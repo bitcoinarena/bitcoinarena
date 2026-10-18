@@ -28,6 +28,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS } from './bond.js';
 import { writeLaunchers } from './launchers.js';
+import * as workersKitDefault from './workers.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
@@ -68,7 +69,7 @@ export function beginAddCustody(state) {
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   // tailscale: the test host app's own CLI when it is installed, else the one in PATH
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
-  tailscaleSh = undefined, chainKit = { coinsOf, broadcast },
+  tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
@@ -254,7 +255,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     },
     'POST /api/reach/save': async (b) => {
       const mode = String(b.mode || '');
-      if (!reach.REACH_MODES.includes(mode)) return { ok: false, why: 'direct, permanent, quick or tailscale' };
+      if (!reach.REACH_MODES.includes(mode)) return { ok: false, why: 'direct, permanent, quick, tailscale or workers' };
       const s = state.read();
       const port = mode === 'direct' ? ((s.direct || {}).port || seatPort) : (Number(b.port) || seatPort);
       if (mode === 'direct') {
@@ -262,6 +263,16 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         return { ok: true, reach: mark('reach', { reach: { mode, port, url: `http://${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:${port}` } }).reach };
       }
       if (mode === 'quick') return { ok: true, reach: mark('reach', { reach: { mode, port, url: null } }).reach };
+      // workers.dev (the owner 2026-10-18: "Implement workers dev tunnel"): the operator's own token, account and subdomain; the Worker itself
+      // is uploaded at the install, once the quick tunnel behind it has a name
+      if (mode === 'workers') {
+        const token = String(b.cfToken || '').trim();
+        const name = (s.reach && s.reach.mode === 'workers' && s.reach.workerName) || workersKit.workerNameOf(randomBytes(3).toString('hex'));
+        const w = await workersKit.workersSetup({ token, name, wantSubdomain: b.cfSubdomain || null, fetcher });
+        if (!w.ok) return { ok: false, why: w.why };
+        state.writeSecret('cf-workers-token', token);
+        return { ok: true, reach: mark('reach', { reach: { mode, port, url: w.url, workerName: name, accountId: w.accountId, subdomain: w.subdomain } }).reach };
+      }
       if (mode === 'tailscale') {
         const t = await reach.tailscaleFunnel({ bin: tailscale, port, sh: tailscaleSh });
         if (!t.ok) return { ok: false, why: t.why };
@@ -295,6 +306,17 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (s.reach.mode === 'quick') {
         const url = await reach.quickTunnelUrl({ home: state.home });
         if (url) { s = state.save({ reach: { ...s.reach, url } }); state.writeSecret('node.env', seatEnv({ ...s, port, bridgePort }, { home: state.home, release })); }
+      }
+      // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
+      if (s.reach.mode === 'workers') {
+        const target = await reach.quickTunnelUrl({ home: state.home });
+        if (!target) return { ok: false, why: 'the node runs, but its quick tunnel gave no name for the Worker to forward to', identity: r.identity };
+        const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
+        if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
+        s = state.save({ reach: { ...s.reach, target, targetAtMs: Date.now() } });
+        const k = await gwKit.installProgram({ id: 'workers', description: 'The keeper of the Arena node\'s workers.dev address', home: state.home, boot,
+          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
+        if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
       }
       if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
       let login = null;
