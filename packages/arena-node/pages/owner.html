@@ -196,6 +196,7 @@ async function area() {
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Bond</h2><div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
+    <h2>Custody</h2><div class="card" id="custody"><p class="sub">reading whether this node holds custody…</p></div>
     <h2>Release</h2><div class="card" id="release"><p class="sub">reading this node's release…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Dev clients</h2><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
@@ -235,6 +236,7 @@ async function area() {
   ballotsPanel();
   standingPanel();
   bondPanel();
+  custodyPanel();
   releasePanel();
   leavePanel();
   storePanel();
@@ -269,6 +271,18 @@ function latestLine(v) {
   if (l.newer && l.latest) return `<p class="ok"><b>A new release is available: ${esc(l.latest.version)}</b>${l.latest.release ? ` - <a href="${esc(l.latest.release)}" target="_blank" rel="noopener">its release page</a> (invite only)` : ''}. Download the asset for this machine with SHA256SUMS and SHA256SUMS.sig beside it.</p>`;
   if (l.latest) return `<div class="row"><span>Newest release</span><b>${esc(l.latest.version)} - this node is up to date</b></div>`;
   return l.why ? `<p class="sub">Newest release: ${esc(l.why)}.</p>` : '';
+}
+// CUSTODY, ADDED LATER (kanban #471, the owner 2026-10-18: "if custody is setup later in the UI we need the same screens"): on its own
+// machine the installer's custody screens open again - what custody is, Lightning and the gateway, the federation, the bond's rules -
+// from the Start menu / Applications / desktop menu ("Add custody") or `arena-install --add-custody`; the bond is updated, not doubled
+async function custodyPanel() {
+  let g = null;
+  try { g = await (await fetch(at('/guardian'), { cache: 'no-store' })).json(); } catch { g = null; }
+  const el = $('custody');
+  if (g && g.guardian) { el.innerHTML = `<div class="row"><span>Custody</span><b>on - this node is a guardian</b></div><div class="row"><span>Guardian endpoint</span><b><code>${esc(g.endpoint || '')}</code></b></div>`; return; }
+  el.innerHTML = `<p><b>This node holds no custody.</b> A custody node is one of a federation's 10 guardians, may run one of its 2 Lightning gateways, and earns a share of every round of its federation (the guardians' third of the 4 % node fee).</p>
+    <p>To add it, on the machine the node runs on open <b>Add custody</b> (Start menu &gt; Arena Node, or the Arena Node scripts) or run <code>arena-install --add-custody</code>. The installer shows the custody screens - what custody is, Lightning and the gateway, the federation, the bond's rules - and updates your bond; no second bond.</p>
+    <p class="sub">Custody needs your own Bitcoin Core (not Electrum) and Lightning (LND, set up there).</p>`;
 }
 async function releasePanel() {
   let v = null;
