@@ -115,7 +115,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -4243,6 +4243,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE NODE'S BOND AND ITS LOCK (kanban #471 part D; the owner 2026-10-18: "withdrawing the bond after the lock (communicating the
         // lock time clearly)"): the bond the newest census this seat holds names for this node, the maturity height, the blocks to it
         // and an estimated date, and whether it can be withdrawn now. Public, as /owner/standing is: the chain says it all anyway.
+        // THE RELEASE THIS NODE RUNS (kanban #471 part D, "Updates: the installed version"): the release's VERSION and COMMIT files
+        // (tools/release/build-release.sh writes them at its root); a node run from a checkout answers null for both
+        if (req.method === 'GET' && url.pathname === '/owner/version') {
+          const read = (f) => { try { return readFileSync(new URL(`../../../${f}`, import.meta.url), 'utf8').trim(); } catch { return null; } };
+          return answer(200, { node: toHex(round.pubkey), version: read('VERSION'), commit: read('COMMIT'),
+            protocols: SUPPORTED_PROTOCOL_VERSIONS, update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/bond') {
           const found = ownBondNow();
           let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
