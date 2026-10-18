@@ -264,7 +264,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
       let reachTest = null;
       if (s.reach.mode === 'quick') {
-        const url = await reach.quickTunnelUrl({});
+        const url = await reach.quickTunnelUrl({ home: state.home });
         if (url) { s = state.save({ reach: { ...s.reach, url } }); state.writeSecret('node.env', seatEnv({ ...s, port, bridgePort }, { home: state.home, release })); }
       }
       if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
