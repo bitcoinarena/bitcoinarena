@@ -94,6 +94,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (typeof c.startTimeMs !== 'bigint') continue;
+      // long started: nothing left to seat, never held (kanban #468 item 4: at a start that was every round in the store, 53,658
+      // contracts on seat 1, of which 5,950 had not started 10 min ago)
+      if (c.startTimeMs + 600000n < BigInt(nowMs())) continue;
       // A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf): its later rounds exchange no
       // PRESENT and sign no seating - the roster seats them with the first round's certificate
       const anchor = tableAnchorOf(c);
