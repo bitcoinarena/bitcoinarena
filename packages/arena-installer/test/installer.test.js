@@ -15,6 +15,7 @@ import { nodeState, seatEnv } from '../src/state.js';
 import { waitHealthy, seatUnit } from '../src/service.js';
 import { probeCore, probeElectrum, tipsAgree, agreeHeights, TESTNET4_GENESIS, headerHash, testConnection } from '../src/chain-test.js';
 import { quickTunnelName } from '../src/tunnel.js';
+import { configureLnd, lndArgs } from '../src/lnd.js';
 import * as reachKit from '../src/reach.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { createReachCheck } from '../../arena-node/src/reach-check.js';
@@ -107,7 +108,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const sent = []; let asked = 0;
   const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 60000, height: 156899 }] : [] }),
     broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
-  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children) });
+  const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit });
   const server = http.createServer((q, s) => wizard.handle(q, s));
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   const port = server.address().port;
@@ -131,8 +133,11 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(saved.ok, true, saved.why);
   assert.equal(saved.result.source.genesis, TESTNET4_GENESIS);
 
-  assert.equal((await c.post('/api/roles', { roles: ['custody'] })).json.ok, false, 'custody is a later slice');
+  assert.equal((await c.post('/api/roles', { roles: ['verify', 'settlement', 'custody'] })).json.ok, true, 'custody on the node\'s own Core');
+  assert.equal((await c.get('/api/state')).json.done.lightning, undefined, 'custody: the Lightning step is to come'),
   assert.equal((await c.post('/api/roles', { roles: ['verify', 'settlement'] })).json.ok, true);
+  assert.ok((await c.get('/api/state')).json.done.lightning, 'no custody: no Lightning step');
+  assert.equal((await c.post('/api/roles', { roles: ['verify', 'settlement', 'custody'] })).json.ok, true);
 
   assert.equal((await c.post('/api/owner', { mode: 'seed' })).json.ok, false, 'no owner before the seed');
   const shown = (await c.post('/api/seed/new')).json;
@@ -174,8 +179,30 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(refused.status, 403);
   assert.equal(statSync(join(home, 'node.db')).isFile(), true);
 
+  // LIGHTNING (slice 5): LND here - its download and service faked, its config real; the wallet waited for, then made from the seed
+  s = (await c.get('/api/state')).json;
+  assert.equal(s.step, 'lightning');
+  const lndCalls = [];
+  lndKit.installLnd = async () => ({ ok: true, lnd: '/fake/lnd', sha256: 'ab'.repeat(32) });
+  lndKit.installProgram = async (o) => { lndCalls.push(o); return { ok: true }; };
+  let walletReady = false;
+  lndKit.createLndWallet = async ({ cfg, seed }) => (walletReady ? { ok: true, created: lndCalls.push({ seedLen: seed.length, cfg: cfg.restUrl }) > 0 } : { ok: false, why: 'LND is starting (no TLS certificate yet)' });
+  lndKit.testLnd = async () => ({ ok: true, pubkey: '03' + 'cd'.repeat(32), alias: 'arena-node', blockHeight: 156900, syncedToChain: true, network: 'testnet4', version: '0.21.4-beta' });
+  const own = (await c.post('/api/lightning/own', { boot: true })).json;
+  assert.equal(own.ok, true, own.why);
+  assert.equal(lndCalls[0].id, 'lnd');
+  assert.match(lndCalls[0].args.join(' '), /^\/fake\/lnd --lnddir=.*lnd --configfile=.*lnd\.conf$/);
+  assert.match(readFileSync(join(home, 'lnd', 'lnd.conf'), 'utf8'), /bitcoin\.testnet4=true[\s\S]*bitcoind\.rpccookie=/);
+  const waiting = (await c.post('/api/lightning/status')).json;
+  assert.deepEqual([waiting.ok, waiting.waiting], [false, true]);
+  walletReady = true;
+  const ln = (await c.post('/api/lightning/status')).json;
+  assert.deepEqual([ln.ok, ln.created, ln.network, lndCalls[1].seedLen], [true, true, 'testnet4', 32], 'the wallet from the 32-byte seed');
+  assert.equal((await c.post('/api/lightning/connect', { restUrl: 'http://x:1', macaroonHex: 'ab', tlsCertPem: '' })).json.why, 'LND\'s REST address is https');
+
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'bond');
+  assert.equal(s.lightning.pubkey, '03' + 'cd'.repeat(32));
   assert.match(s.wallet.address, /^tb1p/);
   assert.equal((await c.post('/api/finish')).json.ok, false, 'not finished before the bond is posted or deferred');
   const none = (await c.post('/api/bond/check')).json;
