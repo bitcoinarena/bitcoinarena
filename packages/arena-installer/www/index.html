@@ -67,6 +67,16 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .ff-note { color: var(--muted); font-size: 12.5px; }
     .role-ic { font-size: 26px; line-height: 1; } .role-earn { color: #f7931a; font-size: 12.5px; margin-top: 3px; } .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
     @media (max-width: 560px) { .ff-rows { grid-template-columns: 1fr; } }
+
+    /* THE INTRO (kanban #498): what a node is, what it earns, what it needs - before step 1 */
+    #s-intro .lead { font-size: 17px; line-height: 1.5; margin: 6px 0 14px; }
+    #s-intro svg { width: 100%; height: auto; display: block; margin: 4px 0 14px; }
+    .earn-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 14px; }
+    .earn-box b.big { font-size: 22px; color: #f7931a; }
+    .needs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
+    .needs li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; line-height: 1.35; }
+    .needs li .ic { font-size: 22px; display: block; margin-bottom: 4px; }
+    .needs li b { display: block; }
 </style>
 </head>
 <body>
@@ -75,6 +85,39 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
   <p class="sub">testnet4 · every step is tested before it is saved, and you can close this page and come back</p>
   <ol class="steps" id="steps"></ol>
 
+
+  <section id="s-intro">
+    <h2>Run a Bitcoin Arena node</h2>
+    <p class="lead">Your computer helps run Bitcoin Arena: it <b>checks the games</b>, <b>pays out the winners</b> and can <b>hold players' bitcoin</b> with other nodes. For that it earns a share of every paid round.</p>
+    <svg viewBox="0 0 640 230" role="img" aria-label="Players pay into rounds; 4 % of every round goes to the nodes, 1 % for each of four services">
+      <defs><marker id="ia" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
+      <rect x="8" y="70" width="150" height="90" rx="12" fill="#1b2230" stroke="#30363d"/>
+      <text x="83" y="108" text-anchor="middle" font-size="30">🎮</text>
+      <text x="83" y="138" text-anchor="middle" font-size="14" fill="#e6edf3">players' rounds</text>
+      <line x1="160" y1="115" x2="232" y2="115" stroke="#8b949e" stroke-width="2" marker-end="url(#ia)"/>
+      <text x="196" y="104" text-anchor="middle" font-size="13" fill="#f7931a" font-weight="700">4 %</text>
+      <rect x="236" y="20" width="396" height="190" rx="14" fill="#1b2230" stroke="#f7931a"/>
+      <text x="434" y="46" text-anchor="middle" font-size="15" fill="#e6edf3" font-weight="700">your Arena node</text>
+      <g font-size="13" fill="#e6edf3" text-anchor="middle">
+        <rect x="250" y="62" width="88" height="130" rx="10" fill="#14321f"/><text x="294" y="102" font-size="26">🎮</text><text x="294" y="132">verify</text><text x="294" y="170" fill="#3fb950" font-weight="700">1 %</text>
+        <rect x="345" y="62" width="88" height="130" rx="10" fill="#261b3a"/><text x="389" y="102" font-size="26">✍️</text><text x="389" y="132">settle</text><text x="389" y="170" fill="#a371f7" font-weight="700">1 %</text>
+        <rect x="440" y="62" width="88" height="130" rx="10" fill="#132a44"/><text x="484" y="102" font-size="26">🏦</text><text x="484" y="132">custody</text><text x="484" y="170" fill="#58a6ff" font-weight="700">1 %</text>
+        <rect x="535" y="62" width="88" height="130" rx="10" fill="#102f33"/><text x="579" y="102" font-size="26">💧</text><text x="579" y="132">liquidity</text><text x="579" y="170" fill="#39c5cf" font-weight="700">1 %</text>
+      </g>
+    </svg>
+    <div class="earn-box">
+      <div><b class="big">4 %</b> of every paid round goes to the nodes, <b>1 % for each service</b>, shared by the nodes doing it.</div>
+      <div class="sub" style="margin-top:6px">Example: 100 rounds of 1,000 sat → 4,000 sat to the nodes. More rounds, more earnings. Testnet4 for now: its coins are for testing.</div>
+    </div>
+    <h3 style="margin:0 0 8px">What you need</h3>
+    <ul class="needs">
+      <li><span class="ic">💻</span><b>A computer that stays on</b>macOS, Linux or Windows</li>
+      <li><span class="ic">💽</span><b>About 3 GB of disk</b>more if it installs Bitcoin Core (testnet4: 25 GB, pruned 6 GB)</li>
+      <li><span class="ic">🌐</span><b>Home internet</b>no open port needed: a tunnel or Tor is set up for you</li>
+      <li><span class="ic">🔒</span><b>A bond of 50,000 sat</b>testnet4 coins, free from a faucet; locked for a while, then yours again</li>
+    </ul>
+    <button id="intro-go">Set up my node</button>
+  </section>
   <section id="s-chain">
     <h2>1. Bitcoin connection</h2>
     <p class="sub">Your node reads the testnet4 chain. Use your own Bitcoin Core, or an Electrum server.</p>
@@ -340,12 +383,17 @@ const post = async (path, body) => (await fetch(path, { method: 'POST', headers:
 const say = (id, r, okText) => { const m = $(id); m.className = 'msg ' + (r.ok ? 'ok' : 'bad'); m.textContent = r.ok ? okText : (r.why || 'failed'); };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+let introSkipped = false;
+const introSeen = () => { if (introSkipped) return true; try { return localStorage.getItem('arena-intro-seen') === '1'; } catch { return false; } };
 async function load() {
   st = await (await fetch('/api/state')).json();
   if (!st.ok) { document.body.innerHTML = '<main><h1>Arena node setup</h1><p>' + esc(st.why) + '</p></main>'; return; }
   $('steps').innerHTML = STEPS.map(([k, t]) => `<li class="${st.done[k] ? 'done' : st.step === k ? 'now' : ''}">${t}</li>`).join('');
   { const now = $('steps').querySelector('.now'); if (now) $('steps').scrollLeft = Math.max(0, now.offsetLeft - $('steps').offsetLeft - 40); }   // the current step in view
-  for (const [k] of STEPS) $('s-' + k).classList.toggle('on', st.step === k);
+  // THE INTRO (kanban #498): before the first step is done, until "Set up my node" (remembered in this browser where it can be)
+  const intro = st.step === 'chain' && !st.done.chain && !introSeen();
+  $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
+  for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
   if (st.step === 'roles') $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
     `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && !OPT_IN_ROLES.includes(k)) ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div class="role-ic">${ROLE_IC[k] || ''}</div><div><b>${esc(r.title)}</b><div class="role-earn">${ROLE_EARN[k] || ''}</div><p>${esc(r.needs)}</p></div></label>`).join('');
   if (st.step === 'roles') { const cb = document.querySelector('#roles input[value=custody]'); const show = () => { $('custody-explain').hidden = !(cb && cb.checked); }; if (cb) cb.addEventListener('change', show); show(); }
@@ -503,6 +551,7 @@ $('svc').onclick = async (e) => { e.target.disabled = true; $('svc-msg').classNa
 $('nostr-login').onclick = async () => { if (!window.nostr) return say('svc-msg', { ok: false, why: 'no Nostr extension in this browser: use one that has your key' });
   const t = { ...nostrTemplate, created_at: Math.floor(Date.now() / 1000) }; const ev = await window.nostr.signEvent(t);
   const r = await post('/api/owner/login', { nostr: ev }); if (r.ok) return load(); say('svc-msg', r); };
+$('intro-go').onclick = () => { introSkipped = true; try { localStorage.setItem('arena-intro-seen', '1'); } catch { /* this visit only */ } load(); };
 $('finish').onclick = async () => { const r = await post('/api/finish'); say('finish-msg', r, `Finished. The installer has stopped. Your owner page: ${r.owner}`); $('finish').disabled = true; };
 setKind('core'); load().then(() => { if (st && st.step === 'chain') fetch('/api/state').then(() => post('/api/core/plan')).then((r) => { if (r && r.core) setKind('install'); }); });
 </script>
