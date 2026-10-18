@@ -108,3 +108,72 @@ test('updates wait out a market seating window; a backup copies only the node\'s
     assert.deepEqual(b.files, ['node.env']);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+/** launchctl, played: bootstrap runs a plist's ProgramArguments in its WorkingDirectory; bootout kills it. codesign answers "not signed". */
+function fakeLaunchd() {
+  const running = new Map(); const calls = []; let torRefused = 0;
+  const sh = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    // launchd refuses the first bootstrap of tor, as it did on the test host right after the bootout
+    if (cmd === 'launchctl' && args[0] === 'bootstrap' && /\.tor\.plist$/.test(args[2]) && torRefused++ === 0) return { ok: false, out: '', err: 'Bootstrap failed: 5: Input/output error' };
+    if (cmd === '/usr/bin/codesign') return { ok: args[0] !== '-v', out: '', err: '' };
+    if (cmd !== 'launchctl') return { ok: true, out: '', err: '' };
+    if (args[0] === 'bootout') {
+      const label = args[1].split('/').pop(); const c = running.get(label); running.delete(label);
+      if (c && c.exitCode === null && c.signalCode === null) { const gone = new Promise((ok) => c.once('exit', ok)); c.kill('SIGTERM'); await gone; }
+    }
+    if (args[0] === 'bootstrap') {
+      const text = readFileSync(args[2], 'utf8');
+      const label = /<key>Label<\/key><string>(.+?)<\/string>/.exec(text)[1];
+      const argv = [...(/<key>ProgramArguments<\/key><array>(.*?)<\/array>/s.exec(text)[1].matchAll(/<string>(.*?)<\/string>/g))].map((m) => m[1].replace(/&apos;/g, "'").replace(/&amp;/g, '&'));
+      const cwd = (/<key>WorkingDirectory<\/key><string>(.+?)<\/string>/.exec(text) || [])[1];
+      if (argv[0] === '/bin/sh') running.set(label, spawn(argv[0], argv.slice(1), { cwd, env: { PATH: process.env.PATH }, stdio: 'ignore' }));
+    }
+    return { ok: true, out: '', err: '' };
+  };
+  return { sh, calls, stopAll: () => { for (const c of running.values()) c.kill('SIGKILL'); } };
+}
+
+test('macOS: the launchd agents that run the old release move to the new one, its tor is signed, a broken one is rolled back (rc.12 -> rc.13 on the test host said "no arena-node unit")', async (t) => {
+  const { launchdPlist, LAUNCHD_LABEL } = await import('../src/service.js');
+  const { releaseOfPlist } = await import('../src/update.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-mac-'));
+  const env = { HOME: join(root, 'user') };
+  const agents = join(env.HOME, 'Library', 'LaunchAgents'); mkdirSync(agents, { recursive: true });
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const port = await freePort();
+  const sys = fakeLaunchd();
+  t.after(() => { sys.stopAll(); rmSync(root, { recursive: true, force: true }); });
+  const v1 = releaseFrom(join(root, 'releases/0.1.0-rc.12')), v2 = releaseFrom(join(root, 'releases/0.1.0-rc.13'));
+  const broken = releaseFrom(join(root, 'releases/broken'));
+  writeFileSync(join(broken, 'packages/arena-node/src/main.js'), "throw new Error('this release does not start');\n");
+  for (const r of [v1, v2, broken]) { mkdirSync(join(r, 'runtime/tor'), { recursive: true }); writeFileSync(join(r, 'runtime/tor/tor'), ''); writeFileSync(join(r, 'runtime/tor/libevent-2.1.7.dylib'), ''); }
+  writeFileSync(join(home, 'node.env'), 'ARENA_BIND=127.0.0.1\nARENA_DONATION_NETWORK=testnet4\nARENA_ROLES=verify\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+  const seat = join(agents, `${LAUNCHD_LABEL}.plist`), tor = join(agents, `${LAUNCHD_LABEL}.tor.plist`), lnd = join(agents, `${LAUNCHD_LABEL}.lnd.plist`);
+  writeFileSync(seat, launchdPlist({ node: process.execPath, release: v1, home, port }));
+  const agent = (label, prog) => `<plist><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>${prog}</string></array></dict></plist>\n`;
+  writeFileSync(tor, agent(`${LAUNCHD_LABEL}.tor`, join(v1, 'runtime/tor/tor')));
+  writeFileSync(lnd, agent(`${LAUNCHD_LABEL}.lnd`, join(home, 'lnd-bin/lnd')));
+  await sys.sh('launchctl', ['bootstrap', 'gui/501', seat]);
+  const first = await waitHealthy({ port, waitMs: 60000, everyMs: 300 });
+  assert.equal(first.ok, true, first.why);
+
+  const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0, platform: 'darwin' });
+  assert.equal(up.ok, true, up.why);
+  assert.deepEqual([up.from, up.to, up.identity], [v1, v2, first.identity], 'the same node answers from rc.13');
+  assert.equal(releaseOfPlist(readFileSync(seat, 'utf8')), v2);
+  assert.match(readFileSync(tor, 'utf8'), new RegExp(`${v2}/runtime/tor/tor`), 'tor moved to the new release');
+  assert.match(readFileSync(lnd, 'utf8'), /lnd-bin\/lnd/, 'LND, which names no release, untouched');
+  assert.deepEqual(up.moved.sort(), [`${LAUNCHD_LABEL}.plist`, `${LAUNCHD_LABEL}.tor.plist`]);
+  assert.equal(up.notStarted, undefined, 'tor refused once, then started: nothing left down');
+  assert.equal(sys.calls.filter((c) => c[0] === 'launchctl' && c[1] === 'bootstrap' && /\.tor\.plist$/.test(c[3])).length, 2, 'tor bootstrapped again after the refusal');
+  assert.deepEqual(sys.calls.filter((c) => c[0] === '/usr/bin/codesign' && c[1] === '--force').map((c) => c.at(-1)).sort(),
+    [join(v2, 'runtime/tor/libevent-2.1.7.dylib'), join(v2, 'runtime/tor/tor')], 'the new release\'s tor signed before it runs');
+
+  const bad = await updateNode({ home, newRelease: broken, port, env, sh: sys.sh, nowMs: () => 0, waitMs: 8000, platform: 'darwin' });
+  assert.deepEqual([bad.ok, bad.rolledBack, bad.restored], [false, true, true]);
+  assert.equal(releaseOfPlist(readFileSync(seat, 'utf8')), v2, 'the agent names rc.13 again');
+  assert.match(readFileSync(tor, 'utf8'), new RegExp(`${v2}/runtime/tor/tor`));
+  assert.equal((await waitHealthy({ port, waitMs: 30000, everyMs: 300 })).identity, first.identity);
+});
