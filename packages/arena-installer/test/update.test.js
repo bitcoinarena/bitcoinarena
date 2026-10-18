@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { updateNode, releaseOfUnit, inSeatingWindow, backupNode } from '../src/update.js';
+import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease } from '../src/update.js';
 import { seatUnit, unitDir, UNIT, waitHealthy } from '../src/service.js';
 
 const REPO = resolve(fileURLToPath(import.meta.url), '../../../..');
@@ -210,4 +210,21 @@ test('Windows: the launchers that run the old release move to the new one; stopp
   assert.deepEqual([bad.ok, bad.rolledBack], [false, true]);
   assert.equal(releaseOfLauncher(readFileSync(join(home, 'arena-node.cmd'), 'utf8')), v2);
   rmSync(root, { recursive: true, force: true });
+});
+
+test('node.env paths into an older release follow to the new one - from every older release; a path the new one lacks is kept (macOS node A at rc.16 still ran games and fedimintd from rc.12)', () => {
+  const rel = '/h/home/releases/arena-node-0.1.0-rc.16-darwin-arm64';
+  const has = new Set([`${rel}/packages/nextblock/plugin/nextblock`, `${rel}/runtime/custody/fedimintd`]);
+  const text = ['ARENA_BIND=127.0.0.1',
+    'ARENA_GAMES=/h/arena-node-0.1.0-rc.12-darwin-arm64/packages/nextblock/plugin/nextblock',
+    'ARENA_FEDIMINTD=/h/home/releases/arena-node-0.1.0-rc.14-darwin-arm64/runtime/custody/fedimintd',
+    'ARENA_FEDIMINT_CLI=/h/arena-node-0.1.0-rc.12-darwin-arm64/runtime/custody/fedimint-cli',
+    'ARENA_PLUGINS_DIR=/h/home/node.db.plugins', ''].join('\n');
+  assert.deepEqual(envForRelease(text, rel, (p) => has.has(p)).split('\n'), ['ARENA_BIND=127.0.0.1',
+    `ARENA_GAMES=${rel}/packages/nextblock/plugin/nextblock`, `ARENA_FEDIMINTD=${rel}/runtime/custody/fedimintd`,
+    'ARENA_FEDIMINT_CLI=/h/arena-node-0.1.0-rc.12-darwin-arm64/runtime/custody/fedimint-cli', 'ARENA_PLUGINS_DIR=/h/home/node.db.plugins', '']);
+  const win = 'C:\\a\\releases\\arena-node-0.1.0-rc.16-windows-x64';
+  assert.equal(envForRelease('ARENA_GAMES=C:\\a\\arena-node-0.1.0-rc.14-windows-x64\\packages\\nextblock\r\nX=1\r\n', win, () => true),
+    `ARENA_GAMES=${win}\\packages\\nextblock\r\nX=1\r\n`, 'CRLF and backslashes on Windows');
+  assert.equal(envForRelease(text, rel, () => true), envForRelease(envForRelease(text, rel, () => true), rel, () => true), 'a second update moves nothing more');
 });
