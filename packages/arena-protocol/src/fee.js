@@ -111,7 +111,10 @@ export function grossVolumeMsat(entries) {
  */
 // `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
 // was checked against at the door; the network's 5 % if none is named
-export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS }) {
+// `weights`: { liquidity: Map(node hex -> sat) } - the providers' available balance from the federation's signed liquidity seating
+// (2026.0.16, §23A.10); without it the liquidity pool is split evenly
+export const LIQUIDITY_WEIGHT_STEP = 10000n;
+export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS, weights = null }) {
   const gross = grossVolumeMsat(entries);
   const fee = (gross * BigInt(feeBps)) / 10000n;
   // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
@@ -159,9 +162,14 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
     // Floor the base share, then hand the leftover out one millisatoshi at a
     // time in the round's own order - 22A's rule, and the one `payout.js`
     // already uses for the pool so there is one implementation of it.
-    const each = amount / BigInt(earning.length);
-    let left = amount - each * BigInt(earning.length);
-    for (const k of earning) signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + each);
+    // THE LIQUIDITY POOL BY AVAILABLE BALANCE (2026.0.16, §23A.10; the owner 2026-10-18: "Fee must be dependant on available balance too if
+    // there is more than one"): each provider's weight floored to 10,000 sat, its share floored; with no weights (or all 0) evenly
+    const w = pool === LIQUIDITY && weights && weights[LIQUIDITY]
+      ? earning.map((k) => { const x = BigInt(weights[LIQUIDITY].get(hex(k)) || 0n); return (x / LIQUIDITY_WEIGHT_STEP) * LIQUIDITY_WEIGHT_STEP; }) : null;
+    const total = w ? w.reduce((a, b) => a + b, 0n) : 0n;
+    const shares = total > 0n ? w.map((x) => (amount * x) / total) : earning.map(() => amount / BigInt(earning.length));
+    let left = amount - shares.reduce((a, b) => a + b, 0n);
+    earning.forEach((k, i) => signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + shares[i]));
     // WITH THREE POOLS THE LEFTOVER MSATS TAKE TURNS ACROSS THEM: the order goes on where the pool before stopped, so
     // a node does not take the extra millisatoshi of every third (measured: 4000 msat over two nodes, 2001 and 1999).
     // The two-pool table keeps its own order, exactly as before.

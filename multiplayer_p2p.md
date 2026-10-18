@@ -5420,8 +5420,17 @@ A provider keeps a channel open while N is a custody node of the network. It may
 
 From **protocol 2026.0.16** the node fee of a paid round (4 % on protocol 11 and later) is split into **four pools of 1 %**:
 game/verify, settlement, custody, liquidity.
-- The **liquidity pool** of a round goes to the **liquidity seats** of the round's federation, evenly: the providers with an
+- The **liquidity pool** of a round goes to the **liquidity seats** of the round's federation: the providers with an
   active channel of ≥ L to at least one of the federation's custody nodes.
+- **Weighted by available balance** *(the owner 2026-10-18: "Fee must be dependant on available balance too if there is more than
+  one")*. With more than one seat, each provider's share is proportional to its **weight**: the liquidity it makes available to
+  the federation, floored to 10,000 sat.
+  - weight = the capacity of its channels to the federation's custody nodes + its **free balance** (coins in its LND wallet, ready
+    for new channels);
+  - the channel capacities are public in the Lightning graph; the free balance is proven: the claim lists the wallet's outpoints,
+    each with a signature by its address key (LND `SignMessageWithAddr`), and a guardian counts only outpoints that are unspent on
+    its own chain and signed;
+  - the shares are floored, and the leftover millisatoshis go out in the round's order, as in every pool.
 - The federation's guardians check every provider's claim each epoch (144 blocks) and **sign the list**, the same way as the
   gateway seating (§23A.9: threshold of the seated guardians). The settlement pays only a signed list.
 - With no liquidity seat, the pool goes to the custody pool.
