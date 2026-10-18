@@ -3767,7 +3767,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const { federation: fid } of fedRecords.list()) {
         const rec = fedRecords.recordOf(fid);
         const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
-        if (!rec || !rec.record || !seatedHex.length) continue;
+        if (!rec || !rec.record || !seatedHex.length) { liquiditySaid(fid, epoch, `not gathered: ${!rec || !rec.record ? 'no held record' : 'no seated guardians'}`); continue; }
+        if (!seatedHex.includes(me)) liquiditySaid(fid, epoch, `not signed here: this node is not one of the ${seatedHex.length} seated guardians`);
         if (seatedHex.includes(me) && !ownLiquiditySeatings.has(`${fid}:${epoch}`)) {
           const lnKeys = [], claims = [];
           for (const node of seatedHex) { const ep = endpointOf(node); const g = ep && await getJson(`${ep}/gateway-claim`); if (g && g.node === node && checkGatewayClaim(g, schnorrVerify).ok) lnKeys.push(g.lightningPubkey); }
@@ -3777,6 +3778,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (proven) for (const c of claims) proven.set(c.node, await provenFreeSats({ claim: c, curve: messageCurve, txOut: chainTxOut }));
           const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys, proven });
           ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
+          liquiditySaid(fid, epoch, `signed: ${providers.length} provider(s) [${providers.map((p) => `${p.node.slice(0, 8)}:${p.weight}`).join(', ')}] of ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`);
         }
         if (liquiditySeatings.has(`${fid}:${epoch}`)) continue;
         const signed = ownLiquiditySeatings.has(`${fid}:${epoch}`) ? [ownLiquiditySeatings.get(`${fid}:${epoch}`)] : [];
@@ -3786,12 +3788,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (s) signed.push(s);
         }
         const st = standingLiquiditySeating({ signed, federationId: fid, epoch, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
-        if (st.ok) liquiditySeatings.set(`${fid}:${epoch}`, st.seating);
+        if (st.ok) { liquiditySeatings.set(`${fid}:${epoch}`, st.seating); liquiditySaid(fid, epoch, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
         for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) liquiditySeatings.delete(k);
         for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) ownLiquiditySeatings.delete(k);
       }
     };
-    const lt = setInterval(() => { gatherLiquidity().catch(() => {}); }, 600000);
+    // ONE LINE PER FEDERATION, EPOCH AND OUTCOME (kanban #494: on the live roll no seating appeared and the gather said nothing - its
+    // errors were swallowed); the first gather a minute after start, not ten
+    const said = new Set();
+    function liquiditySaid(fid, epoch, what, kind = what.split(':')[0]) { const k = `${fid}:${epoch}:${kind}`; if (said.has(k)) return; said.add(k); console.log(`[liquidity] ${fid.slice(0, 12)} epoch ${epoch}: ${what}`); }
+    const gatherLiquidityOnce = () => gatherLiquidity().catch((e) => console.log(`[liquidity] gather failed: ${e && e.stack ? e.stack.split('\n').slice(0, 2).join(' | ') : e}`));
+    const lf = setTimeout(gatherLiquidityOnce, Number(process.env.ARENA_LIQUIDITY_FIRST_MS || 60000)); if (lf.unref) lf.unref();
+    const lt = setInterval(gatherLiquidityOnce, 600000);
     if (lt.unref) lt.unref();
     const st = setInterval(() => { gatherSeatings().catch(() => {}); }, 600000);
     if (st.unref) st.unref();
