@@ -12,8 +12,9 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 syst
 main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
 h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 0 0 8px; }
 .sub { color: var(--muted); margin: 0 0 20px; }
-ol.steps { display: flex; gap: 6px; padding: 0; list-style: none; flex-wrap: wrap; margin: 0 0 20px; }
-ol.steps li { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 13px; }
+ol.steps { display: flex; gap: 4px; padding: 0 0 2px; list-style: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 0 20px; }   /* one line (the owner 2026-10-18); a phone scrolls it */
+ol.steps::-webkit-scrollbar { display: none; }
+ol.steps li { flex: none; white-space: nowrap; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12.5px; }
 ol.steps li.done { border-color: var(--ok); color: var(--ok); } ol.steps li.now { border-color: var(--accent); color: var(--text); }
 section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; display: none; }
 section.on { display: block; }
@@ -324,6 +325,7 @@ async function load() {
   st = await (await fetch('/api/state')).json();
   if (!st.ok) { document.body.innerHTML = '<main><h1>Arena node setup</h1><p>' + esc(st.why) + '</p></main>'; return; }
   $('steps').innerHTML = STEPS.map(([k, t]) => `<li class="${st.done[k] ? 'done' : st.step === k ? 'now' : ''}">${t}</li>`).join('');
+  { const now = $('steps').querySelector('.now'); if (now) $('steps').scrollLeft = Math.max(0, now.offsetLeft - $('steps').offsetLeft - 40); }   // the current step in view
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', st.step === k);
   if (st.step === 'roles') $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
     `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && k !== 'custody') ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div class="role-ic">${ROLE_IC[k] || ''}</div><div><b>${esc(r.title)}</b><div class="role-earn">${ROLE_EARN[k] || ''}</div><p>${esc(r.needs)}</p></div></label>`).join('');
