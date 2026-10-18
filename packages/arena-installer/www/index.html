@@ -128,7 +128,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
           <text x="245" y="194">the 7 nodes</text><text x="245" y="209">seated on the round</text>
           <text x="352" y="194" fill="#58a6ff" font-size="11.5">&#8532; guardians</text><text x="352" y="209" font-size="11.5">the 10</text>
           <text x="442" y="194" fill="#f7931a" font-size="11.5">&#8531; gateways</text><text x="442" y="209" font-size="11.5">the day's 2</text>
-          <text x="555" y="194">the providers</text><text x="555" y="209">by balance given</text>
+          <text x="555" y="194">all liquidity providers</text><text x="555" y="209">more coins, bigger share</text>
           <text x="320" y="240" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
           <text x="320" y="256" fill="#8b949e" font-size="11">Four pools from protocol 2026.0.16; rounds of earlier versions pay three pools of 1&#8531; %.</text>
         </g>
@@ -140,7 +140,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
           <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement (seated)<b>&asymp; 1,429 sat</b></div>
           <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Guardian<b>&asymp; 667 sat</b></div>
           <div class="ff-row"><span class="dot" style="background:#f7931a"></span>Gateway (on top of guardian)<b>&asymp; 1,667 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#39c5cf"></span>Liquidity (1 of 2 providers)<b>&asymp; 5,000 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#39c5cf"></span>Liquidity (half of all coins)<b>&asymp; 5,000 sat</b></div>
         </div>
         <div class="ff-note">One node can hold several roles and earns each share. All shares are paid in the round's settlement - no claims to file.</div>
       </div>
@@ -330,7 +330,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 const $ = (id) => document.getElementById(id);
 // the roles' icons and their share of the 4 % (fee.js: three equal pools; the guardian pool's third to the day's 2 gateways)
 const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;', liquidity: '&#128167;' };
-const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, the day\'s 2 gateways &#8531;', liquidity: '1 % of each round of the federations you give liquidity to, by the balance you give' };
+const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, the day\'s 2 gateways &#8531;', liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share' };
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();

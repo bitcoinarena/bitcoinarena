@@ -5397,6 +5397,10 @@ L matches the inbound a gateway seat needs (§23A.9), so one provider channel ma
 
 ### Who opens to whom: at least 1, at most 2 per node
 
+**Any number of nodes can be providers** - unlimited (the owner 2026-10-18: "There can be an unlimited amount of liquidity providers";
+"It's also not that it's limited to 2 LPs, that is just our setup now" - the two on testnet4, LND C and LND D, are only the start).
+The limit is per **new node**: each gets channels from one or two of them. The liquidity pool is shared by all of them, by coins held.
+
 Every provider publishes a **liquidity claim** at its seat (`GET /liquidity-claim`), signed by its node key:
 - its LND key and address;
 - its free funds;

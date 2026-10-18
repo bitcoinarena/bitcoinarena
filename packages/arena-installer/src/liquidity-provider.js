@@ -26,7 +26,8 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
     if (!ch.ok || !f.ok || !info.ok) return { ok: false, why: `LND did not answer: ${(!ch.ok && ch.why) || (!f.ok && f.why) || info.why}` };
     const given = [...ch.open.filter((x) => x.initiator), ...ch.pending.filter((x) => x.initiator)].map((x) => ({ peer: x.peer, capacitySats: x.capacitySats }));
     const lightningAddr = ((info.uris || []).map((u) => String(u).split('@')[1]).find(Boolean)) || '';
-    const claim = signLiquidityClaim({ node, lightningPubkey: info.pubkey, lightningAddr, freeSats: f.onchainSats, atMs: nowMs(), channels: given }, sign);
+    if (!state.depositAddress && f.address) state.depositAddress = f.address;   // one top-up address, kept (LND makes a new one per ask)
+    const claim = signLiquidityClaim({ node, lightningPubkey: info.pubkey, lightningAddr, freeSats: f.onchainSats, atMs: nowMs(), channels: given, depositAddress: state.depositAddress || '' }, sign);
     await writeClaim(claim);
     // the others, as every provider reads them
     const eps = (await endpoints()) || [];

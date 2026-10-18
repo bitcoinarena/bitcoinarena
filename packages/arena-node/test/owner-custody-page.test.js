@@ -17,7 +17,7 @@ async function render(answer) {
 }
 
 test('no custody: how to add it, the same screens, no second bond; a guardian: on, its endpoint', async () => {
-  assert.ok(HTML.includes('<div class="card" id="custody">') && /custodyPanel\(\);\n\s+releasePanel\(\);/.test(HTML), 'the card, and drawn with the others');
+  assert.ok(HTML.includes('<div class="card" id="custody">') && /custodyPanel\(\);\n\s+liquidityPanel\(\);\n\s+releasePanel\(\);/.test(HTML), 'the card, and drawn with the others');
   const off = await render({ guardian: false });
   assert.deepEqual(off.asked, ['https://seat/guardian']);
   assert.match(off.html, /holds no custody/);
