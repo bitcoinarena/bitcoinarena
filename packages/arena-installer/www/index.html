@@ -62,7 +62,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     #fee-flow { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; }
     .ff-lead { margin: 0 0 6px; font-size: 14px; } .ff-ex { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; font-size: 13.5px; }
     .ff-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 8px 0; } .ff-row { display: flex; align-items: center; gap: 8px; }
-    .ff-row b { margin-left: auto; } .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+    .ff-row b { margin-left: auto; white-space: nowrap; } .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
     .ff-note { color: var(--muted); font-size: 12.5px; }
     .role-ic { font-size: 26px; line-height: 1; } .role-earn { color: #f7931a; font-size: 12.5px; margin-top: 3px; } .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
     @media (max-width: 560px) { .ff-rows { grid-template-columns: 1fr; } }
@@ -109,8 +109,8 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <h2>2. What your node does</h2>
     <div id="fee-flow">
       <div class="cx-title">Where your earnings come from</div>
-      <p class="ff-lead">Every paid round sends <b>4 %</b> of its stakes to the nodes that serve it. It is split into four equal pools of <b>1 %</b>, one per service:</p>
-      <svg viewBox="0 0 640 262" class="cx-flow" aria-hidden="true">
+      <p class="ff-lead">Every paid round: <b>4&nbsp;%</b> of its stakes to the nodes, <b>1&nbsp;%</b> per service.</p>
+      <svg viewBox="0 0 640 276" class="cx-flow" aria-hidden="true">
         <g font-family="system-ui,sans-serif" font-size="12.5" text-anchor="middle" fill="#e6edf3">
           <rect x="230" y="6" width="180" height="40" rx="10" fill="#f7931a"/><text x="320" y="24" fill="#111" font-weight="700" font-size="13">4 % of every round</text><text x="320" y="39" fill="#111" font-size="11">to the nodes</text>
           <path d="M262 46 C262 72 85 62 85 90" stroke="#3fb950" stroke-width="9" fill="none" opacity=".75"/>
@@ -127,18 +127,18 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
           <text x="85" y="194">the 7 nodes</text><text x="85" y="209">seated on the round</text>
           <text x="245" y="194">the 7 nodes</text><text x="245" y="209">seated on the round</text>
           <text x="352" y="194" fill="#58a6ff" font-size="11.5">&#8532; guardians</text><text x="352" y="209" font-size="11.5">the 10</text>
-          <text x="442" y="194" fill="#f7931a" font-size="11.5">&#8531; gateways</text><text x="442" y="209" font-size="11.5">the day's 2</text>
-          <text x="555" y="201">liquidity providers</text>
-          <text x="320" y="240" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
-          <text x="320" y="256" fill="#8b949e" font-size="11">Four pools from protocol 2026.0.16; rounds of earlier versions pay three pools of 1&#8531; %.</text>
+          <text x="442" y="194" fill="#f7931a" font-size="11.5">&#8531; gateways</text><text x="442" y="209" font-size="11.5">2 random per day</text>
+          <text x="562" y="194">liquidity providers</text><text x="562" y="209" font-size="11" fill="#8b949e">provides incoming</text><text x="562" y="223" font-size="11" fill="#8b949e">Lightning liquidity</text>
+          <text x="320" y="252" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
+          <text x="320" y="268" fill="#8b949e" font-size="11">Four pools from protocol 2026.0.16; rounds of earlier versions pay three pools of 1&#8531; %.</text>
         </g>
         <defs><marker id="ar2" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#8b949e"/></marker></defs>
       </svg>
-      <div class="ff-ex"><div class="ff-ex-h">Example: <b>100 rounds of 1,000 sat</b> = 100,000 sat of stakes. 4 % = <b>4,000 sat</b> go to the nodes:</div>
+      <div class="ff-ex"><div class="ff-ex-h">Example: <b>100 rounds of 1,000&nbsp;sat</b> &rarr; <b>4,000&nbsp;sat</b> to the nodes:</div>
         <div class="ff-rows" style="grid-template-columns:1fr;max-width:460px">
           <div class="ff-row"><span class="dot" style="background:#3fb950"></span>Game / verify<b>1,000 sat</b></div>
           <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement<b>1,000 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Custody (guardians 667, gateways 333)<b>1,000 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Custody<b>1,000 sat</b></div>
           <div class="ff-row"><span class="dot" style="background:#39c5cf"></span>Liquidity providers<b>1,000 sat</b></div>
         </div>
         <div class="ff-note">Each role's share is split among the nodes doing it. One node can hold several roles and earns each share.</div>
@@ -327,9 +327,9 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-// the roles' icons and their share of the 4 % (fee.js: three equal pools; the guardian pool's third to the day's 2 gateways)
+// the roles' icons and their share of the 4 % (fee.js, 2026.0.16: four pools of 1 %; custody's third to 2 random gateways per day)
 const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;', liquidity: '&#128167;' };
-const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, the day\'s 2 gateways &#8531;', liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share' };
+const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, gateways &#8531; (2 random per day)', liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share' };
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
