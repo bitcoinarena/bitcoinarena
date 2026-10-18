@@ -76,3 +76,11 @@ export async function joinFederation({ apiUrl, passwordFile, invite, fetcher = f
   if (r.status !== 200) return { ok: false, why: `the gateway refused: ${JSON.stringify(r.json).slice(0, 300)}` };
   return { ok: true, federationId: r.json.federation_id || null };
 }
+
+/** The gateway's peg-in address for a federation it serves (POST /v1/address). Answers { ok, address, why }. */
+export async function depositAddress({ apiUrl, passwordFile, federationId, fetcher = fetch }) {
+  const r = await call({ apiUrl, passwordFile, path: '/address', method: 'POST', body: { federation_id: federationId }, fetcher });
+  const address = typeof r.json === 'string' ? r.json : r.json && (r.json.address || r.json.text);
+  if (r.status !== 200 || !/^(tb1|bcrt1|bc1)[0-9a-z]+$/.test(String(address || ''))) return { ok: false, why: `the gateway gave no peg-in address: ${JSON.stringify(r.json).slice(0, 200)}` };
+  return { ok: true, address };
+}

@@ -13,6 +13,7 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_MATURITY_OFFSET, recoveryLeaf, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { encodeAdvert, advertId, joinSignedAdvert } from '../../arena-protocol/src/advert.js';
+import { advertUpdatePayload } from '../../arena-protocol/src/advert-update.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { bondMarker, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex, taggedHash, sha256 } from '../../arena-protocol/src/hash.js';
@@ -154,6 +155,75 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   const b = bondTx(carrierValue, fundingTxid, feeBond);
   return { funding: { hex: funding, txid: fundingTxid }, bond: { hex: b.hex, txid: txidOf(b.hex), vout: 0 }, advert, advertId: toHex(id),
     maturity, bondSats, changeSats: b.change, fees: { funding: feeFund, bond: feeBond }, nodeKey: toHex(nodeKey) };
+}
+
+/**
+ * AN ADVERTISEMENT UPDATE OF THE NODE'S BOND (§5A.2; kanban #471 slice 5 part 4: a custody node's guardian_of[] once its federation is
+ * founded, published by itself): two transactions as the bond's - the wallet's coins to a carrier, then the carrier to the bond marker,
+ * OP_RETURN "ARN" 'A' bond outpoint H(advertisement) and the change back to the wallet, the advertisement signed by the node's key in
+ * the carrier's witness. It spends no bond and starts no maturity clock. `bond` { txid (hex as Bitcoin Core shows it), vout }.
+ * Answers { funding: { hex, txid }, update: { hex, txid }, advertId, changeSats, fees }.
+ */
+export function buildAdvertUpdate({ wallet, nodeSecret, coins, bond, advert, feeRate = 2 }) {
+  if (!coins.length) throw new Error('the wallet holds no coins for the advertisement update');
+  const nodeKey = schnorr.getPublicKey(nodeSecret);
+  if (toHex(advert.nodePubkey) !== toHex(nodeKey)) throw new Error('an update names the node key that signs it');
+  const id = advertId(advert);
+  const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
+  const pieces = []; for (let at = 0; at < body.length; at += CHUNK) pieces.push(body.subarray(at, Math.min(at + CHUNK, body.length)));
+  const carrierSecret = taggedHash(CARRIER_TAG, new Uint8Array([...wallet.secret, ...id]));
+  const carrier = carrierOf(carrierSecret, pieces.length);
+  const kp = keyPathSecret(wallet.secret, wallet.xonly);
+  const total = coins.reduce((a, c) => a + BigInt(c.sats), 0n);
+  const payload = advertUpdatePayload({ bondTxid: fromHex(bond.txid).reverse(), bondVout: bond.vout, advertIdBytes: id });
+  const updateTx = (carrierValue, fundingTxid, fee) => {
+    const change = carrierValue - MARKER_SATS - fee;
+    const outputs = [{ value: MARKER_SATS, script: fromHex('5120' + toHex(bondMarker(NETWORK))) }, { value: 0n, script: Uint8Array.from([0x6a, payload.length, ...payload]) },
+      ...(change >= 330n ? [{ value: change, script: wallet.spk }] : [])];
+    const inputs = [{ txid: fromHex(fundingTxid).reverse(), vout: 0, sequence: 0xfffffffe }];
+    const sighash = tapSighash({ version: 2, locktime: 0, inputs, outputs, prevouts: [{ value: carrierValue, script: carrier.spk }], inputIndex: 0, leafHash: carrier.leaf });
+    return { hex: toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs,
+      witnesses: [scriptPathWitness({ stack: [schnorr.sign(sighash, carrierSecret), ...pieces], script: carrier.script, controlBlock: carrier.control })] })), change: change >= 330n ? change : 0n };
+  };
+  const fundingTx = (carrierValue) => {
+    const inputs = coins.map((c) => ({ txid: fromHex(c.txid).reverse(), vout: c.vout, sequence: 0xfffffffd }));
+    const prevouts = coins.map((c) => ({ value: BigInt(c.sats), script: wallet.spk }));
+    const outputs = [{ value: carrierValue, script: carrier.spk }];
+    const witnesses = inputs.map((_, i) => [schnorr.sign(tapSighash({ version: 2, locktime: 0, inputs, outputs, prevouts, inputIndex: i }), kp)]);
+    return toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs, witnesses }));
+  };
+  const rate = BigInt(Math.max(1, Math.ceil(feeRate)));
+  let feeUpd = 800n, feeFund = 300n;
+  for (let pass = 0; pass < 2; pass++) {
+    const f = fundingTx(total - feeFund);
+    const u = updateTx(total - feeFund, txidOf(f), feeUpd);
+    feeFund = BigInt(vsizeOf(f)) * rate + 10n; feeUpd = BigInt(vsizeOf(u.hex)) * rate + 10n;
+  }
+  if (total - feeFund - feeUpd < MARKER_SATS) throw new Error(`the wallet holds ${total} sat: an advertisement update needs at least ${MARKER_SATS + feeFund + feeUpd} sat`);
+  const funding = fundingTx(total - feeFund);
+  const u = updateTx(total - feeFund, txidOf(funding), feeUpd);
+  return { funding: { hex: funding, txid: txidOf(funding) }, update: { hex: u.hex, txid: txidOf(u.hex) }, advertId: toHex(id), changeSats: u.change, fees: { funding: feeFund, update: feeUpd } };
+}
+
+/** A payment from the wallet (the custody peg-in): `sats` to `script`, the rest back to the wallet. Answers { hex, txid, fee, changeSats }. */
+export function buildSend({ wallet, coins, script, sats, feeRate = 2 }) {
+  const want = BigInt(sats);
+  const kp = keyPathSecret(wallet.secret, wallet.xonly);
+  const total = coins.reduce((a, c) => a + BigInt(c.sats), 0n);
+  const tx = (fee) => {
+    const change = total - want - fee;
+    const inputs = coins.map((c) => ({ txid: fromHex(c.txid).reverse(), vout: c.vout, sequence: 0xfffffffd }));
+    const prevouts = coins.map((c) => ({ value: BigInt(c.sats), script: wallet.spk }));
+    const outputs = [{ value: want, script }, ...(change >= 330n ? [{ value: change, script: wallet.spk }] : [])];
+    const witnesses = inputs.map((_, i) => [schnorr.sign(tapSighash({ version: 2, locktime: 0, inputs, outputs, prevouts, inputIndex: i }), kp)]);
+    return { hex: toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs, witnesses })), change: change >= 330n ? change : 0n };
+  };
+  const rate = BigInt(Math.max(1, Math.ceil(feeRate)));
+  let fee = 300n;
+  for (let pass = 0; pass < 2; pass++) fee = BigInt(vsizeOf(tx(fee).hex)) * rate + 10n;
+  if (total < want + fee) throw new Error(`the wallet holds ${total} sat: sending ${want} sat needs ${want + fee} sat`);
+  const t = tx(fee);
+  return { hex: t.hex, txid: txidOf(t.hex), fee, changeSats: t.change };
 }
 
 export { sha256 };

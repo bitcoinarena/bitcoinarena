@@ -153,6 +153,10 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <h2>8. The bond</h2>
     <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (and a little for fees) to your node's own wallet:</p>
     <p><code id="b-addr" style="font-size:15px"></code></p>
+    <div id="b-custody" hidden>
+      <p>Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, and the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning. Both stay in your node's wallet until then.</p>
+      <label>Peg-in for the gateway (sat)</label><input id="b-pegin" value="50000">
+    </div>
     <button class="ghost" id="b-check">Check for my deposit</button>
     <div class="msg" id="b-msg"></div>
     <div id="b-lock" class="sub"></div>
@@ -184,7 +188,7 @@ async function load() {
   if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
   if (st.step === 'chain') pickElectrum();
   if (st.step === 'lightning' && st.lightning && st.lightning.pubkey) $('ln-gw').hidden = false;
-  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); }
+  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); $('b-custody').hidden = !st.roles.includes('custody'); }
   if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
@@ -291,9 +295,10 @@ $('gw-later').onclick = async () => { const r = await post('/api/gateway/later')
 $('gw-join-go').onclick = async () => { const r = await post('/api/gateway/join', { invite: $('gw-invite').value }); if (!r.ok) return say('gw-msg', r); say('gw-msg', r, 'Joined.' + fedList(r.federations)); };
 $('gw-next').onclick = () => load();
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
-$('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check'); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
+$('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
+  if (r.parts && r.parts.pegIn !== undefined) $('b-need').textContent = `${r.needSats.toLocaleString('en')} (bond ${r.parts.bond.toLocaleString('en')}, fees ${r.parts.fees.toLocaleString('en')}, advertisement update ${r.parts.advertUpdate.toLocaleString('en')}, peg-in ${r.parts.pegIn.toLocaleString('en')})`;
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
-  m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` A bond needs ${r.needSats.toLocaleString('en')} sat and about 2,000 for fees.`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
+  m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
   $('b-lock').textContent = lockText(r.lock); $('b-post').disabled = !r.enough; };
 $('b-post').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/post'); if (!r.ok) { e.target.disabled = false; return say('b-msg', r); } load(); };
 $('b-later').onclick = async () => { const r = await post('/api/bond/later'); if (r.ok) load(); };
