@@ -197,6 +197,7 @@ async function area() {
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Bond</h2><div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
     <h2>Custody</h2><div class="card" id="custody"><p class="sub">reading whether this node holds custody…</p></div>
+    <h2>Liquidity</h2><div class="card" id="liquidity"><p class="sub">reading whether this node is a liquidity provider…</p></div>
     <h2>Release</h2><div class="card" id="release"><p class="sub">reading this node's release…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Dev clients</h2><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
@@ -237,6 +238,7 @@ async function area() {
   standingPanel();
   bondPanel();
   custodyPanel();
+  liquidityPanel();
   releasePanel();
   leavePanel();
   storePanel();
@@ -283,6 +285,23 @@ async function custodyPanel() {
   el.innerHTML = `<p><b>This node holds no custody.</b> A custody node is one of a federation's 10 guardians, may run one of its 2 Lightning gateways, and earns a share of every round of its federation (the guardians' third of the 4 % node fee).</p>
     <p>To add it, on the machine the node runs on open <b>Add custody</b> (Start menu &gt; Arena Node, or the Arena Node scripts) or run <code>arena-install --add-custody</code>. The installer shows the custody screens - what custody is, Lightning and the gateway, the federation, the bond's rules - and updates your bond; no second bond.</p>
     <p class="sub">Custody needs your own Bitcoin Core (not Electrum) and Lightning (LND, set up there).</p>`;
+}
+// THE LIQUIDITY CARD (kanban #494, §23A.10; the owner 2026-10-18: "Also shows up in the dashboard and owner area to top it up"): the
+// provider's free coins against the deposit minimum (below it, no share of the liquidity pool), the channels it gave, the top-up address
+const LIQUIDITY_DEPOSIT = { testnet4: 500000, mainnet: 2500000 };
+async function liquidityPanel() {
+  let c = null;
+  try { const r = await fetch(at('/liquidity-claim'), { cache: 'no-store' }); c = r.ok ? await r.json() : null; } catch { c = null; }
+  const el = $('liquidity');
+  if (!c) { el.innerHTML = `<p><b>This node is no liquidity provider.</b> A provider opens incoming Lightning channels to new nodes and earns a share of the 1 % liquidity pool of their federations. To become one, run <code>arena-install</code> again and choose <b>Liquidity provider</b> (it needs LND and a deposit of 500,000 sat on testnet4).</p>`; return; }
+  const min = LIQUIDITY_DEPOSIT.testnet4, free = Number(c.freeSats), given = (c.channels || []);
+  const low = free < min;
+  el.innerHTML = `<div class="row"><span>Free for new channels</span><b>${free.toLocaleString('en')} sat</b></div>
+    <div class="row"><span>Deposit minimum</span><b>${min.toLocaleString('en')} sat</b></div>
+    ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - free).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share, by the balance it gives.</p>'}
+    <div class="row"><span>Channels given to new nodes</span><b>${given.length} (${given.reduce((a, x) => a + Number(x.capacitySats), 0).toLocaleString('en')} sat)</b></div>
+    ${given.map((x) => `<div class="row"><span><code>${esc(x.peer.slice(0, 16))}…</code></span><b>${Number(x.capacitySats).toLocaleString('en')} sat</b></div>`).join('')}
+    <div class="row"><span>Top up (LND's wallet, testnet4)</span><b><code>${esc(c.depositAddress || '(not known yet)')}</code></b></div>`;
 }
 async function releasePanel() {
   let v = null;
