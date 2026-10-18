@@ -143,7 +143,10 @@ test('the notice trigger: a standing notice that leaves F CRITICAL (four) or DRA
 test('guardingOpenOf: operators whose adverts name a federation held OPEN, other than the one succeeded', () => {
   const held = [{ federation: toHex(F), status: 'OPEN' }, { federation: toHex(G), status: 'OPEN' }];
   assert.deepEqual([...guardingOpenOf({ entries: sEntries, held, except: toHex(F) })], ['decoy']);
-  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(G), status: 'DRAINING' }], except: null })], [], 'a draining federation does not count');
+  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'DRAINING' }, { federation: toHex(G), status: 'DRAINING' }], except: null })], [], 'a draining federation does not count');
+  // kanban #495 (the owner "A"): a federation no seat holds a record of counts as guarded - its guardians are not free for a cohort
+  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'DRAINING' }], except: null })], ['decoy'], 'no record of G: its guardian counts as guarding it');
+  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [], except: toHex(G) })].sort(), [...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'OPEN' }], except: toHex(G) })].sort(), 'unknown counts as OPEN');
 });
 
 test('a succession by notice: the remaining guardians seated first through their guardian-next, one drawn of the others, the DKG on the four', async () => {
