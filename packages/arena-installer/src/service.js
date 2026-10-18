@@ -2,7 +2,7 @@
 // seat from the installed release with the settings the wizard wrote, restarts it when it falls over, and is checked healthy by the
 // installer before the wizard goes on. The user needs no root: `loginctl enable-linger` keeps a user unit running with nobody logged
 // in, and the wizard says so when linger is off.
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -174,9 +174,10 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
 /**
  * ANY OTHER PROGRAM OF THE NODE AS A SERVICE (kanban #471 ruling 8: the node's own Bitcoin Core): `id` names it (arena-<id>.service,
  * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
- * when `boot`. Answers { ok, why }.
+ * when `boot`. `vars`: environment the program needs (secrets too - kept only in files of this user, 0600). Answers { ok, why }.
  */
-export async function installProgram({ id, description, args, home, boot = true, env = process.env, sh = run, platform = process.platform }) {
+export async function installProgram({ id, description, args, home, boot = true, vars = null, env = process.env, sh = run, platform = process.platform }) {
+  const varLines = Object.entries(vars || {}).map(([k, v]) => { if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || /[\r\n]/.test(String(v))) throw new Error(`bad variable ${k}`); return [k, String(v)]; });
   if (platform === 'darwin') {
     const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
     mkdirSync(dir, { recursive: true });
@@ -188,7 +189,8 @@ export async function installProgram({ id, description, args, home, boot = true,
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>
+  <key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>${varLines.length ? `
+  <key>EnvironmentVariables</key><dict>${varLines.map(([k, v]) => `<key>${k}</key><string>${xml(v)}</string>`).join('')}</dict>` : ''}
   <key>RunAtLoad</key><${boot ? 'true' : 'false'}/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>30</integer>
@@ -197,6 +199,7 @@ export async function installProgram({ id, description, args, home, boot = true,
 </dict>
 </plist>
 `);
+    chmodSync(file, 0o600);
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
     await sh('launchctl', ['bootout', `gui/${uid}/${label}`]);
     const r = await sh('launchctl', ['bootstrap', `gui/${uid}`, file]);
@@ -204,7 +207,8 @@ export async function installProgram({ id, description, args, home, boot = true,
   }
   if (platform === 'win32') {
     const file = join(home, `arena-${id}.cmd`);
-    writeFileSync(file, ['@echo off', `rem ${description} (kanban #471), written by the installer.`, `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`].join('\r\n') + '\r\n');
+    writeFileSync(file, ['@echo off', `rem ${description} (kanban #471), written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
+      `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`].join('\r\n') + '\r\n', { mode: 0o600 });
     const name = `Arena ${id}`;
     if (boot) {
       const c = await sh('schtasks', ['/create', '/f', '/tn', name, '/sc', 'onlogon', '/rl', 'limited', '/tr', `"${file}"`]);
@@ -216,6 +220,8 @@ export async function installProgram({ id, description, args, home, boot = true,
   const dir = unitDir(env);
   mkdirSync(dir, { recursive: true });
   const unit = `arena-${id}.service`;
+  const envFile = join(home, `${id}.env`);
+  if (varLines.length) writeFileSync(envFile, varLines.map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
   writeFileSync(join(dir, unit), `# ${description} (kanban #471), written by the installer.
 [Unit]
 Description=${description}
@@ -223,7 +229,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=${args.join(' ')}
+${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}ExecStart=${args.join(' ')}
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=600

@@ -50,6 +50,8 @@ jobs:
         id: v
         run: echo "version=${{ github.event.inputs.version || github.ref_name }}" | sed 's/=v/=/' >> "$GITHUB_OUTPUT"
       - name: build
+        env:
+          GH_TOKEN: ${{ github.token }}   # the custody binaries come from this repo's release custody-76012ad9 (build-release.sh 3b)
         run: |
           for t in "linux x64" "linux arm64" "darwin arm64" "darwin x64" "windows x64"; do
             set -- $t; tools/release/build-release.sh "${{ steps.v.outputs.version }}" $1 $2 out
@@ -98,6 +100,8 @@ jobs:
           cookie=$(curl -s -o /dev/null -D - "$link" | grep -i set-cookie | grep -oE 'arena_wizard=[^;]+')
           curl -sf -H "cookie: $cookie" http://127.0.0.1:31918/api/state | grep -q '"step":"chain"'
           "$R/runtime/cloudflared" --version
+          # the custody gateway (#471 slice 5), built on the test host for this system: it runs here (glibc, architecture, signing)
+          if [ -e "$R/runtime/custody/gatewayd" ]; then "$R/runtime/custody/gatewayd" --version; else echo "no custody binaries in this asset"; fi
           echo "fresh install of $(cat "$R/VERSION") ($(cat "$R/COMMIT")) on ${{ matrix.asset }}: seat and installer run"
       - name: fresh install (Windows)
         if: runner.os == 'Windows'
@@ -111,6 +115,7 @@ jobs:
           if (-not $ok) { Get-Content seat.log, seat.err; exit 1 }
           if (-not ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:31917/games).Content -match '"name":"nextblock"')) { exit 1 }
           & "$R\runtime\cloudflared.exe" --version
+          if (Test-Path "$R\runtime\custody\gatewayd.exe") { & "$R\runtime\custody\gatewayd.exe" --version; if ($LASTEXITCODE -ne 0) { exit 1 } } else { "no custody binaries in this asset" }
           "fresh install of $(Get-Content $R\VERSION) on windows-x64: the seat runs"
 
   release:
