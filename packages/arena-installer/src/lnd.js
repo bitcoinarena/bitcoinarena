@@ -67,9 +67,11 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
   const auth = chain.cookiePath ? [`bitcoind.rpccookie=${chain.cookiePath}`] : [`bitcoind.rpcuser=${chain.user}`, `bitcoind.rpcpass=${chain.password}`];
   const conf = [
     '; The Arena node\'s Lightning node (kanban #471 slice 5), written by the installer.',
-    // nat: LND asks the router (UPnP / NAT-PMP) to forward its peer port and announces the outside address - the federation's channel ring
-    // dials it there (custody-agent.js); without it a node behind a router takes no peer connection
-    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, 'nat=true', ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
+    // nat: LND asks the router (UPnP / NAT-PMP) to forward its peer port and announces the outside address - only when the wizard knows
+    // neither: a node reached from outside announces externalip, one that is not runs Tor. LND STOPS when no router answers
+    // (measured on the test host, rc.12: "unable to discover a NAT-PMP enabled device on the local network ... Shutting down"), so it is
+    // never set beside Tor or an outside address.
+    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, ...(!tor && !externalIp ? ['nat=true'] : []), ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
     `wallet-unlock-password-file=${passwordFile}`, 'wallet-unlock-allow-create=true',
     '[Bitcoin]', 'bitcoin.active=true', 'bitcoin.testnet4=true', 'bitcoin.node=bitcoind',
     '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true',

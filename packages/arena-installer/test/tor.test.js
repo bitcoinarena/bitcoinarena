@@ -24,11 +24,13 @@ test('lnd.conf: reached from outside - its address announced, no Tor; not reache
   const chain = { url: 'http://127.0.0.1:48332', cookiePath: '/c' };
   const reached = readFileSync(join(configureLnd({ home: mkdtempSync(join(tmpdir(), 'l-')), chain, externalIp: '198.51.100.4' }).lnddir, 'lnd.conf'), 'utf8');
   assert.match(reached, /externalip=198\.51\.100\.4:9735/); assert.doesNotMatch(reached, /tor\.active/);
+  assert.doesNotMatch(reached, /nat=true/, 'an outside address is announced as it is: no router asked');
   const h = mkdtempSync(join(tmpdir(), 'l-'));
   const behind = readFileSync(join(configureLnd({ home: h, chain, tor: TOR_PORTS }).lnddir, 'lnd.conf'), 'utf8');
   assert.match(behind, /\[Tor\]\ntor\.active=true\ntor\.v3=true\ntor\.socks=127\.0\.0\.1:19050\ntor\.control=127\.0\.0\.1:19051/);
   assert.match(behind, /tor\.skip-proxy-for-clearnet-targets=true/, 'hybrid: clearnet peers still dialled directly');
   assert.doesNotMatch(behind, /externalip=/);
+  assert.doesNotMatch(behind, /nat=true/, 'Tor: no NAT-PMP - LND stops when no router answers it');
 });
 
 test('Linux: LND\'s unit restarts with the node\'s Tor (its onion is gone when Tor restarts - measured on the test host)', async () => {
