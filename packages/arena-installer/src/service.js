@@ -75,7 +75,7 @@ export async function installService({ node = process.execPath, release, home, p
       if (!b.ok) return b;
     }
     if (platform === 'darwin') return installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs });
-    return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs });
+    return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs, env });
   }
   const dir = unitDir(env);
   mkdirSync(dir, { recursive: true });
@@ -127,6 +127,27 @@ export function windowsLauncher({ node, release, home, port }) {
     `cd /d "${release}\\packages\\arena-node"`,
     `"${node}" src\\main.js ${port} "${home}\\node.db" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
 }
+/**
+ * START A PROGRAM AT EVERY LOGON, AND NOW, ON WINDOWS. A scheduled task at logon first; Windows refuses that to a user without
+ * administrator rights ("ERROR: Access is denied", measured in the Windows VM 2026-10-18, rc.10: the Bitcoin Core step stopped
+ * there), so then the user's own Startup folder: a hidden-window script that starts the launcher - at every logon, and now.
+ * Answers { ok, mode: 'task' | 'startup', startup?, why }.
+ */
+export const startupDir = (env = process.env) => join(env.APPDATA || join(env.USERPROFILE || homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+export const startupScript = (name, file) => `' ${name} (kanban #471), written by the installer: the launcher in a hidden window, at every logon\r\n`
+  + `CreateObject("WScript.Shell").Run """${file.replace(/"/g, '""')}""", 0, False\r\n`;
+export async function windowsAutostart({ name, file, sh, env = process.env }) {
+  const c = await sh('schtasks', windowsTaskArgs({ launcher: file }).map((x) => (x === WINDOWS_TASK ? name : x)));
+  if (c.ok) { await sh('schtasks', ['/run', '/tn', name]); return { ok: true, mode: 'task' }; }
+  const dir = startupDir(env);
+  mkdirSync(dir, { recursive: true });
+  const vbs = join(dir, `${name}.vbs`);
+  writeFileSync(vbs, startupScript(name, file));
+  const r = await sh('wscript', [vbs]);
+  return r.ok ? { ok: true, mode: 'startup', startup: vbs }
+    : { ok: false, why: `${name}: no logon task (${(c.err || c.out).trim().slice(0, 120)}) and the Startup folder script did not start: ${(r.err || r.out).trim().slice(0, 160)}` };
+}
+
 /** The schtasks arguments that create the task (onlogon: no password is kept; /rl limited: no administrator). */
 export const windowsTaskArgs = ({ launcher }) => ['/create', '/f', '/tn', WINDOWS_TASK, '/sc', 'onlogon', '/rl', 'limited', '/tr', `"${launcher}"`];
 
@@ -152,7 +173,7 @@ async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env
 }
 
 /** Windows: the launchers written beside the node's home, the scheduled tasks created and run (at logon), or started once. */
-async function installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs }) {
+async function installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs, env = process.env }) {
   const t0 = Date.now();
   const tasks = [{ name: WINDOWS_TASK, file: join(home, 'arena-node.cmd'), text: windowsLauncher({ node, release, home, port }) }];
   if (tunnelArgs) tasks.push({ name: `${WINDOWS_TASK} tunnel`, file: join(home, 'arena-tunnel.cmd'),
@@ -160,9 +181,8 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
   for (const t of tasks) {
     writeFileSync(t.file, t.text);
     if (boot) {
-      const c = await sh('schtasks', windowsTaskArgs({ launcher: t.file }).map((x) => (x === WINDOWS_TASK ? t.name : x)));
-      if (!c.ok) return { ok: false, why: `schtasks /create ${t.name} failed: ${(c.err || c.out).trim().slice(0, 300)}` };
-      await sh('schtasks', ['/run', '/tn', t.name]);
+      const a = await windowsAutostart({ name: t.name, file: t.file, sh, env });
+      if (!a.ok) return { ok: false, why: a.why };
     } else {
       await sh('cmd', ['/c', 'start', '""', '/b', t.file]);
     }
@@ -211,9 +231,8 @@ export async function installProgram({ id, description, args, home, boot = true,
       `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`].join('\r\n') + '\r\n', { mode: 0o600 });
     const name = `Arena ${id}`;
     if (boot) {
-      const c = await sh('schtasks', ['/create', '/f', '/tn', name, '/sc', 'onlogon', '/rl', 'limited', '/tr', `"${file}"`]);
-      if (!c.ok) return { ok: false, why: `schtasks /create ${name} failed: ${(c.err || c.out).trim().slice(0, 300)}` };
-      await sh('schtasks', ['/run', '/tn', name]);
+      const a = await windowsAutostart({ name, file, sh, env });
+      if (!a.ok) return { ok: false, why: a.why };
     } else await sh('cmd', ['/c', 'start', '""', '/b', file]);
     return { ok: true };
   }
