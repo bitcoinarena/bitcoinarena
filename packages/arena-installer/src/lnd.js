@@ -66,7 +66,9 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
   const auth = chain.cookiePath ? [`bitcoind.rpccookie=${chain.cookiePath}`] : [`bitcoind.rpcuser=${chain.user}`, `bitcoind.rpcpass=${chain.password}`];
   const conf = [
     '; The Arena node\'s Lightning node (kanban #471 slice 5), written by the installer.',
-    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
+    // nat: LND asks the router (UPnP / NAT-PMP) to forward its peer port and announces the outside address - the federation's channel ring
+    // dials it there (custody-agent.js); without it a node behind a router takes no peer connection
+    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, 'nat=true', `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
     `wallet-unlock-password-file=${passwordFile}`, 'wallet-unlock-allow-create=true',
     '[Bitcoin]', 'bitcoin.active=true', 'bitcoin.testnet4=true', 'bitcoin.node=bitcoind',
     '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true', '',
@@ -143,7 +145,8 @@ export async function testLnd(cfg, { rest = lndRest } = {}) {
   const g = r.json;
   const network = ((g.chains || [])[0] || {}).network || null;
   if (network && network !== 'testnet4') return { ok: false, why: `this LND runs on ${network}, not testnet4` };
-  return { ok: true, pubkey: g.identity_pubkey, alias: g.alias, blockHeight: g.block_height, syncedToChain: Boolean(g.synced_to_chain), network, version: g.version };
+  return { ok: true, pubkey: g.identity_pubkey, alias: g.alias, blockHeight: g.block_height, syncedToChain: Boolean(g.synced_to_chain), network, version: g.version,
+    uris: g.uris || [] };
 }
 
 // CHANNELS FOR A GATEWAY SEAT (spec §23A.9: public channel capacity >= 200,000 sat on testnet4): LND's own on-chain wallet takes the
@@ -177,12 +180,42 @@ export async function lndOpenChannel(cfg, { peer, sats }, { rest = lndRest } = {
   return { ok: true, fundingTxid: raw };
 }
 
-/** LND's channels: open (active or not) and pending, with their capacity. Answers { ok, open, pending, publicCapacitySats }. */
+/**
+ * LND's channels: open (active or not) and pending, with their capacity and both balances. Answers { ok, open, pending, publicCapacitySats,
+ * inboundSats, outboundSats } - inbound the remote balance of the active public channels (what can be paid TO this node: deposits),
+ * outbound their local balance (what it can pay: payouts).
+ */
 export async function lndChannels(cfg, { rest = lndRest } = {}) {
   let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
   const [o, p] = await Promise.all([rest({ ...c, path: '/v1/channels' }), rest({ ...c, path: '/v1/channels/pending' })]);
   if (o.status !== 200) return { ok: false, why: errOf(o) };
-  const open = (o.json.channels || []).map((x) => ({ peer: x.remote_pubkey, capacitySats: Number(x.capacity), active: Boolean(x.active), public: !x.private }));
+  const open = (o.json.channels || []).map((x) => ({ peer: x.remote_pubkey, capacitySats: Number(x.capacity), active: Boolean(x.active), public: !x.private,
+    localSats: Number(x.local_balance || 0), remoteSats: Number(x.remote_balance || 0) }));
   const pending = ((p.json || {}).pending_open_channels || []).map((x) => ({ peer: x.channel.remote_node_pub, capacitySats: Number(x.channel.capacity) }));
-  return { ok: true, open, pending, publicCapacitySats: open.filter((x) => x.public).reduce((a, x) => a + x.capacitySats, 0) };
+  const live = open.filter((x) => x.public && x.active);
+  return { ok: true, open, pending, publicCapacitySats: open.filter((x) => x.public).reduce((a, x) => a + x.capacitySats, 0),
+    inboundSats: live.reduce((a, x) => a + x.remoteSats, 0), outboundSats: live.reduce((a, x) => a + x.localSats, 0) };
+}
+
+// THE FEDERATION'S CHANNEL RING (custody-agent.js, the owner 2026-10-18 "1 and 2"): peers by key, a connection to an address, and a
+// channel over a connection that already exists - whichever side dialled it (a node behind a tunnel dials out; the other opens).
+/** The pubkeys LND is connected to now. Answers { ok, peers: [hex], why }. */
+export async function lndPeers(cfg, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const r = await rest({ ...c, path: '/v1/peers' });
+  return r.status === 200 ? { ok: true, peers: ((r.json || {}).peers || []).map((p) => String(p.pub_key).toLowerCase()) } : { ok: false, why: errOf(r) };
+}
+/** Connect to `pubkey` at `host` (host:port), kept (perm). Answers { ok, why }. */
+export async function lndConnect(cfg, { pubkey, host }, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const r = await rest({ ...c, method: 'POST', path: '/v1/peers', body: { addr: { pubkey: String(pubkey).toLowerCase(), host }, perm: true, timeout: 20 } });
+  return r.status === 200 || /already connected/i.test(errOf(r)) ? { ok: true } : { ok: false, why: errOf(r) };
+}
+/** A public channel of `sats` to a peer LND is connected to. Answers { ok, fundingTxid, why }. */
+export async function lndOpenTo(cfg, { pubkey, sats }, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const o = await rest({ ...c, method: 'POST', path: '/v1/channels', timeoutMs: 60000,
+    body: { node_pubkey: Buffer.from(String(pubkey), 'hex').toString('base64'), local_funding_amount: String(Math.floor(Number(sats))), private: false } });
+  if (o.status !== 200) return { ok: false, why: `the channel was not opened: ${errOf(o)}` };
+  return { ok: true, fundingTxid: o.json.funding_txid_bytes ? Buffer.from(o.json.funding_txid_bytes, 'base64').reverse().toString('hex') : o.json.funding_txid_str || null };
 }

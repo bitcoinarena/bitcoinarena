@@ -171,13 +171,15 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   threshold of its guardians sign each epoch (144 blocks).
 - **To stand** (testnet4 / mainnet):
   - a seated guardian whose announced gateway is registered with the federation;
-  - public channel capacity of at least 200,000 / 5,000,000 sat;
+  - inbound liquidity of at least 100,000 / 2,500,000 sat (deposits come in through it) and outbound of at least the same (payouts);
   - a peg-in of at least 50,000 / 2,000,000 sat;
+  - inbound comes from the federation's **channel ring**: once it is founded, each custody node opens one 150,000 sat channel to the
+    next in node-key order (custody agent), so every gateway gets one channel in and one out from the federation's own nodes;
   - up 95 % of the epoch (every guardian probes every candidate every 10 minutes);
   - a bond of at least `bond_min_guardian`.
 - **The best two**, ranked in order by:
   1. Lightning volume routed for the federation;
-  2. public channel capacity;
+  2. two-way capacity (the smaller of inbound and outbound);
   3. availability;
   4. bond;
   5. a ticket on the epoch's beacon.

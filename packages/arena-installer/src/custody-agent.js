@@ -14,7 +14,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast, addressScript } from './wallet.js';
 import { advertFor, buildAdvertUpdate, buildSend } from './bond.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
-import { lndChannels } from './lnd.js';
+import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo } from './lnd.js';
+
+/** THE RING CHANNEL each custody node opens to the next node of its federation (sat), and what the deposit sets aside for it with fees. */
+export const RING_SATS = 150000;
+export const RING_RESERVE_SATS = RING_SATS + 3000;
 import { signGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { writeFileSync } from 'node:fs';
 import { guardianSetupOf } from './state.js';
@@ -33,7 +37,23 @@ export function guardianOfEntry(dir) {
   return { invite, federationId, guardianKey };
 }
 
-export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, log = () => {}, nowMs = () => Date.now() }) {
+export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd,
+  lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo }, ringMembers = null, log = () => {}, nowMs = () => Date.now() }) {
+  // the federation's custody nodes with their Lightning key and address, from this node's own seat (GET /gateway-seats: the claims it
+  // gathered as a guardian, its own among them)
+  const membersOf = ringMembers || (async (s) => {
+    const port = (s.reach && s.reach.port) || (s.service && s.service.port);
+    try { const r = await fetch(`http://127.0.0.1:${port}/gateway-seats`, { signal: AbortSignal.timeout(10000) }); const v = await r.json();
+      return Object.entries((v && v.gateways) || {}).map(([node, g]) => ({ node, lightningPubkey: g.lightningPubkey, lightningAddr: g.lightningAddr || '' })); } catch { return []; }
+  });
+  // where this node's LND takes peer connections: the address LND announces (its uris, e.g. after NAT traversal), else the node's own
+  // public address when it is reached directly; empty behind a tunnel - then only its ring neighbour dials out to it
+  const lightningAddrOf = async (s) => {
+    const i = await lndInfo(s.lightning).catch(() => ({ ok: false }));
+    const u = i && i.ok && (i.uris || []).map((x) => String(x).split('@')[1]).find(Boolean);
+    if (u) return u;
+    return s.reach && s.reach.mode === 'direct' && s.direct && s.direct.address ? `${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:9735` : '';
+  };
   const nodeSecretOf = () => {
     const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
     try { return new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
@@ -97,14 +117,57 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         const { schnorr } = await import('@noble/curves/secp256k1.js');
         const nodeSecret = nodeSecretOf();
         const claim = signGatewayClaim({ node: Buffer.from(schnorr.getPublicKey(nodeSecret)).toString('hex'), federationId: g.federationId, gatewayUrl: s.gateway.publicUrl,
-          lightningPubkey: s.lightning.pubkey, capacitySats: ch.ok ? ch.publicCapacitySats : 0, pegInSats: c.pegIn.sats, atMs: nowMs() }, (h) => schnorr.sign(h, nodeSecret));
+          lightningPubkey: s.lightning.pubkey, capacitySats: ch.ok ? ch.publicCapacitySats : 0, pegInSats: c.pegIn.sats, atMs: nowMs(),
+          inboundSats: ch.ok ? ch.inboundSats || 0 : 0, outboundSats: ch.ok ? ch.outboundSats || 0 : 0, lightningAddr: await lightningAddrOf(s) }, (h) => schnorr.sign(h, nodeSecret));
         writeFileSync(claimFile, JSON.stringify(claim, null, 2) + '\n');
         state.save({ custody: { ...state.read().custody, claimAtMs: nowMs() } });
-        log(`gateway seat claimed: ${claim.capacitySats} sat of public channels, peg-in ${claim.pegInSats} sat`);
+        log(`gateway seat claimed: inbound ${claim.inboundSats} sat, outbound ${claim.outboundSats} sat, peg-in ${claim.pegInSats} sat`);
         return { ok: true, did: 'gateway-claim' };
       }
     }
-    return { ok: true, idle: 'custody is set up: guardian_of published, the gateway serves the federation, the peg-in sent, the gateway seat claimed' };
+    // 5. THE CHANNEL RING (the owner 2026-10-18, "1 and 2": the installer's LND had no inbound liquidity, so its gateway could take no deposit):
+    // the federation's custody nodes in node-key order, each opens one channel of RING_SATS to the next - every gateway then has one
+    // channel out (payouts) and one in (deposits), made by the federation's own nodes. The opener dials the next one's announced address;
+    // a node nobody can dial (behind a tunnel) dials its previous neighbour instead, and that one opens over the connection it made.
+    if (s.gateway && s.lightning && s.lightning.pubkey && c.pegIn) {
+      const members = ((await membersOf(s)) || []).filter((m) => /^0[23][0-9a-f]{64}$/.test(m.lightningPubkey || '')).sort((a, b) => (a.node < b.node ? -1 : 1));
+      const me = members.findIndex((m) => m.lightningPubkey === s.lightning.pubkey);
+      if (me < 0 || members.length < 2) return { ok: true, idle: `the channel ring waits for the federation's other gateways (${members.length} known)` };
+      const next = members[(me + 1) % members.length], prev = members[(me - 1 + members.length) % members.length];
+      const ch = await channels(s.lightning);
+      const has = (pk) => ch.ok && [...ch.open, ...ch.pending].some((x) => x.peer === pk);
+      const peers = await lnd.peers(s.lightning);
+      // to the previous neighbour: dial it (once connected, it stays), so it can open its ring channel to us even when nobody can dial this node
+      if (!has(prev.lightningPubkey) && prev.lightningAddr && peers.ok && !peers.peers.includes(prev.lightningPubkey) && prev.lightningPubkey !== next.lightningPubkey)
+        await lnd.connect(s.lightning, { pubkey: prev.lightningPubkey, host: prev.lightningAddr });
+      if (!has(next.lightningPubkey)) {
+        const f = await lnd.funds(s.lightning);
+        if (!f.ok) return { ok: false, why: `the ring waits for LND: ${f.why}` };
+        if (f.onchainSats < RING_SATS + 1000) {
+          if (c.ringFund) return { ok: true, idle: `the ring channel's ${RING_RESERVE_SATS} sat are on their way to LND (${c.ringFund.txid})` };
+          const { coins } = await chainKit.coinsOf(s.chain, w.spk);
+          let tx;
+          try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: RING_RESERVE_SATS }); }
+          catch (e) { return { ok: false, why: `the ring channel is not funded yet: ${e.message}` }; }
+          const txid = await chainKit.broadcast(s.chain, tx.hex);
+          state.save({ custody: { ...state.read().custody, ringFund: { address: f.address, sats: RING_RESERVE_SATS, txid, atMs: nowMs() } } });
+          log(`ring channel funds: ${RING_RESERVE_SATS} sat to LND (${txid})`);
+          return { ok: true, did: 'ring-fund', txid };
+        }
+        const connected = peers.ok && peers.peers.includes(next.lightningPubkey);
+        if (!connected) {
+          if (!next.lightningAddr) return { ok: true, idle: `the ring waits for ${next.node.slice(0, 12)}… to connect (its LND takes no connections)` };
+          const k = await lnd.connect(s.lightning, { pubkey: next.lightningPubkey, host: next.lightningAddr });
+          if (!k.ok) return { ok: false, why: `the ring's next node did not answer at ${next.lightningAddr}: ${k.why}` };
+        }
+        const o = await lnd.openTo(s.lightning, { pubkey: next.lightningPubkey, sats: RING_SATS });
+        if (!o.ok) return o;
+        state.save({ custody: { ...state.read().custody, ring: { next: next.node, lightningPubkey: next.lightningPubkey, sats: RING_SATS, fundingTxid: o.fundingTxid, atMs: nowMs() } } });
+        log(`ring channel of ${RING_SATS} sat to ${next.node.slice(0, 12)}…: ${o.fundingTxid}`);
+        return { ok: true, did: 'ring-channel', txid: o.fundingTxid };
+      }
+    }
+    return { ok: true, idle: 'custody is set up: guardian_of published, the gateway serves the federation, the peg-in sent, the gateway seat claimed, the ring channel open' };
   }
   return { tick };
 }

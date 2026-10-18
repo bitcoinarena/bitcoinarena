@@ -29,13 +29,14 @@ import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS } from './bond.js';
 import { writeLaunchers } from './launchers.js';
 import * as workersKitDefault from './workers.js';
+import { RING_RESERVE_SATS } from './custody-agent.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
 export const CUSTODY_PEG_IN_SATS = 50000;
 import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, lndFunds, lndOpenChannel, lndChannels } from './lnd.js';
 /** A gateway seat's requirements on testnet4 (spec §23A.9), said in the wizard. */
-export const GATEWAY_SEAT = Object.freeze({ minCapacitySats: 200000, minPegInSats: 50000, availability: 0.95, seats: 2, epochBlocks: 144 });
+export const GATEWAY_SEAT = Object.freeze({ minInboundSats: 100000, minOutboundSats: 100000, minPegInSats: 50000, availability: 0.95, seats: 2, epochBlocks: 144 });
 import { findGatewayd, configureGateway, testGateway, joinFederation } from './gateway.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -474,8 +475,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
       if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
       // custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation
-      const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats }
-        : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats } : {}) };
+      // and the ring channel each custody node opens to the next node of its federation (custody-agent.js: its gateway's outbound, the next one's inbound)
+      const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, ring: RING_RESERVE_SATS }
+        : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, ring: RING_RESERVE_SATS } : {}) };
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
       return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s) };
     },

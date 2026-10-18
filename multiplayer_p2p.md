@@ -5274,12 +5274,21 @@ all of these hold:
 |---|---|---|---|
 | A **seated guardian of F**, not departing | - | - | the federation record |
 | Its gateway is **announced** (`/gateway-claim`, signed by the node key: gateway URL and Lightning node key) and **registered with F** | - | - | F's own gateway list |
-| **Public channel capacity** of its Lightning node | ≥ 5,000,000 sat | ≥ 200,000 sat | each guardian's own LND reads the Lightning graph |
+| **Inbound liquidity** of its Lightning node (deposits come in through it) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (remote balance of its active public channels) |
+| **Outbound liquidity** (payouts leave through it) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (local balance) |
 | **E-cash in F** for receiving: its **peg-in** | ≥ 2,000,000 sat | ≥ 50,000 sat | the gateway's peg-in, made by the node's custody agent; shown by its first receives |
 | **Availability**: running, its LND synced, answering | ≥ 95 % of the epoch | ≥ 95 % | each guardian probes every candidate every 10 minutes |
 | **Bond** | ≥ `bond_min_guardian` | ≥ `bond_min_guardian` | the census |
 
 An **epoch** is 144 blocks, about a day.
+
+**The channel ring** *(the owner 2026-10-18; the installer's LND had no inbound liquidity, so its gateway could take no deposit)*:
+once a federation is founded, its custody nodes, in node-key order, each open one public channel of 150,000 sat (testnet4) to the
+next. Every gateway then has one channel out and one in, made by the federation's own nodes, with nothing run by anyone else.
+- The opener dials the next node at the Lightning address its claim names. LND asks the router for its peer port (UPnP/NAT-PMP);
+  without it, the address is empty.
+- A node nobody can dial dials its previous neighbour, which then opens over that connection.
+- A pair where neither side can be dialled stays without a ring channel and says so.
 
 ### The best two
 
@@ -5289,7 +5298,7 @@ by, in order:
 1. **Lightning volume routed for F** in the epoch: LNv2 contracts F's
    consensus saw completed through the gateway, in sat, floored to 1,000.
    This is the same number for every guardian.
-2. **Public channel capacity**, floored to 100,000 sat.
+2. **Two-way capacity**: the smaller of inbound and outbound, floored to 100,000 sat (outbound alone takes no deposit).
 3. **Availability**, floored to whole percent.
 4. **Bond** of the operator.
 5. **Ticket** `H('BLWP/v1/GATEWAY' || beacon || node_pubkey)` on the

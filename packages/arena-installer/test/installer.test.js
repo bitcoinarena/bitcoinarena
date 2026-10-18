@@ -108,7 +108,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const reach = { ...reachKit, checkDirect: (o) => reachKit.checkDirect({ ...o, seats: [seat.url, seat.url] }) };
   // THE CHAIN FOR THE BOND: a deposit of 60,000 sat at the wallet's address once asked twice; what is broadcast is kept
   const sent = []; let asked = 0;
-  const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 110000, height: 156899 }] : [] }),
+  const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 263000, height: 156899 }] : [] }),
     broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
   const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
   const gwKit = { configureGateway };
@@ -246,9 +246,9 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const none = (await c.post('/api/bond/check')).json;
   assert.deepEqual([none.ok, none.coins.length, none.enough, none.lock.maturity], [true, 0, false, 156900 + 151]);
   const found = (await c.post('/api/bond/check')).json;
-  assert.deepEqual([found.totalSats, found.enough], [110000, true]);
-  assert.deepEqual(found.parts, { bond: 50000, fees: 2000, advertUpdate: 5000, pegIn: 50000 }, 'custody: the bond, the advertisement update\'s reserve and the peg-in');
-  assert.equal(found.needSats, 107000);
+  assert.deepEqual([found.totalSats, found.enough], [263000, true]);
+  assert.deepEqual(found.parts, { bond: 50000, fees: 2000, advertUpdate: 5000, pegIn: 50000, ring: 153000 }, 'custody: the bond, the advertisement update\'s reserve, the peg-in and the ring channel');
+  assert.equal(found.needSats, 260000);
   assert.equal((await c.post('/api/bond/check', { pegInSats: 70000 })).json.enough, false, 'a larger peg-in needs more than arrived');
   assert.equal((await c.post('/api/bond/check', { pegInSats: 50000 })).json.enough, true);
   const posted = (await c.post('/api/bond/post')).json;
