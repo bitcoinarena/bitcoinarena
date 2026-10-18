@@ -3,7 +3,7 @@
 // the nodes' gateway claims, the assignment, and its channels. Its claim is served at --listen (GET /liquidity-claim) and written to
 // --claim-file (a seat serves that file as GET /liquidity-claim, ARENA_LIQUIDITY_CLAIM_FILE).
 //
-//     liquidity-provider --rest https://127.0.0.1:8182 --lnddir <lnd dir> --key <node key hex file> --state <file> [--listen 18860]
+//     liquidity-provider --rest https://127.0.0.1:8182 --lnddir <lnd dir> --key <node key hex file> --state <file> [--listen 8477]
 //                        [--claim-file <file>] [--peers https://a,https://b] [--seeds https://testnet.bitcoin-arena.io/daily.json]
 //
 // HOW A NEW NODE IS FOUND (the owner 2026-10-18: "How do new nodes communicate with the lnd liquidity providers?"): it does not call a
@@ -54,7 +54,12 @@ const p = createLiquidityProvider({ node, sign: (h) => schnorr.sign(h, secret), 
   endpoints, network: net, state, log,
   writeClaim: async (c) => { current = c; if (claimFile) writeFileSync(claimFile, JSON.stringify(c, null, 2) + '\n'); } });
 const port = Number(opt('--listen', 0));
-if (port) http.createServer((q, s) => { const ok = q.url === '/liquidity-claim' && current; s.writeHead(ok ? 200 : 404, { 'content-type': 'application/json' }); s.end(JSON.stringify(ok ? current : { ok: false })); }).listen(port, '127.0.0.1');
+// its local port (127.0.0.1 only): GET /liquidity-claim, and POST /new-address - the seat's owner page asks it (ARENA_LIQUIDITY_PROVIDER_URL)
+if (port) http.createServer(async (q, s) => {
+  const send = (code, o) => { s.writeHead(code, { 'content-type': 'application/json' }); s.end(JSON.stringify(o)); };
+  if (q.method === 'POST' && q.url === '/new-address') { const r = await p.newAddress().catch((e) => ({ ok: false, why: e.message })); writeFileSync(stateFile, JSON.stringify(state) + '\n'); if (r.ok) log(`new top-up address ${r.address}`); return send(r.ok ? 200 : 502, r); }
+  const ok = q.url === '/liquidity-claim' && current; send(ok ? 200 : 404, ok ? current : { ok: false });
+}).listen(port, '127.0.0.1');
 let last = '';
 const run = async () => { let r; try { r = await p.tick(); } catch (e) { r = { why: e.message }; } writeFileSync(stateFile, JSON.stringify(state) + '\n'); if (r.why !== last) { log(r.why); last = r.why; } };
 log(`liquidity provider ${node.slice(0, 16)}… on ${net}`);

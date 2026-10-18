@@ -75,3 +75,18 @@ test('a provider reached twice (its seat and as a peer) is one provider: never d
   assert.match(r.why, /^2 provider\(s\)/, 'itself and the other one, not three');
   assert.equal(assignLiquidity({ needs: [{ node: g.hex, lightningPubkey: '03' + '99'.repeat(32) }], claims: [other(2)] })[0].open.length, 1);
 });
+
+test('a new top-up address on the owner\'s ask: LND makes it, the claim is re-signed with it at once; never beside a running tick', async () => {
+  const k = key(7); let claim = null; const state = {}; let n = 0; let inTick = 0, overlap = false;
+  const p = createLiquidityProvider({ node: k.hex, sign: (h) => schnorr.sign(h, k.secret), verify, fetcher: async () => ({ status: 404 }), endpoints: async () => [], state,
+    writeClaim: async (c) => { claim = c; },
+    lnd: { channels: async () => { inTick++; if (inTick > 1) overlap = true; await new Promise((r) => setTimeout(r, 20)); inTick--; return { ok: true, open: [], pending: [] }; },
+      funds: async () => ({ ok: true, onchainSats: 600000, address: `tb1paddr${++n}` }), info: async () => ({ ok: true, pubkey: '02' + '77'.repeat(32), uris: [] }) } });
+  await p.tick();
+  assert.equal(claim.depositAddress, 'tb1paddr1', 'the first address, kept');
+  await p.tick(); assert.equal(claim.depositAddress, 'tb1paddr1', 'a tick keeps it');
+  const [, r] = await Promise.all([p.tick(), p.newAddress()]);
+  assert.equal(r.ok, true); assert.equal(claim.depositAddress, r.address, 'the claim names the new one');
+  assert.notEqual(r.address, 'tb1paddr1'); assert.equal(state.depositAddress, r.address, 'kept for the next ticks');
+  assert.equal(overlap, false, 'one tick at a time');
+});

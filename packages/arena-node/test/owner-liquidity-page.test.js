@@ -25,3 +25,19 @@ test('a provider: free vs the deposit minimum, the channels it gave, the top-up 
   assert.match(await render(null), /no liquidity provider[\s\S]*Liquidity provider/);
   assert.ok(/liquidityPanel\(\);/.test(HTML) && HTML.includes('<div class="card" id="liquidity">'));
 });
+
+test('"New address": the owner\'s signed ask, then the card shows the provider\'s new top-up address (the owner: "a button generate a new address for the lp wallet")', async () => {
+  const els = new Map(); const $ = (id) => { if (!els.has(id)) els.set(id, { innerHTML: '', textContent: '', disabled: false }); return els.get(id); };
+  let claim = { freeSats: '600000', depositAddress: 'tb1pold', channels: [] };
+  const posted = [];
+  const fetch = async () => ({ ok: true, json: async () => claim });
+  const post = async (path, body) => { posted.push([path, await body]); claim = { ...claim, depositAddress: 'tb1pnew' }; return { ok: true, address: 'tb1pnew' }; };
+  const signed = async (action) => ({ action, signature: 'sig' });
+  const panel = new Function('$', 'at', 'fetch', 'esc', 'post', 'signed', `${body}; return liquidityPanel;`)($, (p) => `https://seat${p}`, fetch, esc, post, signed);
+  await panel();
+  assert.match($('liquidity').innerHTML, /tb1pold[\s\S]*<button id="liq-new-address">New address<\/button>/);
+  await $('liq-new-address').onclick({ target: $('liq-new-address') });
+  assert.deepEqual(posted, [['/owner/liquidity/new-address', { action: 'liquidity/new-address', signature: 'sig' }]], 'signed by the owner for this action');
+  assert.match($('liquidity').innerHTML, /tb1pnew/, 'the card re-read: the new address');
+  assert.equal($('liq-msg').textContent, 'New address: tb1pnew');
+});

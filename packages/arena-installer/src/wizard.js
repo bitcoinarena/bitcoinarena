@@ -33,6 +33,7 @@ import { LND_PORTS } from './lnd.js';
 import * as workersKitDefault from './workers.js';
 import { RING_RESERVE_SATS, OUTSIDE_RESERVE_SATS } from './custody-agent.js';
 import { LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
+import { LIQUIDITY_PROVIDER_PORT } from './state.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
@@ -546,7 +547,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         state.writeSecret('liquidity.key', toHex(nodeSecret));
         await gwKit.installProgram({ id: 'liquidity', description: 'The liquidity provider of the Arena node', home: state.home, boot: true,
           args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'liquidity-provider.mjs'), '--rest', s.lightning.restUrl, '--lnddir', s.lightning.lnddir,
-            '--key', state.path('liquidity.key'), '--state', state.path('liquidity-state.json'), '--claim-file', state.path('liquidity-claim.json')] });
+            '--key', state.path('liquidity.key'), '--state', state.path('liquidity-state.json'), '--claim-file', state.path('liquidity-claim.json'), '--listen', String(LIQUIDITY_PROVIDER_PORT)] });
       }
       return { ok: true, bond };
     },
