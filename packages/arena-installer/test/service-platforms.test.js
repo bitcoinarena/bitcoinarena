@@ -55,3 +55,21 @@ test('Windows: launchers and logon tasks; without "start after reboot" started o
     assert.equal(existsSync(join(home, 'arena-tunnel.cmd')), false, 'a direct node has no tunnel');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('Electrum mode on macOS and Windows: the chain bridge is its own service, set up before the node', async () => {
+  for (const platform of ['darwin', 'win32']) {
+    const root = mkdtempSync(join(tmpdir(), 'arena-bridge-svc-'));
+    try {
+      const calls = [];
+      const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
+      const r = await installService({ platform, node: '/r/runtime/node', release: '/r', home: root, port: 8470, bridgePort: 8471, boot: true,
+        env: { HOME: root }, sh, fetcher: healthy, waitMs: 2000 });
+      assert.equal(r.ok, true, r.why);
+      const bridgeAt = calls.findIndex((c) => /chain-bridge/.test(c));
+      const nodeAt = calls.findIndex((c) => (platform === 'darwin' ? /bootstrap .*io\.bitcoin-arena\.node\.plist/ : /\/tn Arena node \/sc/).test(c));
+      assert.ok(bridgeAt >= 0 && nodeAt > bridgeAt, `${platform}: the bridge before the node (${bridgeAt}, ${nodeAt})`);
+      if (platform === 'darwin') assert.match(readFileSync(join(root, 'Library/LaunchAgents/io.bitcoin-arena.node.chain-bridge.plist'), 'utf8'), /chain-bridge\.mjs<\/string><string>8471<\/string>/);
+      else assert.match(readFileSync(join(root, 'arena-chain-bridge.cmd'), 'utf8'), /chain-bridge\.mjs" "8471"/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});

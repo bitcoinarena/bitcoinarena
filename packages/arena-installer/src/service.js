@@ -66,8 +66,17 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
  */
 export async function installService({ node = process.execPath, release, home, port, bridgePort = null, tunnel = null, tunnelArgs = null, boot = true,
   env = process.env, sh = run, fetcher = fetch, waitMs = 90000, platform = process.platform }) {
-  if (platform === 'darwin') return installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs });
-  if (platform === 'win32') return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs });
+  if (platform === 'darwin' || platform === 'win32') {
+    // THE CHAIN BRIDGE FIRST (Electrum mode): its own service, so the node finds its chain when it starts - on Linux it is the
+    // arena-chain-bridge unit below, which the node's unit starts after
+    if (bridgePort) {
+      const b = await installProgram({ id: 'chain-bridge', description: 'The Arena node\'s chain bridge (Electrum + Esplora, testnet4)',
+        args: [node, join(release, 'packages', 'arena-installer', 'bin', 'chain-bridge.mjs'), String(bridgePort), home], home, boot, env, sh, platform });
+      if (!b.ok) return b;
+    }
+    if (platform === 'darwin') return installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs });
+    return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs });
+  }
   const dir = unitDir(env);
   mkdirSync(dir, { recursive: true });
   const units = [UNIT];
