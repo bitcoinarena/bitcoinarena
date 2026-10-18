@@ -83,6 +83,18 @@ declare -A CUSTODY_SHA=(
   [gatewayd:windows-x64]=6864274731883823e520e3472ceccdfbdd7e46cb5578ec2da541fc0da0ddf75b
   [fedimintd:windows-x64]=7e82772ddb18c27948c9f2acf2f6723452c76c0f1aa014ec2c8b4cb715736faf
   [fedimint-cli:windows-x64]=55ff1133c2aa8d80873234c1b7310d22403b7d590be1376b0b8181d24c7dbbb0
+  [gatewayd:darwin-arm64]=28d146a553f7fe0a23b30732aac5d2dab2a7f8eafb0c5d4af0437e3f064912ee
+  [gatewayd:darwin-x64]=59c2807c4843e8421b1adf192ac69b114008d2f62c95841eac6db713fc47cfbe
+  [gatewayd:linux-arm64]=47d6f6c6fabbc8a64509f67cfe7369a8764149cf82f1f571bbb03e8f944e1085
+  [gatewayd:linux-x64]=bed6863fb0949feab628d7339052857717e48b964ec731c28e5e601fda2aba28
+  [fedimintd:darwin-arm64]=99f3b9bd3dd329666c6358a030e50d1ae3ce72a27f625971142a2e09ec6b7a6e
+  [fedimintd:darwin-x64]=94f23b2aac3ae8889f0af529656d2616aecb9cc2165616b7347be462654cf23b
+  [fedimintd:linux-arm64]=f3a7ad326f32966d1fc9c530859a75b4bba694403cc816785a6557e5a63efa0e
+  [fedimintd:linux-x64]=a6c1b82b10bbd41b8194a8f0b2c4b7b1eeb9f1483428932b252bf75bb7bad6e4
+  [fedimint-cli:darwin-arm64]=e37785fc5bb33161acd26a2c10739e8e365ea3ad25211efb200c6c5fecf313e5
+  [fedimint-cli:darwin-x64]=81784aa91d8b907613313cc5cac94717f4b89ba38f9a7cef2db42b538d1ff561
+  [fedimint-cli:linux-arm64]=eafa49dc918b5b17d8d68fc5c23c99f0642e559575d3352f76cc33c00ca900dc
+  [fedimint-cli:linux-x64]=cfb80f12946d87daf87247e582caa998bf34373d3624fe1ac4bdaad1b25a99fc
 )
 EXE=""; if [ "$OS" = windows ]; then EXE=.exe; fi   # (an assignment from a failing $(...) ends a set -e script: CI run 39128370301)
 for BIN in gatewayd fedimintd fedimint-cli; do
