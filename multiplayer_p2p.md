@@ -5276,8 +5276,8 @@ all of these hold:
 |---|---|---|---|
 | A **seated guardian of F**, not departing | - | - | the federation record |
 | Its gateway is **announced** (`/gateway-claim`, signed by the node key: gateway URL and Lightning node key) and **registered with F** | - | - | F's own gateway list |
-| **Inbound liquidity from outside F** (deposits from the wider Lightning network come in through it; the ring's channels do not count) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (remote balance of its active public channels to peers that are not F's custody nodes) |
-| **Outbound liquidity** (payouts leave through it) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (local balance) |
+| **Inbound liquidity from outside F** (deposits from the wider Lightning network come in through it; the ring's channels do not count) | ≥ 250,000 sat | ≥ 100,000 sat | stated in the signed claim (remote balance of its active public channels to peers that are not F's custody nodes) |
+| **Outbound liquidity** (payouts leave through it) | ≥ 250,000 sat | ≥ 100,000 sat | stated in the signed claim (local balance) |
 | **E-cash in F** for receiving: its **peg-in** | ≥ 2,000,000 sat | ≥ 50,000 sat | the gateway's peg-in, made by the node's custody agent; shown by its first receives |
 | **Availability**: running, its LND synced, answering | ≥ 95 % of the epoch | ≥ 95 % | each guardian probes every candidate every 10 minutes |
 | **Bond** | ≥ `bond_min_guardian` | ≥ `bond_min_guardian` | the census |
@@ -5388,8 +5388,8 @@ the network, so that node can receive. It is a role like game/verify, settlement
 
 | Requirement | Testnet4 | Mainnet |
 |---|---|---|
-| The **liquidity amount** L: one channel to one node | 100,000 sat | 2,500,000 sat |
-| **Deposit**: coins in the provider's LND wallet, free for new channels, when it starts and to stay eligible | ≥ 5 × L = 500,000 sat | ≥ 10 × L = 25,000,000 sat |
+| The **liquidity amount** L: one channel to one node | 100,000 sat | 250,000 sat (the owner 2026-10-18: "250k per node") |
+| **Deposit**: coins in the provider's LND wallet, free for new channels, when it starts and to stay eligible | ≥ 5 × L = 500,000 sat | ≥ 10 × L = 2,500,000 sat |
 | Its own LND, reachable (an open port, or Tor: §23A.9 "The outside channel and Tor") | yes | yes |
 | A bond | ≥ `bond_min` | ≥ `bond_min` |
 

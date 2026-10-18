@@ -21,7 +21,7 @@ export const UNSEAT_MARGIN_PCT = 25n;
 /** The minimums per network (spec §23A.9 table). */
 export const GATEWAY_MINIMUMS = Object.freeze({
 // inbound and outbound each half of what the single capacity minimum was (the owner 2026-10-18: a gateway with outbound only takes no deposit)
-  mainnet: Object.freeze({ inboundSats: 2_500_000n, outboundSats: 2_500_000n, pegInSats: 2_000_000n, availabilityPct: 95 }),
+  mainnet: Object.freeze({ inboundSats: 250_000n, outboundSats: 250_000n, pegInSats: 2_000_000n, availabilityPct: 95 }),
   testnet4: Object.freeze({ inboundSats: 100_000n, outboundSats: 100_000n, pegInSats: 50_000n, availabilityPct: 95 }),
   regtest: Object.freeze({ inboundSats: 10_000n, outboundSats: 10_000n, pegInSats: 5_000n, availabilityPct: 95 }),
 });
