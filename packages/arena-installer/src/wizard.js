@@ -27,6 +27,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
 import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd } from './lnd.js';
+import { findGatewayd, configureGateway, testGateway, joinFederation } from './gateway.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
@@ -44,7 +45,8 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
-  lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
+  lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram },
+  gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
@@ -88,7 +90,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
+      lightning: s.lightning || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -305,7 +307,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       }
       const t = await lndKit.testLnd(l);
       if (!t.ok) return { ok: false, why: t.why, waiting: l.mode === 'own', created };
-      mark('lightning', { lightning: { ...l, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() } });
+      state.save({ lightning: { ...l, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() } });   // the step is done with the gateway
       return { ok: true, created, ...t };
     },
     'POST /api/lightning/connect': async (b) => {
@@ -319,12 +321,50 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const t = await lndKit.testLnd({ restUrl: restUrl.origin, tlsCertPem, macaroonHex });
       if (!t.ok) return { ok: false, why: t.why };
       state.writeSecret('lnd-connect.macaroon.hex', macaroonHex); state.writeSecret('lnd-connect.tls.cert', tlsCertPem + '\n');
+      writeFileSync(state.path('lnd-connect.macaroon'), Buffer.from(macaroonHex, 'hex'), { mode: 0o600 });   // gatewayd reads the macaroon's bytes
       const l = { mode: 'connect', restUrl: restUrl.origin, tlsCert: state.path('lnd-connect.tls.cert'), macaroonHexFile: state.path('lnd-connect.macaroon.hex'),
-        pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() };
-      mark('lightning', { lightning: l });
+        macaroon: state.path('lnd-connect.macaroon'), rpcHost: b.rpcHost ? String(b.rpcHost) : `https://${restUrl.hostname}:10009`, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() };
+      state.save({ lightning: l });
       return { ok: true, ...t };
     },
     'POST /api/lightning/later': async () => { mark('lightning', { lightning: null }); return { ok: true }; },
+
+    // THE GATEWAY (slice 5 part 2, gateway.js): gatewayd from this release on the LND above, its mnemonic from the seed, a service; the
+    // Lightning step is done when it runs (or when the user leaves it for later - a release without gateway binaries for this system)
+    'POST /api/gateway/setup': async (b) => {
+      const s = state.read(); const l = s.lightning;
+      if (!l || !l.pubkey) return { ok: false, why: 'set up and test LND first' };
+      const f = gwKit.findGatewayd({ release });
+      if (!f.ok) return { ok: false, why: f.why, noBinary: true };
+      const g = gwKit.configureGateway({ home: state.home, gatewayd: f.gatewayd, seed: fromHex(state.readSecret('seed.hex')),
+        lnd: { rpcHost: l.rpcHost, tlsCert: l.tlsCert, macaroon: l.macaroon } });
+      const r = await gwKit.installProgram({ id: 'gateway', description: 'The Fedimint gateway of the Arena node (custody)', args: g.args, vars: g.vars, home: state.home, boot: b.boot !== false });
+      if (!r.ok) return { ok: false, why: r.why };
+      state.save({ gateway: { apiUrl: g.apiUrl, passwordFile: g.passwordFile, dir: g.dir, startedMs: Date.now() } });
+      return { ok: true };
+    },
+    'POST /api/gateway/status': async () => {
+      const s = state.read();
+      if (!s.gateway) return { ok: false, why: 'no gateway set up yet' };
+      const t = await gwKit.testGateway(s.gateway);
+      if (!t.ok) return { ok: false, why: t.why, waiting: true };
+      mark('lightning', { gateway: { ...s.gateway, lightningPubkey: t.lightningPubkey, federations: t.federations, testedMs: Date.now() } });
+      return t;
+    },
+    'POST /api/gateway/join': async (b) => {
+      const s = state.read();
+      if (!s.gateway) return { ok: false, why: 'set up the gateway first' };
+      const j = await gwKit.joinFederation({ ...s.gateway, invite: b.invite });
+      if (!j.ok) return j;
+      const t = await gwKit.testGateway(s.gateway);
+      if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
+      return { ok: true, federationId: j.federationId, federations: t.ok ? t.federations : null };
+    },
+    'POST /api/gateway/later': async () => {
+      const s = state.read();
+      if (!(s.lightning || {}).pubkey) return { ok: false, why: 'set up and test LND first, or leave Lightning for later' };
+      mark('lightning'); return { ok: true };
+    },
 
     'POST /api/bond/check': async () => {
       const s = state.read();
