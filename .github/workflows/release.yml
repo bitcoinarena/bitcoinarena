@@ -116,7 +116,14 @@ jobs:
           if (-not ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:31917/games).Content -match '"name":"nextblock"')) { exit 1 }
           & "$R\runtime\cloudflared.exe" --version
           if (Test-Path "$R\runtime\custody\gatewayd.exe") { & "$R\runtime\custody\gatewayd.exe" --version; if ($LASTEXITCODE -ne 0) { exit 1 } } else { "no custody binaries in this asset" }
-          "fresh install of $(Get-Content $R\VERSION) on windows-x64: the seat runs"
+          if (Test-Path "$R\runtime\tor\tor.exe") { & "$R\runtime\tor\tor.exe" --version; if ($LASTEXITCODE -ne 0) { exit 1 } }
+          # THE INSTALLER STARTS (kanban #471: rc.10 shipped a Windows zip whose installer stopped at "Cannot find package '@noble/curves'")
+          Start-Process -FilePath "$R\runtime\node.exe" -ArgumentList "$R\packages\arena-installer\bin\arena-install.mjs",'--port','31918','--seat-port','31919','--home',"$PWD\home" -RedirectStandardOutput inst.log -RedirectStandardError inst.err
+          $link = $null; for ($i = 0; $i -lt 30; $i++) { $m = Select-String -Path inst.log -Pattern 'http://127.0.0.1:31918/\?t=[A-Za-z0-9_-]+' -ErrorAction SilentlyContinue; if ($m) { $link = $m.Matches[0].Value; break }; Start-Sleep 1 }
+          if (-not $link) { Get-Content inst.log, inst.err; exit 1 }
+          $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession; Invoke-WebRequest -UseBasicParsing -WebSession $s $link | Out-Null
+          if (-not ((Invoke-WebRequest -UseBasicParsing -WebSession $s http://127.0.0.1:31918/api/state).Content -match '"step":"chain"')) { exit 1 }
+          "fresh install of $(Get-Content $R\VERSION) on windows-x64: seat and installer run"
 
   release:
     needs: smoke

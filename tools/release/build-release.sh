@@ -49,6 +49,8 @@ for p in arena-node arena-protocol arena-installer nextblock; do
   [ -L "$STAGE/packages/$p/node_modules" ] && rm "$STAGE/packages/$p/node_modules"
 done
 ln -s ../arena-node/node_modules "$STAGE/packages/arena-installer/node_modules"
+# (Windows: the link is replaced by a copy once the dependencies are in (step 3) - a .zip carries no symlink, Expand-Archive made an
+# empty folder of it and the installer stopped at "Cannot find package '@noble/curves'": measured in the Windows VM, rc.10)
 git -C "$ROOT" rev-parse "$REF" > "$STAGE/COMMIT"
 echo "$VER" > "$STAGE/VERSION"
 
@@ -126,6 +128,8 @@ for BIN in gatewayd fedimintd fedimint-cli; do
   mkdir -p "$STAGE/runtime/custody"
   install -m 0755 "$CACHE/$F" "$STAGE/runtime/custody/$BIN$EXE"
 done
+
+if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; cp -R "$STAGE/packages/arena-node/node_modules" "$STAGE/packages/arena-installer/node_modules"; fi
 
 # 4. the launcher: the installer on the release's own runtime, cloudflared beside it
 if [ "$OS" = windows ]; then
