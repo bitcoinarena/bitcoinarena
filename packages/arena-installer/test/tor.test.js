@@ -41,3 +41,17 @@ test('Linux: LND\'s unit restarts with the node\'s Tor (its onion is gone when T
   await installProgram({ id: 'gateway', description: 'gw', args: ['/x/gw'], home, platform: 'linux', env: { XDG_CONFIG_HOME: cfg }, sh: async () => ({ ok: true, out: '', err: '' }) });
   assert.doesNotMatch(readFileSync(join(cfg, 'systemd', 'user', 'arena-gateway.service'), 'utf8'), /PartOf/);
 });
+
+test('macOS: the bundle\'s unsigned tor and libevent are signed ad hoc before they run; signed ones and other systems untouched', async () => {
+  const rel = mkdtempSync(join(tmpdir(), 'rel-')); const dir = join(rel, 'runtime', 'tor');
+  mkdirSync(dir, { recursive: true }); for (const f of ['tor', 'libevent-2.1.7.dylib', 'torrc-defaults']) writeFileSync(join(dir, f), '');
+  const ran = []; const signedAlready = new Set();
+  const run = async (cmd, args) => { ran.push([cmd, ...args]); if (args[0] === '-v') return signedAlready.has(args[1]); signedAlready.add(args.at(-1)); return true; };
+  assert.equal(await torBin({ release: rel, platform: 'darwin', run }), join(dir, 'tor'));
+  assert.deepEqual(ran.filter((r) => r[1] === '--force').map((r) => r.at(-1).split('/').pop()).sort(), ['libevent-2.1.7.dylib', 'tor'], 'both signed with -s -');
+  assert.ok(ran.every((r) => r[0] === '/usr/bin/codesign'));
+  ran.length = 0; await torBin({ release: rel, platform: 'darwin', run });
+  assert.deepEqual(ran.filter((r) => r[1] === '--force'), [], 'signed once: the next start only checks');
+  ran.length = 0; await torBin({ release: rel, platform: 'linux', run });
+  assert.deepEqual(ran, [], 'Linux: nothing to sign');
+});
