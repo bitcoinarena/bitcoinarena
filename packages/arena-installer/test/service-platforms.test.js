@@ -81,3 +81,17 @@ test('the quick tunnel\'s name on macOS and Windows: the newest in <home>/tunnel
   assert.equal(await quickTunnelUrl({ home: '/h', platform: 'win32', readLog: () => log, waitMs: 1 }), 'https://new-name-two.trycloudflare.com');
   assert.equal(await quickTunnelUrl({ home: '/h', platform: 'darwin', readLog: () => 'nothing yet', waitMs: 1 }), null);
 });
+
+test('after a restart only a name logged since the install counts (measured in the Linux VM: the reinstall tested the old name, HTTP 530)', async () => {
+  const { quickTunnelUrl } = await import('../src/reach.js');
+  // the VM's journal (journalctl -o cat), 2026-10-18: the first run's name, then the restart at 14:10:58
+  const journal = '2026-10-18T14:08:11Z INF Requesting new quick Tunnel on trycloudflare.com...\n2026-10-18T14:08:18Z INF |  https://sends-editing-calculated-workshop.trycloudflare.com    |\n2026-10-18T14:10:58Z INF Requesting new quick Tunnel on trycloudflare.com...\n';
+  const later = journal + '2026-10-18T14:11:03Z INF |  https://size-erp-modular-durham.trycloudflare.com    |\n';
+  const since = Date.parse('2026-10-18T14:10:57.500Z');
+  let reads = 0;
+  const sh = async () => ({ ok: true, out: ++reads < 3 ? journal : later });
+  assert.equal(await quickTunnelUrl({ platform: 'linux', sh, sinceMs: since, waitMs: 10000 }), 'https://size-erp-modular-durham.trycloudflare.com', 'it waits for the new name');
+  assert.ok(reads >= 3);
+  assert.equal(await quickTunnelUrl({ platform: 'linux', sh: async () => ({ ok: true, out: journal }), sinceMs: since, waitMs: 1 }), null, 'the old name alone is no answer');
+  assert.equal(await quickTunnelUrl({ platform: 'darwin', home: '/h', readLog: () => later, sinceMs: since, waitMs: 1 }), 'https://size-erp-modular-durham.trycloudflare.com');
+});
