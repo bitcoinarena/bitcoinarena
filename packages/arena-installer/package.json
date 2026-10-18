@@ -1,0 +1,15 @@
+{
+  "name": "arena-installer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The Arena node installer: a browser wizard on localhost or a Cloudflare tunnel (kanban #471).",
+  "bin": { "arena-install": "bin/arena-install.mjs" },
+  "scripts": {
+    "test": "node --test --test-timeout=120000 test/*.test.js",
+    "start": "node bin/arena-install.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0"
+  }
+}

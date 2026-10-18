@@ -6892,6 +6892,45 @@
     }
    }
   },
+  "/reach-check": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Connect back to the asker (installer reach test)",
+    "description": "Can the internet reach a new node? The seat connects back to the asking address only (a public one), on the port named, asks GET /reach-nonce and answers whether the nonce came back - never what it read, never whether the port refused or stayed silent. 6 checks a minute per address, 60 in all. Used by the node installer's direct-connection test (kanban #471 ruling 7).\n\nAccess: none\n\nReturns: 200 JSON {ok, reached, address, port, ms?}; 400; 429\n\nSource: `packages/arena-node/src/server.js` line 5317.",
+    "operationId": "post_reach_check",
+    "requestBody": {
+     "required": true,
+     "description": "{port: 1-65535, nonce: 16-64 characters of [A-Za-z0-9_-]}",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, reached, address (the asker's public address as this seat saw it), port, ms (when reached)}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Bad port or nonce, or the asker's address is not public (the address is named).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "429": {
+      "description": "More than 6 checks a minute from this address, or 60 in all.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/receipts": {
    "get": {
     "tags": [
