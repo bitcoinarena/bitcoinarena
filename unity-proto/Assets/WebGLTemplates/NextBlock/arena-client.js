@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -675,6 +675,8 @@ const ITEMS_VERSION = 10;
  * reserves' part to its federation's reserve key (reserves.js reservesEntryExpected), and the seats check it.
  */
 const RESERVES_VERSION = 11;
+/** 2026.0.12 (kanban #460): the leaderboard payout - a proposal that pays the top N of a season from the protocol reserves. */
+const LEADERBOARD_VERSION = 12;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -936,6 +938,8 @@ const TYPE_PLAYER_NAME = 0x31;
 // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER TO IT (kanban #462, the owner 2026-10-17): fee-proposal.js
 const TYPE_FEE_PROPOSAL = 0x32;
 const TYPE_FEE_APPROVAL = 0x33;
+// A LEADERBOARD PAYOUT REQUEST (kanban #460): leaderboard-payout.js
+const TYPE_LEADERBOARD_PAYOUT = 0x34;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -1014,6 +1018,7 @@ const TAG = {
   playerName: 'ARENA/v1/PlayerName',
   feeProposal: 'ARENA/v1/FeeProposal',
   feeApproval: 'ARENA/v1/FeeApproval',
+  leaderboardPayout: 'ARENA/v1/LeaderboardPayout',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
@@ -6831,6 +6836,8 @@ const PROTOCOL_RELEASES = Object.freeze([
   // the protocol reserves: a game round's 10 % is nodes 4 %, developers 4 %, reserves 2 % - all mandatory - and each entry locks
   // the reserves' part to its federation's 5-of-7 reserve key (kanban #397)
   Object.freeze({ version: 11, year: 2026, x: 0 }),
+  // the leaderboard payout: a proposal that pays the top N of a season from the protocol reserves, in the federation (kanban #460)
+  Object.freeze({ version: 12, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -12613,6 +12620,100 @@ function newerPlayerName(a, b) {
   return a.idHex < b.idHex ? a : b;
 }
 
+// ---- arena-protocol/src/leaderboard-payout.js
+// A LEADERBOARD PAYOUT REQUEST (kanban #460, the owner 2026-10-17: "new proposal type, not a withdrawal but re-assign to the federation when
+// a specific protocol version is active ... Example: distribution of X sats for the best 10 p&l of last week ... Which game/market/all
+// global and the top count. Amount is divided equally or configurable. Time period is last 7 days, last 14 days, last month. Payment
+// date is another field ... Same protections apply as it only returns it to the federation and pays out top users ... Voting is 2 weeks,
+// no signal period. This is a leaderboard payout request not a pip"; "25% but with weight"; 2026-10-18: "YES >= 25 % of the voting
+// weight is enough on its own. Do not also require more YES than NO").
+//
+//     LeaderboardPayout { network_id, author, published_height, scope, game_name, top, amount_sats, federation_id, split_bps[],
+//                         period_days, payment_height, purpose }      signed by its author, anyone; protocol version 12 (2026.0.12)
+//
+// THE VOTE: the funding proposals' bond-weighted count (funding.js fundingTally over voteWeights), from its publication for 2 weeks -
+// no signal period. THE ONLY PASS TEST: YES weight >= 25 % of the voting weight (everyone who could vote). A larger NO does not block
+// it; ABSTAIN is not YES; there is no second majority test.
+//
+// THE PAYOUT, at the payment height: the network season of its scope over [payment time - period, payment time) - the top N by P&L,
+// identities only (a player whose entries name a round key that is the player itself is no identity, badges.js's rule: skipped, the
+// next one moves up); a tie at the cut shares the places it spans; each winner paid a payout contract to its identity's refund key in
+// the federation, from that federation's protocol reserves - at most 10 % of them (funding.js FUNDING_CAP_PCT).
+
+
+
+
+const LB_SCOPE = Object.freeze({ ALL: 0, GAME: 1, MARKET: 2 });
+const LB_PERIOD_DAYS = Object.freeze([7, 14, 30]);
+const LB_TOP_MAX = 100;
+const LB_PASS_PCT = 25n;
+const LB_PURPOSE_MAX = 4000;
+const lb32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodeLeaderboardPayout(p) {
+  if (!lb32(p.networkId) || !lb32(p.author) || !lb32(p.federationId)) throw new Error('a leaderboard payout names its network, its author and the paying federation by 32 bytes each');
+  if (!Number.isInteger(p.publishedHeight) || p.publishedHeight < 0) throw new Error('published_height is a block height');
+  if (!Object.values(LB_SCOPE).includes(p.scope)) throw new Error('a leaderboard payout is of all games (0), one game (1) or one market (2)');
+  const name = String(p.gameName || '');
+  if ((p.scope === LB_SCOPE.ALL) !== (name === '')) throw new Error('a payout of one game or market names it; one of all names none');
+  if (name.length > 64) throw new Error('a game\'s name is at most 64 characters');
+  if (!Number.isInteger(p.top) || p.top < 1 || p.top > LB_TOP_MAX) throw new Error(`a leaderboard payout pays the top 1 to ${LB_TOP_MAX}`);
+  if (typeof p.amountSats !== 'bigint' || p.amountSats < 1n) throw new Error('a leaderboard payout pays at least 1 sat, as a BigInt');
+  const split = p.splitBps || [];
+  if (split.length && (split.length !== p.top || split.some((b) => !Number.isInteger(b) || b < 1) || split.reduce((t, b) => t + b, 0) !== 10000))
+    throw new Error('a split names every place, each at least 1 bps, 10000 bps in all (none: equal)');
+  if (!LB_PERIOD_DAYS.includes(p.periodDays)) throw new Error(`a period is ${LB_PERIOD_DAYS.join(', ')} days`);
+  if (!Number.isInteger(p.paymentHeight) || p.paymentHeight <= p.publishedHeight) throw new Error('a payment height after its publication');
+  if (typeof p.purpose !== 'string' || p.purpose.length > LB_PURPOSE_MAX) throw new Error(`a leaderboard payout says why in at most ${LB_PURPOSE_MAX} characters`);
+  const w = new Writer();
+  w.u8(TYPE_LEADERBOARD_PAYOUT); w.u16(LEADERBOARD_VERSION);
+  w.bytes32(p.networkId); w.bytes32(p.author); w.u32(p.publishedHeight); w.u8(p.scope); w.str(name); w.u8(p.top); w.u64(p.amountSats);
+  w.bytes32(p.federationId); w.vec(split, (b, ww) => ww.u16(b)); w.u8(p.periodDays); w.u32(p.paymentHeight); w.str(p.purpose);
+  return w.finish();
+}
+function decodeLeaderboardPayout(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_LEADERBOARD_PAYOUT) throw new Error('not a leaderboard payout');
+  const v = r.u16();
+  if (!speaksVersion(v) || v < LEADERBOARD_VERSION) throw new Error(`a leaderboard payout is of protocol ${LEADERBOARD_VERSION} or later, not ${v}`);
+  const p = { networkId: r.bytes32(), author: r.bytes32(), publishedHeight: r.u32(), scope: r.u8(), gameName: r.str(), top: r.u8(), amountSats: r.u64(),
+    federationId: r.bytes32(), splitBps: r.vec((rr) => rr.u16()), periodDays: r.u8(), paymentHeight: r.u32(), purpose: r.str() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the leaderboard payout');
+  encodeLeaderboardPayout(p);
+  return p;
+}
+const leaderboardPayoutId = (p) => taggedHash(TAG.leaderboardPayout, encodeLeaderboardPayout(p));
+
+/**
+ * ITS VOTE: no signal period - from its publication, `vote` blocks (2 weeks), decided when its last block is `decideDepth` deep.
+ * Answers { from, until, last, decidableAt }.
+ */
+function leaderboardVotePeriod({ proposal, schedule = FUNDING_SCHEDULES.spec }) {
+  const from = proposal.publishedHeight, until = from + schedule.vote;
+  return { from, until, last: until - 1, decidableAt: until - 1 + schedule.decideDepth - 1 };
+}
+
+/**
+ * THE ONLY PASS TEST (the owner 2026-10-18): YES weight >= 25 % of the voting weight. `count` funding.js fundingTally's answer over the
+ * voting census (voteWeights): `yesSats` the YES weight, `totalSats` the weight of everyone who could vote. A larger NO, ABSTAIN, the
+ * share of YES among YES + NO: none of them moves it. Answers the count with `passed` and `yesOfAllPct` as this rule reads them.
+ */
+function leaderboardPasses(count) {
+  const yes = BigInt(count.yesSats), total = BigInt(count.totalSats);
+  const passed = total > 0n && yes * 100n >= LB_PASS_PCT * total;
+  return { ...count, passed, rule: `YES >= ${LB_PASS_PCT} % of the voting weight`, yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0 };
+}
+
+/** Each place's amount in msat: equal (the floors' remainder to the first), or by the split's bps (the remainder to the first). */
+function placeAmounts({ amountMsat, top, splitBps = [] }) {
+  const total = BigInt(amountMsat);
+  const out = splitBps.length ? splitBps.map((b) => (total * BigInt(b)) / 10000n) : Array.from({ length: top }, () => total / BigInt(top));
+  out[0] += total - out.reduce((t, x) => t + x, 0n);
+  return out;
+}
+
+const leaderboardHex = (p) => toHex(leaderboardPayoutId(p));
+
 // ---- arena-protocol/src/funding.js
 // PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
 // purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
@@ -12630,6 +12731,7 @@ function newerPlayerName(a, b) {
 // 432 blocks before its end: the window [time(end - 432), time(end)) on the chain's median time, which every seat reads alike and
 // which never runs backwards. A signal counts when it was given inside the signal period by an active node, once per node, whatever
 // its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
+
 
 
 
@@ -12753,6 +12855,8 @@ function readSignedFunding(kind, bytes, verify) {
     // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER (kanban #462, fee-proposal.js): signed by its author, and by the developer
     else if (kind === 'fee') { obj = decodeFeeProposal(body); id = feeProposalId(obj); signer = obj.author; }
     else if (kind === 'fee-approval') { obj = decodeFeeApproval(body); id = feeApprovalId(obj); signer = obj.dev; }
+    // A LEADERBOARD PAYOUT REQUEST (kanban #460, leaderboard-payout.js): signed by its author, anyone
+    else if (kind === 'leaderboard') { obj = decodeLeaderboardPayout(body); id = leaderboardPayoutId(obj); signer = obj.author; }
     else return { ok: false, why: 'a proposal, a comment, a signal, a name, a fee proposal or a fee approval' };
   } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
   let good = false; try { good = verify(signature, id, signer) === true; } catch { good = false; }
@@ -25506,6 +25610,59 @@ const marketFeeBpsOf = (fees) => { const r = marketBps(fees); return r.nodeBps +
 /** Each fee's unit as the form shows it: bps for rounds and markets, percent for items and the website share. */
 const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => [k, /Bps$/.test(k) ? 'bps' : 'pct'])));
 
+// ---- arena-client/src/leaderboard-page.js
+// A LEADERBOARD PAYOUT REQUEST FROM THE PAGE (kanban #460): built from the form - the scope, the top N, the amount, the paying federation,
+// an equal or a per-place split, the period and the payment date turned into a height - checked by the record's own rules before it is
+// signed by the forum's key, and handed to every node as a funding proposal is (funding-page.js postFunding, kind 'leaderboard'). A
+// winner's payout needs nothing here: it is a payout contract to the winner's identity key, recorded on the seats under that key, which
+// the page's zap collector (identity.js collectZaps) already reads and spends into the wallet.
+
+
+
+const lbCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (blwp-curve.js)'); return c; };
+/** A block about every 10 minutes: the height a date falls at, from the tip now. */
+const LB_BLOCK_MS = 600000;
+const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.ceil((Number(dateMs) - Number(nowMs)) / LB_BLOCK_MS));
+
+/**
+ * THE REQUEST, CHECKED THEN SIGNED: the record's own rules (leaderboard-payout.js encodeLeaderboardPayout) and a payment height no earlier
+ * than its vote is decided (published + 2 weeks + depth) - one a seat would refuse is never signed. Answers { ok, id, hex, decidableAt }
+ * or { ok: false, why }.
+ */
+function signedLeaderboardPayout({ secretKey, networkId, publishedHeight, scope, gameName = '', top, amountSats, federationId, splitBps = [], periodDays,
+  paymentHeight, purpose = '', schedule = FUNDING_SCHEDULES.spec, curve }) {
+  const c = lbCurveOf(curve);
+  const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, scope, gameName: scope === LB_SCOPE.ALL ? '' : String(gameName),
+    top: Number(top), amountSats: BigInt(amountSats), federationId: fromHex(federationId), splitBps, periodDays: Number(periodDays), paymentHeight, purpose: String(purpose) };
+  try { encodeLeaderboardPayout(p); } catch (e) { return { ok: false, why: e.message }; }
+  const vp = leaderboardVotePeriod({ proposal: p, schedule });
+  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its 2-week vote is decided (block ${vp.decidableAt})` };
+  const id = leaderboardPayoutId(p);
+  return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeLeaderboardPayout(p), ...c.signSchnorr(id, secretKey)])), decidableAt: vp.decidableAt };
+}
+
+/** A per-place split typed as percents ("50, 30, 20"): bps that add up to 10000 for `top` places, or [] for equal. */
+function splitFromPercents(text, top) {
+  const s = String(text || '').trim();
+  if (!s) return { ok: true, splitBps: [] };
+  const parts = s.split(/[,\s]+/).filter(Boolean).map((x) => Math.round(Number(x.replace(',', '.')) * 100));
+  if (parts.length !== Number(top) || parts.some((b) => !Number.isInteger(b) || b < 1)) return { ok: false, why: `name a share for each of the ${top} places, or leave it empty for equal` };
+  const sum = parts.reduce((t, b) => t + b, 0);
+  if (sum !== 10000) return { ok: false, why: `the shares add up to ${sum / 100} %, not 100 %` };
+  return { ok: true, splitBps: parts };
+}
+
+/** The leaderboard payout requests as the nodes hold them (GET /funding): the list of the node that answers with the most. */
+async function fetchLeaderboards({ nodes, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
+  const answers = (await Promise.all(asked.map(async (b) => {
+    try { const r = await fetcher(`${b}/funding`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
+  }))).filter((a) => a && Array.isArray(a.leaderboards));
+  if (!answers.length) return { ok: false, why: 'no node answered with leaderboard payouts', asked: asked.length };
+  const best = answers.sort((a, b) => b.leaderboards.length - a.leaderboards.length)[0];
+  return { ok: true, leaderboards: best.leaderboards, tip: best.tip, answered: answers.length, asked: asked.length };
+}
+
 // ---- arena-client/src/exchange-view.js
 // A MARKET AS AN EXCHANGE SHOWS IT (kanban #448, the owner 2026-10-17: "build a real desktop view with complete order book bids ask,
 // chart, depth (switchable) like an exchange. Like Polymarket is doing"; "For all prediction markets"): the page draws it for any
@@ -33504,7 +33661,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,

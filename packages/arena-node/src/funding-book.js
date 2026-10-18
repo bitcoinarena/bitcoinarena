@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { newerPlayerName, PLAYER_NAME_SKEW_MS } from '../../arena-protocol/src/player-name.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_TODAY, donationChanges, devMajority } from '../../arena-protocol/src/fee-proposal.js';
+import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
@@ -42,7 +43,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   db.exec(FUNDING_SQL);
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
-  const votedRows = () => [...rows('proposal'), ...rows('fee')];
+  // ... and leaderboard payout requests (kanban #460): voted on as they are, but with no signal - their vote starts at publication
+  const votedRows = () => [...rows('proposal'), ...rows('fee'), ...rows('leaderboard')];
+  const periodOf = (kind, o, signal) => (kind === 'leaderboard' ? leaderboardVotePeriod({ proposal: o, schedule }) : votePeriodOf({ proposal: o, signal, schedule }));
+  // A LEADERBOARD PAYOUT'S ONLY PASS TEST (the owner 2026-10-18): YES >= 25 % of the voting weight (leaderboard-payout.js)
+  const ruleOf = (kind, count) => (kind === 'leaderboard' && count ? leaderboardPasses(count) : count);
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
   const signalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
@@ -65,13 +70,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
   /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
   const readEndOf = (period) => period.last + schedule.delay + (FUNDING_TRANCHES - 1) * schedule.trancheEvery;
-  function voteView(pid, o, signal) {
-    const period = votePeriodOf({ proposal: o, signal, schedule });
+  function voteView(pid, o, signal, kind = 'proposal') {
+    const period = periodOf(kind, o, signal);
     if (!period) return null;
     const decided = voteOutcome(pid);
     const blocks = voteBlocks(pid);
     return { ...period, censusHeight: voteCensus(pid) ? voteCensus(pid).height : null, readTo: blocks.length ? blocks[blocks.length - 1].height : null,
-      state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || countOf(pid, period, o) };
+      state: decided ? (decided.passed ? 'passed' : 'failed') : 'voting', count: decided || ruleOf(kind, countOf(pid, period, o)) };
   }
   async function voteRound() {
     if (!voteChain) return [];
@@ -82,7 +87,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     for (const row of votedRows()) {
       const signal = outcomeOf(row.id);
       const p = read(row.kind, row.hex); if (!p.ok) continue;
-      const period = votePeriodOf({ proposal: p.obj, signal, schedule });
+      const period = periodOf(row.kind, p.obj, signal);
       if (!period || height < period.from) continue;
       // A DECIDED VOTE STANDS while its counted last block is still on this chain; a reorg that replaced it reopens the count
       let decided = voteOutcome(row.id);
@@ -94,7 +99,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id, period.last);
           log(`[funding] ${row.id.slice(0, 16)}: the counted last voting block ${period.last} was reorged away - the vote is counted again`);
           decided = null;
-        } else if (!decided.passed) continue;
+        } else if (!decided.passed || row.kind === 'leaderboard') continue;   // a leaderboard payout has no veto window to read on
       }
       // the census at the vote's start, once
       if (!voteCensus(row.id)) {
@@ -128,7 +133,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const readTo = held.length ? held[held.length - 1].height : null;
       if (decided || readTo === null || readTo < period.last || held.length !== readTo - period.from + 1 || height < period.decidableAt) continue;
       const lastHash = await hashAt(period.last);
-      const out = countOf(row.id, period, p.obj);
+      const out = ruleOf(row.kind, countOf(row.id, period, p.obj));
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
       log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);
       done.push({ id: row.id, ...out, lastHash });
@@ -222,12 +227,29 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? JSON.parse(decided.outcome) : null, hex: row.hex };
     }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
   }
+  /** THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED HERE (kanban #460): [{ id, proposal (decoded), decidableAt }] - reserve-payout.js pays them. */
+  function leaderboardsPassed() {
+    return rows('leaderboard').map((row) => ({ row, p: read('leaderboard', row.hex), v: voteOutcome(row.id) })).filter((x) => x.p.ok && x.v && x.v.passed)
+      .map((x) => ({ id: x.row.id, proposal: x.p.obj, decidableAt: leaderboardVotePeriod({ proposal: x.p.obj, schedule }).decidableAt }));
+  }
+  /** Every leaderboard payout request as a page reads it: its terms, its vote (the 25 % rule) and its hex. */
+  function leaderboardList(height = null) {
+    return rows('leaderboard').map((row) => {
+      const p = read('leaderboard', row.hex); if (!p.ok) return null;
+      const o = p.obj;
+      return { id: row.id, network: toHex(o.networkId), author: toHex(o.author), publishedHeight: o.publishedHeight, scope: o.scope, gameName: o.gameName, top: o.top,
+        amountSats: String(o.amountSats), federation: toHex(o.federationId), splitBps: o.splitBps, periodDays: o.periodDays, paymentHeight: o.paymentHeight, purpose: o.purpose,
+        vote: voteView(row.id, o, null, 'leaderboard'), hex: row.hex, tip: height };
+    }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
+  }
   const cancelledOf = (pid) => { const r = db.prepare('SELECT cancelled FROM funding_payments WHERE proposal = ?').get(pid); return r ? r.cancelled : null; };
   return {
     schedule,
     voteRound,
     decideFees,
     feesAt,
+    leaderboardsPassed,
+    leaderboardList,
     feeList,
     devMajorityOf: (pid, devKeys) => devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }),
     payments,
@@ -263,6 +285,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, id, String(hex).toLowerCase(), now());
         return { ok: true, fresh: true, id, proposal: id };
       }
+      // A LEADERBOARD PAYOUT REQUEST (kanban #460): anyone may ask; kept as a proposal, voted from its publication
+      if (kind === 'leaderboard') {
+        if (Number.isInteger(height) && r.obj.publishedHeight > height + 1) return { ok: false, status: 422, why: `published at ${r.obj.publishedHeight}, and this seat's chain is at ${height}` };
+        const vp = leaderboardVotePeriod({ proposal: r.obj, schedule });
+        if (r.obj.paymentHeight < vp.decidableAt) return { ok: false, status: 422, why: `the payment height ${r.obj.paymentHeight} comes before its vote is decided (${vp.decidableAt})` };
+        db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, id, String(hex).toLowerCase(), now());
+        return { ok: true, fresh: true, id, proposal: id };
+      }
       // A PROTOCOL DEVELOPER'S ANSWER: to a fee proposal this seat holds; the newest answer of each developer counts (devMajority)
       if (kind === 'fee-approval') {
         proposal = toHex(r.obj.proposalId);
@@ -277,7 +307,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (Number.isInteger(height) && r.obj.publishedHeight > height + 1) return { ok: false, status: 422, why: `published at ${r.obj.publishedHeight}, and this seat's chain is at ${height}` };
       } else {
         proposal = toHex(r.obj.proposalId);
-        if (!db.prepare("SELECT 1 FROM funding_items WHERE kind IN ('proposal', 'fee') AND id = ?").get(proposal)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first' };
+        if (!db.prepare("SELECT 1 FROM funding_items WHERE kind IN ('proposal', 'fee', 'leaderboard') AND id = ?").get(proposal)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first' };
         if (Number.isInteger(height) && r.obj.atHeight > height + 1) return { ok: false, status: 422, why: `dated ${r.obj.atHeight}, and this seat's chain is at ${height}` };
         if (kind === 'signal') {
           const bonded = isBonded(toHex(r.obj.node));
@@ -313,6 +343,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (!Number.isInteger(height)) return [];
       const done = [];
       for (const row of votedRows()) {
+        if (row.kind === 'leaderboard') continue;            // no signal period (kanban #460)
         if (outcomeOf(row.id)) continue;
         const p = read(row.kind, row.hex); if (!p.ok) continue;
         const end = p.obj.publishedHeight + schedule.signal;

@@ -26,6 +26,18 @@ import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswers
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { moveSeedOf } from './reserve-move.js';
+import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
+
+/**
+ * A LEADERBOARD PAYOUT'S MONEY (kanban #460): the inputs (reserve outputs) less their fees pay every winner's output and its fee; what is
+ * left is the change back to the reserve key (largestPayoutMsat: it pays its own fee). `covers` false when the inputs fall short.
+ */
+export function leaderboardAmounts({ inputs, winners, fees }) {
+  const total = inputs.reduce((t, x) => t + BigInt(x.amountMsat), 0n);
+  const left = total - inputs.reduce((t, x) => t + lnv2FeeMsat(fees, BigInt(x.amountMsat)), 0n)
+    - winners.reduce((t, w) => t + BigInt(w.msat) + lnv2FeeMsat(fees, BigInt(w.msat)), 0n);
+  return { total, covers: left >= 0n, changeMsat: left > 0n ? largestPayoutMsat(fees, left) : 0n };
+}
 
 /**
  * THE PROPOSAL'S LNURL, ASKED AS THE WINNINGS SENDER ASKS AN ADDRESS (winnings-send.js): a Lightning address (LUD-16) or an LNURL
@@ -110,8 +122,10 @@ export function moveAmountSats(inputs, gwFee, fees) {
  * verifiedMs }] under that federation's reserve key; `portOf(fedHex)`; `payRequest(lnurl, msat)` and `invoiceFor(lnurl, msat)` as
  * winnings-send.js; `network`; `keepRow(row)` a reserve row to keep (putDonationOutputs' shape); `broadcast(record)` to every seat.
  */
+// `leaderboards()` -> [{ id, federation (hex), amountSats, paymentHeight, decidableAt }] the leaderboard payouts whose vote passed here
+// (kanban #460); `winnersOf(id)` -> { ok, winners: [{ player, payoutPk (33-byte hex), msat }] } this seat's own reading of the season
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
-  keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [] }) {
+  keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winnersOf = async () => ({ ok: false, why: 'no season reader' }) }) {
   db.exec(RESERVE_PAYOUT_SQL);
   // A MOVE'S CLAIM (kanban #397, the drained-federation move): the destination's claim transaction and what it put under its reserve key
   for (const col of ['claim_txid', 'claim_msat']) if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} TEXT`);
@@ -145,14 +159,24 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     item: `reserves moved from ${String(plan.federation).slice(0, 8)}` });
   const payoutsOf = (pr) => {
     const p = planOfRow(pr);
+    // A LEADERBOARD PAYOUT (kanban #460): one payout contract per winner, to its identity's refund key, then the change
+    if (p.kind === 'leaderboard') {
+      const outs = p.winners.map((w) => ({ payoutPk: fromHex(w.payoutPk), msat: BigInt(w.msat) }));
+      if (BigInt(p.changeMsat) > 0n) outs.push({ payoutPk: fromHex(p.reserveKey), msat: BigInt(p.changeMsat) });
+      return outs;
+    }
     const outs = [{ payoutPk: fromHex(p.reserveKey), msat: BigInt(p.contractMsat), sent: { paymentHash: p.paymentHash, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration) } }];
     if (BigInt(p.changeMsat) > 0n) outs.push({ payoutPk: fromHex(p.reserveKey), msat: BigInt(p.changeMsat) });
     return outs;
   };
-  const changeRowOf = (plan, txid) => ({ outpoint: { txid: fromHex(txid), outIdx: 1n }, entryId: fromHex(plan.proposal), roundId: new Uint8Array(32),
+  const changeRowOf = (plan, txid) => ({ outpoint: { txid: fromHex(txid), outIdx: plan.kind === 'leaderboard' ? BigInt(plan.winners.length) : 1n }, entryId: fromHex(plan.proposal), roundId: new Uint8Array(32),
     federationId: fromHex(plan.federation), recipientPk: fromHex(plan.reserveKey), amountMsat: BigInt(plan.changeMsat), contractId: `payout-change:${plan.proposal}`,
     senderOnContract: false, item: 'payout change' });
 
+  // A WINNER'S OUTPUT, kept as a row under its key (GET /donations?key= serves it): its page collects it as a zap (kanban #460, #463)
+  const winnerRowsOf = (plan, txid) => plan.winners.map((w, i) => ({ outpoint: { txid: fromHex(txid), outIdx: BigInt(i) }, entryId: fromHex(plan.proposal), roundId: new Uint8Array(32),
+    federationId: fromHex(plan.federation), recipientPk: fromHex(w.payoutPk), amountMsat: BigInt(w.msat), contractId: `leaderboard:${plan.proposal}:${i}`,
+    senderOnContract: false, item: 'leaderboard payout' }));
   // WHAT THE FEDERATION IS ASKED TO SIGN, rebuilt here from the plan: the transaction (`tx`), the gateway's auth (`auth`), or the
   // refund of an expired contract back to the reserve key (`refund`)
   async function messageFor(kind, plan, extra = {}) {
@@ -196,6 +220,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   // window, which has moved on since
   async function planStands(plan, { late = false } = {}) {
     if (!plan || typeof plan !== 'object') return refuse('no plan');
+    if (plan.kind === 'leaderboard') return leaderboardPlanStands(plan, { late });
     const isMove = plan.kind === 'move';
     if (isMove) {
       // A MOVE: this seat's own records call for it - the same drained federation, the same destination and its key
@@ -267,6 +292,54 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const st = sendPlanStands({ plan: { invoice: plan.invoice, paymentHash: plan.paymentHash, gatewayUrl: plan.gatewayUrl, gatewayPk: plan.gatewayPk, expiration: plan.expiration },
       payoutMsat: contractMsat, gateways: gws.gateways || [], height: gws.height, metadata: pr.metadata, network });
     if (!st.ok) return refuse(st.why);
+    return { ok: true, planId: pid, signer: g };
+  }
+
+  /**
+   * DOES A LEADERBOARD PLAN STAND HERE (kanban #460) - a signer's own rebuild: the vote passed in its own record and the payment height is
+   * reached; its own key of that federation; no other plan for it; every input one of its own unspent reserve outputs at that amount and
+   * no more of them than the payout needs; the winners exactly as its own reading of the season names them (who, how much, in that
+   * order); at most 10 % of that federation's reserves; the change as those inputs leave it.
+   */
+  async function leaderboardPlanStands(plan, { late = false } = {}) {
+    const lb = (leaderboards() || []).find((x) => x.id === plan.proposal);
+    if (!lb) return refuse('this seat has no passed leaderboard payout of that id');
+    if (lb.federation !== plan.federation || String(lb.amountSats) !== String(plan.amountSats)) return refuse('the plan pays from another federation or another amount than the request');
+    const g = guardians().get(plan.federation);
+    if (!g || !g.key || toHex(g.key) !== plan.reserveKey) return refuse('the plan names another reserve key than this seat holds for that federation');
+    const pid = planIdOf(plan);
+    const had = rowOf(plan.proposal);
+    if (had && had.plan_id !== pid) return refuse(`a payout of that request is already ${had.state} here (plan ${String(had.plan_id || '-').slice(0, 16)}): no second plan`, 409);
+    if (plan.nonce !== toHex(payoutNonce(plan.proposal))) return refuse('the plan carries another nonce than the request\'s');
+    if (!Array.isArray(plan.winners) || !plan.winners.length) return refuse('a leaderboard payout pays at least one winner');
+    const own = new Map(unspent(plan.federation).map((r) => [r.outpoint, r]));
+    const seen = new Set();
+    for (const x of plan.refunds || []) {
+      if (seen.has(x.outpoint)) return refuse('an input twice'); seen.add(x.outpoint);
+      const sb = spentBy(x.outpoint);
+      if (sb && sb !== plan.proposal) return refuse(`${x.outpoint.slice(0, 16)}… was spent by another payout`, 409);
+      const r = own.get(x.outpoint);
+      if (!r && sb !== plan.proposal) return refuse(`${x.outpoint.slice(0, 16)}… is no unspent reserve output of this seat`);
+      if (r && String(r.amountMsat) !== String(x.amountMsat)) return refuse(`${x.outpoint.slice(0, 16)}… holds ${r.amountMsat} msat, not ${x.amountMsat}`);
+    }
+    const port = await portOf(plan.federation);
+    if (!port) return refuse('this seat reaches no port into that federation', 503);
+    const fees = await port.fees();
+    const amounts = leaderboardAmounts({ inputs: plan.refunds, winners: plan.winners, fees });
+    if (!amounts.covers) return refuse('the inputs do not cover the winners and their fees');
+    if (plan.refunds.length > 1 && leaderboardAmounts({ inputs: plan.refunds.slice(0, -1), winners: plan.winners, fees }).covers) return refuse('the plan spends more reserve outputs than the payout needs');
+    if (String(plan.changeMsat) !== String(amounts.changeMsat)) return refuse(`the change is ${plan.changeMsat} msat, and those inputs leave ${amounts.changeMsat}`);
+    const paid = plan.winners.reduce((t, w) => t + BigInt(w.msat), 0n);
+    if (paid !== BigInt(plan.amountSats) * 1000n) return refuse(`the winners are paid ${paid} msat, and the request is ${plan.amountSats} sat`);
+    if (late) return { ok: true, planId: pid, signer: g };
+    // THE 10 % CAP over the reserves this seat holds there now (the plan's own inputs counted)
+    const held = unspent(plan.federation, plan.proposal).reduce((t, r) => t + BigInt(r.amountMsat), 0n) / 1000n;
+    const cap = leaderboardCap({ amountSats: plan.amountSats, reservesSats: held });
+    if (!cap.ok) return refuse(cap.why);
+    const w = await winnersOf(plan.proposal);
+    if (!w || !w.ok) return refuse(`this seat cannot read the season's winners: ${w ? w.why : '?'}`, 503);
+    const same = (a, b) => a.length === b.length && a.every((x, i) => String(x.payoutPk).toLowerCase() === String(b[i].payoutPk).toLowerCase() && String(x.msat) === String(b[i].msat));
+    if (!same(plan.winners, w.winners)) return refuse('the plan pays other winners or other amounts than this seat\'s reading of the season');
     return { ok: true, planId: pid, signer: g };
   }
 
@@ -357,7 +430,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (rec.state === PAYOUT.SHORT) { if (!had) write(rec.proposal, { state: PAYOUT.SHORT, why: rec.why || null, federation: rec.federation || null }); return { ok: true }; }
     if (!rec.plan || planIdOf(rec.plan) !== rec.planId) return refuse('the record\'s plan is not its id');
     if (had && had.plan_id && had.plan_id !== rec.planId) return refuse('another plan of that proposal is kept here', 409);
-    if (rec.state === PAYOUT.PAID && !(rec.preimage && toHex(sha256(fromHex(rec.preimage))) === rec.plan.paymentHash)) return refuse('that preimage is not the invoice\'s');
+    if (rec.state === PAYOUT.PAID && rec.plan.kind === 'leaderboard' && !rec.txid) return refuse('a paid leaderboard payout names its transaction');
+    if (rec.state === PAYOUT.PAID && rec.plan.kind !== 'leaderboard' && !(rec.preimage && toHex(sha256(fromHex(rec.preimage))) === rec.plan.paymentHash)) return refuse('that preimage is not the invoice\'s');
     // A GUARDIAN OF THAT FEDERATION keeps a plan it was told about only when the plan stands on its own records: a forged plan
     // would otherwise hold the proposal's one place here and refuse the real one
     const g = guardians().get(rec.plan.federation);
@@ -372,6 +446,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (rec.state === PAYOUT.CLAIMED) keepRow(claimRowOf(rec.plan, rec.claimTxid, rec.claimMsat));
     markInputs(rec.proposal, rec.plan);
     if (rec.txid && BigInt(rec.plan.changeMsat) > 0n) keepRow(changeRowOf(rec.plan, rec.txid));
+    if (rec.state === PAYOUT.PAID && rec.plan.kind === 'leaderboard' && rec.txid) for (const row of winnerRowsOf(rec.plan, rec.txid)) keepRow(row);
     // THE REFUNDED CONTRACT is back under the reserve key: kept as a reserve row here too (its amount the refund's, rebuilt from the fees)
     if (rec.state === PAYOUT.REFUNDED && rec.refundTxid) {
       const port = await portOf(rec.plan.federation);
@@ -386,6 +461,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const out = [];
     const feds = guardians();
     out.push(...await moveRound({ height, feds }));
+    out.push(...await leaderboardRound({ height, feds }));
     for (const v of passed() || []) {
       const r = rowOf(v.id);
       if (r && (r.state === PAYOUT.PAID || r.state === PAYOUT.SHORT || r.state === PAYOUT.REFUNDED)) continue;
@@ -436,6 +512,58 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         broadcast(recordOf(rowOf(v.id)));
       }
       out.push({ id: v.id, ...(await advance(v.id, plan)) });
+    }
+    return out;
+  }
+  // THE LEADERBOARD PAYOUTS (kanban #460): from the payment height (and the vote decided) each guardian of the paying federation in
+  // turn plans, signs and submits; PAID once the federation accepts the transaction - the winners' outputs are theirs then
+  async function leaderboardRound({ height, feds }) {
+    const out = [];
+    for (const lb of leaderboards() || []) {
+      const r = rowOf(lb.id);
+      if (r && (r.state === PAYOUT.PAID || r.state === PAYOUT.SHORT)) continue;
+      const g = feds.get(lb.federation);
+      if (!g || !g.signer || !g.key) continue;
+      const i = g.members.indexOf(me);
+      const from = Math.max(Number(lb.paymentHeight), Number(lb.decidableAt));
+      if (i < 0 || !(Number.isInteger(height) && height >= from + TAKEOVER_BLOCKS * i)) continue;
+      let plan = planOfRow(r);
+      if (!plan) {
+        const short = (why) => { write(lb.id, { state: PAYOUT.SHORT, why, federation: lb.federation }); broadcast({ proposal: lb.id, state: PAYOUT.SHORT, why, federation: lb.federation });
+          log(`[leaderboard] ${lb.id.slice(0, 16)}: SHORT - ${why}`); return { id: lb.id, state: PAYOUT.SHORT, why }; };
+        const port = await portOf(lb.federation); if (!port) continue;
+        const fees = await port.fees();
+        const have = unspent(lb.federation);
+        const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
+        const cap = leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats });
+        if (!cap.ok) { out.push(short(cap.why)); continue; }
+        const w = await winnersOf(lb.id);
+        if (!w || !w.ok) { out.push({ id: lb.id, ok: false, why: w ? w.why : 'no winners read' }); continue; }   // read again next pass
+        if (!w.winners.length) { out.push(short('the season names no identity to pay')); continue; }
+        const winners = w.winners.map((x) => ({ player: x.player, payoutPk: String(x.payoutPk).toLowerCase(), msat: String(x.msat) }));
+        const inputs = [];
+        for (const x of have) { inputs.push({ outpoint: x.outpoint, amountMsat: String(x.amountMsat) }); if (leaderboardAmounts({ inputs, winners, fees }).covers) break; }
+        const amounts = leaderboardAmounts({ inputs, winners, fees });
+        if (!amounts.covers) { out.push(short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
+        plan = { kind: 'leaderboard', proposal: lb.id, federation: lb.federation, reserveKey: toHex(g.key), amountSats: String(lb.amountSats), winners,
+          refunds: inputs, changeMsat: String(amounts.changeMsat), nonce: toHex(payoutNonce(lb.id)) };
+        const st = await planStands(plan);
+        if (!st.ok) { log(`[leaderboard] ${lb.id.slice(0, 16)}: own plan refused - ${st.why}`); out.push({ id: lb.id, ...st }); continue; }
+        write(lb.id, { plan_id: st.planId, federation: lb.federation, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(lb.id, plan);
+        broadcast(recordOf(rowOf(lb.id)));
+      }
+      const s = await sign(plan, 'tx');
+      if (!s.ok) { out.push({ id: lb.id, ...s }); continue; }
+      const port = await portOf(plan.federation);
+      const tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: plan.refunds.map((x) => ({ outpoint: outpointOf(x.outpoint), amountMsat: BigInt(x.amountMsat) })),
+        payouts: payoutsOf({ plan: JSON.stringify(plan) }), nonce: fromHex(plan.nonce), signature: s.signature });
+      if (!tx || !tx.accepted) { out.push({ id: lb.id, ...refuse(`the guardians refused the payout: ${tx ? tx.error : '?'}`) }); continue; }
+      write(lb.id, { state: PAYOUT.PAID, txid: tx.txid, why: `${plan.winners.length} winner(s) paid ${plan.amountSats} sat in the federation` });
+      for (const row of winnerRowsOf(plan, tx.txid)) keepRow(row);
+      if (BigInt(plan.changeMsat) > 0n) keepRow(changeRowOf(plan, tx.txid));
+      broadcast(recordOf(rowOf(lb.id)));
+      log(`[leaderboard] ${lb.id.slice(0, 16)}: PAID ${plan.amountSats} sat to ${plan.winners.length} winner(s) (tx ${String(tx.txid).slice(0, 16)})`);
+      out.push({ id: lb.id, ok: true, state: PAYOUT.PAID, txid: tx.txid });
     }
     return out;
   }
