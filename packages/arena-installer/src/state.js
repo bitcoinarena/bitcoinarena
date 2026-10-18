@@ -83,6 +83,7 @@ export function seatEnv(s, { home, release }) {
   // CUSTODY (kanban #471 slice 5, ruling 3): the node's guardian in setup mode (ARENA_FOUNDING=1, node-start.js) from the release's own
   // fedimintd, reached at the node's public address /guardian - so it can be drawn when new nodes found a federation
   const custody = guardianSetupOf(s, { release });
+  if ((s.roles || []).includes('custody')) lines.push('ARENA_GATEWAY_PORT=8476');   // the seat carries <public>/gateway/ to the node's gateway (gateway.js GATEWAY_PORT)
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
   lines.push(`ARENA_ROLES=${(s.roles || []).join(',')}`);
   return lines.join('\n') + '\n';
