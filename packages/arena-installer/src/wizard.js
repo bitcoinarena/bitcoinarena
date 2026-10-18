@@ -71,6 +71,24 @@ export function beginAddCustody(state) {
   return { ok: true };
 }
 
+/** Custody added to a node that already has a bond (no second bond). */
+const laterCustody = (s) => Boolean(s.custodyLater && s.bond && s.bond.txid && (s.roles || []).includes('custody') && !s.bond.custodyAdvert);
+/**
+ * WHAT THE NODE'S WALLET MUST RECEIVE, BY PART, for the roles chosen (the bond step shows the total from the start - measured on the
+ * test host, rc.12: a custody node was told "at least 52,000 sat", the bond alone, while it needs the peg-in and both channels too).
+ * Custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation,
+ * the ring channel to the next node of its federation and the outside channel (custody-agent.js). A liquidity provider: its deposit
+ * (§23A.10: 5 x L on testnet4), sent to LND's wallet by the node's agent.
+ */
+export function depositParts(s, pegInSats) {
+  const custody = (s.roles || []).includes('custody');
+  const pegIn = Math.max(0, Math.floor(Number(pegInSats) || 0));
+  const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS }
+    : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS } : {}) };
+  if ((s.roles || []).includes('liquidity')) { parts.liquidity = Number(LIQUIDITY_TERMS.testnet4.depositSats); parts.fees = parts.fees || 2000; }
+  return parts;
+}
+
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   // tailscale: the test host app's own CLI when it is installed, else the one in PATH
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
@@ -121,7 +139,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS + 2000n) } : null,
+      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0);
+        return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -492,12 +511,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const custody = (s.roles || []).includes('custody');
       const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
       if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
-      // custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation
-      // and the ring channel each custody node opens to the next node of its federation (custody-agent.js: its gateway's outbound, the next one's inbound)
-      const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS }
-        : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS } : {}) };
-      // a liquidity provider's deposit (§23A.10): 5 x L on testnet4, sent to LND's wallet by the node's agent
-      if ((s.roles || []).includes('liquidity')) { parts.liquidity = Number(LIQUIDITY_TERMS.testnet4.depositSats); parts.fees = parts.fees || 2000; }
+      const parts = depositParts(s, pegInSats);
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
       return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s) };
     },
@@ -569,7 +583,6 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   };
 
   // a posted bond whose advertisement does not name custody yet, on a node that chose custody (beginAddCustody)
-  const laterCustody = (s) => Boolean(s.custodyLater && s.bond && s.bond.txid && (s.roles || []).includes('custody') && !s.bond.custodyAdvert);
   const installAgent = async () => {
     const a = await gwKit.installProgram({ id: 'custody', description: 'The custody agent of the Arena node', home: state.home, boot: true,
       args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', state.home] });

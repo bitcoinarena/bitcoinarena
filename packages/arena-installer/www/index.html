@@ -349,7 +349,7 @@ async function load() {
   if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
   if (st.step === 'chain') pickElectrum();
   if (st.step === 'lightning' && st.lightning && st.lightning.pubkey) $('ln-gw').hidden = false;
-  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); $('b-custody').hidden = !st.roles.includes('custody');
+  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = needText(st.wallet.needSats, st.wallet.parts); $('b-need2').textContent = needText(st.wallet.needSats, st.wallet.parts); $('b-custody').hidden = !st.roles.includes('custody');
   $('b-later-custody').hidden = !st.custodyLater; $('b-custody-why').hidden = st.custodyLater; $('b-later').textContent = st.custodyLater ? 'Later' : 'I\'ll post it later'; $('b-new').hidden = st.custodyLater; $('b-post').textContent = st.custodyLater ? 'Update my bond for custody' : 'Post the bond'; }
   if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
@@ -482,9 +482,11 @@ $('ch-refresh').onclick = showFunds;
 $('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/lightning/channel', { peer: $('ch-peer').value, sats: Number($('ch-sats').value) }); e.target.disabled = false;
   say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
+// the total the wallet must receive, and its parts when there are more than the bond and its fees
+const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)' };
+const needText = (need, parts) => `${Number(need).toLocaleString('en')}${parts && Object.keys(parts).length > 2 ? ` (${Object.entries(parts).map(([k, v]) => `${PART[k] || k} ${Number(v).toLocaleString('en')}`).join(', ')})` : ''}`;
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
-  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)' };
-  if (r.parts && Object.keys(r.parts).length > 2) $(r.update ? 'b-need2' : 'b-need').textContent = `${r.needSats.toLocaleString('en')} (${Object.entries(r.parts).map(([k, v]) => `${PART[k] || k} ${v.toLocaleString('en')}`).join(', ')})`;
+  if (r.parts && Object.keys(r.parts).length > 2) $(r.update ? 'b-need2' : 'b-need').textContent = needText(r.needSats, r.parts);
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
   m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
   $('b-lock').textContent = r.lock ? lockText(r.lock) : ''; $('b-post').disabled = !r.enough; };
