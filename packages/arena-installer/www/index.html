@@ -44,7 +44,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <h2>1. Bitcoin connection</h2>
     <p class="sub">Your node reads the testnet4 chain. Use your own Bitcoin Core, or an Electrum server.</p>
     <div class="row">
-      <button class="ghost" id="k-core">Bitcoin Core</button><button class="ghost" id="k-electrum">Electrum server</button>
+      <button class="ghost" id="k-core">My Bitcoin Core</button><button class="ghost" id="k-electrum">Electrum server</button><button class="ghost" id="k-install">Install Bitcoin Core for me</button>
     </div>
     <div id="core-form">
       <label>RPC URL</label><input id="c-url" value="http://127.0.0.1:48332/">
@@ -57,7 +57,17 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
       <label><input type="checkbox" id="e-tls" checked style="width:auto"> TLS</label>
       <p class="sub">In Electrum mode a small bridge on this machine reads headers from the server and verified blocks from Esplora.</p>
     </div>
-    <button class="ghost" id="chain-test">Test</button><button id="chain-save">Save and go on</button>
+    <div id="in-form" hidden>
+      <div id="in-plan" class="sub">Checking this machine…</div>
+      <label class="role"><input type="checkbox" id="in-prune"><div><b>Pruned</b><p>Keeps the chain state and only the newest blocks: a few GB instead of the whole chain. Your node works the same.</p></div></label>
+      <label class="role"><input type="checkbox" id="in-main"><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. The Arena runs on testnet4 now.</p></div></label>
+      <button id="in-go">Install and start syncing</button>
+      <div id="sync" hidden>
+        <p class="warn"><b>Bookmark this page.</b> The first sync can take hours on testnet4 and days on mainnet. You can close this page and come back; setup continues here once testnet4 is synced. Keep the installer running (this terminal), or start it again later.</p>
+        <div id="sync-rows"></div>
+      </div>
+    </div>
+    <div id="chain-buttons"><button class="ghost" id="chain-test">Test</button><button id="chain-save">Save and go on</button></div>
     <div class="msg" id="chain-msg"></div>
   </section>
 
@@ -162,7 +172,37 @@ async function load() {
     ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it can only be added to, not withdrawn; from that block on, the owner page withdraws it.</p>`
       : `<p>No bond yet: send it to <code>${esc(st.wallet ? st.wallet.address : '')}</code> and post it from the owner page. Until then your node is not drawn for rounds.</p>`}`; }
 }
-function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('k-core').className = k === 'core' ? '' : 'ghost'; $('k-electrum').className = k === 'electrum' ? '' : 'ghost'; }
+function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('in-form').hidden = k !== 'install'; $('chain-buttons').hidden = k === 'install';
+  for (const x of ['core', 'electrum', 'install']) $('k-' + x).className = k === x ? '' : 'ghost';
+  if (k === 'install') plan(); }
+const gb = (b) => `${Math.round(b / 2 ** 30).toLocaleString('en')} GB`;
+const dur = (ms) => ms === null || ms === undefined ? 'estimating… (a few minutes of syncing first)' : ms < 3600000 ? `about ${Math.max(1, Math.round(ms / 60000))} min` : ms < 172800000 ? `about ${Math.round(ms / 3600000)} h` : `about ${Math.round(ms / 86400000)} days`;
+async function plan() {
+  const r = await post('/api/core/plan');
+  if (r.core) { $('sync').hidden = false; $('in-go').hidden = true; return watchSync(); }
+  if (r.installed) { $('in-plan').innerHTML = `Bitcoin Core is installed here already (<code>${esc(r.installed)}</code>): choose <b>My Bitcoin Core</b> and connect it.`; $('in-go').disabled = true; return; }
+  const d = r.disk, n = r.needs;
+  $('in-plan').innerHTML = `<p>Free on this disk: <b>${gb(d.freeBytes)}</b>. Needed: testnet4 ${gb(n.testnet4.fullBytes)} (pruned ${gb(n.testnet4.prunedBytes)}), mainnet ${gb(n.mainnet.fullBytes)} (pruned ${gb(n.mainnet.prunedBytes)}).</p>`
+    + (d.warn ? `<p class="warn">${esc(d.warn)}</p>` : '<p>Enough for both full nodes.</p>');
+  $('in-prune').checked = !d.networks.testnet4.full;
+}
+let syncTimer = null;
+async function watchSync() {
+  const r = await (await fetch('/api/core/status')).json();
+  if (r.ok) {
+    $('sync-rows').innerHTML = Object.entries(r.networks).filter(([k]) => k === 'testnet4' || k === 'mainnet').map(([n, x]) => x.ok
+      ? `<div class="role"><div style="flex:1"><b>${n}</b> - block ${x.blocks.toLocaleString('en')} of ${x.headers.toLocaleString('en')} · ${(x.progress * 100).toFixed(2)} % · ${x.synced ? '<b>synced</b>' : dur(x.etaMs) + ' left'}
+         <div style="height:8px;background:var(--line);border-radius:4px;margin-top:6px"><div style="height:8px;width:${(x.progress * 100).toFixed(2)}%;background:var(--accent);border-radius:4px"></div></div></div></div>`
+      : `<div class="role"><b>${n}</b> - ${esc(x.why)}</div>`).join('');
+    if (r.chainSaved) return load();
+  }
+  clearTimeout(syncTimer); syncTimer = setTimeout(watchSync, 15000);
+}
+$('k-install').onclick = () => setKind('install');
+$('in-go').onclick = async (e) => { e.target.disabled = true; $('chain-msg').className = 'msg ok'; $('chain-msg').textContent = 'Downloading and checking Bitcoin Core…';
+  const r = await post('/api/core/install', { prune: $('in-prune').checked, mainnet: $('in-main').checked });
+  if (!r.ok) { e.target.disabled = false; return say('chain-msg', r); }
+  $('chain-msg').className = 'msg ok'; $('chain-msg').textContent = 'Bitcoin Core runs and syncs.'; $('sync').hidden = false; $('in-go').hidden = true; watchSync(); };
 function pickElectrum() { const v = $('e-pick').value; const s = st.electrum[v]; if (s) { $('e-host').value = s.host; $('e-port').value = s.port; $('e-tls').checked = s.tls; } }
 const chainBody = () => kind === 'core'
   ? { kind: 'core', url: $('c-url').value.trim(), ...($('c-cookie').value.trim() ? { cookiePath: $('c-cookie').value.trim() } : { user: $('c-user').value, password: $('c-pass').value }) }
@@ -210,7 +250,7 @@ $('nostr-login').onclick = async () => { if (!window.nostr) return say('svc-msg'
   const t = { ...nostrTemplate, created_at: Math.floor(Date.now() / 1000) }; const ev = await window.nostr.signEvent(t);
   const r = await post('/api/owner/login', { nostr: ev }); if (r.ok) return load(); say('svc-msg', r); };
 $('finish').onclick = async () => { const r = await post('/api/finish'); say('finish-msg', r, `Finished. The installer has stopped. Your owner page: ${r.owner}`); $('finish').disabled = true; };
-setKind('core'); load();
+setKind('core'); load().then(() => { if (st && st.step === 'chain') fetch('/api/state').then(() => post('/api/core/plan')).then((r) => { if (r && r.core) setKind('install'); }); });
 </script>
 </body>
 </html>
