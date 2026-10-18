@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease } from '../src/update.js';
+import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode } from '../src/update.js';
 import { seatUnit, unitDir, UNIT, waitHealthy } from '../src/service.js';
 
 const REPO = resolve(fileURLToPath(import.meta.url), '../../../..');
@@ -203,7 +203,7 @@ test('Windows: the launchers that run the old release move to the new one; stopp
   const kill = calls.find((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1)));
   assert.ok(kill && kill.at(-1).includes(`*${v1}*`), 'the processes of rc.12 are ended, by command line');
   assert.deepEqual(calls.filter((c) => c[0] === 'schtasks').map((c) => c.at(-1)).sort(), ['Arena node', 'Arena tor']);
-  assert.equal(calls.filter((c) => c[0] === 'powershell' && /Start-Process/.test(c.at(-1))).length, 2, 'both started hidden');
+  assert.equal(calls.filter((c) => c[0] === 'powershell' && /Invoke-CimMethod -ClassName Win32_Process -MethodName Create/.test(c.at(-1))).length, 2, 'both started through WMI, outside the session that runs the update');
   // a release that does not come up: the rc.13 launchers put back
   up = false;
   const bad = await updateNode({ home, newRelease: 'C:\\broken', port: 8470, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 1500 });
@@ -262,4 +262,18 @@ test('a node on a quick tunnel: the tunnel starts first, its new name goes into 
   assert.ok(!envNow.includes('conventional-cube') && envNow.includes(`ARENA_WSS_${port}=${fresh}`) && envNow.includes(`=wss://cult-turns-subscriptions-monitors.trycloudflare.com/guardian`), envNow);
   assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).reach.url, fresh);
   assert.equal(up.identity, first.identity);
+});
+
+test('a rollback puts the backup back even while Windows still holds a file: busy ones are tried again, one that never frees is named, the rest go back (rc.14 -> rc.20 in the Windows VM threw and started nothing)', async () => {
+  const backup = { dir: 'B', files: ['node.db', 'node.db-wal', 'node.db-shm', 'node.env'] };
+  const busy = (code) => Object.assign(new Error(`${code}: resource busy or locked`), { code });
+  const copied = [], left = { 'node.db': 2, 'node.db-shm': 99 };
+  const copy = (from, to) => { const f = from.split(/[\\/]/).pop(); if ((left[f] || 0) > 0) { left[f]--; throw busy(f === 'node.db' ? 'EBUSY' : 'EPERM'); } copied.push(f); };
+  let pauses = 0;
+  const r = await restoreNode('H', backup, { tries: 5, pause: async () => { pauses++; }, copy });
+  assert.deepEqual(copied, ['node.db', 'node.db-wal', 'node.env'], 'node.db after two busy tries; the others too');
+  assert.deepEqual([r.ok, r.failed], [false, ['node.db-shm: EPERM']]);
+  assert.equal(pauses, 2 + 4, 'a pause between tries, none after the last');
+  const other = await restoreNode('H', { dir: 'B', files: ['x'] }, { copy: () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); }, pause: async () => { throw new Error('no retry'); } });
+  assert.deepEqual(other.failed, ['x: ENOENT'], 'only a busy file is tried again');
 });
