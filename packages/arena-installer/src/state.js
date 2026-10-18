@@ -14,9 +14,9 @@ export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir
 
 // THE ROLES (spec §27A roles; ruling 2: custody on Linux and macOS, and in slice 5): what each needs, said before it is chosen
 export const ROLES = Object.freeze({
-  verify: { title: 'Game / verify', needs: 'Replays and signs the rounds it is seated on. A bond, a reachable https endpoint, about 2 GB of disk and one core.', slice: 1 },
-  settlement: { title: 'Settlement', needs: 'Co-signs the settlement of rounds it is seated on. The verify role\'s needs, and to be up through each settlement window.', slice: 1 },
-  custody: { title: 'Custody', needs: 'A Lightning node (LND): set up here in the Lightning step, or your own connected. Needs your own Bitcoin Core (not Electrum), about 1 GB more disk, port 9735 open for Lightning peers. Your node becomes one of a federation\'s 10 guardians and may run one of its 2 gateways (the next steps explain both).', slice: 1 },
+  verify: { title: 'Game / verify', needs: 'Replays each round it is seated on and signs who won. 5 of the round\'s 7 seated nodes must agree. Needs a bond, a public https address, about 2 GB of disk and one CPU core.', slice: 1 },
+  settlement: { title: 'Settlement', needs: 'Pays the round out: once the result is signed, it co-signs the payment of the winners from the locked stakes (or the refunds, if a round fails). 5 of the round\'s 7 seated nodes must sign. Needs the same as game / verify, and to stay online until its rounds are paid.', slice: 1 },
+  custody: { title: 'Custody', needs: 'Holds the players\' bitcoin together with 9 other nodes: your node becomes one of a federation\'s 10 guardians and may run one of its 2 Lightning gateways (the next steps explain both). Needs your own Bitcoin Core (not Electrum), a Lightning node (LND: set up in the Lightning step, or your own), about 1 GB more disk and port 9735 open.', slice: 1 },
 });
 
 const atomicWrite = (path, text) => {
