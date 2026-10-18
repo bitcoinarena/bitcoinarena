@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -677,6 +677,11 @@ const ITEMS_VERSION = 10;
 const RESERVES_VERSION = 11;
 /** 2026.0.12 (kanban #460): the leaderboard payout - a proposal that pays the top N of a season from the protocol reserves. */
 const LEADERBOARD_VERSION = 12;
+// 2026.0.13 - THE GUARDIAN POOL IS THE FEDERATION'S SEATED GUARDIANS (§22A v4.6.4, kanban #33 gap 1; measured on Tick Tock round 32cfad1c,
+// 10-16: test host 7, seated in federation A - no absence, no departure - was out of that day's census and got no guardian share, while
+// the six in the census were paid). From this version a round's guardian third goes to the guardians its federation's record seats (not
+// gone, §23A.1), whether or not each is in the round's census; below it, the census nodes naming the federation, as before.
+const SEATED_GUARDIAN_VERSION = 13;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -6838,6 +6843,9 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 11, year: 2026, x: 0 }),
   // the leaderboard payout: a proposal that pays the top N of a season from the protocol reserves, in the federation (kanban #460)
   Object.freeze({ version: 12, year: 2026, x: 0 }),
+  // the guardian pool is the federation's seated guardians: a round's guardian third goes to the guardians its federation's record
+  // seats (not gone), in its census or not (kanban #33, §22A v4.6.4)
+  Object.freeze({ version: 13, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -15357,9 +15365,18 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     const rid = roundId(contract);
     donated = split.shares.map((x, i) => ({ ...x, id: donationSendId(rid, i), index: i })).filter((x) => x.amountMsat > 0n);
   }
-  // ONE PAYOUT PER SIGNER NODE KEY: a signer node in both pools is owed both shares (§22A), paid together.
+  // ONE PAYOUT PER SIGNER NODE KEY: a signer node in both pools is owed both shares (§22A), paid together. A GUARDIAN SHARE OF A
+  // 2026.0.13 ROUND goes to its advert's payout key where the seat names one (`signerNodes.guardianPayout`: node key hex -> 33-byte
+  // key, guardian-payout.js): its own output, apart from that node's committee shares.
+  const payoutOf = signerNodes.guardianPayout instanceof Map ? signerNodes.guardianPayout : null;
   const owed = new Map();
-  for (const [k, msat] of table.signerNodes) { const key = k.slice(k.indexOf(':') + 1); owed.set(key, (owed.get(key) || 0n) + msat); }
+  for (const [k, msat] of table.signerNodes) {
+    const node = k.slice(k.indexOf(':') + 1);
+    const pk = payoutOf && k.startsWith(`${GUARDIAN}:`) ? payoutOf.get(node) : null;
+    if (pk && !(pk instanceof Uint8Array && pk.length === 33)) return refuse('a guardian is paid to a 33-byte payout key');
+    const key = pk ? `payout:${toHex(pk)}` : node;
+    owed.set(key, (owed.get(key) || 0n) + msat);
+  }
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendable = poolMsat - inputFeesMsat;
   if (spendable <= 0n) return refuse(`the guardians' fees on the fee locks (${inputFeesMsat} msat) take the whole fee of ${poolMsat}`);
@@ -15393,12 +15410,13 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   }
   const nodesSpendable = nodePartMsat - publisherGross - frontendGross;
   for (const [key, msat] of owed) {
-    const pubkey = fromHex(key);
+    const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : null;
+    const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
     // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
     const owedMsat = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
     const got = largestPayoutMsat(fees, publisherGross || frontendGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
+    payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: guardianPk ? 'guardian payout key' : 'signer node' });
   }
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {
@@ -31503,10 +31521,24 @@ const countOf = (template, count) => (count !== undefined ? count
   : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
 const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
 
+// ONE TEMPLATE'S ID IS WORKED OUT ONCE PER PERIOD AND COUNT (kanban #468 item 4, measured on seat 3's start 2026-10-18:
+// seriesRoundCheck - every door that touches a round asks it - encoded and hashed every held template again on every ask,
+// 4.5 % of the main thread's first minute). Kept per template object: a series file read again makes new objects; nothing
+// changes a template after it is read.
+const idsOf = new WeakMap();   // template -> Map(`${periodMs}|${count}` -> id)
+
 /** series_id = H(template || round_period || round_count), tagged; a grid's with 'G' after its count. */
 function seriesId(template, { periodMs, count } = {}) {
   periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
+  const memo = template && typeof template === 'object' ? (idsOf.get(template) || (idsOf.set(template, new Map()), idsOf.get(template))) : null;
+  const key = `${periodMs}|${count}`;
+  if (memo && memo.has(key)) return memo.get(key);
+  const id = seriesIdOf(template, periodMs, count);
+  if (memo) memo.set(key, id);
+  return id;
+}
+function seriesIdOf(template, periodMs, count) {
   // a v2 template's `nodes` is no part of its id (2026.0.2, kanban #348): its rounds' seats are drawn after it
   const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
   const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
