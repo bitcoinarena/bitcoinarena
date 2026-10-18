@@ -136,7 +136,8 @@
     var st = el('span', 'say', state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…');
     var nw = el('a', 'btn primary grow', 'New proposal'); nw.href = '#new';
     var fz = el('a', 'btn', 'Change fees'); fz.href = '#fees';
-    bar.append(st, fz, nw); view.append(bar);
+    var lp = el('a', 'btn', 'Leaderboard payout'); lp.href = '#payout';
+    bar.append(st, fz, lp, nw); view.append(bar);
     var t = el('div', 'topics');
     var th = el('div', 'th'); th.append(el('span', null, 'Proposal'), el('span', 'n', 'Amount'), el('span', 'n', 'Replies'), el('span', 'n', 'Stage')); t.append(th);
     if (state.list && !state.list.length) t.append(el('div', 'empty', 'No proposals yet. Start the first one.'));
@@ -338,9 +339,87 @@
     }).catch(function (e) { box.textContent = e.message; });
   }
 
+  // A LEADERBOARD PAYOUT REQUEST (kanban #460, the owner 2026-10-17: "distribution of X sats for the best 10 p&l of last week"; 2026-10-18:
+  // "YES >= 25 % of the voting weight is enough on its own"): which game, market or all, the top N, the amount from one federation's
+  // reserves (at most 10 % of them), equal or per place, the last 7 / 14 days or month, and the payment date. Its vote: 2 weeks from
+  // publication, bond-weighted, no signal; it passes at YES >= 25 % of the voting weight. The winners' payouts land in their wallets as
+  // zaps do. Below, every request with its vote.
+  function payoutView() {
+    view.textContent = '';
+    var back = el('a', 'btn', '← All proposals'); back.href = '#';
+    var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'Leaderboard payout'));
+    var box = el('div', 'empty', 'Reading the nodes…'); view.append(box);
+    var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+    Promise.all([BLWPCLIENT.fetchLeaderboards({ nodes: state.nodes }), fetch(base + '/reserves').then(function (r) { return r.json(); }).catch(function () { return { federations: [] }; })]).then(function (x) {
+      box.remove();
+      var lbs = x[0], feds = (x[1].federations || []).filter(function (f) { return f.key || f.reserveKey; });
+      var tip = Number(lbs.tip || state.tip || 0);
+      var f = el('form', 'compose payout');
+      var fedOpts = feds.map(function (fd) { var held = Math.floor(Number(fd.heldMsat || 0) / 1000); return '<option value="' + esc(fd.federationId) + '">' + esc(fd.federationId.slice(0, 8)) + ' · reserves ' + held.toLocaleString('en-US') + ' sat · up to ' + Math.floor(held / 10).toLocaleString('en-US') + ' sat</option>'; }).join('');
+      var day = new Date(Date.now() + 15 * 86400000); day.setUTCHours(0, 0, 0, 0);
+      f.innerHTML = '<p class="reserves-line">Pays the best players of a season by P&L from one federation\'s protocol reserves, as e-cash into their Arena wallets. Its vote runs 2 weeks from publication, weighted by bond, with no signal; it passes when YES is at least 25 % of the voting weight. At most 10 % of that federation\'s reserves.</p>'
+        + '<div class="row"><label>Leaderboard<select name="scope"><option value="0">All games and markets</option><option value="1">One game</option><option value="2">One market</option></select></label><label>Game or market name<input name="game" placeholder="e.g. btc-updown-15m" disabled></label></div>'
+        + '<div class="row"><label>Top<input name="top" type="number" min="1" max="' + BLWPCLIENT.LB_TOP_MAX + '" value="10"></label><label>Amount (sat)<input name="amount" type="number" min="1" step="1"></label></div>'
+        + '<div class="row"><label>Paid from<select name="fed">' + (fedOpts || '<option value="">no federation with a reserve key answered</option>') + '</select></label><label>Period<select name="period">' + BLWPCLIENT.LB_PERIOD_DAYS.map(function (d) { return '<option value="' + d + '">' + (d === 30 ? 'last month (30 days)' : 'last ' + d + ' days') + '</option>'; }).join('') + '</select></label></div>'
+        + '<div class="row"><label>Split per place <span class="hint">empty: equal; or percents, one per place, e.g. 50, 30, 20</span><input name="split" placeholder="equal"></label><label>Payment date (UTC)<input name="date" type="date" value="' + day.toISOString().slice(0, 10) + '"></label></div>'
+        + '<label>Why <span class="hint">optional</span><textarea name="purpose" rows="3" maxlength="4000"></textarea></label>'
+        + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
+      f.scope.addEventListener('change', function () { f.game.disabled = f.scope.value === '0'; });
+      var built = function () {
+        var sp = BLWPCLIENT.splitFromPercents(f.split.value, Number(f.top.value));
+        if (!sp.ok) return sp;
+        var dateMs = Date.parse(f.date.value + 'T00:00:00Z');
+        if (!(dateMs > Date.now())) return { ok: false, why: 'the payment date is in the future' };
+        return { ok: true, scope: Number(f.scope.value), gameName: f.game.value.trim(), top: Number(f.top.value), amountSats: f.amount.value ? Math.floor(Number(f.amount.value)) : 0,
+          federationId: f.fed.value, splitBps: sp.splitBps, periodDays: Number(f.period.value), paymentHeight: BLWPCLIENT.heightAtDate({ tip: tip, nowMs: Date.now(), dateMs: dateMs }), purpose: f.purpose.value };
+      };
+      var check = function () {
+        var out = f.querySelector('.out'), b = built();
+        if (!b.ok) { say(out, b.why, true); return null; }
+        var fd = feds.find(function (z) { return z.federationId === b.federationId; });
+        var cap = fd ? Math.floor(Number(fd.heldMsat || 0) / 1000 / 10) : 0;
+        if (b.amountSats && fd && b.amountSats > cap) { say(out, b.amountSats.toLocaleString('en-US') + ' sat is more than 10 % of that federation\'s reserves (' + cap.toLocaleString('en-US') + ' sat): it could never be paid.', true); return null; }
+        say(out, 'Pays the top ' + b.top + ' at block ' + b.paymentHeight + (b.splitBps.length ? ' by the split' : ', equal') + '.'); return b;
+      };
+      f.addEventListener('input', check);
+      f.addEventListener('submit', function (e) {
+        e.preventDefault(); var out = f.querySelector('.out');
+        if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
+        var b = check(); if (!b) return;
+        if (!b.amountSats) { say(out, 'Name the amount.', true); return; }
+        say(out, 'Signing…');
+        (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+          if (!net) throw new Error('the nodes did not agree on their network');
+          state.network = net;
+          var p = BLWPCLIENT.signedLeaderboardPayout(Object.assign({ secretKey: state.key, networkId: net, publishedHeight: tip, curve: window.BLWP_CURVE }, b));
+          if (!p.ok) throw new Error(p.why);
+          return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'leaderboard', hex: p.hex }).then(function (y) { return { y: y, id: p.id }; });
+        }).then(function (z) {
+          if (!z.y.ok) { say(out, 'Not taken: ' + z.y.why, true); return; }
+          window.ARENA_LEADERBOARD_PAYOUT = { id: z.id, took: z.y.took, asked: z.y.asked };
+          say(out, 'Published to ' + z.y.took + ' of ' + z.y.asked + ' nodes. Its 2-week vote starts now.');
+          setTimeout(payoutView, 1500);
+        }).catch(function (x) { say(out, x.message, true); });
+      });
+      view.append(f, el('h2', null, 'Leaderboard payout requests'));
+      var list = lbs.ok ? lbs.leaderboards : [];
+      if (!list.length) view.append(el('div', 'empty', lbs.ok ? 'No leaderboard payouts yet.' : lbs.why));
+      list.forEach(function (p) {
+        var v = p.vote || {}, cnt = v.count || {};
+        var c = el('div', 'fee-prop');
+        c.innerHTML = '<div class="bar"><b>Top ' + p.top + ' · ' + Number(p.amountSats).toLocaleString('en-US') + ' sat</b><span class="say">' + esc(v.state || '…') + (cnt.yesOfAllPct !== undefined ? ' · YES ' + cnt.yesOfAllPct + ' % of the voting weight (25 % passes)' : '') + '</span></div>'
+          + '<p class="hint">' + esc(p.scope === 0 ? 'all games and markets' : p.gameName) + ' · last ' + p.periodDays + ' days · paid at block ' + p.paymentHeight + ' from ' + esc(p.federation.slice(0, 8)) + (p.splitBps && p.splitBps.length ? ' · split ' + p.splitBps.map(function (b) { return b / 100 + ' %'; }).join(' / ') : ' · equal') + '</p>'
+          + (p.purpose ? '<div class="md">' + markdown(p.purpose) + '</div>' : '');
+        view.append(c);
+      });
+      window.ARENA_PAYOUT_VIEW = { tip: tip, federations: feds.length, requests: list.length };
+    }).catch(function (e) { box.textContent = e.message; });
+  }
+
   function route() {
     var h = location.hash;
-    if (h === '#fees') feesView();
+    if (h === '#payout') payoutView();
+    else if (h === '#fees') feesView();
     else if (h === '#new') newView();
     else if (h.indexOf('#pip=') === 0) { var q = (state.list || []).find(function (x) { return String(x.pip) === h.slice(5); }); threadView(q ? q.id : ''); }
     else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();

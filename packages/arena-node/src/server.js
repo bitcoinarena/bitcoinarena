@@ -199,6 +199,8 @@ import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
+import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
+import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
 import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
 import { createReservePayouts, lnurlClient } from './reserve-payout.js';
 import { trancheIdOf } from './funding-book.js';
@@ -1408,7 +1410,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let fundingTipSeen = null;
   const capLogged = new Set();
   const movesWaitLogged = new Set();
+  // THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED (kanban #460), and their winners as THIS seat reads the network season: the scope's games
+  // (all hosted, or one by name with all its versions), the window [payment time - period, payment time) on the chain's median time at
+  // the payment height, the seats' accounts merged by 3 that agree (keyed: every entry with its round key), the top N identities
+  const leaderboardsDue = () => (fundingBook ? fundingBook.leaderboardsPassed().map((x) => ({ id: x.id, federation: toHex(x.proposal.federationId),
+    amountSats: x.proposal.amountSats, paymentHeight: x.proposal.paymentHeight, decidableAt: x.decidableAt })) : []);
+  const leaderboardWinnersOf = async (id) => {
+    const lb = fundingBook ? fundingBook.leaderboardsPassed().find((x) => x.id === id) : null;
+    if (!lb) return { ok: false, why: 'no passed leaderboard payout of that id here' };
+    const p = lb.proposal;
+    const ids = [...new Set([...hosted.values()].filter((g) => g && g.gameId && (p.scope === LB_SCOPE.ALL || String(g.name || '').toLowerCase() === String(p.gameName).toLowerCase()))
+      .map((g) => toHex(g.gameId)))].sort();
+    if (!ids.length) return { ok: false, why: `this seat hosts no game "${p.gameName}"` };
+    if (typeof blockTimeAt !== 'function') return { ok: false, why: 'this seat reads no block times' };
+    let paymentMs; try { paymentMs = Number(await blockTimeAt(p.paymentHeight)); } catch (e) { return { ok: false, why: `the payment height's time: ${e.message}` }; }
+    if (!Number.isSafeInteger(paymentMs) || paymentMs <= 0) return { ok: false, why: 'the payment height is not reached here' };
+    const w = leaderboardWindow(p, paymentMs);
+    const { bySeat } = await seasonAccounts(ids, w, { keyed: true, days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1) });
+    const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE, keys: true });
+    if (!m.ok) return { ok: false, why: m.why };
+    return leaderboardWinners({ rounds: m.rounds, games: ids, fromMs: w.fromMs, toMs: w.toMs, top: p.top, amountMsat: p.amountSats * 1000n, splitBps: p.splitBps });
+  };
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
+    leaderboards: leaderboardsDue, winnersOf: leaderboardWinnersOf,
     network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
     // THE PAYMENTS A PASSED VOTE ALLOWS NOW (§27A.9.5): its tranches past the delay whose re-count still passes (rule 5), each within the
     // caps (rule 4): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
@@ -6862,6 +6886,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
         return ans(200, { tip: height, schedule: fundingBook ? fundingBook.schedule : null, signalPct: 15, proposals: fundingBook ? fundingBook.list(height) : [],
+          leaderboards: fundingBook ? fundingBook.leaderboardList(height) : [],   // kanban #460: the leaderboard payout requests and their votes
           names: fundingBook && fundingBook.names ? fundingBook.names() : [] });   // every player's newest name (PIP, player-name.js)
       }
       // THE PAYOUT'S DOORS (kanban #397 slice 8): a guardian seat's FROST commitment and share for a plan it rebuilt itself, and a

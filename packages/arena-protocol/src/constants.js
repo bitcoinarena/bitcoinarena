@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -99,6 +99,8 @@ export const ITEMS_VERSION = 10;
  * reserves' part to its federation's reserve key (reserves.js reservesEntryExpected), and the seats check it.
  */
 export const RESERVES_VERSION = 11;
+/** 2026.0.12 (kanban #460): the leaderboard payout - a proposal that pays the top N of a season from the protocol reserves. */
+export const LEADERBOARD_VERSION = 12;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -360,6 +362,8 @@ export const TYPE_PLAYER_NAME = 0x31;
 // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER TO IT (kanban #462, the owner 2026-10-17): fee-proposal.js
 export const TYPE_FEE_PROPOSAL = 0x32;
 export const TYPE_FEE_APPROVAL = 0x33;
+// A LEADERBOARD PAYOUT REQUEST (kanban #460): leaderboard-payout.js
+export const TYPE_LEADERBOARD_PAYOUT = 0x34;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -438,6 +442,7 @@ export const TAG = {
   playerName: 'ARENA/v1/PlayerName',
   feeProposal: 'ARENA/v1/FeeProposal',
   feeApproval: 'ARENA/v1/FeeApproval',
+  leaderboardPayout: 'ARENA/v1/LeaderboardPayout',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
