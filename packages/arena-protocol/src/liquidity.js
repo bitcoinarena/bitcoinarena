@@ -77,7 +77,8 @@ export function assignLiquidity({ needs, claims, network = 'testnet4', skipped =
   const L = LIQUIDITY_TERMS[network].channelSats;
   const out = [];
   for (const n of needs) {
-    const providers = claims.filter((c) => c.lightningPubkey !== n.lightningPubkey && c.node !== n.node);   // never to itself
+    const providers = claims.filter((c, i) => c.lightningPubkey !== n.lightningPubkey && c.node !== n.node   // never to itself
+      && claims.findIndex((x) => x.node === c.node) === i);                                                      // each provider once
     const have = providers.filter((c) => c.channels.some((x) => x.peer === n.lightningPubkey && BigInt(x.capacitySats) >= L)).map((c) => c.node);
     if (have.length >= MAX_PROVIDERS_PER_NODE) continue;
     const candidates = providers.filter((c) => !have.includes(c.node) && BigInt(c.freeSats) >= L && !skipped.has(`${n.node}:${c.node}`))

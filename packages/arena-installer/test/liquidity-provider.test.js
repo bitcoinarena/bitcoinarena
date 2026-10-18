@@ -57,3 +57,21 @@ test('the claim proves the free balance: every coin signed by its address key fo
   assert.deepEqual(claim.funds.map((f) => f.txid.slice(0, 2)), ['bb'], 'the spent coin is gone');
   assert.deepEqual(Object.keys(state.fundSigs), ['bb'.repeat(32) + ':0']);
 });
+
+test('a provider reached twice (its seat and as a peer) is one provider: never drawn for both of a node\'s channels', async () => {
+  const { assignLiquidity } = await import('../../arena-protocol/src/liquidity.js');
+  const g = key(9), o = key(5), me = key(6);
+  const gw = signGatewayClaim({ node: g.hex, federationId: 'f0'.repeat(32), gatewayUrl: 'https://g.example/gateway/', lightningPubkey: '03' + '99'.repeat(32),
+    capacitySats: 0, pegInSats: 50000, atMs: 1, lightningAddr: 'gw.onion:9735' }, (h) => schnorr.sign(h, g.secret));
+  const { signLiquidityClaim } = await import('../../arena-protocol/src/liquidity.js');
+  const other = (at) => signLiquidityClaim({ node: o.hex, lightningPubkey: '02' + '55'.repeat(32), freeSats: 500000, atMs: at, channels: [] }, (h) => schnorr.sign(h, o.secret));
+  const docs = { 'https://seat-o/liquidity-claim': other(1), 'http://peer-o/liquidity-claim': other(2), 'https://seat-g/gateway-claim': gw };
+  const fetcher = async (u) => (docs[u] ? { status: 200, json: async () => docs[u] } : { status: 404, json: async () => null });
+  const opens = [];
+  const p = createLiquidityProvider({ node: me.hex, sign: (h) => schnorr.sign(h, me.secret), verify, fetcher, endpoints: async () => ['https://seat-o', 'http://peer-o', 'https://seat-g'],
+    writeClaim: async () => {}, lnd: { channels: async () => ({ ok: true, open: [], pending: [] }), funds: async () => ({ ok: true, onchainSats: 50000 }),
+      info: async () => ({ ok: true, pubkey: '02' + '66'.repeat(32), uris: [] }), connect: async () => ({ ok: true }), openTo: async (x) => { opens.push(x); return { ok: true }; } } });
+  const r = await p.tick();
+  assert.match(r.why, /^2 provider\(s\)/, 'itself and the other one, not three');
+  assert.equal(assignLiquidity({ needs: [{ node: g.hex, lightningPubkey: '03' + '99'.repeat(32) }], claims: [other(2)] })[0].open.length, 1);
+});

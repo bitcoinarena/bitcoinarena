@@ -49,7 +49,11 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
     for (const e of eps) {
       const base = String(e).replace(/\/+$/, '');
       const [lc, gc] = await Promise.all([getJson(`${base}/liquidity-claim`), getJson(`${base}/gateway-claim`)]);
-      if (lc && lc.node !== node && checkLiquidityClaim(lc, verify).ok) claims.push(lc);
+      // one claim per provider, the newest: a provider is reached at its seat and as a peer, and counted twice it could be drawn twice
+      if (lc && lc.node !== node && checkLiquidityClaim(lc, verify).ok) {
+        const i = claims.findIndex((c) => c.node === lc.node);
+        if (i < 0) claims.push(lc); else if (BigInt(lc.atMs) > BigInt(claims[i].atMs)) claims[i] = lc;
+      }
       if (gc && checkGatewayClaim(gc, verify).ok) needs.push({ node: gc.node, lightningPubkey: gc.lightningPubkey, lightningAddr: gc.lightningAddr || '' });
     }
     // skipped: a provider the assignment named for a node that still shows no channel to it an hour later
