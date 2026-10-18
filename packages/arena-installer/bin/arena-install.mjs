@@ -66,7 +66,9 @@ if (args.includes('--rebond')) {
   const { readFileSync } = await import('node:fs');
   const { sha256 } = await import('../../arena-protocol/src/hash.js');
   let softwareHash; try { softwareHash = sha256(readFileSync(`${release}/COMMIT`)); } catch { softwareHash = new Uint8Array(32); }
-  const r = await rebond({ state, bondSats: opt('--rebond', ''), post: args.includes('--yes'), softwareHash });
+  const { guardianSetupOf } = await import('../src/state.js');
+  const r = await rebond({ state, bondSats: opt('--rebond', ''), post: args.includes('--yes'), softwareHash,
+    guardianEndpoint: (guardianSetupOf(state.read(), { release }) || {}).endpoint || null });
   if (!r.ok) { console.error(`Not possible: ${r.why}`); process.exit(1); }
   const p = r.plan;
   console.log(`The bond of ${p.from.sats} sat (${p.from.txid}, free since block ${p.from.maturity})${p.coins.length ? ` and ${p.coins.reduce((a, c) => a + c.sats, 0)} sat from the wallet` : ''}`

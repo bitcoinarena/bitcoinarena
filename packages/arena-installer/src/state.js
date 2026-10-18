@@ -43,6 +43,18 @@ export function nodeState(home) {
   };
 }
 
+/** The node's guardian endpoint: its public address as a websocket, /guardian (the seat carries it to its fedimintd). */
+export const guardianUrlOf = (url) => (url ? `${url.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '')}/guardian` : null);
+
+/** A custody node's guardian: its binaries from the release and its endpoint, or null (no custody, no Core, no public address, no binaries). */
+export function guardianSetupOf(s, { release, platform = process.platform }) {
+  if (!(s.roles || []).includes('custody') || !s.chain || s.chain.kind !== 'core' || !s.reach || !s.reach.url) return null;
+  const x = platform === 'win32' ? '.exe' : '';
+  const fedimintd = join(release, 'runtime', 'custody', `fedimintd${x}`), cli = join(release, 'runtime', 'custody', `fedimint-cli${x}`);
+  if (!existsSync(fedimintd) || !existsSync(cli)) return null;
+  return { fedimintd, cli, endpoint: guardianUrlOf(s.reach.url) };
+}
+
 /** The first step not done yet. */
 export const nextStep = (s) => STEPS.find((k) => !(s.done || {})[k]) || 'done';
 
@@ -68,6 +80,10 @@ export function seatEnv(s, { home, release }) {
     lines.push(`ARENA_BITCOIND_URL=http://127.0.0.1:${s.bridgePort}/`, `ARENA_BITCOIND_COOKIE=${join(home, 'bridge.cookie')}`);
   }
   if (s.reach && s.reach.url) lines.push(`ARENA_WSS_${s.port}=${s.reach.url}`);   // the node's public address, as it names itself
+  // CUSTODY (kanban #471 slice 5, ruling 3): the node's guardian in setup mode (ARENA_FOUNDING=1, node-start.js) from the release's own
+  // fedimintd, reached at the node's public address /guardian - so it can be drawn when new nodes found a federation
+  const custody = guardianSetupOf(s, { release });
+  if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
   lines.push(`ARENA_ROLES=${(s.roles || []).join(',')}`);
   return lines.join('\n') + '\n';
 }

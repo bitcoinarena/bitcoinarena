@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS } from './seed.js';
-import { nextStep, seatEnv, ROLES } from './state.js';
+import { nextStep, seatEnv, ROLES, guardianSetupOf } from './state.js';
 import { installService, installProgram } from './service.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
@@ -389,7 +389,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       let built;
       try {
         built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2 });
+          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2,
+          guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null });
       } catch (e) { return { ok: false, why: e.message }; }
       const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
       const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
