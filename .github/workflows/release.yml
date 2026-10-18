@@ -1,0 +1,103 @@
+name: node release
+
+# THE ARENA NODE ON GITHUB RELEASES (kanban #471 part A, slice 1: Linux). A tag v<version> builds every asset with the same script
+# (tools/release/build-linux.sh), tests the installer and the seat doors it uses, installs each asset fresh and checks it runs,
+# and drafts the release with the assets and SHA256SUMS. The draft is signed outside CI with the Arena release key
+# (tools/release/sign.sh, ruling 6: the key never sits in CI) and then published; the installer refuses unsigned assets.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'version without v, e.g. 0.1.0-rc.1 (a dry run: built and tested, no release)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      # the tracked node_modules links point at a developer's checkout: CI installs the two pinned dependencies instead
+      - name: dependencies
+        run: |
+          rm packages/arena-node/node_modules
+          (cd packages/arena-node && npm install --omit=dev --no-audit --no-fund --no-package-lock @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3)
+      - name: installer tests
+        working-directory: packages/arena-installer
+        run: for t in test/*.test.js; do node --test --test-timeout=120000 "$t"; done
+      - name: seat doors the installer uses
+        working-directory: packages/arena-node
+        run: node --test --test-timeout=120000 test/reach-check.test.js
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - name: version
+        id: v
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" | sed 's/=v/=/' >> "$GITHUB_OUTPUT"
+      - name: build
+        run: tools/release/build-linux.sh "${{ steps.v.outputs.version }}" ${{ matrix.arch }} out
+      # A FRESH INSTALL OF THE ASSET (F.1): unpacked into an empty directory, its seat started on its own runtime hosting nextblock,
+      # its installer started and its setup link entered
+      - name: fresh install
+        run: |
+          set -eu
+          mkdir run && tar -xzf out/arena-node-*-linux-${{ matrix.arch }}.tar.gz -C run
+          R=$(echo "$PWD"/run/arena-node-*)
+          (cd "$R/packages/arena-node" && ARENA_DONATION_NETWORK=testnet4 ARENA_GAMES="$R/packages/nextblock/plugin/nextblock.js" \
+            "$R/runtime/node" src/main.js 31917 "$PWD/seat.db" > "$PWD/seat.log" 2>&1 &)
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:31917/identity && break; sleep 1; done
+          curl -sf http://127.0.0.1:31917/games | grep -q '"name":"nextblock"'
+          ("$R/arena-install" --port 31918 --seat-port 31919 --home "$PWD/home" > inst.log 2>&1 &)
+          for i in $(seq 1 30); do grep -q '?t=' inst.log && break; sleep 1; done
+          link=$(grep -oE 'http://127.0.0.1:31918/\?t=[A-Za-z0-9_-]+' inst.log)
+          cookie=$(curl -s -o /dev/null -D - "$link" | grep -i set-cookie | grep -oE 'arena_wizard=[^;]+')
+          curl -sf -H "cookie: $cookie" http://127.0.0.1:31918/api/state | grep -q '"step":"chain"'
+          "$R/runtime/cloudflared" --version
+          echo "fresh install of $(cat "$R/VERSION") ($(cat "$R/COMMIT")) on ${{ matrix.arch }}: seat and installer run"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-${{ matrix.arch }}
+          path: |
+            out/*.tar.gz
+            out/SHA256SUMS
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+      - name: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat assets/*/SHA256SUMS | sort -k2 > SHA256SUMS
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft --title "Arena node ${{ github.ref_name }}" \
+            --notes "Testnet4 only. Download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://bitcoin-arena.io/release-key.txt." \
+            assets/*/*.tar.gz SHA256SUMS
