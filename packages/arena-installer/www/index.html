@@ -32,6 +32,18 @@ button:disabled { opacity: .5; cursor: default; }
 .role input { width: auto; margin-top: 4px; } .role p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
 .warn { color: var(--accent); }
+    .seat { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 10px 0; background: rgba(247,147,26,.04); }
+    .seat-head { font-weight: 700; font-size: 16px; margin-bottom: 10px; }
+    .seat-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+    .seat .tile { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; padding: 10px 6px; border: 1px solid var(--line); border-radius: 10px; }
+    .seat .tile svg { width: 34px; height: 34px; } .seat .tile b { font-size: 15px; } .seat .tile span { font-size: 12px; opacity: .75; line-height: 1.25; }
+    .earn .bar { display: grid; grid-template-columns: 70px 1fr 110px; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; }
+    .earn .fill { height: 12px; border-radius: 6px; background: #57606a; display: block; } .earn .fill.gw { background: linear-gradient(90deg, #f7931a, #ffb347); }
+    .earn .val { font-weight: 700; } .earn .sub { font-size: 12px; opacity: .7; margin-top: 2px; }
+    .needs { margin: 12px 0 6px; } .need { display: grid; grid-template-columns: 18px 130px 1fr 190px; align-items: center; gap: 8px; font-size: 13px; margin: 5px 0; }
+    .need .ok { color: #3fb950; font-weight: 700; } .need .meter { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; } .need .meter i { display: block; height: 100%; background: #3fb950; }
+    .seat details { font-size: 13px; margin-top: 6px; } .seat summary { cursor: pointer; color: var(--accent, #f7931a); }
+    @media (max-width: 560px) { .need { grid-template-columns: 18px 1fr; } .need .meter, .need .num { grid-column: 2; } }
 </style>
 </head>
 <body>
@@ -139,12 +151,27 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <div id="ln-gw" hidden>
       <h3>The gateway</h3>
       <p>The Fedimint gateway pays and receives Lightning for a federation's users through this LND. Its e-cash wallet is made from your 24 words too.</p>
-      <div class="role" id="gw-seat"><div>
-        <b>Hosting a gateway seat</b>
-        <p>Every federation has <b>two gateway seats</b>, held by two of its own guardians. If more want them, the guardians choose the best two every day (144 blocks): first by the Lightning volume each routed for the federation, then channel capacity, availability, bond, and a fair draw. A seated gateway keeps its seat unless it fails the rules or someone routes 25 % more.</p>
-        <p><b>To stand</b> (testnet4): be one of the federation's guardians (your node, once drawn), public channels of at least <b id="gs-cap">200,000</b> sat, a peg-in of at least <b id="gs-peg">50,000</b> sat into the federation (the bond step sets it aside; your node sends it by itself), and be up 95 % of the time.</p>
-        <p><b>What it earns:</b> one third of the federation's custody fee goes to its two gateway seats - about 0.28 % of every round's volume each, against 0.11 % for a guardian of ten - plus your Lightning routing fees.</p>
-      </div></div>
+      <div id="gw-seat" class="seat">
+        <div class="seat-head">&#9889; Earn more: host your federation's gateway</div>
+        <div class="seat-tiles">
+          <div class="tile"><svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="13" cy="20" r="9" fill="#f7931a"/><circle cx="27" cy="20" r="9" fill="#f7931a" opacity=".55"/></svg><b>2 seats</b><span>per federation</span></div>
+          <div class="tile"><svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="14" fill="none" stroke="#3fb950" stroke-width="3"/><path d="M20 11v10l6 4" stroke="#3fb950" stroke-width="3" fill="none" stroke-linecap="round"/></svg><b>Every day</b><span>a fresh pick - your turn comes</span></div>
+          <div class="tile"><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="24" width="9" height="9" rx="2" fill="#57606a"/><rect x="22" y="9" width="9" height="24" rx="2" fill="#f7931a"/></svg><b>~3.5&times;</b><span>a guardian's earnings</span></div>
+        </div>
+        <div class="earn">
+          <div class="bar"><span class="lbl">Guardian</span><span class="fill" style="width:28%"></span><span class="val">0.11 %</span></div>
+          <div class="bar"><span class="lbl">Gateway</span><span class="fill gw" style="width:100%"></span><span class="val">0.39 % + fees</span></div>
+          <div class="sub">of every round's volume in your federation</div>
+        </div>
+        <div class="needs">
+          <div class="need" id="need-cap"><span class="ok">&#9675;</span><span class="what">Lightning channels</span><span class="meter"><i style="width:0%"></i></span><span class="num">0 / <b id="gs-cap">200,000</b> sat</span></div>
+          <div class="need"><span class="ok">&#10003;</span><span class="what">Peg-in</span><span class="meter"><i style="width:100%"></i></span><span class="num"><b id="gs-peg">50,000</b> sat · sent automatically</span></div>
+          <div class="need"><span class="ok">&#9675;</span><span class="what">Online</span><span class="meter"><i style="width:0%"></i></span><span class="num">95 % of the day</span></div>
+        </div>
+        <details><summary>How are seats chosen?</summary>
+          <p>Only the federation's own guardians can stand. Every day (144 blocks) its guardians rank the gateways that meet the three needs above - most Lightning routed first, then channel size, uptime and bond - and take the top two. While gateways are equal it comes down to a fair draw, so every eligible gateway gets its days. A seated gateway keeps its seat unless it drops out or another routes 25 % more.</p>
+        </details>
+      </div>
       <div id="ln-chan">
         <p class="sub">Channels: <span id="ch-state">…</span></p>
         <p class="sub">LND's own wallet for channels: <code id="ch-addr"></code> - <span id="ch-bal"></span></p>
@@ -209,6 +236,9 @@ async function load() {
     $('done-text').innerHTML = `<p>Your node runs as the user service <code>arena-node</code>${sv.boot ? ' and starts again after a reboot' : ' (not started after a reboot)'}.</p>
     <p>Others reach it ${how}.</p>
     <p>Node key: <code>${esc(sv.identity || '')}</code></p>
+    ${st.launchers ? `<p><b>Starting it again</b> (it also starts by itself after a reboot): ${st.launchers.app ? `open <b>Arena Node</b> in your Applications (<code>${esc(st.launchers.app)}</code>) - it starts the node and opens its owner page`
+      : st.launchers.menu && /Start Menu/.test(st.launchers.menu) ? `Start menu &gt; <b>Arena Node</b> &gt; Start Arena node (and Stop, and the owner page)`
+      : `<b>Arena Node</b> in your desktop's menu, or <code>${esc(st.launchers.start)}</code>`}. The scripts - start, stop, status, owner page - are in <code>${esc(String(st.launchers.start).replace(/[\\/][^\\/]+$/, ''))}</code>.</p>` : ''}
     <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>${r.url ? '' : ' (this machine only: the node has no public address yet)'} - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
     ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
     ${st.lightning ? `<p>Lightning: ${st.lightning.mode === 'own' ? 'LND set up here (the user service <code>arena-lnd</code>)' : 'your own LND, connected'}, node <code>${esc(st.lightning.pubkey || '')}</code>. ${st.gateway && st.gateway.testedMs ? `The gateway runs (the user service <code>arena-gateway</code>) at <code>${esc(st.gateway.publicUrl || '')}</code>${(st.gateway.federations || []).length ? ', serving ' + st.gateway.federations.map((f) => esc(f.name || String(f.federationId).slice(0, 12))).join(', ') : ', no federation joined yet'}.` : 'No gateway yet.'} Your node's federation guardian runs and waits to be drawn: when ten custody nodes guard no federation, they found one together, and your node then names it, joins its gateway to it and sends the peg-in by itself.</p>` : ''}
@@ -312,6 +342,9 @@ async function showFunds() {
   $('ch-addr').textContent = r.address; $('ch-bal').textContent = `${r.onchainSats.toLocaleString('en')} sat confirmed${r.unconfirmedSats ? `, ${r.unconfirmedSats.toLocaleString('en')} arriving` : ''}`;
   const c = r.channels || { open: [], pending: [], publicCapacitySats: 0 };
   $('ch-state').textContent = `${c.open.length} open, ${c.pending.length} opening; public capacity ${c.publicCapacitySats.toLocaleString('en')} of ${r.seat.minCapacitySats.toLocaleString('en')} sat a gateway seat needs.`;
+  const capPct = Math.min(100, Math.round(100 * c.publicCapacitySats / r.seat.minCapacitySats)); const need = document.getElementById('need-cap');
+  need.querySelector('.meter i').style.width = capPct + '%'; need.querySelector('.ok').textContent = capPct >= 100 ? '\u2713' : '\u25CB';
+  need.querySelector('.num').innerHTML = `${c.publicCapacitySats.toLocaleString('en')} / <b>${r.seat.minCapacitySats.toLocaleString('en')}</b> sat`;
 }
 $('ch-refresh').onclick = showFunds;
 $('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/lightning/channel', { peer: $('ch-peer').value, sats: Number($('ch-sats').value) }); e.target.disabled = false;

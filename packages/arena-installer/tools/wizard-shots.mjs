@@ -14,6 +14,7 @@ import { nodeState } from '../src/state.js';
 import { openQuickTunnel } from '../src/tunnel.js';
 import * as lndReal from '../src/lnd.js';
 import * as gwReal from '../src/gateway.js';
+import { writeLaunchers } from '../src/launchers.js';
 import { seatUnit, waitHealthy } from '../src/service.js';
 import * as reachKit from '../src/reach.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -63,7 +64,8 @@ for (const sig of ['SIGINT', 'SIGTERM', 'exit']) process.on(sig, () => { for (co
 const gwKit = { ...gwReal, findGatewayd: () => (process.env.ARENA_SHOTS_GATEWAYD ? { ok: true, gatewayd: process.env.ARENA_SHOTS_GATEWAYD } : gwReal.findGatewayd({ release: RELEASE })),
   configureGateway: (o) => gwReal.configureGateway({ ...o, port: 20176, lnd: { ...o.lnd, rpcHost: 'https://127.0.0.1:20109' } }),
   installProgram: async ({ args: [bin, ...rest], vars }) => { lndChildren.push(spawn('nice', [bin, ...rest], { stdio: 'ignore', env: { ...process.env, ...(vars || {}) } })); return { ok: true }; } };
-const wizard = createWizard({ state: nodeState(home), release: RELEASE, seatPort, install, chainKit, reach, cloudflared: 'cloudflared', lndKit, gwKit });
+const wizard = createWizard({ state: nodeState(home), release: RELEASE, seatPort, install, chainKit, reach, cloudflared: 'cloudflared', lndKit, gwKit,
+  launch: (o) => writeLaunchers({ ...o, platform: 'linux', env: { XDG_DATA_HOME: join(home, 'xdg'), HOME: home } }) });
 const server = http.createServer((q, s) => wizard.handle(q, s));
 await new Promise((ok) => server.listen(Number(process.argv[2] || 31918), '127.0.0.1', ok));
 writeFileSync(process.argv[3], `http://127.0.0.1:${server.address().port}/?t=${wizard.token}\n`);

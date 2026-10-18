@@ -17,6 +17,7 @@ import { probeCore, probeElectrum, tipsAgree, agreeHeights, TESTNET4_GENESIS, he
 import { quickTunnelName } from '../src/tunnel.js';
 import { configureLnd, lndArgs } from '../src/lnd.js';
 import { configureGateway } from '../src/gateway.js';
+import { writeLaunchers } from '../src/launchers.js';
 import * as reachKit from '../src/reach.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { createReachCheck } from '../../arena-node/src/reach-check.js';
@@ -111,7 +112,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
     broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
   const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
   const gwKit = { configureGateway };
-  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit, gwKit });
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit, gwKit,
+    launch: (o) => writeLaunchers({ ...o, platform: 'linux', env: { XDG_DATA_HOME: join(home, 'xdg'), HOME: home } }) });
   const server = http.createServer((q, s) => wizard.handle(q, s));
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   const port = server.address().port;
@@ -250,6 +252,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.ok(agent && agent.args[1].endsWith(join('bin', 'custody-agent.mjs')) && agent.args.includes(home), 'the custody agent runs as a service of this node');
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'done');
+  assert.match(readFileSync(join(home, 'bin', 'arena-node-start'), 'utf8'), /systemctl --user start .*arena-lnd.service .*arena-gateway.service .*arena-node.service/, 'the start script names this node\'s services');
+  assert.ok((await c.get('/api/state')).json.launchers.start.endsWith('arena-node-start'));
   const fin = (await c.post('/api/finish')).json;
   assert.deepEqual([fin.ok, fin.mode, fin.owner], [true, 'direct', `http://127.0.0.1:${seatPort}/Dashboard/owner`], 'the user is told how to reach the node');
   assert.equal((await c.get('/api/state')).status, 401, 'after finish the wizard answers nothing');
