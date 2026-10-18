@@ -26,6 +26,7 @@ import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
+import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd } from './lnd.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
@@ -42,7 +43,8 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
  */
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
-  coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
+  coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
+  lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
@@ -86,7 +88,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
+      lightning: s.lightning || null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -161,8 +163,13 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const unknown = roles.filter((r) => !ROLES[r]);
       if (unknown.length) return { ok: false, why: `no role ${unknown.join(', ')}` };
       if (!roles.length) return { ok: false, why: 'choose at least one role' };
-      if (roles.includes('custody')) return { ok: false, why: 'custody comes with the custody step in a later release: choose verify and/or settlement now; it can be added from the owner page then' };
+      if (roles.includes('custody') && state.read().chain && state.read().chain.kind !== 'core')
+        return { ok: false, why: 'custody needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave custody out' };
       mark('roles', { roles });
+      if (!roles.includes('custody')) mark('lightning', { lightning: null });   // no custody: no Lightning step
+      else if (!(state.read().lightning || {}).pubkey) {                          // custody, and no Lightning node tested yet: the step is to come
+        const { lightning: _, ...rest } = state.read().done || {}; state.save({ done: rest });
+      }
       return { ok: true, roles };
     },
 
@@ -273,6 +280,52 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     // THE BOND (C.7, slice 2): the wallet's address and the amount; the coins found; the bond built from them with the node's own key
     // (its store, read only) and broadcast; the lock said plainly. It can wait: the node runs unbonded (outside the census) until then,
     // and the owner page shows the same address.
+    // LIGHTNING FOR CUSTODY (slice 5, lnd.js): LND installed here (checked download, lnd.conf on the node's Core, a service, its wallet
+    // from the node's seed) or an LND that already runs connected; either is tested by getinfo before the step is done
+    'POST /api/lightning/own': async (b) => {
+      const s = state.read();
+      if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
+      if (!s.chain || s.chain.kind !== 'core') return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
+      const got = await lndKit.installLnd({ home: state.home, fetcher });
+      if (!got.ok) return { ok: false, why: got.why };
+      const cfg = lndKit.configureLnd({ home: state.home, chain: s.chain });
+      const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for the Arena node (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot: b.boot !== false });
+      if (!r.ok) return { ok: false, why: r.why };
+      state.save({ lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });
+      return { ok: true, lnd: got.lnd, sha256: got.sha256 || null };
+    },
+    'POST /api/lightning/status': async () => {
+      const s = state.read(); const l = s.lightning;
+      if (!l) return { ok: false, why: 'no Lightning node set up yet' };
+      let created = false;
+      if (l.mode === 'own') {
+        const w = await lndKit.createLndWallet({ cfg: l, seed: fromHex(state.readSecret('seed.hex')) });
+        if (!w.ok) return { ok: false, why: w.why, waiting: true };
+        created = w.created;
+      }
+      const t = await lndKit.testLnd(l);
+      if (!t.ok) return { ok: false, why: t.why, waiting: l.mode === 'own', created };
+      mark('lightning', { lightning: { ...l, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() } });
+      return { ok: true, created, ...t };
+    },
+    'POST /api/lightning/connect': async (b) => {
+      if (!(state.read().done || {}).service) return { ok: false, why: 'install the node first' };
+      let restUrl;
+      try { restUrl = new URL(String(b.restUrl || '')); } catch { return { ok: false, why: 'the REST address, such as https://127.0.0.1:8080' }; }
+      if (restUrl.protocol !== 'https:') return { ok: false, why: 'LND\'s REST address is https' };
+      const macaroonHex = String(b.macaroonHex || '').trim().toLowerCase(), tlsCertPem = String(b.tlsCertPem || '').trim();
+      if (!/^[0-9a-f]{40,}$/.test(macaroonHex)) return { ok: false, why: 'the admin macaroon as hex (xxd -p -c 1000 admin.macaroon)' };
+      if (!tlsCertPem.includes('BEGIN CERTIFICATE')) return { ok: false, why: 'LND\'s tls.cert (the text beginning -----BEGIN CERTIFICATE-----)' };
+      const t = await lndKit.testLnd({ restUrl: restUrl.origin, tlsCertPem, macaroonHex });
+      if (!t.ok) return { ok: false, why: t.why };
+      state.writeSecret('lnd-connect.macaroon.hex', macaroonHex); state.writeSecret('lnd-connect.tls.cert', tlsCertPem + '\n');
+      const l = { mode: 'connect', restUrl: restUrl.origin, tlsCert: state.path('lnd-connect.tls.cert'), macaroonHexFile: state.path('lnd-connect.macaroon.hex'),
+        pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() };
+      mark('lightning', { lightning: l });
+      return { ok: true, ...t };
+    },
+    'POST /api/lightning/later': async () => { mark('lightning', { lightning: null }); return { ok: true }; },
+
     'POST /api/bond/check': async () => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first: the bond is signed with its own key' };
@@ -310,6 +363,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     'POST /api/finish': async () => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'the node is not installed and logged in yet' };
+      if (!(s.done || {}).lightning) return { ok: false, why: 'set up Lightning for custody, or choose to set it up later' };
       if (!(s.done || {}).bond) return { ok: false, why: 'post the bond, or choose to post it later' };
       mark('done');
       finished = true;
