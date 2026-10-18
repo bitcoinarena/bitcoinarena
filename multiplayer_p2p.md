@@ -4755,7 +4755,10 @@ that becomes the founding's `trigger_height` (the earliest wins):
    "10 new nodes find each other on the network automatically and create a
    new federation"). While a federation exists, the census holds at least
    `cohort_nominal` = **10** guardian-capable operators (an endpoint, at
-   least `bond_min_guardian`) that guard no OPEN federation. They found a
+   least `bond_min_guardian`) that guard no OPEN federation. An operator
+   whose advertisement names a federation the seat holds no record of
+   counts as guarding it, as for an OPEN one *(the owner 2026-10-18, kanban
+   #495)*; a DRAINING federation frees its guardians, as before. They found a
    federation of their own, of `cohort_nominal` seats, drawn as below. The
    trigger is the first height of the current run at or above 10: once
    their adverts name the new federation in `guardian_of[]` the run ends,

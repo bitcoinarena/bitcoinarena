@@ -57,11 +57,19 @@ export function noticeTriggers({ held = [], notices = [], departureNotice, verif
   return rows;
 }
 
-/** The operators guarding an OPEN federation other than `except`: census adverts whose guardian_of[] names a federation held OPEN. */
+/**
+ * The operators guarding a federation other than `except`: census adverts whose guardian_of[] names a federation held OPEN - or one
+ * this seat holds no record of at all, which counts as guarded (the owner 2026-10-18, kanban #495, "A": measured, T3's
+ * seven guardians and B's successor's one advertised federations no seat held a record of, so they counted as free and would have
+ * been drawn into a cohort - as no-shows, since each runs its own federation's guardian).
+ */
 export function guardingOpenOf({ entries = [], held = [], except = null }) {
-  const open = new Set((held || []).filter((r) => r && r.status === 'OPEN' && lower(r.federation) !== lower(except)).map((r) => lower(r.federation)));
+  const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), r.status]));
   const ops = new Set();
-  for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) if (open.has(toHex(g.federationId))) ops.add(opOf(e));
+  for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) {
+    const f = toHex(g.federationId);
+    if (f !== lower(except) && (!status.has(f) || status.get(f) === 'OPEN')) ops.add(opOf(e));   // a draining one frees its guardians
+  }
   return ops;
 }
 
