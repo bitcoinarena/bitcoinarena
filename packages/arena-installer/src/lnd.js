@@ -192,8 +192,9 @@ export async function lndChannels(cfg, { rest = lndRest } = {}) {
   const [o, p] = await Promise.all([rest({ ...c, path: '/v1/channels' }), rest({ ...c, path: '/v1/channels/pending' })]);
   if (o.status !== 200) return { ok: false, why: errOf(o) };
   const open = (o.json.channels || []).map((x) => ({ peer: x.remote_pubkey, capacitySats: Number(x.capacity), active: Boolean(x.active), public: !x.private,
-    localSats: Number(x.local_balance || 0), remoteSats: Number(x.remote_balance || 0), channelPoint: x.channel_point || null }));
-  const pending = ((p.json || {}).pending_open_channels || []).map((x) => ({ peer: x.channel.remote_node_pub, capacitySats: Number(x.channel.capacity) }));
+    localSats: Number(x.local_balance || 0), remoteSats: Number(x.remote_balance || 0), channelPoint: x.channel_point || null, initiator: Boolean(x.initiator) }));
+  const pending = ((p.json || {}).pending_open_channels || []).map((x) => ({ peer: x.channel.remote_node_pub, capacitySats: Number(x.channel.capacity),
+    initiator: x.channel.initiator === 'INITIATOR_LOCAL' || x.channel.initiator === 1 }));
   const live = open.filter((x) => x.public && x.active);
   return { ok: true, open, pending, publicCapacitySats: open.filter((x) => x.public).reduce((a, x) => a + x.capacitySats, 0),
     inboundSats: live.reduce((a, x) => a + x.remoteSats, 0), outboundSats: live.reduce((a, x) => a + x.localSats, 0) };
