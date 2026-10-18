@@ -10,6 +10,7 @@
 //               (the user signs up / logs in in the browser; the installer waits for the certificate), the tunnel created, its DNS
 //               name routed, a user service runs it; tested from outside (through Cloudflare's edge) before it is saved
 //   quick       an anonymous trycloudflare.com tunnel as a user service: no account, but a new name at every restart
+import { port } from './instance.js';
 import http from 'node:http';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -19,7 +20,7 @@ import { join } from 'node:path';
 import { quickTunnelName } from './tunnel.js';
 
 /** The node's port for connections from outside (ruling 7: "make up a default port"). */
-export const DEFAULT_NODE_PORT = 8470;
+export const DEFAULT_NODE_PORT = port(8470);   // + ARENA_PORT_OFFSET (instance.js)
 export const REACH_MODES = Object.freeze(['direct', 'permanent', 'quick', 'tailscale', 'workers']);
 /** The modes that run a cloudflared tunnel as a service of the node (Tailscale Funnel is kept by tailscaled itself; workers.dev forwards
  * to a quick tunnel). */

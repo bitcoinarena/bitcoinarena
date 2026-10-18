@@ -3,11 +3,12 @@
 // connection (no open port, a dynamic address). So the node runs Tor and its LND runs hybrid: a permanent onion address others dial,
 // clearnet peers still dialled directly. The federation's channel ring and the gateway's outside channel reach every node this way.
 // The release carries the Tor Project's expert bundle (runtime/tor/); a linux-arm64 machine uses the system's tor (none is built).
+import { port } from './instance.js';
 import { existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 
-export const TOR_PORTS = Object.freeze({ socks: 19050, control: 19051 });
+export const TOR_PORTS = Object.freeze({ socks: port(19050), control: port(19051) });   // + ARENA_PORT_OFFSET (instance.js)
 
 const runFile = (cmd, args) => new Promise((ok) => execFile(cmd, args, (e) => ok(!e)));
 

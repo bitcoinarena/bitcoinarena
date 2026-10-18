@@ -8,6 +8,7 @@
 //              to give it), LND by its RPC address, tls.cert and admin macaroon
 //   test       GET /v1/info with the admin password: its id, network, the federations it serves
 //   join       POST /v1/connect_fed with an invite code (ruling 3: a federation is joined by invite)
+import { port } from './instance.js';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -16,7 +17,7 @@ import { phraseFromSeed } from '../../arena-client/src/bip39.js';
 import { taggedHash } from '../../arena-protocol/src/hash.js';
 import { LND_PORTS } from './lnd.js';
 
-export const GATEWAY_PORT = 8476;
+export const GATEWAY_PORT = port(8476);   // + ARENA_PORT_OFFSET (instance.js)
 export const TESTNET4_ESPLORA = 'https://mempool.space/testnet4/api';
 const GATEWAY_SEED_TAG = 'arena/gateway/v1';
 
