@@ -114,6 +114,16 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <div class="msg" id="svc-msg"></div>
   </section>
 
+  <section id="s-bond">
+    <h2>7. The bond</h2>
+    <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (and a little for fees) to your node's own wallet:</p>
+    <p><code id="b-addr" style="font-size:15px"></code></p>
+    <button class="ghost" id="b-check">Check for my deposit</button>
+    <div class="msg" id="b-msg"></div>
+    <div id="b-lock" class="sub"></div>
+    <button id="b-post" disabled>Post the bond</button><button class="ghost" id="b-later">I'll post it later</button>
+  </section>
+
   <section id="s-done">
     <h2>Done</h2>
     <div id="done-text"></div>
@@ -123,7 +133,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['done', 'Done']];
+const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
 const say = (id, r, okText) => { const m = $(id); m.className = 'msg ' + (r.ok ? 'ok' : 'bad'); m.textContent = r.ok ? okText : (r.why || 'failed'); };
@@ -138,6 +148,7 @@ async function load() {
     `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && k !== 'custody') ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div><b>${esc(r.title)}</b><p>${esc(r.needs)}</p></div></label>`).join('');
   if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
   if (st.step === 'chain') pickElectrum();
+  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); }
   if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
@@ -148,7 +159,8 @@ async function load() {
     <p>Node key: <code>${esc(sv.identity || '')}</code></p>
     <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>, and on this machine <code>http://127.0.0.1:${st.seatPort}/Dashboard/owner</code> - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
     ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
-    <p>Next: the bond (the owner page shows the address and the lock).</p>`; }
+    ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it can only be added to, not withdrawn; from that block on, the owner page withdraws it.</p>`
+      : `<p>No bond yet: send it to <code>${esc(st.wallet ? st.wallet.address : '')}</code> and post it from the owner page. Until then your node is not drawn for rounds.</p>`}`; }
 }
 function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('k-core').className = k === 'core' ? '' : 'ghost'; $('k-electrum').className = k === 'electrum' ? '' : 'ghost'; }
 function pickElectrum() { const v = $('e-pick').value; const s = st.electrum[v]; if (s) { $('e-host').value = s.host; $('e-port').value = s.port; $('e-tls').checked = s.tls; } }
@@ -182,6 +194,13 @@ $('r-test').onclick = async (e) => { e.target.disabled = true; $('r-direct').cla
 $('r-login').onclick = async () => { $('rm-permanent').checked = true; const r = await post('/api/reach/login'); if (!r.ok) return say('r-login-msg', r); showLogin(r); };
 $('r-save').onclick = async (e) => { const mode = (document.querySelector('input[name=rm]:checked') || {}).value; if (!mode) return say('r-msg', { ok: false, why: 'test the direct connection first, or choose a tunnel' });
   e.target.disabled = true; const r = await post('/api/reach/save', { mode, hostname: $('r-host').value, port: Number($('r-port').value) }); e.target.disabled = false; if (r.ok) return load(); say('r-msg', r); };
+const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()} (testnet4 blocks come about every 10 minutes; the block height is the rule, the date an estimate). Until then it cannot be withdrawn; after that, the owner page withdraws it.`;
+$('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check'); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
+  const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
+  m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` A bond needs ${r.needSats.toLocaleString('en')} sat and about 2,000 for fees.`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
+  $('b-lock').textContent = lockText(r.lock); $('b-post').disabled = !r.enough; };
+$('b-post').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/post'); if (!r.ok) { e.target.disabled = false; return say('b-msg', r); } load(); };
+$('b-later').onclick = async () => { const r = await post('/api/bond/later'); if (r.ok) load(); };
 $('svc').onclick = async (e) => { e.target.disabled = true; $('svc-msg').className = 'msg ok'; $('svc-msg').textContent = 'Installing and starting the node (this can take a minute)...';
   const r = await post('/api/service', { boot: $('boot').checked }); e.target.disabled = false;
   if (!r.ok) return say('svc-msg', r);
