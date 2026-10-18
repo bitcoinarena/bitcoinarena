@@ -183,9 +183,10 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   5. a ticket on the epoch's beacon.
 
   An incumbent stays unless it becomes ineligible or a challenger routes 25 % more. An empty seat is stated.
-- **What it earns, from the custody fee** (protocol 2026.0.15): the guardian pool (5/3 % of every round's volume) splits **2/3 to the
-  guardians, 1/3 to the two gateway seats**. With ten guardians that is about **0.278 %** of volume per gateway against 0.111 % per
-  guardian, plus the gateway's own Lightning routing fees.
+- **What it earns, from the custody fee** (protocol 2026.0.15, so the 4 % node fee of protocol 11 on): the guardian pool (4/3 % of every
+  round's volume) splits **2/3 to the guardians, 1/3 to the two gateway seats**. With ten guardians that is about **0.222 %** of volume
+  per gateway seat against 0.089 % per guardian (a seat holder is a guardian too: 0.311 % in all), plus the gateway's own Lightning
+  routing fees.
   - Unearned shares go to the other seat, then to the guardians.
   - With no seating standing, the guardians keep the pool.
 - **The installer** says all of this in its custody step:
