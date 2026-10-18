@@ -10,7 +10,10 @@
 // and the maturity are read straight off genesis, which is where letter 24
 // put them, so nothing here can quietly hold a round against a set of its own.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { ripemd160 } from '@noble/hashes/legacy.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
+import { tapTweak } from '../../arena-protocol/src/bond-script.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const big = (b) => BigInt('0x' + toHex(b));
@@ -20,6 +23,16 @@ export const tweakPoint = (internalKey, tweak) => {
   const P = schnorr.utils.lift_x(big(internalKey));
   const Q = P.add(secp256k1.Point.BASE.multiply(big(tweak)));
   return { outputKey: schnorr.utils.pointToBytes(Q), parity: Number(Q.toAffine().y & 1n) };
+};
+
+/**
+ * WHAT A SIGNED MESSAGE NEEDS (liquidity.js addressSigned, kanban #494: a provider's coins signed by their address keys): the key a
+ * compact signature recovers, a key's hash160 (P2WPKH) and its BIP-86 output key (P2TR, no script).
+ */
+export const messageCurve = {
+  recover: (sig64, bit, digest) => secp256k1.Signature.fromBytes(sig64, 'compact').addRecoveryBit(bit).recoverPublicKey(digest).toBytes(true),
+  hash160: (b) => ripemd160(sha256(b)),
+  taprootOutputKey: (key33) => { const x = key33.slice(1); return tweakPoint(x, tapTweak(x, new Uint8Array(0))).outputKey; },
 };
 
 /** BIP-327's sum: Q = sum a_i * P_i, each key lifted from its x-only form. */

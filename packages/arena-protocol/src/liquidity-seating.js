@@ -30,10 +30,12 @@ export function signLiquiditySeating(seating, guardianNode, sign) {
  * A guardian's list from the providers' claims (checked) and its federation's custody nodes' LND keys: every provider with a channel of
  * at least L to one of them and a weight above 0 (its free balance at or above the deposit minimum), its weight floored to L.
  */
-export function liquiditySeatingFrom({ claims, federationLnKeys, network = 'testnet4' }) {
+export function liquiditySeatingFrom({ claims, federationLnKeys, network = 'testnet4', proven = null }) {
   const L = LIQUIDITY_TERMS[network].channelSats, keys = new Set(federationLnKeys);
+  // `proven` (Map node -> sats, provenFreeSats): the free balance this guardian's chain confirms; without it, the claimed one
+  const free = (c) => (proven ? (proven.get(c.node) || 0n) : BigInt(c.freeSats));
   return claims.filter((c) => c.channels.some((x) => keys.has(x.peer) && BigInt(x.capacitySats) >= L))
-    .map((c) => ({ node: c.node, weight: (liquidityWeight(c, federationLnKeys, network) / L) * L }))
+    .map((c) => ({ node: c.node, weight: (liquidityWeight(c, federationLnKeys, network, free(c)) / L) * L }))
     .filter((p) => p.weight > 0n);
 }
 

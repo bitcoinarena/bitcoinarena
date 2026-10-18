@@ -38,3 +38,22 @@ test('two providers coordinate through their claims: the new node gets two chann
   await a.p.tick(); await b.p.tick();
   assert.equal([...a.calls, ...b.calls].filter((c) => c[0] === 'open').length, 2, 'once');
 });
+
+test('the claim proves the free balance: every coin signed by its address key for this node, once; a spent coin leaves the claim', async () => {
+  const { fundsMessage } = await import('../../arena-protocol/src/liquidity.js');
+  const k = key(4); let coins = [{ txid: 'aa'.repeat(32), vout: 1, address: 'tb1pone', sats: 400000 }, { txid: 'bb'.repeat(32), vout: 0, address: 'tb1qtwo', sats: 200000 }];
+  const signed = []; let claim = null; const state = {};
+  const p = createLiquidityProvider({ node: k.hex, sign: (h) => schnorr.sign(h, k.secret), verify, fetcher: async () => ({ status: 404 }), endpoints: async () => [], state,
+    writeClaim: async (c) => { claim = c; },
+    lnd: { channels: async () => ({ ok: true, open: [], pending: [] }), funds: async () => ({ ok: true, onchainSats: 600000 }),
+      info: async () => ({ ok: true, pubkey: '02' + '44'.repeat(32), uris: [] }),
+      coins: async () => ({ ok: true, coins }), signWithAddr: async ({ address, message }) => { signed.push([address, message]); return { ok: true, signature: `sig:${address}` }; } } });
+  await p.tick();
+  assert.deepEqual(claim.funds.map((f) => [f.txid.slice(0, 2), f.vout, f.sats, f.signature]), [['aa', 1, '400000', 'sig:tb1pone'], ['bb', 0, '200000', 'sig:tb1qtwo']], 'largest first');
+  assert.deepEqual(signed[0], ['tb1pone', fundsMessage(k.hex, 'aa'.repeat(32), 1)], 'the message names this node and the coin');
+  await p.tick();
+  assert.equal(signed.length, 2, 'each coin signed once');
+  coins = coins.slice(1); await p.tick();
+  assert.deepEqual(claim.funds.map((f) => f.txid.slice(0, 2)), ['bb'], 'the spent coin is gone');
+  assert.deepEqual(Object.keys(state.fundSigs), ['bb'.repeat(32) + ':0']);
+});
