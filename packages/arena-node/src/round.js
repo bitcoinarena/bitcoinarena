@@ -341,6 +341,12 @@ export class Round {
    * arrived is right to send it again, and a node that punishes that is
    * making the client guess.
    */
+  /** Does the store hold this round (by id)? A read of one key - no contract decoded. */
+  has(roundIdBytes) {
+    if (!this.hasStmt) this.hasStmt = this.db.prepare('SELECT 1 FROM rounds WHERE round_id = ? LIMIT 1');
+    return Boolean(this.hasStmt.get(roundIdBytes));
+  }
+
   open(contract) {
     // A ROUND NOBODY CAN JOIN IS NOT A ROUND. 5A.5: entry opens when the
     // committee forms, and `start_time >= committee_time + min_entry_window`

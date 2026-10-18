@@ -6,6 +6,7 @@
 // is refused for the same reasons any round is - for every start from now to now + 72 h, and again as the clock
 // moves. A series that leaves less than the 72 h lead is refused whole, by the spec's rule.
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { roundId } from '../../arena-protocol/src/contracts.js';
 import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin, seriesRunFits, isGridSeries } from '../../arena-protocol/src/series.js';
 import { pluginForRound } from './plugins.js';
 import { seriesPeriodFits } from '../../arena-protocol/src/manifest.js';
@@ -55,6 +56,11 @@ export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZO
       if (written.has(i)) continue;
       if (Date.now() >= untilMs) { writer.more = true; break; }
       const c = seriesRound(template, i);
+      // A ROUND THE STORE HOLDS ALREADY IS NOT OPENED AGAIN (kanban #468 item 4, measured on seat 2's start 2026-10-18 07:51Z: every
+      // start re-opened the ~4,500 rounds of its 72 h - each checked against its core's run length in the core's sandbox - and the
+      // loop was held 6.4 s in 17 slices): it was checked when it was first opened, and is only remembered as written
+      const known = typeof round.has === 'function' ? roundId(c) : null;
+      if (known && round.has(known)) { written.set(i, { id: toHex(known), startTimeMs: c.startTimeMs }); continue; }
       const rid = round.open(c);
       written.set(i, { id: toHex(rid), startTimeMs: c.startTimeMs });
       added++;
