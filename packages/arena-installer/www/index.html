@@ -31,6 +31,7 @@ button:disabled { opacity: .5; cursor: default; }
 .words span { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-family: ui-monospace, monospace; }
 .words span b { color: var(--muted); font-weight: 400; margin-right: 6px; }
 .role { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; display: flex; gap: 10px; align-items: flex-start; }
+[hidden] { display: none !important; }
 .role input { width: auto; margin-top: 4px; } .role p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
 .warn { color: var(--accent); }
@@ -93,8 +94,8 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     </div>
     <div id="in-form" hidden>
       <div id="in-plan" class="sub">Checking this machine…</div>
-      <label class="role"><input type="checkbox" id="in-prune"><div><b>Pruned</b><p>Keeps the chain state and only the newest blocks: a few GB instead of the whole chain. Your node works the same.</p></div></label>
-      <label class="role"><input type="checkbox" id="in-main"><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. The Arena runs on testnet4 now.</p></div></label>
+      <label class="role in-opt"><input type="checkbox" id="in-prune"><div><b>Pruned</b><p>Keeps the chain state and only the newest blocks: a few GB instead of the whole chain. Your node works the same.</p></div></label>
+      <label class="role in-opt"><input type="checkbox" id="in-main"><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. The Arena runs on testnet4 now.</p></div></label>
       <button id="in-go">Install and start syncing</button>
       <div id="sync" hidden>
         <p class="warn"><b>Bookmark this page.</b> The first sync can take hours on testnet4 and days on mainnet. You can close this page and come back; setup continues here once testnet4 is synced. Keep the installer running (this terminal), or start it again later.</p>
@@ -385,6 +386,8 @@ async function plan() {
 }
 let syncTimer = null;
 async function watchSync() {
+  // installed and syncing: the plan's text and its options are spent
+  $('in-plan').textContent = 'Bitcoin Core is installed on this machine and syncs.'; for (const o of document.querySelectorAll('.in-opt')) o.hidden = true;
   const r = await (await fetch('/api/core/status')).json();
   if (r.ok) {
     $('sync-rows').innerHTML = Object.entries(r.networks).filter(([k]) => k === 'testnet4' || k === 'mainnet').map(([n, x]) => x.ok
