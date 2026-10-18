@@ -2,14 +2,17 @@
 // seat from the installed release with the settings the wizard wrote, restarts it when it falls over, and is checked healthy by the
 // installer before the wizard goes on. The user needs no root: `loginctl enable-linger` keeps a user unit running with nobody logged
 // in, and the wizard says so when linger is off.
+import { named } from './instance.js';
 import { writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 
-export const UNIT = 'arena-node.service';
-export const BRIDGE_UNIT = 'arena-chain-bridge.service';
-export const TUNNEL_UNIT = 'arena-tunnel.service';
+// a second node on the machine names its services apart (instance.js)
+export const unitName = (id) => `${named(`arena-${id}`)}.service`;
+export const UNIT = unitName('node');
+export const BRIDGE_UNIT = unitName('chain-bridge');
+export const TUNNEL_UNIT = unitName('tunnel');
 
 /** The unit's directory: $XDG_CONFIG_HOME/systemd/user. */
 export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd', 'user');
@@ -96,7 +99,7 @@ export async function installService({ node = process.execPath, release, home, p
 
 // MACOS: A LAUNCHD AGENT (kanban #471 slice 4) - ~/Library/LaunchAgents/io.bitcoin-arena.node.plist, the seat from the release with
 // its settings file read by a small shell line (launchd has no EnvironmentFile), kept alive, logged beside the node's home.
-export const LAUNCHD_LABEL = 'io.bitcoin-arena.node';
+export const LAUNCHD_LABEL = named('io.bitcoin-arena.node');
 const xml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function launchdPlist({ node, release, home, port, boot = true }) {
   const cmd = `set -a; . '${home}/node.env'; set +a; exec '${node}' src/main.js ${port} '${home}/node.db'`;
@@ -120,7 +123,7 @@ export function launchdPlist({ node, release, home, port, boot = true }) {
 
 // WINDOWS: A SCHEDULED TASK (kanban #471 slice 4; ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
 // at logon (or at start-up with the user's password), restarted on failure, running a .cmd that reads node.env and starts the seat.
-export const WINDOWS_TASK = 'Arena node';
+export const WINDOWS_TASK = named('Arena node', ' ');
 export function windowsLauncher({ node, release, home, port }) {
   return ['@echo off', 'rem The Arena node (kanban #471), written by the installer: node.env read, then the seat started.',
     `for /f "usebackq eol=# tokens=1,* delims==" %%a in ("${home}\\node.env") do set "%%a=%%b"`,
@@ -229,7 +232,7 @@ export async function installProgram({ id, description, args, home, boot = true,
     const file = join(home, `arena-${id}.cmd`);
     writeFileSync(file, ['@echo off', `rem ${description} (kanban #471), written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
       `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`].join('\r\n') + '\r\n', { mode: 0o600 });
-    const name = `Arena ${id}`;
+    const name = named(`Arena ${id}`, ' ');
     if (boot) {
       const a = await windowsAutostart({ name, file, sh, env });
       if (!a.ok) return { ok: false, why: a.why };
@@ -238,15 +241,15 @@ export async function installProgram({ id, description, args, home, boot = true,
   }
   const dir = unitDir(env);
   mkdirSync(dir, { recursive: true });
-  const unit = `arena-${id}.service`;
+  const unit = unitName(id);
   const envFile = join(home, `${id}.env`);
   if (varLines.length) writeFileSync(envFile, varLines.map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
   writeFileSync(join(dir, unit), `# ${description} (kanban #471), written by the installer.
 [Unit]
 Description=${description}
-After=network-online.target${partOf ? ` arena-${partOf}.service` : ''}
+After=network-online.target${partOf ? ` ${unitName(partOf)}` : ''}
 Wants=network-online.target
-${partOf ? `# restarted with arena-${partOf}: LND's onion service lives in that Tor and is gone when it restarts (measured 2026-10-18 on the test host)\nPartOf=arena-${partOf}.service\n` : ''}
+${partOf ? `# restarted with arena-${partOf}: LND's onion service lives in that Tor and is gone when it restarts (measured 2026-10-18 on the test host)\nPartOf=${unitName(partOf)}\n` : ''}
 [Service]
 ${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}ExecStart=${args.join(' ')}
 Restart=on-failure
