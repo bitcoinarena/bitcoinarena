@@ -11,11 +11,13 @@
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
 // is rolled back from.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy } from './service.js';
+import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL } from './service.js';
+import { adhocSign } from './tor.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
@@ -45,53 +47,109 @@ export function restoreNode(home, backup) {
   for (const f of backup.files) copyFileSync(join(backup.dir, f), join(home, f));
 }
 
+/** The release a launchd agent runs: its WorkingDirectory less packages/arena-node. */
+export function releaseOfPlist(text) {
+  const m = /<key>WorkingDirectory<\/key><string>(.+?)\/packages\/arena-node<\/string>/.exec(String(text || ''));
+  return m ? m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : null;
+}
+
+/**
+ * THE NODE'S SERVICES, PER SYSTEM (measured on the test host, rc.12 -> rc.13: "Not updated: no arena-node unit names a release
+ * (~/.config/systemd/user/arena-node.service)" - the updater knew only systemd). Linux: the user's systemd units (arena-*.service);
+ * macOS: the user's launchd agents (io.bitcoin-arena.node*.plist). The seat's definition is written fresh for the new release; every
+ * other service of the node that names the old release (the bridge, the tunnel's cloudflared, tor, the gateway, the liquidity
+ * provider) is moved to the new one - before, only the seat and the bridge moved and the rest kept running the old release.
+ */
+function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
+  if (platform === 'darwin') {
+    const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
+    const seatFile = join(dir, `${LAUNCHD_LABEL}.plist`);
+    const files = () => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => f === `${LAUNCHD_LABEL}.plist` || (f.startsWith(`${LAUNCHD_LABEL}.`) && f.endsWith('.plist'))).map((f) => join(dir, f));
+    const label = (f) => f.split('/').pop().replace(/\.plist$/, '');
+    return {
+      where: seatFile, seatText: () => (existsSync(seatFile) ? readFileSync(seatFile, 'utf8') : null), releaseOf: releaseOfPlist, files,
+      seatFor: (release, old) => launchdPlist({ node, release, home, port, boot: !/<key>RunAtLoad<\/key><false\/>/.test(old) }), seatFile,
+      stop: async (fs) => { for (const f of fs) await sh('launchctl', ['bootout', `gui/${uid}/${label(f)}`]); return { ok: true }; },
+      // every agent, each tried up to 5 times a second apart: launchd refuses a bootstrap while the agent it just booted out is
+      // still unloading (measured on the test host, rc.12 -> rc.13: tor's bootstrap failed, the loop stopped, and the tunnel was never
+      // started - both came up at once by hand)
+      start: async (fs) => {
+        const failed = [];
+        for (const f of fs) {
+          let r = { ok: false };
+          for (let i = 0; i < 5 && !r.ok; i++) { if (i) await pause(1000); r = await sh('launchctl', ['bootstrap', `gui/${uid}`, f]); }
+          if (!r.ok) failed.push(`${label(f)}: ${(r.err || r.out || '').trim().slice(0, 120)}`);
+        }
+        return failed.length ? { ok: false, why: `launchctl bootstrap failed for ${failed.join('; ')}` } : { ok: true };
+      },
+      // the new release's own tor is unsigned until this macOS signs it (tor.js adhocSign; the wizard does it at install)
+      prepare: async (release) => { const t = join(release, 'runtime', 'tor'); if (existsSync(t)) await adhocSign(t, { run: async (c, a) => (await sh(c, a)).ok }); },
+    };
+  }
+  const dir = unitDir(env);
+  const seatFile = join(dir, UNIT);
+  const files = () => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^arena-.*\.service$/.test(f)).map((f) => join(dir, f));
+  const unit = (f) => f.split('/').pop();
+  return {
+    where: seatFile, seatText: () => (existsSync(seatFile) ? readFileSync(seatFile, 'utf8') : null), releaseOf: releaseOfUnit, files,
+    seatFor: (release) => seatUnit({ node, release, home, port }), seatFile,
+    bridgeFor: (release, state) => bridgeUnit({ node, release, home, bridgePort: state.bridgePort || 8471 }),
+    stop: async (fs) => { const r = await sh('systemctl', ['--user', 'stop', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${r.err.trim().slice(0, 200)}` }; },
+    start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
+    prepare: async () => {},
+  };
+}
+
 /**
  * Update the node at `home` to the release unpacked at `newRelease`. `asset` / `sums` / `sig` are checked first when given (an
- * unpacked tree from a test is passed without them). Injectables: `sh` (systemctl), `fetcher`, `nowMs`, `wait` (the seating-window
- * wait). Answers { ok, from, to, backup, why, rolledBack }.
+ * unpacked tree from a test is passed without them). Injectables: `sh` (systemctl / launchctl), `fetcher`, `nowMs`, `wait` (the
+ * seating-window wait), `platform`. Answers { ok, from, to, backup, why, rolledBack, moved }.
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
-  fetcher = fetch, nowMs = () => Date.now(), waitMs = 90000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
+  fetcher = fetch, nowMs = () => Date.now(), waitMs = 90000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform }) {
   if (asset) {
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
   }
+  if (platform === 'win32') return { ok: false, why: 'updating a Windows node in place is not built yet: install the new release over it with the same home' };
   if (!existsSync(join(home, 'state.json')) || !existsSync(join(home, 'node.env'))) return { ok: false, why: `no node is installed at ${home}` };
-  const dir = unitDir(env);
-  const unitPath = join(dir, UNIT);
-  const oldUnit = existsSync(unitPath) ? readFileSync(unitPath, 'utf8') : null;
-  const from = releaseOfUnit(oldUnit);
-  if (!from) return { ok: false, why: `no arena-node unit names a release (${unitPath})` };
+  const svc = servicesOf({ platform, env, sh, home, port, node });
+  const oldSeat = svc.seatText();
+  const from = svc.releaseOf(oldSeat);
+  if (!from) return { ok: false, why: `no arena-node service names a release (${svc.where})` };
   if (from === newRelease) return { ok: false, why: 'that release is the one running' };
   const before = await waitHealthy({ port, fetcher, waitMs: 10000, everyMs: 500 });
-  const units = [UNIT, ...(existsSync(join(dir, BRIDGE_UNIT)) ? [BRIDGE_UNIT] : []), ...(existsSync(join(dir, TUNNEL_UNIT)) ? [TUNNEL_UNIT] : [])];
-  const oldBridge = existsSync(join(dir, BRIDGE_UNIT)) ? readFileSync(join(dir, BRIDGE_UNIT), 'utf8') : null;
+  // the node's services that run from the old release: the seat, and every other one naming it
+  const moving = svc.files().filter((f) => f === svc.seatFile || readFileSync(f, 'utf8').includes(from));
+  const oldTexts = new Map(moving.map((f) => [f, readFileSync(f, 'utf8')]));
 
   while (inSeatingWindow(nowMs())) await sleep(5000);
-  const stop = await sh('systemctl', ['--user', 'stop', ...units]);
-  if (!stop.ok) return { ok: false, why: `the node did not stop: ${stop.err.trim().slice(0, 200)}` };
+  await svc.prepare(newRelease);
+  const stop = await svc.stop(moving);
+  if (!stop.ok) return { ok: false, why: stop.why };
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
-  writeFileSync(unitPath, seatUnit({ node, release: newRelease, home, port }));
-  if (oldBridge) writeFileSync(join(dir, BRIDGE_UNIT), bridgeUnit({ node, release: newRelease, home, bridgePort: state.bridgePort || 8471 }));
-  await sh('systemctl', ['--user', 'daemon-reload']);
-  await sh('systemctl', ['--user', 'start', ...units]);
+  for (const f of moving) {
+    const text = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
+      : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
+        : oldTexts.get(f).split(from).join(newRelease);
+    writeFileSync(f, text);
+  }
+  const started = await svc.start(moving);
   const after = await waitHealthy({ port, fetcher, waitMs });
   const same = after.ok && (!before.ok || after.identity === before.identity);
   if (same) {
     writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity };
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), ...(started.ok ? {} : { notStarted: started.why }) };
   }
-  // ROLLED BACK: the old units, the backup, the old release started
-  await sh('systemctl', ['--user', 'stop', ...units]);
-  writeFileSync(unitPath, oldUnit);
-  if (oldBridge) writeFileSync(join(dir, BRIDGE_UNIT), oldBridge);
+  // ROLLED BACK: the old services, the backup, the old release started
+  await svc.stop(moving);
+  for (const [f, t] of oldTexts) writeFileSync(f, t);
   restoreNode(home, backup);
-  await sh('systemctl', ['--user', 'daemon-reload']);
-  await sh('systemctl', ['--user', 'start', ...units]);
+  await svc.start(moving);
   const back = await waitHealthy({ port, fetcher, waitMs });
   return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir,
     why: after.ok ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}` : `the new release did not come up: ${after.why}`,
     restored: back.ok };
 }
-
