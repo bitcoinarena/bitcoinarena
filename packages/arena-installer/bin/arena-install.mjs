@@ -32,7 +32,7 @@ import { openQuickTunnel } from '../src/tunnel.js';
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const port = Number(opt('--port', offsetPort(7800)));   // + ARENA_PORT_OFFSET (instance.js)
-const seatPort = Number(opt('--seat-port', 8470));
+const seatPort = Number(opt('--seat-port', offsetPort(8470)));   // + ARENA_PORT_OFFSET: a second node's seat on its own port (measured: 8470 was the first's)
 const bridgePort = Number(opt('--bridge-port', offsetPort(8471)));
 const home = resolve(opt('--home', defaultHome()));
 const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
