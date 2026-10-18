@@ -105,10 +105,12 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   // the chain test with the fake as the source and a fake second source that agrees (the real list needs the internet)
   const probe = { core: probeCore, electrum: async () => ({ ok: true, height: 0, tipHash: TESTNET4_GENESIS, atHashes: { 0: TESTNET4_GENESIS }, latencyMs: 1 }) };
   const seat = await reachSeat();
-  const reach = { ...reachKit, checkDirect: (o) => reachKit.checkDirect({ ...o, seats: [seat.url, seat.url] }) };
+  // LND's peer port (9735) is measured as a fake here: the real port may be taken on this machine (the the test host's mainnet LND)
+  const reach = { ...reachKit, checkDirect: (o) => (o.port === 9735 ? Promise.resolve({ ok: true, reached: false, address: '203.0.113.5', port: 9735, diagnosis: { advice: 'behind NAT' } })
+    : reachKit.checkDirect({ ...o, seats: [seat.url, seat.url] })) };
   // THE CHAIN FOR THE BOND: a deposit of 60,000 sat at the wallet's address once asked twice; what is broadcast is kept
   const sent = []; let asked = 0;
-  const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 263000, height: 156899 }] : [] }),
+  const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 366000, height: 156899 }] : [] }),
     broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
   const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
   const gwKit = { configureGateway };
@@ -197,6 +199,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(lndCalls[0].id, 'lnd');
   assert.match(lndCalls[0].args.join(' '), /^\/fake\/lnd --lnddir=.*lnd --configfile=.*lnd\.conf$/);
   assert.match(readFileSync(join(home, 'lnd', 'lnd.conf'), 'utf8'), /bitcoin\.testnet4=true[\s\S]*bitcoind\.rpccookie=/);
+  assert.deepEqual([state.read().lnReach.reached, /externalip=/.test(readFileSync(join(home, 'lnd', 'lnd.conf'), 'utf8'))], [false, false], 'LND\'s port measured from outside first: not reached, so no external address');
+  assert.match(state.read().tor.why || 'tor', /no Tor|tor/, 'not reached: Tor (none in this test release and none in PATH: said)');
   const waiting = (await c.post('/api/lightning/status')).json;
   assert.deepEqual([waiting.ok, waiting.waiting], [false, true]);
   walletReady = true;
@@ -245,9 +249,9 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const none = (await c.post('/api/bond/check')).json;
   assert.deepEqual([none.ok, none.coins.length, none.enough, none.lock.maturity], [true, 0, false, 156900 + 151]);
   const found = (await c.post('/api/bond/check')).json;
-  assert.deepEqual([found.totalSats, found.enough], [263000, true]);
-  assert.deepEqual(found.parts, { bond: 50000, fees: 2000, advertUpdate: 5000, pegIn: 50000, ring: 153000 }, 'custody: the bond, the advertisement update\'s reserve, the peg-in and the ring channel');
-  assert.equal(found.needSats, 260000);
+  assert.deepEqual([found.totalSats, found.enough], [366000, true]);
+  assert.deepEqual(found.parts, { bond: 50000, fees: 2000, advertUpdate: 5000, pegIn: 50000, outside: 103000, ring: 153000 }, 'custody: the bond, the advertisement update\'s reserve, the peg-in, the outside and the ring channel');
+  assert.equal(found.needSats, 363000);
   assert.equal((await c.post('/api/bond/check', { pegInSats: 70000 })).json.enough, false, 'a larger peg-in needs more than arrived');
   assert.equal((await c.post('/api/bond/check', { pegInSats: 50000 })).json.enough, true);
   const posted = (await c.post('/api/bond/post')).json;

@@ -5274,7 +5274,7 @@ all of these hold:
 |---|---|---|---|
 | A **seated guardian of F**, not departing | - | - | the federation record |
 | Its gateway is **announced** (`/gateway-claim`, signed by the node key: gateway URL and Lightning node key) and **registered with F** | - | - | F's own gateway list |
-| **Inbound liquidity** of its Lightning node (deposits come in through it) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (remote balance of its active public channels) |
+| **Inbound liquidity from outside F** (deposits from the wider Lightning network come in through it; the ring's channels do not count) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (remote balance of its active public channels to peers that are not F's custody nodes) |
 | **Outbound liquidity** (payouts leave through it) | ≥ 2,500,000 sat | ≥ 100,000 sat | stated in the signed claim (local balance) |
 | **E-cash in F** for receiving: its **peg-in** | ≥ 2,000,000 sat | ≥ 50,000 sat | the gateway's peg-in, made by the node's custody agent; shown by its first receives |
 | **Availability**: running, its LND synced, answering | ≥ 95 % of the epoch | ≥ 95 % | each guardian probes every candidate every 10 minutes |
@@ -5289,6 +5289,13 @@ next. Every gateway then has one channel out and one in, made by the federation'
   without it, the address is empty.
 - A node nobody can dial dials its previous neighbour, which then opens over that connection.
 - A pair where neither side can be dialled stays without a ring channel and says so.
+
+**The outside channel and Tor** *(the owner 2026-10-18: "If the incoming channels are only connected between them with nothing outside it's no good"; "Measure if lnd is accessible from the outside after installing if not install tor")*:
+- Each gateway also opens one channel of 100,000 sat (testnet4) to a well-connected hub outside its federation, so payers and payees on the wider Lightning network reach it. On testnet4 the hub is the the test host's LND C at its onion address; mainnet hubs are named before mainnet.
+- Most installed nodes take no incoming connection (no open port, a dynamic address). Before LND starts, two seats try to reach its peer port (9735) from outside:
+  - reached: LND announces that address;
+  - not reached: the node runs Tor (the Tor Project's bundle in the release; the system's tor on linux-arm64), and LND runs hybrid. Others dial its permanent onion address; it still dials clearnet peers directly.
+- The ring and the outside channel then reach every node.
 
 ### The best two
 

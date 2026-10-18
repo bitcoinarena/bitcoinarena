@@ -19,6 +19,18 @@ import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClo
 /** THE RING CHANNEL each custody node opens to the next node of its federation (sat), and what the deposit sets aside for it with fees. */
 export const RING_SATS = 150000;
 export const RING_RESERVE_SATS = RING_SATS + 3000;
+/**
+ * THE OUTSIDE CHANNEL (the owner 2026-10-18: "If the incoming channels are only connected between them with nothing outside it's no good"):
+ * each gateway also opens one channel to a well-connected node outside its federation, so payers and payees on the wider Lightning
+ * network reach it. Per network; testnet4: the the test host's LND C over Tor ("for Testnet you can take one of our test-host nodes"; its IP is
+ * dynamic, so its permanent onion address). Mainnet: to be named before mainnet.
+ */
+export const OUTSIDE_SATS = 100000;
+export const OUTSIDE_RESERVE_SATS = OUTSIDE_SATS + 3000;
+export const LIGHTNING_HUBS = Object.freeze({
+  testnet4: Object.freeze(['02bf834901a65ed21af3c45c9c02e03213f56034e9b2a514ece11e9b9e7b4c4859@boxy5rnx32ovj2qa2l2sw6p5nns3t2u2zephqe6x3fkbqbfoamdu6xad.onion:9735']),
+  mainnet: Object.freeze([]),
+});
 import { signGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { writeFileSync } from 'node:fs';
 import { guardianSetupOf } from './state.js';
@@ -37,7 +49,7 @@ export function guardianOfEntry(dir) {
   return { invite, federationId, guardianKey };
 }
 
-export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd,
+export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
   lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now() }) {
   // the federation's custody nodes with their Lightning key and address, from this node's own seat (GET /gateway-seats: the claims it
   // gathered as a guardian, its own among them)
@@ -114,18 +126,50 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       const last = (state.read().custody || {}).claimAtMs || 0;
       if (nowMs() - last >= 3600000) {
         const ch = await channels(s.lightning);
+        // inbound from OUTSIDE the federation is what takes deposits from the wider network; the ring's channels do not count for it
+        const inside = new Set(((await membersOf(s)) || []).map((m) => m.lightningPubkey));
+        const outsideIn = ch.ok ? ch.open.filter((x) => x.public && x.active && !inside.has(x.peer)).reduce((a, x) => a + (x.remoteSats || 0), 0) : 0;
         const { schnorr } = await import('@noble/curves/secp256k1.js');
         const nodeSecret = nodeSecretOf();
         const claim = signGatewayClaim({ node: Buffer.from(schnorr.getPublicKey(nodeSecret)).toString('hex'), federationId: g.federationId, gatewayUrl: s.gateway.publicUrl,
           lightningPubkey: s.lightning.pubkey, capacitySats: ch.ok ? ch.publicCapacitySats : 0, pegInSats: c.pegIn.sats, atMs: nowMs(),
-          inboundSats: ch.ok ? ch.inboundSats || 0 : 0, outboundSats: ch.ok ? ch.outboundSats || 0 : 0, lightningAddr: await lightningAddrOf(s) }, (h) => schnorr.sign(h, nodeSecret));
+          inboundSats: ch.ok ? ch.inboundSats || 0 : 0, outboundSats: ch.ok ? ch.outboundSats || 0 : 0, outsideInboundSats: outsideIn, lightningAddr: await lightningAddrOf(s) }, (h) => schnorr.sign(h, nodeSecret));
         writeFileSync(claimFile, JSON.stringify(claim, null, 2) + '\n');
         state.save({ custody: { ...state.read().custody, claimAtMs: nowMs() } });
-        log(`gateway seat claimed: inbound ${claim.inboundSats} sat, outbound ${claim.outboundSats} sat, peg-in ${claim.pegInSats} sat`);
+        log(`gateway seat claimed: inbound ${claim.inboundSats} sat (${claim.outsideInboundSats} from outside the federation), outbound ${claim.outboundSats} sat, peg-in ${claim.pegInSats} sat`);
         return { ok: true, did: 'gateway-claim' };
       }
     }
-    // 5. THE CHANNEL RING (the owner 2026-10-18, "1 and 2": the installer's LND had no inbound liquidity, so its gateway could take no deposit):
+    // 5. THE OUTSIDE CHANNEL: one channel to a hub outside the federation (LIGHTNING_HUBS), dialled at its address (an onion: over Tor)
+    if (s.gateway && s.lightning && s.lightning.pubkey && c.pegIn && hubs.length) {
+      const ch0 = await channels(s.lightning);
+      const hubKeys = hubs.map((u) => u.split('@')[0]);
+      const toHub = ch0.ok && [...ch0.open, ...ch0.pending].some((x) => hubKeys.includes(x.peer));
+      if (!toHub) {
+        const f = await lnd.funds(s.lightning);
+        if (!f.ok) return { ok: false, why: `the outside channel waits for LND: ${f.why}` };
+        if (f.onchainSats < OUTSIDE_SATS + 1000) {
+          if (c.outsideFund) return { ok: true, idle: `the outside channel's ${OUTSIDE_RESERVE_SATS} sat are on their way to LND (${c.outsideFund.txid})` };
+          const { coins } = await chainKit.coinsOf(s.chain, w.spk);
+          let tx;
+          try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: OUTSIDE_RESERVE_SATS }); }
+          catch (e) { return { ok: false, why: `the outside channel is not funded yet: ${e.message}` }; }
+          const txid = await chainKit.broadcast(s.chain, tx.hex);
+          state.save({ custody: { ...state.read().custody, outsideFund: { address: f.address, sats: OUTSIDE_RESERVE_SATS, txid, atMs: nowMs() } } });
+          log(`outside channel funds: ${OUTSIDE_RESERVE_SATS} sat to LND (${txid})`);
+          return { ok: true, did: 'outside-fund', txid };
+        }
+        const [pubkey, host] = hubs[0].split('@');
+        const k = await lnd.connect(s.lightning, { pubkey, host });
+        if (!k.ok) return { ok: false, why: `the outside hub did not answer at ${host}: ${k.why}` };
+        const o = await lnd.openTo(s.lightning, { pubkey, sats: OUTSIDE_SATS });
+        if (!o.ok) return o;
+        state.save({ custody: { ...state.read().custody, outside: { pubkey, sats: OUTSIDE_SATS, fundingTxid: o.fundingTxid, atMs: nowMs() } } });
+        log(`outside channel of ${OUTSIDE_SATS} sat to ${pubkey.slice(0, 12)}…: ${o.fundingTxid}`);
+        return { ok: true, did: 'outside-channel', txid: o.fundingTxid };
+      }
+    }
+    // 6. THE CHANNEL RING (the owner 2026-10-18, "1 and 2": the installer's LND had no inbound liquidity, so its gateway could take no deposit):
     // the federation's custody nodes in node-key order, each opens one channel of RING_SATS to the next - every gateway then has one
     // channel out (payouts) and one in (deposits), made by the federation's own nodes. The opener dials the next one's announced address;
     // a node nobody can dial (behind a tunnel) dials its previous neighbour instead, and that one opens over the connection it made.
@@ -182,7 +226,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         return { ok: true, did: 'ring-channel', txid: o.fundingTxid };
       }
     }
-    return { ok: true, idle: 'custody is set up: guardian_of published, the gateway serves the federation, the peg-in sent, the gateway seat claimed, the ring channel open' };
+    return { ok: true, idle: 'custody is set up: guardian_of published, the gateway serves the federation, the peg-in sent, the gateway seat claimed, the outside and the ring channel open' };
   }
   return { tick };
 }

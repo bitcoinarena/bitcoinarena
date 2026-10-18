@@ -28,8 +28,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS } from './bond.js';
 import { writeLaunchers } from './launchers.js';
+import { torBin, writeTorrc, TOR_PORTS } from './tor.js';
+import { LND_PORTS } from './lnd.js';
 import * as workersKitDefault from './workers.js';
-import { RING_RESERVE_SATS } from './custody-agent.js';
+import { RING_RESERVE_SATS, OUTSIDE_RESERVE_SATS } from './custody-agent.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
@@ -350,11 +352,23 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!s.chain || s.chain.kind !== 'core') return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
       const got = await lndKit.installLnd({ home: state.home, fetcher });
       if (!got.ok) return { ok: false, why: got.why };
-      const cfg = lndKit.configureLnd({ home: state.home, chain: s.chain });
+      // CAN OTHERS DIAL THIS LND? (the owner 2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
+      // two seats connect back to the peer port before LND takes it (reach.checkDirect). Reached: LND announces that address, no Tor.
+      // Not reached - the usual case, no open port: Tor (tor.js), and LND gets a permanent onion address others dial instead.
+      const lnReach = await reach.checkDirect({ port: LND_PORTS.p2p, fetcher }).catch((e) => ({ ok: false, reached: false, why: e.message }));
+      state.save({ lnReach: { reached: Boolean(lnReach.reached), address: lnReach.address || null, port: LND_PORTS.p2p, why: (lnReach.diagnosis && lnReach.diagnosis.advice) || lnReach.why || null, atMs: Date.now() } });
+      const tor = lnReach.reached ? null : await torBin({ release, which: async (x) => { const r = await new Promise((ok) => execFile(process.platform === 'win32' ? 'where' : 'which', [x], (e, o) => ok(e ? '' : String(o).split(/\r?\n/)[0].trim()))); return r || null; } });
+      let torOn = false;
+      if (tor) {
+        const t = await lndKit.installProgram({ id: 'tor', description: 'Tor for the Arena node\'s Lightning', args: [tor, '-f', writeTorrc({ home: state.home })], home: state.home, boot: b.boot !== false });
+        torOn = t.ok;
+      }
+      const cfg = lndKit.configureLnd({ home: state.home, chain: s.chain, tor: torOn ? TOR_PORTS : null, externalIp: lnReach.reached ? lnReach.address : null });
       const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for the Arena node (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot: b.boot !== false });
       if (!r.ok) return { ok: false, why: r.why };
-      state.save({ lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });
-      return { ok: true, lnd: got.lnd, sha256: got.sha256 || null };
+      state.save({ tor: torOn ? { bin: tor, ports: TOR_PORTS } : { why: lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
+        lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });
+      return { ok: true, lnd: got.lnd, sha256: got.sha256 || null, peers: lnReach.reached ? `reachable from outside at ${lnReach.address}:${LND_PORTS.p2p}` : torOn ? 'not reachable from outside: Tor gives LND an onion address' : 'not reachable from outside and no Tor: only nodes it dials reach it' };
     },
     'POST /api/lightning/status': async () => {
       const s = state.read(); const l = s.lightning;
@@ -368,7 +382,11 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const t = await lndKit.testLnd(l);
       if (!t.ok) return { ok: false, why: t.why, waiting: l.mode === 'own', created };
       state.save({ lightning: { ...l, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() } });   // the step is done with the gateway
-      return { ok: true, created, ...t };
+      // how other Lightning nodes reach this one: the measured address, or the onion LND announces (Tor), or not at all
+      const r = s.lnReach || {}; const onion = (t.uris || []).find((u) => /\.onion:/.test(u));
+      const peers = r.reached ? `others reach it at ${r.address}:${r.port} (measured from outside)` : onion ? `no open port (measured), so it is reached over Tor at ${onion.split('@')[1]}`
+        : s.tor && s.tor.bin ? 'no open port (measured); Tor is making its onion address' : r.atMs ? `no open port (measured) and no Tor: ${(s.tor || {}).why || ''}` : null;
+      return { ok: true, created, ...t, peers };
     },
     'POST /api/lightning/connect': async (b) => {
       if (!(state.read().done || {}).service) return { ok: false, why: 'install the node first' };
@@ -471,8 +489,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
       // custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation
       // and the ring channel each custody node opens to the next node of its federation (custody-agent.js: its gateway's outbound, the next one's inbound)
-      const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, ring: RING_RESERVE_SATS }
-        : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, ring: RING_RESERVE_SATS } : {}) };
+      const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS }
+        : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS } : {}) };
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
       return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s) };
     },

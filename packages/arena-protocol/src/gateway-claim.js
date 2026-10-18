@@ -6,7 +6,8 @@
 // INBOUND AND OUTBOUND APART (the owner 2026-10-18, on the installer's LND: "Does the [LND] we setup have incoming liquidity?" - it had none):
 // a deposit reaches the federation through the gateway's INBOUND liquidity, a payout leaves through its OUTBOUND, so a claim states
 // both (the remote and the local balance of its public channels), and the address its LND takes peer connections at (host:port,
-// empty when it takes none) - the federation's channel ring (custody-agent.js) dials it.
+// empty when it takes none) - the federation's channel ring (custody-agent.js) dials it. outsideInboundSats: the inbound from peers OUTSIDE
+// the federation ("only connected between them with nothing outside it's no good") - the part a seat's deposit minimum counts.
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 
@@ -18,7 +19,7 @@ export function gatewayClaimHash(c) {
   w.bytes32(fromHex(c.node)); w.bytes32(fromHex(c.federationId));
   w.str(String(c.gatewayUrl)); w.bytes(fromHex(c.lightningPubkey), 33);
   w.u64(BigInt(c.capacitySats)); w.u64(BigInt(c.pegInSats)); w.u64(BigInt(c.atMs));
-  w.u64(BigInt(c.inboundSats)); w.u64(BigInt(c.outboundSats)); w.str(String(c.lightningAddr || ''));
+  w.u64(BigInt(c.inboundSats)); w.u64(BigInt(c.outboundSats)); w.str(String(c.lightningAddr || '')); w.u64(BigInt(c.outsideInboundSats || 0));
   return taggedHash(GATEWAY_CLAIM_TAG, w.finish());
 }
 
@@ -26,7 +27,8 @@ export function gatewayClaimHash(c) {
 export function signGatewayClaim(fields, sign) {
   const c = { node: String(fields.node).toLowerCase(), federationId: String(fields.federationId).toLowerCase(), gatewayUrl: String(fields.gatewayUrl),
     lightningPubkey: String(fields.lightningPubkey).toLowerCase(), capacitySats: String(fields.capacitySats), pegInSats: String(fields.pegInSats), atMs: String(fields.atMs),
-    inboundSats: String(fields.inboundSats ?? 0), outboundSats: String(fields.outboundSats ?? 0), lightningAddr: String(fields.lightningAddr || '') };
+    inboundSats: String(fields.inboundSats ?? 0), outboundSats: String(fields.outboundSats ?? 0), lightningAddr: String(fields.lightningAddr || ''),
+    outsideInboundSats: String(fields.outsideInboundSats ?? 0) };
   return { ...c, signature: toHex(sign(gatewayClaimHash(c))) };
 }
 
@@ -36,7 +38,7 @@ export function checkGatewayClaim(c, verify) {
   if (!/^https?:\/\/\S+\/$/.test(c.gatewayUrl || '')) return { ok: false, why: 'a claim names its gateway\'s address, ending in /' };
   if (!/^0[23][0-9a-f]{64}$/.test(c.lightningPubkey || '')) return { ok: false, why: 'a claim names its Lightning node key' };
   if (!/^(|([a-z0-9-]+\.)*[a-z0-9-]+:\d{1,5}|\[[0-9a-f:]+\]:\d{1,5})$/i.test(String(c.lightningAddr ?? ''))) return { ok: false, why: 'a claim\'s Lightning address is host:port, or empty' };
-  for (const k of ['capacitySats', 'pegInSats', 'atMs', 'inboundSats', 'outboundSats']) if (!/^\d+$/.test(String(c[k] || ''))) return { ok: false, why: `a claim's ${k} is a whole number` };
+  for (const k of ['capacitySats', 'pegInSats', 'atMs', 'inboundSats', 'outboundSats', 'outsideInboundSats']) if (!/^\d+$/.test(String(c[k] || ''))) return { ok: false, why: `a claim's ${k} is a whole number` };
   if (!/^[0-9a-f]{128}$/.test(c.signature || '')) return { ok: false, why: 'a claim is signed' };
   let good = false;
   try { good = verify(fromHex(c.signature), gatewayClaimHash(c), fromHex(c.node)); } catch { good = false; }

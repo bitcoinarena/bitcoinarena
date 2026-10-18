@@ -69,6 +69,22 @@ case "$OS" in
     install -m 0755 "$CACHE/$CF_VER-$CF" "$STAGE/runtime/cloudflared.exe" ;;
 esac
 
+# 2b. TOR (kanban #471, the owner 2026-10-18: "find a way to connect to it via a tunnel" / "connect via tor to the other nodes as well"):
+# the Tor Project's expert bundle, pinned by the SHA-256 of its sha256sums-signed-build.txt, unpacked to runtime/tor/ (tor and its
+# libraries). The node's LND runs hybrid through it: a permanent onion address with no open port. The Tor Project builds no linux-arm64
+# bundle: there the installer uses the system's tor (apt install tor) when it is installed.
+TOR_VER=15.0.25
+declare -A TOR_FILE=([linux-x64]=tor-expert-bundle-linux-x86_64-$TOR_VER.tar.gz [darwin-arm64]=tor-expert-bundle-macos-aarch64-$TOR_VER.tar.gz
+  [darwin-x64]=tor-expert-bundle-macos-x86_64-$TOR_VER.tar.gz [windows-x64]=tor-expert-bundle-windows-x86_64-$TOR_VER.tar.gz)
+declare -A TOR_SHA=([linux-x64]=19cf18726eecb362e0f21d27afa9ea9efe5da928bfdfbb1ceb5fe54519e87f4a [darwin-arm64]=a3febb6179152b0b4f56a0f5cc57bf5cc8ecef7db35e7c3e9d5a044c8158c26c
+  [darwin-x64]=e1ae4d4a734d28bb590839188511deb3cebc26fcbce9df66d01b2c452060fe95 [windows-x64]=c1988c701de2f24f7d098d1d6d7f507b58f27740d097f29c246e0524d639b252)
+TF="${TOR_FILE[$KEY]:-}"
+if [ -n "$TF" ]; then
+  fetch "https://dist.torproject.org/torbrowser/$TOR_VER/$TF" "${TOR_SHA[$KEY]}" "$TF"
+  tar -xzf "$CACHE/$TF" -C "$STAGE/runtime" tor
+  if [ "$OS" = windows ]; then ls "$STAGE/runtime/tor/tor.exe" > /dev/null; else ls "$STAGE/runtime/tor/tor" > /dev/null; fi
+fi
+
 # 3. the npm dependencies, pinned (pure JavaScript: the same files for every architecture)
 ( cd "$STAGE/packages/arena-node" && npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts \
     @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3 >/dev/null )   # bcryptjs: the gateway's admin password hash (gateway.js)

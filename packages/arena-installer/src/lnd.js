@@ -9,6 +9,7 @@
 //              and kept 0600 beside it; LND's channel backup file is not in the seed (said on the page)
 //   test       getinfo over REST with the admin macaroon: its key, block height and whether it is synced to the chain
 //   connect    an LND that already runs: its REST address, admin macaroon (hex) and TLS certificate, tested the same way
+import { lndTorLines } from './tor.js';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
@@ -57,7 +58,7 @@ export async function installLnd({ home, platform = process.platform, arch = pro
  * <home>/lnd and its lnd.conf for testnet4 on the node's Bitcoin Core. `chain`: the wizard's chain step ({ url, cookiePath } or
  * { url, user, password }). Answers { lnddir, conf, passwordFile, restUrl, tlsCert, macaroon }.
  */
-export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PORTS }) {
+export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PORTS, tor = null, externalIp = null }) {
   const lnddir = join(home, 'lnd');
   mkdirSync(lnddir, { recursive: true, mode: 0o700 });
   const passwordFile = join(lnddir, 'wallet-password');
@@ -68,10 +69,11 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
     '; The Arena node\'s Lightning node (kanban #471 slice 5), written by the installer.',
     // nat: LND asks the router (UPnP / NAT-PMP) to forward its peer port and announces the outside address - the federation's channel ring
     // dials it there (custody-agent.js); without it a node behind a router takes no peer connection
-    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, 'nat=true', `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
+    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, 'nat=true', ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
     `wallet-unlock-password-file=${passwordFile}`, 'wallet-unlock-allow-create=true',
     '[Bitcoin]', 'bitcoin.active=true', 'bitcoin.testnet4=true', 'bitcoin.node=bitcoind',
-    '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true', '',
+    '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true',
+    ...(tor ? lndTorLines(tor) : []), '',
   ].join('\n');
   writeFileSync(join(lnddir, 'lnd.conf'), conf, { mode: 0o600 });
   return { lnddir, conf: join(lnddir, 'lnd.conf'), passwordFile, restUrl: `https://127.0.0.1:${ports.rest}`, tlsCert: join(lnddir, 'tls.cert'),

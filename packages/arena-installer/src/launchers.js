@@ -19,6 +19,7 @@ export function servicesOf(s) {
   const ids = [];
   for (const n of ['testnet4', 'mainnet']) if (s.core && s.core.networks && s.core.networks[n]) ids.push(`bitcoind-${n}`);
   if (s.chain && s.chain.kind === 'electrum') ids.push('chain-bridge');
+  if (s.tor && s.tor.bin) ids.push('tor');                                // before LND: LND makes its onion through it
   if (s.lightning && s.lightning.mode === 'own') ids.push('lnd');
   if (s.gateway) ids.push('gateway');
   if (s.custodyAgent && s.custodyAgent.installedMs) ids.push('custody');
