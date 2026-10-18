@@ -14,7 +14,7 @@ const claim = (n, free, ch) => ({ node: String(n).repeat(64).slice(0, 64), freeS
 test('the list: providers with a channel to the federation, at or above the deposit, weights floored to L', () => {
   const list = liquiditySeatingFrom({ federationLnKeys: [fedKey], claims: [
     claim(1, 612345, [{ peer: fedKey, capacitySats: '100000' }]),            // 712,345 -> 700,000
-    claim(2, 499999, [{ peer: fedKey, capacitySats: '100000' }]),            // below the deposit: out
+    claim(2, 399999, [{ peer: fedKey, capacitySats: '100000' }]),            // free + given 499,999, below the deposit: out
     claim(3, 900000, [{ peer: other, capacitySats: '100000' }]),             // no channel to this federation: out
     claim(4, 500000, [{ peer: fedKey, capacitySats: '99999' }]),             // channel below L: out
   ] });

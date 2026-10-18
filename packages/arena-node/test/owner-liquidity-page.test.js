@@ -16,12 +16,12 @@ async function render(claim) {
 }
 
 test('a provider: free vs the deposit minimum, the channels it gave, the top-up address; below the minimum, no share said', async () => {
-  const claim = { freeSats: '420000', depositAddress: 'tb1pdeposit', channels: [{ peer: '03' + 'aa'.repeat(32), capacitySats: '100000' }] };
+  const claim = { freeSats: '320000', depositAddress: 'tb1pdeposit', channels: [{ peer: '03' + 'aa'.repeat(32), capacitySats: '100000' }] };
   const low = await render(claim);
-  assert.match(low, /Free for new channels<\/span><b>420,000 sat/); assert.match(low, /Deposit minimum<\/span><b>500,000 sat/);
-  assert.match(low, /earns no share of the liquidity pool<\/b> until it is topped up by 80,000 sat/);
+  assert.match(low, /Free for new channels<\/span><b>320,000 sat/); assert.match(low, /Deposit minimum \(free \+ channels given\)<\/span><b>500,000 sat/);
+  assert.match(low, /earns no share of the liquidity pool<\/b> until it is topped up by 80,000 sat/, '320,000 free + 100,000 given: 80,000 short');
+  assert.match(await render({ ...claim, freeSats: '496150' }), /Above the deposit minimum/, 'LND D after its first channel: 496,150 + 100,000 given');
   assert.match(low, /Channels given to new nodes<\/span><b>1 \(100,000 sat\)/); assert.match(low, /tb1pdeposit/);
-  assert.match(await render({ ...claim, freeSats: '600000' }), /Above the deposit minimum/);
   assert.match(await render(null), /no liquidity provider[\s\S]*Liquidity provider/);
   assert.ok(/liquidityPanel\(\);/.test(HTML) && HTML.includes('<div class="card" id="liquidity">'));
 });
