@@ -12,7 +12,7 @@ const fid = 'f0'.repeat(32);
 const keys = [1, 2, 3, 4].map((n) => { const secret = new Uint8Array(32).fill(n); return { secret, hex: toHex(schnorr.getPublicKey(secret)) }; });
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const claimOf = (i, over = {}) => signGatewayClaim({ node: keys[i].hex, federationId: fid, gatewayUrl: `https://n${i}.example/gateway/`, lightningPubkey: '02' + 'ab'.repeat(32),
-  capacitySats: 300000, pegInSats: 60000, atMs: 1, ...over }, (h) => schnorr.sign(h, keys[i].secret));
+  capacitySats: 300000, pegInSats: 60000, atMs: 1, inboundSats: 150000, outboundSats: 150000, ...over }, (h) => schnorr.sign(h, keys[i].secret));
 
 test('claims: signed by their node, checked; a forged one refused', () => {
   const c = claimOf(0);

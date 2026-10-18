@@ -36,8 +36,19 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
     testGateway: async () => ({ ok: true, federations: [{ federationId: fid, name: 'arena' }] }),
     depositAddress: async (o) => { calls.push(['address', o.federationId]); return { ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' }; } };
   let clock = 1_800_000_000_000;
+  // LND: one channel out so far (no inbound), announcing an address; the ring's other members from the seat; peers and channels faked
+  let open = [{ peer: '03' + '77'.repeat(32), capacitySats: 250000, public: true, active: true }];
+  let lndOnchain = 0; const lndCalls = []; const connected = new Set();
+  const ring = [{ node: '00'.repeat(32), lightningPubkey: '02' + '11'.repeat(32), lightningAddr: '198.51.100.1:9735' },
+    { node: 'ff'.repeat(32), lightningPubkey: '03' + '22'.repeat(32), lightningAddr: '' }];
   const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock,
-    channels: async () => ({ ok: true, open: [], pending: [], publicCapacitySats: 250000 }) });
+    channels: async () => ({ ok: true, open, pending: [], publicCapacitySats: 250000, inboundSats: 0, outboundSats: 250000 }),
+    lndInfo: async () => ({ ok: true, uris: ['02' + '99'.repeat(32) + '@203.0.113.9:9735'] }),
+    ringMembers: async () => [...ring, { node: toHex(schnorr.getPublicKey(nodeSecret)), lightningPubkey: '02' + '99'.repeat(32), lightningAddr: '203.0.113.9:9735' }],
+    lnd: { funds: async () => ({ ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', onchainSats: lndOnchain }),
+      peers: async () => ({ ok: true, peers: [...connected] }),
+      connect: async (_c, o) => { lndCalls.push(['connect', o.pubkey, o.host]); connected.add(o.pubkey); return { ok: true }; },
+      openTo: async (_c, o) => { lndCalls.push(['open', o.pubkey, o.sats]); open = [...open, { peer: o.pubkey, capacitySats: o.sats, public: true, active: false }]; return { ok: true, fundingTxid: 'ab'.repeat(32) }; } } });
 
   assert.match((await agent.tick()).idle, /waits to be drawn/);
   const dir = join(home, 'node.db.guardian'); mkdirSync(dir);
@@ -70,10 +81,23 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   const claim = JSON.parse(readFileSync(join(home, 'gateway-claim.json'), 'utf8'));
   assert.equal(checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k)).ok, true, 'signed by the node key');
   assert.deepEqual([claim.node, claim.federationId, claim.gatewayUrl, claim.capacitySats, claim.pegInSats], [toHex(schnorr.getPublicKey(nodeSecret)), fid, 'https://node.example.com/gateway/', '250000', '50000']);
-  assert.match((await agent.tick()).idle, /gateway seat claimed/, 'renewed hourly, not every minute');
+  assert.deepEqual([claim.inboundSats, claim.outboundSats, claim.lightningAddr], ['0', '250000', '203.0.113.9:9735'], 'inbound and outbound apart, and where LND takes peers');
+  // THE RING: members in node-key order (00.., this node, ff..); the next one after this node is ff.. (it takes no connections)
+  coins = [{ txid: '7c'.repeat(32), vout: 1, sats: 200000 }];
+  const fund = await agent.tick();
+  assert.equal(fund.did, 'ring-fund', 'LND\'s wallet is empty: the ring channel\'s funds go to it first');
+  assert.equal(parseTransaction(fromHex(sent[3])).outputs[0].value, 153000n);
+  assert.match((await agent.tick()).idle, /on their way to LND/, 'once');
+  lndOnchain = 160000;
+  assert.match((await agent.tick()).idle, /waits for ffffffffffff… to connect/, 'the next node takes no connections and has not dialled in');
+  assert.deepEqual(lndCalls, [['connect', '02' + '11'.repeat(32), '198.51.100.1:9735']], 'this node dialled its previous neighbour, so that one can open to it');
+  ring[1].lightningAddr = '192.0.2.7:9735';
+  assert.equal((await agent.tick()).did, 'ring-channel');
+  assert.deepEqual(lndCalls.slice(-2), [['connect', '03' + '22'.repeat(32), '192.0.2.7:9735'], ['open', '03' + '22'.repeat(32), 150000]]);
+  assert.match((await agent.tick()).idle, /custody is set up.*ring channel open/, 'one ring channel, once');
   clock += 3_600_000;
   assert.equal((await agent.tick()).did, 'gateway-claim');
-  assert.equal(sent.length, 3, 'each payment once');
+  assert.equal(sent.length, 4, 'each payment once');
   state.save({ roles: ['verify'] });
   assert.match((await agent.tick()).idle, /no custody role/);
 });

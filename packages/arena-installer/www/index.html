@@ -241,7 +241,9 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
           <div class="sub">of every round's volume in your federation</div>
         </div>
         <div class="needs">
-          <div class="need" id="need-cap"><span class="ok">&#9675;</span><span class="what">Lightning channels</span><span class="meter"><i style="width:0%"></i></span><span class="num">0 / <b id="gs-cap">200,000</b> sat</span></div>
+          <div class="need" id="need-in"><span class="ok">&#9675;</span><span class="what">Inbound (deposits)</span><span class="meter"><i style="width:0%"></i></span><span class="num">0 / <b>100,000</b> sat</span></div>
+          <div class="need" id="need-out"><span class="ok">&#9675;</span><span class="what">Outbound (payouts)</span><span class="meter"><i style="width:0%"></i></span><span class="num">0 / <b>100,000</b> sat</span></div>
+          <p class="sub">Inbound comes by itself: when your federation is founded, each of its nodes opens a channel to the next one (a ring), so every gateway gets one channel in and one out.</p>
           <div class="need"><span class="ok">&#10003;</span><span class="what">Peg-in</span><span class="meter"><i style="width:100%"></i></span><span class="num"><b id="gs-peg">50,000</b> sat · sent automatically</span></div>
           <div class="need"><span class="ok">&#9675;</span><span class="what">Online</span><span class="meter"><i style="width:0%"></i></span><span class="num">95 % of the day</span></div>
         </div>
@@ -300,7 +302,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <p><code id="b-addr" style="font-size:15px"></code></p>
     <p class="sub">No testnet4 coins? Get them free from <a href="https://coinfaucet.eu/en/btc-testnet4/" target="_blank" rel="noopener">coinfaucet.eu</a>.</p>
     <div id="b-custody" hidden>
-      <p id="b-custody-why">Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, and the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning. Both stay in your node's wallet until then.</p>
+      <p id="b-custody-why">Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning - and the <b>ring channel</b> (150,000 sat) your node opens to the next node of the federation, which gives every gateway Lightning in and out. All of it stays in your node's wallet until then.</p>
       <label>Peg-in for the gateway (sat)</label><input id="b-pegin" value="50000">
     </div>
     <button class="ghost" id="b-check">Check for my deposit</button>
@@ -458,20 +460,22 @@ $('promise-save').onclick = async () => { const r = await post('/api/promise', {
 
 async function showFunds() {
   const r = await post('/api/lightning/funds'); if (!r.ok) { $('ch-state').textContent = r.why; return; }
-  $('gs-cap').textContent = r.seat.minCapacitySats.toLocaleString('en'); $('gs-peg').textContent = r.seat.minPegInSats.toLocaleString('en');
+  $('gs-peg').textContent = r.seat.minPegInSats.toLocaleString('en');
   $('ch-addr').textContent = r.address; $('ch-bal').textContent = `${r.onchainSats.toLocaleString('en')} sat confirmed${r.unconfirmedSats ? `, ${r.unconfirmedSats.toLocaleString('en')} arriving` : ''}`;
-  const c = r.channels || { open: [], pending: [], publicCapacitySats: 0 };
-  $('ch-state').textContent = `${c.open.length} open, ${c.pending.length} opening; public capacity ${c.publicCapacitySats.toLocaleString('en')} of ${r.seat.minCapacitySats.toLocaleString('en')} sat a gateway seat needs.`;
-  const capPct = Math.min(100, Math.round(100 * c.publicCapacitySats / r.seat.minCapacitySats)); const need = document.getElementById('need-cap');
-  need.querySelector('.meter i').style.width = capPct + '%'; need.querySelector('.ok').textContent = capPct >= 100 ? '\u2713' : '\u25CB';
-  need.querySelector('.num').innerHTML = `${c.publicCapacitySats.toLocaleString('en')} / <b>${r.seat.minCapacitySats.toLocaleString('en')}</b> sat`;
+  const c = r.channels || { open: [], pending: [], publicCapacitySats: 0, inboundSats: 0, outboundSats: 0 };
+  $('ch-state').textContent = `${c.open.length} open, ${c.pending.length} opening; inbound ${(c.inboundSats || 0).toLocaleString('en')} sat, outbound ${(c.outboundSats || 0).toLocaleString('en')} sat (a gateway seat needs ${r.seat.minInboundSats.toLocaleString('en')} each way).`;
+  for (const [id, have, min] of [['need-in', c.inboundSats || 0, r.seat.minInboundSats], ['need-out', c.outboundSats || 0, r.seat.minOutboundSats]]) {
+    const pct = Math.min(100, Math.round(100 * have / min)); const need = document.getElementById(id);
+    need.querySelector('.meter i').style.width = pct + '%'; need.querySelector('.ok').textContent = pct >= 100 ? '\u2713' : '\u25CB';
+    need.querySelector('.num').innerHTML = `${have.toLocaleString('en')} / <b>${min.toLocaleString('en')}</b> sat`;
+  }
 }
 $('ch-refresh').onclick = showFunds;
 $('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/lightning/channel', { peer: $('ch-peer').value, sats: Number($('ch-sats').value) }); e.target.disabled = false;
   say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
-  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in' };
+  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', ring: 'ring channel' };
   if (r.parts && r.parts.pegIn !== undefined) $(r.update ? 'b-need2' : 'b-need').textContent = `${r.needSats.toLocaleString('en')} (${Object.entries(r.parts).map(([k, v]) => `${PART[k] || k} ${v.toLocaleString('en')}`).join(', ')})`;
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
   m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';

@@ -44,7 +44,7 @@ test('custody added later: the same screens, then an advertisement update of the
   const home = mkdtempSync(join(tmpdir(), 'add-custody-'));
   const state = installedNode(home);
   const sent = [];
-  const chainKit = { coinsOf: async () => ({ tip: 157000, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 61000, height: 156999 }] }),
+  const chainKit = { coinsOf: async () => ({ tip: 157000, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 214000, height: 156999 }] }),
     broadcast: async (_c, hex) => { sent.push(hex); return toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()); } };
   const programs = [];
   const gwKit = { installProgram: async (o) => { programs.push(o.id); return { ok: true }; } };
@@ -71,7 +71,7 @@ test('custody added later: the same screens, then an advertisement update of the
   assert.equal((await c.get('/api/state')).json.step, 'bond');
 
   const check = (await c.post('/api/bond/check', { pegInSats: 50000 })).json;
-  assert.deepEqual([check.parts, check.needSats, check.enough, check.lock, check.update], [{ custodyUpdate: 5000, advertUpdate: 5000, pegIn: 50000 }, 60000, true, null, true],
+  assert.deepEqual([check.parts, check.needSats, check.enough, check.lock, check.update], [{ custodyUpdate: 5000, advertUpdate: 5000, pegIn: 50000, ring: 153000 }, 213000, true, null, true],
     'no second bond: this update, the reserve for the one naming the federation, the peg-in');
   const posted = (await c.post('/api/bond/post')).json;
   assert.equal(posted.ok, true, posted.why);
