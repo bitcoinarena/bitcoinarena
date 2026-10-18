@@ -22,6 +22,7 @@ import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
 import { networkOf, namesNoDraw, SEATED_GUARDIAN_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { guardianPayoutKeyOf } from '../../arena-protocol/src/guardian-payout.js';
 import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
 import { findPublication, publicationIsBeforeBeacon } from '../../arena-protocol/src/publication.js';
@@ -501,6 +502,24 @@ export class Roster {
     const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid) || []) : [];
     const seated = typeof this.seatedGuardians === 'function' ? this.seatedGuardians(fid) : null;
     return { ok: true, guardians: guardianPoolOf({ contract, census, seated, drain }) };
+  }
+
+  /**
+   * WHERE EACH GUARDIAN OF A 2026.0.13 ROUND IS PAID (§22A v4.6.4, guardian-payout.js): node key hex -> the 33-byte payout key of its
+   * census advertisement, for the guardians whose advert names a real one; the rest (a placeholder, no key, or not in the census)
+   * are paid at their node key. Empty below the version.
+   */
+  guardianPayoutsFor(roundIdBytes) {
+    const out = new Map();
+    const census = this.censusFor(roundIdBytes);
+    if (!census.ok) return out;
+    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    if (!(Number(contract.protocolVersion) >= SEATED_GUARDIAN_VERSION)) return out;
+    for (const e of census.entries || []) {
+      const pk = guardianPayoutKeyOf(e.advert && e.advert.payoutPubkey);
+      if (pk) out.set(toHex(e.pubkey), pk);
+    }
+    return out;
   }
 
   guardianBondsFor(roundIdBytes) {

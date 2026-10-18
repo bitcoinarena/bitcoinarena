@@ -451,3 +451,31 @@ test('WINNINGS-AUTO: with send plans handed in, a late payout is still the contr
     assert.equal(toHex(p.payoutPk), toHex(winnerLocks.get(toHex(p.pubkey)).refundPk), 'a late share is not a contract to the winner\'s own key');
   }
 });
+
+// A GUARDIAN IS PAID AT ITS ADVERT'S PAYOUT KEY (2026.0.13, kanban #33 gap 2; §22A v4.6.4): the seat names it per guardian
+// (signerNodes.guardianPayout); a guardian with none - a placeholder key, or out of the census - is paid at its node key as before.
+test('a 2026.0.13 guardian share goes to the guardian\'s payout key, its own output; one without a key at its node key', async () => {
+  const { guardianPayoutKeyOf, onCurveX, isPlaceholderKey } = await import('../src/guardian-payout.js');
+  const GX = Uint8Array.from(Buffer.from('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798', 'hex'));   // the generator's x
+  assert.equal(onCurveX(GX), true);
+  assert.equal(isPlaceholderKey(new Uint8Array(32).fill(3)), true);
+  assert.equal(guardianPayoutKeyOf(new Uint8Array(32).fill(3)), null, 'the live adverts\' placeholder: no payout key');
+  assert.equal(guardianPayoutKeyOf(new Uint8Array(32).fill(0xff)), null, 'an x past the field: no key');
+  assert.equal(toHex(guardianPayoutKeyOf(GX)), '02' + toHex(GX));
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const committee = [SIGNER_NODE(1), SIGNER_NODE(2)];
+  const g1 = SIGNER_NODE(7), g2 = SIGNER_NODE(8);
+  const s = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, contract: contractOf(committee),
+    signerNodes: { gameVerify: committee, settlement: committee, guardian: [g1, g2], guardianPayout: new Map([[toHex(g1), guardianPayoutKeyOf(GX)]]) },
+    addressed: named(W), locks: new Map([lockFor(W, 1), lockFor(L, 2)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  assert.equal(s.ok, true, s.why);
+  const byKey = new Map(s.signerNodePayouts.map((p) => [toHex(p.payoutPk), p]));
+  const third = (2n * FEE) - 2n * ((2n * FEE) / 3n);
+  assert.equal(byKey.get('02' + toHex(GX)).kind, 'guardian payout key', 'g1 at its payout key');
+  assert.equal(byKey.get('02' + toHex(GX)).owedMsat, third / 2n);
+  assert.equal(byKey.get(toHex(refundKeyOf(g2))).owedMsat, third / 2n, 'g2 (no payout key) at its node key');
+  assert.equal(byKey.has(toHex(refundKeyOf(g1))), false, 'nothing of g1\'s guardian share at its node key');
+  const total = s.signerNodePayouts.reduce((a, p) => a + p.owedMsat, 0n);
+  assert.equal(total, 2n * FEE, 'the whole fee, as before');
+});
