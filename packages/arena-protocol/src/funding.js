@@ -21,6 +21,7 @@ import { servedNodes } from './served-nodes.js';
 import { decodeVote, voteMessage, CHOICE } from './ballot.js';
 import { decodePlayerName, playerNameId } from './player-name.js';
 import { decodeFeeProposal, feeProposalId, decodeFeeApproval, feeApprovalId } from './fee-proposal.js';
+import { decodeLeaderboardPayout, leaderboardPayoutId } from './leaderboard-payout.js';
 
 /** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
 // THE HIJACK DEFENCES, FIVE RULES (§27A.9.5, kanban #397, the owner 2026-10-17: "It needs to be more simple so people understand it" -
@@ -138,6 +139,8 @@ export function readSignedFunding(kind, bytes, verify) {
     // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER (kanban #462, fee-proposal.js): signed by its author, and by the developer
     else if (kind === 'fee') { obj = decodeFeeProposal(body); id = feeProposalId(obj); signer = obj.author; }
     else if (kind === 'fee-approval') { obj = decodeFeeApproval(body); id = feeApprovalId(obj); signer = obj.dev; }
+    // A LEADERBOARD PAYOUT REQUEST (kanban #460, leaderboard-payout.js): signed by its author, anyone
+    else if (kind === 'leaderboard') { obj = decodeLeaderboardPayout(body); id = leaderboardPayoutId(obj); signer = obj.author; }
     else return { ok: false, why: 'a proposal, a comment, a signal, a name, a fee proposal or a fee approval' };
   } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
   let good = false; try { good = verify(signature, id, signer) === true; } catch { good = false; }
