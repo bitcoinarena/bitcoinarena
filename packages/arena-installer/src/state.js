@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, chmodSy
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 'service', 'done']);
+export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 'service', 'bond', 'done']);
 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
 export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');

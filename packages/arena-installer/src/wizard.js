@@ -21,8 +21,11 @@ import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CO
 import { nextStep, seatEnv, ROLES } from './state.js';
 import { installService } from './service.js';
 import * as reachKit from './reach.js';
+import { DatabaseSync } from 'node:sqlite';
+import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
+import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
 export const SESSION_IDLE_MS = 2 * 3600000;
@@ -34,7 +37,7 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
  * `test` (chain test), `install` (service), `fetcher`, `nowMs`. Answers { token, handle(req, res), allowHost(host), close() }.
  */
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
-  fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
+  fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const sessions = new Map();                // sid -> last seen ms
@@ -72,6 +75,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
+      bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -206,9 +210,47 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       return r;
     },
 
+    // THE BOND (C.7, slice 2): the wallet's address and the amount; the coins found; the bond built from them with the node's own key
+    // (its store, read only) and broadcast; the lock said plainly. It can wait: the node runs unbonded (outside the census) until then,
+    // and the owner page shows the same address.
+    'POST /api/bond/check': async () => {
+      const s = state.read();
+      if (!(s.done || {}).service) return { ok: false, why: 'install the node first: the bond is signed with its own key' };
+      const w = walletOf(fromHex(state.readSecret('seed.hex')));
+      const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
+      const total = coins.reduce((a, c) => a + c.sats, 0);
+      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats: Number(BOND_MIN_SATS), enough: total >= Number(BOND_MIN_SATS) + 2000, lock: lockOf(tip) };
+    },
+    'POST /api/bond/post': async (b) => {
+      const s = state.read();
+      if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
+      if (s.bond && s.bond.txid) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
+      const seed = fromHex(state.readSecret('seed.hex'));
+      const w = walletOf(seed);
+      const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
+      const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
+      let nodeSecret;
+      try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      const bondSats = b.bondSats ? BigInt(b.bondSats) : BOND_MIN_SATS;
+      if (bondSats < BOND_MIN_SATS) return { ok: false, why: `a bond is at least ${BOND_MIN_SATS} sat` };
+      let built;
+      try {
+        built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2 });
+      } catch (e) { return { ok: false, why: e.message }; }
+      const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
+      const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
+      const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
+        lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
+      mark('bond', { bond });
+      return { ok: true, bond };
+    },
+    'POST /api/bond/later': async () => { mark('bond', { bond: null }); return { ok: true }; },
+
     'POST /api/finish': async () => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'the node is not installed and logged in yet' };
+      if (!(s.done || {}).bond) return { ok: false, why: 'post the bond, or choose to post it later' };
       mark('done');
       finished = true;
       setTimeout(() => onDone(), 200);
@@ -236,6 +278,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   };
 
   const page = () => readFileSync(new URL('../www/index.html', import.meta.url));
+  // the release's commit as the advertisement's software hash (sha256 of the COMMIT file; zeros from a checkout)
+  const commitOf = () => { try { return sha256(readFileSync(`${release}/COMMIT`)); } catch { return new Uint8Array(32); } };
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://x');
