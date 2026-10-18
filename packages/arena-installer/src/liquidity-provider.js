@@ -73,5 +73,19 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
     }
     return { ok: true, claim, opened, why: `${claims.length} provider(s), ${needs.length} node(s) with a gateway, ${plan.length} wanting liquidity, ${opened.length} opened by this one` };
   }
-  return { tick };
+  // ONE TICK AT A TIME: the minute's tick and an owner's new address never run side by side (two would open two channels)
+  let queue = Promise.resolve();
+  const serial = (fn) => (queue = queue.then(fn, fn));
+  /**
+   * A NEW TOP-UP ADDRESS (the owner 2026-10-18: "a button generate a new address for the lp wallet"): LND makes one, it becomes the
+   * claim's depositAddress at once (the claim re-signed and written), and the owner page and dashboard show it. Answers { ok, address }.
+   */
+  const newAddress = () => serial(async () => {
+    const f = await lnd.funds();
+    if (!f.ok || !f.address) return { ok: false, why: `LND made no address: ${f.why || 'none given'}` };
+    state.depositAddress = f.address;
+    const t = await tick();
+    return t.ok ? { ok: true, address: f.address } : { ok: false, why: t.why };
+  });
+  return { tick: () => serial(tick), newAddress };
 }

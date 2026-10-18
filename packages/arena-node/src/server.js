@@ -4628,6 +4628,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           } catch (e) { return answer(422, { ok: false, why: e.message }); }
         }
         // SET UP, WITHDRAW, REMOVE (kanban #358): signed by the owner like every owner door
+        // A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (kanban #494, the owner 2026-10-18: "a button generate a new address for
+        // the lp wallet"): signed by the owner, asked of this node's provider service, which owns the LND and re-signs its claim
+        if (url.pathname === '/owner/liquidity/new-address') {
+          const a = owner.authorize(body, 'liquidity/new-address');
+          if (!a.ok) return answer(a.status || 401, a);
+          const prov = process.env.ARENA_LIQUIDITY_PROVIDER_URL;
+          if (!prov) return answer(501, { ok: false, why: 'this node runs no liquidity provider service (ARENA_LIQUIDITY_PROVIDER_URL)' });
+          let r; try { const x = await fetch(`${prov.replace(/\/+$/, '')}/new-address`, { method: 'POST', signal: AbortSignal.timeout(60000) }); r = await x.json(); } catch (e) { r = { ok: false, why: `the provider service did not answer: ${e.message}` }; }
+          if (r.ok) dashboardKept = null;
+          return answer(r.ok ? 200 : 502, r);
+        }
         if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
           const action = url.pathname.slice('/owner/'.length);
           const a = owner.authorize(body, action);

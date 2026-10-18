@@ -7,6 +7,8 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, chmodSy
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+/** The liquidity provider service's local port (127.0.0.1): its claim, and a new top-up address for the owner page. */
+export const LIQUIDITY_PROVIDER_PORT = 8477;
 export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
@@ -86,7 +88,7 @@ export function seatEnv(s, { home, release }) {
   // fedimintd, reached at the node's public address /guardian - so it can be drawn when new nodes found a federation
   const custody = guardianSetupOf(s, { release });
   if ((s.roles || []).includes('custody')) lines.push('ARENA_GATEWAY_PORT=8476', `ARENA_GATEWAY_CLAIM_FILE=${join(home, 'gateway-claim.json')}`);
-  if ((s.roles || []).includes('liquidity')) lines.push(`ARENA_LIQUIDITY_CLAIM_FILE=${join(home, 'liquidity-claim.json')}`);   // its provider's claim (§23A.10)   // the gateway seat's claim (custody-agent.js)   // the seat carries <public>/gateway/ to the node's gateway (gateway.js GATEWAY_PORT)
+  if ((s.roles || []).includes('liquidity')) lines.push(`ARENA_LIQUIDITY_CLAIM_FILE=${join(home, 'liquidity-claim.json')}`, `ARENA_LIQUIDITY_PROVIDER_URL=http://127.0.0.1:${LIQUIDITY_PROVIDER_PORT}`);   // its provider's claim (§23A.10)   // the gateway seat's claim (custody-agent.js)   // the seat carries <public>/gateway/ to the node's gateway (gateway.js GATEWAY_PORT)
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
   lines.push(`ARENA_ROLES=${(s.roles || []).join(',')}`);
   return lines.join('\n') + '\n';
