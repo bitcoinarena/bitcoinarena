@@ -56,6 +56,27 @@ test('Windows: launchers and logon tasks; without "start after reboot" started o
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('Windows without administrator rights: the logon task is refused, the Startup folder starts it (measured in the VM: "Access is denied")', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'arena-win-'));
+  try {
+    const calls = [];
+    const sh = async (cmd, args) => { calls.push([cmd, ...args]);
+      return cmd === 'schtasks' && args[0] === '/create' ? { ok: false, out: '', err: 'ERROR: Access is denied.' } : { ok: true, out: '', err: '' }; };
+    const env = { APPDATA: join(root, 'AppData') };
+    const r = await installService({ platform: 'win32', node: 'C:\\r\\node.exe', release: 'C:\\r', home: root, port: 8470, boot: true, sh, env, fetcher: healthy, waitMs: 2000 });
+    assert.equal(r.ok, true, r.why);
+    const startup = join(root, 'AppData', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+    const vbs = join(startup, `${WINDOWS_TASK}.vbs`);
+    assert.match(readFileSync(vbs, 'utf8'), /CreateObject\("WScript\.Shell"\)\.Run """.*arena-node\.cmd""", 0, False/, 'a hidden window, at every logon');
+    assert.ok(calls.some((c) => c[0] === 'wscript' && c[1] === vbs), 'and started now');
+    assert.equal(calls.some((c) => c[0] === 'schtasks' && c[1] === '/run'), false, 'no task to run');
+    const { installProgram } = await import('../src/service.js');
+    const p = await installProgram({ id: 'bitcoind-testnet4', description: 'Core', args: ['C:\\b\\bitcoind.exe'], home: root, platform: 'win32', env, sh });
+    assert.equal(p.ok, true, p.why);
+    assert.ok(existsSync(join(startup, 'Arena bitcoind-testnet4.vbs')), 'the same for a program (Bitcoin Core, LND, Tor...)');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('Electrum mode on macOS and Windows: the chain bridge is its own service, set up before the node', async () => {
   for (const platform of ['darwin', 'win32']) {
     const root = mkdtempSync(join(tmpdir(), 'arena-bridge-svc-'));
