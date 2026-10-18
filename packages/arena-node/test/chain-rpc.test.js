@@ -200,3 +200,36 @@ test('views read at the same time share one read of each block and hold one obje
   assert.equal(cache.inFlight.size, 0);
   assert.equal((await blocksOver(flaky, 0, 0, { cache })).blocks.length, 1);
 });
+
+// KANBAN #468 ITEM 4 (measured on seat 3's start 2026-10-18: the chain RPC was 9 % of the main thread's first minute, the cookie file
+// read on every call 2.7 %): a census view asks bitcoind only for the hashes near its top once the deep ones are kept, and the
+// cookie is read once - again only after bitcoind refuses it.
+test('a second census view asks only its top DEEP_BLOCKS heights; the cookie is read once and again after a 401', async () => {
+  const { blocksOver, blockCache, DEEP_BLOCKS } = await import('../src/chain-rpc.js');
+  const asked = [];
+  // testnet4's block 0, raw: one block every height answers (the view only divides the bytes; the census checks the links)
+  const hexOf = '0100000000000000000000000000000000000000000000000000000000000000000000004e7b2b9128fe0291db0693af2ae418b767e657cd407e80cb1434221eaea7a07a046f3566ffff001dbb0c78170101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff5504ffff001d01044c4c30332f4d61792f323032342030303030303030303030303030303030303030303165626435386332343439373062336161396437383362623030313031316662653865613865393865303065ffffffff0100f2052a010000002321000000000000000000000000000000000000000000000000000000000000000000ac00000000';
+  const call = async (method, params) => { asked.push(method); return method === 'getblockhash' ? `${String(params[0]).padStart(64, '0')}` : hexOf; };
+  const cache = blockCache();
+  await blocksOver(call, 0, 99, { cache });
+  assert.equal(asked.filter((m) => m === 'getblockhash').length, 100, 'the first view reads every height');
+  asked.length = 0;
+  const v = await blocksOver(call, 0, 101, { cache });
+  assert.equal(v.blocks.length, 102);
+  assert.equal(asked.filter((m) => m === 'getblockhash').length, DEEP_BLOCKS + 2, 'the second: its top DEEP_BLOCKS and the two new heights');
+  assert.equal(asked.filter((m) => m === 'getblock').length, 2, 'blocks it holds are not read again');
+
+  let reads = 0, cookieNow = 'u:one';
+  const seen = [];
+  const fetcher = async (_url, init) => {
+    seen.push(init.headers.authorization);
+    const ok = init.headers.authorization === `Basic ${Buffer.from(cookieNow).toString('base64')}`;
+    return new Response(ok ? JSON.stringify({ result: 7, error: null }) : 'no', { status: ok ? 200 : 401 });
+  };
+  const rpc = bitcoindRpc({ url: 'http://x/', fetcher, readCookie: () => { reads += 1; return cookieNow; } });
+  for (let i = 0; i < 5; i++) assert.equal(await rpc('getblockcount'), 7);
+  assert.equal(reads, 1, 'read once for five calls');
+  cookieNow = 'u:two';                 // bitcoind restarted: a new cookie
+  assert.equal(await rpc('getblockcount'), 7, 'the 401 reads the new cookie and asks again');
+  assert.equal(reads, 2);
+});
