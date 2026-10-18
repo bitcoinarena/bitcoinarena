@@ -199,14 +199,22 @@ WantedBy=default.target
 /** Read a quick tunnel's current name from its unit's journal. */
 // ON macOS AND WINDOWS THE TUNNEL'S SERVICE WRITES TO <home>/tunnel.log (launchd's StandardOutPath, the task's redirect), not to a journal
 // (measured on the test host 2026-10-18, rc.4: "the node runs, but not at its public address: the quick tunnel gave no name" while the log
-// held it); the newest name there is the running tunnel's - the file keeps every start's
-export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, waitMs = 45000, home = null, platform = process.platform, readLog = (f) => readFileSync(f, 'utf8') }) {
+// held it); the newest name there is the running tunnel's - the file keeps every start's.
+// `sinceMs`: only a name cloudflared logged at or after that time (its lines carry their own UTC time) - after a restart the journal and
+// the log still hold the previous run's name, which is gone (measured in the Linux VM 2026-10-18, rc.6: the reinstall tested the old
+// name, HTTP 530, while the new one was logged 5 s after the restart).
+export const tunnelNameSince = (text, sinceMs = null) => {
+  const lines = String(text).split('\n').filter((l) => /\.trycloudflare\.com/.test(l));
+  const fresh = sinceMs === null ? lines : lines.filter((l) => { const m = /(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)/.exec(l); return m && Date.parse(m[1]) >= Math.floor(sinceMs / 1000) * 1000; });
+  return quickTunnelName(fresh.join('\n'));
+};
+export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, waitMs = 45000, home = null, platform = process.platform, readLog = (f) => readFileSync(f, 'utf8'), sinceMs = null }) {
   const until = Date.now() + waitMs;
   while (Date.now() < until) {
     let text = '';
     if (platform === 'linux') text = (await sh('journalctl', ['--user', '-u', unit, '-o', 'cat', '--no-pager', '-n', '200'])).out;
-    else if (home) { try { const all = readLog(join(home, 'tunnel.log')); const names = all.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g); text = names ? names[names.length - 1] : ''; } catch { text = ''; } }
-    const url = quickTunnelName(text);
+    else if (home) { try { text = readLog(join(home, 'tunnel.log')); } catch { text = ''; } }
+    const url = tunnelNameSince(text, sinceMs);
     if (url) return url;
     await new Promise((ok) => setTimeout(ok, 1500));
   }
