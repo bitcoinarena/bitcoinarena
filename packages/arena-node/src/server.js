@@ -3709,6 +3709,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
   roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
+  roster.seatedGuardians = (fidHex) => fedRecords.seatedGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
   const recordTimer = setInterval(() => { fedRecords.gatherAll(inviteFedId).then((r) => { for (const x of r) if (x.ok === false) console.log(`[federations] ${String(x.federation || '').slice(0, 16)}: ${x.why}`); }, () => {}); },
     Number(process.env.ARENA_FEDERATION_RECORD_MS || 600000));

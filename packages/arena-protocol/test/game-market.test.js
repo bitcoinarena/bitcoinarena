@@ -159,7 +159,7 @@ test('version 6 is spoken: 2026.0.6, markets on games', () => {
   assert.equal(GAME_MARKET_VERSION, 6);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(6));
   assert.equal(speaksVersion(6), true);
-  assert.equal(speaksVersion(13), false, '11 is 2026.0.11, the protocol reserves (kanban #397); 12 is 2026.0.12, the leaderboard payout (kanban #460); 13 is spoken by no build');
+  assert.equal(speaksVersion(14), false, '11 is 2026.0.11, the protocol reserves (kanban #397); 12 is 2026.0.12, the leaderboard payout (kanban #460); 13 is 2026.0.13, the seated guardian pool (kanban #33); 14 is spoken by no build');
 });
 
 test('a game source rides in its manifest after its own marker: read back whole, after the market terms and before the required version', () => {
@@ -217,10 +217,10 @@ test('a market on a game\'s rules, each refused by name', () => {
   // FLAT may pay an outcome too (a three-way market), and all three may: the mapping is the dev's, the refund one choice of it
   assert.ok(encodeManifestBody({ ...BODY, outcomes: ['BULLS', 'BEARS', 'FLAT'], gameSource: { ...GAME_SOURCE, mapping: [0, 1, 2] } }));
   // and a manifest that requires a version this build does not speak is no game it hosts
-  const tooNew = signed({ ...BODY, requiredProtocolVersion: 13 });
+  const tooNew = signed({ ...BODY, requiredProtocolVersion: 14 });
   const st = manifestStands(tooNew, { verify: verifyEd });
   assert.equal(st.ok, false);
-  assert.match(st.why, /market on a game under protocol version \?\.\?\.13, which this build does not speak/);
+  assert.match(st.why, /market on a game under protocol version \?\.\?\.14, which this build does not speak/);
   console.log('  FACTS (refusals):', JSON.stringify(said));
 });
 
@@ -266,8 +266,8 @@ test('a source round below version 6, on a series, beside a question, or of zero
   const v5 = new Uint8Array(v6); v5[2] = 5;
   assert.throws(() => decodeRoundContract(v5), /trailing bytes/);
   // and a version 10 contract is no contract of this build (9 is 2026.0.9, the website's fee - kanban #362 item 7)
-  const v10 = new Uint8Array(v6); v10[2] = 13;    // 12 is 2026.0.12 since kanban #460: the version nobody speaks is 13
-  assert.throws(() => decodeRoundContract(v10), /protocol version 13/);
+  const v10 = new Uint8Array(v6); v10[2] = 14;    // 13 is 2026.0.13 since kanban #33 (the seated guardian pool): the version nobody speaks is 14
+  assert.throws(() => decodeRoundContract(v10), /protocol version 14/);
 });
 
 test('which rounds name a source: a market on a game\'s round must (v6 or later), any other game\'s must not - each refused by name', () => {
