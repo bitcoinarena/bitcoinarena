@@ -3169,6 +3169,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   let endTimer = null;
   if (closeAtEnd) {
+    // A ROUND NOBODY ENTERED IS COUNTED, NOT LOGGED ONE BY ONE (kanban #468 item 5, measured 2026-10-18: 105,248 of the last 20 MB
+    // of seat 2's log were this line, 30 a minute, nearly all for rounds with no entry): a round with an entry keeps its own line;
+    // the rest are one line a minute with their count
+    const hasEntry = round.db.prepare('SELECT 1 FROM entries WHERE round_id = ? LIMIT 1');
+    let quietClosed = 0, quietSince = Date.now();
     const sweep = () => timed('close sweep', () => {
       if (shuttingDown) return;
       const nowMs = BigInt(round.now());
@@ -3179,9 +3184,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const end = h.endMs;
         if (nowMs < end) continue;
         if (round.close(held.roundId)) {
-          console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this signer node`);
+          if (hasEntry.get(held.roundId)) console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this signer node`);
+          else quietClosed += 1;
           afterClose(held.roundId);
         }
+      }
+      if (quietClosed && Date.now() - quietSince >= 60000) {
+        console.log(`[close] ${quietClosed} round(s) with no entry closed by this signer node in the last ${Math.round((Date.now() - quietSince) / 1000)} s`);
+        quietClosed = 0; quietSince = Date.now();
       }
     });
     endTimer = setInterval(sweep, (closeAtEnd && closeAtEnd.everyMs) || 2000);
@@ -3278,9 +3288,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // from the store: a round with no signer nodes whose committee time is less than ten minutes past.
   if (chainFor) {
     try {
-      for (const r of round.db.prepare('SELECT round_id, contract FROM rounds').all()) {
+      // ONLY THE ROUNDS WITH NO SIGNER NODES (kanban #468 item 4, measured on seat 1 2026-10-18: 1,891 of 53,658 rounds, found in
+      // 72 ms - every round read and decoded was 0.8 s on the loop at each start)
+      for (const r of round.db.prepare('SELECT round_id, contract FROM rounds r WHERE NOT EXISTS (SELECT 1 FROM signer_nodes s WHERE s.round_id = r.round_id)').all()) {
         const rid = new Uint8Array(r.round_id);
-        if (round.signerNodes(rid).length) continue;
         let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
         if (BigInt(round.now()) <= c.committeeTimeMs + 600000n) awaitingBeacon.add(toHex(rid));
       }
