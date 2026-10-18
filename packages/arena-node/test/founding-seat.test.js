@@ -235,3 +235,24 @@ test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a 
   for (let i = 0; i < 4; i++) assert.ok(!drawn.has(toHex(all[i].pub)), `B's guardian ${i} is not drawn`);
   for (let i = 4; i < 14; i++) assert.ok(drawn.has(toHex(all[i].pub)), `new node ${i} is drawn`);
 });
+
+test('a seat that holds no record (no round) sees the federation the census names: the cohort triggers there, not a genesis (kanban #495: the seven new second-host seats drew genesis at 156970)', async () => {
+  const bFed = 'bb'.repeat(32);
+  const all = Array.from({ length: 14 }, (_, i) => key(`r${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/rtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `rop${i}`, guardianCapable: true, guardianEndpoint: `wss://r${i}`,
+      guardianOf: i < 4 ? [{ federationId: Uint8Array.from(Buffer.from(bFed, 'hex')), guardianKey: new Uint8Array(33) }] : [] } }));
+  const w = { tip: 300 };
+  const s = createFoundingSeat({ records: () => [], entriesAt: async () => cEntries,
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
+    nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[7].pub, sign: (h) => schnorr.sign(h, all[7].secret), verify });
+  await s.tick();
+  w.tip = 301;
+  const r = await s.tick();
+  assert.equal(r.ok, true, r.why);
+  const st = s.state();
+  assert.deepEqual([st.trigger.kind, st.trigger.height, st.seated.length], ['cohort', 300, 10], 'the cohort of ten, not a genesis of four');
+  const drawn = new Set(st.seated.map((y) => y.node));
+  for (let i = 0; i < 4; i++) assert.ok(!drawn.has(toHex(all[i].pub)), `B's guardian ${i}: no record, still guarding (a')`);
+});

@@ -39,6 +39,10 @@ export function seatedOf(record) {
 }
 
 /** The federations a census knows: every federation some census node guards. */
+/** A seat with no round: the chain census this many blocks below the tip, at a multiple of CHAIN_BASIS_STEP (kanban #495). */
+export const CHAIN_BASIS_LAG = 6;
+export const CHAIN_BASIS_STEP = 6;
+
 export function federationsOf(census) {
   const ids = new Map();
   for (const e of census.entries || []) for (const g of (e.advert && e.advert.guardianOf) || []) ids.set(toHex(g.federationId), g.federationId);
@@ -58,7 +62,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // THE CENSUS AT A RECORD'S OWN HEIGHT (kanban #326, measured live 2026-10-15): async (height) -> census entries | null, from this seat's
   // chain (main.js ballot.censusEntriesAt). A seat whose basis is an older census than the record's (node 15: 156388, B's record at
   // 156538, its guardians' current keys in the newer census) checks a mirrored record against the census the record names
-  censusAt = null }) {
+  censusAt = null,
+  // THE CHAIN'S TIP (kanban #495): async () -> height, for the census a seat that holds no round builds and checks records from
+  chainTip = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5, kanban #323): the lowest-height signed HALTED record of the run of HALTED records
@@ -109,7 +115,40 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
    * their own newest round, a round posted ahead whose census they could not read yet ("this node has no chain view for
    * that round"), and no record ever had more than 1 signature of the 5 it needs.
    */
+  // A SEAT THAT HOLDS NO ROUND READS THE CENSUS OFF ITS OWN CHAIN (kanban #495, measured on the test host 2026-10-18: the seven new seats and
+  // the three installer nodes held no round - "this seat holds no round, so it reads no census" - so no federation record, no seated
+  // guardians, no gateway seats, ever, on a node that runs no series). The height is shared: the tip less CHAIN_BASIS_LAG, down to a
+  // multiple of CHAIN_BASIS_STEP, so a federation's seats name the same one; a gatherer's named height is read too. Read ahead by
+  // gatherAll (the census read is async, basis is not) and kept; only when no held round gives a basis, so a seat of a series is as it was.
+  const chainCensus = new Map();             // height -> { entries } once read; null while reading
+  let chainHeight = null;
+  const readChainCensus = (h) => {
+    if (typeof censusAt !== 'function' || !Number.isInteger(h) || h < 0 || chainCensus.has(h)) return;
+    chainCensus.set(h, null);
+    Promise.resolve(censusAt(h)).then((e) => { if (Array.isArray(e) && e.length) chainCensus.set(h, { entries: e }); else chainCensus.delete(h); }, () => chainCensus.delete(h));
+    while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
+  };
+  async function chainAhead() {
+    if (typeof chainTip !== 'function' || typeof censusAt !== 'function') return;
+    let t = null; try { t = Number(await chainTip()); } catch { t = null; }
+    if (!Number.isFinite(t)) return;
+    const h = Math.floor((t - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
+    if (!chainCensus.get(h)) { try { const e = await censusAt(h); if (Array.isArray(e) && e.length) chainCensus.set(h, { entries: e }); } catch { /* the next pass */ } }
+    if (chainCensus.get(h)) chainHeight = h;
+  }
+  function chainBasis(atHeight) {
+    const h = atHeight !== null ? atHeight : chainHeight;
+    if (h === null) return null;
+    const c = chainCensus.get(h);
+    if (!c) { readChainCensus(h); return null; }
+    return { ok: true, census: { ok: true, entries: c.entries }, height: h, networkId, fromChain: true };
+  }
   function basis(atHeight = null) {
+    const b = roundBasis(atHeight);
+    if (b.ok) return b;
+    return chainBasis(atHeight) || b;
+  }
+  function roundBasis(atHeight = null) {
     if (newest) {
       const best = newest();
       if (!best) return { ok: false, why: 'this seat holds no round, so it reads no census' };
@@ -336,6 +375,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   return {
     mySignature, mySignatureWithGone, gather,
     async gatherAll(inviteFederationId) {
+      await chainAhead();
       const b = basis();
       if (!b.ok) return [b];
       const out = [];
