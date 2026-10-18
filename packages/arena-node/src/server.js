@@ -34,6 +34,7 @@ import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
 import { ownBondOf, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { latestReleaseReader } from './release-latest.js';
+import { createGatewayWatch } from './gateway-watch.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
@@ -107,7 +108,7 @@ import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex } from './absences.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup } from './founding-seat.js';
-import { createEndpointsOf } from './federation-endpoints.js';
+import { createEndpointsOf, federationOfDir } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
@@ -3673,6 +3674,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }, Number(process.env.ARENA_FOUNDING_MS || 600000));
     if (ft.unref) ft.unref();
   }
+  // THE FEDERATION'S GATEWAY SEATS (spec §23A.9, kanban #471, gateway-watch.js): a guardian probes, every 10 min, the gateways its
+  // federation's seated guardians claim, and ranks them per epoch; GET /gateway-seats says its ranking
+  let gatewayWatch = null;
+  if (guardian && guardian.dataDir && typeof chainTip === 'function' && fedRecords) {
+    gatewayWatch = createGatewayWatch({ federationId: async () => federationOfDir(guardian.dataDir),
+      seated: async (fid) => (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k)),
+      entries: async () => { const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
+      tip: async () => Number(await chainTip()),
+      beaconAt: async (h) => {
+        if (ballot && typeof ballot.blockHashAt === 'function') { const x = await ballot.blockHashAt(h); return x ? fromHex(String(x)).reverse() : null; }
+        return null;
+      },
+      verify: schnorrVerify,
+      bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000) });
+    const gt = setInterval(() => { gatewayWatch.probe().catch(() => {}); }, 600000);
+    if (gt.unref) gt.unref();
+    gatewayWatch.probe().catch(() => {});
+  }
   // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which
   // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
   // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
@@ -4166,6 +4185,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/guardian') {
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint, ...(guardianNext ? { next: guardianNext.endpoint } : {}) } : { guardian: false }));
+      }
+      // A GATEWAY CLAIM (§23A.9): this node stands for a gateway seat of its federation - the claim its custody agent signed (file)
+      if (req.method === 'GET' && url.pathname === '/gateway-claim') {
+        const f = process.env.ARENA_GATEWAY_CLAIM_FILE;
+        let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
+        return c ? answer(200, c) : answer(404, { ok: false, why: 'this node stands for no gateway seat' });
+      }
+      if (req.method === 'GET' && url.pathname === '/gateway-seats') {
+        if (!gatewayWatch) return answer(404, { ok: false, why: 'this node runs no guardian, so it ranks no gateways' });
+        const v = await gatewayWatch.view();
+        return answer(v.ok ? 200 : 503, JSON.parse(JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? String(x) : x))));
       }
       if (req.method === 'GET' && url.pathname === '/identity') {
         return bytes(res, 200, round.pubkey);
