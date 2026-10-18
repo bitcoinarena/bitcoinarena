@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
+import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS } from './bond.js';
 import { writeLaunchers } from './launchers.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
@@ -50,6 +50,21 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
  * The wizard. `state`: nodeState(home). `release`: the installed release's root. `seatPort`: the node's port. Injectables for the tests:
  * `test` (chain test), `install` (service), `fetcher`, `nowMs`. Answers { token, handle(req, res), allowHost(host), close() }.
  */
+/**
+ * CUSTODY, ADDED LATER (the owner 2026-10-18: "if custody is setup later in the UI we need the same screens"): `arena-install --add-custody`
+ * (or Start menu / Arena Node > Add custody) reopens the wizard at the roles step with custody chosen, so the node owner sees the same
+ * screens as a new custody node - what custody is, Lightning and the gateway, the federation, the bond's rules (I UNDERSTAND) - and the
+ * bond step then updates the posted bond's advertisement to name custody instead of posting a second bond. The install step runs again
+ * (the node's settings name its guardian and gateway, and it restarts with them); seed, owner and reach stay done.
+ */
+export function beginAddCustody(state) {
+  const s = state.read();
+  if ((s.roles || []).includes('custody') && (s.bond || {}).custodyAdvert) return { ok: false, why: 'this node holds custody already' };
+  const { roles: _r, service: _s, lightning: _l, federation: _f, promise: _p, bond: _b, done: _d, ...rest } = s.done || {};
+  state.save({ roles: [...new Set([...(s.roles || []), 'custody'])], done: rest, custodyLater: { atMs: Date.now() } });
+  return { ok: true };
+}
+
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
@@ -98,7 +113,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS + 2000n) } : null,
+      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS + 2000n) } : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -176,9 +191,14 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (roles.includes('custody') && state.read().chain && state.read().chain.kind !== 'core')
         return { ok: false, why: 'custody needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave custody out' };
       mark('roles', { roles });
-      if (!roles.includes('custody')) mark('lightning', { lightning: null });   // no custody: no Lightning step
+      // no custody: no Lightning, federation or bond-rules step (the owner 2026-10-18: "No slashing for leaving if you have no custody, so that will only come then")
+      if (!roles.includes('custody')) {
+        mark('lightning', { lightning: null }); mark('federation', { federation: null }); mark('promise', { promise: null });
+        // custody not added after all: the node as it was - its install and its posted bond stand
+        if ((state.read().bond || {}).txid) { mark('bond'); if (state.read().service) mark('service'); }
+      }
       else if (!(state.read().lightning || {}).pubkey) {                          // custody, and no Lightning node tested yet: the step is to come
-        const { lightning: _, ...rest } = state.read().done || {}; state.save({ done: rest });
+        const { lightning: _, federation: __, promise: ___, ...rest } = state.read().done || {}; state.save({ done: rest });
       }
       return { ok: true, roles };
     },
@@ -382,6 +402,29 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
       return { ok: true, federationId: j.federationId, federations: t.ok ? t.federations : null };
     },
+    // THE FEDERATION (the owner 2026-10-18: "it should be its own point and the default is find a new federation with 9 other nodes or
+    // invitation"): found one with nine other new nodes - the cohort, automatic (spec §23A.2 event 4) - or join one by its invite code
+    'POST /api/federation': async (b) => {
+      const s = state.read();
+      if (!(s.roles || []).includes('custody')) { mark('federation', { federation: null }); return { ok: true }; }
+      if (b.mode === 'invite') {
+        const invite = String(b.invite || '').trim();
+        if (!/^fed1[0-9a-z]+$/.test(invite)) return { ok: false, why: 'an invite code starts with fed1' };
+        let joined = null;
+        if (s.gateway) { const j = await gwKit.joinFederation({ ...s.gateway, invite }); if (!j.ok) return j; joined = j.federationId; }
+        mark('federation', { federation: { mode: 'invite', invite, gatewayJoined: joined, atMs: Date.now() } });
+        return { ok: true, mode: 'invite', federationId: joined };
+      }
+      mark('federation', { federation: { mode: 'found', atMs: Date.now() } });
+      return { ok: true, mode: 'found' };
+    },
+    // THE BOND'S RULES, UNDERSTOOD (the owner 2026-10-18: "Explain in detail, intuitive why we need a bond and leaving without clicking LEAVE will
+    // slash the bond ... people have to type I UNDERSTAND. That is its own screen")
+    'POST /api/promise': async (b) => {
+      if (String(b.text || '').trim().toUpperCase() !== 'I UNDERSTAND') return { ok: false, why: 'type I UNDERSTAND to go on' };
+      mark('promise', { promise: { atMs: Date.now() } });
+      return { ok: true };
+    },
     'POST /api/gateway/later': async () => {
       const s = state.read();
       if (!(s.lightning || {}).pubkey) return { ok: false, why: 'set up and test LND first, or leave Lightning for later' };
@@ -400,20 +443,37 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const custody = (s.roles || []).includes('custody');
       const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
       if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
-      const parts = { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats } : {}) };
+      // custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation
+      const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats }
+        : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats } : {}) };
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
-      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: lockOf(tip) };
+      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s) };
     },
     'POST /api/bond/post': async (b) => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
-      if (s.bond && s.bond.txid) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
+      if (!(s.done || {}).promise) return { ok: false, why: 'read the bond\'s rules first and type I UNDERSTAND' };
+      if (s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
       const seed = fromHex(state.readSecret('seed.hex'));
       const w = walletOf(seed);
       const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
       const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
       let nodeSecret;
       try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      // custody added to a node with a bond: the bond's advertisement is updated to name custody and the guardian's endpoint (§5A.2)
+      if (laterCustody(s)) {
+        const advert = advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
+          payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null });
+        let u;
+        try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
+        catch (e) { return { ok: false, why: e.message }; }
+        await chainKit.broadcast(s.chain, u.funding.hex);
+        const txid = await chainKit.broadcast(s.chain, u.update.hex);
+        const bond = { ...s.bond, custodyAdvert: { txid, advertId: u.advertId, atTip: tip, atMs: Date.now() } };
+        mark('bond', { bond });
+        await installAgent();
+        return { ok: true, bond, update: txid };
+      }
       const bondSats = b.bondSats ? BigInt(b.bondSats) : BOND_MIN_SATS;
       if (bondSats < BOND_MIN_SATS) return { ok: false, why: `a bond is at least ${BOND_MIN_SATS} sat` };
       let built;
@@ -428,14 +488,10 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
       mark('bond', { bond });
       // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
-      if ((s.roles || []).includes('custody')) {
-        const a = await gwKit.installProgram({ id: 'custody', description: 'The custody agent of the Arena node', home: state.home, boot: true,
-          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', state.home] });
-        state.save({ custodyAgent: a.ok ? { installedMs: Date.now() } : { why: a.why } });
-      }
+      if ((s.roles || []).includes('custody')) await installAgent();
       return { ok: true, bond };
     },
-    'POST /api/bond/later': async () => { mark('bond', { bond: null }); return { ok: true }; },
+    'POST /api/bond/later': async () => { const s = state.read(); mark('bond', { bond: s.bond && s.bond.txid ? s.bond : null }); return { ok: true }; },   // a posted bond stays
 
     'POST /api/finish': async () => {
       saveLaunchers();
@@ -452,13 +508,23 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     },
   };
 
+  // a posted bond whose advertisement does not name custody yet, on a node that chose custody (beginAddCustody)
+  const laterCustody = (s) => Boolean(s.custodyLater && s.bond && s.bond.txid && (s.roles || []).includes('custody') && !s.bond.custodyAdvert);
+  const installAgent = async () => {
+    const a = await gwKit.installProgram({ id: 'custody', description: 'The custody agent of the Arena node', home: state.home, boot: true,
+      args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', state.home] });
+    state.save({ custodyAgent: a.ok ? { installedMs: Date.now() } : { why: a.why } });
+  };
+
   // THE WAYS TO START IT AGAIN (launchers.js): scripts, the Start menu / the app / the desktop menu - written for the services this node has
   const saveLaunchers = () => {
     const s = state.read();
     if (!s.service) return null;
     const ownerUrl = `${(s.reach && s.reach.url) || `http://127.0.0.1:${portOf()}`}/Dashboard/owner`;
     try {
-      const l = launch({ home: state.home, s, ownerUrl,
+      const addCustody = (s.roles || []).includes('custody') ? null
+        : [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'arena-install.mjs'), '--add-custody', '--home', state.home];
+      const l = launch({ home: state.home, s, ownerUrl, addCustody,
         run: (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, () => ok())) });
       state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, atMs: Date.now() } });
       return l;

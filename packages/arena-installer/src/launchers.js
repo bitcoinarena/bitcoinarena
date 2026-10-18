@@ -7,7 +7,8 @@
 //            opening it starts the node's services and opens its owner page
 //   Windows  <home>\bin\Arena node {start,stop,owner page}.cmd   + Start menu > Arena Node: the same three as shortcuts
 //
-// Every script names the services it acts on, so a user can read what it does.
+// Every script names the services it acts on, so a user can read what it does. A node without custody also gets "add custody": it opens
+// the installer's custody screens again (arena-install --add-custody, wizard.js beginAddCustody).
 import { mkdirSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -38,7 +39,7 @@ const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
  * Write the launchers. `ownerUrl` the owner page (the public address when the node has one). Answers { files: [paths], app, menu } -
  * what was written, for the Done page and the installer's last lines.
  */
-export function writeLaunchers({ home, s, ownerUrl, platform = process.platform, env = process.env, applicationsDir = null, run = null }) {
+export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform = process.platform, env = process.env, applicationsDir = null, run = null }) {
   const svc = servicesOf(s)[platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux'];
   const bin = join(home, 'bin');
   mkdirSync(bin, { recursive: true });
@@ -49,6 +50,7 @@ export function writeLaunchers({ home, s, ownerUrl, platform = process.platform,
     put(join(bin, 'arena-node-stop'), sh([`# Stop the Arena node's services`, `systemctl --user stop ${[...svc].reverse().join(' ')}`]));
     put(join(bin, 'arena-node-status'), sh([`systemctl --user --no-pager status ${svc.join(' ')}`]));
     put(join(bin, 'arena-node-open'), sh([`xdg-open ${q(ownerUrl)}`]));
+    if (addCustody) put(join(bin, 'arena-node-add-custody'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));
     const apps = join(env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local', 'share'), 'applications');
     mkdirSync(apps, { recursive: true });
     const menu = put(join(apps, 'arena-node.desktop'), ['[Desktop Entry]', 'Type=Application', 'Name=Arena Node', 'Comment=Start the Arena node and open its owner page',
@@ -64,6 +66,7 @@ export function writeLaunchers({ home, s, ownerUrl, platform = process.platform,
     put(join(bin, 'Arena Node Stop.command'), sh([`# Stop the Arena node's services`, `uid=${uid}`, ...[...svc].reverse().map((l) => `launchctl bootout gui/$uid/${l} 2>/dev/null`), 'echo Stopped.']));
     put(join(bin, 'Arena Node Status.command'), sh([`uid=${uid}`, ...svc.map((l) => `launchctl print gui/$uid/${l} 2>/dev/null | grep -E '^\\s*(state|pid) =' | sed "s/^/${l}: /" || echo "${l}: not loaded"`)]));
     put(join(bin, 'Arena Node Open.command'), sh([`open ${q(ownerUrl)}`]));
+    if (addCustody) put(join(bin, 'Arena Node Add Custody.command'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));
     // THE APP: /Applications when the user may write there (an admin's macOS), else ~/Applications - Launchpad and Spotlight find both
     const appsDir = applicationsDir || (writable('/Applications') ? '/Applications' : join(env.HOME || homedir(), 'Applications'));
     const app = join(appsDir, 'Arena Node.app');
@@ -84,9 +87,10 @@ export function writeLaunchers({ home, s, ownerUrl, platform = process.platform,
   const start = put(join(bin, 'Arena node start.cmd'), cmd([`rem Start the Arena node's services: ${svc.join(', ')}`, ...svc.map((t) => `schtasks /run /tn "${t}" >nul`), `echo Started. Owner page: ${ownerUrl}`, `start "" "${ownerUrl}"`]));
   const stop = put(join(bin, 'Arena node stop.cmd'), cmd([`rem Stop the Arena node's services`, ...[...svc].reverse().map((t) => `schtasks /end /tn "${t}" >nul 2>&1`), 'echo Stopped.', 'pause']));
   const open = put(join(bin, 'Arena node owner page.cmd'), cmd([`start "" "${ownerUrl}"`]));
+  const custody = addCustody ? put(join(bin, 'Arena node add custody.cmd'), cmd(['rem Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map((a) => `"${a}"`).join(' ')])) : null;
   const menu = join(env.APPDATA || join(env.USERPROFILE || homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Arena Node');
   mkdirSync(menu, { recursive: true });
-  const ps = [[start, 'Start Arena node'], [stop, 'Stop Arena node'], [open, 'Arena node owner page']]
+  const ps = [[start, 'Start Arena node'], [stop, 'Stop Arena node'], [open, 'Arena node owner page'], ...(custody ? [[custody, 'Add custody to the Arena node']] : [])]
     .map(([target, name]) => `$s = $w.CreateShortcut('${join(menu, `${name}.lnk`).replace(/'/g, "''")}'); $s.TargetPath = '${target.replace(/'/g, "''")}'; $s.WorkingDirectory = '${bin.replace(/'/g, "''")}'; $s.Save()`);
   if (run) run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ['$w = New-Object -ComObject WScript.Shell', ...ps].join('; ')]);
   return { files, menu, app: null, start };
