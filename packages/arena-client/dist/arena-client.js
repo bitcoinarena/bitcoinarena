@@ -18017,20 +18017,44 @@ async function swapQuote({ from, to, amountMsat }) {
 
 /** THE SWAP ITSELF: `amountMsat` from `from` to `to` - an invoice from the receiving wallet, paid through a gateway by the
  * paying one (withdrawCollected); the fee measured off the paying wallet's balance, both sides in the history. */
+/** At most this many gateway pairs per swap: each Refunded try costs seconds of the round's entry window. */
+const SWAP_PAIRS_MAX = 6;
+/**
+ * THE SWAP'S GATEWAY PAIRS (kanban #466): [receive, pay], the named gateways first, then each federation's list, never the same
+ * gateway on both legs; none listed on either side - one pair of the lock client's own picks ('').
+ */
+function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP_PAIRS_MAX) {
+  const recv = gatewayOrder(named, listedTo), pay = gatewayOrder(named, listedFrom);
+  if (!recv.length || !pay.length) return [[recv[0] || '', '']];
+  const out = [];
+  for (const r of recv) for (const p of pay) if (gwKey(r) !== gwKey(p) && out.length < max) out.push([r, p]);
+  return out.length ? out : [[recv[0], '']];
+}
 async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {} }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   onState({ state: 'swapping', amountMsat: amount });
   const before = BigInt(await from.balanceMsat());
-  // THE INVOICE IS THE RECEIVING WALLET'S OWN, made for exactly the amount, and paid as a withdraw pays (the funded gateway
-  // preferred; the lock client never takes the gateway on the invoice's own node)
-  const made = JSON.parse(await to.receive(String(amount), ''));
-  const said = JSON.parse(await from.withdraw(made.invoice, depositGateway('', gateways) || undefined));
+  // THE INVOICE IS THE RECEIVING WALLET'S OWN, made for exactly the amount, and paid as a withdraw pays; the lock client never
+  // takes the gateway on the invoice's own node. TWO GATEWAYS, PAIR BY PAIR (kanban #466, measured 2026-10-18 on testnet4: left
+  // to the lock client's pick, the legs landed on gateway C's node twice - once paying, its one channel's 775 sat leaving no
+  // outbound, "InsufficientBalance"; once receiving, gw-b's node then finding "NoRoute" - and every swap ended Refunded):
+  // receive through one listed gateway, pay through another, and a payment that ends Refunded - the money back - tries the next
+  // pair; any other end stops, as money may be on its way.
+  const pairs = swapGatewayPairs(gateways, await federationGateways(to), await federationGateways(from));
+  const tried = [];
+  let made = null, said = null;
+  for (const [recv, pay] of pairs) {
+    made = JSON.parse(await to.receive(String(amount), recv));
+    said = JSON.parse(await from.withdraw(made.invoice, pay || undefined));
+    if (said.state !== 'Refunded') break;
+    tried.push({ receive: recv, pay, state: said.state });
+  }
   const final = said.state === 'Success' ? await to.awaitReceive(made.operation) : null;
   if (!(said.state === 'Success' && final === 'Claimed')) {
-    const why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ' - the money is back there' : ''}`;
-    onState({ state: 'stopped', why });
-    return { ok: false, state: 'stopped', why };
+    const why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ` - the money is back there (${tried.length} gateway pair${tried.length === 1 ? '' : 's'} tried)` : ''}`;
+    onState({ state: 'stopped', why, tried });
+    return { ok: false, state: 'stopped', why, tried };
   }
   const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
   if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'swapped-out', msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });

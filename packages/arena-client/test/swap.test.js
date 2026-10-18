@@ -3,7 +3,7 @@
 // fee measured off the paying balance and both sides in the history; declined, nothing moves.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { swapQuote, swapForRound } from '../src/page-lock.js';
+import { swapQuote, swapForRound, swapGatewayPairs, SWAP_PAIRS_MAX } from '../src/page-lock.js';
 
 // a wallet: balance in msat, a gateway fee rule, receive/awaitReceive/withdraw as the lock client answers them
 function wallet(balanceMsat, rule) {
@@ -102,4 +102,53 @@ test('the page\'s swap dialog shows the amount, the fee and the total; Cancel an
   assert.equal(p2.els['awc-go'].textContent, 'Swap and enter');
   p2.els['awc-go'].onclick();
   assert.equal(await r2, true);
+});
+
+// TWO GATEWAYS, PAIR BY PAIR (kanban #466, testnet4 2026-10-18): gateway C's node had no outbound ("InsufficientBalance"), and gw-b
+// found no route to C's invoice ("NoRoute"); left to the lock client's pick every swap ended Refunded. The legs now go through two
+// different listed gateways, and a Refunded payment - the money back - tries the next pair; another end stops.
+test('the pairs: named first, then each federation\'s list, never one gateway on both legs, at most SWAP_PAIRS_MAX; none listed - the lock client\'s pick', () => {
+  const pairs = swapGatewayPairs(['https://gw-c/'], ['https://gw-c', 'https://gw-b', 'https://gw-a'], ['https://gw-b', 'https://gw-a', 'https://gw-c']);
+  assert.deepEqual(pairs.slice(0, 3), [['https://gw-c/', 'https://gw-b'], ['https://gw-c/', 'https://gw-a'], ['https://gw-b', 'https://gw-c/']]);
+  assert.ok(pairs.every(([r, p]) => r.replace(/\/+$/, '') !== p.replace(/\/+$/, '')), 'never the same gateway on both legs');
+  assert.equal(pairs.length, SWAP_PAIRS_MAX);
+  assert.deepEqual(swapGatewayPairs([], [], []), [['', '']]);
+  assert.deepEqual(swapGatewayPairs([], ['https://only'], ['https://only']), [['https://only', '']], 'one gateway on both sides: the lock client pays');
+});
+
+test('a Refunded payment tries the next pair and the swap lands; a payment in another state is not retried', async () => {
+  const listed = JSON.stringify(['https://gw-c', 'https://gw-b', 'https://gw-a']);
+  const to = wallet(0n, { base: 0, ppm: 0 }), from = wallet(500000n, { base: 0, ppm: 0 });
+  to.gateways = async () => listed; from.gateways = async () => listed;
+  const recvOf = new Map(); let n = 0;
+  to.receive = async (msat, gw) => { to.pending = BigInt(msat); const inv = `lnbcrt-${++n}-${msat}`; recvOf.set(inv, gw); return JSON.stringify({ invoice: inv, operation: 'op' + n }); };
+  const legs = [];
+  from.withdraw = async (invoice, pay) => {
+    const recv = recvOf.get(invoice); legs.push([recv, pay]);
+    if (pay === 'https://gw-c') return JSON.stringify({ state: 'Refunded' });                          // C: no outbound
+    if (recv === 'https://gw-c' && pay === 'https://gw-b') return JSON.stringify({ state: 'Refunded' }); // B -> C: no route
+    const msat = BigInt(invoice.split('-').pop()); from.balance -= msat; return JSON.stringify({ state: 'Success', invoice_msat: String(msat) });
+  };
+  const states = [];
+  const done = await swapForRound({ from, to, amountMsat: 52000n, onState: (s) => states.push(s.state) });
+  assert.deepEqual([done.ok, done.state, done.movedMsat], [true, 'swapped', 52000n]);
+  assert.deepEqual(legs, [['https://gw-c', 'https://gw-b'], ['https://gw-c', 'https://gw-a']], 'the second pair paid');
+  assert.equal(to.balance, 52000n);
+  assert.deepEqual(states, ['swapping', 'swapped']);
+
+  // a payment that ends neither Success nor Refunded is not retried: money may be on its way
+  const to2 = wallet(0n, { base: 0, ppm: 0 }), from2 = wallet(500000n, { base: 0, ppm: 0 });
+  to2.gateways = async () => listed; from2.gateways = async () => listed;
+  let asked = 0; from2.withdraw = async () => { asked += 1; return JSON.stringify({ state: 'Pending' }); };
+  const r = await swapForRound({ from: from2, to: to2, amountMsat: 52000n });
+  assert.deepEqual([r.ok, asked], [false, 1]);
+  assert.match(r.why, /ended Pending/);
+
+  // every pair Refunded: stopped, the money back, the pairs named
+  const to3 = wallet(0n, { base: 0, ppm: 0 }), from3 = wallet(500000n, { base: 0, ppm: 0 });
+  to3.gateways = async () => listed; from3.gateways = async () => listed;
+  from3.withdraw = async () => JSON.stringify({ state: 'Refunded' });
+  const r3 = await swapForRound({ from: from3, to: to3, amountMsat: 52000n });
+  assert.deepEqual([r3.ok, r3.tried.length, from3.balance], [false, SWAP_PAIRS_MAX, 500000n]);
+  assert.match(r3.why, /the money is back there \(6 gateway pairs tried\)/);
 });
