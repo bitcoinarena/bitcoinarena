@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWizard } from '../src/wizard.js';   // run: node tools/wizard-shots.mjs <port> <link file>; then tools/wizard-drive.mjs (headless Chrome on 9361)
 import { nodeState } from '../src/state.js';
+import * as lndReal from '../src/lnd.js';
 import { seatUnit, waitHealthy } from '../src/service.js';
 import * as reachKit from '../src/reach.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -47,7 +48,13 @@ const chainKit = { coinsOf: async () => ({ tip: 156905, coins: ++asked > 1 ? [{ 
   broadcast: async (_c, hex) => Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex') };
 // the quick tunnel's name: the seat itself (no cloudflared started here)
 const reach = { ...reachKit, quickTunnelUrl: async () => `http://127.0.0.1:${seatPort}` };
-const wizard = createWizard({ state: nodeState(home), release: RELEASE, seatPort, install, chainKit, reach, cloudflared: 'cloudflared' });
+// LIGHTNING (slice 5): a real LND - the checked download, its config on this machine's Core, its wallet from the seed - on ports of its
+// own (this machine runs other LNDs), started directly instead of as a service; stopped with the harness
+const lndChildren = [];
+const lndKit = { ...lndReal, configureLnd: (o) => lndReal.configureLnd({ ...o, ports: { rpc: 20109, rest: 20180, p2p: 20135 } }),
+  installProgram: async ({ args: [bin, ...rest] }) => { lndChildren.push(spawn('nice', [bin, ...rest], { stdio: 'ignore' })); return { ok: true }; } };
+for (const sig of ['SIGINT', 'SIGTERM', 'exit']) process.on(sig, () => { for (const c of lndChildren) c.kill('SIGTERM'); if (sig !== 'exit') process.exit(0); });
+const wizard = createWizard({ state: nodeState(home), release: RELEASE, seatPort, install, chainKit, reach, cloudflared: 'cloudflared', lndKit });
 const server = http.createServer((q, s) => wizard.handle(q, s));
 await new Promise((ok) => server.listen(Number(process.argv[2] || 31918), '127.0.0.1', ok));
 writeFileSync(process.argv[3], `http://127.0.0.1:${server.address().port}/?t=${wizard.token}\n`);
