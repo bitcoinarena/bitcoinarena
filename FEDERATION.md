@@ -173,7 +173,11 @@ paths are the ones every LNv2 payment runs; this use of them is not.
   one provider the pool is split by **available balance** (the owner: "dependant on available balance"): each provider's channels to the
   federation's nodes plus its proven free coins, floored to 10,000 sat. A provider whose free coins are below the deposit minimum
   earns nothing of it until topped up.
-- **Live on testnet4:** LND C and LND D on the test host.
+- **Proven free coins:** the claim lists the provider's coins, each signed by its address key for that provider's node. A guardian
+  counts a coin only when the signature is good and its own Bitcoin Core shows it unspent, at the chain's amount, never the claimed
+  one. A guardian therefore needs its own Core (Electrum mode serves no `gettxout`).
+- **Live on testnet4:** nodes 1 and 2 are the providers, their LND C and LND D on the test host. Node 1 proves 672,182 sat in 4 coins,
+  node 2 600,000 sat in 1 coin (measured 2026-10-18 16:41Z against the the test host's testnet4 Core).
 
 ## Who hosts the Lightning: two gateway seats, and what they earn (the owner 2026-10-18; spec §23A.9)
 
