@@ -20,7 +20,7 @@
 //   FIRST     ascending), and draws the missing seats (drawGuardians). The draw's pool leaves out the operators guarding an OPEN
 //             federation other than the one succeeded (their census adverts' guardian_of[] naming a federation whose held record is
 //             OPEN), and the leaving guardians' operators (the succeeded federation's departing / gone guardians).
-import { foundingTrigger } from '../../arena-protocol/src/guardian-founding.js';
+import { triggerKey, foundingTrigger } from '../../arena-protocol/src/guardian-founding.js';
 import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
 import { createFounding } from './founding.js';
@@ -98,6 +98,7 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
+  const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
   // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2, kanban #320), one row per chain height this seat ticked at:
   //   capable  { height, operators }: the distinct operators of guardian-capable census nodes with an endpoint (the draw's own rule)
   //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
@@ -128,9 +129,9 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
     let notes = [];
     try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
-    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0 });
+    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0, voided: [...voided] });
     if (!t.ok) return { ok: false, why: t.why };
-    const key = `${t.kind}:${t.federation || ''}:${t.height}`;
+    const key = triggerKey(t);
     const h = await tip();
     if (!current || current.key !== key) {
       const seed = await beaconAt(t.height + 1);
@@ -161,6 +162,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       } catch { /* the next tick */ }
     }
     const st = await current.founding.advance(h);
+    if (st && st.void) voided.add(current.key);   // the next tick draws on the next trigger
     return { ok: true, trigger: current.trigger, state: st };
   }
   return { tick, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
