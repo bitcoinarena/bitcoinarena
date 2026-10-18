@@ -5312,13 +5312,13 @@ The flooring makes honest guardians measure the same values.
 
 ### What it earns (from the custody fee)
 
-The **GUARDIAN pool** of the node fee (5/3 % of gross volume, §"Node fee")
-is the custody fee. It is split:
+The **GUARDIAN pool** of the node fee (4/3 % of gross volume on protocol 11 and later, §"Node fee"; gateway seats exist only from
+2026.0.15) is the custody fee. It is split:
 
 ```text
-GUARDIAN pool (5/3 %)
-  2/3 -> the seated guardians, evenly            (10 guardians: 0.111 % each)
-  1/3 -> the seated gateways, evenly             (2 gateways:  0.278 % each)
+GUARDIAN pool (4/3 %)
+  2/3 -> the seated guardians, evenly            (10 guardians: 0.089 % each)
+  1/3 -> the seated gateways, evenly             (2 gateways:  0.222 % each)
 ```
 
 - A gateway seat therefore earns **2.5×** what a guardian earns, plus its
