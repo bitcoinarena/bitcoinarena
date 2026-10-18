@@ -5435,6 +5435,8 @@ game/verify, settlement, custody, liquidity.
     each with a signature by its address key (LND `SignMessageWithAddr`), and a guardian counts only outpoints that are unspent on
     its own chain and signed;
   - the shares are floored, and the leftover millisatoshis go out in the round's order, as in every pool.
+  - in the guardians' signed list (the liquidity seating) each weight is **floored to L** (100,000 sat testnet4, 250,000 mainnet):
+    free balances move by the minute, and guardians reading a few minutes apart must still sign the same list to reach the threshold.
 - **Below the deposit, no share** *(the owner 2026-10-18: "Once a liquidity provider has not enough funds left he never receives
   part of the 1%")*: a provider whose proven free balance is below the deposit minimum (5 × L on testnet4, 10 × L on mainnet) has
   weight 0 and earns nothing of the liquidity pool, whatever channels it gave. Once topped up to the minimum it earns again.
