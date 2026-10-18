@@ -73,7 +73,7 @@ jobs:
           - { os: ubuntu-latest, asset: linux-x64 }
           - { os: ubuntu-24.04-arm, asset: linux-arm64 }
           - { os: macos-latest, asset: darwin-arm64 }
-          - { os: macos-13, asset: darwin-x64 }
+          - { os: macos-15-intel, asset: darwin-x64 }   # macos-13 is retired: run 39112904496 waited for it 14 min
           - { os: windows-latest, asset: windows-x64 }
     runs-on: ${{ matrix.os }}
     steps:
