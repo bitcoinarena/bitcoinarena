@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWizard } from '../src/wizard.js';   // run: node tools/wizard-shots.mjs <port> <link file>; then tools/wizard-drive.mjs (headless Chrome on 9361)
 import { nodeState } from '../src/state.js';
+import { openQuickTunnel } from '../src/tunnel.js';
 import * as lndReal from '../src/lnd.js';
 import { seatUnit, waitHealthy } from '../src/service.js';
 import * as reachKit from '../src/reach.js';
@@ -46,8 +47,10 @@ const install = async ({ release, home: h, port }) => {
 let asked = 0;
 const chainKit = { coinsOf: async () => ({ tip: 156905, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 60000, height: 156904 }] : [] }),
   broadcast: async (_c, hex) => Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex') };
-// the quick tunnel's name: the seat itself (no cloudflared started here)
-const reach = { ...reachKit, quickTunnelUrl: async () => `http://127.0.0.1:${seatPort}` };
+// the quick tunnel: a real one (cloudflared on this machine) to the seat, so the screens show the public address the node really has
+const tunnels = [];
+const reach = { ...reachKit, quickTunnelUrl: async () => { const t = await openQuickTunnel({ port: seatPort }); tunnels.push(t); return t.ok ? t.url : null; } };
+for (const sig of ['SIGINT', 'SIGTERM', 'exit']) process.on(sig, () => { for (const t of tunnels) if (t.close) t.close(); });
 // LIGHTNING (slice 5): a real LND - the checked download, its config on this machine's Core, its wallet from the seed - on ports of its
 // own (this machine runs other LNDs), started directly instead of as a service; stopped with the harness
 const lndChildren = [];
