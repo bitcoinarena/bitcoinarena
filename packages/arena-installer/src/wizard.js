@@ -32,6 +32,7 @@ import { torBin, writeTorrc, TOR_PORTS } from './tor.js';
 import { LND_PORTS } from './lnd.js';
 import * as workersKitDefault from './workers.js';
 import { RING_RESERVE_SATS, OUTSIDE_RESERVE_SATS } from './custody-agent.js';
+import { LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
@@ -194,17 +195,20 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const unknown = roles.filter((r) => !ROLES[r]);
       if (unknown.length) return { ok: false, why: `no role ${unknown.join(', ')}` };
       if (!roles.length) return { ok: false, why: 'choose at least one role' };
-      if (roles.includes('custody') && state.read().chain && state.read().chain.kind !== 'core')
-        return { ok: false, why: 'custody needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave custody out' };
+      for (const r of ['custody', 'liquidity']) if (roles.includes(r) && state.read().chain && state.read().chain.kind !== 'core')
+        return { ok: false, why: `${r === 'custody' ? 'custody' : 'a liquidity provider'} needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave ${r} out` };
+      const ln = roles.includes('custody') || roles.includes('liquidity');   // the roles that run LND
       mark('roles', { roles });
       // no custody: no Lightning, federation or bond-rules step (the owner 2026-10-18: "No slashing for leaving if you have no custody, so that will only come then")
-      if (!roles.includes('custody')) {
-        mark('lightning', { lightning: null }); mark('federation', { federation: null }); mark('promise', { promise: null });
+      if (!roles.includes('custody')) { mark('federation', { federation: null }); mark('promise', { promise: null }); }
+      if (!ln) {
+        mark('lightning', { lightning: null });
         // custody not added after all: the node as it was - its install and its posted bond stand
         if ((state.read().bond || {}).txid) { mark('bond'); if (state.read().service) mark('service'); }
       }
-      else if (!(state.read().lightning || {}).pubkey) {                          // custody, and no Lightning node tested yet: the step is to come
-        const { lightning: _, federation: __, promise: ___, ...rest } = state.read().done || {}; state.save({ done: rest });
+      else if (!(state.read().lightning || {}).pubkey) {                          // LND, and none tested yet: the step is to come (custody's too)
+        const { lightning: _, federation: __, promise: ___, ...rest } = state.read().done || {};
+        state.save({ done: roles.includes('custody') ? rest : { ...rest, federation: (state.read().done || {}).federation, promise: (state.read().done || {}).promise } });
       }
       return { ok: true, roles };
     },
@@ -491,6 +495,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       // and the ring channel each custody node opens to the next node of its federation (custody-agent.js: its gateway's outbound, the next one's inbound)
       const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS }
         : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS } : {}) };
+      // a liquidity provider's deposit (§23A.10): 5 x L on testnet4, sent to LND's wallet by the node's agent
+      if ((s.roles || []).includes('liquidity')) { parts.liquidity = Number(LIQUIDITY_TERMS.testnet4.depositSats); parts.fees = parts.fees || 2000; }
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
       return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s) };
     },
@@ -533,7 +539,15 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
       mark('bond', { bond });
       // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
-      if ((s.roles || []).includes('custody')) await installAgent();
+      if ((s.roles || []).includes('custody') || (s.roles || []).includes('liquidity')) await installAgent();
+      // THE LIQUIDITY PROVIDER SERVICE (§23A.10): its node key for its claims (0600 beside the node's other secrets), its LND, its claim
+      // file the seat serves (ARENA_LIQUIDITY_CLAIM_FILE)
+      if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.lnddir) {
+        state.writeSecret('liquidity.key', toHex(nodeSecret));
+        await gwKit.installProgram({ id: 'liquidity', description: 'The liquidity provider of the Arena node', home: state.home, boot: true,
+          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'liquidity-provider.mjs'), '--rest', s.lightning.restUrl, '--lnddir', s.lightning.lnddir,
+            '--key', state.path('liquidity.key'), '--state', state.path('liquidity-state.json'), '--claim-file', state.path('liquidity-claim.json')] });
+      }
       return { ok: true, bond };
     },
     'POST /api/bond/later': async () => { const s = state.read(); mark('bond', { bond: s.bond && s.bond.txid ? s.bond : null }); return { ok: true }; },   // a posted bond stays
