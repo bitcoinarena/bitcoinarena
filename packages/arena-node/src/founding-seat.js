@@ -108,9 +108,15 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
     let entries = null; try { entries = await entriesAt(h); } catch { entries = null; }
     if (entries) {
-      const ops = new Set();
-      for (const e of entries) { const a = e && e.advert; if (a && a.guardianCapable === true && a.guardianEndpoint) ops.add(String(a.operatorId || toHex(e.pubkey))); }
-      remember(capable, { height: h, operators: ops.size });
+      const ops = new Set(), bonds = new Map();
+      for (const e of entries) {
+        const a = e && e.advert; if (!(a && a.guardianCapable === true && a.guardianEndpoint)) continue;
+        const op = String(a.operatorId || toHex(e.pubkey)); ops.add(op); bonds.set(op, (bonds.get(op) || 0n) + BigInt(e.bondSats || 0));
+      }
+      // THE COHORT (protocol 2026.0.14): the same operators, held to bond_min_guardian, minus those guarding an OPEN federation
+      const guarding = guardingOpen ? guardingOpen({ entries, records: held, except: null }) : guardingOpenOf({ entries, held });
+      const free = [...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).length;
+      remember(capable, { height: h, operators: ops.size, free });
     }
     return held;
   }
