@@ -112,11 +112,11 @@ export function guardianEnv({ nodePort, dataDir, network, chain = network, bitco
   return env;
 }
 
-/** fedimintd on the node's PATH, as the node finds any tool it runs; null when this machine has none. */
-export function findFedimintd(pathVar = process.env.PATH || '') {
+/** fedimintd on the node's PATH, as the node finds any tool it runs (fedimintd.exe on Windows); null when this machine has none. */
+export function findFedimintd(pathVar = process.env.PATH || '', platform = process.platform) {
   for (const dir of pathVar.split(delimiter)) {
     if (!dir) continue;
-    const f = join(dir, 'fedimintd');
+    const f = join(dir, platform === 'win32' ? 'fedimintd.exe' : 'fedimintd');
     try { accessSync(f, constants.X_OK); return f; } catch { /* next */ }
   }
   return null;
@@ -157,7 +157,8 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   log = ((say) => (line) => say(String(line).replace(/^\[guardian\]/, tag)))(log);
   const not = (why) => { log(`[guardian] not a guardian: ${why}`); return { running: false, why, stop: async () => {} }; };
   if (!bitcoindUrl || !cookiePath) return not('this node reads no chain (ARENA_BITCOIND_URL / ARENA_BITCOIND_COOKIE)');
-  const bin = findFedimintd(env.PATH || '');
+  // ARENA_FEDIMINTD: the release's own custody binary (kanban #471 slice 5, written by the installer), else PATH
+  const bin = env.ARENA_FEDIMINTD && existsSync(env.ARENA_FEDIMINTD) ? env.ARENA_FEDIMINTD : findFedimintd(env.PATH || '');
   if (!bin) return not('no fedimintd on this machine');
   let network, chain;
   // A CHAIN THAT DOES NOT ANSWER ONCE IS ASKED AGAIN (the owner's testnet4, 2026-09-28 09:27: node 1 of 7 restarted while
