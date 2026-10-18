@@ -352,3 +352,16 @@ test('what blocks a port: the host firewall when the public address is this mach
   assert.match(reachKit.tunnelUnit({ bin: '/usr/bin/cloudflared', mode: 'permanent', config: '/h/cloudflared.yml', port: 8470 }), /ExecStart=\/usr\/bin\/cloudflared tunnel --no-autoupdate --config \/h\/cloudflared.yml run/);
   assert.match(reachKit.tunnelUnit({ bin: 'cloudflared', mode: 'quick', port: 8470 }), /--url http:\/\/127.0.0.1:8470/);
 });
+
+test('the bond step names the whole deposit from the start: custody 363,000 with its parts, a plain node 52,000 (rc.12 on the test host said 52,000 to a custody node)', async () => {
+  const { depositParts } = await import('../src/wizard.js');
+  const sum = (p) => Object.values(p).reduce((a, x) => a + x, 0);
+  const c = depositParts({ roles: ['custody'] }, 50000);
+  assert.deepEqual(c, { bond: 50000, fees: 2000, advertUpdate: 5000, pegIn: 50000, outside: 103000, ring: 153000 });
+  assert.equal(sum(c), 363000);
+  assert.equal(sum(depositParts({ roles: [] }, 0)), 52000);
+  assert.equal(sum(depositParts({ roles: ['liquidity'] }, 0)), 552000);
+  const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
+  assert.match(html, /\$\('b-need'\)\.textContent = needText\(st\.wallet\.needSats, st\.wallet\.parts\)/, 'the first render shows the total and its parts');
+  assert.match(html, /\$\('b-need2'\)\.textContent = needText\(st\.wallet\.needSats, st\.wallet\.parts\)/, 'custody added later too: not "Send  sat"');
+});
