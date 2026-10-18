@@ -51,13 +51,14 @@ if (args.includes('--update')) {
   catch { console.error(`SHA256SUMS and SHA256SUMS.sig belong beside ${asset} (download them from the same release)`); process.exit(2); }
   const c = checkAsset({ file: asset, sums, sig });
   if (!c.ok) { console.error(`Refused: ${c.why}`); process.exit(2); }
-  const name = asset.split('/').pop().replace(/\.tar\.gz$/, '');
+  const name = asset.split(/[\\/]/).pop().replace(/\.(tar\.gz|zip)$/, '');
   const dir = `${home}/releases`;
   mkdirSync(dir, { recursive: true });
-  if (!existsSync(`${dir}/${name}`)) execFileSync('tar', ['-xzf', asset, '-C', dir]);
+  // the Windows asset is a .zip: Windows 10+ has tar (bsdtar), which reads zip too
+  if (!existsSync(`${dir}/${name}`)) execFileSync('tar', [asset.endsWith('.zip') ? '-xf' : '-xzf', asset, '-C', dir]);
   const s = state.read();
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-    node: `${dir}/${name}/runtime/node` });
+    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}` });
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   process.exit(r.ok ? 0 : 1);

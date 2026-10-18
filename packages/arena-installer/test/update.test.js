@@ -177,3 +177,37 @@ test('macOS: the launchd agents that run the old release move to the new one, it
   assert.match(readFileSync(tor, 'utf8'), new RegExp(`${v2}/runtime/tor/tor`));
   assert.equal((await waitHealthy({ port, waitMs: 30000, everyMs: 300 })).identity, first.identity);
 });
+
+test('Windows: the launchers that run the old release move to the new one; stopping ends only that release\'s processes; a failed start is rolled back', async () => {
+  const { windowsLauncher } = await import('../src/service.js');
+  const { releaseOfLauncher } = await import('../src/update.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-win-'));
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const v1 = 'C:\\Users\\owner\\arena\\arena-node-0.1.0-rc.12-windows-x64', v2 = 'C:\\Users\\owner\\arena\\home\\releases\\arena-node-0.1.0-rc.13-windows-x64';
+  writeFileSync(join(home, 'node.env'), 'ARENA_ROLES=verify\r\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+  writeFileSync(join(home, 'arena-node.cmd'), windowsLauncher({ node: `${v1}\\runtime\\node.exe`, release: v1, home, port: 8470 }));
+  writeFileSync(join(home, 'arena-tor.cmd'), `@echo off\r\n"${v1}\\runtime\\tor\\tor.exe" "-f" "${home}\\tor\\torrc"\r\n`);
+  writeFileSync(join(home, 'arena-lnd.cmd'), `@echo off\r\n"${home}\\lnd-bin\\lnd.exe"\r\n`);
+  assert.equal(releaseOfLauncher(readFileSync(join(home, 'arena-node.cmd'), 'utf8')), v1);
+  const calls = []; let up = true;
+  const sh = async (cmd, args) => { calls.push([cmd, ...args]); return { ok: true, out: '', err: '' }; };
+  // GET /identity answers the node's 32-byte key; down, a 502
+  const fetcher = async () => (up ? { status: 200, arrayBuffer: async () => new Uint8Array(32).fill(0xab).buffer } : { status: 502, arrayBuffer: async () => new ArrayBuffer(0) });
+  const r = await updateNode({ home, newRelease: v2, port: 8470, node: `${v2}\\runtime\\node.exe`, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 2000 });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(releaseOfLauncher(readFileSync(join(home, 'arena-node.cmd'), 'utf8')), v2);
+  assert.match(readFileSync(join(home, 'arena-tor.cmd'), 'utf8'), /rc\.13-windows-x64\\runtime\\tor\\tor\.exe/, 'tor moved');
+  assert.match(readFileSync(join(home, 'arena-lnd.cmd'), 'utf8'), /lnd-bin\\lnd\.exe/, 'LND untouched');
+  assert.deepEqual(r.moved.map((f) => f.split(/[\\/]/).pop()).sort(), ['arena-node.cmd', 'arena-tor.cmd']);
+  const kill = calls.find((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1)));
+  assert.ok(kill && kill.at(-1).includes(`*${v1}*`), 'the processes of rc.12 are ended, by command line');
+  assert.deepEqual(calls.filter((c) => c[0] === 'schtasks').map((c) => c.at(-1)).sort(), ['Arena node', 'Arena tor']);
+  assert.equal(calls.filter((c) => c[0] === 'powershell' && /Start-Process/.test(c.at(-1))).length, 2, 'both started hidden');
+  // a release that does not come up: the rc.13 launchers put back
+  up = false;
+  const bad = await updateNode({ home, newRelease: 'C:\\broken', port: 8470, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 1500 });
+  assert.deepEqual([bad.ok, bad.rolledBack], [false, true]);
+  assert.equal(releaseOfLauncher(readFileSync(join(home, 'arena-node.cmd'), 'utf8')), v2);
+  rmSync(root, { recursive: true, force: true });
+});

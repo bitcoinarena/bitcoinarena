@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL } from './service.js';
+import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher } from './service.js';
 import { adhocSign } from './tor.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
@@ -53,10 +53,16 @@ export function releaseOfPlist(text) {
   return m ? m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : null;
 }
 
+/** The release a Windows launcher runs: its `cd /d "<release>\packages\arena-node"`. */
+export function releaseOfLauncher(text) {
+  const m = /^cd \/d "(.+)\\packages\\arena-node"\r?$/m.exec(String(text || ''));
+  return m ? m[1] : null;
+}
+
 /**
  * THE NODE'S SERVICES, PER SYSTEM (measured on the test host, rc.12 -> rc.13: "Not updated: no arena-node unit names a release
  * (~/.config/systemd/user/arena-node.service)" - the updater knew only systemd). Linux: the user's systemd units (arena-*.service);
- * macOS: the user's launchd agents (io.bitcoin-arena.node*.plist). The seat's definition is written fresh for the new release; every
+ * macOS: the user's launchd agents (io.bitcoin-arena.node*.plist); Windows: the launchers in the node's home (arena-*.cmd). The seat's definition is written fresh for the new release; every
  * other service of the node that names the old release (the bridge, the tunnel's cloudflared, tor, the gateway, the liquidity
  * provider) is moved to the new one - before, only the seat and the bridge moved and the rest kept running the old release.
  */
@@ -87,6 +93,31 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
       prepare: async (release) => { const t = join(release, 'runtime', 'tor'); if (existsSync(t)) await adhocSign(t, { run: async (c, a) => (await sh(c, a)).ok }); },
     };
   }
+  if (platform === 'win32') {
+    // WINDOWS: the launchers beside the node's home (arena-node.cmd, arena-tunnel.cmd, arena-<id>.cmd), each started at logon by a
+    // scheduled task or the Startup folder (service.js windowsAutostart). Every program runs the release's own runtime (node.exe,
+    // tor.exe, cloudflared.exe), so stopping a release is ending the processes whose command line names it, and its tasks.
+    const seatFile = join(home, 'arena-node.cmd');
+    const files = () => readdirSync(home).filter((f) => /^arena-.*\.cmd$/.test(f)).map((f) => join(home, f));
+    const task = (f) => { const id = f.split(/[\\/]/).pop().replace(/^arena-|\.cmd$/g, ''); return id === 'node' ? 'Arena node' : id === 'tunnel' ? 'Arena node tunnel' : `Arena ${id}`; };
+    const ps = (script) => sh('powershell', ['-NoProfile', '-NonInteractive', '-Command', script]);
+    const q = (t) => String(t).replace(/'/g, "''");
+    return {
+      where: seatFile, seatText: () => (existsSync(seatFile) ? readFileSync(seatFile, 'utf8') : null), releaseOf: releaseOfLauncher, files,
+      seatFor: (release) => windowsLauncher({ node, release, home, port }), seatFile,
+      stop: async (fs, release) => {
+        for (const f of fs) await sh('schtasks', ['/end', '/tn', task(f)]);
+        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${q(release)}*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+        return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
+      },
+      start: async (fs) => {
+        const failed = [];
+        for (const f of fs) { const r = await ps(`Start-Process -WindowStyle Hidden -FilePath '${q(f)}'`); if (!r.ok) failed.push(`${task(f)}: ${(r.err || '').trim().slice(0, 120)}`); }
+        return failed.length ? { ok: false, why: `not started: ${failed.join('; ')}` } : { ok: true };
+      },
+      prepare: async () => {},
+    };
+  }
   const dir = unitDir(env);
   const seatFile = join(dir, UNIT);
   const files = () => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^arena-.*\.service$/.test(f)).map((f) => join(dir, f));
@@ -112,7 +143,6 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
   }
-  if (platform === 'win32') return { ok: false, why: 'updating a Windows node in place is not built yet: install the new release over it with the same home' };
   if (!existsSync(join(home, 'state.json')) || !existsSync(join(home, 'node.env'))) return { ok: false, why: `no node is installed at ${home}` };
   const svc = servicesOf({ platform, env, sh, home, port, node });
   const oldSeat = svc.seatText();
@@ -126,7 +156,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
 
   while (inSeatingWindow(nowMs())) await sleep(5000);
   await svc.prepare(newRelease);
-  const stop = await svc.stop(moving);
+  const stop = await svc.stop(moving, from);
   if (!stop.ok) return { ok: false, why: stop.why };
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
@@ -144,7 +174,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), ...(started.ok ? {} : { notStarted: started.why }) };
   }
   // ROLLED BACK: the old services, the backup, the old release started
-  await svc.stop(moving);
+  await svc.stop(moving, newRelease);
   for (const [f, t] of oldTexts) writeFileSync(f, t);
   restoreNode(home, backup);
   await svc.start(moving);
