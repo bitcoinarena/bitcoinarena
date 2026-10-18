@@ -4290,30 +4290,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint, ...(guardianNext ? { next: guardianNext.endpoint } : {}) } : { guardian: false }));
       }
+      // THE CLAIM AND SEATING ROUTES' JSON (kanban #494, measured on seats 1-4 rolled to protocol 16: every one answered 400, "answer is
+      // not defined" - no `answer` in this scope, so guardians could never fetch each other's gateway or liquidity seatings)
+      const claimJson = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
       // A GATEWAY CLAIM (§23A.9): this node stands for a gateway seat of its federation - the claim its custody agent signed (file)
       if (req.method === 'GET' && url.pathname === '/gateway-claim') {
         const f = process.env.ARENA_GATEWAY_CLAIM_FILE;
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
-        return c ? answer(200, c) : answer(404, { ok: false, why: 'this node stands for no gateway seat' });
+        return c ? claimJson(200, c) : claimJson(404, { ok: false, why: 'this node stands for no gateway seat' });
       }
       // A LIQUIDITY CLAIM (§23A.10, kanban #494): this node is a liquidity provider - the claim its provider service signed (file)
       if (req.method === 'GET' && url.pathname === '/liquidity-claim') {
         const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE;
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
-        return c ? answer(200, c) : answer(404, { ok: false, why: 'this node is no liquidity provider' });
+        return c ? claimJson(200, c) : claimJson(404, { ok: false, why: 'this node is no liquidity provider' });
       }
       if (req.method === 'GET' && url.pathname === '/liquidity-seating') {
         const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
-        return ownLiquiditySeatings.has(k) ? answer(200, ownLiquiditySeatings.get(k)) : answer(404, { ok: false, why: 'this guardian signed no liquidity seating for that federation and epoch' });
+        return ownLiquiditySeatings.has(k) ? claimJson(200, ownLiquiditySeatings.get(k)) : claimJson(404, { ok: false, why: 'this guardian signed no liquidity seating for that federation and epoch' });
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seating') {
         const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
-        return ownSeatings.has(k) ? answer(200, ownSeatings.get(k)) : answer(404, { ok: false, why: 'this guardian signed no seating for that federation and epoch' });
+        return ownSeatings.has(k) ? claimJson(200, ownSeatings.get(k)) : claimJson(404, { ok: false, why: 'this guardian signed no seating for that federation and epoch' });
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seats') {
-        if (!gatewayWatch) return answer(404, { ok: false, why: 'this node runs no guardian, so it ranks no gateways' });
+        if (!gatewayWatch) return claimJson(404, { ok: false, why: 'this node runs no guardian, so it ranks no gateways' });
         const v = await gatewayWatch.view();
-        return answer(v.ok ? 200 : 503, JSON.parse(JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? String(x) : x))));
+        return claimJson(v.ok ? 200 : 503, JSON.parse(JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? String(x) : x))));
       }
       if (req.method === 'GET' && url.pathname === '/identity') {
         return bytes(res, 200, round.pubkey);
