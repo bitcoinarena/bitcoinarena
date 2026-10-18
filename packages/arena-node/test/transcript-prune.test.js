@@ -83,3 +83,17 @@ test('unused rounds past their time go with every committee and seating row; use
   for (const n of [2, 3, 4]) { assert.equal(has('rounds', n), 1, `round ${n} stays`); assert.equal(has('signer_nodes', n), 1); assert.equal(has('seat_certs', n), 1); }
   assert.equal(has('entries', 2), 1, 'the entry untouched');
 });
+
+test('a contract this seat cannot read goes a week after it was stored, unless something marks it used', async () => {
+  const { pruneUnusedRounds, UNREADABLE_KEEP_MS } = await import('../src/transcript-prune.js');
+  const db = openStore(':memory:');
+  const id = (n) => Buffer.alloc(32, n);
+  const now = 100 * DAY_MS;
+  for (const [n, opened] of [[1, now - UNREADABLE_KEEP_MS - 1], [2, now - DAY_MS], [3, now - UNREADABLE_KEEP_MS - 1]])
+    db.prepare('INSERT INTO rounds (round_id, contract, opened_ms) VALUES (?, ?, ?)').run(id(n), Buffer.from([0x5e, n]), opened);
+  db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, 0)').run(id(50), id(3), Buffer.from([3]));
+  const r = pruneUnusedRounds({ db, nowMs: now });
+  assert.deepEqual([r.deleted, r.looked, r.done], [1, 3, true], 'round 1 (unreadable, stored over a week ago) only');
+  const left = db.prepare('SELECT round_id FROM rounds ORDER BY rowid').all().map((x) => Buffer.from(x.round_id)[0]);
+  assert.deepEqual(left, [2, 3], 'round 2 (stored a day ago) and round 3 (entered) stay');
+});

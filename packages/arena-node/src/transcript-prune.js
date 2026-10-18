@@ -56,6 +56,8 @@ export const COMMITTEE_TABLES = Object.freeze(['rounds', 'signer_nodes', 'round_
 const TRANSCRIPT_TABLES = ['ticks', 'batches', 'checkpoints'];
 /** At most this many rounds looked at in one pass: the backlog goes in steps, never one long stall of the seat. */
 export const UNUSED_BATCH = 5000;
+/** An unreadable round's keep after it was stored: a week, far past any window a readable one has. */
+export const UNREADABLE_KEEP_MS = 7 * DAY_MS;
 
 /** When an unused round may go, in ms: its end (roundEndMs, else entry close) + W + its claim window (a day where none is named). */
 export function unusedRoundGoesAt(contract, endMs) {
@@ -76,12 +78,17 @@ export function usedMarkerTables(db) {
  * done } - done when the pass reached the table's end; the next pass starts from 0 again.
  */
 export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batch = UNUSED_BATCH, goesAt = null, onDeleted = () => {} }) {
-  const at = goesAt || ((row) => { const c = decodeRoundContract(new Uint8Array(row.contract)); let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); } return unusedRoundGoesAt(c, end); });
+  // A CONTRACT THIS SEAT CANNOT READ (measured on test host seat 1: its oldest 3,000 rounds, stored 2026-09-28, all fail with "custody
+  // byte 94 is not a custody of this network" - an older format) can be neither served nor settled by it: it goes UNREADABLE_KEEP_MS
+  // after it was stored, still only when nothing marks it used
+  const at = goesAt || ((row) => {
+    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return Number(row.opened_ms) + UNREADABLE_KEEP_MS; }
+    let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); } return unusedRoundGoesAt(c, end); });
   const markers = usedMarkerTables(db).map((t) => db.prepare(`SELECT 1 FROM ${t} WHERE round_id = ? LIMIT 1`));
   const present = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
   const dels = [...COMMITTEE_TABLES.filter((t) => t !== 'rounds' && present.has(t)), ...TRANSCRIPT_TABLES.filter((t) => present.has(t)), 'rounds']
     .map((t) => db.prepare(`DELETE FROM ${t} WHERE round_id = ?`));
-  const rowsOf = db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid LIMIT ?').all(afterRowid, batch);
+  const rowsOf = db.prepare('SELECT rowid, round_id, contract, opened_ms FROM rounds WHERE rowid > ? ORDER BY rowid LIMIT ?').all(afterRowid, batch);
   let deleted = 0, rows = 0, lastRowid = afterRowid;
   db.exec('BEGIN');
   try {
