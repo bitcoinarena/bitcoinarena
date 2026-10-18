@@ -298,18 +298,19 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       state.writeSecret('node.env', seatEnv(conf, { home: state.home, release }));
       const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
       const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
+      const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
       const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot });
       if (!r.ok) return { ok: false, why: r.why };
       // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
       // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
       let reachTest = null;
       if (s.reach.mode === 'quick') {
-        const url = await reach.quickTunnelUrl({ home: state.home });
+        const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
         if (url) { s = state.save({ reach: { ...s.reach, url } }); state.writeSecret('node.env', seatEnv({ ...s, port, bridgePort }, { home: state.home, release })); }
       }
       // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
       if (s.reach.mode === 'workers') {
-        const target = await reach.quickTunnelUrl({ home: state.home });
+        const target = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
         if (!target) return { ok: false, why: 'the node runs, but its quick tunnel gave no name for the Worker to forward to', identity: r.identity };
         const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
         if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
