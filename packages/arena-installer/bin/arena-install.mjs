@@ -3,6 +3,7 @@
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
 //     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
+//     arena-install --rebond <sats> [--yes] [--home ~/.arena-node]
 //
 // --tunnel     the machine is remote: open a Cloudflare quick tunnel (no account) and print its https link instead
 // --port       the wizard's local port (127.0.0.1 only)
@@ -10,6 +11,8 @@
 // --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
 // --update     update this node to a downloaded release: SHA256SUMS and SHA256SUMS.sig beside the asset are checked against the Arena
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
+// --rebond     a larger bond in one step, once the posted bond's lock has ended: that bond and the wallet's coins become a new bond
+//              of <sats> with a new lock (rebond.js). Without --yes it only shows the plan.
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
 import http from 'node:http';
@@ -53,6 +56,22 @@ if (args.includes('--update')) {
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   process.exit(r.ok ? 0 : 1);
+}
+
+// A LARGER BOND (kanban #471 part D): the plan, then with --yes the broadcast
+if (args.includes('--rebond')) {
+  const { rebond } = await import('../src/rebond.js');
+  const { readFileSync } = await import('node:fs');
+  const { sha256 } = await import('../../arena-protocol/src/hash.js');
+  let softwareHash; try { softwareHash = sha256(readFileSync(`${release}/COMMIT`)); } catch { softwareHash = new Uint8Array(32); }
+  const r = await rebond({ state, bondSats: opt('--rebond', ''), post: args.includes('--yes'), softwareHash });
+  if (!r.ok) { console.error(`Not possible: ${r.why}`); process.exit(1); }
+  const p = r.plan;
+  console.log(`The bond of ${p.from.sats} sat (${p.from.txid}, free since block ${p.from.maturity})${p.coins.length ? ` and ${p.coins.reduce((a, c) => a + c.sats, 0)} sat from the wallet` : ''}`
+    + `\nbecome a bond of ${p.bondSats} sat, locked until block ${p.maturity} (${p.lock.blocks} blocks, about ${new Date(p.lock.estimatedMs).toUTCString()}).`
+    + `\nFees ${p.fees.funding} + ${p.fees.bond} sat${p.changeSats !== '0' ? `, ${p.changeSats} sat back to the wallet` : ''}.`);
+  console.log(r.bond ? `Posted: the new bond is ${r.bond.txid}:0.` : 'Nothing sent. Run again with --yes to post it.');
+  process.exit(0);
 }
 
 let tunnel = null, server = null;

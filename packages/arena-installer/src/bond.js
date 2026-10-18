@@ -10,7 +10,7 @@
 // The carrier's key comes from the wallet key and the advertisement's id, so coins stuck in a carrier are recovered from the 24 words.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
-import { bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_MATURITY_OFFSET } from '../../arena-protocol/src/bond-script.js';
+import { bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_MATURITY_OFFSET, recoveryLeaf, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { encodeAdvert, advertId, joinSignedAdvert } from '../../arena-protocol/src/advert.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -89,8 +89,13 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
  * { funding: { hex, txid }, bond: { hex, txid, vout: 0 }, advert, maturity, bondSats, changeSats, fees } or throws why not.
  */
 export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
-  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now() }) {
-  if (!coins.length) throw new Error('the wallet holds no coins yet');
+  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null }) {
+  // A LARGER BOND, IN ONE STEP (kanban #471 part D, "increasing the bond size"; a template-2 bond cannot be topped up in place):
+  // `oldBond` { txid, vout, sats, maturity } - from its maturity on - is the funding's first input, spent on its recovery leaf by the
+  // node's key (the transaction's locktime is that maturity), and the wallet's coins add the rest; the new bond is built as any
+  // other, with a new maturity. One step: the old bond is never back in the wallet in between.
+  if (oldBond && !(tip >= oldBond.maturity)) throw new Error(`the bond is locked until block ${oldBond.maturity}: ${oldBond.maturity - tip} blocks from now`);
+  if (!coins.length && !oldBond) throw new Error('the wallet holds no coins yet');
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const maturity = maturityHeightFor(tip, NETWORK);
   const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, nowMs });
@@ -99,7 +104,8 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   const pieces = []; for (let at = 0; at < body.length; at += CHUNK) pieces.push(body.subarray(at, Math.min(at + CHUNK, body.length)));
   const carrierSecret = taggedHash(CARRIER_TAG, new Uint8Array([...wallet.secret, ...id]));
   const carrier = carrierOf(carrierSecret, pieces.length);
-  const total = coins.reduce((a, c) => a + BigInt(c.sats), 0n);
+  const total = coins.reduce((a, c) => a + BigInt(c.sats), 0n) + (oldBond ? BigInt(oldBond.sats) : 0n);
+  const old = oldBond ? (() => { const built = bondKeyAt(nodeKey, oldBond.maturity); return { built, spk: fromHex('5120' + toHex(built.outputKey)), leaf: recoveryLeaf(nodeKey, oldBond.maturity) }; })() : null;
   const bondOut = bondKeyAt(nodeKey, maturity);
   const kp = keyPathSecret(wallet.secret, wallet.xonly);
 
@@ -119,11 +125,16 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
     return { hex, change: change >= 330n ? change : 0n };
   };
   const fundingTx = (carrierValue) => {
-    const inputs = coins.map((c) => ({ txid: fromHex(c.txid).reverse(), vout: c.vout, sequence: 0xfffffffd }));
-    const prevouts = coins.map((c) => ({ value: BigInt(c.sats), script: wallet.spk }));
+    const inputs = [...(oldBond ? [{ txid: fromHex(oldBond.txid).reverse(), vout: oldBond.vout, sequence: 0xfffffffe }] : []),
+      ...coins.map((c) => ({ txid: fromHex(c.txid).reverse(), vout: c.vout, sequence: 0xfffffffd }))];
+    const prevouts = [...(oldBond ? [{ value: BigInt(oldBond.sats), script: old.spk }] : []), ...coins.map((c) => ({ value: BigInt(c.sats), script: wallet.spk }))];
     const outputs = [{ value: carrierValue, script: carrier.spk }];
-    const witnesses = inputs.map((_, i) => [schnorr.sign(tapSighash({ version: 2, locktime: 0, inputs, outputs, prevouts, inputIndex: i }), kp)]);
-    return toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs, witnesses }));
+    const locktime = oldBond ? oldBond.maturity : 0;
+    const witnesses = inputs.map((_, i) => (oldBond && i === 0
+      ? scriptPathWitness({ stack: [schnorr.sign(tapSighash({ version: 2, locktime, inputs, outputs, prevouts, inputIndex: 0, leafHash: tapLeafHash(old.leaf) }), nodeSecret)],
+        script: old.leaf, controlBlock: controlBlockFor('recovery', old.built).controlBlock })
+      : [schnorr.sign(tapSighash({ version: 2, locktime, inputs, outputs, prevouts, inputIndex: i }), kp)]));
+    return toHex(serializeSpend({ version: 2, locktime, inputs, outputs, witnesses }));
   };
   // sizes from a first build, then the fees at feeRate sat/vB (rounded up, 1 sat/vB at least above the relay floor)
   const rate = BigInt(Math.max(1, Math.ceil(feeRate)));
@@ -136,7 +147,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
     feeBond = BigInt(vsizeOf(b.hex)) * rate + 10n;
   }
   const carrierValue = total - feeFund;
-  if (carrierValue - feeBond < bondSats + MARKER_SATS) throw new Error(`the wallet holds ${total} sat: a bond of ${bondSats} sat needs at least ${bondSats + MARKER_SATS + feeBond + feeFund} sat`);
+  if (carrierValue - feeBond < bondSats + MARKER_SATS) throw new Error(`${oldBond ? 'the old bond and the wallet hold' : 'the wallet holds'} ${total} sat: a bond of ${bondSats} sat needs at least ${bondSats + MARKER_SATS + feeBond + feeFund} sat`);
   const funding = fundingTx(carrierValue);
   const fundingTxid = txidOf(funding);
   const b = bondTx(carrierValue, fundingTxid, feeBond);

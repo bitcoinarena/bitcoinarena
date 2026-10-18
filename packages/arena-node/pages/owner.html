@@ -288,7 +288,7 @@ async function bondPanel() {
     <div class="row"><span>Outpoint</span><b><code>${esc(b.bond.txid)}:${b.bond.vout}</code></b></div>
     <div class="row"><span>Confirmed at</span><b>${b.bond.height === null ? '?' : 'block ' + esc(b.bond.height)}</b></div>
     <p>${lockLine}</p>
-    <p class="sub">${esc(b.says)}. A larger bond: withdraw this one once it is unlocked and post the larger one from the installer's bond step.</p>
+    <p class="sub">${esc(b.says)}. A larger bond, once it is unlocked, in one step on the node's machine: <code>arena-install --rebond &lt;sat&gt;</code> shows the plan (this bond plus the wallet's coins, the new lock); <code>--yes</code> posts it.</p>
     <div class="row"><input id="wd-addr" placeholder="your ${esc(b.network || 'testnet4')} address" style="flex:1"><button id="wd" ${l && l.withdrawable ? '' : 'disabled'}>Withdraw the bond</button></div>
     <p class="sub" id="wd-msg"></p>`;
   $('wd').onclick = async () => {

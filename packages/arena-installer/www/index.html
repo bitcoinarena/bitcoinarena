@@ -170,7 +170,7 @@ async function load() {
     <p>Node key: <code>${esc(sv.identity || '')}</code></p>
     <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>, and on this machine <code>http://127.0.0.1:${st.seatPort}/Dashboard/owner</code> - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
     ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
-    ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it cannot be withdrawn; from that block on, the owner page withdraws it.</p>`
+    ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it cannot be withdrawn; from that block on, the owner page withdraws it, or <code>arena-install --rebond &lt;sat&gt;</code> makes it larger in one step.</p>`
       : `<p>No bond yet: send it to <code>${esc(st.wallet ? st.wallet.address : '')}</code> and post it from the owner page. Until then your node is not drawn for rounds.</p>`}`; }
 }
 function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('in-form').hidden = k !== 'install'; $('chain-buttons').hidden = k === 'install';
