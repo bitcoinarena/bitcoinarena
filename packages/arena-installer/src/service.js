@@ -176,7 +176,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
  * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
  * when `boot`. `vars`: environment the program needs (secrets too - kept only in files of this user, 0600). Answers { ok, why }.
  */
-export async function installProgram({ id, description, args, home, boot = true, vars = null, env = process.env, sh = run, platform = process.platform }) {
+export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform }) {
   const varLines = Object.entries(vars || {}).map(([k, v]) => { if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || /[\r\n]/.test(String(v))) throw new Error(`bad variable ${k}`); return [k, String(v)]; });
   if (platform === 'darwin') {
     const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
@@ -225,9 +225,9 @@ export async function installProgram({ id, description, args, home, boot = true,
   writeFileSync(join(dir, unit), `# ${description} (kanban #471), written by the installer.
 [Unit]
 Description=${description}
-After=network-online.target
+After=network-online.target${partOf ? ` arena-${partOf}.service` : ''}
 Wants=network-online.target
-
+${partOf ? `# restarted with arena-${partOf}: LND's onion service lives in that Tor and is gone when it restarts (measured 2026-10-18 on the test host)\nPartOf=arena-${partOf}.service\n` : ''}
 [Service]
 ${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}ExecStart=${args.join(' ')}
 Restart=on-failure
