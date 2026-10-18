@@ -3,14 +3,18 @@
 // serves this federation (POST <gateway>/routing_info with the federation id: the LNv2 call a client makes before paying - public,
 // null when the gateway does not serve it). Per epoch (144 blocks) it counts probes and answers per node; the seats are ranked by
 // gateway-seats.js on the last whole epoch (the running one while there is none), with the seats it ranked before as incumbents.
-// Routed volume is not measured here yet (it is read from the federation's LNv2 contracts): every candidate's is 0 until it is.
+// ROUTED VOLUME (gateway-volume.js): `incoming(from)` streams the federation's LNv2 incoming contracts after a stream index; each one is
+// credited to the gateway whose module key (its routing_info's module_public_key) funded it, in the epoch of the probe that first
+// saw it. The first probe only takes the index (history before the watch is not credited to any epoch). Outgoing is not counted.
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { seatGateways, GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = fetch, network = 'testnet4', bondMinGuardian = 50000n,
-  epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000 }) {
-  const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim })
+  epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null }) {
+  const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
+  const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
+  let cursor = null;
   let incumbents = [];
   const baseOf = (u) => String(u).replace(/\/+$/, '');
   async function probe() {
@@ -18,7 +22,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (!fid) return { ok: false, why: 'this node guards no federation' };
     const h = await tip();
     const epoch = Math.floor(h / epochBlocks);
-    if (!epochs.has(epoch)) { epochs.set(epoch, new Map()); for (const e of [...epochs.keys()]) if (e < epoch - 1) epochs.delete(e); }
+    if (!epochs.has(epoch)) { epochs.set(epoch, new Map()); for (const e of [...epochs.keys()]) if (e < epoch - 1) { epochs.delete(e); volumes.delete(e); } }
     const rows = epochs.get(epoch);
     const all = (await entries()) || [];
     for (const node of (await seated(fid)) || []) {
@@ -35,11 +39,25 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       try {
         const r = await fetcher(`${claim.gatewayUrl}routing_info`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fid), signal: AbortSignal.timeout(timeoutMs) });
         const body = r.status === 200 ? (await r.text()).trim() : 'null';
-        if (body && body !== 'null') row.up++;
+        if (body && body !== 'null') { row.up++; try { const k = JSON.parse(body).module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) row.modulePk = k; } catch { /* no key */ } }
       } catch { /* down this probe */ }
       rows.set(node, row);
     }
-    return { ok: true, epoch, standing: rows.size };
+    let credited = 0;
+    if (incoming) {
+      try {
+        const got = await incoming(cursor === null ? 0 : cursor);
+        if (got && got.ok) {
+          if (cursor !== null) {
+            const v = volumes.get(epoch) || new Map();
+            for (const c of got.contracts) { v.set(c.refundPk, (v.get(c.refundPk) || 0n) + BigInt(c.amountMsat)); credited++; }
+            volumes.set(epoch, v);
+          }
+          cursor = got.next;
+        }
+      } catch { /* the guardian's API did not answer: next probe */ }
+    }
+    return { ok: true, epoch, standing: rows.size, credited };
   }
   /** The seats as this guardian ranks them now. */
   async function view() {
@@ -54,7 +72,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const candidates = [...rows].map(([node, r]) => {
       const e = all.find((x) => toHex(x.pubkey) === node);
       return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (e && e.advert && e.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
-        registered: r.up > 0, volumeSats: 0n, capacitySats: BigInt(r.claim.capacitySats), pegInSats: BigInt(r.claim.pegInSats),
+        registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(at) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), pegInSats: BigInt(r.claim.pegInSats),
         availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: e ? BigInt(e.bondSats) : 0n, gatewayUrl: r.claim.gatewayUrl };
     });
     const beacon = await beaconAt(at * epochBlocks);
@@ -62,7 +80,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const s = seatGateways({ candidates, beacon, incumbents, network, bondMinGuardian });
     if (at < epoch) incumbents = s.seated;
     return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...s,
-      gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes }])) };
+      gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats) }])) };
   }
   return { probe, view };
 }
