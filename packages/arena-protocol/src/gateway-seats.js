@@ -3,9 +3,10 @@
 // Pure: every guardian ranks the same candidates the same way from the same measurements, and the federation record (signed at
 // threshold) names the seats. The measurements are each guardian's own; flooring them is what makes honest guardians agree.
 //
-//   eligible  a seated guardian of the federation, its gateway announced and registered with it, public channel capacity, peg-in and
-//             availability at least the network's minimum, bond at least bond_min_guardian
-//   ranked    routed volume (floored to 1,000 sat), then capacity (floored to 100,000 sat), availability (whole percent), bond, then the
+//   eligible  a seated guardian of the federation, its gateway announced and registered with it, inbound liquidity (deposits come in
+//             through it), outbound liquidity (payouts leave through it), peg-in and availability at least the network's minimum, bond
+//             at least bond_min_guardian
+//   ranked    routed volume (floored to 1,000 sat), then two-way capacity - the smaller of inbound and outbound (floored to 100,000 sat), availability (whole percent), bond, then the
 //             ticket H('BLWP/v1/GATEWAY' || beacon || node key), lowest first
 //   seated    the top `seats` operators (one seat per operator); an incumbent keeps its seat unless it is ineligible or a challenger it
 //             would yield to routed at least 25 % more
@@ -19,9 +20,10 @@ export const GATEWAY_TICKET_TAG = 'BLWP/v1/GATEWAY';
 export const UNSEAT_MARGIN_PCT = 25n;
 /** The minimums per network (spec §23A.9 table). */
 export const GATEWAY_MINIMUMS = Object.freeze({
-  mainnet: Object.freeze({ capacitySats: 5_000_000n, pegInSats: 2_000_000n, availabilityPct: 95 }),
-  testnet4: Object.freeze({ capacitySats: 200_000n, pegInSats: 50_000n, availabilityPct: 95 }),
-  regtest: Object.freeze({ capacitySats: 20_000n, pegInSats: 10_000n, availabilityPct: 95 }),
+// inbound and outbound each half of what the single capacity minimum was (the owner 2026-10-18: a gateway with outbound only takes no deposit)
+  mainnet: Object.freeze({ inboundSats: 2_500_000n, outboundSats: 2_500_000n, pegInSats: 2_000_000n, availabilityPct: 95 }),
+  testnet4: Object.freeze({ inboundSats: 100_000n, outboundSats: 100_000n, pegInSats: 50_000n, availabilityPct: 95 }),
+  regtest: Object.freeze({ inboundSats: 10_000n, outboundSats: 10_000n, pegInSats: 5_000n, availabilityPct: 95 }),
 });
 
 const floorTo = (x, step) => (BigInt(x) / step) * step;
@@ -30,11 +32,12 @@ export function gatewayTicket(beacon, nodeKey) {
   return bytesToBigInt(taggedHash(GATEWAY_TICKET_TAG, w.finish()));
 }
 
-/** Why a candidate may not stand, or null. `c` { seatedGuardian, registered, capacitySats, pegInSats, availabilityPct, bondSats }. */
+/** Why a candidate may not stand, or null. `c` { seatedGuardian, registered, inboundSats, outboundSats, pegInSats, availabilityPct, bondSats }. */
 export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
   if (!c.seatedGuardian) return 'not a seated guardian of the federation';
   if (!c.registered) return 'its gateway is not registered with the federation';
-  if (BigInt(c.capacitySats) < minimums.capacitySats) return `public channel capacity ${c.capacitySats} below ${minimums.capacitySats} sat`;
+  if (BigInt(c.inboundSats || 0) < minimums.inboundSats) return `inbound liquidity ${c.inboundSats || 0} below ${minimums.inboundSats} sat (deposits come in through it)`;
+  if (BigInt(c.outboundSats || 0) < minimums.outboundSats) return `outbound liquidity ${c.outboundSats || 0} below ${minimums.outboundSats} sat (payouts leave through it)`;
   if (BigInt(c.pegInSats) < minimums.pegInSats) return `peg-in ${c.pegInSats} below ${minimums.pegInSats} sat`;
   if (Math.floor(Number(c.availabilityPct)) < minimums.availabilityPct) return `available ${Math.floor(Number(c.availabilityPct))} % of the epoch, below ${minimums.availabilityPct} %`;
   if (BigInt(c.bondSats) < BigInt(bondMinGuardian)) return `bond below bond_min_guardian`;
@@ -42,7 +45,7 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
 }
 
 /**
- * THE EPOCH'S GATEWAY SEATS. `candidates` [{ node (32-byte key), operatorId, seatedGuardian, registered, volumeSats, capacitySats, pegInSats,
+ * THE EPOCH'S GATEWAY SEATS. `candidates` [{ node (32-byte key), operatorId, seatedGuardian, registered, volumeSats, inboundSats, outboundSats, pegInSats,
  * availabilityPct, bondSats }]; `beacon` the epoch's first block hash (32 bytes); `incumbents` node keys hex seated last epoch;
  * `network`; `bondMinGuardian`. Answers { seated: [node hex], ranked: [{ node, ... }], ineligible: [{ node, why }], empty, why }.
  */
@@ -54,7 +57,7 @@ export function seatGateways({ candidates = [], beacon, incumbents = [], network
   for (const c of candidates) {
     const why = ineligibleWhy(c, { minimums, bondMinGuardian });
     if (why) { ineligible.push({ node: toHex(c.node), why }); continue; }
-    eligible.push({ ...c, nodeHex: toHex(c.node), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(c.capacitySats, 100_000n),
+    eligible.push({ ...c, nodeHex: toHex(c.node), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats) < BigInt(c.outboundSats) ? c.inboundSats : c.outboundSats, 100_000n),
       availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats), ticket: gatewayTicket(beacon, c.node) });
   }
   const cmp = (a, b) => (a.volume !== b.volume ? (a.volume > b.volume ? -1 : 1) : a.capacity !== b.capacity ? (a.capacity > b.capacity ? -1 : 1)
