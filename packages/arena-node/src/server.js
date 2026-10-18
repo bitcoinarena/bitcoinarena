@@ -37,6 +37,9 @@ import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, incomingSince } from './gateway-volume.js';
 import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/gateway-seating.js';
+import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
+import { checkLiquidityClaim } from '../../arena-protocol/src/liquidity.js';
+import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -120,7 +123,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -512,6 +515,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const absencesFile = db && db.blwpPath ? `${db.blwpPath}.held-absences.json` : null;
   // THE GATEWAY SEATINGS (§23A.9): `${federation}:${epoch}` -> the standing seating / this guardian's own signed one (gathered below)
   const gatewaySeatings = new Map(), ownSeatings = new Map();
+  // THE LIQUIDITY SEATINGS (§23A.10, kanban #494): the same, for the providers and their weights
+  const liquiditySeatings = new Map(), ownLiquiditySeatings = new Map();
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } },
     store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => writeFileSync(absencesFile, JSON.stringify(v)) } : null });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
@@ -1925,8 +1930,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const seating = gatewaySeatings.get(`${toHex(contract.federationId)}:${Math.floor(Number(contract.censusHeight) / GATEWAY_EPOCH_BLOCKS) - 1}`);
         if (seating) gateway = seating.seats.map((k) => fromHex(k));
       }
+      // AND THE LIQUIDITY PROVIDERS (2026.0.16, §23A.10): the standing liquidity seating of the same epoch, with the weights the
+      // quarter is split by - none standing, the quarter is custody's
+      let liquidity = [], liquidityWeights = null;
+      if (Number(contract.protocolVersion) >= LIQUIDITY_VERSION && contract.federationId) {
+        const ls = liquiditySeatings.get(`${toHex(contract.federationId)}:${Math.floor(Number(contract.censusHeight) / GATEWAY_EPOCH_BLOCKS) - 1}`);
+        if (ls) { liquidity = ls.providers.map((p) => fromHex(p.node)); liquidityWeights = new Map(ls.providers.map((p) => [p.node, BigInt(p.weight)])); }
+      }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
-        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian, gateway,
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian, gateway, liquidity, ...(liquidityWeights ? { liquidityWeights } : {}),
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
     },
   });
@@ -3741,6 +3753,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const k of [...gatewaySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) gatewaySeatings.delete(k);
       }
     };
+    // THE LIQUIDITY SEATINGS (§23A.10): a guardian lists its federation's providers - every census node's liquidity claim, the
+    // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch; every seat keeps the standing one
+    const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await r.json() : null; } catch { return null; } };
+    const gatherLiquidity = async () => {
+      const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
+      const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
+      const entries = now.ok ? now.entries : [];
+      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return e && e.advert && e.advert.endpoint ? String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
+      const me = toHex(round.pubkey);
+      for (const { federation: fid } of fedRecords.list()) {
+        const rec = fedRecords.recordOf(fid);
+        const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
+        if (!rec || !rec.record || !seatedHex.length) continue;
+        if (seatedHex.includes(me) && !ownLiquiditySeatings.has(`${fid}:${epoch}`)) {
+          const lnKeys = [], claims = [];
+          for (const node of seatedHex) { const ep = endpointOf(node); const g = ep && await getJson(`${ep}/gateway-claim`); if (g && g.node === node && checkGatewayClaim(g, schnorrVerify).ok) lnKeys.push(g.lightningPubkey); }
+          for (const e of entries) { const ep = endpointOf(toHex(e.pubkey)); const c = ep && await getJson(`${ep}/liquidity-claim`); if (c && c.node === toHex(e.pubkey) && checkLiquidityClaim(c, schnorrVerify).ok) claims.push(c); }
+          const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys });
+          ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
+        }
+        if (liquiditySeatings.has(`${fid}:${epoch}`)) continue;
+        const signed = ownLiquiditySeatings.has(`${fid}:${epoch}`) ? [ownLiquiditySeatings.get(`${fid}:${epoch}`)] : [];
+        for (const node of seatedHex) {
+          if (node === me) continue;
+          const ep = endpointOf(node); const s = ep && await getJson(`${ep}/liquidity-seating?federation=${fid}&epoch=${epoch}`);
+          if (s) signed.push(s);
+        }
+        const st = standingLiquiditySeating({ signed, federationId: fid, epoch, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+        if (st.ok) liquiditySeatings.set(`${fid}:${epoch}`, st.seating);
+        for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) liquiditySeatings.delete(k);
+        for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) ownLiquiditySeatings.delete(k);
+      }
+    };
+    const lt = setInterval(() => { gatherLiquidity().catch(() => {}); }, 600000);
+    if (lt.unref) lt.unref();
     const st = setInterval(() => { gatherSeatings().catch(() => {}); }, 600000);
     if (st.unref) st.unref();
   }
@@ -4249,6 +4296,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE;
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
         return c ? answer(200, c) : answer(404, { ok: false, why: 'this node is no liquidity provider' });
+      }
+      if (req.method === 'GET' && url.pathname === '/liquidity-seating') {
+        const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
+        return ownLiquiditySeatings.has(k) ? answer(200, ownLiquiditySeatings.get(k)) : answer(404, { ok: false, why: 'this guardian signed no liquidity seating for that federation and epoch' });
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seating') {
         const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
