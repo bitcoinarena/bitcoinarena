@@ -365,3 +365,13 @@ test('the bond step names the whole deposit from the start: custody 363,000 with
   assert.match(html, /\$\('b-need'\)\.textContent = needText\(st\.wallet\.needSats, st\.wallet\.parts\)/, 'the first render shows the total and its parts');
   assert.match(html, /\$\('b-need2'\)\.textContent = needText\(st\.wallet\.needSats, st\.wallet\.parts\)/, 'custody added later too: not "Send  sat"');
 });
+
+test('a new node starts with game / verify and settlement ticked; custody and liquidity are chosen on purpose (rc.14 in the Windows VM ticked liquidity: 863,000 sat asked)', () => {
+  const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
+  assert.match(html, /const OPT_IN_ROLES = \['custody', 'liquidity'\];/);
+  assert.match(html, /\(!st\.roles\.length && !OPT_IN_ROLES\.includes\(k\)\) \? 'checked'/, 'only the roles outside OPT_IN_ROLES start ticked');
+  const opt = ['custody', 'liquidity'];
+  const ticked = (st, k) => st.roles.includes(k) || (!st.roles.length && !opt.includes(k));
+  assert.deepEqual(['verify', 'settlement', 'custody', 'liquidity'].filter((k) => ticked({ roles: [] }, k)), ['verify', 'settlement']);
+  assert.deepEqual(['verify', 'settlement', 'custody', 'liquidity'].filter((k) => ticked({ roles: ['custody', 'verify'] }, k)), ['verify', 'custody'], 'a saved choice is shown as saved');
+});
