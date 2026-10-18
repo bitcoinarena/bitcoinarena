@@ -4732,8 +4732,8 @@ drawn it must also:
   federation** at a time - a draining one does not count. Independence
   between federations is what makes several of them worth having (§23A.3).
 
-**What starts a founding.** One of three events, each at a Bitcoin height
-that becomes the founding's `trigger_height`:
+**What starts a founding.** One of four events, each at a Bitcoin height
+that becomes the founding's `trigger_height` (the earliest wins):
 
 1. **Genesis.** The network's first federation is drawn at the first height
    after genesis at which the census holds at least `federation_nominal`
@@ -4745,6 +4745,17 @@ that becomes the founding's `trigger_height`:
    decided by threshold signature to be replaced.
 3. **Load.** Every OPEN federation has been at or above 80% of its
    exposure cap (§23A.3) for `abandon_blocks`.
+4. **Cohort** (protocol 2026.0.14; the owner 2026-10-18, kanban #471 ruling 3:
+   "10 new nodes find each other on the network automatically and create a
+   new federation"). While a federation exists, the census holds at least
+   `cohort_nominal` = **10** guardian-capable operators (an endpoint, at
+   least `bond_min_guardian`) that guard no OPEN federation. They found a
+   federation of their own, of `cohort_nominal` seats, drawn as below. The
+   trigger is the first height of the current run at or above 10: once
+   their adverts name the new federation in `guardian_of[]` the run ends,
+   and the next ten are a later height. A node that installs the custody
+   role advertises itself guardian-capable at its public address
+   `/guardian` and runs its guardian in setup mode until drawn.
 
 **Who is drawn.** Bond-weighted stateless sortition, §5A.6 unchanged, with
 the beacon block after `trigger_height` and the tag `'BLWP/v1/GUARDIAN'`,

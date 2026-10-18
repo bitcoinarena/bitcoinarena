@@ -113,3 +113,18 @@ test('a departure notice that would make a federation DRAINING triggers a succes
   const earlier = foundingTrigger({ records: [{ federation: 'cc'.repeat(32), status: 'DRAINING', height: 940 }], notices: [{ federation: 'bb'.repeat(32), height: 950 }], federationExists: true });
   assert.deepEqual([earlier.height, earlier.federation, earlier.notice], [940, 'cc'.repeat(32), undefined], 'the earliest event wins');
 });
+
+test('the cohort (protocol 2026.0.14, #471 ruling 3): COHORT_NOMINAL free operators found their own federation while others exist', async () => {
+  const { foundingTrigger, COHORT_NOMINAL } = await import('../src/guardian-founding.js');
+  assert.equal(COHORT_NOMINAL, 10);
+  const capable = [{ height: 100, operators: 14, free: 8 }, { height: 101, operators: 16, free: 10 }, { height: 102, operators: 17, free: 11 },
+    { height: 103, operators: 15, free: 9 }, { height: 104, operators: 16, free: 10 }, { height: 105, operators: 16, free: 10 }];
+  const t = foundingTrigger({ capable, nominal: 4, abandonBlocks: 12, federationExists: true });
+  assert.deepEqual([t.ok, t.kind, t.height, t.nominal], [true, 'cohort', 104, 10], 'the start of the current run: the run from 101 ended at 103');
+  assert.equal(foundingTrigger({ capable: capable.slice(0, 1), nominal: 4, abandonBlocks: 12, federationExists: true }).ok, false, 'eight are not a cohort');
+  assert.equal(foundingTrigger({ capable: capable.map(({ free, ...r }) => r), nominal: 4, abandonBlocks: 12, federationExists: true }).ok, false, 'a seat that counts no free operators triggers none');
+  const g = foundingTrigger({ capable, nominal: 4, abandonBlocks: 12, federationExists: false });
+  assert.deepEqual([g.kind, g.height], ['genesis', 100], 'before any federation the genesis trigger stands');
+  const early = foundingTrigger({ capable, records: [{ federation: 'aa', status: 'DRAINING', height: 90 }], nominal: 4, abandonBlocks: 12, federationExists: true });
+  assert.equal(early.kind, 'succession', 'the earliest event wins');
+});

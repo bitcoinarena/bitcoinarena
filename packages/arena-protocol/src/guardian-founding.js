@@ -101,11 +101,25 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
  * Answers { ok, kind, height, why } for the earliest, or { ok: false, why } naming what is missing.
  */
 export const LOAD_TRIGGER = 0.8;
-export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false }) {
+/**
+ * THE COHORT (kanban #471 ruling 3, the owner 2026-10-18: "10 new nodes find each other on the network automatically and create a new
+ * federation"; protocol 2026.0.14): `capable` rows may carry `free` - the guardian-capable operators with an endpoint and at least
+ * bond_min_guardian that guard no OPEN federation. While a federation exists, COHORT_NOMINAL of them found one of their own, of that
+ * size: the trigger is the first height of the current run at or above it (after a founding their adverts name it in guardian_of[],
+ * the run ends, and the next cohort is a later height). Before any federation exists the genesis trigger stands as it was.
+ */
+export const COHORT_NOMINAL = 10;
+export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false, cohort = COHORT_NOMINAL }) {
   const found = [];
   if (!federationExists && Number.isInteger(nominal)) {
     const g = capable.find((x) => x.operators >= nominal);
     if (g) found.push({ kind: 'genesis', height: g.height, why: `${g.operators} guardian-capable operators at ${g.height}, at least federation_nominal ${nominal}: the first federation is drawn` });
+  }
+  if (federationExists && Number.isInteger(cohort) && cohort > 0) {
+    let start = null;
+    for (const x of capable) { if (typeof x.free !== 'number') continue; if (x.free >= cohort) { if (start === null) start = x; } else start = null; }
+    if (start) found.push({ kind: 'cohort', height: start.height, nominal: cohort,
+      why: `${start.free} guardian-capable operators guarding no OPEN federation at ${start.height}, at least ${cohort}: they found a federation of their own` });
   }
   const carried = (r) => ({ ...(r.federation !== undefined ? { federation: r.federation } : {}), ...(Number.isInteger(r.nominal) ? { nominal: r.nominal } : {}),
     ...(Array.isArray(r.seatedFirst) ? { seatedFirst: r.seatedFirst } : {}),
