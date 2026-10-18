@@ -73,23 +73,31 @@ esac
 ( cd "$STAGE/packages/arena-node" && npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts \
     @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3 >/dev/null )   # bcryptjs: the gateway's admin password hash (gateway.js)
 
-# 3b. THE CUSTODY BINARIES (kanban #471 slice 5): gatewayd of the patched fork 76012ad9119, built on the test host by
+# 3b. THE CUSTODY BINARIES (kanban #471 slice 5): gatewayd, fedimintd and fedimint-cli of the patched fork 76012ad9119, built on the test host by
 # tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
 # custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
 # wizard says so (gateway.js findGatewayd).
 CUSTODY_TAG=custody-76012ad9
-declare -A GW_SHA=()
-if [[ -n "${GW_SHA[$KEY]:-}" ]]; then
-  GW="gatewayd-$KEY$([ "$OS" = windows ] && echo .exe)"
-  if [ ! -f "$CACHE/$GW" ] || ! echo "${GW_SHA[$KEY]}  $CACHE/$GW" | sha256sum -c --status; then
-    if [ -n "${ARENA_CUSTODY_DIR:-}" ]; then cp "$ARENA_CUSTODY_DIR/$GW" "$CACHE/$GW.part"
-    else gh release download "$CUSTODY_TAG" --repo a tester/bitcoin-arena -p "$GW" -O "$CACHE/$GW.part" --clobber; fi
-    echo "${GW_SHA[$KEY]}  $CACHE/$GW.part" | sha256sum -c --status || { echo "$GW: checksum mismatch" >&2; rm -f "$CACHE/$GW.part"; exit 1; }
-    mv "$CACHE/$GW.part" "$CACHE/$GW"
+# the pinned binaries, "<bin>:<os>-<arch>" -> SHA-256 (out/SHA256SUMS.custody of tools/release/custody-build.sh)
+declare -A CUSTODY_SHA=(
+  [gatewayd:windows-x64]=6864274731883823e520e3472ceccdfbdd7e46cb5578ec2da541fc0da0ddf75b
+  [fedimintd:windows-x64]=7e82772ddb18c27948c9f2acf2f6723452c76c0f1aa014ec2c8b4cb715736faf
+  [fedimint-cli:windows-x64]=55ff1133c2aa8d80873234c1b7310d22403b7d590be1376b0b8181d24c7dbbb0
+)
+EXE="$([ "$OS" = windows ] && echo .exe)"
+for BIN in gatewayd fedimintd fedimint-cli; do
+  PIN="${CUSTODY_SHA[$BIN:$KEY]:-}"
+  [ -n "$PIN" ] || continue
+  F="$BIN-$KEY$EXE"
+  if [ ! -f "$CACHE/$F" ] || ! echo "$PIN  $CACHE/$F" | sha256sum -c --status; then
+    if [ -n "${ARENA_CUSTODY_DIR:-}" ]; then cp "$ARENA_CUSTODY_DIR/$F" "$CACHE/$F.part"
+    else gh release download "$CUSTODY_TAG" --repo a tester/bitcoin-arena -p "$F" -O "$CACHE/$F.part" --clobber; fi
+    echo "$PIN  $CACHE/$F.part" | sha256sum -c --status || { echo "$F: checksum mismatch" >&2; rm -f "$CACHE/$F.part"; exit 1; }
+    mv "$CACHE/$F.part" "$CACHE/$F"
   fi
   mkdir -p "$STAGE/runtime/custody"
-  install -m 0755 "$CACHE/$GW" "$STAGE/runtime/custody/gatewayd$([ "$OS" = windows ] && echo .exe)"
-fi
+  install -m 0755 "$CACHE/$F" "$STAGE/runtime/custody/$BIN$EXE"
+done
 
 # 4. the launcher: the installer on the release's own runtime, cloudflared beside it
 if [ "$OS" = windows ]; then
