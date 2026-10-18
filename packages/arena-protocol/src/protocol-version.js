@@ -33,6 +33,11 @@ export const PROTOCOL_RELEASES = Object.freeze([
   // the guardian pool is the federation's seated guardians: a round's guardian third goes to the guardians its federation's record
   // seats (not gone), in its census or not (kanban #33, §22A v4.6.4)
   Object.freeze({ version: 13, year: 2026, x: 0 }),
+  // the cohort: while federations exist, ten guardian-capable operators that guard none found a federation of their own (kanban #471
+  // ruling 3, §23A.2 event 4)
+  Object.freeze({ version: 14, year: 2026, x: 0 }),
+  // gateway seats: the guardian pool splits 2/3 to the seated guardians, 1/3 to the federation's two gateway seats (kanban #471, §23A.9)
+  Object.freeze({ version: 15, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

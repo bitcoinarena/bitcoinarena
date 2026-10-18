@@ -2,7 +2,8 @@
 # #471 slice 5: the custody binaries for every release system, built on the test host (the owner 2026-10-18: "use the mac to compile things
 # as much") from the patched fork 76012ad9119 (the copy in src/: crunchy 0.2.4; gatewayd without jemalloc on Windows): stripped, no
 # debug info. Linux against glibc 2.31 (zig), so older systems run it; macOS natively for both architectures; Windows through zig.
-# Writes out/<bin>-<os>-<arch>[.exe] and out/SHA256SUMS.custody.
+# ONLY: os-arch keys to build (default all).
+# Writes out/<bin>-<os>-<arch>[.exe] and out/SHA256SUMS.custody. BINS: which (default: gatewayd fedimintd fedimint-cli; jemalloc off for all).
 set -uo pipefail
 B=/Users/arena/blwp-offload/fedwin; F=$B/src; OUT=$B/out; mkdir -p $OUT
 export PATH=$HOME/.cargo/bin:$B/zig-aarch64-macos-0.16.0:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -18,12 +19,16 @@ cd $F
 for row in "x86_64-pc-windows-gnu zig windows-x64 .exe" "x86_64-unknown-linux-gnu.2.31 zig linux-x64 -" "aarch64-unknown-linux-gnu.2.31 zig linux-arm64 -" \
            "aarch64-apple-darwin cargo darwin-arm64 -" "x86_64-apple-darwin cargo darwin-x64 -"; do
   set -- $row; tgt=$1; how=$2; key=$3; ext=${4/-/}; dir=${tgt%.2.31}
-  t0=$(date +%s); say "gatewayd for $key ($tgt)"
-  if [ $how = zig ]; then cargo zigbuild --release --target $tgt -p fedimint-gateway-server --bin gatewayd > $B/custody-$key.log 2>&1
-  else cargo build --release --target $tgt -p fedimint-gateway-server --bin gatewayd > $B/custody-$key.log 2>&1; fi
-  rc=$?; say "$key: exit $rc after $(( $(date +%s) - t0 )) s"
-  if [ $rc = 0 ]; then cp $CARGO_TARGET_DIR/$dir/release/gatewayd$ext $OUT/gatewayd-$key$ext; ls -la $OUT/gatewayd-$key$ext; file $OUT/gatewayd-$key$ext | cut -c1-160
-  else grep -E "^error" -A6 $B/custody-$key.log | head -14; fi
+  [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $key "* ]] && continue
+  for bin in ${BINS:-gatewayd fedimintd fedimint-cli}; do
+    case $bin in gatewayd) spec="-p fedimint-gateway-server --bin gatewayd";; fedimintd) spec="-p fedimintd --no-default-features";; fedimint-cli) spec="-p fedimint-cli --no-default-features";; esac
+    t0=$(date +%s); say "$bin for $key ($tgt)"
+    if [ $how = zig ]; then cargo zigbuild --release --target $tgt $spec > $B/custody-$bin-$key.log 2>&1
+    else cargo build --release --target $tgt $spec > $B/custody-$bin-$key.log 2>&1; fi
+    rc=$?; say "$bin $key: exit $rc after $(( $(date +%s) - t0 )) s"
+    if [ $rc = 0 ]; then cp $CARGO_TARGET_DIR/$dir/release/$bin$ext $OUT/$bin-$key$ext; ls -la $OUT/$bin-$key$ext; file $OUT/$bin-$key$ext | cut -c1-160
+    else grep -E "^error" -A6 $B/custody-$bin-$key.log | head -14; fi
+  done
 done
-cd $OUT && shasum -a 256 gatewayd-* > SHA256SUMS.custody && cat SHA256SUMS.custody
+cd $OUT && shasum -a 256 gatewayd-* fedimintd-* fedimint-cli-* > SHA256SUMS.custody && cat SHA256SUMS.custody
 say done
