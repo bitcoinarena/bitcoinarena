@@ -33,6 +33,7 @@ import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
 import { ownBondOf, lockAt, withdrawSpend } from './bond-withdraw.js';
+import { latestReleaseReader } from './release-latest.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
@@ -335,6 +336,8 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
 }
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null,
+  // THE NEWEST RELEASE'S READER (release-latest.js), for a test; none given, the Arena site's, checked with the installer's release key
+  latestRelease: givenLatestRelease = null,
   // THE GENESIS THIS SEAT BINDS CONTRACTS TO, for a test (kanban #32 slice 3): none given, the chain's own (genesisFor)
   genesis: givenGenesis = null,
   // WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "Node software SHOULD make certificate provisioning a first-class setup
@@ -2986,6 +2989,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const reachCheck = createReachCheck({ allowPrivate: process.env.ARENA_REACH_ALLOW_PRIVATE === '1' });
   // THIS NODE'S BOND in the newest census this seat holds (bond-withdraw.js): { bond, network } or null
+  // THE NEWEST RELEASE (release-latest.js): checked with the installer's release key when this node runs from a release (a seat
+  // tree without the installer has no verifier and offers none)
+  let latestRelease = givenLatestRelease;
+  const latestReleaseFor = async (own) => {
+    if (!latestRelease) {
+      let verify = null;
+      try { ({ sumsSigned: verify } = await import('../../arena-installer/src/release-verify.js')); } catch { verify = null; }
+      latestRelease = latestReleaseReader({ verify });
+    }
+    return latestRelease.read(own);
+  };
   const ownBondNow = () => {
     const me = toHex(round.pubkey);
     for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
@@ -4247,7 +4261,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // (tools/release/build-release.sh writes them at its root); a node run from a checkout answers null for both
         if (req.method === 'GET' && url.pathname === '/owner/version') {
           const read = (f) => { try { return readFileSync(new URL(`../../../${f}`, import.meta.url), 'utf8').trim(); } catch { return null; } };
-          return answer(200, { node: toHex(round.pubkey), version: read('VERSION'), commit: read('COMMIT'),
+          const version = read('VERSION');
+          let latest; try { latest = await latestReleaseFor(version); } catch (e) { latest = { latest: null, newer: false, why: e.message }; }
+          return answer(200, { node: toHex(round.pubkey), version, commit: read('COMMIT'), latest,
             protocols: SUPPORTED_PROTOCOL_VERSIONS, update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
         }
         if (req.method === 'GET' && url.pathname === '/owner/bond') {

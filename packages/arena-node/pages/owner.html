@@ -263,6 +263,13 @@ async function area() {
 // clearly)"): the bond the census names, locked until its maturity block - the blocks to it and an estimated date - and from that
 // block on, withdrawn to an address the owner names, signed by the owner
 // THE RELEASE THIS NODE RUNS (kanban #471 part D): its version and commit, the protocol versions it speaks, and how it is updated
+// A NEW RELEASE IS AVAILABLE (kanban #471): the newest release the Arena site names, signed with the release key (the seat checks it)
+function latestLine(v) {
+  const l = v.latest || {};
+  if (l.newer && l.latest) return `<p class="ok"><b>A new release is available: ${esc(l.latest.version)}</b>${l.latest.release ? ` - <a href="${esc(l.latest.release)}" target="_blank" rel="noopener">its release page</a> (invite only)` : ''}. Download the asset for this machine with SHA256SUMS and SHA256SUMS.sig beside it.</p>`;
+  if (l.latest) return `<div class="row"><span>Newest release</span><b>${esc(l.latest.version)} - this node is up to date</b></div>`;
+  return l.why ? `<p class="sub">Newest release: ${esc(l.why)}.</p>` : '';
+}
 async function releasePanel() {
   let v = null;
   try { v = await (await fetch(at('/owner/version'), { cache: 'no-store' })).json(); } catch { v = null; }
@@ -271,6 +278,7 @@ async function releasePanel() {
   el.innerHTML = `<div class="row"><span>Version</span><b>${v.version ? esc(v.version) : 'run from a source checkout'}</b></div>
     ${v.commit ? `<div class="row"><span>Commit</span><b><code>${esc(v.commit.slice(0, 12))}</code></b></div>` : ''}
     <div class="row"><span>Protocol versions</span><b>${esc((v.protocols || []).join(', '))}</b></div>
+    ${latestLine(v)}
     <p class="sub">To update: ${esc(v.update)}.</p>`;
 }
 
