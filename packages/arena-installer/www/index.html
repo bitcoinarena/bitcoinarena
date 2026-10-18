@@ -193,7 +193,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <button class="ghost" id="r-test">Test direct connection</button>
     <div class="msg" id="r-direct"></div>
     <div class="role"><input type="radio" name="rm" value="direct" id="rm-direct"><div><b>Direct connection</b><p>Your node listens on the port above. Needs the port open in the firewall and, behind a router, forwarded to this machine.</p></div></div>
-    <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it. No open ports.</p>
+    <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it (Cloudflare sells one for a few dollars a year). No open ports. <b>No domain?</b> Choose Tailscale Funnel below.</p>
       <button class="ghost" id="r-login">Sign up / log in to Cloudflare</button><div class="msg" id="r-login-msg"></div>
       <label>Your node's name (under a domain on that account)</label><input id="r-host" placeholder="node.example.com"></div></div>
     <div class="role"><input type="radio" name="rm" value="tailscale" id="rm-tailscale"><div><b>Permanent Tailscale Funnel</b><p>A fixed https name such as <code>my-pc.tail1234.ts.net</code> from your free Tailscale account - no domain needed, no open ports. Install Tailscale and log in (<code>tailscale up</code>) first; Funnel must be allowed for this machine in your tailnet.</p></div></div>
