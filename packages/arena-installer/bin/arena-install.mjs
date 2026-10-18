@@ -2,11 +2,14 @@
 // THE INSTALLER (kanban #471): start it, open the link it prints, finish in the browser.
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
+//     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
 //
 // --tunnel     the machine is remote: open a Cloudflare quick tunnel (no account) and print its https link instead
 // --port       the wizard's local port (127.0.0.1 only)
 // --seat-port  the node's port for connections from outside (8470, kanban #471 ruling 7)
 // --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
+// --update     update this node to a downloaded release: SHA256SUMS and SHA256SUMS.sig beside the asset are checked against the Arena
+//              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
 import http from 'node:http';
@@ -26,6 +29,31 @@ const home = resolve(opt('--home', defaultHome()));
 const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const state = nodeState(home);
 const cloudflared = process.env.ARENA_CLOUDFLARED || 'cloudflared';   // the release's own (arena-install sets it), else PATH
+
+// AN UPDATE (kanban #471 part E): checked, unpacked beside the running release, the node moved to it (update.js)
+if (args.includes('--update')) {
+  const { updateNode } = await import('../src/update.js');
+  const { checkAsset } = await import('../src/release-verify.js');
+  const { readFileSync, mkdirSync, existsSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const asset = resolve(opt('--update', ''));
+  const at = dirname(asset);
+  let sums, sig;
+  try { sums = readFileSync(`${at}/SHA256SUMS`); sig = readFileSync(`${at}/SHA256SUMS.sig`, 'utf8'); }
+  catch { console.error(`SHA256SUMS and SHA256SUMS.sig belong beside ${asset} (download them from the same release)`); process.exit(2); }
+  const c = checkAsset({ file: asset, sums, sig });
+  if (!c.ok) { console.error(`Refused: ${c.why}`); process.exit(2); }
+  const name = asset.split('/').pop().replace(/\.tar\.gz$/, '');
+  const dir = `${home}/releases`;
+  mkdirSync(dir, { recursive: true });
+  if (!existsSync(`${dir}/${name}`)) execFileSync('tar', ['-xzf', asset, '-C', dir]);
+  const s = state.read();
+  const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
+    node: `${dir}/${name}/runtime/node` });
+  console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}`
+    : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
+  process.exit(r.ok ? 0 : 1);
+}
 
 let tunnel = null, server = null;
 const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l), onDone: () => {
