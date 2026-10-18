@@ -332,5 +332,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // WHETHER THIS NODE'S OWN PRESENT IS HELD FOR A ROUND'S SEATING (kanban #302): a reserve that was present has not missed it
     presentHere: (rid, role = 'settlement') => !!db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(seatOf(rid), role, me),
     takePresent, presentsOf, mySignature, certOf: (rid, role) => certOf(seatOf(rid), role), keepCert, equivocationOf, takePresents, batchOf,
+    /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too (#468). */
+    forget: (ridHex) => { for (const role of SEATING_ROLES) certs.delete(`${ridHex}:${role}`); },
   };
 }
