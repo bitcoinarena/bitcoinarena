@@ -196,6 +196,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it. No open ports.</p>
       <button class="ghost" id="r-login">Sign up / log in to Cloudflare</button><div class="msg" id="r-login-msg"></div>
       <label>Your node's name (under a domain on that account)</label><input id="r-host" placeholder="node.example.com"></div></div>
+    <div class="role"><input type="radio" name="rm" value="tailscale" id="rm-tailscale"><div><b>Permanent Tailscale Funnel</b><p>A fixed https name such as <code>my-pc.tail1234.ts.net</code> from your free Tailscale account - no domain needed, no open ports. Install Tailscale and log in (<code>tailscale up</code>) first; Funnel must be allowed for this machine in your tailnet.</p></div></div>
     <div class="role"><input type="radio" name="rm" value="quick" id="rm-quick"><div><b>Temporary anonymous tunnel</b><p>A random <code>trycloudflare.com</code> name, no account. It changes whenever the tunnel restarts, so others lose your node until it is announced again.</p></div></div>
     <button id="r-save">Save and go on</button>
     <div class="msg" id="r-msg"></div>
@@ -339,6 +340,7 @@ async function load() {
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
       : r.mode === 'permanent' ? `at <code>${esc(r.url)}</code> through your Cloudflare tunnel (the user service <code>arena-tunnel</code>)`
+      : r.mode === 'tailscale' ? `at <code>${esc(r.url)}</code> through Tailscale Funnel (kept by Tailscale itself; <code>tailscale funnel status</code> shows it)`
       : `at <code>${esc(r.url || '(no name yet)')}</code> through a temporary tunnel - <b>this name changes when the tunnel restarts</b>; set up a permanent tunnel later from the owner page`;
     $('done-text').innerHTML = `<p>Your node runs as the user service <code>arena-node</code>${sv.boot ? ' and starts again after a reboot' : ' (not started after a reboot)'}.</p>
     <p>Others reach it ${how}.</p>

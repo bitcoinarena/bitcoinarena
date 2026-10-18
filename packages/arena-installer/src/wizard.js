@@ -15,7 +15,7 @@
 // owner login against the running node) -> done. The state is on disk after every step (state.js), so the wizard can be closed and resumed.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS } from './seed.js';
@@ -66,7 +66,9 @@ export function beginAddCustody(state) {
 }
 
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
-  fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
+  // tailscale: the test host app's own CLI when it is installed, else the one in PATH
+  fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
+  tailscaleSh = undefined, chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
@@ -252,7 +254,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     },
     'POST /api/reach/save': async (b) => {
       const mode = String(b.mode || '');
-      if (!reach.REACH_MODES.includes(mode)) return { ok: false, why: 'direct, permanent or quick' };
+      if (!reach.REACH_MODES.includes(mode)) return { ok: false, why: 'direct, permanent, quick or tailscale' };
       const s = state.read();
       const port = mode === 'direct' ? ((s.direct || {}).port || seatPort) : (Number(b.port) || seatPort);
       if (mode === 'direct') {
@@ -260,6 +262,11 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         return { ok: true, reach: mark('reach', { reach: { mode, port, url: `http://${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:${port}` } }).reach };
       }
       if (mode === 'quick') return { ok: true, reach: mark('reach', { reach: { mode, port, url: null } }).reach };
+      if (mode === 'tailscale') {
+        const t = await reach.tailscaleFunnel({ bin: tailscale, port, sh: tailscaleSh });
+        if (!t.ok) return { ok: false, why: t.why };
+        return { ok: true, reach: mark('reach', { reach: { mode, port, url: t.url, host: t.host, httpsPort: t.httpsPort } }).reach };
+      }
       // permanent: logged in, then the tunnel and its name
       if (!login || !login.result || !login.result.ok) return { ok: false, why: 'log in to Cloudflare first (the link above), then save' };
       const hostname = String(b.hostname || '').trim().toLowerCase();
@@ -278,8 +285,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const boot = b.boot !== false;
       const conf = { ...s, port, bridgePort };
       state.writeSecret('node.env', seatEnv(conf, { home: state.home, release }));
-      const tunnel = s.reach.mode === 'direct' ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
-      const tunnelArgs = s.reach.mode === 'direct' ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
+      const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
+      const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
       const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot });
       if (!r.ok) return { ok: false, why: r.why };
       // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
