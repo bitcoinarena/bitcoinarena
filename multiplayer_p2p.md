@@ -4046,6 +4046,10 @@ census advertisement. A guardian earns it only if seated; a gone guardian's
 share goes pro rata to the other seated ones. While the federation's
 predecessor is DRAINING, the pool is shared per seat with the predecessor's
 seated guardians (§23A.6 step 5). Testnet: 5/3 % over seven guardians.
+From protocol 2026.0.15 one third of the guardian pool goes to the
+federation's two **gateway seats** and two thirds to its guardians (§23A.9:
+who hosts the federation's Lightning, how the best two are chosen, what they
+earn).
 
 Each pool's share is divided among the round's **sitting seats** - the seats
 the census seated for this round, its `nodes` - however many there are: two
@@ -5238,6 +5242,107 @@ seed in someone else's hands is that person's wallet. Both are stated on
 the screen that shows the words, in those words.
 
 ---
+
+## 23A.9 Gateway seats: who hosts the federation's Lightning *(the owner 2026-10-18)*
+
+> "We need 2 guardians per federation and there is currently no process who
+> will host the guardian. Modify the spec for it and come up with additional
+> incentives from the custody node fee that people want to host a guardian.
+> If more than 2 nodes in the federation want to host a guardian a clear
+> process must choose the best guardians possible, make the rules and
+> requirements clear." (the owner 2026-10-18, kanban #471)
+
+**What is meant.** The thing hosted is the federation's **Lightning
+gateway**, the role that needs a peg-in. A federation keeps its 4 to 10
+*guardians* (§23A.1). Fedimint cannot run on two guardians: four is its
+minimum against one fault. §23 already demands Lightning "through any of at
+least two gateways run by different operators". Until now nothing said who
+runs them. This section does.
+
+**Two gateway seats per federation** (`gateway_seats` = 2), held by two
+**different operators** among the federation's own seated guardians. A
+gateway seat is a stock LNv2 gateway (§23A.4), registered with the
+federation. The federation record (§23A.1) names the seated gateways, and
+clients use those two first.
+
+### Who may stand
+
+A node is **eligible** for a gateway seat of federation F in an epoch when
+all of these hold:
+
+| Requirement | Mainnet | Testnet4 | How it is checked |
+|---|---|---|---|
+| A **seated guardian of F**, not departing | - | - | the federation record |
+| Its gateway is **announced** (`/gateway-claim`, signed by the node key: gateway URL and Lightning node key) and **registered with F** | - | - | F's own gateway list |
+| **Public channel capacity** of its Lightning node | ≥ 5,000,000 sat | ≥ 200,000 sat | each guardian's own LND reads the Lightning graph |
+| **E-cash in F** for receiving: its **peg-in** | ≥ 2,000,000 sat | ≥ 50,000 sat | the gateway's peg-in, made by the node's custody agent; shown by its first receives |
+| **Availability**: running, its LND synced, answering | ≥ 95 % of the epoch | ≥ 95 % | each guardian probes every candidate every 10 minutes |
+| **Bond** | ≥ `bond_min_guardian` | ≥ `bond_min_guardian` | the census |
+
+An **epoch** is 144 blocks, about a day.
+
+### The best two
+
+At each epoch boundary, every seated guardian ranks the eligible candidates
+by, in order:
+
+1. **Lightning volume routed for F** in the epoch: LNv2 contracts F's
+   consensus saw completed through the gateway, in sat, floored to 1,000.
+   This is the same number for every guardian.
+2. **Public channel capacity**, floored to 100,000 sat.
+3. **Availability**, floored to whole percent.
+4. **Bond** of the operator.
+5. **Ticket** `H('BLWP/v1/GATEWAY' || beacon || node_pubkey)` on the
+   epoch's first block, lowest first. Nobody hand-picks.
+
+The flooring makes honest guardians measure the same values.
+
+**Seating:**
+- The top two operators are seated in the next federation record, signed
+  at threshold like every record. A guardian that ranks differently is
+  outvoted by the threshold.
+- **An incumbent stays** unless it becomes ineligible, or a challenger
+  ranks above it with at least **25 % more** routed volume. A busy gateway
+  is not swapped for a lucky one.
+- A brand-new federation has no volume yet, so its first two are ranked
+  by capacity, availability, bond and ticket.
+- **Fewer than two eligible:** the empty seat stays empty and the record
+  says so. The federation still runs, and clients may use any registered
+  gateway.
+
+### What it earns (from the custody fee)
+
+The **GUARDIAN pool** of the node fee (5/3 % of gross volume, §"Node fee")
+is the custody fee. It is split:
+
+```text
+GUARDIAN pool (5/3 %)
+  2/3 -> the seated guardians, evenly            (10 guardians: 0.111 % each)
+  1/3 -> the seated gateways, evenly             (2 gateways:  0.278 % each)
+```
+
+- A gateway seat therefore earns **2.5×** what a guardian earns, plus its
+  own Lightning routing fees. A gateway that is also a guardian, which every
+  gateway seat is, earns both shares.
+- A seat earns its share for a round only if it was eligible in that
+  round's epoch.
+- An empty or unearned gateway share goes to the other gateway seat. With no
+  gateway seated, it goes to the guardians.
+- Paid like every share: one payout contract per seat in the round's
+  settlement transaction, to the advertisement's `payout_pubkey` (§23,
+  2026.0.13).
+- This split is **protocol 2026.0.15**. Rounds of earlier versions pay the
+  guardian pool as before.
+
+### In the installer
+
+The custody step says all of the above before anyone opts in:
+- the requirements in the table and what a gateway seat earns;
+- the peg-in it needs.
+
+It then sets the gateway up: LND, its channels, the gateway on it, and the
+peg-in from the node's wallet. The node announces its gateway, and its
+federation's guardians rank it from the next epoch on.
 
 # 24. Wallet integration
 
