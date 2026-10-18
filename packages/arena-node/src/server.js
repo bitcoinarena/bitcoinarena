@@ -53,7 +53,7 @@ import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
@@ -4134,6 +4134,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const http = (tls ? (h) => createHttpsServer({ cert: tls.cert, key: tls.key }, h) : createServer)(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://node');
+      // THE NODE'S GATEWAY AT ITS PUBLIC ADDRESS (kanban #471 slice 5, spec §23A.9): /gateway/... carried byte for byte to the gateway on
+      // this machine (ARENA_GATEWAY_PORT, written by the installer), as /guardian is to the guardian - clients of its federation reach the
+      // gateway where the gateway says it is (its api-addr <public>/gateway/); its admin calls still need its own password
+      const gwPort = Number(process.env.ARENA_GATEWAY_PORT || 0);
+      if (gwPort && (url.pathname === '/gateway' || url.pathname.startsWith('/gateway/'))) {
+        const up = httpRequest({ host: '127.0.0.1', port: gwPort, method: req.method, path: (url.pathname.slice('/gateway'.length) || '/') + url.search,
+          headers: { ...req.headers, host: `127.0.0.1:${gwPort}` } }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
+        up.on('error', (e) => { if (!res.headersSent) text(res, 502, `the node's gateway does not answer (${e.code || e.message})`); else res.destroy(); });
+        req.pipe(up);
+        return;
+      }
       // EVERY DOOR IS TIMED, so a stall inside one has a name (the owner 2026-09-17 19:15, the ghost lag: 32 of the 34
       // stalls left on the Daily had no phase name at all). The label is the path, never the query, which carries ids.
       return await timed(`door ${req.method} ${url.pathname}`, () => served(req, res, url), { over: 200 });
