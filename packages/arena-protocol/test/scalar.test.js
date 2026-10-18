@@ -49,7 +49,7 @@ test('version 7 is spoken: 2026.0.7, scalar markets', () => {
   assert.equal(SCALAR_VERSION, 7);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(7));
   assert.equal(speaksVersion(7), true);
-  assert.equal(speaksVersion(16), false, '11 is 2026.0.11, the protocol reserves; 12 is 2026.0.12, the leaderboard payout; 13 is 2026.0.13, the seated guardian pool; 14 the cohort; 15 the gateway seats; 16 is spoken by no build');
+  assert.equal(speaksVersion(17), false, '11 is 2026.0.11, the protocol reserves; 12 is 2026.0.12, the leaderboard payout; 13 is 2026.0.13, the seated guardian pool; 14 the cohort; 15 the gateway seats; 16 the liquidity providers; 17 is spoken by no build');
   assert.equal(protocolVersionName(7), '2026.0.7');
   assert.equal(TYPE_VALUE_ATTESTATION, 0x2a);
   assert.notEqual(TYPE_VALUE_ATTESTATION, TYPE_OUTCOME_ATTESTATION);
@@ -168,10 +168,10 @@ test('a scalar market\'s rules, each refused by name - low >= high among them', 
   assert.match(scalarBoundsFit({ low: 5n, high: 5n }).why, /low bound is below its high bound/);
   assert.throws(() => scalarPayoutTable({ entries: [], value: 0n, bounds: { low: 7n, high: 3n } }), /low bound is below its high bound; this one names low 7 and high 3/);
   // and a manifest that requires a version this build does not speak is no game it hosts
-  const tooNew = signed({ ...BODY, requiredProtocolVersion: 16 });
+  const tooNew = signed({ ...BODY, requiredProtocolVersion: 17 });
   const st = manifestStands(tooNew, { verify: verifyEd });
   assert.equal(st.ok, false);
-  assert.match(st.why, /scalar market under protocol version \?\.\?\.16, which this build does not speak/);
+  assert.match(st.why, /scalar market under protocol version \?\.\?\.17, which this build does not speak/);
   console.log('  FACTS (refusals):', JSON.stringify(said));
 });
 
@@ -202,7 +202,7 @@ test('a value attestation: its own type, its own tag, written at 7 - read back w
   }
   // REFUSED BELOW 7 (and at a version nobody speaks): the version bytes patched
   const bytes = encodeValueAttestation(valueSigned({ roundId: RID, value: 1n, observedAtMs: AT }, ATTESTORS.slice(0, 2)));
-  for (const [v, why] of [[6, /written at protocol version 2026\.0\.7 or later; this one names 2026\.0\.6/], [1, /names 2026\.0\.1/], [16, /names \?\.\?\.16/]]) {
+  for (const [v, why] of [[6, /written at protocol version 2026\.0\.7 or later; this one names 2026\.0\.6/], [1, /names 2026\.0\.1/], [17, /names \?\.\?\.17/]]) {
     const p = bytes.slice(); p[1] = v >> 8; p[2] = v & 255;
     assert.throws(() => decodeValueAttestation(p), why, `version ${v}`);
   }

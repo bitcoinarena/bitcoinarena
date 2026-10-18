@@ -81,7 +81,7 @@ test('a signer node in both pools earns both shares, and they do not merge', () 
 test('the rates are 22A\'s and are not a taste', () => {
   assert.equal(NODE_FEE_BPS, 500, '5.00% of gross_round_volume (§0A.8, kanban #205)');
   assert.equal(POOL_BPS, 250, '2.50% to each pool when the round names no guardian (two halves)');
-  assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN, 'gateway'], 'the gateway seats\' pool (2026.0.15) appended');
+  assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN, 'gateway', 'liquidity'], 'the gateway seats\' pool (2026.0.15) and the liquidity providers\' (2026.0.16) appended');
 });
 
 // THE GUARDIAN POOL (§22A v4.6.4, RULED 2026-09-21 / 2026-10-01 15:44): 2/3 % each to game/verify, settlement and the
@@ -370,4 +370,22 @@ test('2026.0.15 (§23A.9): a third of the guardian pool goes to the gateway seat
   const none = nodeFeeTable({ contract: { ...contract, protocolVersion: 15 }, entries, pools: { ...pools, guardian: g, gateway: [b32(0x61)] }, eligible: new Set([...game, ...settle, ...g].map(toHex)) });
   assert.deepEqual(none.pools, { gameVerify: third, settlement: third, guardian: guardianPool }, 'no eligible gateway: the guardians keep it');
   assert.equal(POOLS.indexOf('gateway'), 3, 'appended: the fee table ids of every earlier table are as they were');
+});
+
+test('2026.0.16 (§23A.10): four quarters - game/verify, settlement, custody, liquidity; no provider: its quarter is custody\'s', () => {
+  const g = [b32(0x51), b32(0x52), b32(0x53)], gw = [b32(0x52), b32(0x61)], lp = [b32(0x71), b32(0x72)];
+  const elig = new Set([...game, ...settle, ...g, ...gw, ...lp].map(toHex));
+  const t = nodeFeeTable({ contract: { ...contract, protocolVersion: 16 }, entries, pools: { ...pools, guardian: g, gateway: gw, liquidity: lp }, eligible: elig });
+  const fee = t.fee, q = fee / 4n, custody = fee - 3n * q, gwPool = custody / 3n;
+  // the custody quarter keeps the floors' leftover, then a third of it is the gateway seats' (§23A.9)
+  assert.deepEqual(t.pools, { gameVerify: q, settlement: q, guardian: custody - gwPool, gateway: gwPool, liquidity: q });
+  const sum = (pool) => [...t.signerNodes].filter(([k]) => k.startsWith(`${pool}:`)).reduce((a, [, v]) => a + v, 0n);
+  assert.equal(sum('liquidity'), q);
+  assert.equal([...t.signerNodes.keys()].filter((k) => k.startsWith('liquidity:')).length, 2, 'both providers paid');
+  assert.equal(sum('gameVerify') + sum('settlement') + sum('guardian') + sum('gateway') + sum('liquidity'), fee, 'nothing lost');
+  const none = nodeFeeTable({ contract: { ...contract, protocolVersion: 16 }, entries, pools: { ...pools, guardian: g, liquidity: [b32(0x79)] }, eligible: new Set([...game, ...settle, ...g].map(toHex)) });
+  assert.deepEqual(none.pools, { gameVerify: q, settlement: q, guardian: fee - 2n * q }, 'no eligible provider: custody keeps the liquidity quarter');
+  const t15 = nodeFeeTable({ contract: { ...contract, protocolVersion: 15 }, entries, pools: { ...pools, guardian: g, liquidity: lp }, eligible: elig });
+  assert.equal(t15.pools.liquidity, undefined, 'a 2026.0.15 round pays no provider (thirds, as before)');
+  assert.equal(POOLS.indexOf('liquidity'), 4, 'appended');
 });

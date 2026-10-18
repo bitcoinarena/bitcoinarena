@@ -37,7 +37,7 @@ import { paysReserves, RESERVES_NODE_FEE_BPS } from './reserves.js';
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
-import { nodeFeeTable, entryFeeMsat, frontendShares, frontendBookShares, GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY } from './fee.js';
+import { nodeFeeTable, entryFeeMsat, frontendShares, frontendBookShares, GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY, LIQUIDITY } from './fee.js';
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
@@ -560,7 +560,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : []),
-    ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : [])].map(toHex));
+    ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : []), ...(Array.isArray(signerNodes[LIQUIDITY]) ? signerNodes[LIQUIDITY] : [])].map(toHex));
   // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13, kanban #309): its operator plays the round (operator-conflict.js); the
   // caller names them on `signerNodes.conflicted` (hex), and their shares go to the rest of their pool as any absent node's
   for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
@@ -591,7 +591,8 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   for (const [k, msat] of table.signerNodes) {
     const node = k.slice(k.indexOf(':') + 1);
     // a gateway seat's share (2026.0.15, §23A.9) goes where its guardian share goes: its advert's payout key
-    const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`)) ? payoutOf.get(node) : null;
+    // a liquidity provider's share (2026.0.16, §23A.10) too
+    const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`) || k.startsWith(`${LIQUIDITY}:`)) ? payoutOf.get(node) : null;
     if (pk && !(pk instanceof Uint8Array && pk.length === 33)) return refuse('a guardian is paid to a 33-byte payout key');
     const key = pk ? `payout:${toHex(pk)}` : node;
     owed.set(key, (owed.get(key) || 0n) + msat);

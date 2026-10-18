@@ -38,6 +38,8 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 14, year: 2026, x: 0 }),
   // gateway seats: the guardian pool splits 2/3 to the seated guardians, 1/3 to the federation's two gateway seats (kanban #471, §23A.9)
   Object.freeze({ version: 15, year: 2026, x: 0 }),
+  // liquidity providers: the node fee in four pools of a quarter, the fourth to the federation's providers (kanban #494, §23A.10)
+  Object.freeze({ version: 16, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

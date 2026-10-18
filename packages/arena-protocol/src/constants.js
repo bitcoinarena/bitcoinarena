@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -110,6 +110,9 @@ export const SEATED_GUARDIAN_VERSION = 13;
 export const COHORT_VERSION = 14;
 /** 2026.0.15 (kanban #471, §23A.9): a third of the guardian pool goes to the federation's two gateway seats (the record names them). */
 export const GATEWAY_SEAT_VERSION = 15;
+/** 2026.0.16 (kanban #494, §23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
+ * federation's liquidity providers, who open incoming channels to new nodes). */
+export const LIQUIDITY_VERSION = 16;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
