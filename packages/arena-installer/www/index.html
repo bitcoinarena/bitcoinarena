@@ -134,15 +134,14 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
         </g>
         <defs><marker id="ar2" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#8b949e"/></marker></defs>
       </svg>
-      <div class="ff-ex"><div class="ff-ex-h">Example: rounds with <b>1,000,000 sat</b> of stakes - 40,000 sat go to the nodes, 10,000 per pool. Each node gets:</div>
-        <div class="ff-rows">
-          <div class="ff-row"><span class="dot" style="background:#3fb950"></span>Game / verify (seated)<b>&asymp; 1,429 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement (seated)<b>&asymp; 1,429 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Guardian<b>&asymp; 667 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#f7931a"></span>Gateway (on top of guardian)<b>&asymp; 1,667 sat</b></div>
-          <div class="ff-row" style="grid-column:1/-1"><span class="dot" style="background:#39c5cf"></span>Liquidity: the 10,000 sat are split among all providers by the coins each holds ready - e.g. 10 providers of equal size get &asymp; 1,000 sat each</div>
+      <div class="ff-ex"><div class="ff-ex-h">Example: <b>100 rounds of 1,000 sat</b> = 100,000 sat of stakes. 4 % = <b>4,000 sat</b> go to the nodes:</div>
+        <div class="ff-rows" style="grid-template-columns:1fr;max-width:460px">
+          <div class="ff-row"><span class="dot" style="background:#3fb950"></span>Game / verify<b>1,000 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement<b>1,000 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Custody (guardians 667, gateways 333)<b>1,000 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#39c5cf"></span>Liquidity providers<b>1,000 sat</b></div>
         </div>
-        <div class="ff-note">One node can hold several roles and earns each share. All shares are paid in the round's settlement - no claims to file.</div>
+        <div class="ff-note">Each role's share is split among the nodes doing it. One node can hold several roles and earns each share.</div>
       </div>
     </div>
     <div id="roles"></div>
