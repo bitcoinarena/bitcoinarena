@@ -67,6 +67,14 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .ff-note { color: var(--muted); font-size: 12.5px; }
     .role-ic { font-size: 26px; line-height: 1; } .role-earn { color: #f7931a; font-size: 12.5px; margin-top: 3px; } .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
     @media (max-width: 560px) { .ff-rows { grid-template-columns: 1fr; } }
+    /* THE ROLE CARDS (kanban #497): one line each - icon, name, what it does, its 1 % - its needs as chips, the rest behind "more" */
+    .rc { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 6px 0; } .rc:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
+    .rc-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; } .rc-top input { width: auto; margin: 0; }
+    .rc .role-ic { font-size: 22px; } .rc-name { flex: 1; min-width: 150px; } .rc-does { color: var(--muted); }
+    .rc-pct { background: #f7931a; color: #111; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .rc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0 34px; } .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 12px; white-space: nowrap; }
+    .chip.opt { border-color: #f7931a; color: #f7931a; } .rc-more { margin: 4px 0 0 34px; font-size: 12.5px; color: var(--muted); } .rc-more summary { cursor: pointer; } .rc-more p { margin: 4px 0; }
+    @media (max-width: 560px) { .rc-chips, .rc-more { margin-left: 0; } }   /* the badge wraps to the left edge on a phone: chips under it, not indented */
 
     /* THE INTRO (kanban #498): what a node is, what it earns, what it needs - before step 1 */
     #s-intro .lead { font-size: 17px; line-height: 1.5; margin: 6px 0 14px; }
@@ -395,7 +403,10 @@ async function load() {
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
   if (st.step === 'roles') $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
-    `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && !OPT_IN_ROLES.includes(k)) ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div class="role-ic">${ROLE_IC[k] || ''}</div><div><b>${esc(r.title)}</b><div class="role-earn">${ROLE_EARN[k] || ''}</div><p>${esc(r.needs)}</p></div></label>`).join('');
+    `<div class="rc"><label class="rc-top"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && !OPT_IN_ROLES.includes(k)) ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><span class="role-ic">${ROLE_IC[k] || ''}</span>`
+    + `<span class="rc-name"><b>${esc(r.title)}</b> <span class="rc-does">${esc(r.does || '')}</span></span><span class="rc-pct">1 % of each round</span></label>`
+    + `<div class="rc-chips">${(r.chips || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('')}${OPT_IN_ROLES.includes(k) ? '<span class="chip opt">needs coins + LND</span>' : ''}</div>`
+    + `<details class="rc-more"><summary>more</summary><p>${ROLE_EARN[k] || ''}</p><p>${esc(r.needs)}</p></details></div>`).join('');
   if (st.step === 'roles') { const cb = document.querySelector('#roles input[value=custody]'); const show = () => { $('custody-explain').hidden = !(cb && cb.checked); }; if (cb) cb.addEventListener('change', show); show(); }
   if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
   if (st.step === 'chain') pickElectrum();
