@@ -19,7 +19,7 @@
 //
 //   ARENA_FUND_INPUT=<txid>:<vout> node tools/testnet4-advert-update.mjs [--publish]
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { regtest } from './regtest-bond.mjs';
 import { openStore, nodeIdentity } from '../src/store.js';
@@ -58,6 +58,21 @@ const DECLARE = /^\d+:\d+$/.test(env.ARENA_ADVERT_DECLARE || '')
 // THE OPERATOR IT DECLARES AS A KEY (§5A.13, kanban #309): ARENA_ADVERT_OPERATOR=<64 hex> - an entry declaring the same operator
 // conflicts this node in that round (it neither signs nor earns); unset, the advert's operator stays as it was
 const OPERATOR = /^[0-9a-f]{64}$/.test(env.ARENA_ADVERT_OPERATOR || '') ? env.ARENA_ADVERT_OPERATOR : null;
+// THE GUARDIAN'S PAYOUT KEY (§22A v4.6.4, 2026.0.13, kanban #33 gap 2): ARENA_ADVERT_PAYOUT=1 - each named node's advertisement
+// names a real payout_pubkey instead of the placeholder 32 x 0x03 every testnet4 advert carried (measured 2026-10-17): a key made
+// once per node and kept (0600, never printed) at ARENA_PAYOUT_KEY_DIR/node-<n>.hex, a copy at ARENA_PAYOUT_KEY_BACKUP when set.
+// Only a 2026.0.13 round reads it (its guardian share); below that nothing does.
+const PAYOUT = env.ARENA_ADVERT_PAYOUT === '1';
+const PAYOUT_DIR = env.ARENA_PAYOUT_KEY_DIR || `${env.HOME}/.config/blwp/seat-payout`;
+function payoutKeyOf(n) {
+  const file = join(PAYOUT_DIR, `node-${n}.hex`);
+  if (!existsSync(file)) {
+    mkdirSync(PAYOUT_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(file, toHex(schnorr.utils.randomSecretKey()) + '\n', { mode: 0o600, flag: 'wx' });
+    if (env.ARENA_PAYOUT_KEY_BACKUP) { mkdirSync(env.ARENA_PAYOUT_KEY_BACKUP, { recursive: true, mode: 0o700 }); copyFileSync(file, join(env.ARENA_PAYOUT_KEY_BACKUP, `node-${n}.hex`)); chmodSync(join(env.ARENA_PAYOUT_KEY_BACKUP, `node-${n}.hex`), 0o600); }
+  }
+  return schnorr.getPublicKey(fromHex(readFileSync(file, 'utf8').trim()));
+}
 const gamesWith = (hosted) => [...new Map([...(hosted || []), ...ADD_GAMES.map(fromHex)].map((g) => [toHex(g), g])).values()]
   .sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1));
 
@@ -98,12 +113,14 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   const gamesDiffer = ADD_GAMES.length && gamesWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
   const servingDiffers = SERVING !== null && (bond.advert.serving !== false) !== SERVING;
   const operatorDiffers = OPERATOR !== null && bond.advert.operatorId !== OPERATOR;
+  const payout = PAYOUT ? payoutKeyOf(n) : null;
+  const payoutDiffers = payout !== null && toHex(bond.advert.payoutPubkey) !== toHex(payout);
   const declaresDiffer = DECLARE && JSON.stringify(bond.advert.declares || null, (k, v) => (typeof v === 'bigint' ? String(v) : v))
     !== JSON.stringify(DECLARE, (k, v) => (typeof v === 'bigint' ? String(v) : v));
-  if (now.join(',') === want && !versionsDiffer && !gamesDiffer && !servingDiffers && !declaresDiffer && !operatorDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
+  if (now.join(',') === want && !versionsDiffer && !gamesDiffer && !servingDiffers && !declaresDiffer && !operatorDiffers && !payoutDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
   const advert = { ...bond.advert, guardianOf: entries, timestamp: BigInt(Date.now()),
     ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}),
-    ...(SERVING !== null ? { serving: SERVING } : {}), ...(DECLARE ? { declares: DECLARE } : {}), ...(OPERATOR ? { operatorId: OPERATOR } : {}) };
+    ...(SERVING !== null ? { serving: SERVING } : {}), ...(DECLARE ? { declares: DECLARE } : {}), ...(OPERATOR ? { operatorId: OPERATOR } : {}), ...(payout ? { payoutPubkey: payout } : {}) };
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }
 if (!plans.length) { say({ done: 'every bond already advertises its node\'s current guardian key; nothing posted' }); process.exit(0); }
