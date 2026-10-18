@@ -364,7 +364,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         torOn = t.ok;
       }
       const cfg = lndKit.configureLnd({ home: state.home, chain: s.chain, tor: torOn ? TOR_PORTS : null, externalIp: lnReach.reached ? lnReach.address : null });
-      const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for the Arena node (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot: b.boot !== false });
+      const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for the Arena node (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot: b.boot !== false, partOf: torOn ? 'tor' : null });
       if (!r.ok) return { ok: false, why: r.why };
       state.save({ tor: torOn ? { bin: tor, ports: TOR_PORTS } : { why: lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
         lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });

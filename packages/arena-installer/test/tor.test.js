@@ -30,3 +30,14 @@ test('lnd.conf: reached from outside - its address announced, no Tor; not reache
   assert.match(behind, /tor\.skip-proxy-for-clearnet-targets=true/, 'hybrid: clearnet peers still dialled directly');
   assert.doesNotMatch(behind, /externalip=/);
 });
+
+test('Linux: LND\'s unit restarts with the node\'s Tor (its onion is gone when Tor restarts - measured on the test host)', async () => {
+  const { installProgram } = await import('../src/service.js');
+  const home = mkdtempSync(join(tmpdir(), 'svc-')); const cfg = mkdtempSync(join(tmpdir(), 'cfg-'));
+  const ran = [];
+  await installProgram({ id: 'lnd', description: 'LND', args: ['/x/lnd'], home, partOf: 'tor', platform: 'linux', env: { XDG_CONFIG_HOME: cfg }, sh: async (...a) => { ran.push(a); return { ok: true, out: '', err: '' }; } });
+  const unit = readFileSync(join(cfg, 'systemd', 'user', 'arena-lnd.service'), 'utf8');
+  assert.match(unit, /After=network-online\.target arena-tor\.service/); assert.match(unit, /\nPartOf=arena-tor\.service\n/);
+  await installProgram({ id: 'gateway', description: 'gw', args: ['/x/gw'], home, platform: 'linux', env: { XDG_CONFIG_HOME: cfg }, sh: async () => ({ ok: true, out: '', err: '' }) });
+  assert.doesNotMatch(readFileSync(join(cfg, 'systemd', 'user', 'arena-gateway.service'), 'utf8'), /PartOf/);
+});
