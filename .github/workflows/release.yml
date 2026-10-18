@@ -99,5 +99,5 @@ jobs:
         run: |
           cat assets/*/SHA256SUMS | sort -k2 > SHA256SUMS
           gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft --title "Arena node ${{ github.ref_name }}" \
-            --notes "Testnet4 only. Download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://bitcoin-arena.io/release-key.txt." \
+            --notes "Testnet4 only. Download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://testnet.bitcoin-arena.io/release-key.txt." \
             assets/*/*.tar.gz SHA256SUMS
