@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -682,6 +682,10 @@ const LEADERBOARD_VERSION = 12;
 // the six in the census were paid). From this version a round's guardian third goes to the guardians its federation's record seats (not
 // gone, §23A.1), whether or not each is in the round's census; below it, the census nodes naming the federation, as before.
 const SEATED_GUARDIAN_VERSION = 13;
+/** 2026.0.14 (kanban #471 ruling 3, §23A.2 event 4): the cohort - ten guardian-capable operators guarding no OPEN federation found one. */
+const COHORT_VERSION = 14;
+/** 2026.0.15 (kanban #471, §23A.9): a third of the guardian pool goes to the federation's two gateway seats (the record names them). */
+const GATEWAY_SEAT_VERSION = 15;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -6846,6 +6850,11 @@ const PROTOCOL_RELEASES = Object.freeze([
   // the guardian pool is the federation's seated guardians: a round's guardian third goes to the guardians its federation's record
   // seats (not gone), in its census or not (kanban #33, §22A v4.6.4)
   Object.freeze({ version: 13, year: 2026, x: 0 }),
+  // the cohort: while federations exist, ten guardian-capable operators that guard none found a federation of their own (kanban #471
+  // ruling 3, §23A.2 event 4)
+  Object.freeze({ version: 14, year: 2026, x: 0 }),
+  // gateway seats: the guardian pool splits 2/3 to the seated guardians, 1/3 to the federation's two gateway seats (kanban #471, §23A.9)
+  Object.freeze({ version: 15, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -6920,7 +6929,9 @@ const SETTLEMENT = 'settlement';
 // the settlement pool ... and 2/3 % to the guardian pool, the seated guardians of the federation the round names"): the
 // third pool, divided evenly among those guardians. A round whose guardians are not named keeps the two-pool table.
 const GUARDIAN = 'guardian';
-const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN];
+// THE GATEWAY SEATS (2026.0.15, §23A.9): a third of the guardian pool, to the federation's two seated gateways
+const GATEWAY = 'gateway';
+const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY];
 
 /**
  * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
@@ -6992,6 +7003,13 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
   if (guardians.length) {
     const third = fee / 3n;
     shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
+    // A 2026.0.15 ROUND WITH A SEATED GATEWAY (§23A.9): one third of the guardian pool is the gateway seats', the guardians keep the rest;
+    // with no eligible gateway the guardians keep it all, as before
+    const gateways = ((pools && pools[GATEWAY]) || []).filter((k) => eligible.has(hex(k)));
+    if (Number(contract && contract.protocolVersion) >= GATEWAY_SEAT_VERSION && gateways.length) {
+      const gw = shareOf[GUARDIAN] / 3n;
+      shareOf[GATEWAY] = gw; shareOf[GUARDIAN] -= gw;
+    }
   } else {
     // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
     const first = fee / 2n;
@@ -7005,7 +7023,7 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
 
   for (const pool of POOLS) {
     const amount = shareOf[pool];
-    if (amount === 0n) continue;
+    if (!amount) continue;   // the gateway pool is named only when a 2026.0.15 round pays it
     const inPool = (pools && pools[pool]) || [];
     const earning = inPool.filter((k) => eligible.has(hex(k)));
 
@@ -15342,7 +15360,8 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
-  const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : [])].map(toHex));
+  const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : []),
+    ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : [])].map(toHex));
   // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13, kanban #309): its operator plays the round (operator-conflict.js); the
   // caller names them on `signerNodes.conflicted` (hex), and their shares go to the rest of their pool as any absent node's
   for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
@@ -15372,7 +15391,8 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   const owed = new Map();
   for (const [k, msat] of table.signerNodes) {
     const node = k.slice(k.indexOf(':') + 1);
-    const pk = payoutOf && k.startsWith(`${GUARDIAN}:`) ? payoutOf.get(node) : null;
+    // a gateway seat's share (2026.0.15, §23A.9) goes where its guardian share goes: its advert's payout key
+    const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`)) ? payoutOf.get(node) : null;
     if (pk && !(pk instanceof Uint8Array && pk.length === 33)) return refuse('a guardian is paid to a 33-byte payout key');
     const key = pk ? `payout:${toHex(pk)}` : node;
     owed.set(key, (owed.get(key) || 0n) + msat);
