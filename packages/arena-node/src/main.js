@@ -50,7 +50,7 @@ import { lightningFromEnv } from './node-start.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { hostsFromEnv, hostsReader } from './hosts.js';
 import { statSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
@@ -196,7 +196,7 @@ if (process.env.ARENA_DEV_WASM_PKG) {
   const { newKey, keyFromSecret } = await import('../../arena-donor/src/donor.js');
   options.devClients = createDevClients({
     root: process.env.ARENA_DEV_CLIENTS_ROOT || `${path}.dev-clients`,
-    donorBin: new URL('../../arena-donor/bin/arena-donor.mjs', import.meta.url).pathname,
+    donorBin: fileURLToPath(new URL('../../arena-donor/bin/arena-donor.mjs', import.meta.url)),
     defaults: { wasmPkg: process.env.ARENA_DEV_WASM_PKG,
       seats: list(process.env.ARENA_DEV_SEATS).length ? list(process.env.ARENA_DEV_SEATS) : (beside.seats || []),
       invitesFrom: list(process.env.ARENA_DEV_INVITES_FROM).length ? list(process.env.ARENA_DEV_INVITES_FROM) : (beside.invitesFrom || []),
