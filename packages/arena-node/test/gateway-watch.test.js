@@ -46,3 +46,29 @@ test('the watch: seated guardians\' claims probed per epoch, ranked; a foreign f
   const next = await w.view();
   assert.deepEqual([next.measuredEpoch, next.epoch], ['whole', 10], 'the last whole epoch is ranked once there is one');
 });
+
+test('routed volume: incoming contracts credited to the gateway whose module key funded them, from the second probe on', async () => {
+  const claims = { 0: claimOf(0, { capacitySats: 900000 }), 1: claimOf(1, { capacitySats: 300000 }) };
+  const mk = { 0: '03' + '11'.repeat(32), 1: '02' + '22'.repeat(32) };
+  const height = 144 * 20 + 3;
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => null };
+    const gw = /^https:\/\/n(\d)\.example\/gateway\/routing_info$/.exec(url);
+    return { status: 200, text: async () => JSON.stringify({ module_public_key: mk[gw[1]] }) };
+  };
+  // the stream: history before the watch (never credited), then 3 contracts through gateway 1 and 1 through gateway 0
+  const stream = [{ refundPk: mk[0], amountMsat: 9_000_000_000n }, { refundPk: mk[1], amountMsat: 2_000_000n }, { refundPk: mk[1], amountMsat: 3_500_000n }, { refundPk: mk[0], amountMsat: 1_000_000n }, { refundPk: mk[1], amountMsat: 500_000n }];
+  let shown = 1; const asked = [];
+  const incoming = async (from) => { asked.push(from); return { ok: true, contracts: stream.slice(from, shown), next: shown }; };
+  const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries,
+    tip: async () => height, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher, incoming });
+  assert.equal((await w.probe()).credited, 0, 'the first probe takes the index only');
+  shown = 5;
+  assert.equal((await w.probe()).credited, 4);
+  assert.deepEqual(asked, [0, 1]);
+  const v = await w.view();
+  assert.deepEqual([v.gateways[keys[1].hex].volumeSats, v.gateways[keys[0].hex].volumeSats], ['6000', '1000'], 'msat summed per module key, in sat');
+  assert.equal(v.ranked[0].node, keys[1].hex, 'more routed volume ranks first, before the larger capacity of gateway 0');
+});

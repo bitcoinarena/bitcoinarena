@@ -35,6 +35,7 @@ import { createReachCheck } from './reach-check.js';
 import { ownBondOf, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
+import { lnv2ModuleId, incomingSince } from './gateway-volume.js';
 import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/gateway-seating.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -3698,6 +3699,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return null;
       },
       verify: schnorrVerify,
+      // routed volume: this guardian's own API, the LNv2 module's incoming contracts (gateway-volume.js)
+      incoming: guardian.apiPort ? (() => { let mod = null; const url = `ws://127.0.0.1:${guardian.apiPort}`;
+        return async (from) => { if (mod === null) mod = await lnv2ModuleId(url); return mod === null ? { ok: false } : incomingSince({ url, moduleId: mod, from }); }; })() : null,
       bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000) });
     const gt = setInterval(() => { gatewayWatch.probe().catch(() => {}); }, 600000);
     if (gt.unref) gt.unref();
