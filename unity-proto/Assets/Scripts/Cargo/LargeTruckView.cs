@@ -34,6 +34,8 @@ public class LargeTruckView : MonoBehaviour
     public const float MorphS = 1.6f;
     /// <summary>A test's switch: morph in the editor too, where no core runs.</summary>
     public static bool MorphInEditor;
+    /// <summary>A test's switch: act as if a core ran (BlwpCore.Available), so the hold behind the lobby and the fly-in is tested.</summary>
+    public static bool CoreInEditor;
 
     CargoBay _bay;
     Vector3 _floor0;
@@ -45,6 +47,7 @@ public class LargeTruckView : MonoBehaviour
     float _morphAt = -1f;
     Light _pulse;
     SplashScreen _splash;
+    ChaseCamera _chase;
     MaterialPropertyBlock _tint;
     static readonly Color MorphGlow = new Color(1f, 0.55f, 0.12f);
 
@@ -83,9 +86,21 @@ public class LargeTruckView : MonoBehaviour
         if (Mathf.Abs(want - _target) > 0.0005f)
         {
             if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
-            bool live = MorphInEditor || (Blwp.BlwpCore.Available && _splash != null && !_splash.Showing);
-            if (live && Mathf.Abs(want - _applied) > 0.05f && _body != null) StartMorph(want);
-            else Apply(want);
+            // THE MORPH WAITS FOR THE RUN (kanban #374, measured 2026-10-18 on live UI 221: a joined round's core starts with the
+            // entry's unlocks while the lobby's splash still shows, so the 3.9 m bed was drawn at once - "[LargeTruckView] bed 3.900 m
+            // drawn" - and no player ever saw the morph): a real core's new bed while the splash shows is held, the old truck kept,
+            // and it morphs once the splash has hidden and PLAY's 4.2 s fly-in has brought the camera to the truck - in view. Without
+            // a core (the editor's tests) - at once, as before.
+            if (_chase == null) _chase = FindFirstObjectByType<ChaseCamera>();
+            bool core = Blwp.BlwpCore.Available || CoreInEditor;
+            bool held = !MorphInEditor && core && _splash != null && _body != null && Mathf.Abs(want - _applied) > 0.05f
+                && (_splash.Showing || (_chase != null && _chase.Flying));
+            if (!held)
+            {
+                bool live = MorphInEditor || (core && _splash != null && !_splash.Showing);
+                if (live && Mathf.Abs(want - _applied) > 0.05f && _body != null) StartMorph(want);
+                else Apply(want);
+            }
         }
         if (_morphAt >= 0f)
         {

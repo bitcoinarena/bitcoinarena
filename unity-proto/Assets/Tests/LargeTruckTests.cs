@@ -13,7 +13,7 @@ using UnityEngine.TestTools;
 /// </summary>
 public class LargeTruckTests
 {
-    [TearDown] public void ClearTheWorld() { Blwp.BlwpCore.TruckBedOverride = 0; LargeTruckView.MorphInEditor = false; TestWorld.TearDown(); }
+    [TearDown] public void ClearTheWorld() { Blwp.BlwpCore.TruckBedOverride = 0; LargeTruckView.MorphInEditor = false; LargeTruckView.CoreInEditor = false; TestWorld.TearDown(); }
     [SetUp] public void PracticeOff() => Blwp.PracticeMode.On = false;
 
     const int LargeBedQ16 = 255590;   // frozen/f0cc7b7b/items.js LARGE_TRUCK.bedLength
@@ -158,6 +158,43 @@ public class LargeTruckTests
         var span2 = BodySpan();
         Assert.AreEqual(span0.rear, span2.rear, 1e-3f, "the original body again");
         Assert.AreEqual(fit0, CratesThatFit());
+    }
+
+    /// <summary>
+    /// THE MORPH WAITS FOR THE RUN (kanban #374, measured 2026-10-18 on live UI 221: a joined round's core starts with the entry's
+    /// unlocks while the lobby's splash still shows; the 3.9 m bed was drawn at once and no player saw the morph). With a core
+    /// (CoreInEditor stands in for one), a new bed behind the lobby is held - the old truck kept - through PLAY's fly-in, and morphs
+    /// once the camera is at the truck.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator ABedChangedBehindTheLobbyMorphsOnceTheRunIsInView()
+    {
+        Blwp.BlwpCore.TruckBedOverride = 0;
+        yield return null;
+        var splash = Object.FindFirstObjectByType<SplashScreen>();
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        Assert.IsNotNull(splash); Assert.IsNotNull(chase);
+        typeof(SplashScreen).GetMethod("ShowLobbyAgain", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(splash, null);
+        yield return null;
+        Assert.IsTrue(splash.Showing, "back in the lobby");
+        LargeTruckView.CoreInEditor = true;
+        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;   // the joined round's core starts with the larger truck
+        for (int i = 0; i < 10; i++) yield return null;
+        Assert.IsFalse(_view.Morphing, "behind the lobby: no morph yet");
+        Assert.AreEqual(3.0f, _view.AppliedBed, 1e-4f, "the old truck is kept while the lobby shows");
+        splash.Play();                                   // the run starts: the splash hides, the camera flies in
+        yield return null;
+        Assert.IsFalse(splash.Showing);
+        Assert.IsTrue(chase.Flying, "PLAY's fly-in");
+        int heldFrames = 0;
+        while (chase.Flying) { Assert.IsFalse(_view.Morphing, "held while the camera flies in"); heldFrames++; yield return null; }
+        Assert.AreEqual(3.0f, _view.AppliedBed, 1e-4f, "still the old truck when the camera arrives");
+        yield return null; yield return null;
+        Assert.IsTrue(_view.Morphing, "the morph starts once the run is in view");
+        float t0 = Time.unscaledTime;
+        while (_view.Morphing && Time.unscaledTime - t0 < LargeTruckView.MorphS + 1f) yield return null;
+        Assert.AreEqual(LargeBedQ16 / 65536f, _view.AppliedBed, 1e-4f, "it rests at the core's bed");
+        Debug.Log($"[LargeTruckTests] FACTS held {heldFrames} frames through the fly-in, then morphed to {_view.AppliedBed:0.000} m");
     }
 
     /// <summary>
