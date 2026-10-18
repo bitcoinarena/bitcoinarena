@@ -298,7 +298,7 @@ async function liquidityPanel() {
   const low = free < min;
   el.innerHTML = `<div class="row"><span>Free for new channels</span><b>${free.toLocaleString('en')} sat</b></div>
     <div class="row"><span>Deposit minimum</span><b>${min.toLocaleString('en')} sat</b></div>
-    ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - free).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share, by the balance it gives.</p>'}
+    ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - free).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share of the liquidity pool.</p>'}
     <div class="row"><span>Channels given to new nodes</span><b>${given.length} (${given.reduce((a, x) => a + Number(x.capacitySats), 0).toLocaleString('en')} sat)</b></div>
     ${given.map((x) => `<div class="row"><span><code>${esc(x.peer.slice(0, 16))}…</code></span><b>${Number(x.capacitySats).toLocaleString('en')} sat</b></div>`).join('')}
     <div class="row"><span>Top up (LND's wallet, testnet4)</span><b><code>${esc(c.depositAddress || '(not known yet)')}</code></b></div>`;
