@@ -304,3 +304,28 @@ test('a series of a game whose manifest names a 60 s period is refused by the wr
   assert.equal(facts.p60.lone, 'ok');
   for (const k2 of ['p90', 'p0']) assert.deepEqual([facts[k2].writer, facts[k2].door, facts[k2].lone], ['ok', 'ok', 'ok'], k2);
 });
+
+// A RESTART DOES NOT OPEN THE 72 h AGAIN (kanban #468 item 4, measured on seat 2's start 2026-10-18 07:51Z: ~4,500 rounds re-opened,
+// each checked in its core's sandbox, the loop held 6.4 s): a writer over a store that holds its rounds remembers them as written,
+// opens none, and knows the same rounds as the writer before it
+test('a series writer after a restart opens none of the rounds its store holds, and knows them all', () => {
+  const round = new Round(openStore(':memory:'), () => NOW, { plugins: HOSTED });
+  const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) - 1;
+  const t = seriesTemplate(base([b32(7)]), k);
+  const first = seriesWriter(round, t);
+  const added = first.write(NOW);
+  assert.ok(added > 100, `the first writer opens the series' rounds within 72 h (${added})`);
+  let opened = 0;
+  const open = round.open.bind(round);
+  round.open = (c) => { opened += 1; return open(c); };
+  const again = seriesWriter(round, t);
+  assert.equal(again.write(NOW), 0, 'nothing new to write');
+  assert.equal(opened, 0, 'and no round opened again');
+  assert.deepEqual([...again.ids()].sort(), [...first.ids()].sort(), 'the same rounds, known');
+  assert.deepEqual(again.summary(NOW), first.summary(NOW));
+  // a round the store does not hold (deleted here) is opened again, and only that one
+  const gone = [...first.ids()][0];
+  round.db.prepare('DELETE FROM rounds WHERE round_id = ?').run(Buffer.from(gone, 'hex'));
+  assert.equal(seriesWriter(round, t).write(NOW), 1);
+  assert.equal(opened, 1);
+});

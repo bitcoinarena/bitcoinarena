@@ -2894,7 +2894,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let transcriptsLast = null;
   const transcriptPrune = () => {
     if (shuttingDown || process.env.ARENA_TRANSCRIPT_PRUNE === '0') return;
-    try { transcriptsLast = { atMs: Date.now(), ...pruneTranscripts({ db }) };
+    // ON THE NODE'S OWN CLOCK (round.now: the wall clock on a seat, a test's fixed time in a test - measured: on the wall clock the
+    // unused-round prune deleted 1,000 of a test node's future rounds a pass, series-ahead's "2880 listed, 1880")
+    try { transcriptsLast = { atMs: Date.now(), ...pruneTranscripts({ db, nowMs: Number(round.now()) }) };
       if (transcriptsLast.pruned.length) console.log(`[transcripts] ${transcriptsLast.pruned.length} round(s) past their claim window: ${transcriptsLast.rows} rows deleted, ${transcriptsLast.kept} kept`); }
     catch (e) { console.error(`[transcripts] prune: ${e.message}`); }
   };
@@ -2910,7 +2912,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const unusedPass = () => {
     if (shuttingDown || process.env.ARENA_LEAN_PRUNE === '0' || Date.now() < unusedIdleUntil) return;
     try {
-      const r = pruneUnusedRounds({ db, afterRowid: unusedAfter, batch: UNUSED_PASS,
+      const r = pruneUnusedRounds({ db, nowMs: Number(round.now()), afterRowid: unusedAfter, batch: UNUSED_PASS,
         onDeleted: (rid) => { if (seating && seating.forget) seating.forget(toHex(new Uint8Array(rid))); } });
       unusedTally.deleted += r.deleted; unusedTally.rows += r.rows; unusedTally.passes += 1; unusedTally.lastAtMs = Date.now();
       unusedAfter = r.done ? 0 : r.lastRowid;
