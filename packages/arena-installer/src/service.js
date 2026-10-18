@@ -162,6 +162,74 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
   return { ...health, ms: Date.now() - t0, boot, linger: true };
 }
 
+/**
+ * ANY OTHER PROGRAM OF THE NODE AS A SERVICE (kanban #471 ruling 8: the node's own Bitcoin Core): `id` names it (arena-<id>.service,
+ * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
+ * when `boot`. Answers { ok, why }.
+ */
+export async function installProgram({ id, description, args, home, boot = true, env = process.env, sh = run, platform = process.platform }) {
+  if (platform === 'darwin') {
+    const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
+    mkdirSync(dir, { recursive: true });
+    const label = `${LAUNCHD_LABEL}.${id}`;
+    const file = join(dir, `${label}.plist`);
+    writeFileSync(file, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ${xml(description)} (kanban #471), written by the installer. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>
+  <key>RunAtLoad</key><${boot ? 'true' : 'false'}/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>${xml(home)}/${id}.log</string>
+  <key>StandardErrorPath</key><string>${xml(home)}/${id}.log</string>
+</dict>
+</plist>
+`);
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
+    await sh('launchctl', ['bootout', `gui/${uid}/${label}`]);
+    const r = await sh('launchctl', ['bootstrap', `gui/${uid}`, file]);
+    return r.ok ? { ok: true } : { ok: false, why: `launchctl bootstrap ${label} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
+  }
+  if (platform === 'win32') {
+    const file = join(home, `arena-${id}.cmd`);
+    writeFileSync(file, ['@echo off', `rem ${description} (kanban #471), written by the installer.`, `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`].join('\r\n') + '\r\n');
+    const name = `Arena ${id}`;
+    if (boot) {
+      const c = await sh('schtasks', ['/create', '/f', '/tn', name, '/sc', 'onlogon', '/rl', 'limited', '/tr', `"${file}"`]);
+      if (!c.ok) return { ok: false, why: `schtasks /create ${name} failed: ${(c.err || c.out).trim().slice(0, 300)}` };
+      await sh('schtasks', ['/run', '/tn', name]);
+    } else await sh('cmd', ['/c', 'start', '""', '/b', file]);
+    return { ok: true };
+  }
+  const dir = unitDir(env);
+  mkdirSync(dir, { recursive: true });
+  const unit = `arena-${id}.service`;
+  writeFileSync(join(dir, unit), `# ${description} (kanban #471), written by the installer.
+[Unit]
+Description=${description}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=${args.join(' ')}
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=600
+Nice=10
+
+[Install]
+WantedBy=default.target
+`);
+  for (const a of [['--user', 'daemon-reload'], ['--user', boot ? 'enable' : 'disable', unit], ['--user', 'restart', unit]]) {
+    const r = await sh('systemctl', a);
+    if (!r.ok) return { ok: false, why: `systemctl ${a.join(' ')} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
+  }
+  return { ok: true };
+}
+
 /** Wait until the seat at 127.0.0.1:port answers its identity (33 bytes): { ok, identity (hex), why }. */
 export async function waitHealthy({ port, fetcher = fetch, waitMs = 90000, everyMs = 1000 }) {
   const until = Date.now() + waitMs;

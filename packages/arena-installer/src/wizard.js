@@ -19,7 +19,9 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS } from './seed.js';
 import { nextStep, seatEnv, ROLES } from './state.js';
-import { installService } from './service.js';
+import { installService, installProgram } from './service.js';
+import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
+import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
@@ -28,7 +30,9 @@ import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
-export const SESSION_IDLE_MS = 2 * 3600000;
+// A SESSION LASTS A WEEK IDLE AND OUTLIVES AN INSTALLER RESTART (ruling 8: "Tells user to bookmark this page as it can take days on
+// main net"): kept on disk as the hash of its cookie, never the cookie itself
+export const SESSION_IDLE_MS = 7 * 24 * 3600000;
 const b64u = (n) => randomBytes(n).toString('base64url');
 const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -37,13 +41,19 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
  * `test` (chain test), `install` (service), `fetcher`, `nowMs`. Answers { token, handle(req, res), allowHost(host), close() }.
  */
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
-  fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
+  fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
+  coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
-  const sessions = new Map();                // sid -> last seen ms
+  const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
+  const sessions = new Map();                // sha256(sid) -> last seen ms
+  try { for (const [k, v] of Object.entries(JSON.parse(state.readSecret('sessions.json') || '{}'))) sessions.set(k, v); } catch { /* none kept */ }
+  let sessionsSaved = 0;
+  const saveSessions = (force = false) => { if (!force && nowMs() - sessionsSaved < 60000) return; sessionsSaved = nowMs(); state.writeSecret('sessions.json', JSON.stringify(Object.fromEntries(sessions))); };
   const hosts = new Set();
   let pendingSeed = null;                    // { seed, words, positions } until confirmed - never on disk unconfirmed
   let login = null;                          // the Cloudflare login under way: { url, result }
+  const coreSamples = new Map();             // network -> the sync readings of the last ETA window
   const portOf = () => ((state.read().reach || {}).port || seatPort);
   let finished = false;
 
@@ -56,11 +66,12 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const sessionOk = (req) => {
     const sid = sidOf(req);
     if (!sid || finished) return false;
-    for (const [k, seen] of sessions) if (same(k, sid)) {
-      if (nowMs() - seen > SESSION_IDLE_MS) { sessions.delete(k); return false; }
-      sessions.set(k, nowMs()); return true;
-    }
-    return false;
+    const k = hashOf(sid);
+    const seen = sessions.get(k);
+    if (seen === undefined) return false;
+    if (nowMs() - seen > SESSION_IDLE_MS) { sessions.delete(k); saveSessions(true); return false; }
+    sessions.set(k, nowMs()); saveSessions();
+    return true;
   };
 
   const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
@@ -95,6 +106,54 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       }
       mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: r.why, latencyMs: r.source.latencyMs, height: r.source.height } });
       return { ok: true, result: r };
+    },
+
+    // BITCOIN CORE, INSTALLED WHEN ASKED (ruling 8): the plan (one already here? the disk against what mainnet and testnet4 need),
+    // the install (checked download, a datadir and config per network, a service each), and the sync's progress with an ETA - and once
+    // testnet4 is synced, the chain step is saved with it and the wizard goes on
+    'POST /api/core/plan': async () => {
+      const found = await coreKit.detectBitcoind({ home: state.home });
+      return { ok: true, installed: found, disk: coreKit.diskCheck(state.home), needs: NEEDS, core: state.read().core || null };
+    },
+    'POST /api/core/install': async (b) => {
+      const found = await coreKit.detectBitcoind({ home: state.home });
+      if (found && !found.startsWith(state.home)) return { ok: false, why: `Bitcoin Core is installed already (${found}): connect it with its RPC address and cookie file instead` };
+      const disk = coreKit.diskCheck(state.home);
+      const nets = ['testnet4', ...(b.mainnet ? ['mainnet'] : [])];
+      const prune = Boolean(b.prune);
+      const need = nets.reduce((a, n) => a + (prune ? NEEDS[n].prunedBytes : NEEDS[n].fullBytes), 0);
+      if (disk.freeBytes < need) return { ok: false, why: `${Math.round(disk.freeBytes / 2 ** 30)} GB free, and ${nets.join(' + ')}${prune ? ' pruned' : ''} need about ${Math.round(need / 2 ** 30)} GB`, disk };
+      const got = await coreKit.installCore({ home: state.home, fetcher });
+      if (!got.ok) return { ok: false, why: got.why };
+      const networks = {};
+      for (const n of nets) {
+        const c = coreKit.configureCore({ home: state.home, network: n, prune });
+        const r = await coreKit.installProgram({ id: `bitcoind-${n}`, description: `Bitcoin Core for the Arena node (${n})`, args: coreKit.coreArgs({ bitcoind: got.bitcoind, datadir: c.datadir }), home: state.home, boot: b.boot !== false });
+        if (!r.ok) return { ok: false, why: r.why };
+        networks[n] = { rpcUrl: c.rpcUrl, cookiePath: c.cookiePath, datadir: c.datadir };
+      }
+      const core = { bitcoind: got.bitcoind, prune, networks, startedMs: nowMs() };
+      state.save({ core });
+      return { ok: true, core };
+    },
+    'GET /api/core/status': async () => {
+      const s = state.read();
+      if (!s.core) return { ok: false, why: 'no Bitcoin Core was installed by this installer' };
+      const out = {};
+      for (const [n, c] of Object.entries(s.core.networks)) {
+        const r = await coreKit.syncStatus({ ...c, samples: coreSamples.get(n) || [], nowMs: nowMs(), fetcher });
+        coreSamples.set(n, r.samples || []);
+        out[n] = { ...r, samples: undefined };
+      }
+      // TESTNET4 SYNCED: the chain step saved with this node, as the Bitcoin Core option would save it, tested the same way
+      const t4 = out.testnet4;
+      if (t4 && t4.ok && t4.synced && !(s.done || {}).chain) {
+        const conn = { kind: 'core', url: s.core.networks.testnet4.rpcUrl, cookiePath: s.core.networks.testnet4.cookiePath };
+        const r = await test(conn);
+        if (r.ok) mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: r.why, latencyMs: r.source.latencyMs, height: r.source.height } });
+        out.chainSaved = r.ok; out.chainWhy = r.why;
+      }
+      return { ok: true, networks: out };
     },
 
     'POST /api/roles': async (b) => {
@@ -254,6 +313,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!(s.done || {}).bond) return { ok: false, why: 'post the bond, or choose to post it later' };
       mark('done');
       finished = true;
+      sessions.clear(); saveSessions(true);
       setTimeout(() => onDone(), 200);
       const reachNow = state.read().reach || {};
       return { ok: true, owner: `${reachNow.url || `http://127.0.0.1:${portOf()}`}/Dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
@@ -290,9 +350,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'that setup link is used or expired: restart the installer for a new one' });
       token = null;
       const sid = b64u(32);
-      sessions.set(sid, nowMs());
+      sessions.set(hashOf(sid), nowMs()); saveSessions(true);
       const secure = String(req.headers['x-forwarded-proto'] || req.headers['cf-visitor'] || '').includes('https') ? '; Secure' : '';
-      res.writeHead(303, { location: '/', 'set-cookie': `arena_wizard=${sid}; HttpOnly; SameSite=Strict; Path=/${secure}`, 'cache-control': 'no-store' });
+      res.writeHead(303, { location: '/', 'set-cookie': `arena_wizard=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_IDLE_MS / 1000}${secure}`, 'cache-control': 'no-store' });
       return res.end();
     }
     if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'the installer has finished' : 'open the setup link the installer printed' });
@@ -312,5 +372,5 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     } catch (e) { return json(res, 400, { ok: false, why: e.message }); }
   }
 
-  return { get token() { return token; }, handle, allowHost, close: () => { finished = true; sessions.clear(); } };
+  return { get token() { return token; }, handle, allowHost, close: () => { finished = true; sessions.clear(); saveSessions(true); } };
 }
