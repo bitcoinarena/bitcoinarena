@@ -4244,6 +4244,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
         return c ? answer(200, c) : answer(404, { ok: false, why: 'this node stands for no gateway seat' });
       }
+      // A LIQUIDITY CLAIM (§23A.10, kanban #494): this node is a liquidity provider - the claim its provider service signed (file)
+      if (req.method === 'GET' && url.pathname === '/liquidity-claim') {
+        const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE;
+        let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
+        return c ? answer(200, c) : answer(404, { ok: false, why: 'this node is no liquidity provider' });
+      }
       if (req.method === 'GET' && url.pathname === '/gateway-seating') {
         const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
         return ownSeatings.has(k) ? answer(200, ownSeatings.get(k)) : answer(404, { ok: false, why: 'this guardian signed no seating for that federation and epoch' });
