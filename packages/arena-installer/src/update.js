@@ -58,9 +58,19 @@ export function backupNode(home, stamp = new Date().toISOString().replace(/[:.]/
   for (const f of NODE_FILES) if (existsSync(join(home, f))) { copyFileSync(join(home, f), join(dir, f)); files.push(f); }
   return { dir, files };
 }
-/** Put a backup's files back (the database first). */
-export function restoreNode(home, backup) {
-  for (const f of backup.files) copyFileSync(join(backup.dir, f), join(home, f));
+/** Put a backup's files back (the database first). A file Windows still holds (EBUSY / EPERM / EACCES: the stopped seat's handle not
+ *  closed yet) is tried again each second for a while; one that never frees is named, and the others still go back. { ok, failed } */
+export async function restoreNode(home, backup, { tries = 30, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)), copy = copyFileSync } = {}) {
+  const failed = [];
+  for (const f of backup.files) {
+    for (let i = 0; ; i++) {
+      try { copy(join(backup.dir, f), join(home, f)); break; } catch (e) {
+        if (i + 1 >= tries || !['EBUSY', 'EPERM', 'EACCES'].includes(e.code)) { failed.push(`${f}: ${e.code || e.message}`); break; }
+        await pause(1000);
+      }
+    }
+  }
+  return { ok: !failed.length, failed };
 }
 
 /** The release a launchd agent runs: its WorkingDirectory less packages/arena-node. */
@@ -128,7 +138,12 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
       },
       start: async (fs) => {
         const failed = [];
-        for (const f of fs) { const r = await ps(`Start-Process -WindowStyle Hidden -FilePath '${q(f)}'`); if (!r.ok) failed.push(`${task(f)}: ${(r.err || '').trim().slice(0, 120)}`); }
+        // THROUGH WMI (Win32_Process.Create), NOT Start-Process (measured in the Windows VM 2026-10-18): a process the update starts must not
+        // belong to the session that runs it - an update over ssh, or from a console window closed afterwards, would end its services with it
+        for (const f of fs) {
+          const r = await ps(`$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd.exe /c "${q(f)}"'; CurrentDirectory = '${q(home)}' }; if ($r.ReturnValue -ne 0) { throw "Win32_Process.Create: $($r.ReturnValue)" }`);
+          if (!r.ok) failed.push(`${task(f)}: ${(r.err || '').trim().slice(0, 120)}`);
+        }
         return failed.length ? { ok: false, why: `not started: ${failed.join('; ')}` } : { ok: true };
       },
       prepare: async () => {},
@@ -156,8 +171,11 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
  * seating-window wait), `platform`. Answers { ok, from, to, backup, why, rolledBack, moved }.
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
-  fetcher = fetch, nowMs = () => Date.now(), waitMs = 90000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
+  fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
   quickUrl = quickTunnelUrl }) {
+  // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
+  // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
+  waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
   if (asset) {
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
@@ -216,13 +234,15 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
-  // ROLLED BACK: the old services, the backup, the old release started
-  await svc.stop(moving, newRelease);
+  // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows
+  // VM: copying the backup back threw while the stopped seat still held its database, and the node was left with nothing running)
+  try { await svc.stop(moving, newRelease); } catch { /* the start below is what matters */ }
   for (const [f, t] of oldTexts) writeFileSync(f, t);
-  restoreNode(home, backup);
+  let put = { ok: false, failed: ['not tried'] };
+  try { put = await restoreNode(home, backup, { pause: sleep }); } catch (e) { put = { ok: false, failed: [e.message] }; }
   await svc.start(moving);
   const back = await waitHealthy({ port, fetcher, waitMs });
   return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir,
     why: after.ok ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}` : `the new release did not come up: ${after.why}`,
-    restored: back.ok };
+    restored: back.ok, ...(put.ok ? {} : { notRestored: put.failed }) };
 }
