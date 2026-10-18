@@ -26,7 +26,7 @@ import { Writer } from './encode.js';
 // places for it to differ. It also made this file unbundleable beside
 // hash.js, which is how it was found.
 import { taggedHash, fromHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG, GATEWAY_SEAT_VERSION } from './constants.js';
+import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION } from './constants.js';
 import { roundId } from './contracts.js';
 import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } from './payout.js';
 
@@ -47,7 +47,10 @@ export const SETTLEMENT = 'settlement';
 export const GUARDIAN = 'guardian';
 // THE GATEWAY SEATS (2026.0.15, §23A.9): a third of the guardian pool, to the federation's two seated gateways
 export const GATEWAY = 'gateway';
-export const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY];
+// THE LIQUIDITY PROVIDERS (2026.0.16, §23A.10): a quarter of the node fee, to the providers with a channel to one of the federation's
+// custody nodes (appended as index 4: every earlier table's id is unchanged)
+export const LIQUIDITY = 'liquidity';
+export const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY, LIQUIDITY];
 
 /**
  * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
@@ -116,20 +119,28 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
   // two-pool table exactly as before - 1% and the rest.
   const guardians = ((pools && pools[GUARDIAN]) || []).filter((k) => eligible.has(hex(k)));
   let shareOf;
-  if (guardians.length) {
+  const v = Number(contract && contract.protocolVersion);
+  if (guardians.length && v >= LIQUIDITY_VERSION) {
+    // FOUR QUARTERS (2026.0.16, §23A.10): game/verify, settlement, custody and liquidity; the custody quarter takes the floors' leftover.
+    // With no eligible liquidity provider, its quarter is custody's (the guardians', then a third of it the gateway seats').
+    const quarter = fee / 4n;
+    const providers = ((pools && pools[LIQUIDITY]) || []).filter((k) => eligible.has(hex(k)));
+    shareOf = providers.length ? { [GAME_VERIFY]: quarter, [SETTLEMENT]: quarter, [GUARDIAN]: fee - 3n * quarter, [LIQUIDITY]: quarter }
+      : { [GAME_VERIFY]: quarter, [SETTLEMENT]: quarter, [GUARDIAN]: fee - 2n * quarter };
+  } else if (guardians.length) {
     const third = fee / 3n;
     shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
-    // A 2026.0.15 ROUND WITH A SEATED GATEWAY (§23A.9): one third of the guardian pool is the gateway seats', the guardians keep the rest;
-    // with no eligible gateway the guardians keep it all, as before
-    const gateways = ((pools && pools[GATEWAY]) || []).filter((k) => eligible.has(hex(k)));
-    if (Number(contract && contract.protocolVersion) >= GATEWAY_SEAT_VERSION && gateways.length) {
-      const gw = shareOf[GUARDIAN] / 3n;
-      shareOf[GATEWAY] = gw; shareOf[GUARDIAN] -= gw;
-    }
   } else {
     // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
     const first = fee / 2n;
     shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
+  }
+  // A 2026.0.15 ROUND WITH A SEATED GATEWAY (§23A.9): one third of the guardian (custody) pool is the gateway seats', the guardians keep
+  // the rest; with no eligible gateway the guardians keep it all, as before. On 2026.0.16 the custody pool is a quarter of the fee.
+  const gateways = ((pools && pools[GATEWAY]) || []).filter((k) => eligible.has(hex(k)));
+  if (guardians.length && v >= GATEWAY_SEAT_VERSION && gateways.length) {
+    const gw = shareOf[GUARDIAN] / 3n;
+    shareOf[GATEWAY] = gw; shareOf[GUARDIAN] -= gw;
   }
 
   const id = roundId(contract);
