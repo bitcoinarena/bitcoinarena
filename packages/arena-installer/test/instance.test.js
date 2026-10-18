@@ -25,3 +25,9 @@ test('a second node: every service named apart, every fixed port moved; a bad na
   assert.throws(() => read({ ARENA_INSTANCE: 'B/x' }), /ARENA_INSTANCE is a-z0-9/);
   assert.throws(() => read({ ARENA_PORT_OFFSET: '-5' }), /ARENA_PORT_OFFSET is a whole number/);
 });
+
+test('the CLI\'s own port defaults move with the offset too: wizard, seat, bridge (measured on the test host with rc.16: the second node\'s seat took 8470, the first\'s)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const bin = readFileSync(join(dir, 'bin', 'arena-install.mjs'), 'utf8');
+  for (const [flag, p] of [['--port', 7800], ['--seat-port', 8470], ['--bridge-port', 8471]]) assert.match(bin, new RegExp(`opt\\('${flag}', offsetPort\\(${p}\\)\\)`), flag);
+});
