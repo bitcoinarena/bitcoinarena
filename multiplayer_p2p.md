@@ -4046,6 +4046,8 @@ census advertisement. A guardian earns it only if seated; a gone guardian's
 share goes pro rata to the other seated ones. While the federation's
 predecessor is DRAINING, the pool is shared per seat with the predecessor's
 seated guardians (§23A.6 step 5). Testnet: 5/3 % over seven guardians.
+From protocol 2026.0.16 the node fee is split into **four pools of 1 %**: game/verify,
+settlement, custody and **liquidity** (§23A.10: the federation's liquidity providers).
 From protocol 2026.0.15 one third of the guardian pool goes to the
 federation's two **gateway seats** and two thirds to its guardians (§23A.9:
 who hosts the federation's Lightning, how the best two are chosen, what they
@@ -5359,6 +5361,94 @@ The custody step says all of the above before anyone opts in:
 It then sets the gateway up: LND, its channels, the gateway on it, and the
 peg-in from the node's wallet. The node announces its gateway, and its
 federation's guardians rank it from the next epoch on.
+
+## 23A.10 Liquidity providers: incoming Lightning for every new node *(the owner 2026-10-18)*
+
+> "This is a real problem. On mainnet everybody needs incoming liquidity. Spec a fourth service for nodes: LND liquidity provider.
+> This service alone listens to new nodes and creates incoming liquidity for them. Incentive are part of the 4 % node fees. Gets 1 %
+> from the node fees in the federation like other services." (the owner 2026-10-18)
+
+### The problem
+
+A node that runs Lightning (every custody node: its gateway) starts with **no incoming liquidity**. Its own channels are outgoing:
+it can pay out, but a player's deposit cannot reach it. Buying inbound costs money and time; a new operator should not have to.
+
+### The fourth service
+
+A **liquidity provider** is a node with its own LND and coins in it. Its one job: open a channel **to** each new Lightning node of
+the network, so that node can receive. It is a role like game/verify, settlement and custody; a node may hold any of the four.
+
+| | Game / verify | Settlement | Custody | **Liquidity** |
+|---|---|---|---|---|
+| Does | replays a round, signs who won | co-signs paying the winners | holds the players' bitcoin (guardians), connects it to Lightning (gateways) | opens channels **to** new nodes so they can receive |
+| Share of the 4 % node fee (from 2026.0.16) | 1 % | 1 % | 1 % (⅔ guardians, ⅓ the two gateway seats) | **1 %** |
+| Shared by | the round's 7 seated nodes | the round's 7 seated nodes | the federation's guardians and gateway seats | the federation's **liquidity providers** (below) |
+
+### Requirements
+
+| Requirement | Testnet4 | Mainnet |
+|---|---|---|
+| The **liquidity amount** L: one channel to one node | 100,000 sat | 2,500,000 sat |
+| **Deposit**: coins in the provider's LND wallet, free for new channels, when it starts and to stay eligible | ≥ 5 × L = 500,000 sat | ≥ 10 × L = 25,000,000 sat |
+| Its own LND, reachable (an open port, or Tor: §23A.9 "The outside channel and Tor") | yes | yes |
+| A bond | ≥ `bond_min` | ≥ `bond_min` |
+
+L matches the inbound a gateway seat needs (§23A.9), so one provider channel makes a new gateway eligible.
+
+### Who opens to whom: at least 1, at most 2 per node
+
+Every provider publishes a **liquidity claim** at its seat (`GET /liquidity-claim`), signed by its node key:
+- its LND key and address;
+- its free funds;
+- its open channels to nodes: the peer's LND key and the capacity.
+
+It renews the claim every 10 minutes. The nodes that need liquidity are the custody nodes whose gateway claims (§23A.9) name an LND key.
+
+For each such node N, every provider computes the same thing from the same claims:
+1. **Count** N's provider channels: the claims whose channels name N's LND key, with capacity ≥ L.
+2. If N has **2 or more**: nothing to do.
+3. Otherwise the **candidates** are the providers without a channel to N and with free funds ≥ L, ranked by the ticket
+   `H('BLWP/v1/LIQUIDITY' || N's node key || provider node key)`, lowest first.
+4. The top `2 − count` candidates open one channel of L to N. The others wait.
+
+No coordinator is needed. Each provider sees the others' opens in their claims and stops at 2. A provider that does not open
+within an hour of being ranked top is skipped next time: it drops out of the ranking for N until it opens.
+
+A provider keeps a channel open while N is a custody node of the network. It may close it when N has left (no gateway claim for a day).
+
+### Pay
+
+From **protocol 2026.0.16** the node fee of a paid round (4 % on protocol 11 and later) is split into **four pools of 1 %**:
+game/verify, settlement, custody, liquidity.
+- The **liquidity pool** of a round goes to the **liquidity seats** of the round's federation, evenly: the providers with an
+  active channel of ≥ L to at least one of the federation's custody nodes.
+- The federation's guardians check every provider's claim each epoch (144 blocks) and **sign the list**, the same way as the
+  gateway seating (§23A.9: threshold of the seated guardians). The settlement pays only a signed list.
+- With no liquidity seat, the pool goes to the custody pool.
+- Rounds of earlier versions keep the three pools of the 4 % (or 5 %) fee.
+
+**Fee proposals (§27A, fee-proposal.js).** A proposal changes the total node fee (`roundNodeBps`, today 400 = 4 %), never the
+split: from 2026.0.16 each of the four services takes a quarter of whatever total a passed proposal sets. A node fee of 6 % pays
+1.5 % per service; one of 2 % pays 0.5 %.
+
+### In the installer
+
+- The Roles step shows the four services and the fee split as four pools of 1 %.
+- Choosing **Liquidity provider** adds the Lightning step (LND, or your own) and, in the Bond step, the **liquidity deposit**
+  (5 × L on testnet4). The deposit goes to LND's own wallet.
+- The provider service runs as a service of the node.
+
+### On the owner page and the dashboard
+
+A **Liquidity** card:
+- LND's free coins and the deposit minimum, with a warning when below;
+- the channels it gave (node, capacity) and what they earned;
+- a **top-up address** (LND's wallet).
+
+### Live on testnet4
+
+Two providers run on the test host, so the coordination is tested for real: **LND C** and **LND D**, each with its own Tor onion
+address and its own deposit.
 
 # 24. Wallet integration
 

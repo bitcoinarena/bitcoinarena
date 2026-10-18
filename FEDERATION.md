@@ -158,6 +158,20 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 
 ---
 
+## Liquidity providers: incoming Lightning for every new node (the owner 2026-10-18; spec §23A.10)
+
+- **The problem:** a new Lightning node (every custody node's gateway) has no incoming liquidity, so no deposit can reach it.
+- **The fourth service:** a liquidity provider opens one channel **to** each new node so it can receive.
+  It earns **1 % of the node fee** of its federation's rounds, as each of the other three services does from protocol 2026.0.16
+  (game/verify 1 %, settlement 1 %, custody 1 %, liquidity 1 %).
+- **Amounts:** one channel L = 100,000 sat on testnet4 (2,500,000 on mainnet). The deposit is ≥ 5 × L on testnet4 (10 × L on
+  mainnet), coins in the provider's own LND wallet.
+- **At least 1, at most 2 per node:** every provider publishes a signed liquidity claim at its seat (its channels, its free funds).
+  For a node with fewer than 2 provider channels, all providers rank the candidates the same way (a ticket on node and provider
+  keys) and the top ones open. No coordinator.
+- **Paid** from a guardian-signed list per epoch, like the gateway seats; with no provider, the pool goes to custody.
+- **Live on testnet4:** LND C and LND D on the test host.
+
 ## Who hosts the Lightning: two gateway seats, and what they earn (the owner 2026-10-18; spec §23A.9)
 
 > "We need 2 guardians per federation and there is currently no process who will host the guardian. Modify the spec for it and come
