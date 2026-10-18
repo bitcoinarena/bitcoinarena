@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arena Node Setup</title>
+<style>
+:root { --bg: #0f1115; --card: #171a21; --line: #2a2f3a; --text: #e8eaf0; --muted: #9aa3b2; --accent: #f7931a; --ok: #3fb950; --bad: #f85149; }
+@media (prefers-color-scheme: light) { :root { --bg: #f6f7f9; --card: #fff; --line: #dde1e7; --text: #161a21; --muted: #5b6474; --ok: #1a7f37; --bad: #cf222e; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+ol.steps { display: flex; gap: 6px; padding: 0; list-style: none; flex-wrap: wrap; margin: 0 0 20px; }
+ol.steps li { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 13px; }
+ol.steps li.done { border-color: var(--ok); color: var(--ok); } ol.steps li.now { border-color: var(--accent); color: var(--text); }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; display: none; }
+section.on { display: block; }
+label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
+input, select { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+button { padding: 9px 16px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #111; font: inherit; font-weight: 600; cursor: pointer; margin: 12px 8px 0 0; }
+button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; } .row > * { flex: 1 1 200px; }
+.msg { margin-top: 12px; padding: 10px; border-radius: 6px; border: 1px solid var(--line); white-space: pre-wrap; font-size: 14px; display: none; }
+.msg.ok { display: block; border-color: var(--ok); } .msg.bad { display: block; border-color: var(--bad); }
+.words { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; margin: 12px 0; }
+.words span { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-family: ui-monospace, monospace; }
+.words span b { color: var(--muted); font-weight: 400; margin-right: 6px; }
+.role { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; display: flex; gap: 10px; align-items: flex-start; }
+.role input { width: auto; margin-top: 4px; } .role p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
+.warn { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Arena node setup</h1>
+  <p class="sub">testnet4 · every step is tested before it is saved, and you can close this page and come back</p>
+  <ol class="steps" id="steps"></ol>
+
+  <section id="s-chain">
+    <h2>1. Bitcoin connection</h2>
+    <p class="sub">Your node reads the testnet4 chain. Use your own Bitcoin Core, or an Electrum server.</p>
+    <div class="row">
+      <button class="ghost" id="k-core">Bitcoin Core</button><button class="ghost" id="k-electrum">Electrum server</button>
+    </div>
+    <div id="core-form">
+      <label>RPC URL</label><input id="c-url" value="http://127.0.0.1:48332/">
+      <label>Cookie file (or leave empty and give user and password)</label><input id="c-cookie" placeholder="~/.bitcoin/testnet4/.cookie">
+      <div class="row"><div><label>RPC user</label><input id="c-user"></div><div><label>RPC password</label><input id="c-pass" type="password"></div></div>
+    </div>
+    <div id="el-form" hidden>
+      <label>Server</label><select id="e-pick"></select>
+      <div class="row"><div><label>Host</label><input id="e-host"></div><div><label>Port</label><input id="e-port"></div></div>
+      <label><input type="checkbox" id="e-tls" checked style="width:auto"> TLS</label>
+      <p class="sub">In Electrum mode a small bridge on this machine reads headers from the server and verified blocks from Esplora.</p>
+    </div>
+    <button class="ghost" id="chain-test">Test</button><button id="chain-save">Save and go on</button>
+    <div class="msg" id="chain-msg"></div>
+  </section>
+
+  <section id="s-roles">
+    <h2>2. What your node does</h2>
+    <div id="roles"></div>
+    <button id="roles-save">Save and go on</button>
+    <div class="msg" id="roles-msg"></div>
+  </section>
+
+  <section id="s-seed">
+    <h2>3. Your seed: write it down</h2>
+    <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone with them owns the node; without them a lost machine is a lost node.</p>
+    <button id="seed-show">Show my 24 words</button>
+    <div class="words" id="words"></div>
+    <div id="confirm" hidden>
+      <p>Now type back these words from your paper:</p>
+      <div class="row" id="confirm-inputs"></div>
+      <button id="seed-confirm">Confirm</button>
+    </div>
+    <div class="msg" id="seed-msg"></div>
+  </section>
+
+  <section id="s-owner">
+    <h2>4. Owner login</h2>
+    <p class="sub">How you sign in to your node's owner page later.</p>
+    <div class="role"><input type="radio" name="om" value="seed" id="om-seed" checked><div><b>My 24 words</b><p>Type them on the owner page in any browser (they stay in that browser).</p></div></div>
+    <div class="role"><input type="radio" name="om" value="nostr" id="om-nostr"><div><b>Nostr</b><p>Sign in with your Nostr key (a browser extension such as Alby or nos2x, or paste your npub).</p>
+      <label>npub</label><input id="npub" placeholder="npub1..."><button class="ghost" id="nip07">Read from my Nostr extension</button></div></div>
+    <button id="owner-save">Save and go on</button>
+    <div class="msg" id="owner-msg"></div>
+  </section>
+
+  <section id="s-reach">
+    <h2>5. How others reach your node</h2>
+    <p class="sub">Players and other nodes connect to your node. First the installer checks whether the internet can reach this machine directly.</p>
+    <div class="row"><div><label>Port for connections from outside</label><input id="r-port"></div></div>
+    <button class="ghost" id="r-test">Test direct connection</button>
+    <div class="msg" id="r-direct"></div>
+    <div class="role"><input type="radio" name="rm" value="direct" id="rm-direct"><div><b>Direct connection</b><p>Your node listens on the port above. Needs the port open in the firewall and, behind a router, forwarded to this machine.</p></div></div>
+    <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it. No open ports.</p>
+      <button class="ghost" id="r-login">Sign up / log in to Cloudflare</button><div class="msg" id="r-login-msg"></div>
+      <label>Your node's name (under a domain on that account)</label><input id="r-host" placeholder="node.example.com"></div></div>
+    <div class="role"><input type="radio" name="rm" value="quick" id="rm-quick"><div><b>Temporary anonymous tunnel</b><p>A random <code>trycloudflare.com</code> name, no account. It changes whenever the tunnel restarts, so others lose your node until it is announced again.</p></div></div>
+    <button id="r-save">Save and go on</button>
+    <div class="msg" id="r-msg"></div>
+  </section>
+
+  <section id="s-service">
+    <h2>6. Install and start</h2>
+    <p>The node is installed as a user service, started, checked at its public address, and then you are logged in once as its owner.</p>
+    <label class="role"><input type="checkbox" id="boot" checked><div><b>Start the node again after a reboot</b><p>Recommended. It also keeps the node running when you log out.</p></div></label>
+    <button id="svc">Install and start</button><button class="ghost" id="nostr-login" hidden>Log in with Nostr</button>
+    <div class="msg" id="svc-msg"></div>
+  </section>
+
+  <section id="s-done">
+    <h2>Done</h2>
+    <div id="done-text"></div>
+    <button id="finish">Finish</button>
+    <div class="msg" id="finish-msg"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['done', 'Done']];
+let st = null, kind = 'core', nostrTemplate = null;
+const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
+const say = (id, r, okText) => { const m = $(id); m.className = 'msg ' + (r.ok ? 'ok' : 'bad'); m.textContent = r.ok ? okText : (r.why || 'failed'); };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function load() {
+  st = await (await fetch('/api/state')).json();
+  if (!st.ok) { document.body.innerHTML = '<main><h1>Arena node setup</h1><p>' + esc(st.why) + '</p></main>'; return; }
+  $('steps').innerHTML = STEPS.map(([k, t]) => `<li class="${st.done[k] ? 'done' : st.step === k ? 'now' : ''}">${t}</li>`).join('');
+  for (const [k] of STEPS) $('s-' + k).classList.toggle('on', st.step === k);
+  if (st.step === 'roles') $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
+    `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && k !== 'custody') ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div><b>${esc(r.title)}</b><p>${esc(r.needs)}</p></div></label>`).join('');
+  if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
+  if (st.step === 'chain') pickElectrum();
+  if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
+  if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
+    const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
+      : r.mode === 'permanent' ? `at <code>${esc(r.url)}</code> through your Cloudflare tunnel (the user service <code>arena-tunnel</code>)`
+      : `at <code>${esc(r.url || '(no name yet)')}</code> through a temporary tunnel - <b>this name changes when the tunnel restarts</b>; set up a permanent tunnel later from the owner page`;
+    $('done-text').innerHTML = `<p>Your node runs as the user service <code>arena-node</code>${sv.boot ? ' and starts again after a reboot' : ' (not started after a reboot)'}.</p>
+    <p>Others reach it ${how}.</p>
+    <p>Node key: <code>${esc(sv.identity || '')}</code></p>
+    <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>, and on this machine <code>http://127.0.0.1:${st.seatPort}/Dashboard/owner</code> - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
+    ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
+    <p>Next: the bond (the owner page shows the address and the lock).</p>`; }
+}
+function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('k-core').className = k === 'core' ? '' : 'ghost'; $('k-electrum').className = k === 'electrum' ? '' : 'ghost'; }
+function pickElectrum() { const v = $('e-pick').value; const s = st.electrum[v]; if (s) { $('e-host').value = s.host; $('e-port').value = s.port; $('e-tls').checked = s.tls; } }
+const chainBody = () => kind === 'core'
+  ? { kind: 'core', url: $('c-url').value.trim(), ...($('c-cookie').value.trim() ? { cookiePath: $('c-cookie').value.trim() } : { user: $('c-user').value, password: $('c-pass').value }) }
+  : { kind: 'electrum', host: $('e-host').value.trim(), port: Number($('e-port').value), tls: $('e-tls').checked };
+const chainText = (r) => { const x = r.result || r; const s = x.source || {};
+  return `${x.ok ? 'Passed' : 'Failed'}: ${x.why}\nthis source: ${s.ok ? `testnet4 (genesis checked), tip ${s.height}, ${s.latencyMs} ms${s.software ? ', ' + s.software : ''}${s.pruned ? ', pruned' : ''}` : s.why}`
+    + (x.second ? `\nsecond source ${x.second.endpoint}: ${x.second.ok ? `tip ${x.second.height}, ${x.second.latencyMs} ms` : x.second.why}` : ''); };
+$('k-core').onclick = () => setKind('core'); $('k-electrum').onclick = () => setKind('electrum'); $('e-pick').onchange = pickElectrum;
+$('chain-test').onclick = async (e) => { e.target.disabled = true; $('chain-msg').className = 'msg ok'; $('chain-msg').textContent = 'Testing...'; const r = await post('/api/chain/test', chainBody()); e.target.disabled = false; const m = $('chain-msg'); m.className = 'msg ' + (r.result && r.result.ok ? 'ok' : 'bad'); m.textContent = r.ok ? chainText(r) : r.why; };
+$('chain-save').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/chain/save', chainBody()); e.target.disabled = false; if (r.ok) return load(); const m = $('chain-msg'); m.className = 'msg bad'; m.textContent = r.result ? chainText(r) : r.why; };
+$('roles-save').onclick = async () => { const roles = [...document.querySelectorAll('#roles input:checked')].map((x) => x.value); const r = await post('/api/roles', { roles }); if (r.ok) return load(); say('roles-msg', r); };
+$('seed-show').onclick = async () => { const r = await post('/api/seed/new'); if (!r.ok) return say('seed-msg', r);
+  $('words').innerHTML = r.words.map((w, i) => `<span><b>${i + 1}</b>${esc(w)}</span>`).join(''); $('seed-show').hidden = true;
+  $('confirm-inputs').innerHTML = r.positions.map((p) => `<div><label>word ${p}</label><input data-p="${p}" autocomplete="off" spellcheck="false"></div>`).join('');
+  $('confirm').hidden = false; };
+$('seed-confirm').onclick = async () => { $('words').innerHTML = ''; const answers = {}; for (const i of document.querySelectorAll('#confirm-inputs input')) answers[i.dataset.p] = i.value;
+  const r = await post('/api/seed/confirm', { answers }); if (r.ok) return load(); say('seed-msg', r); if (r.wrong) $('seed-show').hidden = false; };
+$('nip07').onclick = async () => { if (!window.nostr) return say('owner-msg', { ok: false, why: 'no Nostr extension in this browser - paste your npub instead' }); $('npub').value = await window.nostr.getPublicKey(); $('om-nostr').checked = true; };
+$('owner-save').onclick = async () => { const mode = $('om-nostr').checked ? 'nostr' : 'seed'; const r = await post('/api/owner', { mode, npub: $('npub').value }); if (r.ok) return load(); say('owner-msg', r); };
+function showDirect(d) { const m = $('r-direct'); m.className = 'msg ' + (d.reached ? 'ok' : 'bad');
+  m.textContent = d.reached ? `Reachable from outside at ${d.address}:${d.port} - direct connection is the default.` : `Not reachable from outside: ${d.diagnosis ? d.diagnosis.advice : d.why}\nThe permanent tunnel is the default.`;
+  const def = d.reached ? 'direct' : 'permanent'; if (!document.querySelector('input[name=rm]:checked')) $('rm-' + def).checked = true; }
+function showLogin(l) { const m = $('r-login-msg'); if (l.result && l.result.ok) { m.className = 'msg ok'; m.textContent = 'Logged in to Cloudflare.'; }
+  else if (l.result) { m.className = 'msg bad'; m.textContent = l.result.why; }
+  else if (l.url) { m.className = 'msg ok'; m.innerHTML = `Open <a href="${esc(l.url)}" target="_blank" rel="noopener">this Cloudflare link</a>, sign up or log in, and choose the domain for your node. This page waits for you.`; setTimeout(pollLogin, 3000); } }
+async function pollLogin() { const s = await (await fetch('/api/state')).json(); if (s.login) showLogin(s.login); }
+$('r-test').onclick = async (e) => { e.target.disabled = true; $('r-direct').className = 'msg ok'; $('r-direct').textContent = 'Asking Arena nodes to connect back to this machine...';
+  const r = await post('/api/reach/direct', { port: Number($('r-port').value) }); e.target.disabled = false; if (!r.ok) return say('r-direct', r); showDirect(r.result); };
+$('r-login').onclick = async () => { $('rm-permanent').checked = true; const r = await post('/api/reach/login'); if (!r.ok) return say('r-login-msg', r); showLogin(r); };
+$('r-save').onclick = async (e) => { const mode = (document.querySelector('input[name=rm]:checked') || {}).value; if (!mode) return say('r-msg', { ok: false, why: 'test the direct connection first, or choose a tunnel' });
+  e.target.disabled = true; const r = await post('/api/reach/save', { mode, hostname: $('r-host').value, port: Number($('r-port').value) }); e.target.disabled = false; if (r.ok) return load(); say('r-msg', r); };
+$('svc').onclick = async (e) => { e.target.disabled = true; $('svc-msg').className = 'msg ok'; $('svc-msg').textContent = 'Installing and starting the node (this can take a minute)...';
+  const r = await post('/api/service', { boot: $('boot').checked }); e.target.disabled = false;
+  if (!r.ok) return say('svc-msg', r);
+  if (r.template) { nostrTemplate = r.template; $('nostr-login').hidden = false; say('svc-msg', r, `The node runs (started in ${r.ms} ms). Now log in once with your Nostr key.`); return; }
+  load(); };
+$('nostr-login').onclick = async () => { if (!window.nostr) return say('svc-msg', { ok: false, why: 'no Nostr extension in this browser: use one that has your key' });
+  const t = { ...nostrTemplate, created_at: Math.floor(Date.now() / 1000) }; const ev = await window.nostr.signEvent(t);
+  const r = await post('/api/owner/login', { nostr: ev }); if (r.ok) return load(); say('svc-msg', r); };
+$('finish').onclick = async () => { const r = await post('/api/finish'); say('finish-msg', r, `Finished. The installer has stopped. Your owner page: ${r.owner}`); $('finish').disabled = true; };
+setKind('core'); load();
+</script>
+</body>
+</html>

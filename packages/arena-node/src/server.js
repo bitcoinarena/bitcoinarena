@@ -31,6 +31,7 @@ import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
+import { createReachCheck } from './reach-check.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
@@ -2975,6 +2976,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       finalMs: Math.max(...settled.map((x) => Number(x.madeMs))), settlement: settled.map(({ federation, txid }) => ({ federation, txid })),
       outcome: decided, entries } };
   };
+  const reachCheck = createReachCheck({ allowPrivate: process.env.ARENA_REACH_ALLOW_PRIVATE === '1' });
   const nostr = nostrResults({ db: round.db, secret: round.identity.secret, resultOf: nostrResultOf, relays: nostrPublish,
     settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', perMinute: nostrPerMinute, tickMs: nostrTickMs });
   nostr.start();
@@ -5309,6 +5311,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!/^[0-9a-f]{64}$/.test(player)) return text(res, 400, 'GET /items?player=<the buyer\'s 32-byte key>[&game=<name>][&dev=<key>]');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), items: itemsOwned(round.db, { player, gameName: url.searchParams.get('game') || null, gameDev: url.searchParams.get('dev') || null }) }));
+      }
+      // CAN THE INTERNET REACH A NEW NODE (kanban #471 ruling 7, reach-check.js): connects back to the asking address only, on the
+      // port named, and answers whether GET /reach-nonce gave the nonce - and the address it saw
+      if (req.method === 'POST' && url.pathname === '/reach-check') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reach check is JSON { port, nonce }'); }
+        const r = await reachCheck(req, j);
+        res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(r.body));
       }
       if (req.method === 'GET' && url.pathname === '/served') {
         const to = Number(url.searchParams.get('to'));
