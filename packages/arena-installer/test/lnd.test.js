@@ -59,3 +59,29 @@ test('the wallet from the seed, created once; getinfo read; another network refu
   assert.match(main.why, /runs on mainnet, not testnet4/);
   assert.match((await testLnd({ restUrl: 'https://127.0.0.1:1', tlsCert: '/nope', macaroon: '/nope' })).why, /not there yet/);
 });
+
+test('channels for a gateway seat: LND\'s deposit address and balances, a public channel to a named peer, the public capacity counted', async () => {
+  const { lndFunds, lndOpenChannel, lndChannels } = await import('../src/lnd.js');
+  const cfg = { restUrl: 'https://127.0.0.1:10080', tlsCertPem: 'CERT', macaroonHex: 'aabb' };
+  const asked = [];
+  const rest = async (o) => {
+    asked.push(o);
+    const map = { '/v1/newaddress?type=4': { address: 'tb1pdeposit' }, '/v1/balance/blockchain': { confirmed_balance: '250000', unconfirmed_balance: '1000' },
+      '/v1/balance/channels': { local_balance: { sat: '150000' } }, '/v1/peers': {}, '/v1/channels/pending': { pending_open_channels: [{ channel: { remote_node_pub: '03bb', capacity: '100000' } }] },
+      '/v1/channels': o.method === 'POST' ? { funding_txid_bytes: Buffer.from('11'.repeat(31) + '22', 'hex').toString('base64') }
+        : { channels: [{ remote_pubkey: '02aa', capacity: '150000', active: true, private: false }, { remote_pubkey: '02cc', capacity: '90000', active: true, private: true }] } };
+    return { status: 200, json: map[o.path] };
+  };
+  const f = await lndFunds(cfg, { rest });
+  assert.deepEqual([f.address, f.onchainSats, f.unconfirmedSats, f.channelSats], ['tb1pdeposit', 250000, 1000, 150000]);
+  assert.equal(asked[0].macaroonHex, 'aabb');
+  const ch = await lndChannels(cfg, { rest });
+  assert.deepEqual([ch.open.length, ch.pending.length, ch.publicCapacitySats], [2, 1, 150000], 'a private channel does not count for a gateway seat');
+  assert.match((await lndOpenChannel(cfg, { peer: 'nonsense', sats: 200000 }, { rest })).why, /pubkey@host:port/);
+  assert.match((await lndOpenChannel(cfg, { peer: '02' + 'ab'.repeat(32) + '@node.example.com:9735', sats: 1000 }, { rest })).why, /at least 20,000/);
+  asked.length = 0;
+  const o = await lndOpenChannel(cfg, { peer: '02' + 'AB'.repeat(32) + '@node.example.com:9735', sats: 200000 }, { rest });
+  assert.deepEqual([o.ok, o.fundingTxid], [true, '22' + '11'.repeat(31)], 'the funding txid as Bitcoin shows it');
+  assert.deepEqual(asked[0].body.addr, { pubkey: '02' + 'ab'.repeat(32), host: 'node.example.com:9735' });
+  assert.deepEqual([asked[1].body.local_funding_amount, asked[1].body.private, asked[1].body.node_pubkey], ['200000', false, Buffer.from('02' + 'ab'.repeat(32), 'hex').toString('base64')]);
+});

@@ -139,6 +139,18 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <div id="ln-gw" hidden>
       <h3>The gateway</h3>
       <p>The Fedimint gateway pays and receives Lightning for a federation's users through this LND. Its e-cash wallet is made from your 24 words too.</p>
+      <div class="role" id="gw-seat"><div>
+        <b>Hosting a gateway seat</b>
+        <p>Every federation has <b>two gateway seats</b>, held by two of its own guardians. If more want them, the guardians choose the best two every day (144 blocks): first by the Lightning volume each routed for the federation, then channel capacity, availability, bond, and a fair draw. A seated gateway keeps its seat unless it fails the rules or someone routes 25 % more.</p>
+        <p><b>To stand</b> (testnet4): be one of the federation's guardians (your node, once drawn), public channels of at least <b id="gs-cap">200,000</b> sat, a peg-in of at least <b id="gs-peg">50,000</b> sat into the federation (the bond step sets it aside; your node sends it by itself), and be up 95 % of the time.</p>
+        <p><b>What it earns:</b> one third of the federation's custody fee goes to its two gateway seats - about 0.28 % of every round's volume each, against 0.11 % for a guardian of ten - plus your Lightning routing fees.</p>
+      </div></div>
+      <div id="ln-chan">
+        <p class="sub">Channels: <span id="ch-state">…</span></p>
+        <p class="sub">LND's own wallet for channels: <code id="ch-addr"></code> - <span id="ch-bal"></span></p>
+        <div class="row"><div style="flex:3"><label>Peer (pubkey@host:port)</label><input id="ch-peer" placeholder="02…@host:9735"></div><div><label>Sat</label><input id="ch-sats" value="200000"></div></div>
+        <button class="ghost" id="ch-open">Open a channel</button> <button class="ghost" id="ch-refresh">Refresh</button>
+      </div>
       <button id="gw-setup">Set up the gateway</button><button class="ghost" id="gw-later">Without the gateway for now</button>
       <div class="msg" id="gw-msg"></div>
       <div id="gw-join" hidden>
@@ -286,7 +298,7 @@ let gwTimer = null;
 const fedList = (fs) => (fs || []).length ? ' Federations: ' + fs.map((f) => (f.name || String(f.federationId).slice(0, 12))).join(', ') + '.' : ' No federation joined yet.';
 async function watchGw() {
   const r = await post('/api/gateway/status');
-  if (r.ok) { $('gw-msg').className = 'msg ok'; $('gw-msg').textContent = `The gateway runs (${r.state}) on LND ${String(r.lightningPubkey).slice(0, 16)}…, ${r.network}, block ${r.blockHeight}.` + fedList(r.federations); $('gw-join').hidden = false; return; }
+  if (r.ok) { $('gw-msg').className = 'msg ok'; $('gw-msg').textContent = `The gateway runs (${r.state}) on LND ${String(r.lightningPubkey).slice(0, 16)}…, ${r.network}, block ${r.blockHeight}.` + fedList(r.federations); $('gw-join').hidden = false; showFunds(); return; }
   $('gw-msg').className = 'msg ' + (r.waiting ? 'ok' : 'bad'); $('gw-msg').textContent = r.waiting ? `Starting the gateway… (${r.why})` : r.why;
   if (r.waiting) { clearTimeout(gwTimer); gwTimer = setTimeout(watchGw, 5000); }
 }
@@ -294,6 +306,16 @@ $('gw-setup').onclick = async (e) => { e.target.disabled = true; const r = await
 $('gw-later').onclick = async () => { const r = await post('/api/gateway/later'); if (!r.ok) return say('gw-msg', r); load(); };
 $('gw-join-go').onclick = async () => { const r = await post('/api/gateway/join', { invite: $('gw-invite').value }); if (!r.ok) return say('gw-msg', r); say('gw-msg', r, 'Joined.' + fedList(r.federations)); };
 $('gw-next').onclick = () => load();
+async function showFunds() {
+  const r = await post('/api/lightning/funds'); if (!r.ok) { $('ch-state').textContent = r.why; return; }
+  $('gs-cap').textContent = r.seat.minCapacitySats.toLocaleString('en'); $('gs-peg').textContent = r.seat.minPegInSats.toLocaleString('en');
+  $('ch-addr').textContent = r.address; $('ch-bal').textContent = `${r.onchainSats.toLocaleString('en')} sat confirmed${r.unconfirmedSats ? `, ${r.unconfirmedSats.toLocaleString('en')} arriving` : ''}`;
+  const c = r.channels || { open: [], pending: [], publicCapacitySats: 0 };
+  $('ch-state').textContent = `${c.open.length} open, ${c.pending.length} opening; public capacity ${c.publicCapacitySats.toLocaleString('en')} of ${r.seat.minCapacitySats.toLocaleString('en')} sat a gateway seat needs.`;
+}
+$('ch-refresh').onclick = showFunds;
+$('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/lightning/channel', { peer: $('ch-peer').value, sats: Number($('ch-sats').value) }); e.target.disabled = false;
+  say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
   if (r.parts && r.parts.pegIn !== undefined) $('b-need').textContent = `${r.needSats.toLocaleString('en')} (bond ${r.parts.bond.toLocaleString('en')}, fees ${r.parts.fees.toLocaleString('en')}, advertisement update ${r.parts.advertUpdate.toLocaleString('en')}, peg-in ${r.parts.pegIn.toLocaleString('en')})`;

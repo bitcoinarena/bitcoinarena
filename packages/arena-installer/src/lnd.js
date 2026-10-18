@@ -145,3 +145,44 @@ export async function testLnd(cfg, { rest = lndRest } = {}) {
   if (network && network !== 'testnet4') return { ok: false, why: `this LND runs on ${network}, not testnet4` };
   return { ok: true, pubkey: g.identity_pubkey, alias: g.alias, blockHeight: g.block_height, syncedToChain: Boolean(g.synced_to_chain), network, version: g.version };
 }
+
+// CHANNELS FOR A GATEWAY SEAT (spec §23A.9: public channel capacity >= 200,000 sat on testnet4): LND's own on-chain wallet takes the
+// deposit, then a channel to a peer the owner names. Each call reads LND's certificate and admin macaroon as testLnd does.
+const credsOf = (cfg) => ({ restUrl: cfg.restUrl, tlsCertPem: cfg.tlsCertPem || readFileSync(cfg.tlsCert),
+  macaroonHex: cfg.macaroonHex || (cfg.macaroonHexFile ? readFileSync(cfg.macaroonHexFile, 'utf8').trim() : readFileSync(cfg.macaroon).toString('hex')) });
+const errOf = (r) => (r.json && (r.json.message || r.json.error)) || `LND answered ${r.status}`;
+
+/** LND's on-chain deposit address (taproot) and its balances. Answers { ok, address, onchainSats, unconfirmedSats, channelSats, why }. */
+export async function lndFunds(cfg, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: `LND's certificate or macaroon is not there yet (${e.code || e.message})` }; }
+  const [a, b, ch] = await Promise.all([rest({ ...c, path: '/v1/newaddress?type=4' }), rest({ ...c, path: '/v1/balance/blockchain' }), rest({ ...c, path: '/v1/balance/channels' })]);
+  if (a.status !== 200) return { ok: false, why: errOf(a) };
+  return { ok: true, address: a.json.address, onchainSats: Number((b.json || {}).confirmed_balance || 0), unconfirmedSats: Number((b.json || {}).unconfirmed_balance || 0),
+    channelSats: Number(((ch.json || {}).local_balance || {}).sat || (ch.json || {}).balance || 0) };
+}
+
+/** Connect to `peer` (pubkey@host:port) and open a public channel of `sats`. Answers { ok, fundingTxid, why }. */
+export async function lndOpenChannel(cfg, { peer, sats }, { rest = lndRest } = {}) {
+  const m = /^(0[23][0-9a-f]{64})@([^\s:]+|\[[0-9a-f:]+\]):(\d{1,5})$/i.exec(String(peer || '').trim());
+  if (!m) return { ok: false, why: 'a peer is pubkey@host:port' };
+  const amount = Math.floor(Number(sats));
+  if (!(amount >= 20000)) return { ok: false, why: 'a channel is at least 20,000 sat' };
+  const c = credsOf(cfg);
+  const con = await rest({ ...c, method: 'POST', path: '/v1/peers', body: { addr: { pubkey: m[1].toLowerCase(), host: `${m[2]}:${m[3]}` }, perm: true, timeout: 20 } });
+  if (con.status !== 200 && !/already connected/i.test(errOf(con))) return { ok: false, why: `could not reach the peer: ${errOf(con)}` };
+  const o = await rest({ ...c, method: 'POST', path: '/v1/channels', timeoutMs: 60000,
+    body: { node_pubkey: Buffer.from(m[1], 'hex').toString('base64'), local_funding_amount: String(amount), private: false } });
+  if (o.status !== 200) return { ok: false, why: `the channel was not opened: ${errOf(o)}` };
+  const raw = o.json.funding_txid_bytes ? Buffer.from(o.json.funding_txid_bytes, 'base64').reverse().toString('hex') : o.json.funding_txid_str || null;
+  return { ok: true, fundingTxid: raw };
+}
+
+/** LND's channels: open (active or not) and pending, with their capacity. Answers { ok, open, pending, publicCapacitySats }. */
+export async function lndChannels(cfg, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const [o, p] = await Promise.all([rest({ ...c, path: '/v1/channels' }), rest({ ...c, path: '/v1/channels/pending' })]);
+  if (o.status !== 200) return { ok: false, why: errOf(o) };
+  const open = (o.json.channels || []).map((x) => ({ peer: x.remote_pubkey, capacitySats: Number(x.capacity), active: Boolean(x.active), public: !x.private }));
+  const pending = ((p.json || {}).pending_open_channels || []).map((x) => ({ peer: x.channel.remote_node_pub, capacitySats: Number(x.channel.capacity) }));
+  return { ok: true, open, pending, publicCapacitySats: open.filter((x) => x.public).reduce((a, x) => a + x.capacitySats, 0) };
+}
