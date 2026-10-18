@@ -16,6 +16,7 @@ import { waitHealthy, seatUnit } from '../src/service.js';
 import { probeCore, probeElectrum, tipsAgree, agreeHeights, TESTNET4_GENESIS, headerHash, testConnection } from '../src/chain-test.js';
 import { quickTunnelName } from '../src/tunnel.js';
 import { configureLnd, lndArgs } from '../src/lnd.js';
+import { configureGateway } from '../src/gateway.js';
 import * as reachKit from '../src/reach.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { createReachCheck } from '../../arena-node/src/reach-check.js';
@@ -109,7 +110,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 60000, height: 156899 }] : [] }),
     broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
   const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
-  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit });
+  const gwKit = { configureGateway };
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit, gwKit });
   const server = http.createServer((q, s) => wizard.handle(q, s));
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   const port = server.address().port;
@@ -199,10 +201,33 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const ln = (await c.post('/api/lightning/status')).json;
   assert.deepEqual([ln.ok, ln.created, ln.network, lndCalls[1].seedLen], [true, true, 'testnet4', 32], 'the wallet from the 32-byte seed');
   assert.equal((await c.post('/api/lightning/connect', { restUrl: 'http://x:1', macaroonHex: 'ab', tlsCertPem: '' })).json.why, 'LND\'s REST address is https');
+  assert.equal((await c.get('/api/state')).json.step, 'lightning', 'LND alone does not finish the step: the gateway (or "later") does');
+  // THE GATEWAY: from the release (faked here), configured for real, a service with the seed's mnemonic, then a federation by invite
+  gwKit.findGatewayd = () => ({ ok: false, why: 'this release carries no gateway for linux-x64 yet (runtime/custody/ is missing)' });
+  assert.equal((await c.post('/api/gateway/setup')).json.noBinary, true);
+  gwKit.findGatewayd = () => ({ ok: true, gatewayd: '/fake/gatewayd' });
+  const gwCalls = [];
+  gwKit.installProgram = async (o) => { gwCalls.push(o); return { ok: true }; };
+  let gwUp = false;
+  const fed = { federationId: 'ee'.repeat(32), name: 'T', balanceMsat: 0 };
+  gwKit.testGateway = async () => (gwUp ? { ok: true, state: 'Running', lightningPubkey: '03' + 'cd'.repeat(32), network: 'testnet4', blockHeight: 156910, federations: gwKit.joined ? [fed] : [] } : { ok: false, why: 'the gateway does not answer yet (ECONNREFUSED)' });
+  gwKit.joinFederation = async ({ invite }) => { gwKit.joined = invite; return { ok: true, federationId: fed.federationId }; };
+  assert.equal((await c.post('/api/gateway/setup')).json.ok, true);
+  assert.equal(gwCalls[0].id, 'gateway');
+  assert.equal(gwCalls[0].args[0], '/fake/gatewayd');
+  assert.ok(gwCalls[0].args.includes(`--lnd-macaroon=${join(home, 'lnd', 'data', 'chain', 'bitcoin', 'testnet4', 'admin.macaroon')}`));
+  assert.equal(gwCalls[0].vars.FM_GATEWAY_MNEMONIC.split(' ').length, 24);
+  assert.equal((await c.post('/api/gateway/status')).json.waiting, true);
+  gwUp = true;
+  assert.equal((await c.post('/api/gateway/status')).json.state, 'Running');
+  const joined = (await c.post('/api/gateway/join', { invite: 'fed1testinvite' })).json;
+  assert.deepEqual([joined.ok, joined.federations[0].name, gwKit.joined], [true, 'T', 'fed1testinvite']);
+  assert.equal((await c.get('/api/state')).json.gateway.passwordFile, undefined, 'the page is not told where the admin password is');
 
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'bond');
   assert.equal(s.lightning.pubkey, '03' + 'cd'.repeat(32));
+  assert.equal(s.gateway.federations[0].name, 'T');
   assert.match(s.wallet.address, /^tb1p/);
   assert.equal((await c.post('/api/finish')).json.ok, false, 'not finished before the bond is posted or deferred');
   const none = (await c.post('/api/bond/check')).json;

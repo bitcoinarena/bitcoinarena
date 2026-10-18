@@ -71,7 +71,25 @@ esac
 
 # 3. the npm dependencies, pinned (pure JavaScript: the same files for every architecture)
 ( cd "$STAGE/packages/arena-node" && npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts \
-    @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 >/dev/null )
+    @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3 >/dev/null )   # bcryptjs: the gateway's admin password hash (gateway.js)
+
+# 3b. THE CUSTODY BINARIES (kanban #471 slice 5): gatewayd of the patched fork 76012ad9119, built on the test host by
+# tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
+# custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
+# wizard says so (gateway.js findGatewayd).
+CUSTODY_TAG=custody-76012ad9
+declare -A GW_SHA=()
+if [[ -n "${GW_SHA[$KEY]:-}" ]]; then
+  GW="gatewayd-$KEY$([ "$OS" = windows ] && echo .exe)"
+  if [ ! -f "$CACHE/$GW" ] || ! echo "${GW_SHA[$KEY]}  $CACHE/$GW" | sha256sum -c --status; then
+    if [ -n "${ARENA_CUSTODY_DIR:-}" ]; then cp "$ARENA_CUSTODY_DIR/$GW" "$CACHE/$GW.part"
+    else gh release download "$CUSTODY_TAG" --repo a tester/bitcoin-arena -p "$GW" -O "$CACHE/$GW.part" --clobber; fi
+    echo "${GW_SHA[$KEY]}  $CACHE/$GW.part" | sha256sum -c --status || { echo "$GW: checksum mismatch" >&2; rm -f "$CACHE/$GW.part"; exit 1; }
+    mv "$CACHE/$GW.part" "$CACHE/$GW"
+  fi
+  mkdir -p "$STAGE/runtime/custody"
+  install -m 0755 "$CACHE/$GW" "$STAGE/runtime/custody/gatewayd$([ "$OS" = windows ] && echo .exe)"
+fi
 
 # 4. the launcher: the installer on the release's own runtime, cloudflared beside it
 if [ "$OS" = windows ]; then
