@@ -117,15 +117,16 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
     let entries = null; try { entries = await entriesAt(h); } catch { entries = null; }
     if (entries) {
-      const ops = new Set(), bonds = new Map();
+      const ops = new Set(), bonds = new Map(), named = new Set();
       for (const e of entries) {
+        for (const g of (e && e.advert && e.advert.guardianOf) || []) named.add(toHex(g.federationId));
         const a = e && e.advert; if (!(a && a.guardianCapable === true && a.guardianEndpoint)) continue;
         const op = String(a.operatorId || toHex(e.pubkey)); ops.add(op); bonds.set(op, (bonds.get(op) || 0n) + BigInt(e.bondSats || 0));
       }
       // THE COHORT (protocol 2026.0.14): the same operators, held to bond_min_guardian, minus those guarding an OPEN federation
       const guarding = guardingOpen ? guardingOpen({ entries, records: held, except: null }) : guardingOpenOf({ entries, held });
       const free = [...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).length;
-      remember(capable, { height: h, operators: ops.size, free });
+      remember(capable, { height: h, operators: ops.size, free, federations: named.size });
     }
     return held;
   }
@@ -137,7 +138,11 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
     let notes = [];
     try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
-    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0, voided: [...voided] });
+    // A FEDERATION EXISTS when this seat holds a record OR the census names one (kanban #495, measured on the test host 2026-10-18: the seven
+    // new seats and the three installer nodes hold no round, so no record - they drew a GENESIS trigger at 156970 on a network with two
+    // federations, and the cohort of ten could never trigger there). guardian_of[] in the bond adverts is the chain's own word for it.
+    const federationExists = held.length > 0 || capable.some((x) => x.federations > 0);
+    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists, voided: [...voided] });
     if (!t.ok) return { ok: false, why: t.why };
     const key = triggerKey(t);
     const h = await tip();

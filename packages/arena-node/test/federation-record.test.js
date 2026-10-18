@@ -351,3 +351,33 @@ test('a guardian with a due notice who stopped before its leave_after is ABANDON
   const onTime = await run(LEAVE);
   assert.deepEqual([onTime.got.gone, onTime.got.signers, onTime.gone[0].kind, onTime.gone[0].sinceHeight], [1, 7, 1, LEAVE], 'DEPARTED from leave_after');
 });
+
+test('seats that hold no round build and sign the record from their chain\'s census (kanban #495: the new second-host seats held no record, so no seated guardians and no gateway seats)', async () => {
+  const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 21) }));
+  for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x70 + i)]); n.endpoint = `wss://nr-${i}.example`; }
+  const entries = nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xb0 + i), vout: 0, bondSats: 50000n,
+    advert: { operatorId: `nr${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://ng${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }] } }));
+  const asked = [];
+  const seats = nodes.map((n) => federationRecords({
+    round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => null,
+    roster: { censusFor: () => ({ ok: false, why: 'no round' }) }, inviteFor: () => INVITE, networkId: NET,
+    censusAt: async (h) => { asked.push(h); return entries; }, chainTip: async () => 157000,
+    fetcher: async (url) => {
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
+      const u = new URL(url);
+      if (!u.pathname.endsWith('/federation-record')) return new Response('{}', { status: 404 });
+      const hp = u.searchParams.get('height');
+      const body = await j.mySignature(u.searchParams.get('federation'), hp === null ? null : Number(hp), u.searchParams.get('reserve'));
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
+    },
+  }));
+  assert.match(seats[0].censusNow().why, /holds no round/, 'before: no census at all');
+  for (const s of seats) await s.gatherAll(inviteFederationId);           // each reads its chain's census ahead
+  const now = seats[0].censusNow();
+  assert.deepEqual([now.ok, now.height, now.entries.length], [true, 156990, 7], 'the census 6 below the tip, at a multiple of 6: 156990');
+  assert.ok(asked.every((h) => h === 156990), `every seat names the same height: ${[...new Set(asked)]}`);
+  const got = await seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers], [true, 'OPEN', 7], got.why);
+  assert.equal(seats[0].list()[0].height, 156990);
+  assert.equal(seats[0].seatedGuardians(toHex(FED)).length, 7, 'its seated guardians, for the gateway seats');
+});
