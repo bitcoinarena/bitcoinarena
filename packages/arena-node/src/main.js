@@ -349,6 +349,14 @@ if (url) {
     },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
     chainTip: async () => Number(await call('getblockcount')),
+    // A RAW TRANSACTION CHECKED, THEN BROADCAST (kanban #471 part D, the owner's bond withdrawal): testmempoolaccept first - a bridge
+    // in Electrum mode serves none, and its Electrum server refuses an invalid transaction itself
+    chainSend: async (hex) => {
+      let r = null;
+      try { [r] = await call('testmempoolaccept', [[hex]]); } catch (e) { if (!/not served in Electrum mode/.test(e.message)) throw e; }
+      if (r && !r.allowed) throw new Error(`the mempool refuses it: ${r['reject-reason']}`);
+      return String(await call('sendrawtransaction', [hex]));
+    },
     // THE CHAIN'S MEDIAN TIME AT A HEIGHT (kanban #397 slice 6): a funding signal's active window, read alike by every seat
     blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
