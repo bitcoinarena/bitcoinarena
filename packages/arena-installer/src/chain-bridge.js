@@ -175,6 +175,8 @@ export function createBridge({ electrum, home, esplora = ESPLORA_TESTNET4, sessi
       if (verbosity !== 0) throw Object.assign(new Error('the chain bridge serves raw blocks only (verbosity 0)'), { code: -32601 });
       return (await rawBlock(hash)).toString('hex');
     },
+    // THE OWNER'S BOND WITHDRAWAL (kanban #471 part D) is sent through the Electrum server, which refuses an invalid one itself
+    sendrawtransaction: async ([hex]) => String(await ask('blockchain.transaction.broadcast', [String(hex)])),
     getrawtransaction: async ([txid, verbose = false]) => {
       if (verbose) throw Object.assign(new Error('the chain bridge serves raw transactions only'), { code: -32601 });
       const hex = await ask('blockchain.transaction.get', [txid, false]);

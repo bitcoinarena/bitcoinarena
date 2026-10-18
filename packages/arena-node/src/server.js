@@ -32,6 +32,8 @@ import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/t
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
+import { ownBondOf, lockAt, withdrawSpend } from './bond-withdraw.js';
+import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
@@ -460,6 +462,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
+  // THE CHAIN'S MEMPOOL (kanban #471 part D): a raw transaction checked and broadcast by this seat's bitcoind (main.js chainSend)
+  chainSend = null,
   // THE CHAIN'S MEDIAN TIME AT A HEIGHT, in ms (kanban #397 slice 6: a funding signal's 432-block active window), as the launcher reads it
   blockTimeAt = null,
   expiry = {},
@@ -2977,6 +2981,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       outcome: decided, entries } };
   };
   const reachCheck = createReachCheck({ allowPrivate: process.env.ARENA_REACH_ALLOW_PRIVATE === '1' });
+  // THIS NODE'S BOND in the newest census this seat holds (bond-withdraw.js): { bond, network } or null
+  const ownBondNow = () => {
+    const me = toHex(round.pubkey);
+    for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
+      let census; try { census = roster.censusFor(new Uint8Array(r.round_id)); } catch { continue; }
+      if (!census || !census.ok) continue;
+      const bond = ownBondOf(census.entries || [], me);
+      if (!bond) continue;
+      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+      return { bond, network: networkOf(c.networkId) };
+    }
+    return null;
+  };
   const nostr = nostrResults({ db: round.db, secret: round.identity.secret, resultOf: nostrResultOf, relays: nostrPublish,
     settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', perMinute: nostrPerMinute, tickMs: nostrTickMs });
   nostr.start();
@@ -4218,6 +4235,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // THIS NODE'S STANDING (§5A.10B, kanban #310): own weight, brackets served, headroom - from the censuses of the newest rounds
         // held, and the warnings an operator needs before the floor passes the bond
+        // THE NODE'S BOND AND ITS LOCK (kanban #471 part D; the owner 2026-10-18: "withdrawing the bond after the lock (communicating the
+        // lock time clearly)"): the bond the newest census this seat holds names for this node, the maturity height, the blocks to it
+        // and an estimated date, and whether it can be withdrawn now. Public, as /owner/standing is: the chain says it all anyway.
+        if (req.method === 'GET' && url.pathname === '/owner/bond') {
+          const found = ownBondNow();
+          let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
+          if (!found) return answer(200, { node: toHex(round.pubkey), bond: null, tip, says: 'no census this seat holds names a bond of this node' });
+          return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip),
+            says: 'a withdrawn bond takes this node out of the census from the next census height on' });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/standing') {
           const me = toHex(round.pubkey);
           const rows = [];
@@ -4487,6 +4514,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
+        // THE BOND WITHDRAWN (kanban #471 part D), signed by the owner: { address, feeRate } - from its maturity height on, the whole
+        // bond to that address on its recovery leaf, signed by this node's key, checked by the chain's mempool and broadcast
+        if (url.pathname === '/owner/bond-withdraw') {
+          const a = owner.authorize(body, 'bond-withdraw');
+          if (!a.ok) return answer(a.status, a);
+          const found = ownBondNow();
+          if (!found) return answer(409, { ok: false, why: 'no census this seat holds names a bond of this node' });
+          if (typeof chainTip !== 'function' || typeof chainSend !== 'function') return answer(503, { ok: false, why: 'this seat reads no chain to send to' });
+          const tip = Number(await chainTip());
+          const lock = lockAt(found.bond, tip);
+          if (!lock || !lock.withdrawable) return answer(409, { ok: false, why: `the bond is locked until block ${found.bond.maturity}: ${lock ? lock.blocksLeft : '?'} blocks from now, about ${lock ? new Date(lock.estimatedMs).toISOString() : '?'}`, lock });
+          const script = addressScript((body.args || {}).address, HRP_OF[found.network] || 'tb');
+          if (!script) return answer(400, { ok: false, why: `that is not a ${found.network} address` });
+          let spend;
+          try { spend = withdrawSpend({ bond: found.bond, nodeSecret: round.identity.secret, network: found.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
+          catch (e) { return answer(400, { ok: false, why: e.message }); }
+          try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat, fee ${spend.fee})`); return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee }); }
+          catch (e) { return answer(400, { ok: false, why: e.message }); }
+        }
         if (url.pathname === '/owner/login') {
           const r = owner.authorize(body, 'login');
           if (!r.ok) return answer(r.status, r);
