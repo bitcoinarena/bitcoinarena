@@ -84,7 +84,7 @@ declare -A CUSTODY_SHA=(
   [fedimintd:windows-x64]=7e82772ddb18c27948c9f2acf2f6723452c76c0f1aa014ec2c8b4cb715736faf
   [fedimint-cli:windows-x64]=55ff1133c2aa8d80873234c1b7310d22403b7d590be1376b0b8181d24c7dbbb0
 )
-EXE="$([ "$OS" = windows ] && echo .exe)"
+EXE=""; if [ "$OS" = windows ]; then EXE=.exe; fi   # (an assignment from a failing $(...) ends a set -e script: CI run 39128370301)
 for BIN in gatewayd fedimintd fedimint-cli; do
   PIN="${CUSTODY_SHA[$BIN:$KEY]:-}"
   [ -n "$PIN" ] || continue
