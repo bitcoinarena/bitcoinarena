@@ -83,6 +83,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone with them owns the node; without them a lost machine is a lost node.</p>
     <button id="seed-show">Show my 24 words</button>
     <div class="words" id="words"></div>
+    <button id="seed-written" hidden>I have written them down</button>
     <div id="confirm" hidden>
       <p>Now type back these words from your paper:</p>
       <div class="row" id="confirm-inputs"></div>
@@ -169,7 +170,7 @@ async function load() {
     <p>Node key: <code>${esc(sv.identity || '')}</code></p>
     <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>, and on this machine <code>http://127.0.0.1:${st.seatPort}/Dashboard/owner</code> - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
     ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
-    ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it can only be added to, not withdrawn; from that block on, the owner page withdraws it.</p>`
+    ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it cannot be withdrawn; from that block on, the owner page withdraws it.</p>`
       : `<p>No bond yet: send it to <code>${esc(st.wallet ? st.wallet.address : '')}</code> and post it from the owner page. Until then your node is not drawn for rounds.</p>`}`; }
 }
 function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('in-form').hidden = k !== 'install'; $('chain-buttons').hidden = k === 'install';
@@ -217,7 +218,11 @@ $('roles-save').onclick = async () => { const roles = [...document.querySelector
 $('seed-show').onclick = async () => { const r = await post('/api/seed/new'); if (!r.ok) return say('seed-msg', r);
   $('words').innerHTML = r.words.map((w, i) => `<span><b>${i + 1}</b>${esc(w)}</span>`).join(''); $('seed-show').hidden = true;
   $('confirm-inputs').innerHTML = r.positions.map((p) => `<div><label>word ${p}</label><input data-p="${p}" autocomplete="off" spellcheck="false"></div>`).join('');
-  $('confirm').hidden = false; };
+  $('seed-written').hidden = false; $('confirm').hidden = true; };
+// THE WORDS LEAVE THE SCREEN BEFORE THEY ARE ASKED BACK (kanban #471, seen on the wizard's screenshot 06: the 24 words stood beside
+// the three inputs, so the check proved nothing): asked from the paper, not from the page
+$('seed-written').onclick = () => { $('words').innerHTML = ''; $('seed-written').hidden = true; $('confirm').hidden = false;
+  const first = document.querySelector('#confirm-inputs input'); if (first) first.focus(); };
 $('seed-confirm').onclick = async () => { $('words').innerHTML = ''; const answers = {}; for (const i of document.querySelectorAll('#confirm-inputs input')) answers[i.dataset.p] = i.value;
   const r = await post('/api/seed/confirm', { answers }); if (r.ok) return load(); say('seed-msg', r); if (r.wrong) $('seed-show').hidden = false; };
 $('nip07').onclick = async () => { if (!window.nostr) return say('owner-msg', { ok: false, why: 'no Nostr extension in this browser - paste your npub instead' }); $('npub').value = await window.nostr.getPublicKey(); $('om-nostr').checked = true; };
