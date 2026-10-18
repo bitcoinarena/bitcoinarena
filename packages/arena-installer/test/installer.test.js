@@ -375,3 +375,14 @@ test('a new node starts with game / verify and settlement ticked; custody and li
   assert.deepEqual(['verify', 'settlement', 'custody', 'liquidity'].filter((k) => ticked({ roles: [] }, k)), ['verify', 'settlement']);
   assert.deepEqual(['verify', 'settlement', 'custody', 'liquidity'].filter((k) => ticked({ roles: ['custody', 'verify'] }, k)), ['verify', 'custody'], 'a saved choice is shown as saved');
 });
+
+test('the intro (kanban #498): what a node is, one picture, what it earns and needs, then step 1', () => {
+  const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
+  const intro = html.slice(html.indexOf('<section id="s-intro">'), html.indexOf('<section id="s-chain">'));
+  assert.match(intro, /<svg viewBox="0 0 640 230" role="img"/, 'one overview picture');
+  assert.match(intro, /4 %<\/b> of every paid round goes to the nodes, <b>1 % for each service<\/b>/);
+  assert.match(intro, /100 rounds of 1,000 sat → 4,000 sat to the nodes/);
+  for (const need of ['A computer that stays on', 'About 3 GB of disk', 'Home internet', 'A bond of 50,000 sat']) assert.ok(intro.includes(need), need);
+  assert.match(html, /const intro = st\.step === 'chain' && !st\.done\.chain && !introSeen\(\);/, 'shown only before the first step is done');
+  assert.match(html, /\$\('intro-go'\)\.onclick = \(\) => \{ introSkipped = true; try \{ localStorage\.setItem/, '"Set up my node" goes on, remembered where the browser allows');
+});
