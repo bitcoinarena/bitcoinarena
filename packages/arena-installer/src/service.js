@@ -64,8 +64,10 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
  * on so a user unit runs with nobody logged in; without it the units run now and not after a reboot. `sh` runs a command
  * (injectable: the tests start the seat without systemd). Answers { ok, why, ms, boot, linger }.
  */
-export async function installService({ node = process.execPath, release, home, port, bridgePort = null, tunnel = null, boot = true,
-  env = process.env, sh = run, fetcher = fetch, waitMs = 90000 }) {
+export async function installService({ node = process.execPath, release, home, port, bridgePort = null, tunnel = null, tunnelArgs = null, boot = true,
+  env = process.env, sh = run, fetcher = fetch, waitMs = 90000, platform = process.platform }) {
+  if (platform === 'darwin') return installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs });
+  if (platform === 'win32') return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs });
   const dir = unitDir(env);
   mkdirSync(dir, { recursive: true });
   const units = [UNIT];
@@ -81,6 +83,83 @@ export async function installService({ node = process.execPath, release, home, p
   if (boot) await sh('loginctl', ['enable-linger', env.USER || '']);
   const linger = await sh('loginctl', ['show-user', env.USER || '', '-p', 'Linger', '--value']);
   return { ...health, ms: Date.now() - t0, boot, linger: linger.ok ? linger.out.trim() === 'yes' : null };
+}
+
+// MACOS: A LAUNCHD AGENT (kanban #471 slice 4) - ~/Library/LaunchAgents/io.bitcoin-arena.node.plist, the seat from the release with
+// its settings file read by a small shell line (launchd has no EnvironmentFile), kept alive, logged beside the node's home.
+export const LAUNCHD_LABEL = 'io.bitcoin-arena.node';
+const xml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+export function launchdPlist({ node, release, home, port, boot = true }) {
+  const cmd = `set -a; . '${home}/node.env'; set +a; exec '${node}' src/main.js ${port} '${home}/node.db'`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${xml(home)}/node.env. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LAUNCHD_LABEL}</string>
+  <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>${xml(cmd)}</string></array>
+  <key>WorkingDirectory</key><string>${xml(release)}/packages/arena-node</string>
+  <key>RunAtLoad</key><${boot ? 'true' : 'false'}/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>${xml(home)}/node.log</string>
+  <key>StandardErrorPath</key><string>${xml(home)}/node.log</string>
+</dict>
+</plist>
+`;
+}
+
+// WINDOWS: A SCHEDULED TASK (kanban #471 slice 4; ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
+// at logon (or at start-up with the user's password), restarted on failure, running a .cmd that reads node.env and starts the seat.
+export const WINDOWS_TASK = 'Arena node';
+export function windowsLauncher({ node, release, home, port }) {
+  return ['@echo off', 'rem The Arena node (kanban #471), written by the installer: node.env read, then the seat started.',
+    `for /f "usebackq eol=# tokens=1,* delims==" %%a in ("${home}\\node.env") do set "%%a=%%b"`,
+    `cd /d "${release}\\packages\\arena-node"`,
+    `"${node}" src\\main.js ${port} "${home}\\node.db" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
+}
+/** The schtasks arguments that create the task (onlogon: no password is kept; /rl limited: no administrator). */
+export const windowsTaskArgs = ({ launcher }) => ['/create', '/f', '/tn', WINDOWS_TASK, '/sc', 'onlogon', '/rl', 'limited', '/tr', `"${launcher}"`];
+
+/** macOS: the agents written to ~/Library/LaunchAgents and loaded (bootout first: an update or a second run replaces them). */
+async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs }) {
+  const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
+  mkdirSync(dir, { recursive: true });
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
+  const agents = [{ label: LAUNCHD_LABEL, text: launchdPlist({ node, release, home, port, boot }) }];
+  if (tunnelArgs) agents.push({ label: `${LAUNCHD_LABEL}.tunnel`, text: launchdPlist({ node, release, home, port, boot }).replace(`<string>${LAUNCHD_LABEL}</string>`, `<string>${LAUNCHD_LABEL}.tunnel</string>`)
+    .replace(/<key>ProgramArguments<\/key><array>.*?<\/array>/s, `<key>ProgramArguments</key><array>${tunnelArgs.map((a) => `<string>${xml(a)}</string>`).join('')}</array>`)
+    .replace(/node\.log/g, 'tunnel.log') });
+  const t0 = Date.now();
+  for (const a of agents) {
+    const file = join(dir, `${a.label}.plist`);
+    writeFileSync(file, a.text);
+    await sh('launchctl', ['bootout', `gui/${uid}/${a.label}`]);
+    const r = await sh('launchctl', ['bootstrap', `gui/${uid}`, file]);
+    if (!r.ok) return { ok: false, why: `launchctl bootstrap ${a.label} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
+  }
+  const health = await waitHealthy({ port, fetcher, waitMs });
+  return { ...health, ms: Date.now() - t0, boot, linger: true };
+}
+
+/** Windows: the launchers written beside the node's home, the scheduled tasks created and run (at logon), or started once. */
+async function installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs }) {
+  const t0 = Date.now();
+  const tasks = [{ name: WINDOWS_TASK, file: join(home, 'arena-node.cmd'), text: windowsLauncher({ node, release, home, port }) }];
+  if (tunnelArgs) tasks.push({ name: `${WINDOWS_TASK} tunnel`, file: join(home, 'arena-tunnel.cmd'),
+    text: ['@echo off', 'rem The Arena node tunnel (kanban #471), written by the installer.', `${tunnelArgs.map((a) => `"${a}"`).join(' ')} >> "${home}\\tunnel.log" 2>&1`].join('\r\n') + '\r\n' });
+  for (const t of tasks) {
+    writeFileSync(t.file, t.text);
+    if (boot) {
+      const c = await sh('schtasks', windowsTaskArgs({ launcher: t.file }).map((x) => (x === WINDOWS_TASK ? t.name : x)));
+      if (!c.ok) return { ok: false, why: `schtasks /create ${t.name} failed: ${(c.err || c.out).trim().slice(0, 300)}` };
+      await sh('schtasks', ['/run', '/tn', t.name]);
+    } else {
+      await sh('cmd', ['/c', 'start', '""', '/b', t.file]);
+    }
+  }
+  const health = await waitHealthy({ port, fetcher, waitMs });
+  return { ...health, ms: Date.now() - t0, boot, linger: true };
 }
 
 /** Wait until the seat at 127.0.0.1:port answers its identity (33 bytes): { ok, identity (hex), why }. */
