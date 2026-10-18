@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-18",
+  "version": "2026-10-19",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `deploy/doc-site/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
  },
  "servers": [
@@ -3218,6 +3218,147 @@
     }
    }
   },
+  "/gateway-claim": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "This node's gateway claim",
+    "description": "This node stands for a gateway seat of its federation (2026.0.15, spec \u00a723A.9): the claim its custody agent signed with the node key - which federation, where its gateway answers, its Lightning node key, inbound and outbound of its public channels (inbound from outside the federation counted apart), its peg-in, when. The federation's guardians read it, probe the gateway and rank the claims. Measured on seat guardian-1 (2026-10-18 22:20Z): 404 {\"ok\":false,\"why\":\"this node stands for no gateway seat\"}.\n\nAccess: none (the claim is signed by the node key)\n\nReturns: 200 JSON signed gateway claim {node, federationId, gatewayUrl, lightningPubkey, capacitySats, pegInSats, atMs, inboundSats, outboundSats, lightningAddr, outsideInboundSats, signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4305.",
+    "operationId": "get_gateway_claim",
+    "responses": {
+     "200": {
+      "description": "The signed claim; amounts are decimal strings. Minimums on testnet4: inbound 100,000, outbound 100,000, peg-in 50,000 sat (mainnet 250,000 / 250,000 / 2,000,000).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "{ok:false, why:\"this node stands for no gateway seat\"}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/gateway-seating": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A guardian's signed gateway seating",
+    "description": "The gateway seats this guardian signed for a federation and epoch (2026.0.15): at most 2 seated gateways, drawn by ticket from the eligible claims; a seating holds when 7 of the 10 guardians sign the same one. The gateways share a third of the custody pool. Measured on guardian-1, federation 337ae01a, epoch 1089: seats [] (no eligible claim yet).\n\nAccess: none (signed by the guardian)\n\nReturns: 200 JSON {federationId, epoch, seats[], guardian, signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4320.",
+    "operationId": "get_gateway_seating",
+    "parameters": [
+     {
+      "name": "federation",
+      "in": "query",
+      "required": true,
+      "description": "Federation id, 64 hex.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e"
+     },
+     {
+      "name": "epoch",
+      "in": "query",
+      "required": true,
+      "description": "Gateway epoch: block height / 144 (2026.0.15).",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 1089
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{\"federationId\":\"337ae01a\u2026\",\"epoch\":1089,\"seats\":[],\"guardian\":\"2fca1090\u2026\",\"signature\":\"3474e0c8\u2026\"}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This guardian signed none for that federation and epoch.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/gateway-seats": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "This guardian's gateway ranking",
+    "description": "How this guardian ranks its federation's gateway claims in the current epoch: who is seated, how many seats are empty, the ranked candidates and why the others are ineligible (minimums, availability, not serving the federation). Measured on guardian-1 (22:20Z): {\"ok\":true,\"federationId\":\"337ae01a\u2026\",\"epoch\":1089,\"measuredEpoch\":\"whole\",\"seated\":[],\"empty\":2,\"ranked\":[],\"ineligible\":[],\"why\":\"0 of 2 gateway seats filled from 0 eligible operators\",\"gateways\":{}}.\n\nAccess: none\n\nReturns: 200 JSON {ok, federationId, epoch, measuredEpoch, seated[], empty, ranked[], ineligible[], why, gateways{}}; 503 when the view cannot be read; 404 JSON on a node with no guardian\n\nSource: `packages/arena-node/src/server.js` line 4324.",
+    "operationId": "get_gateway_seats",
+    "responses": {
+     "200": {
+      "description": "The ranking; amounts are decimal strings.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "{ok:false, why:\"this node runs no guardian, so it ranks no gateways\"}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "503": {
+      "description": "The view could not be read now.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/gateway/{rest}": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The node's Lightning gateway (passthrough)",
+    "description": "The node's Lightning gateway at the node's public address: /gateway/... is carried byte for byte to the gateway on the same machine (ARENA_GATEWAY_PORT, written by the installer for a custody node). Clients of its federation reach the gateway where its api-addr says (<public address>/gateway/), as /guardian carries the guardian (spec \u00a723A.9).\n\nAccess: none here; the gateway's own admin calls need its own password\n\nReturns: the gateway's own answer, byte for byte; 502 text when the gateway on this machine does not answer; 404 \"no such door\" on a seat without ARENA_GATEWAY_PORT\n\nSource: `packages/arena-node/src/server.js` line 4272.",
+    "operationId": "get_gateway_rest",
+    "parameters": [
+     {
+      "name": "rest",
+      "in": "path",
+      "required": true,
+      "description": "The gateway API path, e.g. v1/info.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The gateway's answer.",
+      "content": {
+       "*/*": {}
+      }
+     },
+     "404": {
+      "description": "This seat runs no gateway (\"no such door\").",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "502": {
+      "description": "The gateway on this machine does not answer.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/guardian": {
    "get": {
     "tags": [
@@ -3881,6 +4022,76 @@
     "x-changes-state": true
    }
   },
+  "/liquidity-claim": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "This node's liquidity provider claim",
+    "description": "This node is a liquidity provider (2026.0.16, the fourth service, spec \u00a723A.10): the claim its provider service signed - its Lightning node, the coins it holds free with one signed proof per coin (the address's key signs the claim message: BIP-322-style compact ECDSA, P2TR by the BIP-86 tweak; at most 50), the channels it gave. Guardians count it only while free + channels given >= 5 x L on testnet4 (10 x L on mainnet), L = the 100,000 sat channel; its weight is that amount. Measured on guardian-1 (22:20Z): 200, freeSats 538022, 1 channel of 100,000, funds with signatures; on guardian-3: 404.\n\nAccess: none (the claim and each coin proof are signed)\n\nReturns: 200 JSON signed liquidity claim {node, lightningPubkey, lightningAddr, freeSats, atMs, depositAddress, channels[{peer, capacitySats}], funds[{txid, vout, address, sats, signature}], signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4311.",
+    "operationId": "get_liquidity_claim",
+    "responses": {
+     "200": {
+      "description": "The signed claim, e.g. {\"node\":\"2fca1090\u2026\",\"lightningPubkey\":\"02bf8349\u2026\",\"lightningAddr\":\"boxy5rnx\u2026.onion:9735\",\"freeSats\":\"538022\",\"atMs\":\"1792362197408\",\"depositAddress\":\"tb1pytcj\u2026\",\"channels\":[{\"peer\":\"0274e261\u2026\",\"capacitySats\":\"100000\"}],\"funds\":[{\"txid\":\"2ff934cf\u2026\",\"vout\":1,\"address\":\"tb1pqszc\u2026\",\"sats\":\"198137\",\"signature\":\"IMADMYz4\u2026\"}],\"signature\":\"\u2026\"}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "{ok:false, why:\"this node is no liquidity provider\"}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/liquidity-seating": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A guardian's signed liquidity seating",
+    "description": "The liquidity providers this guardian signed for a federation and epoch (2026.0.16): every provider whose proven coins meet the minimum, with its weight. A new node's inbound channels are drawn from them (at most 2 providers per node, each once); the liquidity pool (1 % of each round) is split by weight. Measured on guardian-1, federation 337ae01a, epoch 1089: providers 2fca1090 (600000) and f4bfe620 (800000).\n\nAccess: none (signed by the guardian)\n\nReturns: 200 JSON {federationId, epoch, providers[{node, weight}], guardian, signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4316.",
+    "operationId": "get_liquidity_seating",
+    "parameters": [
+     {
+      "name": "federation",
+      "in": "query",
+      "required": true,
+      "description": "Federation id, 64 hex.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e"
+     },
+     {
+      "name": "epoch",
+      "in": "query",
+      "required": true,
+      "description": "Gateway epoch: block height / 144 (2026.0.15).",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 1089
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{\"federationId\":\"337ae01a\u2026\",\"epoch\":1089,\"providers\":[{\"node\":\"2fca1090\u2026\",\"weight\":\"600000\"},{\"node\":\"f4bfe620\u2026\",\"weight\":\"800000\"}],\"guardian\":\"2fca1090\u2026\",\"signature\":\"0138fd89\u2026\"}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This guardian signed none for that federation and epoch.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/lock": {
    "post": {
     "tags": [
@@ -3944,7 +4155,7 @@
      "Builders"
     ],
     "summary": "Losers' lock settlement state",
-    "description": "Where the round's settlement of losers' locks stands.\n\nAccess: none\n\nReturns: 200 JSON {state, txid, why, signature, message, madeMs, moved} or {state:NONE}; for a round that takes any federation {state ACCEPTED|REFUSED|SUBMITTING, federations[]}\n\nSource: `packages/arena-node/src/server.js` line 5728.",
+    "description": "Where the round's settlement of losers' locks stands. `moved` is what the settlement paid: `moved.payouts[]` each {kind, pk, sats} - the winners (kind qualifier) and, from 2026.0.16, the four 1 % node pools (game/verify, settlement, custody split guardians \u2154 / gateways \u2153, liquidity providers by weight).\n\nAccess: none\n\nReturns: 200 JSON {state, txid, why, signature, message, madeMs, moved} or {state:NONE}; for a round that takes any federation {state ACCEPTED|REFUSED|SUBMITTING, federations[]}\n\nSource: `packages/arena-node/src/server.js` line 5728.",
     "operationId": "get_lock_settlement",
     "parameters": [
      {
@@ -5385,6 +5596,52 @@
     "x-changes-state": true
    }
   },
+  "/owner/liquidity/new-address": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] New top-up address for the liquidity wallet",
+    "description": "A new top-up address for the liquidity provider's LND wallet (the owner page's \"New address\" button). The node asks its provider service on the same machine, which owns the LND and re-signs its claim once coins arrive.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, address}; 401/403 when not the owner; 501 without a provider service (ARENA_LIQUIDITY_PROVIDER_URL); 502 when the provider service fails\n\nSource: `packages/arena-node/src/server.js` line 4644.",
+    "operationId": "post_owner_liquidity_new_address",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"liquidity/new-address\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, address:\"tb1p\u2026\"}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node runs no liquidity provider service.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "502": {
+      "description": "The provider service did not answer or failed.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/login": {
    "post": {
     "tags": [
@@ -6327,11 +6584,11 @@
      "Operators"
     ],
     "summary": "The release this node runs",
-    "description": "The release this node runs: its VERSION and COMMIT (the release root's files, null when run from a source checkout), the protocol versions it speaks, and how it is updated (kanban #471 part D). Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, version, commit, protocols, update}\n\nSource: `packages/arena-node/src/server.js` line 4248.",
+    "description": "The release this node runs: its VERSION and COMMIT (the release root's files, null when run from a source checkout), the protocol versions it speaks, and how it is updated (kanban #471 part D). Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, version, commit, latest, protocols, update}\n\nSource: `packages/arena-node/src/server.js` line 4248.",
     "operationId": "get_owner_version",
     "responses": {
      "200": {
-      "description": "{node, version (e.g. 0.1.0) or null, commit or null, protocols: [1..13], update: how to update}.",
+      "description": "{node, version (e.g. 0.1.0-rc.17) or null, commit or null, latest {latest, why, checkedMs, newer} from the signed release/latest.json, protocols: [1..16], update: how to update}.",
       "content": {
        "application/json": {}
       }
