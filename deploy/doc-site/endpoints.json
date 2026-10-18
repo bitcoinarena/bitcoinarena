@@ -9579,5 +9579,29 @@
   "changesState": true,
   "needsAuth": "owner",
   "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/version",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {node, version, commit, protocols, update}",
+  "purpose": "The release this node runs: its VERSION and COMMIT (the release root's files, null when run from a source checkout), the protocol versions it speaks, and how it is updated (kanban #471 part D). Public, as /owner/standing.",
+  "audience": "operator/monitoring",
+  "line": 4248,
+  "summary": "The release this node runs",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, version (e.g. 0.1.0) or null, commit or null, protocols: [1..13], update: how to update}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]
