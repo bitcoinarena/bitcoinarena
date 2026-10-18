@@ -196,6 +196,7 @@ async function area() {
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Bond</h2><div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
+    <h2>Release</h2><div class="card" id="release"><p class="sub">reading this node's release…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Dev clients</h2><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
     <h2>Developer donation split</h2><div id="ballots"><div class="card"><p class="sub">reading the developers' ballots…</p></div></div>
@@ -234,6 +235,7 @@ async function area() {
   ballotsPanel();
   standingPanel();
   bondPanel();
+  releasePanel();
   leavePanel();
   storePanel();
   networkPanel();
@@ -260,6 +262,18 @@ async function area() {
 // THE BOND AND ITS LOCK (kanban #471 part D; the owner 2026-10-18: "withdrawing the bond after the lock (communicating the lock time
 // clearly)"): the bond the census names, locked until its maturity block - the blocks to it and an estimated date - and from that
 // block on, withdrawn to an address the owner names, signed by the owner
+// THE RELEASE THIS NODE RUNS (kanban #471 part D): its version and commit, the protocol versions it speaks, and how it is updated
+async function releasePanel() {
+  let v = null;
+  try { v = await (await fetch(at('/owner/version'), { cache: 'no-store' })).json(); } catch { v = null; }
+  const el = $('release');
+  if (!v) { el.innerHTML = '<p class="sub">This seat does not say its release.</p>'; return; }
+  el.innerHTML = `<div class="row"><span>Version</span><b>${v.version ? esc(v.version) : 'run from a source checkout'}</b></div>
+    ${v.commit ? `<div class="row"><span>Commit</span><b><code>${esc(v.commit.slice(0, 12))}</code></b></div>` : ''}
+    <div class="row"><span>Protocol versions</span><b>${esc((v.protocols || []).join(', '))}</b></div>
+    <p class="sub">To update: ${esc(v.update)}.</p>`;
+}
+
 async function bondPanel() {
   let b = null;
   try { b = await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json(); } catch { b = null; }
