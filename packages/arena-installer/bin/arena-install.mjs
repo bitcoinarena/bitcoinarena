@@ -5,7 +5,7 @@
 //
 // --tunnel     the machine is remote: open a Cloudflare quick tunnel (no account) and print its https link instead
 // --port       the wizard's local port (127.0.0.1 only)
-// --seat-port  the node's port
+// --seat-port  the node's port for connections from outside (8470, kanban #471 ruling 7)
 // --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
@@ -20,8 +20,8 @@ import { openQuickTunnel } from '../src/tunnel.js';
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const port = Number(opt('--port', 7800));
-const seatPort = Number(opt('--seat-port', 7801));
-const bridgePort = Number(opt('--bridge-port', seatPort + 1));
+const seatPort = Number(opt('--seat-port', 8470));
+const bridgePort = Number(opt('--bridge-port', 8471));
 const home = resolve(opt('--home', defaultHome()));
 const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const state = nodeState(home);
