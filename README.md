@@ -1,5 +1,9 @@
 # Bitcoin Arena
 
+> **⬇ Run a node: [download the latest release](https://github.com/a tester/bitcoin-arena/releases/latest)** (testnet4):
+> Windows `ArenaNodeSetup-*.exe` · macOS `ArenaNode-*.dmg` · Linux `arena-node_*.deb` · or the plain archives.
+> All releases: [Releases](https://github.com/a tester/bitcoin-arena/releases). Guide: [docs.bitcoin-arena.io](https://docs.bitcoin-arena.io/#run).
+
 A real-time 3D browser game where the **live Bitcoin price chart is the battlefield** and **real
 unconfirmed mempool transactions are your cargo**.
 
