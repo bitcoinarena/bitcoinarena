@@ -30,8 +30,24 @@ const CHUNK = 80;
 /** Testnet4's blocks, for saying when a height is reached: ten minutes each (often faster: the date is an estimate, the height is the rule). */
 export const BLOCK_MS = 600000;
 
+/**
+ * THE BLOCKS A BOND MAY WAIT TO CONFIRM. A bond counts in the census only when its maturity is at least its confirmation height plus the
+ * network's offset (bond-script.js); the protocol's own default leaves 6 blocks for that. Measured on testnet4 2026-10-19: seven bonds
+ * posted while an empty-block bot held the chain confirmed 23 blocks after they were built, T2's four 14 blocks after - all eleven locked
+ * and never counted; two installer bonds counted with no block to spare. A day of slack (the lock a day longer) covers a stalled chain or a
+ * full mempool.
+ */
+export const BOND_SLACK_BLOCKS = 144;
+const maturityAfter = (tip) => maturityHeightFor(tip, NETWORK, { slackBlocks: BOND_SLACK_BLOCKS });
+
+/** A confirmed bond's standing in the census: { counts, short } - short the blocks its maturity misses confirmation + offset by. */
+export function bondCounts({ maturity, confirmedAt, network = NETWORK }) {
+  const want = confirmedAt + BOND_MATURITY_OFFSET[network];
+  return { counts: maturity >= want, short: Math.max(0, want - maturity) };
+}
+
 /** The lock, said plainly: the maturity height for a bond confirmed after `tip`, the blocks until then and an estimated date. */
-export function lockOf(tip, { nowMs = Date.now(), maturity = maturityHeightFor(tip, NETWORK) } = {}) {
+export function lockOf(tip, { nowMs = Date.now(), maturity = maturityAfter(tip) } = {}) {
   const blocks = Math.max(0, maturity - tip);
   return { maturity, blocks, offset: BOND_MATURITY_OFFSET[NETWORK], estimatedMs: nowMs + blocks * BLOCK_MS };
 }
@@ -101,7 +117,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   if (oldBond && !(tip >= oldBond.maturity)) throw new Error(`the bond is locked until block ${oldBond.maturity}: ${oldBond.maturity - tip} blocks from now`);
   if (!coins.length && !oldBond) throw new Error('the wallet holds no coins yet');
   const nodeKey = schnorr.getPublicKey(nodeSecret);
-  const maturity = maturityHeightFor(tip, NETWORK);
+  const maturity = maturityAfter(tip);
   const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs });
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));

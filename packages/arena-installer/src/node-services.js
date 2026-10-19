@@ -22,6 +22,7 @@ import { lndRest } from './lnd.js';
 import { testGateway } from './gateway.js';
 import { quickTunnelUrl } from './reach.js';
 import { parseConf, unknownKeys } from '../../arena-node/src/arena-conf.js';
+import { bondCounts } from './bond.js';
 
 /** Every service an installed node can have, in start order. */
 export const SERVICES = Object.freeze([
@@ -452,7 +453,11 @@ export async function doctor({ home, platform = process.platform, env = process.
   else {
     try {
       const st = await (await fetcher(`${esplora}/tx/${bond.txid}/status`, { signal: AbortSignal.timeout(10000) })).json();
-      add('Bond', st.confirmed ? true : null, st.confirmed ? `${bond.txid.slice(0, 16)}… confirmed in block ${st.block_height}` : `${bond.txid.slice(0, 16)}… not confirmed yet`);
+      // A BOND CONFIRMED TOO LATE NEVER COUNTS (bond.js BOND_SLACK_BLOCKS): its maturity is short of its confirmation plus the offset
+      const late = st.confirmed && Number.isInteger(bond.maturity) ? bondCounts({ maturity: bond.maturity, confirmedAt: st.block_height }) : { counts: true };
+      if (!late.counts) add('Bond', false, `${bond.txid.slice(0, 16)}… confirmed in block ${st.block_height}, too late: its maturity ${bond.maturity} is ${late.short} block(s) short of that plus the lock, so the census never counts it`,
+        `post a new bond: arena-install (the bond step); this one is locked until block ${bond.maturity}`);
+      else add('Bond', st.confirmed ? true : null, st.confirmed ? `${bond.txid.slice(0, 16)}… confirmed in block ${st.block_height}` : `${bond.txid.slice(0, 16)}… not confirmed yet`);
     } catch (e) { add('Bond', null, `${bond.txid.slice(0, 16)}…: the explorer did not answer (${e.message})`); }
   }
   // the release

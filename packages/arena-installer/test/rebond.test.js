@@ -38,7 +38,7 @@ test('the posted bond and the wallet\'s coins become a larger bond: planned, the
   const plan = await rebond({ state, bondSats: 53500, chainKit });
   assert.equal(plan.ok, true);
   assert.equal(sent.length, 0, 'the plan sends nothing');
-  assert.deepEqual([plan.plan.bondSats, plan.plan.maturity, plan.plan.from.sats], ['53500', 157057, '50000']);
+  assert.deepEqual([plan.plan.bondSats, plan.plan.maturity, plan.plan.from.sats], ['53500', 157195, '50000']);
 
   const r = await rebond({ state, bondSats: 53500, chainKit, post: true });
   assert.equal(r.ok, true);
@@ -51,9 +51,9 @@ test('the posted bond and the wallet\'s coins become a larger bond: planned, the
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const bondTx = parseTransaction(fromHex(sent[1]));
   assert.equal(bondTx.outputs[0].value, 53500n);
-  assert.equal(toHex(bondTx.outputs[0].script), '5120' + toHex(bondKeyAt(nodeKey, 157057).outputKey), 'the new bond, at the new maturity');
+  assert.equal(toHex(bondTx.outputs[0].script), '5120' + toHex(bondKeyAt(nodeKey, 157195).outputKey), 'the new bond, at the new maturity');
   assert.equal(toHex(advertInTransaction(fromHex(sent[1])).nodePubkey), toHex(nodeKey));
   const after = state.read().bond;
-  assert.deepEqual([after.txid, after.sats, after.maturity, after.replaced.txid], [r.bond.txid, '53500', 157057, '77'.repeat(32)], 'the new bond recorded');
+  assert.deepEqual([after.txid, after.sats, after.maturity, after.replaced.txid], [r.bond.txid, '53500', 157195, '77'.repeat(32)], 'the new bond recorded');
   assert.equal(walletOf(seed).address.startsWith('tb1p'), true);
 });
