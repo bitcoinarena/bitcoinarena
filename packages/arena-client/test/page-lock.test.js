@@ -968,7 +968,7 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called only inside a Withdraw press: the lobby's Withdraw action, and
   // Settings' Withdraw button with its round tabs (GROSS-INVOICE-2053) - never on a timer (above).
   const fromWallet = [...page.matchAll(/BLWPCLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
-  const settingsAt = page.indexOf("document.getElementById('blwp-wd-go').onclick = async () => {");
+  const settingsAt = page.indexOf("document.getElementById('arena-wd-go').onclick = async () => {");
   const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
   // AND A ZAP OR A TIP: the zap box's pay(), reached only from its Zap press - one call, inside it
   const zapPayAt = page.indexOf('async function pay(invoice) {');

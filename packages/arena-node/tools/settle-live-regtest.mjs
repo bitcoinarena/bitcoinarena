@@ -245,7 +245,7 @@ const pageReady = async (b) => {
 // the federation and even a fresh tab collected nothing, with no console line): the kept
 // collect records, the tab's storage keys, BLWP_COLLECT, and the harness's own save probe.
 const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, owed: ${OWED},
-  settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+  settled: (document.getElementById('arena-settled') || {}).textContent || '',
   collects: (() => { try { return BLWPCLIENT.savedCollects(window.sessionStorage).map((r) => ({ round: r.roundIdHex.slice(0, 12),
     locks: BLWPCLIENT.roundLocks(r.round), lock: !!r.stakeLock, done: !!r.done })); } catch (e) { return 'savedCollects threw: ' + e.message; } })(),
   keys: (() => { try { return Object.keys(window.sessionStorage); } catch (e) { return e.message; } })(),
@@ -289,10 +289,10 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
     return { b };
   };
   const federation = async () => ({ payoutHeld: payoutAt ? await held(payoutAt) : null, stakeLockHeld: await held(p.stake.outpoint) });
-  const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
-    withdrawLine: (document.getElementById('blwp-withdraw') || {}).textContent || '',
-    withdrawOffered: (document.getElementById('blwp-withdraw-go') || { style: {} }).style.display !== 'none',
-    onScreen: (() => { const el = document.getElementById('blwp-settled'); if (!el) return null; const r = el.getBoundingClientRect();
+  const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('arena-settled') || {}).textContent || '',
+    withdrawLine: (document.getElementById('arena-wallet-withdraw') || {}).textContent || '',
+    withdrawOffered: (document.getElementById('arena-withdraw-go') || { style: {} }).style.display !== 'none',
+    onScreen: (() => { const el = document.getElementById('arena-settled'); if (!el) return null; const r = el.getBoundingClientRect();
       const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
       return { w: Math.round(r.width), h: Math.round(r.height), onTop: !!hit && (hit === el || el.contains(hit)) }; })(),
   }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}'));
@@ -371,8 +371,8 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
   const desktop = mkdtempSync(join(tmpdir(), 'settle-live-desktop-'));
   const phone = mkdtempSync(join(tmpdir(), 'settle-live-phone-'));
   const federation = async () => ({ payoutHeld: payoutAt ? await held(payoutAt) : null, stakeLockHeld: await held(p.stake.outpoint) });
-  const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
-    withdrawLine: (document.getElementById('blwp-withdraw') || {}).textContent || '',
+  const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('arena-settled') || {}).textContent || '',
+    withdrawLine: (document.getElementById('arena-wallet-withdraw') || {}).textContent || '',
     forUnity: window.BLWP_WITHDRAW_AVAILABLE ? window.BLWP_WITHDRAW_AVAILABLE() : null,
     kept: Object.keys(window.localStorage).filter((k) => k.startsWith('arena.collect.')).length,
     step: window.BLWP_WITHDRAW_STEP || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((x) => JSON.parse(x || '{}'));
@@ -709,7 +709,7 @@ async function round(stakeMsat) {
     }
     // The Node path's values from the one mining pass, when there is no tab (the page's own code, from Node).
     let nodePath = null;
-    const refundView = (t) => t.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+    const refundView = (t) => t.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('arena-settled') || {}).textContent || '',
       withdrawable: String(window.BLWP_WITHDRAWABLE ?? '') }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}')).catch((e) => ({ unread: e.message }));
 
     if (bare) {
@@ -758,7 +758,7 @@ async function round(stakeMsat) {
           'lookupinvoice', made.r_hash])).so || '{}') : {};
         const shot = `${P}/refused-tab-refund.png`;
         await tab.shot(shot);
-        const line = await tab.evaluate(`[(document.getElementById('blwp-settled') || {}).textContent, (document.getElementById('blwp-withdraw') || {}).textContent].join(' | ')`).catch(() => '');
+        const line = await tab.evaluate(`[(document.getElementById('arena-settled') || {}).textContent, (document.getElementById('arena-wallet-withdraw') || {}).textContent].join(' | ')`).catch(() => '');
         out({ round: `${stakeMsat / 1000n} sat`, check: 'the refused player\'s own tab, on screen',
           beforeExpiry: tabEarly && { owed: tabEarly.owed, settled: tabEarly.settled },
           mined: { chainBefore: chainAt, expiration: exp, guardiansCountAfter: counts, err: mined.err ? mined.err.message : null },

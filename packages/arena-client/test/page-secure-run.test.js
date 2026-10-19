@@ -24,7 +24,7 @@ test('a DELIVERED run: asked until two nodes hold all of it, then "safe"', async
   const p = page([{ safe: false, holders: ['https://n1'], why: '1 of the 2' }, { safe: false, holders: ['https://n1'] }, { safe: true, holders: ['https://n1', 'https://n2'] }]);
   const got = await p.window.BLWP_SECURE_RUN('DELIVERED', run, { everyMs: 0 });
   assert.deepEqual([got.safe, p.asked.length, p.asked[0].finalTick, p.asked[0].nodes.length], [true, 3, 4920, 3]);
-  assert.match(p.els.get('blwp-securing').textContent, /Your run is safe: 2 signer nodes hold all of it/);
+  assert.match(p.els.get('arena-securing').textContent, /Your run is safe: 2 signer nodes hold all of it/);
 });
 
 test('not delivered: not gated; still unsafe after its tries: the line stays and says why', async () => {
@@ -33,5 +33,5 @@ test('not delivered: not gated; still unsafe after its tries: the line stays and
   assert.equal(p.asked.length, 0);
   const got = await p.window.BLWP_SECURE_RUN('DELIVERED', run, { tries: 2, everyMs: 0 });
   assert.equal(got.safe, false);
-  assert.match(p.els.get('blwp-securing').textContent, /not yet held by two signer nodes - keep this tab open \(0 of the 2/);
+  assert.match(p.els.get('arena-securing').textContent, /not yet held by two signer nodes - keep this tab open \(0 of the 2/);
 });

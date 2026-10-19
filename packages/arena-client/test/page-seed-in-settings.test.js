@@ -36,9 +36,9 @@ test('a Nostr login shows no words after its reload', () => {
 });
 
 test('Settings keeps the 24 words and their check; the lobby\'s backup line leads there', () => {
-  assert.match(HTML, /<button id="blwp-phrase-show"[^>]*>Show seed phrase<\/button>/);
-  assert.ok(HTML.includes('id="blwp-verify-start"'), 'the check of the words');
-  assert.ok(HTML.includes("document.getElementById('blwp-backup-cta').addEventListener('click'"), 'the lobby line opens Settings on the words');
+  assert.match(HTML, /<button id="arena-phrase-show"[^>]*>Show seed phrase<\/button>/);
+  assert.ok(HTML.includes('id="arena-verify-start"'), 'the check of the words');
+  assert.ok(HTML.includes("document.getElementById('arena-backup-cta').addEventListener('click'"), 'the lobby line opens Settings on the words');
 });
 
 // (2026-10-17: "when it says back up now and the modal opens there is space for a message explaining why user needs
@@ -46,9 +46,9 @@ test('Settings keeps the 24 words and their check; the lobby\'s backup line lead
 test('the seed modal says why the words must be written down, above them', async () => {
   const { readFileSync } = await import('node:fs');
   const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
-  const box = HTML.slice(HTML.indexOf('<div id="blwp-seed-words">'), HTML.indexOf('<div id="blwp-verify-step"'));
-  assert.ok(box.indexOf('id="blwp-seed-why"') > box.indexOf('<h3>Your seed phrase</h3>') && box.indexOf('id="blwp-seed-why"') < box.indexOf('id="blwp-phrase"'));
+  const box = HTML.slice(HTML.indexOf('<div id="arena-seed-words">'), HTML.indexOf('<div id="arena-verify-step"'));
+  assert.ok(box.indexOf('id="arena-seed-why"') > box.indexOf('<h3>Your seed phrase</h3>') && box.indexOf('id="arena-seed-why"') < box.indexOf('id="arena-phrase"'));
   assert.match(box, /These 24 words are your wallet\.<\/b> Your sats are kept only in this browser/);
   assert.match(box, /Never share them: whoever has them can take your sats\./);
-  assert.match(HTML, /@media \(max-width: 420px\) \{ #blwp-seed-modal \.seed-why \{ font-size: 12\.5px;/);
+  assert.match(HTML, /@media \(max-width: 420px\) \{ #arena-seed-modal \.seed-why \{ font-size: 12\.5px;/);
 });

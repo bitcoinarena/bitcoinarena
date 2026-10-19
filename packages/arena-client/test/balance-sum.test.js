@@ -61,7 +61,7 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
     append(...c) { this.children.push(...c); }, addEventListener(k, f) { this.listeners[k] = f; }, contains: () => false,
     set textContent(v) { this._t = v; this.children = []; }, get textContent() { return this._t + this.children.map((c) => c.textContent).join(' | '); } }; return e; };
   const split = mk('div'); split.style.display = 'none';
-  const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#blwp-lobby-balance': mk('div'), '#blwp-set-wallet .bal-grid': mk('div') };
+  const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#arena-lobby-balance': mk('div'), '#arena-set-wallet .bal-grid': mk('div') };
   const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
   const window = { BLWP_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
     ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };

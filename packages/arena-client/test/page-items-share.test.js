@@ -16,25 +16,25 @@ const html = readFileSync(PAGE, 'utf8');
 
 // the owner ~13:40Z: "Advanced settings muss ein eigener Menüpunkt sein ganz unten und dann geht ein neuer Screen auf"
 test('Advanced settings is the last menu item of Settings and opens a screen of its own: the donation dropdown and the in-game share 40 .. 0 %', () => {
-  const settings = html.slice(html.indexOf('<div id="blwp-settings"'), html.indexOf('  <script>\n  // SETTINGS OPENS ON THE FIRST CLICK'));
-  const screenAt = settings.indexOf('<div id="blwp-settings-advanced"');
+  const settings = html.slice(html.indexOf('<div id="arena-settings"'), html.indexOf('  <script>\n  // SETTINGS OPENS ON THE FIRST CLICK'));
+  const screenAt = settings.indexOf('<div id="arena-settings-advanced"');
   assert.ok(screenAt > 0, 'the Advanced screen');
   const main = settings.slice(0, screenAt), screen = settings.slice(screenAt);
   const cards = [...main.matchAll(/<section class="settings-card[^"]*" id="([^"]+)"/g)].map((m) => m[1]);
-  assert.equal(cards.at(-1), 'blwp-set-advanced-item', `the menu: ${cards.join(', ')}`);
-  assert.match(main.slice(main.indexOf('id="blwp-set-advanced-item"')), /<button id="blwp-advanced-go" type="button" class="menu-row">Advanced settings/);
-  assert.ok(!/<select/.test(main.slice(main.indexOf('id="blwp-set-advanced-item"'))), 'no select on the menu item');
+  assert.equal(cards.at(-1), 'arena-set-advanced-item', `the menu: ${cards.join(', ')}`);
+  assert.match(main.slice(main.indexOf('id="arena-set-advanced-item"')), /<button id="arena-advanced-go" type="button" class="menu-row">Advanced settings/);
+  assert.ok(!/<select/.test(main.slice(main.indexOf('id="arena-set-advanced-item"'))), 'no select on the menu item');
   assert.ok(!/blwp-donation-select/.test(main), 'the donation dropdown is on the Advanced screen only');
   assert.match(screen, /style="display:none"/);
-  assert.match(screen, /<h2 id="blwp-advanced-title">ADVANCED SETTINGS<\/h2><button id="blwp-advanced-back" type="button">/);
+  assert.match(screen, /<h2 id="arena-advanced-title">ADVANCED SETTINGS<\/h2><button id="arena-advanced-back" type="button">/);
   assert.match(screen, /<select id="blwp-donation-select"/);
   const share = screen.slice(screen.indexOf('<select id="arena-items-share-select"'), screen.indexOf('</select>', screen.indexOf('arena-items-share-select')));
   assert.deepEqual([...share.matchAll(/<option value="(\d+)"( selected)?>(\d+)%<\/option>/g)].map((m) => [Number(m[1]), !!m[2]]),
     [[40, true], [30, false], [20, false], [10, false], [0, false]]);   // the reserves' terms: 40 .. 0 %
   // the menu item opens the screen, Back and Settings' Close hide it
-  assert.match(html, /getElementById\('blwp-advanced-go'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('blwp-settings-advanced'\)\.style\.display = '';/);
-  assert.match(html, /getElementById\('blwp-advanced-back'\)\.addEventListener\('click', \(\) => \{ document\.getElementById\('blwp-settings-advanced'\)\.style\.display = 'none'; \}\);/);
-  assert.match(html, /getElementById\('blwp-settings-close'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('blwp-settings-advanced'\)\.style\.display = 'none';/);
+  assert.match(html, /getElementById\('arena-advanced-go'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('arena-settings-advanced'\)\.style\.display = '';/);
+  assert.match(html, /getElementById\('arena-advanced-back'\)\.addEventListener\('click', \(\) => \{ document\.getElementById\('arena-settings-advanced'\)\.style\.display = 'none'; \}\);/);
+  assert.match(html, /getElementById\('arena-settings-close'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('arena-settings-advanced'\)\.style\.display = 'none';/);
 });
 
 test('the price at the share: 500 sat at the default 50 %, 250 sat at 0 %, kept in this browser; an unknown value is 50 %', () => {

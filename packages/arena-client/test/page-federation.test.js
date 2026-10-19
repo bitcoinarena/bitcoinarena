@@ -24,7 +24,7 @@ const OPEN = slice('    function openMoney(which, say = ', '\n      })();\n    }
 function page(status, extra = {}) {
   const els = {}; const classes = new Set();
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
-  for (const id of ['arena-fed-note', 'blwp-money-why', 'blwp-settings']) el(id);
+  for (const id of ['arena-fed-note', 'arena-money-why', 'arena-settings']) el(id);
   const document = { getElementById: (id) => els[id] || null, body: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: (c) => classes.has(c) } } };
   const { move, wallet, ...fields } = extra;
   // the wallet's own federation (its chip) holds the round's status unless a test names another
@@ -49,8 +49,8 @@ test('CRITICAL: Withdraw and Move only - Deposit refused by name, the note shown
   assert.deepEqual(await p.openMoney('deposit', () => {}), { ok: false, why: federationSays('CRITICAL') });
   assert.deepEqual(await p.openMoney('withdraw', () => {}), { ok: true });
   assert.ok(p.did.includes('withdraw'));
-  const css = slice('    body.arena-fed-draining #blwp-deposit-go', '{ display: none; }');
-  assert.match(css, /body\.arena-fed-critical #blwp-deposit-go, body\.arena-fed-critical #arena-wb-deposit/);
+  const css = slice('    body.arena-fed-draining #arena-deposit-go', '{ display: none; }');
+  assert.match(css, /body\.arena-fed-critical #arena-deposit-go, body\.arena-fed-critical #arena-wb-deposit/);
 });
 
 test('DRAINING closes Deposit only; HALTED closes Withdraw too; OPEN and unverified change nothing', async () => {

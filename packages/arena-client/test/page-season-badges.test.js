@@ -66,7 +66,7 @@ function fakePage() {
   const box = make('div');
   box.querySelector = (sel) => parts[sel] || null;
   box.querySelectorAll = (sel) => (sel === '.days button' ? days : []);
-  const els = { 'arena-season': box, 'blwp-season-go': make('button'), 'arena-wb-season': make('button') };
+  const els = { 'arena-season': box, 'arena-season-go': make('button'), 'arena-wb-season': make('button') };
   const docHandlers = {};
   const document = { getElementById: (id) => els[id] || null, createElement: (t) => make(t), addEventListener: (ev, f) => { docHandlers[ev] = f; } };
   return { document, box, parts, days, els, docHandlers };

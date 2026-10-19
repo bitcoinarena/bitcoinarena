@@ -382,7 +382,7 @@ function showNotedOnThePage({ search, storage }) {
   const el = (id) => (made[id] = made[id] || { textContent: '', classes: new Set(), classList: { add(c) { made[id].classes.add(c); } } });
   pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'location'], src, ' return showNotedDonation();')(
     { getElementById: el }, { sessionStorage: storage, BLWP_CURVE: pageCurve }, SHIPPED, { search });
-  return made['blwp-donation-noted'];
+  return made['arena-donation-noted'];
 }
 
 test('a reload whose round link cannot be reached still shows the donation from the tab\'s notes, and asks the wallet nothing', async () => {

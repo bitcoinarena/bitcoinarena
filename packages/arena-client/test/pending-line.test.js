@@ -16,7 +16,7 @@ const src = html.slice(at, html.indexOf('\n    }\n', at) + 6);
 function page({ answers, done = [] }) {
   const kept = new Map([['arena.pending.r1', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e1', nodes: ['http://a', 'http://b', 'http://c'] })]]);
   const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
-  const els = { 'blwp-bal-pending-when': { textContent: '' }, 'blwp-lobby-pending': { parentNode: { title: '' } } };
+  const els = { 'arena-bal-pending-when': { textContent: '' }, 'arena-lobby-pending': { parentNode: { title: '' } } };
   const window = { BLWP_WALLET_BALANCE: { sats: 10, pending: 0 } };
   const fetch = async (u) => { const a = answers[new URL(u).host]; return a ? { ok: true, json: async () => a } : { ok: false }; };
   // the page's own line functions (3f1e2674 had the page call them; this stub lacked them since)
@@ -32,7 +32,7 @@ test('signed: the majority figure is pending at once, with the window close in U
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 196, 'the pending is not the majority figure');
   assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 196);
-  assert.equal(p.els['blwp-bal-pending-when'].textContent, 'window closes 12:11:22 UTC');
+  assert.equal(p.els['arena-bal-pending-when'].textContent, 'window closes 12:11:22 UTC');
 });
 
 test('past the close the line says the window closed and the payout is on its way (playtest d917975d)', async () => {
@@ -41,19 +41,19 @@ test('past the close the line says the window closed and the payout is on its wa
   const p = page({ answers: { a: closed, b: closed } });
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 192);
-  assert.equal(p.els['blwp-bal-pending-when'].textContent, `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`);
+  assert.equal(p.els['arena-bal-pending-when'].textContent, `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`);
   // AND NOT "PAYING OUT" FOREVER (MF 18, 3f1e2674): long past the close it is "not paid yet"
   const old = signed('192000', { windowCloseMs: String(Date.UTC(2026, 9, 3, 6, 43, 21)) });
   const q = page({ answers: { a: old, b: old } });
   await q.go();
-  assert.match(q.els['blwp-bal-pending-when'].textContent, /^window closed 06:43:21 UTC \u00b7 not paid yet/);
+  assert.match(q.els['arena-bal-pending-when'].textContent, /^window closed 06:43:21 UTC \u00b7 not paid yet/);
 });
 
 test('while other results still arrive the figure is marked provisional', async () => {
   const p = page({ answers: { a: signed('98000', { provisional: true }), b: signed('98000', { provisional: true }) } });
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 98);
-  assert.match(p.els['blwp-bal-pending-when'].textContent, /provisional/);
+  assert.match(p.els['arena-bal-pending-when'].textContent, /provisional/);
 });
 
 test('a result that becomes invalid takes the line away: no figure, or 0, is no pending', async () => {
@@ -61,7 +61,7 @@ test('a result that becomes invalid takes the line away: no figure, or 0, is no 
     const p = page({ answers });
     await p.go();
     assert.equal(p.window.BLWP_PENDING_SATS, 0, `a pending stayed: ${JSON.stringify(answers)}`);
-    assert.equal(p.els['blwp-bal-pending-when'].textContent, '');
+    assert.equal(p.els['arena-bal-pending-when'].textContent, '');
   }
 });
 
@@ -82,7 +82,7 @@ test('a round the nodes report settled - PROVISIONALLY_FINAL, no pending amount 
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a settled round left a pending amount');
   assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 0);
-  assert.equal(p.els['blwp-bal-pending-when'].textContent, '', 'a settled round left its window line');
+  assert.equal(p.els['arena-bal-pending-when'].textContent, '', 'a settled round left its window line');
   const live = page({ answers: { a: signed('196000', { state: 'PROVISIONALLY_FINAL' }), b: signed('196000', { state: 'PROVISIONALLY_FINAL' }), c: settled } });
   await live.go();
   assert.equal(live.window.BLWP_PENDING_SATS, 196);
@@ -130,7 +130,7 @@ test('four seats VOID with a refund, three still PROVISIONALLY_FINAL with winnin
   p.kept.set('arena.pending.r1', JSON.stringify(note));
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a refund or a minority figure was shown as pending winnings');
-  assert.equal(p.els['blwp-bal-pending-when'].textContent, '');
+  assert.equal(p.els['arena-bal-pending-when'].textContent, '');
 });
 
 // ONE LOOK AT A TIME, AND A SETTLED ROUND LESS OFTEN (2026-10-16: "Lower the amount of concurrent connections and network

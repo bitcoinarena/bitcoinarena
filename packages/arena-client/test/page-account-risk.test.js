@@ -13,8 +13,8 @@ const section = HTML.slice(HTML.indexOf('<section class="settings-card" id="aren
 test('both delete buttons are red danger buttons', () => {
   assert.match(section, /<button id="arena-acct-delete" type="button" class="danger">/);
   assert.match(section, /<button id="arena-acct-go" type="button" class="primary danger" disabled>/);
-  assert.match(HTML, /#blwp-settings button\.danger \{ color: #ff6b6b;/);
-  assert.match(HTML, /#blwp-settings button\.danger\.primary \{ color: #fff; background: #c62828;/);
+  assert.match(HTML, /#arena-settings button\.danger \{ color: #ff6b6b;/);
+  assert.match(HTML, /#arena-settings button\.danger\.primary \{ color: #fff; background: #c62828;/);
 });
 
 test('the section says in red, before any click, that the money is lost without the words or the key', () => {
