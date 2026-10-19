@@ -12,7 +12,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const HTML = readFileSync(PAGE, 'utf8');
 
 test('the strip holds "← Games", shown for a chosen game, never over a game\'s own client', () => {
-  const strip = HTML.slice(HTML.indexOf('  <div id="blwp-money">'), HTML.indexOf("<button id=\"blwp-settings-go\""));
+  const strip = HTML.slice(HTML.indexOf('  <div id="arena-money">'), HTML.indexOf("<button id=\"arena-settings-go\""));
   // it says Arena, as every way back does
   assert.match(strip, /<button id="arena-games-back" type="button"[^>]*>.*&larr;.*Arena<\/span><\/button>/);
   assert.doesNotMatch(HTML, /\\u2190 Games|&larr; Games|← Games<\/button>/, 'no "← Games" left on the page');

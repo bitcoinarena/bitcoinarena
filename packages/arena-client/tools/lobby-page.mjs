@@ -98,7 +98,7 @@ const STATE = `(() => {
   return JSON.stringify({
     href: location.search.slice(0, 40),
     lobby: f(() => window.BLWP_LOBBY || null),
-    lobbyShown: f(() => { const l = document.getElementById('blwp-lobby'); return !!l && getComputedStyle(l).display !== 'none'; }),
+    lobbyShown: f(() => { const l = document.getElementById('arena-lobby'); return !!l && getComputedStyle(l).display !== 'none'; }),
     round: f(() => (window.BLWP_ROUND ? hex(BLWPCLIENT.roundId(window.BLWP_ROUND)) : null)),
     // The page's BLWP_ENTRY is entryFor's fields - no round id or session key -
     // so the tab is named by its player key and the signer node is found at the nodes.
@@ -106,7 +106,7 @@ const STATE = `(() => {
     unity: f(() => !!window.unityInstance),
     deposit: f(() => window.BLWP_DEPOSIT || null),
     pageError: f(() => (document.getElementById('err') || {}).textContent || null),
-    walletShown: f(() => { const w = document.getElementById('blwp-wallet'); return !!w && getComputedStyle(w).display !== 'none'; }),
+    walletShown: f(() => { const w = document.getElementById('arena-wallet'); return !!w && getComputedStyle(w).display !== 'none'; }),
     chip: f(() => (document.getElementById('blwp-players') || {}).textContent || null),
     net: f(() => { const i = window.unityInstance; const m = (i && i.Module) || window.Module; const n = m && m.blwpNet;
       return n ? { state: n.state || null, error: n.error || null, status: n.client && n.client.status ? n.client.status(n.seen) : null } : null; }),
@@ -163,10 +163,10 @@ try {
     i.value = 'Night Hauler 7'; document.getElementById('blwp-name-save').click(); return true; })()`);
   await wait(300);
   const idNamed = await identity(one);
-  const shownName = await one.evaluate(`(document.querySelector('#blwp-lobby b') || {}).textContent || null`);
+  const shownName = await one.evaluate(`(document.querySelector('#arena-lobby b') || {}).textContent || null`);
   const refusedName = await one.evaluate(`(() => { const i = document.getElementById('blwp-name'); i.value = '<b>x</b>';
     document.getElementById('blwp-name-save').click();
-    return { why: (document.getElementById('blwp-name-why') || {}).textContent || null, nameAfter: (window.BLWP_IDENTITY || {}).name || null }; })()`);
+    return { why: (document.getElementById('arena-name-why') || {}).textContent || null, nameAfter: (window.BLWP_IDENTITY || {}).name || null }; })()`);
   await one.evaluate('location.reload(); true');
   await wait(1500);
   await until(one, 60000, (x) => x.lobbyShown === true && Array.isArray(x.lobby) && x.lobby.length > 0);
@@ -177,7 +177,7 @@ try {
     nameKept: !!(idReloaded && idReloaded.name === 'Night Hauler 7' && idReloaded.custom === true) });
 
   // JOIN, BY THE ROW'S OWN BUTTON; TAB 2 JOINS THE SAME ROUND FROM ITS OWN LOBBY.
-  const pressJoin = (b, id) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#blwp-lobby .row')) {
+  const pressJoin = (b, id) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#arena-lobby .row')) {
     if (row.textContent.includes(${JSON.stringify(id)})) { const a = row.querySelector('a.join'); if (a) { a.click(); return true; } } } return false; })()`);
   const pressed1 = await pressJoin(one, target.id);
   const two = await browse(round.lobbyUrl);
@@ -258,7 +258,7 @@ try {
     .filter(Boolean).map((k) => String(k).replace(/-/g, '').slice(0, 8));
   const seen = (t) => ({ text: t == null ? t : String(t).slice(0, 500), hasName: String(t || '').includes(TWO_NAME),
     keyStub: twoKeys.filter((k) => String(t || '').replace(/-/g, '').includes(k)) });
-  const rowText = (b, id = target.id) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#blwp-lobby .row'))
+  const rowText = (b, id = target.id) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#arena-lobby .row'))
     if (row.textContent.includes(${JSON.stringify(id)})) return row.textContent; return null; })()`);
   const look = await browse(round.lobbyUrl);
   tabs.push(look);

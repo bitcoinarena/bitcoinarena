@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 
 const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const HANDLER = (() => {
-  const head = "    document.getElementById('blwp-bench-go').addEventListener('click', () => {\n";
+  const head = "    document.getElementById('arena-bench-go').addEventListener('click', () => {\n";
   const at = PAGE.indexOf(head); assert.ok(at > 0, 'the page has no Benchmark handler');
   return PAGE.slice(at + head.length, PAGE.indexOf('\n    });\n', at));
 })();
@@ -22,10 +22,10 @@ const click = (window) => {
 };
 
 test('Settings has a Benchmark card with its button, inside the settings sheet', () => {
-  const sheet = PAGE.slice(PAGE.indexOf('<div id="blwp-settings"'), PAGE.indexOf('SETTINGS OPENS ON THE FIRST CLICK'));
-  assert.match(sheet, /<section class="settings-card" id="blwp-set-bench">\s*<h3>Benchmark<\/h3>/);
-  assert.match(sheet, /<input type="checkbox" id="blwp-bench-on"> On - off by default/);
-  assert.match(sheet, /<button id="blwp-bench-go" type="button" disabled>Run the benchmark<\/button>/, 'disabled as the page loads');
+  const sheet = PAGE.slice(PAGE.indexOf('<div id="arena-settings"'), PAGE.indexOf('SETTINGS OPENS ON THE FIRST CLICK'));
+  assert.match(sheet, /<section class="settings-card" id="arena-set-bench">\s*<h3>Benchmark<\/h3>/);
+  assert.match(sheet, /<input type="checkbox" id="arena-bench-on"> On - off by default/);
+  assert.match(sheet, /<button id="arena-bench-go" type="button" disabled>Run the benchmark<\/button>/, 'disabled as the page loads');
 });
 
 test('the switch: off with nothing kept, on only with "1" kept; a blocked store is off', () => {

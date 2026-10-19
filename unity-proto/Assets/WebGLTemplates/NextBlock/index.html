@@ -312,16 +312,16 @@
     /* THE DEPOSIT A LOCK ROUND ASKS FOR, ON THE LOADING SCREEN - the only thing
        a player sees while the page waits for it (W1b). Selectable, so any
        wallet can be given the invoice. Empty, it takes no room. */
-    #blwp-deposit { max-width: min(560px, 90vw); text-align: center; font-size: 13px; color: #e8eaed; }
-    #blwp-deposit:empty { display: none; }
+    #arena-deposit { max-width: min(560px, 90vw); text-align: center; font-size: 13px; color: #e8eaed; }
+    #arena-deposit:empty { display: none; }
     /* AN INVOICE TO PAY IS ON TOP (measured 2026-09-30 at 800x437: the backup banner and the lobby chips, z-index 30, lay over
        the QR code and it did not scan) - under the settings and the seed dialog only. */
-    body > #blwp-deposit:not(:empty) { z-index: 38; }
+    body > #arena-deposit:not(:empty) { z-index: 38; }
     /* THE DEPOSIT MODAL (GROSS-INVOICE-2053): a close, the message, the round tabs, the amount, the QR and the invoice */
-    #blwp-deposit.deposit-modal { background: #11151a; border: 1px solid #3a4250; border-radius: 8px; padding: 12px 14px;
+    #arena-deposit.deposit-modal { background: #11151a; border: 1px solid #3a4250; border-radius: 8px; padding: 12px 14px;
       /* CENTRED AND SCROLLABLE (measured at 800x437: anchored to the bottom it grew over the top edge, its close and tabs cut off) */
       top: 50%; bottom: auto; transform: translate(-50%, -50%); max-height: 94vh; overflow-y: auto; box-sizing: border-box; }
-    #blwp-deposit.over-settings { z-index: 44 !important; }
+    #arena-deposit.over-settings { z-index: 44 !important; }
     /* WITHDRAW IN ITS OWN OVERLAY, AS DEPOSIT (2026-10-17: "make withdrawals an overlay like deposits. withdrawals and
        gear opening the same settings overlay is confusing and redundant. do not touch deposit or withdrawal in the settings overlay"):
        the wallet bar's Withdraw and a game's own client open this box, centred like the deposit modal, with Settings' own withdraw
@@ -335,39 +335,39 @@
     #arena-withdraw .wd-close { background: none; border: 0; color: #e8eaed; font-size: 18px; cursor: pointer; padding: 2px 6px; }
     #arena-withdraw .muted { color: #9aa4b1; font-size: 13px; }
     #arena-withdraw input { padding: 9px 10px; border-radius: 6px; border: 1px solid #3a4250; background: #0d1014; color: #e8eaed; font: 13px ui-monospace, monospace; }
-    #arena-withdraw #blwp-wd-go { margin-top: 8px; width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #f7931a; background: #f7931a; color: #1a1000; font: 700 14px system-ui, sans-serif; cursor: pointer; }
-    #arena-withdraw #blwp-wd-go:disabled { opacity: .45; cursor: default; }
-    #arena-withdraw #blwp-money-why:not(:empty) { margin-top: 8px; color: #f0b72f; font-size: 13px; }
-    #blwp-deposit .dep-close { float: right; background: none; border: 0; color: #e8eaed; font-size: 18px; cursor: pointer; }
-    #blwp-deposit .dep-tabs, .wd-tabs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 8px 0; }
-    #blwp-deposit .dep-tabs button, .wd-tabs button { padding: 5px 10px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; border-radius: 4px; cursor: pointer; }
-    #blwp-deposit .dep-tabs button.on, .wd-tabs button.on,
-    #blwp-settings .wd-tabs button.on { background: #f7931a; color: #111; border-color: #f7931a; }   /* over Settings' own button style */
-    #blwp-withdraw-panel.empty input, #blwp-withdraw-panel.empty button { opacity: .4; pointer-events: none; }
-    #blwp-deposit .dep-custom input, .wd-custom input { width: 9em; padding: 4px; }
+    #arena-withdraw #arena-wd-go { margin-top: 8px; width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #f7931a; background: #f7931a; color: #1a1000; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+    #arena-withdraw #arena-wd-go:disabled { opacity: .45; cursor: default; }
+    #arena-withdraw #arena-money-why:not(:empty) { margin-top: 8px; color: #f0b72f; font-size: 13px; }
+    #arena-deposit .dep-close { float: right; background: none; border: 0; color: #e8eaed; font-size: 18px; cursor: pointer; }
+    #arena-deposit .dep-tabs, .wd-tabs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 8px 0; }
+    #arena-deposit .dep-tabs button, .wd-tabs button { padding: 5px 10px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; border-radius: 4px; cursor: pointer; }
+    #arena-deposit .dep-tabs button.on, .wd-tabs button.on,
+    #arena-settings .wd-tabs button.on { background: #f7931a; color: #111; border-color: #f7931a; }   /* over Settings' own button style */
+    #arena-withdraw-panel.empty input, #arena-withdraw-panel.empty button { opacity: .4; pointer-events: none; }
+    #arena-deposit .dep-custom input, .wd-custom input { width: 9em; padding: 4px; }
     /* A FIXED HEIGHT (2026-09-30: "the deposit window never jumps when the QR changes"): the QR square, the amount
        line, the custom row, the invoice line and the status keep their space whether filled or not. */
-    #blwp-deposit .dep-custom { height: 30px; margin: 4px 0; }
-    #blwp-deposit .dep-custom input { width: 10em; font-size: 16px; }
-    #blwp-deposit .dep-amount { height: 2.8em; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    #arena-deposit .dep-custom { height: 30px; margin: 4px 0; }
+    #arena-deposit .dep-custom input { width: 10em; font-size: 16px; }
+    #arena-deposit .dep-amount { height: 2.8em; overflow: hidden; display: flex; align-items: center; justify-content: center; }
     /* WHY NOT EXACTLY THE STAKE (2026-10-01): two small lines under the amount, their place kept when empty */
-    #blwp-deposit .dep-why { height: 2.6em; overflow: hidden; font-size: 11px; line-height: 1.3em; color: #9fb3c8; margin: 0 4px; }
-    #blwp-deposit .blwp-deposit-qr { box-sizing: border-box; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; }
-    #blwp-deposit .blwp-deposit-qr svg { width: 100%; height: 100%; }
-    #blwp-deposit .qr-hold { color: #8a94a3; font-size: 12px; line-height: 1.4; }
-    #blwp-deposit .dep-inv-row { height: 36px; }
-    #blwp-deposit .dep-inv-row code { height: 36px; box-sizing: border-box; line-height: 18px; }
-    #blwp-deposit .dep-copy { height: 36px; box-sizing: border-box; }
-    #blwp-deposit .pay-status-text { height: 2.8em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    #arena-deposit .dep-why { height: 2.6em; overflow: hidden; font-size: 11px; line-height: 1.3em; color: #9fb3c8; margin: 0 4px; }
+    #arena-deposit .arena-deposit-qr { box-sizing: border-box; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; }
+    #arena-deposit .arena-deposit-qr svg { width: 100%; height: 100%; }
+    #arena-deposit .qr-hold { color: #8a94a3; font-size: 12px; line-height: 1.4; }
+    #arena-deposit .dep-inv-row { height: 36px; }
+    #arena-deposit .dep-inv-row code { height: 36px; box-sizing: border-box; line-height: 18px; }
+    #arena-deposit .dep-copy { height: 36px; box-sizing: border-box; }
+    #arena-deposit .pay-status-text { height: 2.8em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     /* COPY INVOICE (2026-09-30): one press copies the invoice; the button turns green and says Copied */
-    #blwp-deposit .dep-inv-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+    #arena-deposit .dep-inv-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
     /* ONE LINE (a 437 px window cut the tabs off with the invoice wrapped over six lines; the copy button carries it whole) */
-    #blwp-deposit .dep-inv-row code { flex: 1; min-width: 0; margin-top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
-    #blwp-deposit .dep-copy { flex: none; white-space: nowrap; margin: 0; padding: 6px 12px; border: 1px solid #f7931a; background: #1c2128;
+    #arena-deposit .dep-inv-row code { flex: 1; min-width: 0; margin-top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
+    #arena-deposit .dep-copy { flex: none; white-space: nowrap; margin: 0; padding: 6px 12px; border: 1px solid #f7931a; background: #1c2128;
       color: #f7931a; border-radius: 4px; cursor: pointer; font-weight: 600; }
-    #blwp-deposit .dep-copy:disabled { opacity: .45; cursor: default; }
-    #blwp-deposit .dep-copy.copied { background: #2ea043; border-color: #2ea043; color: #fff; }
-    #blwp-deposit .dep-copy.failed { background: #b62324; border-color: #b62324; color: #fff; }
+    #arena-deposit .dep-copy:disabled { opacity: .45; cursor: default; }
+    #arena-deposit .dep-copy.copied { background: #2ea043; border-color: #2ea043; color: #fff; }
+    #arena-deposit .dep-copy.failed { background: #b62324; border-color: #b62324; color: #fff; }
     /* THE PAYMENT'S STATUS UNDER THE INVOICE (2026-09-30): what is happening now, and a bar of how far along */
     .pay-status { margin: 8px 0 2px; text-align: left; font-size: 12px; color: #c9d1d9; }
     .pay-bar { height: 8px; margin-top: 4px; background: #1c2128; border: 1px solid #3a4250; border-radius: 4px; overflow: hidden; }
@@ -382,9 +382,9 @@
     /* ...AND OVER THE GAME once the loading screen is gone: PLAY in the lobby
        joins in the running page (M3.3-34), so a lock round's deposit
        is asked for after Unity loaded. */
-    body > #blwp-deposit { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 25;
+    body > #arena-deposit { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 25;
       padding: 12px 14px; border-radius: 6px; background: rgba(13, 16, 20, 0.94); border: 1px solid #3a3f45; }
-    #blwp-deposit code { display: block; margin-top: 8px; padding: 8px 10px; border-radius: 4px;
+    #arena-deposit code { display: block; margin-top: 8px; padding: 8px 10px; border-radius: 4px;
       background: #0d1014; border: 1px solid #3a3f45; color: #ffc46b; word-break: break-all;
       user-select: all; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
@@ -392,43 +392,43 @@
     #err.show { display: block; }
     /* A donation that already left the wallet, from the tab's notes, under a
        refusal: the player is told what was paid even when the round is gone. */
-    #blwp-donation-noted { display: none; color: #e8eaed; max-width: 560px; text-align: center; font-size: 14px; }
-    #blwp-donation-noted.show { display: block; }
+    #arena-donation-noted { display: none; color: #e8eaed; max-width: 560px; text-align: center; font-size: 14px; }
+    #arena-donation-noted.show { display: block; }
 
     /* THE LOBBY (M3.3-34): a link naming nodes and no round lists the rounds
        they hold, over everything else, until the player joins one. Every row
        is the client's line - checked against its contract - and Join is the
        round's own link. Hidden unless the link is a lobby link. */
-    #blwp-lobby {
+    #arena-lobby {
       position: absolute; inset: 0; z-index: 30; display: none; overflow: auto;
       padding: 32px 18px; background: rgba(13, 16, 20, 0.96);
     }
-    #blwp-lobby.show { display: block; }
-    #blwp-lobby h2 { margin: 0 0 4px; font-size: 22px; }
-    #blwp-lobby .sub { color: #8b949e; font-size: 13px; margin-bottom: 18px; }
-    #blwp-lobby .row { display: flex; gap: 14px; align-items: center; max-width: 820px;
+    #arena-lobby.show { display: block; }
+    #arena-lobby h2 { margin: 0 0 4px; font-size: 22px; }
+    #arena-lobby .sub { color: #8b949e; font-size: 13px; margin-bottom: 18px; }
+    #arena-lobby .row { display: flex; gap: 14px; align-items: center; max-width: 820px;
       padding: 12px 14px; margin-bottom: 10px; border-radius: 6px; background: #161b22;
       border-left: 3px solid #3a3f45; }
-    #blwp-lobby .row.free { border-left-color: #f7931a; }
-    #blwp-lobby .row .line { flex: 1; font-size: 14px; }
-    #blwp-lobby .row .id { color: #8b949e; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    #blwp-lobby a.join { color: #0d1014; background: #f7931a; padding: 8px 14px; border-radius: 4px;
+    #arena-lobby .row.free { border-left-color: #f7931a; }
+    #arena-lobby .row .line { flex: 1; font-size: 14px; }
+    #arena-lobby .row .id { color: #8b949e; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #arena-lobby a.join { color: #0d1014; background: #f7931a; padding: 8px 14px; border-radius: 4px;
       font-weight: 700; text-decoration: none; white-space: nowrap; }
-    #blwp-lobby .none, #blwp-lobby .refused { color: #8b949e; font-size: 13px; max-width: 820px; }
+    #arena-lobby .none, #arena-lobby .refused { color: #8b949e; font-size: 13px; max-width: 820px; }
     /* THE PICK SHEET: a market is joined by choosing one of its outcomes - over the lobby, above its
        chrome (z 30-36) and below an invoice to pay (which the pick's deposit may raise next) */
-    #blwp-pick { position: fixed; inset: 0; z-index: 38; display: none; align-items: center; justify-content: center;
+    #arena-pick { position: fixed; inset: 0; z-index: 38; display: none; align-items: center; justify-content: center;
       background: rgba(13, 16, 20, 0.82); font-family: system-ui, sans-serif; color: #e6edf3; }
-    #blwp-pick.show { display: flex; }
-    #blwp-pick .sheet { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 18px 20px; width: min(440px, calc(100vw - 32px)); box-sizing: border-box; }
-    #blwp-pick h3 { margin: 0 0 6px; font-size: 18px; }
-    #blwp-pick .lines { color: #8b949e; font-size: 13px; line-height: 1.5; margin: 8px 0 12px; }
-    #blwp-pick .outcomes { display: flex; flex-direction: column; gap: 8px; }
-    #blwp-pick button { font: 600 15px/1.2 system-ui, sans-serif; padding: 10px 12px; border-radius: 4px; border: 0; cursor: pointer; }
-    #blwp-pick button.outcome { background: #f7931a; color: #0d1014; text-align: left; }
-    #blwp-pick button.cancel { background: transparent; color: #8b949e; border: 1px solid #30363d; margin-top: 12px; width: 100%; }
-    #blwp-pick .confirm { color: #f0b72f; font-size: 13px; margin-top: 8px; }
-    #blwp-lobby .refused { margin-top: 14px; white-space: pre-wrap; }
+    #arena-pick.show { display: flex; }
+    #arena-pick .sheet { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 18px 20px; width: min(440px, calc(100vw - 32px)); box-sizing: border-box; }
+    #arena-pick h3 { margin: 0 0 6px; font-size: 18px; }
+    #arena-pick .lines { color: #8b949e; font-size: 13px; line-height: 1.5; margin: 8px 0 12px; }
+    #arena-pick .outcomes { display: flex; flex-direction: column; gap: 8px; }
+    #arena-pick button { font: 600 15px/1.2 system-ui, sans-serif; padding: 10px 12px; border-radius: 4px; border: 0; cursor: pointer; }
+    #arena-pick button.outcome { background: #f7931a; color: #0d1014; text-align: left; }
+    #arena-pick button.cancel { background: transparent; color: #8b949e; border: 1px solid #30363d; margin-top: 12px; width: 100%; }
+    #arena-pick .confirm { color: #f0b72f; font-size: 13px; margin-top: 8px; }
+    #arena-lobby .refused { margin-top: 14px; white-space: pre-wrap; }
     /* THE GAMES FIRST: when the lobby's nodes host more than one game, the player picks one before anything of
        a game loads - nextblock goes on to Unity, any other game's own client is loaded by its manifest's hashes. Above the
        loading screen (z 40); below the pick sheet's invoice (z 38 is the sheet, which a game's client opens over itself) */
@@ -674,28 +674,28 @@
     /* THE HEADER STAYS OVER THE LEADERBOARD AND THE SHOP (2026-10-17: "the leaderboard in each game has no header
        bar. add one as on every other page. the back button should move to the header"): the game's own bar - the logo, ← and the
        trophy, shop and gear - sits over the sheet, the sheet starts below it, and the bar's ← closes the sheet (back to the game) */
-    body:has(#arena-season.show) #blwp-money, body:has(#arena-shop.show) #blwp-money { z-index: 60; }
+    body:has(#arena-season.show) #arena-money, body:has(#arena-shop.show) #arena-money { z-index: 60; }
     body:has(#arena-season.show) #arena-games-back, body:has(#arena-shop.show) #arena-games-back { display: inline-flex; flex: none; align-items: center; gap: 4px;
       margin-right: auto; padding: 7px 10px; cursor: pointer; background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px;
       font: 600 13px/1 system-ui, sans-serif; }
     body:not(.blwp-clean) #arena-season, body:not(.blwp-clean) #arena-shop { padding-top: calc(58px + env(safe-area-inset-top, 0px)); }
     body:not(.blwp-clean) #arena-season .back, body:not(.blwp-clean) #arena-shop .back { display: none; }
-    body:has(#arena-season.show) #blwp-season-go, body:has(#arena-shop.show) #blwp-shop-go { color: #f7931a; border-color: #f7931a; }
-    #blwp-season-go, #arena-wb-season { display: none; }
-    body.arena-game-chosen #blwp-season-go { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
+    body:has(#arena-season.show) #arena-season-go, body:has(#arena-shop.show) #arena-shop-go { color: #f7931a; border-color: #f7931a; }
+    #arena-season-go, #arena-wb-season { display: none; }
+    body.arena-game-chosen #arena-season-go { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; font: 600 13px/1 system-ui, sans-serif; }
     body.arena-game-chosen #arena-wb-season { display: inline-flex; align-items: center; gap: 5px; }
-    #blwp-season-go svg, #arena-wb-season svg { width: 15px; height: 15px; color: #f7931a; }
-    @media (max-width: 560px) { #blwp-season-go .word, #arena-wb-season .word { display: none; } }
-    body.blwp-clean #arena-season, body.blwp-clean #blwp-season-go, body.blwp-clean #arena-wb-season { display: none !important; }
+    #arena-season-go svg, #arena-wb-season svg { width: 15px; height: 15px; color: #f7931a; }
+    @media (max-width: 560px) { #arena-season-go .word, #arena-wb-season .word { display: none; } }
+    body.blwp-clean #arena-season, body.blwp-clean #arena-season-go, body.blwp-clean #arena-wb-season { display: none !important; }
     /* THE GAME'S SHOP: beside the Leaderboard once a game that sells items is chosen, and its sheet - each item
        with its price and Buy, or Owned with "Play with it" */
-    #blwp-shop-go { display: none; }
-    body.arena-game-chosen.arena-game-shop #blwp-shop-go { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
+    #arena-shop-go { display: none; }
+    body.arena-game-chosen.arena-game-shop #arena-shop-go { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; font: 600 13px/1 system-ui, sans-serif; }
-    #blwp-shop-go svg { width: 15px; height: 15px; color: #f7931a; }
-    @media (max-width: 560px) { #blwp-shop-go .word { display: none; } }
-    body.blwp-clean #blwp-shop-go, body.blwp-clean #arena-shop { display: none !important; }
+    #arena-shop-go svg { width: 15px; height: 15px; color: #f7931a; }
+    @media (max-width: 560px) { #arena-shop-go .word { display: none; } }
+    body.blwp-clean #arena-shop-go, body.blwp-clean #arena-shop { display: none !important; }
     #arena-shop { position: fixed; inset: 0; z-index: 50; display: none; justify-content: center; overflow-y: auto;
       background: radial-gradient(1200px 600px at 50% -10%, #1b2230 0%, #0d1014 60%); color: #e6edf3; font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
       padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(32px + env(safe-area-inset-bottom, 0px)); box-sizing: border-box; }
@@ -773,7 +773,7 @@
       font: 600 12px system-ui, sans-serif; cursor: pointer; }
     /* THE BALANCE, TAPPED (2026-10-13: "Die UI muss auch anzeigen wenn ich auf die balances klicke wieviel Geld in welcher
        Federation gespeichert ist"): every balance opens the split over the federations */
-    #arena-wallet-bar .wb-bal, #blwp-lobby-balance, #blwp-set-wallet .bal-grid { cursor: pointer; }
+    #arena-wallet-bar .wb-bal, #arena-lobby-balance, #arena-set-wallet .bal-grid { cursor: pointer; }
     #arena-bal-split { position: fixed; z-index: 60; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
       width: min(92vw, 380px); background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px;
       box-shadow: 0 12px 40px rgba(0,0,0,.55); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
@@ -799,45 +799,45 @@
        7 px padding and 6 px round, 6 px from the top - so every button moved between screens. Now every header button is 32 px tall at
        4 px from the top, the same border, round, font and gaps, the gear 38 x 32 */
     #arena-wallet-bar { gap: 6px; }
-    body #blwp-money { top: calc(4px + env(safe-area-inset-top, 0px)); gap: 6px; }
-    #arena-wallet-bar button, #arena-games-back, #blwp-season-go, #blwp-shop-go, #blwp-settings-go, #blwp-hdr-bal, #blwp-hdr-deposit, #blwp-hdr-withdraw {
+    body #arena-money { top: calc(4px + env(safe-area-inset-top, 0px)); gap: 6px; }
+    #arena-wallet-bar button, #arena-games-back, #arena-season-go, #arena-shop-go, #arena-settings-go, #arena-hdr-bal, #arena-hdr-deposit, #arena-hdr-withdraw {
       height: 32px; box-sizing: border-box; padding: 0 10px; border-radius: 6px; border: 1px solid #3a4452; background: rgba(22,27,34,0.94); color: #e8eaed;
       font: 600 13px/1 system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
-    #arena-wallet-bar #arena-wb-gear, body #blwp-settings-go { width: 38px; padding: 0; font-size: 20px; }   /* body: #blwp-settings-go's own later rule (padding 6px 10px) put its glyph 1 px lower */
-    #arena-wallet-bar #arena-wb-deposit, #blwp-hdr-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
+    #arena-wallet-bar #arena-wb-gear, body #arena-settings-go { width: 38px; padding: 0; font-size: 20px; }   /* body: #arena-settings-go's own later rule (padding 6px 10px) put its glyph 1 px lower */
+    #arena-wallet-bar #arena-wb-deposit, #arena-hdr-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
     /* THE BALANCE IS A BUTTON (2026-10-19: "the balance in the header should also have the layout of a button") */
-    #arena-wallet-bar .wb-bal, #blwp-hdr-bal { display: inline-flex; align-items: center; gap: 4px; }
-    #arena-wallet-bar .wb-bal b, #blwp-hdr-bal b { color: #f7931a; font-weight: 700; }
+    #arena-wallet-bar .wb-bal, #arena-hdr-bal { display: inline-flex; align-items: center; gap: 4px; }
+    #arena-wallet-bar .wb-bal b, #arena-hdr-bal b { color: #f7931a; font-weight: 700; }
     #arena-wallet-bar .wb-bal span { color: #9aa4b1; font-weight: 600; }
     /* THE WALLET IN A GAME'S OWN HEADER: balance, Deposit and Withdraw over Unity, its loading screen, the
        leaderboard and the shop, as on the games screen; a phone keeps the balance (Deposit and Withdraw are in Settings and the lobby) */
-    #blwp-hdr-bal, #blwp-hdr-deposit, #blwp-hdr-withdraw { display: none; }
-    body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-bal, body:has(#arena-season.show) #blwp-hdr-bal, body:has(#arena-shop.show) #blwp-hdr-bal,
-    body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-deposit, body:has(#arena-season.show) #blwp-hdr-deposit, body:has(#arena-shop.show) #blwp-hdr-deposit,
-    body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-withdraw, body:has(#arena-season.show) #blwp-hdr-withdraw, body:has(#arena-shop.show) #blwp-hdr-withdraw {
+    #arena-hdr-bal, #arena-hdr-deposit, #arena-hdr-withdraw { display: none; }
+    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-bal, body:has(#arena-season.show) #arena-hdr-bal, body:has(#arena-shop.show) #arena-hdr-bal,
+    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-deposit, body:has(#arena-season.show) #arena-hdr-deposit, body:has(#arena-shop.show) #arena-hdr-deposit,
+    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-withdraw, body:has(#arena-season.show) #arena-hdr-withdraw, body:has(#arena-shop.show) #arena-hdr-withdraw {
       display: inline-flex; align-items: center; flex: none; }
     /* EVERY MAIN GAME SCREEN, THE LOBBY TOO, HAS DEPOSIT AND WITHDRAW (2026-10-19: "All main game screens incl lobby in
        next block show deposit & withdrawal"): with the backup warning out of the header there is room; a phone shows their icons, as it
        shows the trophy and the bag */
-    #blwp-hdr-deposit, #blwp-hdr-withdraw { gap: 6px; }
-    #blwp-hdr-deposit svg, #blwp-hdr-withdraw svg { width: 15px; height: 15px; flex: none; }
-    @media (min-width: 561px) { #blwp-hdr-deposit svg, #blwp-hdr-withdraw svg { display: none; } }
-    @media (max-width: 560px) { #blwp-hdr-deposit .word, #blwp-hdr-withdraw .word { display: none; } #blwp-hdr-deposit, #blwp-hdr-withdraw { padding: 0 9px; } }
+    #arena-hdr-deposit, #arena-hdr-withdraw { gap: 6px; }
+    #arena-hdr-deposit svg, #arena-hdr-withdraw svg { width: 15px; height: 15px; flex: none; }
+    @media (min-width: 561px) { #arena-hdr-deposit svg, #arena-hdr-withdraw svg { display: none; } }
+    @media (max-width: 560px) { #arena-hdr-deposit .word, #arena-hdr-withdraw .word { display: none; } #arena-hdr-deposit, #arena-hdr-withdraw { padding: 0 9px; } }
     /* the backup warning in the loading screen: its whole sentence and its button, under the progress, on a phone too */
-    #boot #blwp-backup-warn { flex: none; width: min(560px, 90vw); box-sizing: border-box; margin: 0; z-index: 3; position: relative; }
-    @media (max-width: 480px) { #boot #blwp-backup-warn { padding: 6px 10px; border: 2px solid #ff9d2e; background: rgba(58,32,0,0.94); }
-      #boot #blwp-backup-notice { display: inline; } #boot #blwp-backup-cta::before { content: none; } }
+    #boot #arena-backup-warn { flex: none; width: min(560px, 90vw); box-sizing: border-box; margin: 0; z-index: 3; position: relative; }
+    @media (max-width: 480px) { #boot #arena-backup-warn { padding: 6px 10px; border: 2px solid #ff9d2e; background: rgba(58,32,0,0.94); }
+      #boot #arena-backup-notice { display: inline; } #boot #arena-backup-cta::before { content: none; } }
     /* and in the deposit popup (paintMoney) */
-    #blwp-deposit .dep-backup, #arena-withdraw .dep-backup { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 6px 10px; text-align: left;
+    #arena-deposit .dep-backup, #arena-withdraw .dep-backup { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 6px 10px; text-align: left;
       background: rgba(58,32,0,0.94); border: 2px solid #ff9d2e; border-radius: 6px; color: #ffcf8a; font: 600 13px/1.25 system-ui, sans-serif; }
-    #blwp-deposit .dep-backup span, #arena-withdraw .dep-backup span { flex: 1; min-width: 0; }
-    #blwp-deposit .dep-backup button, #arena-withdraw .dep-backup button { flex: none; font: 700 13px system-ui, sans-serif; padding: 6px 10px; cursor: pointer; background: #ff9d2e; color: #241400; border: 0; border-radius: 4px; }
-    body.blwp-clean #blwp-hdr-bal, body.blwp-clean #blwp-hdr-deposit, body.blwp-clean #blwp-hdr-withdraw { display: none !important; }
-    body.arena-fed-draining #blwp-hdr-deposit, body.arena-fed-critical #blwp-hdr-deposit, body.arena-fed-closed #blwp-hdr-deposit,
-    body.arena-fed-halted #blwp-hdr-deposit, body.arena-fed-halted #blwp-hdr-withdraw { display: none !important; }
-    #blwp-hdr-why { position: absolute; top: calc(100% + 4px); right: 0; max-width: min(92vw, 520px); padding: 6px 8px; background: #2a1d0b; border: 1px solid #5a4a22;
+    #arena-deposit .dep-backup span, #arena-withdraw .dep-backup span { flex: 1; min-width: 0; }
+    #arena-deposit .dep-backup button, #arena-withdraw .dep-backup button { flex: none; font: 700 13px system-ui, sans-serif; padding: 6px 10px; cursor: pointer; background: #ff9d2e; color: #241400; border: 0; border-radius: 4px; }
+    body.blwp-clean #arena-hdr-bal, body.blwp-clean #arena-hdr-deposit, body.blwp-clean #arena-hdr-withdraw { display: none !important; }
+    body.arena-fed-draining #arena-hdr-deposit, body.arena-fed-critical #arena-hdr-deposit, body.arena-fed-closed #arena-hdr-deposit,
+    body.arena-fed-halted #arena-hdr-deposit, body.arena-fed-halted #arena-hdr-withdraw { display: none !important; }
+    #arena-hdr-why { position: absolute; top: calc(100% + 4px); right: 0; max-width: min(92vw, 520px); padding: 6px 8px; background: #2a1d0b; border: 1px solid #5a4a22;
       border-radius: 4px; color: #ffe2b0; font: 13px/1.35 system-ui, sans-serif; }
-    #blwp-hdr-why:empty { display: none; }
+    #arena-hdr-why:empty { display: none; }
     /* THE NAME BESIDE THE MARK IN A GAME'S HEADER TOO (2026-10-19: "is missing the "Bitcoin Arena" label on the tic toc
        next block game and on all game loadings screens (desktop version)"): as the games screen draws it */
     body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home {
@@ -865,15 +865,15 @@
     /* ONE PLACE AND ONE LOOK FOR EVERY OVERLAY (2026-10-19: "the overlays (balance, deposit, withdraw, ...) should all open
        at the same starting position. they also should look alike. title (left aligned, amber), an 'x' to close (missing at balance), no extra
        close button (balance)"): under the header, centred, 420 px wide, scrolling within the window */
-    #arena-bal-split, #arena-withdraw, #blwp-deposit.deposit-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); bottom: auto; right: auto;
+    #arena-bal-split, #arena-withdraw, #arena-deposit.deposit-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); bottom: auto; right: auto;
       transform: translateX(-50%); width: min(92vw, 420px); max-width: none; max-height: calc(100vh - 70px - env(safe-area-inset-top, 0px)); overflow-y: auto; box-sizing: border-box;
       background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
     #arena-bal-split .ov-head, #arena-withdraw .wd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
-    #arena-bal-split h4, #arena-withdraw h3, #blwp-deposit .dep-title { margin: 0; color: #f7931a; text-align: left; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; }
-    #blwp-deposit .dep-title { margin: 0 0 8px; padding-right: 28px; }
-    #arena-bal-split .ov-close, #arena-withdraw .wd-close, #blwp-deposit .dep-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1;
+    #arena-bal-split h4, #arena-withdraw h3, #arena-deposit .dep-title { margin: 0; color: #f7931a; text-align: left; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; }
+    #arena-deposit .dep-title { margin: 0 0 8px; padding-right: 28px; }
+    #arena-bal-split .ov-close, #arena-withdraw .wd-close, #arena-deposit .dep-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1;
       cursor: pointer; padding: 2px 6px; margin: 0; width: auto; }
-    #arena-bal-split .ov-close:hover, #arena-withdraw .wd-close:hover, #blwp-deposit .dep-close:hover { color: #f7931a; }
+    #arena-bal-split .ov-close:hover, #arena-withdraw .wd-close:hover, #arena-deposit .dep-close:hover { color: #f7931a; }
     /* THE GAME'S BAR AND THE HEADER OVER THE LEADERBOARD DRAW THEIR BUTTONS AT ONE PLACE ("when clicking on the leaderboard,
        the buttons balance, deposit and withdraw move slightly"; measured at 1280 px over Rock Paper Scissors: the balance 841.5 -> 844.5, Deposit
        909.8 -> 908.8, Withdraw 994.1 -> 993.1): the bar's balance kept 4 px of gap for its empty pending line, and its Leaderboard a 5 px gap
@@ -882,28 +882,28 @@
     body.arena-game-chosen #arena-wb-season { gap: 6px; }
     /* THE DEPOSIT BOX SPACED AS WITHDRAW AND THE BALANCE ("we need better spacing between the elements ... its to compressed. compare
        to withdrawal and balance layers"): their 14 px text, 12 px between the parts, and controls of their size */
-    #blwp-deposit.deposit-modal { font: 14px/1.45 system-ui, -apple-system, sans-serif; }
-    #blwp-deposit .dep-tabs { gap: 8px; margin: 12px 0; }
-    #blwp-deposit .dep-tabs button { padding: 8px 12px; border-radius: 6px; font: 600 14px system-ui, sans-serif; }
-    #blwp-deposit .dep-custom { height: 36px; margin: 0 0 8px; }
-    #blwp-deposit .dep-custom input { padding: 7px 10px; border-radius: 6px; border: 1px solid #3a4250; background: #0d1014; color: #e8eaed; }
-    #blwp-deposit .dep-why { font-size: 12px; margin: 4px 4px 12px; }
-    #blwp-deposit .dep-nwc { margin: 0 0 12px; }
-    #blwp-deposit .blwp-deposit-qr { margin-top: 12px; margin-bottom: 12px; }
-    #blwp-deposit .dep-inv-row { margin-top: 12px; }
-    #blwp-deposit .pay-status { margin-top: 12px; }
+    #arena-deposit.deposit-modal { font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+    #arena-deposit .dep-tabs { gap: 8px; margin: 12px 0; }
+    #arena-deposit .dep-tabs button { padding: 8px 12px; border-radius: 6px; font: 600 14px system-ui, sans-serif; }
+    #arena-deposit .dep-custom { height: 36px; margin: 0 0 8px; }
+    #arena-deposit .dep-custom input { padding: 7px 10px; border-radius: 6px; border: 1px solid #3a4250; background: #0d1014; color: #e8eaed; }
+    #arena-deposit .dep-why { font-size: 12px; margin: 4px 4px 12px; }
+    #arena-deposit .dep-nwc { margin: 0 0 12px; }
+    #arena-deposit .arena-deposit-qr { margin-top: 12px; margin-bottom: 12px; }
+    #arena-deposit .dep-inv-row { margin-top: 12px; }
+    #arena-deposit .pay-status { margin-top: 12px; }
     /* A LAYER UNDER THE OVERLAYS ("make a slightly lighter layer underneath the overlays that covers the main page and also catches
        the clicks, so no click through is possible until the overlay is closed ... from bellow the header up to the footer";: "when an
        overlay is open, selecting a game loads the game without closing the overlay first"): balance, deposit and withdraw lie on it */
     #arena-ov-scrim { display: none; position: fixed; left: 0; right: 0; top: calc(41px + env(safe-area-inset-top, 0px));
       bottom: calc(30px + env(safe-area-inset-bottom, 0px)); z-index: 43; background: rgba(150, 162, 180, .14); }
-    body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#blwp-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
+    body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
     body:has(#arena-bal-split:not([style*="none"]):not(:empty)) #arena-ov-scrim { display: block; }
     body.blwp-clean #arena-ov-scrim { display: none !important; }
     /* WITHDRAW KEEPS ITS SIZE WHILE THE BALANCE IS READ (2026-10-19: "the withdraw overlay changes dimension because it does
        not have the wallet amount when opening. use a placeholder while loading the balance"): the amount line holds two lines from the start */
-    #arena-withdraw #blwp-wd-amount { min-height: calc(2 * 1.45em); }
-    #arena-withdraw #blwp-wd-chosen { min-height: 1.45em; }
+    #arena-withdraw #arena-wd-amount { min-height: calc(2 * 1.45em); }
+    #arena-withdraw #arena-wd-chosen { min-height: 1.45em; }
 
     /* Who is in this round. Hidden until a round is named. Pointer-events none
        so it cannot steal the canvas.
@@ -943,26 +943,26 @@
     /* THE WALLET, and it takes pointer events because it is the one thing on
        this page a player types into. Hidden until a round that asks for money
        is named - a free round has nothing to pay and no reason to ask. */
-    #blwp-wallet {
+    #arena-wallet {
       position: absolute; top: 14px; right: 14px; z-index: 21; display: none;
       font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: #e8eaed; background: rgba(13, 16, 20, 0.86);
       border-left: 3px solid #f7931a; padding: 10px 12px; border-radius: 4px;
       max-width: 320px; text-align: left;
     }
-    #blwp-wallet .owed { font-size: 15px; }
-    #blwp-wallet .spent { opacity: 0.75; font-weight: 400; margin-top: 4px; }
-    #blwp-wallet .why { opacity: 0.9; font-weight: 400; margin-top: 6px; white-space: pre-wrap; }
-    #blwp-wallet input {
+    #arena-wallet .owed { font-size: 15px; }
+    #arena-wallet .spent { opacity: 0.75; font-weight: 400; margin-top: 4px; }
+    #arena-wallet .why { opacity: 0.9; font-weight: 400; margin-top: 6px; white-space: pre-wrap; }
+    #arena-wallet input {
       width: 100%; margin-top: 8px; padding: 6px 8px; border-radius: 3px;
       border: 1px solid #3a3f45; background: #0d1014; color: #e8eaed;
       font: 400 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    #blwp-wallet button {
+    #arena-wallet button {
       margin-top: 8px; padding: 6px 12px; border-radius: 3px; border: 0;
       background: #f7931a; color: #14171a; font: 600 13px/1 inherit; cursor: pointer;
     }
-    #blwp-wallet button[disabled] { opacity: 0.5; cursor: default; }
+    #arena-wallet button[disabled] { opacity: 0.5; cursor: default; }
     /* A PHONE ON ITS SIDE (M3.2 6e). Measured on the daily page at 844x390: the
        320x428 panel at the right edge ended 52 px below the screen ("Pay the
        stake" cut) and lay over the throttle. The touch pads are Unity's
@@ -973,95 +973,95 @@
        its lines are few; the input and the button share a row. The height cap
        only guards a longer why - it scrolls rather than run off the screen. */
     @media (orientation: landscape) and (max-height: 500px) {
-      #blwp-wallet {
+      #arena-wallet {
         left: 14px; right: calc(23.5vh + 12px); max-width: none;
         max-height: calc(76.5vh - 22px); overflow-y: auto;
       }
-      #blwp-wallet input { width: calc(100% - 150px); margin-right: 8px; vertical-align: middle; }
-      #blwp-wallet button { vertical-align: middle; }
+      #arena-wallet input { width: calc(100% - 150px); margin-right: 8px; vertical-align: middle; }
+      #arena-wallet button { vertical-align: middle; }
     }
     /* THE CONSOLE (2026-10-03 playtest: "The console with the consensus and federation logs covers the whole
        playfield ... Make it much more compact. A small button labeled Console opens it. Collapsed by default."): the
        node strip and the round's federation panel are the console. Closed, neither is drawn and only this button is;
        open, both are drawn small. The deposit invoice, a refusal and the lobby are not the console and never hide. */
-    #blwp-console-go { position: fixed; top: 52px; right: 8px; z-index: 31; display: none; padding: 3px 8px;
+    #arena-console-go { position: fixed; top: 52px; right: 8px; z-index: 31; display: none; padding: 3px 8px;
       font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #c9d1d9;
       background: rgba(13,16,20,0.72); border: 1px solid #3a4452; border-radius: 4px; cursor: pointer; }
-    #blwp-console-go[aria-expanded="true"] { color: #0d1014; background: #f7931a; border-color: #f7931a; }
+    #arena-console-go[aria-expanded="true"] { color: #0d1014; background: #f7931a; border-color: #f7931a; }
     /* THE OPEN CONSOLE: BOTTOM RIGHT, 260 PX, SCROLLING (2026-10-06 17:11, phone screenshot: the console
        covered the truck). Its height is fixed at twice the box in that screenshot - the box measured 289 image px against
        the Console button's 50 px for its 22.3 CSS px, so 129 CSS px; twice is 260 - border and padding inside it, never
        growing or shrinking with its lines. It stands in the bottom right corner one HUD margin above the throttle pad
        (BLWP_PLACE_CONSOLE, from DriveHud.ConsoleSlot); before the HUD is placed, by TouchPad.RectFor's own rule: the
        right column's top is 45.25vmin up, the margin 3.5vmin. Its lines scroll inside it; a touch on it is the panel's. */
-    body.blwp-console-open #blwp-wallet { position: fixed; top: auto; left: auto; right: 3.5vmin; bottom: 3.5vmin;
+    body.arena-console-open #arena-wallet { position: fixed; top: auto; left: auto; right: 3.5vmin; bottom: 3.5vmin;
       width: min(280px, calc(100vw - 7vmin)); max-width: 280px; height: 260px; max-height: none; box-sizing: border-box;
       overflow-y: scroll; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
       font-size: 11px; line-height: 1.3; padding: 6px 12px 6px 8px;
       scrollbar-width: thin; scrollbar-color: #f7931a transparent; }
-    @media (pointer: coarse) { body.blwp-console-open #blwp-wallet { bottom: calc(45.25vmin + 3.5vmin); } }
-    body.blwp-console-open #blwp-wallet::-webkit-scrollbar { width: 4px; }
-    body.blwp-console-open #blwp-wallet::-webkit-scrollbar-track { background: transparent; }
-    body.blwp-console-open #blwp-wallet::-webkit-scrollbar-thumb { background: #f7931a; border-radius: 2px; }
+    @media (pointer: coarse) { body.arena-console-open #arena-wallet { bottom: calc(45.25vmin + 3.5vmin); } }
+    body.arena-console-open #arena-wallet::-webkit-scrollbar { width: 4px; }
+    body.arena-console-open #arena-wallet::-webkit-scrollbar-track { background: transparent; }
+    body.arena-console-open #arena-wallet::-webkit-scrollbar-thumb { background: #f7931a; border-radius: 2px; }
     /* THE THUMB, DRAWN (iOS Safari shows its own only while scrolling): over the panel's right edge, where the desktop
        scrollbar's thumb is, sized and moved from the panel's scroll - so a phone always sees there is more. */
-    #blwp-console-thumb { position: fixed; z-index: 22; width: 4px; border-radius: 2px; background: #f7931a;
+    #arena-console-thumb { position: fixed; z-index: 22; width: 4px; border-radius: 2px; background: #f7931a;
       pointer-events: none; display: none; }
-    body.blwp-console-open:not(.blwp-console-held):not(.blwp-clean) #blwp-console-thumb.on { display: block; }
+    body.arena-console-open:not(.arena-console-held):not(.blwp-clean) #arena-console-thumb.on { display: block; }
     /* PARKED IN THE LOBBY: above the lobby's chrome (the backup strip and the balance boxes are z 30), so no
        console line sits under a lobby widget; the place itself keeps it off the balance boxes and the round rows. */
-    body.blwp-console-lobby #blwp-wallet { z-index: 35; }
-    body.blwp-console-lobby #blwp-console-thumb { z-index: 36; }
-    body.blwp-console-open #blwp-wallet .owed { font-size: 12px; }
-    body.blwp-console-open #blwp-players { font-size: 10px; line-height: 1.25; padding: 4px 7px; max-width: min(40vw, 320px); }
-    body.blwp-clean #blwp-console-go { display: none !important; }
+    body.arena-console-lobby #arena-wallet { z-index: 35; }
+    body.arena-console-lobby #arena-console-thumb { z-index: 36; }
+    body.arena-console-open #arena-wallet .owed { font-size: 12px; }
+    body.arena-console-open #blwp-players { font-size: 10px; line-height: 1.25; padding: 4px 7px; max-width: min(40vw, 320px); }
+    body.blwp-clean #arena-console-go { display: none !important; }
     /* HELD while the cargo bay leaves the panel no room (BLWP_PLACE_CONSOLE): the panel steps aside until ROLL OUT, the
        button stays, dimmed, and says so on hover. */
-    body.blwp-console-held #blwp-wallet { display: none !important; }
-    body.blwp-console-held #blwp-console-go { opacity: 0.55; }
+    body.arena-console-held #arena-wallet { display: none !important; }
+    body.arena-console-held #arena-console-go { opacity: 0.55; }
     /* THE LOBBY'S STRIP: positioned over the top edge, never in the page's flow, so it can never be the page. */
-    #blwp-money { position: fixed; top: 6px; left: 8px; right: 8px; z-index: 30; display: flex; gap: 8px;
+    #arena-money { position: fixed; top: 6px; left: 8px; right: 8px; z-index: 30; display: flex; gap: 8px;
       align-items: flex-start; justify-content: flex-end; pointer-events: none; }
-    #blwp-money > * { pointer-events: auto; }
+    #arena-money > * { pointer-events: auto; }
     /* CleanHud.cs (Shift+H): a clean screen for the trailer - the page's overlays go with the Unity HUD. */
-    body.blwp-clean #blwp-money, body.blwp-clean #blwp-players, body.blwp-clean #blwp-wallet,
-    body.blwp-clean #blwp-deposit, body.blwp-clean #blwp-refund { display: none !important; }
-    #blwp-backup-warn { display:flex; align-items:center; gap:10px; flex: 1 1 auto; max-width: 560px; padding:6px 10px;
+    body.blwp-clean #arena-money, body.blwp-clean #blwp-players, body.blwp-clean #arena-wallet,
+    body.blwp-clean #arena-deposit, body.blwp-clean #arena-refund { display: none !important; }
+    #arena-backup-warn { display:flex; align-items:center; gap:10px; flex: 1 1 auto; max-width: 560px; padding:6px 10px;
       background:rgba(58,32,0,0.94); border:2px solid #ff9d2e; border-radius:6px; color:#ffcf8a;
       font-size:13px; font-weight:600; line-height:1.25; }
-    #blwp-backup-cta { flex:none; font-size:13px; font-weight:700; padding:6px 10px; cursor:pointer;
+    #arena-backup-cta { flex:none; font-size:13px; font-weight:700; padding:6px 10px; cursor:pointer;
       background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
     /* A PHONE: THE WARNING IS ITS BUTTON (2026-10-17, UI 199: "Still Backup overflowing" - "No backup" on two lines beside "Back up
        now" made the box taller than the header row and it hung over Tick Tock's panel): under 480 px the words go, the orange
        "⚠ Back up now" stays on one line, as tall as the header's other buttons */
     @media (max-width: 480px) {
-      #blwp-backup-warn { padding: 0; border: 0; background: none; flex: 0 1 auto; max-width: none; min-width: 0; }
-      #blwp-backup-notice { display: none; }
-      #blwp-backup-cta { white-space: nowrap; padding: 7px 10px; font-size: 12.5px; border-radius: 7px; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-      #blwp-backup-cta::before { content: '\26A0\FE0E  '; }
+      #arena-backup-warn { padding: 0; border: 0; background: none; flex: 0 1 auto; max-width: none; min-width: 0; }
+      #arena-backup-notice { display: none; }
+      #arena-backup-cta { white-space: nowrap; padding: 7px 10px; font-size: 12.5px; border-radius: 7px; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+      #arena-backup-cta::before { content: '\26A0\FE0E  '; }
     }
     #arena-platform-go { flex: none; font: 600 13px/1 system-ui, sans-serif; padding: 9px 10px; text-decoration: none;
       background: rgba(13,16,20,0.9); color: #f7931a; border: 1px solid #3a4452; border-radius: 6px; white-space: nowrap; }
     #arena-set-platform a { color: #f7931a; font-weight: 600; }
     /* A PHONE: the backup warning keeps the strip's width; the platform page is in Settings */
     @media (max-width: 560px) { #arena-platform-go { display: none; } }
-    #blwp-settings-go { flex: none; font-size: 20px; line-height: 1; padding: 6px 10px; cursor: pointer;
+    #arena-settings-go { flex: none; font-size: 20px; line-height: 1; padding: 6px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; }
     /* THE LOBBY'S BALANCE (2026-09-29 12:47, SETTINGS-1254): confirmed and pending, each with its icon. */
-    #blwp-lobby-balance { position: fixed; z-index: 30; display: flex; gap: 6px; box-sizing: border-box;
+    #arena-lobby-balance { position: fixed; z-index: 30; display: flex; gap: 6px; box-sizing: border-box;
       font: 600 13px/1.1 system-ui, sans-serif; pointer-events: none; }
-    #blwp-lobby-balance .bal-chip { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+    #arena-lobby-balance .bal-chip { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px;
       border-radius: 6px; background: rgba(13,16,20,0.92); border: 1px solid #5a4a22; color: #e8eaed; white-space: nowrap; overflow: hidden; }
     /* ICON AND AMOUNT ONLY IN THE LOBBY (2026-10-02: "Co 310 sat / Pe... 0 sat - not very nice"): the chips are too
        narrow for the words beside a three-digit amount, and a cut word reads worse than none; the icon says which (the
        chip's title says it in words), Settings shows the words in full */
-    #blwp-lobby-balance .bal-what { display: none; }
-    #blwp-lobby-balance .bal-chip { justify-content: center; }
+    #arena-lobby-balance .bal-what { display: none; }
+    #arena-lobby-balance .bal-chip { justify-content: center; }
     /* THE AMOUNT IS NEVER CUT (2026-10-02: "Confirmed 5" - a three-digit balance was clipped): the amount and the
        icon keep their width, the label gives way first */
-    #blwp-lobby-balance b { flex: none; }
-    #blwp-lobby-balance .bal-ico { flex: none; }
-    body.blwp-clean #blwp-lobby-balance { display: none !important; }
+    #arena-lobby-balance b { flex: none; }
+    #arena-lobby-balance .bal-ico { flex: none; }
+    body.blwp-clean #arena-lobby-balance { display: none !important; }
     .bal-ico { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
       border-radius: 50%; font-size: 11px; font-weight: 800; flex: none; }
     .bal-ico.ok { background: #1f6f3a; color: #d8ffe4; }
@@ -1073,74 +1073,74 @@
       background: rgba(13,16,20,0.95); border: 2px solid #f7931a; color: #e8eaed; font: 700 16px/1.25 system-ui, sans-serif; }
     /* SIDE BY SIDE ON A PHONE, NEITHER OVER THE OTHER (SPECTATE-2158: "exit game" lay on the countdown words): the words
        take the room left of the button and wrap inside it; the button keeps its own width. */
-    #blwp-next-say { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    #arena-next-say { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
     #blwp-next { width: max-content; }
     /* NEVER ONE LETTER A LINE (measured 2026-10-18 on a 390 px phone: beside "Buy add-ons", "Donate" and "exit game"
        the words had no room left and stood one letter per line down the box): the words keep at least 10em, and the buttons
        that do not fit beside them wrap to a row of their own; on a phone the words take the first row whole. */
-    #blwp-next { flex-wrap: wrap; justify-content: center; } #blwp-next-say { min-width: min(10em, 100%); }
-    @media (max-width: 520px) { #blwp-next { width: calc(100% - 32px); font-size: 15px; } #blwp-next-say { flex-basis: 100%; text-align: center; } }
+    #blwp-next { flex-wrap: wrap; justify-content: center; } #arena-next-say { min-width: min(10em, 100%); }
+    @media (max-width: 520px) { #blwp-next { width: calc(100% - 32px); font-size: 15px; } #arena-next-say { flex-basis: 100%; text-align: center; } }
     /* AT THE BOTTOM EDGE IN LANDSCAPE (MF 19: at 18% up it stood over the result summary - "1 still driving",
        "YOU PENDING" - and a wreck's summary has no room above it there). Between the touch pads, which sit in the bottom
        corners; upright there is room above 18%, and on a touch screen it goes above the pads (below). Unity reads its top
        (nextBoxTop) and ends the card above it. */
     @media (orientation: landscape) { #blwp-next { bottom: max(10px, env(safe-area-inset-bottom)); } }
     @media (orientation: landscape) and (max-height: 460px) { #blwp-next { padding: 6px 10px; font-size: 14px; gap: 10px; }
-      #blwp-next-exit { padding: 5px 10px; } }
+      #arena-next-exit { padding: 5px 10px; } }
     /* on a touch screen no wider than the gap between the pads: each corner group is 2 buttons of 20% of the short side and
        1.5 margins of 3.5% (TouchPad.ButtonSize, Margin) - 45.25vh a side; the words wrap inside */
     @media (orientation: landscape) and (pointer: coarse) { #blwp-next { max-width: calc(100vw - 92vh); } }
     /* upright on a touch screen, above the pads: their top is 2 buttons and 1.5 margins up (45.25vw) */
     @media (orientation: portrait) and (pointer: coarse) { #blwp-next { bottom: max(18%, calc(45.25vw + 10px)); } }
-    #blwp-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
+    #arena-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
       border: 1px solid #3a4a5c; border-radius: 6px; }
-    #blwp-next-addons { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #f7931a; color: #111;
+    #arena-next-addons { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #f7931a; color: #111;
       border: 1px solid #f7931a; border-radius: 6px; }
-    @media (orientation: landscape) and (max-height: 460px) { #blwp-next-addons { padding: 5px 10px; } }
+    @media (orientation: landscape) and (max-height: 460px) { #arena-next-addons { padding: 5px 10px; } }
     /* DONATE IN THE COUNTDOWN (2026-10-17: "Ticktok location accepted") */
-    #blwp-next-donate { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #1b1408; color: #f7931a; border: 1px solid #f7931a; border-radius: 6px; }
-    @media (orientation: landscape) and (max-height: 460px) { #blwp-next-donate { padding: 5px 10px; } }
+    #arena-next-donate { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #1b1408; color: #f7931a; border: 1px solid #f7931a; border-radius: 6px; }
+    @media (orientation: landscape) and (max-height: 460px) { #arena-next-donate { padding: 5px 10px; } }
     body.blwp-clean #blwp-next { display: none !important; }
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
-    #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
+    #arena-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
       padding: 14px 14px 24px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
-    #blwp-settings .settings-head { display: flex; align-items: center; justify-content: space-between; max-width: 720px;
+    #arena-settings .settings-head { display: flex; align-items: center; justify-content: space-between; max-width: 720px;
       margin: 0 auto 14px; }
-    #blwp-settings .settings-head h2 { margin: 0; font-size: 20px; color: #f7931a; letter-spacing: 0.04em; }
-    #blwp-settings .settings-head h2 { display: flex; align-items: center; gap: 10px; }
-    #blwp-settings .settings-head h2 .mark { width: 28px; height: 28px; }
-    #blwp-settings .settings-head h2 small { color: #8b949e; font-size: 13px; font-weight: 600; letter-spacing: 0; }
-    #blwp-settings .settings-card { max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box;
+    #arena-settings .settings-head h2 { margin: 0; font-size: 20px; color: #f7931a; letter-spacing: 0.04em; }
+    #arena-settings .settings-head h2 { display: flex; align-items: center; gap: 10px; }
+    #arena-settings .settings-head h2 .mark { width: 28px; height: 28px; }
+    #arena-settings .settings-head h2 small { color: #8b949e; font-size: 13px; font-weight: 600; letter-spacing: 0; }
+    #arena-settings .settings-card { max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box;
       background: linear-gradient(180deg, #161c24, #11161c); border: 1px solid #2f3b49; border-radius: 10px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
-    #blwp-history { margin: 10px 0 4px; }
-    #blwp-history-rows { max-height: 240px; overflow-y: auto; }
+    #arena-history { margin: 10px 0 4px; }
+    #arena-history-rows { max-height: 240px; overflow-y: auto; }
     /* THE FEDERATION AS A CHIP, NOT A WALL OF HEX (2026-10-12 16:44: "the federation id is too long. Make it
        better visible"): its first and last 4 bytes, the full id on hover and copied on a tap */
-    #blwp-history-fed .fed-chip { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 3px 10px; border-radius: 999px;
+    #arena-history-fed .fed-chip { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 3px 10px; border-radius: 999px;
       background: rgba(88,166,255,0.14); border: 1px solid rgba(88,166,255,0.45); color: #79c0ff; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
-    #blwp-history-fed .fed-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
-    #blwp-history-rows .empty { color: #8b949e; font-size: 14px; padding: 6px 0; }
+    #arena-history-fed .fed-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
+    #arena-history-rows .empty { color: #8b949e; font-size: 14px; padding: 6px 0; }
     .hist-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #2a2f36; font-size: 12px; }
     .hist-row .hist-amt { margin-left: auto; font-variant-numeric: tabular-nums; }
     .hist-row.plus .hist-amt { color: #7bd88f; } .hist-row.minus .hist-amt { color: #ff9f7a; }
     .hist-row.clickable { cursor: pointer; } .hist-row.clickable:hover { background: #1c2128; }
-    #blwp-settings .settings-menu { padding: 0; }
-    #blwp-settings .settings-menu .menu-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin: 0; padding: 16px 14px;
+    #arena-settings .settings-menu { padding: 0; }
+    #arena-settings .settings-menu .menu-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin: 0; padding: 16px 14px;
       background: transparent; border: 0; color: #e6edf3; font-size: 16px; text-align: left; cursor: pointer; }
-    #blwp-settings .settings-menu .menu-row span { color: #f7931a; font-size: 22px; }
-    #blwp-settings-advanced { position: fixed; inset: 0; z-index: 41; overflow-y: auto; background: #0b0e12; padding: 16px; box-sizing: border-box; }
-    #blwp-settings .settings-card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    #arena-settings .settings-menu .menu-row span { color: #f7931a; font-size: 22px; }
+    #arena-settings-advanced { position: fixed; inset: 0; z-index: 41; overflow-y: auto; background: #0b0e12; padding: 16px; box-sizing: border-box; }
+    #arena-settings .settings-card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
       color: #f7931a; border-bottom: 1px solid #2f3b49; padding-bottom: 8px; }
-    #blwp-settings button, #blwp-seed-modal button { font: inherit; font-weight: 600; padding: 9px 14px; margin: 4px 6px 4px 0;
+    #arena-settings button, #arena-seed-modal button { font: inherit; font-weight: 600; padding: 9px 14px; margin: 4px 6px 4px 0;
       cursor: pointer; background: #1e2833; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
-    #blwp-settings button.primary, #blwp-seed-modal button.primary { background: #f7931a; color: #1b1000; border-color: #f7931a; }
-    #blwp-settings button:disabled { opacity: 0.45; cursor: default; }
+    #arena-settings button.primary, #arena-seed-modal button.primary { background: #f7931a; color: #1b1000; border-color: #f7931a; }
+    #arena-settings button:disabled { opacity: 0.45; cursor: default; }
     /* THE RISK IS SAID AND SHOWN (2026-10-16: "this section should highlight the potential risk. maybe choosing
        red as text color in the button instead of white. also for the account section wording"): both delete buttons in red, the
        risk in red under the heading, and the confirm step names what is lost */
-    #blwp-settings button.danger { color: #ff6b6b; border-color: #8b2b2b; background: #1f1316; }
-    #blwp-settings button.danger.primary { color: #fff; background: #c62828; border-color: #c62828; }
+    #arena-settings button.danger { color: #ff6b6b; border-color: #8b2b2b; background: #1f1316; }
+    #arena-settings button.danger.primary { color: #fff; background: #c62828; border-color: #c62828; }
     #arena-set-account .risk { color: #ff8a80; font-weight: 600; }
     /* LESS CONVOLUTED (2026-10-17: "move the warning text bellow the deletion button. make the text also a bit smaller
        and centered. add a bit of vertical spacing between the elements"): who, then the button, then the warning under it, small and
@@ -1151,25 +1151,25 @@
     #arena-set-account #arena-acct-confirm { margin-top: 14px; }
     #arena-set-account #arena-acct-confirm .risk { margin-bottom: 10px; }
     #arena-set-account #arena-acct-why:not(:empty) { margin-top: 10px; }
-    #blwp-settings .bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
-    #blwp-settings .bal-box { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px;
+    #arena-settings .bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    #arena-settings .bal-box { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px;
       background: #0d1218; border: 1px solid #263240; }
-    #blwp-settings .bal-box .bal-what { font-size: 12px; color: #9fb3c8; }
-    #blwp-settings .bal-box .bal-sats { font-size: 17px; font-weight: 700; }
-    #blwp-settings .muted { color: #9fb3c8; font-size: 13px; }
-    #blwp-settings .name-row { display: flex; gap: 8px; align-items: center; }
-    #blwp-settings input[type=text], #blwp-settings input[type=password], #blwp-settings select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px;
+    #arena-settings .bal-box .bal-what { font-size: 12px; color: #9fb3c8; }
+    #arena-settings .bal-box .bal-sats { font-size: 17px; font-weight: 700; }
+    #arena-settings .muted { color: #9fb3c8; font-size: 13px; }
+    #arena-settings .name-row { display: flex; gap: 8px; align-items: center; }
+    #arena-settings input[type=text], #arena-settings input[type=password], #arena-settings select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px;
       background: #0d1218; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
-    #blwp-settings select { width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
+    #arena-settings select { width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
     /* THE SEED, A SMALL MODAL OVER SETTINGS: 24 numbered words in a grid, then Verify one word at a time. */
     /* THE WALLET SCREEN (2026-10-10: "a new loading screen in each game - create a new wallet or restore
        wallet ... Also Login with Nostr"): shown at start in a browser that holds no wallet; above the loading screen */
     /* THE FEDERATION'S STATUS: CRITICAL and CLOSED leave Withdraw and Move; DRAINING closes Deposit; HALTED all */
     .arena-fed-note { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #f7931a; background: rgba(247,147,26,.08); border-radius: 0 8px 8px 0; font-size: 14px; }
-    body.arena-fed-draining #blwp-deposit-go, body.arena-fed-draining #arena-wb-deposit,
-    body.arena-fed-critical #blwp-deposit-go, body.arena-fed-critical #arena-wb-deposit,
-    body.arena-fed-closed #blwp-deposit-go, body.arena-fed-closed #arena-wb-deposit,
-    body.arena-fed-halted #blwp-money-actions button, body.arena-fed-halted #arena-wb-deposit, body.arena-fed-halted #arena-wb-withdraw { display: none; }
+    body.arena-fed-draining #arena-deposit-go, body.arena-fed-draining #arena-wb-deposit,
+    body.arena-fed-critical #arena-deposit-go, body.arena-fed-critical #arena-wb-deposit,
+    body.arena-fed-closed #arena-deposit-go, body.arena-fed-closed #arena-wb-deposit,
+    body.arena-fed-halted #arena-money-actions button, body.arena-fed-halted #arena-wb-deposit, body.arena-fed-halted #arena-wb-withdraw { display: none; }
     #arena-fed-confirm { position: fixed; inset: 0; z-index: 70; display: none; align-items: center; justify-content: center; background: rgba(5,8,12,.78); padding: 16px; }
     #arena-fed-confirm .afc-box { width: 100%; max-width: 460px; max-height: 90vh; overflow: auto; background: #141a21; border: 1px solid #2a3442; border-radius: 16px; padding: 20px; color: #e6edf5; font: 15px system-ui, sans-serif; }
     #arena-fed-confirm h2 { margin: 0 0 6px; color: #f7931a; font-size: 20px; }
@@ -1223,24 +1223,24 @@
     #arena-wallet-start input[type=checkbox] { width: 20px; height: 20px; margin: 0; flex: 0 0 auto; }
     #arena-wallet-start label.ws-check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; margin: 0 0 12px; }
     #arena-wallet-start .ws-or { text-align: center; color: #6b7685; font-size: 12px; margin: 4px 0 10px; }
-    #blwp-seed-modal { position: fixed; inset: 0; z-index: 45; display: none; align-items: center; justify-content: center;
+    #arena-seed-modal { position: fixed; inset: 0; z-index: 45; display: none; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.6); padding: 14px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
-    #blwp-seed-modal .modal-box { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; box-sizing: border-box;
+    #arena-seed-modal .modal-box { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; box-sizing: border-box;
       background: #141a21; border: 1px solid #f7931a; border-radius: 12px; padding: 16px; }
-    #blwp-seed-modal h3 { margin: 0 0 12px; color: #f7931a; font-size: 17px; }
-    #blwp-seed-modal .seed-why { margin: -4px 0 12px; padding: 9px 11px; border-radius: 8px; background: #1b1408; border: 1px solid #5a4a22;
+    #arena-seed-modal h3 { margin: 0 0 12px; color: #f7931a; font-size: 17px; }
+    #arena-seed-modal .seed-why { margin: -4px 0 12px; padding: 9px 11px; border-radius: 8px; background: #1b1408; border: 1px solid #5a4a22;
       color: #e8dcc6; font-size: 13px; line-height: 1.45; }
-    #blwp-seed-modal .seed-why b { color: #f7a64a; }
-    @media (max-width: 420px) { #blwp-seed-modal .seed-why { font-size: 12.5px; padding: 8px 10px; } }
-    #blwp-seed-modal .seed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
-    #blwp-seed-modal .seed-cell { display: flex; gap: 6px; align-items: baseline; padding: 7px 8px; border-radius: 6px;
+    #arena-seed-modal .seed-why b { color: #f7a64a; }
+    @media (max-width: 420px) { #arena-seed-modal .seed-why { font-size: 12.5px; padding: 8px 10px; } }
+    #arena-seed-modal .seed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+    #arena-seed-modal .seed-cell { display: flex; gap: 6px; align-items: baseline; padding: 7px 8px; border-radius: 6px;
       background: #0d1218; border: 1px solid #263240; font-weight: 600; }
-    #blwp-seed-modal .seed-cell .n { color: #9fb3c8; font-size: 11px; min-width: 16px; text-align: right; }
-    #blwp-seed-modal .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
-    #blwp-seed-modal .opt-grid button { margin: 0; padding: 14px 8px; font-size: 16px; }
-    #blwp-seed-modal .verify-n { font-size: 20px; font-weight: 800; }
-    #blwp-seed-modal .why { color: #ff7b72; min-height: 1.3em; }
-    #blwp-seed-modal .done { color: #3fb950; font-size: 18px; font-weight: 800; }
+    #arena-seed-modal .seed-cell .n { color: #9fb3c8; font-size: 11px; min-width: 16px; text-align: right; }
+    #arena-seed-modal .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+    #arena-seed-modal .opt-grid button { margin: 0; padding: 14px 8px; font-size: 16px; }
+    #arena-seed-modal .verify-n { font-size: 20px; font-weight: 800; }
+    #arena-seed-modal .why { color: #ff7b72; min-height: 1.3em; }
+    #arena-seed-modal .done { color: #3fb950; font-size: 18px; font-weight: 800; }
     /* ONE SCREEN, NO SCROLLING (2026-10-18: "it is slightly too high to fit on a normal macbook pro screen. We want to see everything
        on one page without scrolling" - measured 80 px over at 1440 x 760; "not a two-column layout - optimise the space vertically"): the
        same layout, less height - the tiles' logos 96 px, tighter tiles, headings and footer. Measured: 1512 x 830, 1440 x 760 and 1280 x 720 fit. */
@@ -1259,7 +1259,7 @@
 </head>
 <body>
   <canvas id="canvas" tabindex="-1"></canvas>
-  <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `blwp-money` is hidden while a
+  <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
        round is being driven, so the balance, the federation and the pending line cannot follow a player
        into the game. -->
   <!-- THE LOBBY'S STRIP, AND NOTHING MORE (2026-09-25 21:11-21:16, phone: the wallet page stood where the lobby
@@ -1273,21 +1273,21 @@
   <button id="arena-donate-go" type="button" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || null)">&hearts; Donate</button>
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
-  <div id="blwp-money">
+  <div id="arena-money">
     <a id="arena-game-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (2026-10-08 11:38): the platform page, beside the gear -->
     <!-- THE WALLET IN EVERY HEADER (2026-10-19: "the header is missing balance, deposit and withdrawls"):
          the same balance button, Deposit and Withdraw as the games screen's bar, the same handlers -->
-    <button id="blwp-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="blwp-hdr-sats">&ndash; sat</b></button>
-    <button id="blwp-hdr-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
-    <button id="blwp-hdr-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
+    <button id="arena-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="arena-hdr-sats">&ndash; sat</b></button>
+    <button id="arena-hdr-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
+    <button id="arena-hdr-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
     <!-- THE SEASON BOARD OF THE CHOSEN GAME, beside the gear once a game is chosen -->
-    <button id="blwp-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
+    <button id="arena-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <!-- THE GAME'S SHOP, beside the Leaderboard once a game that sells items is chosen -->
-    <button id="blwp-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
-    <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
-    <div id="blwp-hdr-why" role="status"></div>
+    <button id="arena-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
+    <button id="arena-settings-go" type="button" title="Settings">&#9881;</button>
+    <div id="arena-hdr-why" role="status"></div>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
        withdraw, the seed, the backup warning: that is Settings"): the wallet, the name, the donation, and the seed with
@@ -1306,52 +1306,52 @@
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
   <div id="arena-ov-scrim" aria-hidden="true"></div>
   <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
-  <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons</button><button id="blwp-next-donate" type="button">&hearts; Donate</button><button id="blwp-next-exit" type="button">exit game</button></div>
+  <div id="blwp-next" role="status"><span id="arena-next-say"></span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons</button><button id="arena-next-donate" type="button">&hearts; Donate</button><button id="arena-next-exit" type="button">exit game</button></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (2026-09-29): placed over the row Unity reports as `balance`, where
        NAME and KEY stood, above the rounds. -->
-  <div id="blwp-lobby-balance" style="display:none">
-    <span class="bal-chip" title="confirmed"><span class="bal-ico ok">&#10003;</span><span class="bal-what">Confirmed</span><b id="blwp-lobby-confirmed">&ndash;</b></span>
-    <span class="bal-chip" title="pending"><span class="bal-ico pend">&#8987;</span><span class="bal-what">Pending</span><b id="blwp-lobby-pending">&ndash;</b></span>
+  <div id="arena-lobby-balance" style="display:none">
+    <span class="bal-chip" title="confirmed"><span class="bal-ico ok">&#10003;</span><span class="bal-what">Confirmed</span><b id="arena-lobby-confirmed">&ndash;</b></span>
+    <span class="bal-chip" title="pending"><span class="bal-ico pend">&#8987;</span><span class="bal-what">Pending</span><b id="arena-lobby-pending">&ndash;</b></span>
   </div>
-  <div id="blwp-settings" style="display:none">
-    <div class="settings-head"><h2><img class="mark" src="nextblock-icon.svg" alt="">SETTINGS <small>Tick Tock, Next Block</small></h2><button id="blwp-settings-close" type="button">&#10005; Close</button></div>
-    <section class="settings-card" id="blwp-set-wallet">
+  <div id="arena-settings" style="display:none">
+    <div class="settings-head"><h2><img class="mark" src="nextblock-icon.svg" alt="">SETTINGS <small>Tick Tock, Next Block</small></h2><button id="arena-settings-close" type="button">&#10005; Close</button></div>
+    <section class="settings-card" id="arena-set-wallet">
       <h3>Wallet</h3>
       <div class="bal-grid">
-        <div class="bal-box"><span class="bal-ico ok">&#10003;</span><div><div class="bal-what">Confirmed</div><div class="bal-sats" id="blwp-bal-confirmed">&ndash;</div></div></div>
-        <div class="bal-box"><span class="bal-ico pend">&#8987;</span><div><div class="bal-what">Pending</div><div class="bal-sats" id="blwp-bal-pending">&ndash;</div><div class="bal-what" id="blwp-bal-pending-when"></div></div></div>
+        <div class="bal-box"><span class="bal-ico ok">&#10003;</span><div><div class="bal-what">Confirmed</div><div class="bal-sats" id="arena-bal-confirmed">&ndash;</div></div></div>
+        <div class="bal-box"><span class="bal-ico pend">&#8987;</span><div><div class="bal-what">Pending</div><div class="bal-sats" id="arena-bal-pending">&ndash;</div><div class="bal-what" id="arena-bal-pending-when"></div></div></div>
       </div>
-      <div class="muted" id="blwp-balance-line"></div>
-      <div id="blwp-other-wallets"></div>
-      <div id="blwp-history">
-        <div class="muted" id="blwp-history-fed"></div>
-        <div id="blwp-history-rows"></div>
+      <div class="muted" id="arena-balance-line"></div>
+      <div id="arena-other-wallets"></div>
+      <div id="arena-history">
+        <div class="muted" id="arena-history-fed"></div>
+        <div id="arena-history-rows"></div>
       </div>
-      <div id="blwp-withdraw-panel" style="display:none">
-        <div class="muted" id="blwp-wd-amount"></div>
-        <input id="blwp-wd-invoice" type="text" autocomplete="off" placeholder="Paste an invoice from your own Lightning wallet" style="width:100%;box-sizing:border-box;margin:6px 0">
-        <div class="muted" id="blwp-wd-chosen"></div>
-        <button id="blwp-wd-go" type="button">Withdraw</button>
+      <div id="arena-withdraw-panel" style="display:none">
+        <div class="muted" id="arena-wd-amount"></div>
+        <input id="arena-wd-invoice" type="text" autocomplete="off" placeholder="Paste an invoice from your own Lightning wallet" style="width:100%;box-sizing:border-box;margin:6px 0">
+        <div class="muted" id="arena-wd-chosen"></div>
+        <button id="arena-wd-go" type="button">Withdraw</button>
       </div>
       <!-- ALL FEDERATIONS AT A GLANCE (2026-10-12: on the deposit part of Settings, inline): funds held,
            how many, health before deposits stop (green / yellow / red, its meaning in the tooltip) and possible capacity -->
       <div id="arena-custody" style="margin:8px 0 10px;padding:9px 11px;border:1px solid #2a3442;border-radius:10px;background:#11161d;font-size:13px;line-height:1.5"></div>
-      <div id="blwp-money-actions">
-        <button id="blwp-deposit-go" type="button">Deposit</button>
-        <button id="blwp-withdraw-lobby" type="button">Withdraw</button>
-        <button id="blwp-move-go" type="button">Move</button>
+      <div id="arena-money-actions">
+        <button id="arena-deposit-go" type="button">Deposit</button>
+        <button id="arena-withdraw-lobby" type="button">Withdraw</button>
+        <button id="arena-move-go" type="button">Move</button>
       </div>
-      <div class="muted" id="blwp-money-why"></div>
+      <div class="muted" id="arena-money-why"></div>
       <div class="arena-fed-note" id="arena-fed-note" style="display:none"></div>
     </section>
-    <section class="settings-card" id="blwp-set-name">
+    <section class="settings-card" id="arena-set-name">
       <h3>Name</h3>
       <div class="muted">Current name</div>
       <div class="name-row">
-        <input id="blwp-name-field" type="text" autocomplete="off" spellcheck="false" maxlength="32">
-        <button id="blwp-name-update" type="button" class="primary">Update</button>
+        <input id="arena-name-field" type="text" autocomplete="off" spellcheck="false" maxlength="32">
+        <button id="arena-name-update" type="button" class="primary">Update</button>
       </div>
-      <div class="muted" id="blwp-name-why"></div>
+      <div class="muted" id="arena-name-why"></div>
     </section>
     <section class="settings-card" id="arena-set-graphics">
       <h3>Graphics</h3>
@@ -1362,31 +1362,31 @@
       <!-- SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings") -->
       <label class="fps-toggle"><input type="checkbox" id="arena-fps-toggle"> Show FPS</label>
     </section>
-    <section class="settings-card" id="blwp-set-logs">
+    <section class="settings-card" id="arena-set-logs">
       <h3>Client logs</h3>
       <div class="muted">What this page did - its log lines, sockets and run state, no seed or keys - to paste to Claude.</div>
-      <button id="blwp-logs-copy" type="button">Copy client logs</button>
-      <div class="muted" id="blwp-logs-said"></div>
+      <button id="arena-logs-copy" type="button">Copy client logs</button>
+      <div class="muted" id="arena-logs-said"></div>
     </section>
     <!-- THE BENCHMARK, HERE AND NOT IN THE LOBBY (2026-10-16: "Remove the benchmark button and have that in the
          settings instead"): the same test the lobby's BENCHMARK ran - SPECTATE, then the frame rate with each render cost off in turn -->
-    <section class="settings-card" id="blwp-set-bench">
+    <section class="settings-card" id="arena-set-bench">
       <h3>Benchmark</h3>
-      <label class="muted"><input type="checkbox" id="blwp-bench-on"> On - off by default</label>
+      <label class="muted"><input type="checkbox" id="arena-bench-on"> On - off by default</label>
       <div class="muted">Spectates the round and measures this device's frame rate with each graphics cost switched off in turn; the result shows under the FPS line. While it is on, a tap on the FPS line runs it too.</div>
-      <button id="blwp-bench-go" type="button" disabled>Run the benchmark</button>
+      <button id="arena-bench-go" type="button" disabled>Run the benchmark</button>
     </section>
-    <section class="settings-card" id="blwp-set-seed">
+    <section class="settings-card" id="arena-set-seed">
       <h3>Seed phrase</h3>
-      <div class="muted" id="blwp-settings-backup"></div>
-      <button id="blwp-phrase-show" type="button" class="primary">Show seed phrase</button>
+      <div class="muted" id="arena-settings-backup"></div>
+      <button id="arena-phrase-show" type="button" class="primary">Show seed phrase</button>
       <!-- RESTORE, OVERWRITING THIS TAB'S SEED: the 24 words or the 64 hex -->
       <div class="muted">Restore: your 24 words (or your seed, 64 hex) replace this tab's seed, and the page reloads.</div>
       <div class="name-row">
-        <input id="blwp-seed-restore" type="password" autocomplete="off" placeholder="your 24 words, or your seed (64 hex)">
-        <button id="blwp-seed-use" type="button">use my seed</button>
+        <input id="arena-seed-restore" type="password" autocomplete="off" placeholder="your 24 words, or your seed (64 hex)">
+        <button id="arena-seed-use" type="button">use my seed</button>
       </div>
-      <div class="muted" id="blwp-seed-restore-why"></div>
+      <div class="muted" id="arena-seed-restore-why"></div>
     </section>
     <!-- DELETE THIS ACCOUNT FROM THIS BROWSER (2026-10-11: "Im settings screen gibt es die Möglichkeit seinen
          Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"): this tab's phrase, its wallets' data and the
@@ -1417,7 +1417,7 @@
     <!-- THE COMMUNITY (2026-10-09: "Armada is the Discord"): the Bitcoin Arena community on Armada, an
          encrypted, open-source Discord alternative on Nostr - its public invite link (Share to Discover, published from the
          game's Armada key ~/.config/blwp/armada) -->
-    <section class="settings-card" id="blwp-set-community">
+    <section class="settings-card" id="arena-set-community">
       <h3>Community</h3>
       <div class="muted">Chat with players, node operators and game developers on Armada - log in with your Nostr key.</div>
       <a id="arena-armada-link" href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener" style="color:#c9a8ff;font-weight:600">Join Bitcoin Arena on Armada →</a>
@@ -1426,21 +1426,21 @@
          "There is a screen in settings called advanced settings which has two select boxes, the existing donation dropdown and a new one
          for ingame options: 50% 40% 30% 20% 10% 0% ... It is at the very bottom of the settings screen and needs to be scrolled to be
          visible"; ~13:40Z: "Advanced settings muss ein eigener Menüpunkt sein ganz unten und dann geht ein neuer Screen auf") -->
-    <section class="settings-card settings-menu" id="blwp-set-advanced-item">
-      <button id="blwp-advanced-go" type="button" class="menu-row">Advanced settings <span aria-hidden="true">&#8250;</span></button>
+    <section class="settings-card settings-menu" id="arena-set-advanced-item">
+      <button id="arena-advanced-go" type="button" class="menu-row">Advanced settings <span aria-hidden="true">&#8250;</span></button>
     </section>
-    <div id="blwp-settings-advanced" style="display:none" role="dialog" aria-modal="true" aria-labelledby="blwp-advanced-title">
-      <div class="settings-head"><h2 id="blwp-advanced-title">ADVANCED SETTINGS</h2><button id="blwp-advanced-back" type="button">&#8249; Back</button></div>
-      <section class="settings-card" id="blwp-set-advanced">
+    <div id="arena-settings-advanced" style="display:none" role="dialog" aria-modal="true" aria-labelledby="arena-advanced-title">
+      <div class="settings-head"><h2 id="arena-advanced-title">ADVANCED SETTINGS</h2><button id="arena-advanced-back" type="button">&#8249; Back</button></div>
+      <section class="settings-card" id="arena-set-advanced">
         <h3>Donation</h3>
         <div class="muted">A share of each paid entry to the protocol and game developers</div>
         <select id="blwp-donation-select" aria-label="Donation">
           <option value="0">0%</option><option value="1">1%</option><option value="2">2%</option>
           <option value="3">3%</option><option value="4">4%</option><option value="5" selected>5%</option>
         </select>
-        <div class="muted" id="blwp-donation-recipients"></div>
+        <div class="muted" id="arena-donation-recipients"></div>
       </section>
-      <section class="settings-card" id="blwp-set-items-share">
+      <section class="settings-card" id="arena-set-items-share">
         <h3>In-game items</h3>
         <div class="muted" id="arena-items-share-lead">Your share to the protocol and game developers, on top of the nodes' 40 % and the protocol reserves' 20 %</div>
         <select id="arena-items-share-select" aria-label="In-game items: developers' share">
@@ -1455,8 +1455,8 @@
   // SETTINGS OPENS ON THE FIRST CLICK: this runs as the page is parsed, before the bundles, the wallet or
   // Unity, so the gear opens the panel at once. The page's main script fills it (BLWP_PAINT_SETTINGS) - at once when it
   // is up, or as soon as it is if the panel was opened before it.
-  document.getElementById('blwp-settings-go').addEventListener('click', () => {
-    document.getElementById('blwp-settings').style.display = '';
+  document.getElementById('arena-settings-go').addEventListener('click', () => {
+    document.getElementById('arena-settings').style.display = '';
     if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); else window.BLWP_SETTINGS_EARLY = true;
   });
   </script>
@@ -1524,49 +1524,49 @@
       <p class="ws-note" style="text-align:center;margin:8px 0 0">Questions? <a href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener" style="color:#c9a8ff">Join the community on Armada</a></p>
     </div>
   </div>
-  <div id="blwp-seed-modal" role="dialog" aria-modal="true">
+  <div id="arena-seed-modal" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <div id="blwp-seed-words">
+      <div id="arena-seed-words">
         <h3>Your seed phrase</h3>
         <!-- WHY, SAID WHERE THE WORDS ARE (2026-10-17: "when it says back up now and the modal opens there is space
              for a message explaining why user needs to do it. Needs to fit mobile as well") -->
-        <div class="seed-why" id="blwp-seed-why"><b>These 24 words are your wallet.</b> Your sats are kept only in this browser: if it is cleared, or
+        <div class="seed-why" id="arena-seed-why"><b>These 24 words are your wallet.</b> Your sats are kept only in this browser: if it is cleared, or
           this phone is lost or replaced, these words are the only way to get them back. Write them on paper, in order, and keep them
           offline. Never share them: whoever has them can take your sats.</div>
-        <div id="blwp-phrase" class="seed-grid"></div>
-        <button id="blwp-verify-start" type="button" class="primary">Verify seed phrase</button>
-        <button id="blwp-seed-close" type="button">Close</button>
+        <div id="arena-phrase" class="seed-grid"></div>
+        <button id="arena-verify-start" type="button" class="primary">Verify seed phrase</button>
+        <button id="arena-seed-close" type="button">Close</button>
       </div>
-      <div id="blwp-verify-step" style="display:none">
+      <div id="arena-verify-step" style="display:none">
         <h3>Verify seed phrase</h3>
-        <div>Word <span class="verify-n" id="blwp-verify-n">1</span> of 24</div>
-        <div class="opt-grid" id="blwp-verify-options"></div>
-        <div class="why" id="blwp-verify-why"></div>
-        <button id="blwp-verify-cancel" type="button">Cancel</button>
+        <div>Word <span class="verify-n" id="arena-verify-n">1</span> of 24</div>
+        <div class="opt-grid" id="arena-verify-options"></div>
+        <div class="why" id="arena-verify-why"></div>
+        <button id="arena-verify-cancel" type="button">Cancel</button>
       </div>
-      <div id="blwp-verify-done" style="display:none">
+      <div id="arena-verify-done" style="display:none">
         <div class="done">Seed phrase verified</div>
-        <button id="blwp-verify-close" type="button" class="primary">Done</button>
+        <button id="arena-verify-close" type="button" class="primary">Done</button>
       </div>
     </div>
   </div>
-  <div id="blwp-link-warn" role="alert" style="display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(92vw,720px);padding:8px 14px;border-radius:8px;background:#b3261e;color:#fff;font:600 14px/1.35 system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.4)"></div>
-  <div id="blwp-lobby"></div>
-  <div id="blwp-pick" role="dialog" aria-modal="true" aria-label="pick an outcome"><div class="sheet"></div></div>
+  <div id="arena-link-warn" role="alert" style="display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(92vw,720px);padding:8px 14px;border-radius:8px;background:#b3261e;color:#fff;font:600 14px/1.35 system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.4)"></div>
+  <div id="arena-lobby"></div>
+  <div id="arena-pick" role="dialog" aria-modal="true" aria-label="pick an outcome"><div class="sheet"></div></div>
   <div id="blwp-players"></div>
-  <div id="blwp-refund"></div>
-  <button id="blwp-console-go" type="button" aria-expanded="false" title="Consensus and federation lines">Console</button>
-  <div id="blwp-console-thumb" aria-hidden="true"></div>
-  <div id="blwp-wallet">
-    <div class="owed" id="blwp-owed"></div>
-    <div class="spent" id="blwp-spent"></div>
+  <div id="arena-refund"></div>
+  <button id="arena-console-go" type="button" aria-expanded="false" title="Consensus and federation lines">Console</button>
+  <div id="arena-console-thumb" aria-hidden="true"></div>
+  <div id="arena-wallet">
+    <div class="owed" id="arena-owed"></div>
+    <div class="spent" id="arena-spent"></div>
     <div class="spent" id="blwp-donation"></div>
-    <div class="spent" id="blwp-settled"></div>
-    <div class="spent" id="blwp-withdraw"></div>
-    <input id="blwp-withdraw-invoice" type="text" autocomplete="off" spellcheck="false"
+    <div class="spent" id="arena-settled"></div>
+    <div class="spent" id="arena-wallet-withdraw"></div>
+    <input id="arena-withdraw-invoice" type="text" autocomplete="off" spellcheck="false"
            placeholder="connect your wallet to withdraw; an invoice pasted here pays only what is already in this tab" style="display:none">
-    <button id="blwp-withdraw-go" type="button" style="display:none">Withdraw to my wallet</button>
-    <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
+    <button id="arena-withdraw-go" type="button" style="display:none">Withdraw to my wallet</button>
+    <input id="arena-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
   </div>
 
@@ -1948,14 +1948,14 @@
          loading screen instead of the header"; "When doing a deposit the popup in there shows the warning again"): every game's loading
          screen says it while the wallet has no backup, with its own way out; the deposit popup says it again (paintMoney). PLAY is never
          refused, so the warning is what stands between a player and a wallet never written down (2026-09-21 20:01). -->
-    <div id="blwp-backup-warn" style="display:none">
-      <span id="blwp-backup-notice"></span>
-      <button id="blwp-backup-cta" type="button">Back up now</button>
+    <div id="arena-backup-warn" style="display:none">
+      <span id="arena-backup-notice"></span>
+      <button id="arena-backup-cta" type="button">Back up now</button>
     </div>
     <div class="build-line" id="boot-build">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
-    <div id="blwp-deposit"></div>
+    <div id="arena-deposit"></div>
     <div id="err"></div>
-    <div id="blwp-donation-noted"></div>
+    <div id="arena-donation-noted"></div>
   </div>
 
   <!-- The deterministic core, loaded before Unity so the jslib glue can reach
@@ -2564,7 +2564,7 @@
     // for the round this link names and this tab's own key; no node and no
     // wallet is asked anything.
     function showNotedDonation() {
-      const el = document.getElementById('blwp-donation-noted');
+      const el = document.getElementById('arena-donation-noted');
       if (!el || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.notedDonationForLink) return;
       let noted = null;
       try { noted = BLWPCLIENT.notedDonationForLink(location.search, { storage: window.sessionStorage, curve: window.BLWP_CURVE }); } catch { noted = null; }
@@ -2832,8 +2832,8 @@
       const n = M && (M.blwpRunNet || M.blwpNet);
       const finalTick = n && n.client && Number.isInteger(n.client.nextTick) ? n.client.nextTick : null;
       if (!finalTick || !run.roundHex || !run.entryHex) return null;
-      let el = document.getElementById('blwp-securing');
-      if (!el) { el = document.createElement('div'); el.id = 'blwp-securing';
+      let el = document.getElementById('arena-securing');
+      if (!el) { el = document.createElement('div'); el.id = 'arena-securing';
         el.style.cssText = 'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:60;padding:8px 14px;border-radius:8px;background:rgba(10,14,20,.92);color:#ffd27a;font:600 14px system-ui;max-width:92vw;text-align:center';
         document.body.appendChild(el); }
       el.style.display = ''; el.textContent = 'Securing your run with the signer nodes … keep this tab open';
@@ -2955,10 +2955,10 @@
       if (box) {
         box.style.display = v.show === 'countdown' ? 'flex' : 'none';
         if (v.show === 'countdown') {
-          document.getElementById('blwp-next-say').textContent = v.line;
-          document.getElementById('blwp-next-exit').textContent = v.exit;
+          document.getElementById('arena-next-say').textContent = v.line;
+          document.getElementById('arena-next-exit').textContent = v.exit;
           // AND BUY ADD-ONS while the countdown runs: Unity's add-ons panel, when this game sells something
-          const ad = document.getElementById('blwp-next-addons');
+          const ad = document.getElementById('arena-next-addons');
           if (ad) ad.style.display = window.ARENA_ADDONS_VIEW && window.ARENA_ADDONS_VIEW().shop && window.unityInstance ? '' : 'none';
         }
       }
@@ -2998,11 +2998,11 @@
       }
       return show(offer);
     };
-    document.getElementById('blwp-next-donate').addEventListener('click', () => { if (window.ARENA_DONATE_OPEN) window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || 'nextblock'); });
-    document.getElementById('blwp-next-addons').addEventListener('click', () => {
+    document.getElementById('arena-next-donate').addEventListener('click', () => { if (window.ARENA_DONATE_OPEN) window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || 'nextblock'); });
+    document.getElementById('arena-next-addons').addEventListener('click', () => {
       try { window.unityInstance.SendMessage('Bootstrap', 'OpenAddons'); } catch (e) { console.error('[blwp] add-ons: ' + e.message); }
     });
-    document.getElementById('blwp-next-exit').addEventListener('click', () => {
+    document.getElementById('arena-next-exit').addEventListener('click', () => {
       // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
       // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
       window.BLWP_CONTINUE = false;
@@ -3322,7 +3322,7 @@
       }
       if (!market) throw new Error('that round is not a market this page can read');
       const sheet = BLWPCLIENT.pickSheet({ market, contract });
-      const el = document.getElementById('blwp-pick');
+      const el = document.getElementById('arena-pick');
       const box = el.querySelector('.sheet');
       box.textContent = '';
       const h = document.createElement('h3'); h.textContent = sheet.title;
@@ -3460,7 +3460,7 @@
         window.BLWP_DONATION_PAID = BLWPCLIENT.donationNotedState(window.sessionStorage,
           { roundId: player.roundId, playerPubkey: player.pubkey }) || undefined;
       }
-      const refundEl = document.getElementById('blwp-refund');
+      const refundEl = document.getElementById('arena-refund');
       if (refundEl) {
         refundEl.textContent = 'refund key fingerprint ' + player.fingerprint
           + (origin === 'imported' ? ' (from the seed you imported)'
@@ -3663,7 +3663,7 @@
       const keptUseOf = (kept) => BLWPCLIENT.keptLockUse(kept, { entry: keptSentEntry(named.roundIdHex),
         beforeStart: Date.now() < Number(named.round.startTimeMs), beforeClose: Date.now() < closeMsOf() });
       // handout run while the player pays; the lock waits for both. A lock kept from before a reload asks no deposit.
-      const depositEl = document.getElementById('blwp-deposit');
+      const depositEl = document.getElementById('arena-deposit');
       const stageEl = document.getElementById('stage');
       let funding = null;
       if (pays && BLWPCLIENT.roundLocks(named.round)) {
@@ -4570,7 +4570,7 @@
     // once it is over. A paid join never waits for this - it is only where money leaves FOR.
     // ===== §24B: THE WALLET'S LINE, ITS SETTINGS, AND THE BACKUP GATE =====
     //
-    // Everything here is LOBBY. `blwp-money` and `blwp-settings` are hidden the moment a round is being
+    // Everything here is LOBBY. `arena-money` and `arena-settings` are hidden the moment a round is being
     // driven, so a balance, a federation name or a pending line can never sit over the game.
     //
     // The gate is not decided here: `BLWPCLIENT.mayDeposit` / `mayJoin` are the rule and they live where
@@ -4604,8 +4604,8 @@
     /** Driving hides the money entirely - §24B: never in the game. */
     const drivingNow = () => !!(window.BLWP_ROUND && window.BLWP_STARTED);
     function paintMoney() {
-      const money = document.getElementById('blwp-money');
-      const settings = document.getElementById('blwp-settings');
+      const money = document.getElementById('arena-money');
+      const settings = document.getElementById('arena-settings');
       if (!money) return;
       if (drivingNow()) { money.style.display = 'none'; if (settings) settings.style.display = 'none'; return; }
       // THE GEAR FROM THE FIRST PAINT: the strip is up over the loading screen, Unity's title and the lobby,
@@ -4615,7 +4615,7 @@
       const overLobby = !!(window.unityInstance && !document.getElementById('boot') && u && u.showing && u.lobby);
       money.style.display = u && u.showing === false ? 'none' : '';
       // THE BALANCE OVER THE LOBBY'S OWN ROW: Unity's layout units scaled to the canvas as it sits on the page
-      const balEl = document.getElementById('blwp-lobby-balance');
+      const balEl = document.getElementById('arena-lobby-balance');
       const cv = document.getElementById('canvas');
       const row = u && u.balance;
       if (balEl && cv && overLobby && Array.isArray(row) && row[2] > 0 && Array.isArray(u.screen)) {
@@ -4631,15 +4631,15 @@
       const line = (st && seed) ? (seedBroughtIn() ? '' : BLWPCLIENT.backupLine(st, seed)) : BLWPCLIENT.NO_BACKUP_LINE;
       // A PHONE GETS THE SHORT WORDS (measured at 360 px: the ten-line warning covered the game's title); the button
       // beside it and Settings say the rest, the full sentence is its title
-      const notice = document.getElementById('blwp-backup-notice');
+      const notice = document.getElementById('arena-backup-notice');
       if (notice) { notice.textContent = line; notice.title = line || ''; }
       // IN THE LOADING SCREEN, ALWAYS, NOT OVER THE LOBBY: the box sits in #boot, so it goes with the loading screen
-      const warn = document.getElementById('blwp-backup-warn');
+      const warn = document.getElementById('arena-backup-warn');
       if (warn) warn.style.display = line ? 'flex' : 'none';
       // AND AGAIN IN THE DEPOSIT AND THE WITHDRAW POPUP (2026-10-19: "When doing a deposit the popup in there shows the
       // warning again", "Withdrawal screen also gets the warning"): a wallet with no backup is lost with this browser; its button closes the
       // popup (nothing was paid or sent) and opens the 24 words
-      const popups = [[document.getElementById('blwp-deposit'), (el) => el.classList.contains('deposit-modal') && el.childElementCount > 0, '.dep-title', '.dep-close'],
+      const popups = [[document.getElementById('arena-deposit'), (el) => el.classList.contains('deposit-modal') && el.childElementCount > 0, '.dep-title', '.dep-close'],
         [document.getElementById('arena-withdraw'), (el) => el.classList.contains('show'), '.wd-head', '.wd-close']];
       for (const [el, open, after, close] of popups) {
         if (!el || !open(el)) continue;
@@ -4648,13 +4648,13 @@
           box = document.createElement('div'); box.className = 'dep-backup';
           const t = document.createElement('span'); t.textContent = line;
           const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Back up now';
-          b.addEventListener('click', () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'blwp-deposit') { el.textContent = ''; el.className = ''; } else el.classList.remove('show');
-            const cta = document.getElementById('blwp-backup-cta'); if (cta) cta.click(); });
+          b.addEventListener('click', () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'arena-deposit') { el.textContent = ''; el.className = ''; } else el.classList.remove('show');
+            const cta = document.getElementById('arena-backup-cta'); if (cta) cta.click(); });
           box.append(t, b);
           const head = el.querySelector(after); if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
         } else if (!line && box) box.remove();
       }
-      document.getElementById('blwp-settings-backup').textContent = line || 'This wallet is backed up.';
+      document.getElementById('arena-settings-backup').textContent = line || 'This wallet is backed up.';
       // THE BALANCE IS READ, NEVER COMPUTED HERE. Until the player wallet of §24A.1 exists this says what
       // it honestly knows - nothing yet - rather than inventing a number the page would then be trusted for.
       const bal = window.BLWP_WALLET_BALANCE;
@@ -4665,16 +4665,16 @@
       const loadingBal = !known && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED');
       const confirmed = known ? sat(bal.sats) : loadingBal ? '\u2026' : '\u2013';
       const pending = known ? sat(bal.pending) : loadingBal ? '\u2026' : '\u2013';
-      for (const [id, v] of [['blwp-lobby-confirmed', confirmed], ['blwp-bal-confirmed', confirmed],
-        ['blwp-lobby-pending', pending], ['blwp-bal-pending', pending]]) {
+      for (const [id, v] of [['arena-lobby-confirmed', confirmed], ['arena-bal-confirmed', confirmed],
+        ['arena-lobby-pending', pending], ['arena-bal-pending', pending]]) {
         const el = document.getElementById(id); if (el) el.textContent = v;
       }
       // THE FEDERATION ONCE (2026-10-02: "don't show the federation id twice"): the history names it in full
       // THE SPLIT, ONLY WHEN THERE IS ONE: the sum above is every federation's; this line says where it sits (2026-10-13)
       const split = known && Array.isArray(bal.parts) && bal.parts.length > 1
         ? 'Across ' + bal.parts.length + ' federations: ' + bal.parts.map((x) => x.federation.slice(0, 8) + ' ' + sat(x.sats)).join(' · ') : '';
-      document.getElementById('blwp-balance-line').textContent = known ? split : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
-      const why = document.getElementById('blwp-money-why');
+      document.getElementById('arena-balance-line').textContent = known ? split : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
+      const why = document.getElementById('arena-money-why');
       if (why && !isBackedUp()) why.textContent = '';
     }
     // ONE DEPOSIT AND ONE WITHDRAW FOR EVERY GAME (2026-10-10: "Align the deposit process of nextblock,
@@ -4790,7 +4790,7 @@
       if (note) { if (note.textContent !== says) note.textContent = says; note.style.display = says ? '' : 'none'; }
       for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
     };
-    function openMoney(which, say = (t) => { document.getElementById('blwp-money-why').textContent = t; }, opts = {}) {
+    function openMoney(which, say = (t) => { document.getElementById('arena-money-why').textContent = t; }, opts = {}) {
       // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
       // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
       const ctx = moneyContext(which, opts.seatRound || null);
@@ -4823,7 +4823,7 @@
       // THE NO-ROUND DEPOSIT: plain amounts into the same player wallet, opened from the lobby's federation (walletDepositOffer)
       if (noRound) {
         say('Opening your wallet and making the invoice \u2026');
-        const el = document.getElementById('blwp-deposit');
+        const el = document.getElementById('arena-deposit');
         if (el) { el.textContent = ''; el.className = 'deposit-modal over-settings'; el.style.width = 'min(92vw, 420px)';
           const t = document.createElement('div'); t.className = 'dep-why'; t.textContent = 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)'; el.append(t); }
         return (async () => {
@@ -4842,7 +4842,7 @@
       if (which === 'withdraw' && opts.overlay) {
         // ITS OWN OVERLAY: Settings' withdraw panel and its why-line moved into the box while it is open
         const box = document.getElementById('arena-withdraw'), body = box.querySelector('.wd-body');
-        const wp = document.getElementById('blwp-withdraw-panel'), why = document.getElementById('blwp-money-why');
+        const wp = document.getElementById('arena-withdraw-panel'), why = document.getElementById('arena-money-why');
         if (!openMoney.wdHome) openMoney.wdHome = { wp: [wp.parentNode, wp.nextSibling], why: [why.parentNode, why.nextSibling] };
         body.append(wp, why);
         box.classList.add('show');
@@ -4858,7 +4858,7 @@
       }
       if (which === 'withdraw') {
         // the withdraw panel is Settings' own: opened over whatever asked (a game's client too), painted once
-        const panel = document.getElementById('blwp-settings');
+        const panel = document.getElementById('arena-settings');
         if (panel.style.display === 'none') { panel.style.display = ''; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
         openWithdraw(ctx);
         return Promise.resolve({ ok: true });
@@ -4870,7 +4870,7 @@
       // the deposit modal at all"; measured in Chrome: 14.2 s from the tap to the modal, the player wallet joining the federation
       // all that time): the box opens on the tap with what it waits for, and the invoice fills it when it is made
       const waitBox = which === 'deposit' ? (() => {
-        const el = document.getElementById('blwp-deposit');
+        const el = document.getElementById('arena-deposit');
         if (!el) return null;
         // ON TOP OF THE GAMES SCREEN (2026-10-13 08:5x: "Deposit doesn't open at all modal when I click it";
         // measured in WebKit: the box opened inside the loading screen's #boot, whose stacking context (z 10) lies under
@@ -4910,8 +4910,8 @@
         } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (waitBox && waitBox.el.contains(waitBox.w)) waitBox.w.textContent = why; return { ok: false, why }; }
       })();
     }
-    for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'move'],
-      ['blwp-withdraw-lobby', 'withdraw']]) {
+    for (const [id, which] of [['arena-deposit-go', 'deposit'], ['arena-move-go', 'move'],
+      ['arena-withdraw-lobby', 'withdraw']]) {
       const el = document.getElementById(id);
       if (el) el.addEventListener('click', () => { openMoney(which); });
     }
@@ -4921,7 +4921,7 @@
     // until what it waits for answers.
     function paintWalletBar() {
       // a game's own header (Unity's, the leaderboard's, the shop's) shows the same balance
-      { const hb = window.BLWP_WALLET_BALANCE; const he = document.getElementById('blwp-hdr-sats');
+      { const hb = window.BLWP_WALLET_BALANCE; const he = document.getElementById('arena-hdr-sats');
         if (he) { const t = hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat'; if (he.textContent !== t) he.textContent = t; } }
       const bar = document.getElementById('arena-wallet-bar');
       if (!bar || !(document.body.classList.contains('arena-own-client') || document.body.classList.contains('arena-picking'))) return;
@@ -4958,14 +4958,14 @@
       }
       // A GAME'S OWN HEADER, THE SAME TWO, its why-line under that header
       let hdrTimer = null;
-      const hdrSay = (t) => { const el = document.getElementById('blwp-hdr-why'); if (!el) return; el.textContent = t; clearTimeout(hdrTimer);
+      const hdrSay = (t) => { const el = document.getElementById('arena-hdr-why'); if (!el) return; el.textContent = t; clearTimeout(hdrTimer);
         if (t && !t.endsWith('\u2026')) hdrTimer = setTimeout(() => { el.textContent = ''; }, 8000); };
-      for (const [id, which] of [['blwp-hdr-deposit', 'deposit'], ['blwp-hdr-withdraw', 'withdraw']]) {
+      for (const [id, which] of [['arena-hdr-deposit', 'deposit'], ['arena-hdr-withdraw', 'withdraw']]) {
         const el = document.getElementById(id);
         if (el) el.addEventListener('click', () => { openMoney(which, hdrSay, { overlay: true }); });
       }
       const gear = document.getElementById('arena-wb-gear');
-      if (gear) gear.addEventListener('click', () => { document.getElementById('blwp-settings-go').click(); });
+      if (gear) gear.addEventListener('click', () => { document.getElementById('arena-settings-go').click(); });
       setInterval(paintWalletBar, 1000);
     }
     // THE DEPOSIT MODAL (2026-09-30 20:53, GROSS-INVOICE-2053): a close; the message when the wallet cannot fund the
@@ -5009,7 +5009,7 @@
       return `A round costs ${sats(st)}. You deposit ${sats(one)} per round: the stake, plus the round's node fee and donation, rounded up to a whole sat. Whatever a round does not use stays in your wallet.`;
     }
     function showDepositOffer(offer, { message = '', title = 'Deposit', overSettings = false } = {}) {
-      const el = document.getElementById('blwp-deposit');
+      const el = document.getElementById('arena-deposit');
       if (!el) return;
       // over the games screen too: never inside #boot's stacking context once the games screen is up
       if (el.parentElement !== document.body && document.body.classList.contains('arena-picking')) document.body.appendChild(el);
@@ -5123,7 +5123,7 @@
           status.set(2, 'Your browser wallet did not pay: ' + window.ARENA_WEBLN.failed + ' - you can still pay the invoice above from any wallet.', 'fail');
         } finally { weblnPay.disabled = false; }
       });
-      const qr = add('div', 'blwp-deposit-qr');
+      const qr = add('div', 'arena-deposit-qr');
       qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,28vh);margin:6px auto;line-height:0';
       const qrHold = (words) => { qr.innerHTML = ''; const h = document.createElement('div'); h.className = 'qr-hold'; h.textContent = words; qr.appendChild(h); };
       // COPY INVOICE (2026-09-30): the invoice shown, to the clipboard, with the press answered on the button -
@@ -5322,13 +5322,13 @@
     function openWithdraw(ctx) {
       // THE INVOICE DEFINES THE AMOUNT (2026-10-01, "1 and 3"): no selector - the page says how much can be withdrawn,
       // the player makes an invoice in their own wallet for up to that, and the page reads the amount off the invoice.
-      const panel = document.getElementById('blwp-withdraw-panel');
-      const amountEl = document.getElementById('blwp-wd-amount'); const inv = document.getElementById('blwp-wd-invoice');
-      const chosenEl = document.getElementById('blwp-wd-chosen');
-      const why = document.getElementById('blwp-money-why');
+      const panel = document.getElementById('arena-withdraw-panel');
+      const amountEl = document.getElementById('arena-wd-amount'); const inv = document.getElementById('arena-wd-invoice');
+      const chosenEl = document.getElementById('arena-wd-chosen');
+      const why = document.getElementById('arena-money-why');
       panel.style.display = ''; why.textContent = ''; chosenEl.textContent = ''; inv.value = '';
       // WHAT IS HAPPENING NOW, UNDER THE PASTED INVOICE (2026-09-30): one status line and bar, made once
-      const go = document.getElementById('blwp-wd-go');
+      const go = document.getElementById('arena-wd-go');
       const status = openWithdraw.status || (openWithdraw.status = payStatus(go.parentNode, go.nextSibling));
       status.hide();
       const satOf = (msat) => `${(BigInt(msat) / 1000n).toLocaleString('en-US')} sat`;
@@ -5356,7 +5356,7 @@
             : 'Your wallet is empty, so there is nothing to withdraw.';
         } catch (e) { amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
       })();
-      document.getElementById('blwp-wd-go').onclick = async () => {
+      document.getElementById('arena-wd-go').onclick = async () => {
         readInvoice();
         const pasted = String(inv.value || '').trim();
         if (!pasted) { why.textContent = 'Paste an invoice first.'; return; }
@@ -5390,7 +5390,7 @@
     // tab made in the federation that holds the funds - its id named, the id LockClient.federationIdOf reads off the
     // lobby's invite - newest first; a stake row names its round and opens that round's replay in a new window.
     async function paintHistory() {
-      const fedEl = document.getElementById('blwp-history-fed'); const rowsEl = document.getElementById('blwp-history-rows');
+      const fedEl = document.getElementById('arena-history-fed'); const rowsEl = document.getElementById('arena-history-rows');
       if (!fedEl || !rowsEl) return;
       const lob = window.BLWP_LEDGER_LOBBY;
       if (!lob || !lob.federation) { fedEl.textContent = 'No federation named by this lobby'; rowsEl.textContent = ''; return; }
@@ -5443,7 +5443,7 @@
       }
     }
     // SETTINGS: three things and a Close, and the phrase is only shown when asked for.
-    const settingsPanel = () => document.getElementById('blwp-settings');
+    const settingsPanel = () => document.getElementById('arena-settings');
     // THE GEAR'S CLICK IS TAKEN BY THE EARLY SCRIPT UNDER THE PANEL, which opens it and calls this to fill it
     // THE CUSTODY SUMMARY IN SETTINGS: from the verified statuses this page read (window.ARENA_FED_LOADS), else
     // the round's own federation; every value on its own line, the band's meaning in the health line's tooltip
@@ -5492,7 +5492,7 @@
     // "Use this wallet" makes it this tab's phrase - only when no other open tab holds it. Nothing is moved or spent.
     let otherWalletsBusy = false;
     async function paintOtherWallets() {
-      const el = document.getElementById('blwp-other-wallets');
+      const el = document.getElementById('arena-other-wallets');
       if (!el || otherWalletsBusy || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.phraseWalletEntries) return;
       const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
       let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
@@ -5542,22 +5542,22 @@
     }
     window.BLWP_PAINT_HISTORY = paintHistory;
     // The lobby's own way out: one click to Settings with the words already on screen.
-    document.getElementById('blwp-backup-cta').addEventListener('click', () => {
+    document.getElementById('arena-backup-cta').addEventListener('click', () => {
       settingsPanel().style.display = ''; paintSettings();
-      document.getElementById('blwp-phrase-show').click();
+      document.getElementById('arena-phrase-show').click();
     });
-    document.getElementById('blwp-settings-close').addEventListener('click', () => {
-      document.getElementById('blwp-settings-advanced').style.display = 'none';   // Settings closes with its Advanced screen
+    document.getElementById('arena-settings-close').addEventListener('click', () => {
+      document.getElementById('arena-settings-advanced').style.display = 'none';   // Settings closes with its Advanced screen
       settingsPanel().style.display = 'none';
     });
     // THE BENCHMARK FROM SETTINGS: Settings closes, and Unity spectates and runs the page's frame-rate test (Benchmark,
     // as the lobby's button did); a game without Unity runs the test over its own client
     {
-      const on = document.getElementById('blwp-bench-on'), go = document.getElementById('blwp-bench-go');
+      const on = document.getElementById('arena-bench-on'), go = document.getElementById('arena-bench-go');
       on.checked = window.ARENA_BENCH_ON(); go.disabled = !on.checked;
       on.addEventListener('change', () => { try { window.BLWP_BROWSER_STORE().setItem('arena.bench.on', on.checked ? '1' : '0'); } catch { /* this page only */ } go.disabled = !on.checked; });
     }
-    document.getElementById('blwp-bench-go').addEventListener('click', () => {
+    document.getElementById('arena-bench-go').addEventListener('click', () => {
       if (!window.ARENA_BENCH_ON()) return;   // off by default
       settingsPanel().style.display = 'none';
       if (window.unityInstance && window.ARENA_UNITY !== false) { try { window.unityInstance.SendMessage('Bootstrap', 'Benchmark'); return; } catch { /* the test alone */ } }
@@ -5570,18 +5570,18 @@
       paintSettings();
     });
     // ADVANCED SETTINGS OPENS ITS OWN SCREEN, AND BACK RETURNS TO SETTINGS (2026-10-16 ~13:40Z)
-    document.getElementById('blwp-advanced-go').addEventListener('click', () => {
-      document.getElementById('blwp-settings-advanced').style.display = ''; paintSettings();
+    document.getElementById('arena-advanced-go').addEventListener('click', () => {
+      document.getElementById('arena-settings-advanced').style.display = ''; paintSettings();
     });
-    document.getElementById('blwp-advanced-back').addEventListener('click', () => { document.getElementById('blwp-settings-advanced').style.display = 'none'; });
+    document.getElementById('arena-advanced-back').addEventListener('click', () => { document.getElementById('arena-settings-advanced').style.display = 'none'; });
     // THE IN-GAME ITEMS' DEVELOPERS' SHARE: the buyer's choice, kept in this browser; every buy screen prices by it
     document.getElementById('arena-items-share-select').addEventListener('change', (e) => {
       if (window.ARENA_ITEMS_SHARE_SET) window.ARENA_ITEMS_SHARE_SET(Number(e.target.value));
       paintSettings();
     });
     // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
-    const nameField = document.getElementById('blwp-name-field');
-    const nameUpdate = document.getElementById('blwp-name-update');
+    const nameField = document.getElementById('arena-name-field');
+    const nameUpdate = document.getElementById('arena-name-update');
     // THE NAME OTHERS SEE, ALSO BEFORE THE LOBBY HAS RUN (2026-10-14 20:01Z, his phone: "It doesn't show the
     // player name" - Settings showed an empty field): the identity was only made inside the lobby's own start, so a page that had
     // not reached it showed nothing. The same identity is read from this tab's seed here (tabIdentity: the chosen name, else the
@@ -5599,7 +5599,7 @@
     });
     nameUpdate.addEventListener('click', () => {
       const t = nameField.value.trim();
-      const why = document.getElementById('blwp-name-why');
+      const why = document.getElementById('arena-name-why');
       if (!t) { why.textContent = 'A name is needed.'; return; }
       const said = window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.setName ? window.BLWP_LOBBY_ACT.setName(t) : 'the lobby is not up yet';
       why.textContent = said || 'Updated.';
@@ -5609,7 +5609,7 @@
       const sel = document.getElementById('blwp-donation-select');
       const chosen = String(Math.round(donationBps() / 100));
       if (sel && sel.value !== chosen) sel.value = chosen;
-      const rec = document.getElementById('blwp-donation-recipients');
+      const rec = document.getElementById('arena-donation-recipients');
       // WHO RECEIVES IT, once a round names its donation set - and nothing otherwise: never "no donation set" under a
       // dropdown that plainly shows the choice (2026-09-29 12:47)
       const line = BLWPCLIENT.donationRecipientsLine ? BLWPCLIENT.donationRecipientsLine(window.BLWP_ROUND) : '';
@@ -5640,9 +5640,9 @@
     // THE SEED PHRASE, A SMALL MODAL OVER SETTINGS (2026-09-29 12:47): the 24 words numbered in a grid, and
     // Verify seed phrase - one word at a time, 1 to 24, each out of four taken from this phrase. A wrong tap does not
     // advance. After word 24 the backup is recorded by the same rule as before (verifyAndRecord) and the modal says so.
-    const seedModal = document.getElementById('blwp-seed-modal');
+    const seedModal = document.getElementById('arena-seed-modal');
     const seedPanes = (which) => {
-      for (const [id, name] of [['blwp-seed-words', 'words'], ['blwp-verify-step', 'verify'], ['blwp-verify-done', 'done']])
+      for (const [id, name] of [['arena-seed-words', 'words'], ['arena-verify-step', 'verify'], ['arena-verify-done', 'done']])
         document.getElementById(id).style.display = which === name ? '' : 'none';
     };
     const closeSeed = () => { seedModal.style.display = 'none'; window.BLWP_VERIFY = null; paintMoney(); };
@@ -5650,13 +5650,13 @@
     let verify = null;
     function paintVerify() {
       const n = verify.at + 1;
-      document.getElementById('blwp-verify-n').textContent = String(n);
+      document.getElementById('arena-verify-n').textContent = String(n);
       const right = verify.words[verify.at];
       const others = [...new Set(verify.words.filter((w) => w !== right))];
       const options = [right];
       while (options.length < 4 && others.length) options.push(others.splice(randomIndex(others.length), 1)[0]);
       for (let i = options.length - 1; i > 0; i--) { const j = randomIndex(i + 1); [options[i], options[j]] = [options[j], options[i]]; }
-      const box = document.getElementById('blwp-verify-options');
+      const box = document.getElementById('arena-verify-options');
       box.textContent = '';
       for (const w of options) {
         const b = document.createElement('button'); b.type = 'button'; b.textContent = w; b.dataset.word = w;
@@ -5666,7 +5666,7 @@
       window.BLWP_VERIFY = { word: n, options, right };
     }
     function pick(w) {
-      const why = document.getElementById('blwp-verify-why');
+      const why = document.getElementById('arena-verify-why');
       if (w !== verify.words[verify.at]) { why.textContent = `Not word ${verify.at + 1}. Try again.`; return; }
       why.textContent = '';
       verify.at += 1;
@@ -5742,19 +5742,19 @@
         location.reload();
       });
     })();
-    document.getElementById('blwp-seed-use').addEventListener('click', () => {
-      const why = document.getElementById('blwp-seed-restore-why');
-      const got = window.BLWP_RESTORE_SEED(document.getElementById('blwp-seed-restore').value);
+    document.getElementById('arena-seed-use').addEventListener('click', () => {
+      const why = document.getElementById('arena-seed-restore-why');
+      const got = window.BLWP_RESTORE_SEED(document.getElementById('arena-seed-restore').value);
       why.textContent = got.ok ? 'restored - reloading' : got.why;
     });
-    document.getElementById('blwp-phrase-show').addEventListener('click', () => {
+    document.getElementById('arena-phrase-show').addEventListener('click', () => {
       const seed = walletSeed();
       const made = seed ? BLWPCLIENT.phraseFromSeed(seed) : { ok: false, why: 'no wallet yet' };
-      const grid = document.getElementById('blwp-phrase');
+      const grid = document.getElementById('arena-phrase');
       grid.textContent = '';
       seedModal.style.display = 'flex'; seedPanes('words');
-      if (!made.ok) { grid.textContent = made.why; document.getElementById('blwp-verify-start').style.display = 'none'; return; }
-      document.getElementById('blwp-verify-start').style.display = '';
+      if (!made.ok) { grid.textContent = made.why; document.getElementById('arena-verify-start').style.display = 'none'; return; }
+      document.getElementById('arena-verify-start').style.display = '';
       made.words.forEach((w, i) => {
         const cell = document.createElement('div'); cell.className = 'seed-cell';
         const num = document.createElement('span'); num.className = 'n'; num.textContent = String(i + 1);
@@ -5762,16 +5762,16 @@
         cell.append(num, word); grid.appendChild(cell);
       });
     });
-    document.getElementById('blwp-verify-start').addEventListener('click', () => {
+    document.getElementById('arena-verify-start').addEventListener('click', () => {
       const seed = walletSeed(); const st = backupStore();
       const made = seed ? BLWPCLIENT.phraseFromSeed(seed) : null;
-      if (!made || !made.ok || !st) { document.getElementById('blwp-phrase').textContent = 'no wallet to back up yet'; return; }
+      if (!made || !made.ok || !st) { document.getElementById('arena-phrase').textContent = 'no wallet to back up yet'; return; }
       verify = { words: made.words, phrase: made.phrase, at: 0, st, seed };
-      document.getElementById('blwp-phrase').textContent = '';            // the words go: verify is from memory
-      document.getElementById('blwp-verify-why').textContent = '';
+      document.getElementById('arena-phrase').textContent = '';            // the words go: verify is from memory
+      document.getElementById('arena-verify-why').textContent = '';
       seedPanes('verify'); paintVerify();
     });
-    for (const id of ['blwp-seed-close', 'blwp-verify-cancel', 'blwp-verify-close'])
+    for (const id of ['arena-seed-close', 'arena-verify-cancel', 'arena-verify-close'])
       document.getElementById(id).addEventListener('click', closeSeed);
     setInterval(paintMoney, 1000);
     // A RUN THAT DOES NOT REACH THE SIGNER NODES IS SAID WHILE IT IS DRIVEN (2026-10-02, playtest: his Firefox run
@@ -5784,7 +5784,7 @@
     let linkSaid = '', linkLoggedAt = 0, linkEndedSaidFor = null, linkEndedUntil = 0, linkLive = null, linkLiveGoneAt = 0;
     const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
     function watchTheLink() {
-      const bar = document.getElementById('blwp-link-warn');
+      const bar = document.getElementById('arena-link-warn');
       if (!bar) return;
       const M = window.unityInstance && window.unityInstance.Module;
       const n = M && (M.blwpRunNet || M.blwpNet);
@@ -5856,16 +5856,16 @@
         return was && was.tab !== THIS_TAB && Date.now() - Number(was.beat) < 6000 ? String(was.round || '') : null;
       } catch { return null; }
     };
-    document.getElementById('blwp-logs-copy').addEventListener('click', async () => {
-      const said = document.getElementById('blwp-logs-said');
+    document.getElementById('arena-logs-copy').addEventListener('click', async () => {
+      const said = document.getElementById('arena-logs-said');
       said.textContent = window.BLWP_COPY_LOGS ? await window.BLWP_COPY_LOGS() : 'this page keeps no client logs';
     });
     // the balance read again every 10 s (a read, never a spend)
     setInterval(() => { if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }, 10000);
 
-    const withdrawGo = document.getElementById('blwp-withdraw-go');
+    const withdrawGo = document.getElementById('arena-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
-      const field = document.getElementById('blwp-withdraw-invoice');
+      const field = document.getElementById('arena-withdraw-invoice');
       // THE BUTTON IS THE LOCK ROUND'S WITHDRAW AND NOTHING ELSE. A hold round's winnings are SENT
       // (the owner 13:25): there is no Collect to press, so nothing here branches into them.
       window.BLWP_WITHDRAW(field ? field.value : null).catch((e) => console.error('[blwp] withdraw: ' + e.message));
@@ -5879,19 +5879,19 @@
 
     // THE CONSOLE'S STATE: closed by default, the player's choice kept in this browser (a blocked store: closed)
     const consoleShown = { wallet: false, players: false };
-    function consoleOpen() { return document.body.classList.contains('blwp-console-open'); }
+    function consoleOpen() { return document.body.classList.contains('arena-console-open'); }
     function consoleHas(part, has) {
       consoleShown[part] = has;
-      const go = document.getElementById('blwp-console-go');
+      const go = document.getElementById('arena-console-go');
       if (go) go.style.display = consoleShown.wallet || consoleShown.players ? 'block' : 'none';
     }
     (function consoleButton() {
-      const go = document.getElementById('blwp-console-go');
+      const go = document.getElementById('arena-console-go');
       if (!go) return;
       let open = false;
       try { open = window.BLWP_BROWSER_STORE().getItem('arena.console.open') === '1'; } catch { open = false; }
       const set = (o) => {
-        document.body.classList.toggle('blwp-console-open', o);
+        document.body.classList.toggle('arena-console-open', o);
         go.setAttribute('aria-expanded', o ? 'true' : 'false');
         try { window.BLWP_BROWSER_STORE().setItem('arena.console.open', o ? '1' : '0'); } catch { /* not kept */ }
         try { paintWallet(); paintPlayers(); } catch { /* painted on the next tick */ }
@@ -5919,7 +5919,7 @@
           go.style.left = '';
           // A PHONE'S LOBBY (MF 17: "the Console button sits on the title"; measured at 360 px on UI 134: on the
           // lobby panel's top-right corner): the strip between the top bar and the panel, at the left, clear of both
-          const Lb = window.BLWP_UNITY_LOBBY, bar = document.getElementById('blwp-money');
+          const Lb = window.BLWP_UNITY_LOBBY, bar = document.getElementById('arena-money');
           if (W <= 560 && Lb && Lb.showing && bar) {
             top = bar.getBoundingClientRect().bottom + 6;
             go.style.top = Math.round(top) + 'px'; go.style.right = 'auto'; go.style.left = '8px';
@@ -5931,26 +5931,26 @@
           geo = { btnBottom: b.height ? b.bottom : 52 + bh, right: 3.5 * vmin, pads: window.matchMedia('(pointer: coarse)').matches,
             padTop: H - 45.25 * vmin, m: 3.5 * vmin, floor: H, bayUp: false };
         }
-        const panel = document.getElementById('blwp-wallet');
+        const panel = document.getElementById('arena-wallet');
         // THE OPEN CONSOLE, BOTTOM RIGHT AT ITS FIXED 260 PX: its right edge at the HUD's corner margin, its
         // bottom one HUD margin above the throttle pad (the screen's bottom margin where no pads are drawn) and above the
         // cargo bay while that is up; never left of the screen's middle less a margin, the truck's lane; 280 px at most.
         // WHERE 260 PX DO NOT FIT between the Console button and that bottom, the panel keeps its height and steps aside
-        // (blwp-console-held): the button stays, dimmed, and says why - never squeezed onto a control.
+        // (arena-console-held): the button stays, dimmed, and says why - never squeezed onto a control.
         // WHILE THE LOBBY IS UP (2026-10-06: "Stepped aside while the lobby is up. Not drawn over the
         // lobby content"): the open console parks along the top edge under the Console button - 260 x 260, drawn above the
-        // lobby's chrome (blwp-console-lobby) - at the right if that is clear of the balance boxes and the round rows
+        // lobby's chrome (arena-console-lobby) - at the right if that is clear of the balance boxes and the round rows
         // (Unity's own rectangles, BLWP_UNITY_LOBBY, and the page's balance strip), else slid left along the top edge until
         // it is; where no spot on that edge is clear, it steps aside (held). Out of the lobby, the truck view's rule below.
         const L = window.BLWP_UNITY_LOBBY;
         const inLobby = !!(L && L.showing);
-        document.body.classList.toggle('blwp-console-lobby', !!(panel && consoleOpen() && inLobby));
+        document.body.classList.toggle('arena-console-lobby', !!(panel && consoleOpen() && inLobby));
         let lobbyPark = null;
         if (panel && consoleOpen() && inLobby) {
           const SIZE = 260;
           const avoid = [L.balance, ...((L.rows || []).map((r) => r && r.rect))]
             .filter((q) => Array.isArray(q) && q[2] > 0 && q[3] > 0).map(([x, y, w, h]) => ({ l: x, t: y, r: x + w, b: y + h }));
-          const lb = document.getElementById('blwp-lobby-balance');
+          const lb = document.getElementById('arena-lobby-balance');
           if (lb && getComputedStyle(lb).display !== 'none') { const q = lb.getBoundingClientRect(); if (q.width && q.height) avoid.push({ l: q.left, t: q.top, r: q.right, b: q.bottom }); }
           const pTop = Math.round(geo.btnBottom + gap);
           const hits = (x) => avoid.some((q) => x < q.r && x + SIZE > q.l && pTop < q.b && pTop + SIZE > q.t);
@@ -5958,7 +5958,7 @@
           let x = rightX;
           while (x >= geo.m && hits(x)) x -= 4;
           const clear = x >= geo.m && !hits(x) && pTop + SIZE <= H - geo.m;
-          document.body.classList.toggle('blwp-console-held', !clear);
+          document.body.classList.toggle('arena-console-held', !clear);
           go.title = clear ? '' : 'The Console steps aside in the lobby - no spot on the top edge clears the balance and the rounds';
           lobbyPark = { clear, edge: !clear ? 'none' : x === rightX ? 'top right' : 'top edge, slid left to ' + Math.round(x) + ' px', x: Math.round(x), top: pTop };
           panel.style.top = pTop + 'px'; panel.style.bottom = 'auto'; panel.style.left = 'auto'; panel.style.maxHeight = '';
@@ -5967,7 +5967,7 @@
           const PANEL_H = 260;
           const bottom = Math.min(geo.pads ? geo.padTop - geo.m : H - geo.m, geo.floor - geo.m);
           const held = bottom - PANEL_H < geo.btnBottom + gap;
-          document.body.classList.toggle('blwp-console-held', held);
+          document.body.classList.toggle('arena-console-held', held);
           go.title = !held ? '' : geo.bayUp ? 'The Console opens after ROLL OUT - the cargo bay leaves it no room on this screen'
             : 'The Console needs 260 px above the throttle pad - this screen holds less';
           const width = Math.max(120, Math.min(280, W - geo.right - W / 2 - geo.m));
@@ -5975,7 +5975,7 @@
           panel.style.right = Math.round(geo.right) + 'px';
           panel.style.bottom = Math.round(H - bottom) + 'px';
           panel.style.width = Math.round(width) + 'px'; panel.style.maxWidth = '280px';
-        } else document.body.classList.remove('blwp-console-held');
+        } else document.body.classList.remove('arena-console-held');
         paintConsoleThumb();
         window.BLWP_CONSOLE_PLACED = { lobby: lobbyPark, top: top === null ? null : Math.round(top), right: right === null ? null : Math.round(right), bh, bw, corner: c || null,
           geo: { btnBottom: Math.round(geo.btnBottom), right: Math.round(geo.right), pads: geo.pads, padTop: Math.round(geo.padTop), m: Math.round(geo.m * 10) / 10 } };
@@ -5993,9 +5993,9 @@
       // THE DRAWN THUMB: over the panel's right edge, sized and moved from its scroll; iOS Safari draws its own
       // only while a finger scrolls, so a phone would not see that the console holds more
       function paintConsoleThumb() {
-        const t = document.getElementById('blwp-console-thumb'), p = document.getElementById('blwp-wallet');
+        const t = document.getElementById('arena-console-thumb'), p = document.getElementById('arena-wallet');
         if (!t || !p) return;
-        const shown = consoleOpen() && !document.body.classList.contains('blwp-console-held') && getComputedStyle(p).display !== 'none' && p.clientHeight > 0;
+        const shown = consoleOpen() && !document.body.classList.contains('arena-console-held') && getComputedStyle(p).display !== 'none' && p.clientHeight > 0;
         t.classList.toggle('on', shown);
         if (!shown) return;
         const r = p.getBoundingClientRect();
@@ -6007,7 +6007,7 @@
       }
       window.BLWP_CONSOLE_THUMB = paintConsoleThumb;
       {
-        const p = document.getElementById('blwp-wallet');
+        const p = document.getElementById('arena-wallet');
         if (p) {
           p.addEventListener('scroll', paintConsoleThumb, { passive: true });
           new MutationObserver(() => paintConsoleThumb()).observe(p, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style'] });
@@ -6021,7 +6021,7 @@
       go.addEventListener('click', (e) => { e.stopPropagation(); set(!consoleOpen()); });
     })();
     function paintWallet() {
-      const el = document.getElementById('blwp-wallet');
+      const el = document.getElementById('arena-wallet');
       if (!el || !wallet || typeof BLWPCLIENT === 'undefined') return;
       // A ROUND THAT ASKS NO MONEY GETS NO WALLET. Nothing to pay, nothing to
       // show, and a payment box on a free round is a question with no answer.
@@ -6045,23 +6045,23 @@
       // deposit invoice the whole time the page waited for it.
       if (shown && BLWPCLIENT.roundLocks(shown)) {
         const lockShown = window.BLWP_STAKE_LOCK || (window.BLWP_COLLECT && window.BLWP_COLLECT.stakeLock);
-        document.getElementById('blwp-owed').textContent = lockShown
+        document.getElementById('arena-owed').textContent = lockShown
           ? BLWPCLIENT.lockLine(lockShown)
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
         // WHAT IS OWED, AS LOOKED AT (W4 / 6d): still in the federation until the player withdraws.
-        document.getElementById('blwp-settled').textContent = window.BLWP_COLLECT_LINE || BLWPCLIENT.owedToLine(window.BLWP_OWED);
+        document.getElementById('arena-settled').textContent = window.BLWP_COLLECT_LINE || BLWPCLIENT.owedToLine(window.BLWP_OWED);
         // AND THE WITHDRAW: what is owed or already in the tab's wallet, what went, or why not;
         // the field and the button only while there is something to withdraw.
         const inTab = window.BLWP_WITHDRAWABLE !== undefined && window.BLWP_WITHDRAWABLE !== null && window.BLWP_WITHDRAWABLE > 0n;
         const canWithdraw = inTab || !!(window.BLWP_OWED && window.BLWP_OWED.owedMsat > 0n);
-        document.getElementById('blwp-withdraw').textContent = window.BLWP_WITHDRAWING
+        document.getElementById('arena-wallet-withdraw').textContent = window.BLWP_WITHDRAWING
           ? `Withdrawing - do not close this tab until it says Withdrawn (what is collected is kept in this tab): ${window.BLWP_WITHDRAW_STEP || ''}`
           : window.BLWP_ELSEWHERE ? 'This round\'s withdrawal is open in another tab of this browser - withdraw it there, or close that tab'
           : BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN, canWithdraw ? window.BLWP_WITHDRAWABLE : null);
         const offer = canWithdraw && !window.BLWP_WITHDRAWING && !window.BLWP_ELSEWHERE;
-        for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = offer ? '' : 'none';
-        document.getElementById('blwp-spent').textContent = '';
-        document.getElementById('blwp-nwc').style.display = 'none';
+        for (const id of ['arena-withdraw-invoice', 'arena-withdraw-go']) document.getElementById(id).style.display = offer ? '' : 'none';
+        document.getElementById('arena-spent').textContent = '';
+        document.getElementById('arena-nwc').style.display = 'none';
         return;
       }
 
@@ -6325,8 +6325,8 @@
       // the close "not paid yet", and the federation block from which the round's lock comes back to the player's key
       const when = total > 0n && closeMs ? BLWPCLIENT.pendingWindowLine({ closeMs, provisional,
         expiration: BLWPCLIENT.savedLockExpiration ? BLWPCLIENT.savedLockExpiration(vault(), closeRound) : null }) : '';
-      const whenEl = document.getElementById('blwp-bal-pending-when'); if (whenEl) whenEl.textContent = when;
-      const chip = document.getElementById('blwp-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
+      const whenEl = document.getElementById('arena-bal-pending-when'); if (whenEl) whenEl.textContent = when;
+      const chip = document.getElementById('arena-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
       paintMoney();
       } finally { st.busy = false; }
     }
@@ -6386,7 +6386,7 @@
           window.unityInstance = instance;
           show(1);
           // the deposit box outlives the loading screen: a signer node taken later asks there
-          const deposit = document.getElementById('blwp-deposit');
+          const deposit = document.getElementById('arena-deposit');
           if (deposit) document.body.appendChild(deposit);
           boot.classList.add('done');
           setTimeout(() => boot.remove(), 600);
@@ -6919,7 +6919,7 @@
       box.querySelector('.back').addEventListener('click', close);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && s.open) close(); });
       // THE STRIP AND THE WALLET BAR open the chosen game's board (body.arena-game-chosen shows them once there is one)
-      for (const id of ['blwp-season-go', 'arena-wb-season']) {
+      for (const id of ['arena-season-go', 'arena-wb-season']) {
         const b = document.getElementById(id);
         if (b) b.addEventListener('click', () => open(window.ARENA_GAME_CHOSEN));
       }
@@ -7066,7 +7066,7 @@
           el.classList.add('show');
           document.body.classList.add('arena-picking');
           // SETTINGS BEFORE A GAME IS CHOSEN names Bitcoin Arena, not Next Block (the chosen game's name replaces it after)
-          { const small = document.querySelector('#blwp-settings .settings-head h2 small'); if (small) small.textContent = 'Bitcoin Arena'; }
+          { const small = document.querySelector('#arena-settings .settings-head h2 small'); if (small) small.textContent = 'Bitcoin Arena'; }
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
         });
         el.classList.remove('show');
@@ -7090,7 +7090,7 @@
       // THE CHOSEN GAME'S NAME WHERE THE PAGE NAMED NEXT BLOCK (2026-10-12 16:44: "Settings shows tick tock
       // Next block even though I am in RPS"): the Settings head and its mark, and the bare root's splash while the game loads
       if (game.name !== 'nextblock') {
-        const head = document.querySelector('#blwp-settings .settings-head h2');
+        const head = document.querySelector('#arena-settings .settings-head h2');
         if (head) { const small = head.querySelector('small'); if (small) small.textContent = game.title || game.name;
           const mark = head.querySelector('img.mark'); if (mark) { if (game.icon) { const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(game.icon) : game.icon; mark.onerror = () => { if (mark.src !== game.icon) mark.src = game.icon; }; mark.src = via; } else mark.remove(); } }
         // the loading screen's title: the game's name and its icon, as on its tile
@@ -7347,8 +7347,8 @@
       document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
       // THE DEPOSIT BOX OUTLIVES THE LOADING SCREEN HERE TOO (measured on the paid Up/Down series: no deposit
-      // invoice was ever made - showDepositOffer found no #blwp-deposit, removed with the boot screen), as on Unity's path
-      const deposit = document.getElementById('blwp-deposit');
+      // invoice was ever made - showDepositOffer found no #arena-deposit, removed with the boot screen), as on Unity's path
+      const deposit = document.getElementById('arena-deposit');
       if (deposit) document.body.appendChild(deposit);
       boot.remove();
       console.log('[arena] ' + game.name + ' client ' + file.hash.slice(0, 16) + ' loaded by its manifest hash, ' + (Date.now() - t0) + ' ms');
@@ -7579,7 +7579,7 @@
         paintSplit(); el.style.display = '';
         if (window.BLWP_SUM_BALANCES) window.BLWP_SUM_BALANCES().then(() => { if (el.style.display !== 'none') paintSplit(); }, () => {});
       };
-      for (const sel of ['#arena-wallet-bar .wb-bal', '#blwp-hdr-bal', '#blwp-lobby-balance', '#blwp-set-wallet .bal-grid']) {
+      for (const sel of ['#arena-wallet-bar .wb-bal', '#arena-hdr-bal', '#arena-lobby-balance', '#arena-set-wallet .bal-grid']) {
         const el = document.querySelector(sel);
         if (el) el.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_SHOW_BALANCE_SPLIT(); });
       }
@@ -8659,7 +8659,7 @@
       setItemsUse(shop.game.name, [...now]); return 1;
     };
     {
-      const go = document.getElementById('blwp-shop-go');
+      const go = document.getElementById('arena-shop-go');
       if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[blwp] shop: ' + e.message)));
       const back = document.querySelector('#arena-shop .back');
       if (back) back.addEventListener('click', () => document.getElementById('arena-shop').classList.remove('show'));
@@ -8674,17 +8674,17 @@
       const OVERLAYS = {
         balance: { open: () => { const e = byId('arena-bal-split'); return !!e && e.style.display !== 'none' && e.childElementCount > 0; },
           close: () => { byId('arena-bal-split').style.display = 'none'; } },
-        deposit: { open: () => { const e = byId('blwp-deposit'); return !!e && e.classList.contains('deposit-modal') && e.childElementCount > 0; },
-          close: () => { const c = document.querySelector('#blwp-deposit .dep-close'); if (c) c.click(); else { const e = byId('blwp-deposit'); e.textContent = ''; e.className = ''; } } },
+        deposit: { open: () => { const e = byId('arena-deposit'); return !!e && e.classList.contains('deposit-modal') && e.childElementCount > 0; },
+          close: () => { const c = document.querySelector('#arena-deposit .dep-close'); if (c) c.click(); else { const e = byId('arena-deposit'); e.textContent = ''; e.className = ''; } } },
         withdraw: { open: () => !!byId('arena-withdraw') && byId('arena-withdraw').classList.contains('show'),
           close: () => { const c = document.querySelector('#arena-withdraw .wd-close'); if (c && c.onclick) c.click(); else byId('arena-withdraw').classList.remove('show'); } },
         leaderboard: { open: () => !!(window.ARENA_SEASON && window.ARENA_SEASON.isOpen()), close: () => window.ARENA_SEASON.close() },
         shop: { open: () => !!byId('arena-shop') && byId('arena-shop').classList.contains('show'), close: () => byId('arena-shop').classList.remove('show') },
-        settings: { open: () => !!byId('blwp-settings') && byId('blwp-settings').style.display !== 'none', close: () => byId('blwp-settings-close').click() },
+        settings: { open: () => !!byId('arena-settings') && byId('arena-settings').style.display !== 'none', close: () => byId('arena-settings-close').click() },
       };
-      const BUTTONS = { 'arena-wb-deposit': 'deposit', 'blwp-hdr-deposit': 'deposit', 'arena-wb-withdraw': 'withdraw', 'blwp-hdr-withdraw': 'withdraw',
-        'blwp-hdr-bal': 'balance', 'arena-wb-season': 'leaderboard', 'blwp-season-go': 'leaderboard', 'blwp-shop-go': 'shop',
-        'arena-wb-gear': 'settings', 'blwp-settings-go': 'settings' };
+      const BUTTONS = { 'arena-wb-deposit': 'deposit', 'arena-hdr-deposit': 'deposit', 'arena-wb-withdraw': 'withdraw', 'arena-hdr-withdraw': 'withdraw',
+        'arena-hdr-bal': 'balance', 'arena-wb-season': 'leaderboard', 'arena-season-go': 'leaderboard', 'arena-shop-go': 'shop',
+        'arena-wb-gear': 'settings', 'arena-settings-go': 'settings' };
       document.addEventListener('click', (e) => {
         const b = e.target && e.target.closest ? e.target.closest('button') : null; if (!b) return;
         const name = BUTTONS[b.id] || (b.classList.contains('wb-bal') ? 'balance' : null);

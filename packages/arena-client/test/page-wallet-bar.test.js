@@ -15,18 +15,18 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const OPEN = slice('    function openMoney(which, say = ', '\n      })();\n    }\n');
-const WIRED = slice("    for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'move'],", '\n      setInterval(paintWalletBar, 1000);\n    }\n');
+const WIRED = slice("    for (const [id, which] of [['arena-deposit-go', 'deposit'], ['arena-move-go', 'move'],", '\n      setInterval(paintWalletBar, 1000);\n    }\n');
 
 function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab'.repeat(32), roundStake: 100000n, invite: 'fed1', seed: 'seed', gateways: [] },
   ownClient = true, balance = { sats: 12345, pending: 0 }, settingsShown = false, depositFails = null } = {}) {
   const els = {}; const clicks = {};
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, addEventListener: (k, f) => { clicks[id] = f; }, click: () => clicks[id] && clicks[id]() });
-  for (const id of ['blwp-deposit-go', 'blwp-move-go', 'blwp-withdraw-lobby', 'blwp-money-why', 'blwp-settings', 'blwp-settings-go',
+  for (const id of ['arena-deposit-go', 'arena-move-go', 'arena-withdraw-lobby', 'arena-money-why', 'arena-settings', 'arena-settings-go',
     'arena-wallet-bar', 'arena-wb-sats', 'arena-wb-pending', 'arena-wb-deposit', 'arena-wb-withdraw', 'arena-wb-gear', 'arena-wb-why']) el(id);
-  els['blwp-settings'].style.display = settingsShown ? '' : 'none';
+  els['arena-settings'].style.display = settingsShown ? '' : 'none';
   //: the withdraw overlay, and Settings' panel with its home to go back to
   const home = { kids: [], insertBefore: (n) => { home.kids.push(n.id); n.parentNode = home; } };
-  for (const id of ['blwp-withdraw-panel', 'blwp-money-why']) { el(id).parentNode = home; els[id].nextSibling = null; }
+  for (const id of ['arena-withdraw-panel', 'arena-money-why']) { el(id).parentNode = home; els[id].nextSibling = null; }
   const body = { kids: [], append: (...n) => { for (const x of n) { body.kids.push(x.id); x.parentNode = body; } } };
   const close = {}; const shown = new Set();
   els['arena-withdraw'] = { id: 'arena-withdraw', querySelector: (q) => (q === '.wd-body' ? body : close),
@@ -48,7 +48,7 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
 test('Settings\' Deposit and the wallet bar\'s Deposit open the same offer and the same modal', async () => {
-  for (const button of ['blwp-deposit-go', 'arena-wb-deposit']) {
+  for (const button of ['arena-deposit-go', 'arena-wb-deposit']) {
     const p = page();
     p.click(button); await settle();
     assert.deepEqual(p.did, [['offer', 'fed1', '1000'], ['modal', 'Deposit into your player wallet', true]], button);
@@ -60,24 +60,24 @@ test('Withdraw from a game\'s bar opens its own overlay with Settings\' panel in
   const p = page();
   p.click('arena-wb-withdraw');
   const b = p.els.withdrawBox;
-  assert.equal(p.els['blwp-settings'].style.display, 'none', 'Settings stays closed');
+  assert.equal(p.els['arena-settings'].style.display, 'none', 'Settings stays closed');
   assert.ok(b.shown.has('show'), 'the overlay is shown');
-  assert.deepEqual(b.body.kids, ['blwp-withdraw-panel', 'blwp-money-why']);
+  assert.deepEqual(b.body.kids, ['arena-withdraw-panel', 'arena-money-why']);
   assert.deepEqual(p.did, [['withdraw', 'fed1']]);
   b.close.onclick();
   assert.ok(!b.shown.has('show'));
-  assert.deepEqual(b.home.kids, ['blwp-withdraw-panel', 'blwp-money-why'], 'the panel is back in Settings');
-  assert.equal(p.els['blwp-withdraw-panel'].style.display, 'none');
+  assert.deepEqual(b.home.kids, ['arena-withdraw-panel', 'arena-money-why'], 'the panel is back in Settings');
+  assert.equal(p.els['arena-withdraw-panel'].style.display, 'none');
   const q = page({ settingsShown: true });
-  q.click('blwp-withdraw-lobby');
+  q.click('arena-withdraw-lobby');
   assert.deepEqual(q.did, [['withdraw', 'fed1']], 'already open: not painted again');
 });
 
 test('a reason not to says itself where it was asked: under Settings\' buttons, or under the bar; and the answer names it', async () => {
   const why = 'No paying round is listed, so there is no stake to count rounds in.';
   const p = page({ ctx: { ok: false, why } });
-  p.click('blwp-deposit-go');
-  assert.equal(p.els['blwp-money-why'].textContent, why);
+  p.click('arena-deposit-go');
+  assert.equal(p.els['arena-money-why'].textContent, why);
   p.click('arena-wb-deposit');
   assert.equal(p.els['arena-wb-why'].textContent, why, 'the bar says it under itself');
   assert.deepEqual(await p.openMoney('deposit', () => {}), { ok: false, why });
@@ -98,7 +98,7 @@ test('the bar shows the balance this wallet read, only while a game\'s client ru
   const lobby = page({ ownClient: false }); lobby.paintWalletBar();
   assert.equal(lobby.els['arena-wb-sats'].textContent, '', 'no game client: the bar is not painted');
   assert.ok(p.intervals.some(([f, ms]) => f === p.paintWalletBar && ms === 1000), 'painted every second');
-  let opened = 0; p.els['blwp-settings-go'].addEventListener('click', () => { opened++; });
+  let opened = 0; p.els['arena-settings-go'].addEventListener('click', () => { opened++; });
   p.click('arena-wb-gear');
   assert.equal(opened, 1, 'the bar\'s gear clicks the page\'s own gear');
 });

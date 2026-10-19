@@ -3,7 +3,7 @@
 // A MARKET IN THE PAGE (§0A.7a; 2026-10-07, decisions A and B of plan 777): the pick sheet's
 // model, the pick handed to the seats, the outcome checked by the page itself, and the lines the lobby draws.
 //
-// - The sheet (#blwp-pick in index.html) is drawn from `pickSheet`: one button per outcome, the stake, the 5% fee line and
+// - The sheet (#arena-pick in index.html) is drawn from `pickSheet`: one button per outcome, the stake, the 5% fee line and
 //   the 0-5% donation line. Outcome labels and attestor keys come from the page's PINNED known-games list (`marketOf`),
 //   never from a node; a market the page does not pin is read from its signed manifest (GET /game-manifest, checked to hash
 //   to the round's game id) and staked on only after the second confirmation (§0A.6) - `needsConfirm`.

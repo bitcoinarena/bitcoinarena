@@ -69,7 +69,7 @@ async function bot(name) {
   const paid = new Set(); const deposits = [];
   const depositSat = String(env.DEPOSIT_SAT || 20000);
   const payer = setInterval(async () => {
-    await ev(`(() => { const m = document.getElementById('blwp-deposit'); if (!m || !m.querySelector('.dep-tabs')) return 0;
+    await ev(`(() => { const m = document.getElementById('arena-deposit'); if (!m || !m.querySelector('.dep-tabs')) return 0;
       const c = [...m.querySelectorAll('.dep-tabs button')].find((x) => /custom/i.test(x.textContent)); const f = m.querySelector('.dep-custom input');
       if (!c || !f || f.value === '${depositSat}') return 0; c.click(); f.value = '${depositSat}'; f.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`).catch(() => 0);
     const want = BigInt(depositSat) * 1000n;

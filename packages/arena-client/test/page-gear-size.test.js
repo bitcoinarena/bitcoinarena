@@ -11,7 +11,7 @@ const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/Ne
 const decl = (rule, prop) => { const m = rule.match(new RegExp('(?:^|[;{\\s])' + prop + ': ([^;]+);')); return m ? m[1].trim() : null; };
 
 test('the wallet bar\'s gear is the size of the strip\'s gear', () => {
-  const strip = HTML.match(/\n\s*#blwp-settings-go \{([^}]*)\}/)[1];
+  const strip = HTML.match(/\n\s*#arena-settings-go \{([^}]*)\}/)[1];
   const m = HTML.match(/\n\s*#arena-wallet-bar #arena-wb-gear \{([^}]*)\}/);
   assert.ok(m, 'the wallet bar\'s gear has its own rule');
   for (const prop of ['font-size', 'line-height', 'padding']) assert.equal(decl(m[1], prop), decl(strip, prop), prop);
