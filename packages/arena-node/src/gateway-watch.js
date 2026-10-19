@@ -79,7 +79,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     });
     const beacon = await beaconAt(at * epochBlocks);
     if (!beacon) return { ok: false, why: `the epoch's first block ${at * epochBlocks} is not in this seat's chain` };
-    const s = seatGateways({ candidates, beacon, incumbents, network, bondMinGuardian });
+    const s = seatGateways({ candidates, beacon, epoch: at, incumbents, network, bondMinGuardian });
     if (at < epoch) incumbents = s.seated;
     return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...s,
       gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),

@@ -12,6 +12,7 @@
 // It opens nothing below L, and nothing when its free balance is under L - its claim then says so, and the top-up address is LND's.
 import { signLiquidityClaim, checkLiquidityClaim, assignLiquidity, fundsMessage, LIQUIDITY_TERMS, MAX_FUNDS } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { tagAt, TAG_PAIRS } from '../../arena-protocol/src/tag-switch.js';
 
 export const SKIP_AFTER_MS = 3600000;
 
@@ -32,18 +33,21 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
     // THE PROOF OF THE FREE BALANCE (§23A.10): every confirmed coin, largest first, signed by its address key for this node - a
     // coin's signature is kept, so each is signed once
     const funds = [];
+    // the claim's time, which the coins' tag follows (tag-switch.js, kanban #525)
+    const at = nowMs(), tag = tagAt('liquidityFunds', { ms: at });
     const coins = lnd.coins ? await lnd.coins() : { ok: false };
     if (coins.ok) {
       state.fundSigs = state.fundSigs || {};
+      // each coin under that tag: kept per coin and tag, so the switch signs it once more
       for (const k of [...coins.coins].sort((a, b) => b.sats - a.sats).slice(0, MAX_FUNDS)) {
-        const id = `${k.txid}:${k.vout}`;
-        if (!state.fundSigs[id]) { const s = await lnd.signWithAddr({ address: k.address, message: fundsMessage(node, k.txid, k.vout) }); if (s.ok) state.fundSigs[id] = s.signature; }
-        if (state.fundSigs[id]) funds.push({ txid: k.txid, vout: k.vout, address: k.address, sats: k.sats, signature: state.fundSigs[id] });
+        const id = `${k.txid}:${k.vout}`, kept = tag === TAG_PAIRS.liquidityFunds[0] ? id : `${id}:${tag}`;
+        if (!state.fundSigs[kept]) { const s = await lnd.signWithAddr({ address: k.address, message: fundsMessage(node, k.txid, k.vout, tag) }); if (s.ok) state.fundSigs[kept] = s.signature; }
+        if (state.fundSigs[kept]) funds.push({ txid: k.txid, vout: k.vout, address: k.address, sats: k.sats, signature: state.fundSigs[kept] });
       }
       const live = new Set(coins.coins.map((k) => `${k.txid}:${k.vout}`));
-      for (const id of Object.keys(state.fundSigs)) if (!live.has(id)) delete state.fundSigs[id];
+      for (const id of Object.keys(state.fundSigs)) if (!live.has(id.split(':').slice(0, 2).join(':'))) delete state.fundSigs[id];
     }
-    const claim = signLiquidityClaim({ node, lightningPubkey: info.pubkey, lightningAddr, freeSats: f.onchainSats, atMs: nowMs(), channels: given, depositAddress: state.depositAddress || '', funds }, sign);
+    const claim = signLiquidityClaim({ node, lightningPubkey: info.pubkey, lightningAddr, freeSats: f.onchainSats, atMs: at, channels: given, depositAddress: state.depositAddress || '', funds }, sign);
     await writeClaim(claim);
     // the others, as every provider reads them
     const eps = (await endpoints()) || [];
@@ -61,7 +65,7 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
     // skipped: a provider the assignment named for a node that still shows no channel to it an hour later
     state.rankedAt = state.rankedAt || {};
     const skipped = new Set(Object.entries(state.rankedAt).filter(([, at]) => nowMs() - at > SKIP_AFTER_MS).map(([k]) => k));
-    const plan = assignLiquidity({ needs, claims, network, skipped });
+    const plan = assignLiquidity({ needs, claims, network, skipped, atMs: nowMs() });
     for (const p of plan) for (const prov of p.open) { const k = `${p.node}:${prov}`; if (!state.rankedAt[k]) state.rankedAt[k] = nowMs(); }
     const opened = [];
     for (const p of plan.filter((x) => x.open.includes(node))) {

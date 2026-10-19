@@ -14,10 +14,11 @@
 //             would yield to routed at least 25 % more
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
+import { tagAt, TAG_PAIRS } from './tag-switch.js';
 
 export const GATEWAY_SEATS = 2;
 export const GATEWAY_EPOCH_BLOCKS = 144;
-export const GATEWAY_TICKET_TAG = 'BLWP/v1/GATEWAY';
+export const GATEWAY_TICKET_TAG = TAG_PAIRS.gatewayTicket[0];   // the tag before the switch (tag-switch.js, kanban #525)
 /** A challenger unseats an incumbent only with this much more routed volume (25 %). */
 export const UNSEAT_MARGIN_PCT = 25n;
 /** The minimums per network (spec §23A.9 table). */
@@ -29,9 +30,9 @@ export const GATEWAY_MINIMUMS = Object.freeze({
 });
 
 const floorTo = (x, step) => (BigInt(x) / step) * step;
-export function gatewayTicket(beacon, nodeKey) {
+export function gatewayTicket(beacon, nodeKey, epoch) {
   const w = new Writer(); w.bytes32(beacon); w.bytes32(nodeKey);
-  return bytesToBigInt(taggedHash(GATEWAY_TICKET_TAG, w.finish()));
+  return bytesToBigInt(taggedHash(tagAt('gatewayTicket', { epoch }), w.finish()));
 }
 
 /** Why a candidate may not stand, or null. `c` { seatedGuardian, registered, inboundSats, outboundSats, pegInSats, availabilityPct, bondSats }. */
@@ -53,7 +54,7 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
  * availabilityPct, bondSats }]; `beacon` the epoch's first block hash (32 bytes); `incumbents` node keys hex seated last epoch;
  * `network`; `bondMinGuardian`. Answers { seated: [node hex], ranked: [{ node, ... }], ineligible: [{ node, why }], empty, why }.
  */
-export function seatGateways({ candidates = [], beacon, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS }) {
+export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS }) {
   if (!(beacon instanceof Uint8Array) || beacon.length !== 32) throw new TypeError('the epoch is ranked on its first block\'s hash');
   const minimums = GATEWAY_MINIMUMS[network];
   if (!minimums) throw new Error(`no gateway minimums for ${network}`);
@@ -62,7 +63,7 @@ export function seatGateways({ candidates = [], beacon, incumbents = [], network
     const why = ineligibleWhy(c, { minimums, bondMinGuardian });
     if (why) { ineligible.push({ node: toHex(c.node), why }); continue; }
     eligible.push({ ...c, nodeHex: toHex(c.node), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats) < BigInt(c.outboundSats) ? c.inboundSats : c.outboundSats, 100_000n),
-      availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats), ticket: gatewayTicket(beacon, c.node) });
+      availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats), ticket: gatewayTicket(beacon, c.node, epoch) });
   }
   const cmp = (a, b) => (a.volume !== b.volume ? (a.volume > b.volume ? -1 : 1) : a.capacity !== b.capacity ? (a.capacity > b.capacity ? -1 : 1)
     : a.availability !== b.availability ? (a.availability > b.availability ? -1 : 1) : a.bond !== b.bond ? (a.bond > b.bond ? -1 : 1)
