@@ -167,7 +167,11 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
       stop: async (fs, release) => {
         for (const f of fs) await sh('schtasks', ['/end', '/tn', task(f)]);
         // every process of that release but the auto update that runs this update: it ends by itself when done
-        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${q(release)}*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+        // BY THE RELEASE'S FOLDER, ANY SLASHES (measured 2026-10-19 22:43Z in the Windows VM: the node ran as "...\\.arena-node/releases/
+        // arena-node-2026.1.0-windows-x64/runtime/node.exe", the release was named with backslashes, -like matched nothing, the old node
+        // kept its port, the new one could not start, and the old one answered the health check - a false "updated")
+        const folder = String(release).split(/[\\/]/).filter(Boolean).pop();
+        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
       start: async (fs) => {

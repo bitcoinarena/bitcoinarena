@@ -221,7 +221,8 @@ test('Windows: the launchers that run the old release move to the new one; stopp
   assert.match(readFileSync(join(home, 'arena.conf'), 'utf8'), /\r\nroles=verify\r\n/, 'the settings moved into arena.conf, in CRLF');
   assert.match(readFileSync(join(home, 'arena-node.cmd'), 'utf8'), /src\\run\.js "[^"]+\\arena\.conf"/);
   const kill = calls.find((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1)));
-  assert.ok(kill && kill.at(-1).includes(`*${v1}*`), 'the processes of rc.12 are ended, by command line');
+  assert.ok(kill && kill.at(-1).includes("-like '*\\arena-node-0.1.0-rc.12-windows-x64\\*'") && kill.at(-1).includes(".Replace('/', '\\')"),
+    'the processes of rc.12 are ended by its folder, whatever slashes their command line uses (2026-10-19: a node started with "/" survived)');
   assert.deepEqual(calls.filter((c) => c[0] === 'schtasks').map((c) => c.at(-1)).sort(), ['Arena node', 'Arena tor']);
   assert.equal(calls.filter((c) => c[0] === 'powershell' && /Invoke-CimMethod -ClassName Win32_Process -MethodName Create/.test(c.at(-1))).length, 2, 'both started through WMI, outside the session that runs the update');
   // a release that does not come up: the rc.13 launchers put back
