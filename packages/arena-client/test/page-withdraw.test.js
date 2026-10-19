@@ -16,7 +16,7 @@ const tick = () => new Promise((r) => setTimeout(r, 10));
 
 function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, gateway: 'https://gw.example/x' }) }) {
   const el = (id) => ({ id, style: {}, textContent: '', value: '', disabled: false, classList: { on: new Set(), toggle(c, v) { if (v) this.on.add(c); else this.on.delete(c); } } });
-  const els = Object.fromEntries(['blwp-withdraw-panel', 'blwp-wd-amount', 'blwp-wd-invoice', 'blwp-wd-chosen', 'blwp-money-why', 'blwp-wd-go'].map((id) => [id, el(id)]));
+  const els = Object.fromEntries(['arena-withdraw-panel', 'arena-wd-amount', 'arena-wd-invoice', 'arena-wd-chosen', 'arena-money-why', 'arena-wd-go'].map((id) => [id, el(id)]));
   const status = { shown: [], set(step, words, kind) { this.shown.push({ step, words, kind }); }, hide() { this.shown.push({ hidden: true }); } };
   const calls = { withdraw: [] };
   const BLWPCLIENT = {
@@ -29,8 +29,8 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
   const openWithdraw = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
     document, window, BLWPCLIENT, () => status, () => ({}), () => {});
   openWithdraw({ round: {}, invite: 'fed1', seed: new Uint8Array(32), gateways: [] });
-  const type = (text) => { els['blwp-wd-invoice'].value = text; els['blwp-wd-invoice'].oninput(); };
-  const go = () => els['blwp-wd-go'].onclick();
+  const type = (text) => { els['arena-wd-invoice'].value = text; els['arena-wd-invoice'].oninput(); };
+  const go = () => els['arena-wd-go'].onclick();
   const last = () => status.shown.filter((s) => !s.hidden).at(-1);
   return { els, status, calls, type, go, last };
 }
@@ -38,24 +38,24 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
 test('the balance line: how much can be withdrawn; an empty wallet; a balance that cannot be read', async () => {
   const p = panel({ can: 50000n });
   // the same sentence while the balance is read, so the overlay keeps its size
-  assert.equal(p.els['blwp-wd-amount'].textContent, 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.');
+  assert.equal(p.els['arena-wd-amount'].textContent, 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.');
   await tick();
-  assert.equal(p.els['blwp-wd-amount'].textContent, 'You can withdraw up to 50 sat. Make an invoice in your own wallet for any amount up to that and paste it here.');
-  assert.deepEqual([p.els['blwp-wd-invoice'].disabled, p.els['blwp-wd-go'].disabled], [false, false]);
+  assert.equal(p.els['arena-wd-amount'].textContent, 'You can withdraw up to 50 sat. Make an invoice in your own wallet for any amount up to that and paste it here.');
+  assert.deepEqual([p.els['arena-wd-invoice'].disabled, p.els['arena-wd-go'].disabled], [false, false]);
   const empty = panel({ can: 0n });
   await tick();
-  assert.equal(empty.els['blwp-wd-amount'].textContent, 'Your wallet is empty, so there is nothing to withdraw.');
-  assert.deepEqual([empty.els['blwp-wd-invoice'].disabled, empty.els['blwp-wd-go'].disabled], [true, true], 'off for good at 0');
+  assert.equal(empty.els['arena-wd-amount'].textContent, 'Your wallet is empty, so there is nothing to withdraw.');
+  assert.deepEqual([empty.els['arena-wd-invoice'].disabled, empty.els['arena-wd-go'].disabled], [true, true], 'off for good at 0');
   const broken = panel({ can: new Error('the federation did not answer') });
   await tick();
-  assert.equal(broken.els['blwp-wd-amount'].textContent, 'Your balance could not be read (the federation did not answer). Try again in a moment.');
+  assert.equal(broken.els['arena-wd-amount'].textContent, 'Your balance could not be read (the federation did not answer). Try again in a moment.');
 });
 
 test('an invoice above the balance: the player\'s words at once, and on go the wallet is never asked to spend', async () => {
   const p = panel({ can: 50000n, invoiceMsat: 60000n });
   await tick();
   p.type('lnbc600n1over');
-  assert.equal(p.els['blwp-wd-chosen'].textContent, 'You withdraw 60 sat.');
+  assert.equal(p.els['arena-wd-chosen'].textContent, 'You withdraw 60 sat.');
   assert.deepEqual(p.last(), { step: 3, words: TOO_MUCH, kind: 'fail' });
   await p.go();
   assert.equal(p.calls.withdraw.length, 0, 'the wallet\'s withdraw was not called');
@@ -63,7 +63,7 @@ test('an invoice above the balance: the player\'s words at once, and on go the w
   const none = panel({ can: 50000n, invoiceMsat: 30000n });
   await tick();
   await none.go();
-  assert.equal(none.els['blwp-money-why'].textContent, 'Paste an invoice first.');
+  assert.equal(none.els['arena-money-why'].textContent, 'Paste an invoice first.');
   assert.equal(none.calls.withdraw.length, 0);
 });
 

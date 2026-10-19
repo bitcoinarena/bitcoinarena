@@ -50,7 +50,7 @@ function fakePage() {
   const box = make('div');
   box.querySelector = (sel) => parts[sel] || null;
   box.querySelectorAll = (sel) => (sel === '.days button' ? days : []);
-  const els = { 'arena-season': box, 'blwp-season-go': make('button'), 'arena-wb-season': make('button') };
+  const els = { 'arena-season': box, 'arena-season-go': make('button'), 'arena-wb-season': make('button') };
   const docHandlers = {};
   const document = { getElementById: (id) => els[id] || null, createElement: (t) => make(t), addEventListener: (ev, f) => { docHandlers[ev] = f; } };
   return { document, box, parts, days, els, docHandlers };
@@ -186,14 +186,14 @@ test('its ways in: a link on each tile, the strip beside the gear and the wallet
   assert.match(HTML, /window\.ARENA_SEASON\.open\(g\)/);
   // the class follows the choice within a few lines (22b2b331 put the wallet's early start between them)
   assert.match(HTML, /window\.ARENA_GAME_CHOSEN = game;\n(?:.*\n){1,6}\s+document\.body\.classList\.add\('arena-game-chosen'\);/);
-  assert.match(HTML, /<button id="blwp-season-go" type="button"/);
+  assert.match(HTML, /<button id="arena-season-go" type="button"/);
   assert.match(HTML, /<button id="arena-wb-season" type="button"/);
-  assert.match(HTML, /body\.blwp-clean #arena-season, body\.blwp-clean #blwp-season-go, body\.blwp-clean #arena-wb-season \{ display: none !important; \}/);
-  assert.match(HTML, /#blwp-season-go, #arena-wb-season \{ display: none; \}/, 'not before a game is chosen');
+  assert.match(HTML, /body\.blwp-clean #arena-season, body\.blwp-clean #arena-season-go, body\.blwp-clean #arena-wb-season \{ display: none !important; \}/);
+  assert.match(HTML, /#arena-season-go, #arena-wb-season \{ display: none; \}/, 'not before a game is chosen');
   // the strip's button opens the chosen game's board
   const p = liftSeason();
   p.window.ARENA_GAME_CHOSEN = GAME;
-  p.els['blwp-season-go'].click();
+  p.els['arena-season-go'].click();
   await settle();
   assert.equal(p.window.ARENA_SEASON.isOpen(), true);
   assert.equal(p.asked[0], 'https://seat-1.example/season?game=nextblock&days=7&scope=network');

@@ -17,7 +17,7 @@ const b = html.indexOf("      window.addEventListener('resize', () => window.BLW
 assert.ok(a > 0 && b > a, 'the page places its Console button in BLWP_PLACE_CONSOLE');
 const body = html.slice(a, b);
 const PANEL_H = 260;
-const css = html.slice(html.indexOf('body.blwp-console-open #blwp-wallet { position: fixed;'), html.indexOf('#blwp-console-thumb {'));
+const css = html.slice(html.indexOf('body.arena-console-open #arena-wallet { position: fixed;'), html.indexOf('#arena-console-thumb {'));
 
 /** The page's function over a fake window: the canvas fills the window, the button is 64 x 22 as measured. */
 function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = slot && slot.h, coarse = true, btnTop = 52, lobby = null } = {}) {
@@ -26,16 +26,16 @@ function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = sl
   const window = { innerWidth: w, innerHeight: h, BLWP_HUD_CORNER: slot, BLWP_UNITY_LOBBY: lobby, matchMedia: () => ({ matches: coarse }) };
   const classes = new Set();
   const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } },
-    getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } : id === 'blwp-wallet' ? panel : null) };
+    getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } : id === 'arena-wallet' ? panel : null) };
   pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'document', 'go', 'consoleOpen', 'paintConsoleThumb'], body, 'window.BLWP_PLACE_CONSOLE();')(window, document, go, () => open, () => {});
   const px = (v) => Number(String(v).replace('px', ''));
   const btn = slot ? { top: px(go.style.top), right: px(go.style.right) } : { top: btnTop, right: null };
   btn.bottom = btn.top + bh;
   if (slot) { btn.rightX = w - btn.right; btn.left = btn.rightX - bw; }
-  const held = classes.has('blwp-console-held');
+  const held = classes.has('arena-console-held');
   let p = null;
   if (open) {
-    p = { held, lobbyClass: classes.has('blwp-console-lobby'), title: go.title, right: px(panel.style.right), bottomGap: px(panel.style.bottom), width: px(panel.style.width), maxW: px(panel.style.maxWidth) };
+    p = { held, lobbyClass: classes.has('arena-console-lobby'), title: go.title, right: px(panel.style.right), bottomGap: px(panel.style.bottom), width: px(panel.style.width), maxW: px(panel.style.maxWidth) };
     if (panel.style.bottom === 'auto') { p.top = px(panel.style.top); p.bottom = p.top + PANEL_H; } else { p.bottom = h - p.bottomGap; p.top = p.bottom - PANEL_H; }
     p.rightX = w - p.right; p.left = p.rightX - p.width;
   }
@@ -111,7 +111,7 @@ test('the lobby, before the HUD is placed: TouchPad.RectFor\'s rule in CSS pixel
   assert.equal(p.bottomGap, Math.round(45.25 * vmin + 3.5 * vmin));
   const noTouch = place(null, { w: 1280, h: 720, coarse: false }).p;
   assert.equal(noTouch.bottomGap, Math.round(3.5 * 7.2), 'no pads drawn: the screen\'s bottom margin');
-  assert.match(css, /@media \(pointer: coarse\) \{ body\.blwp-console-open #blwp-wallet \{ bottom: calc\(45\.25vmin \+ 3\.5vmin\); \} \}/);
+  assert.match(css, /@media \(pointer: coarse\) \{ body\.arena-console-open #arena-wallet \{ bottom: calc\(45\.25vmin \+ 3\.5vmin\); \} \}/);
 });
 
 test('closed, the panel is left alone; the button is still placed', () => {
@@ -129,13 +129,13 @@ test('the lobby up: the open console parks top right under the button, 260 x 260
   const s = SLOTS.upright;
   const { btn, p, placed } = place(s, { lobby: LOBBY });
   assert.equal(p.held, false);
-  assert.equal(p.lobbyClass, true, 'drawn above the lobby chrome (blwp-console-lobby)');
+  assert.equal(p.lobbyClass, true, 'drawn above the lobby chrome (arena-console-lobby)');
   assert.equal(p.width, 260);
   assert.ok(p.top >= btn.bottom, `under the Console button (top ${p.top}, button bottom ${btn.bottom})`);
   assert.equal(p.right, Math.round(s.w - s.right), 'at the right margin');
   for (const r of [LOBBY.balance, ...LOBBY.rows.map((x) => x.rect)]) assert.ok(clearOf(p, r), `the panel ${JSON.stringify(p)} lies on ${r}`);
   assert.equal(placed.lobby.edge, 'top right');
-  assert.match(html, /body\.blwp-console-lobby #blwp-wallet \{ z-index: 35; \}/);
+  assert.match(html, /body\.arena-console-lobby #arena-wallet \{ z-index: 35; \}/);
 });
 
 test('the lobby with a widget at the top right: the panel slides left along the top edge until clear, and says so', () => {

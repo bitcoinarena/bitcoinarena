@@ -34,9 +34,9 @@ test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a p
 test('the countdown box offers Buy add-ons beside exit game, shown when the game sells something, opening Unity\'s panel', () => {
   // the donate button sits between add-ons and exit game
   // never one letter a line (2026-10-18, 390 px: three buttons left the words 0 px): the box wraps, the words keep 10em, a phone gives them a row
-  assert.match(PAGE, /#blwp-next \{ flex-wrap: wrap; justify-content: center; \} #blwp-next-say \{ min-width: min\(10em, 100%\); \}/);
-  assert.match(PAGE, /@media \(max-width: 520px\) \{ #blwp-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #blwp-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
-  assert.match(PAGE, /<div id="blwp-next" role="status"><span id="blwp-next-say"><\/span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="blwp-next-donate" type="button">[^<]*<\/button>)?<button id="blwp-next-exit"/);
+  assert.match(PAGE, /#blwp-next \{ flex-wrap: wrap; justify-content: center; \} #arena-next-say \{ min-width: min\(10em, 100%\); \}/);
+  assert.match(PAGE, /@media \(max-width: 520px\) \{ #blwp-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #arena-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
+  assert.match(PAGE, /<div id="blwp-next" role="status"><span id="arena-next-say"><\/span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="arena-next-donate" type="button">[^<]*<\/button>)?<button id="arena-next-exit"/);
   assert.match(PAGE, /ad\.style\.display = window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance \? '' : 'none';/);
-  assert.match(PAGE, /getElementById\('blwp-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
+  assert.match(PAGE, /getElementById\('arena-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
 });

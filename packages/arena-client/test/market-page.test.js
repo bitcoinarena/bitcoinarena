@@ -78,7 +78,7 @@ function fakeDocument() {
   };
   const sheet = make('div');
   const root = make('div');
-  return { document: { getElementById: (id) => (id === 'blwp-pick' ? root : null), createElement: make }, root, sheet };
+  return { document: { getElementById: (id) => (id === 'arena-pick' ? root : null), createElement: make }, root, sheet };
 }
 function liftSheet(window, document) {
   const at = PAGE.indexOf('    async function openPickSheet(');

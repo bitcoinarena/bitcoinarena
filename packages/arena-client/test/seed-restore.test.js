@@ -77,12 +77,12 @@ test('a live run in this tab is refused with "leave the round first", and the se
 // restoreSeed; the round page under the refund fingerprint has no restore field any more.
 test('Settings has the restore field wired to restoreSeed; the round page has none', () => {
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url).pathname, 'utf8');
-  const card = page.slice(page.indexOf('id="blwp-set-seed"'), page.indexOf('</section>', page.indexOf('id="blwp-set-seed"')));
-  assert.match(card, /<input id="blwp-seed-restore" type="password"/);
-  assert.match(card, /<button id="blwp-seed-use" type="button">use my seed<\/button>/);
+  const card = page.slice(page.indexOf('id="arena-set-seed"'), page.indexOf('</section>', page.indexOf('id="arena-set-seed"')));
+  assert.match(card, /<input id="arena-seed-restore" type="password"/);
+  assert.match(card, /<button id="arena-seed-use" type="button">use my seed<\/button>/);
   assert.match(page, /BLWPCLIENT\.restoreSeed\(\{ text, session: window\.sessionStorage, kept, now: Date\.now\(\), liveRun \}\)/);
-  assert.match(page, /getElementById\('blwp-seed-use'\)\.addEventListener\('click'/);
-  const roundPage = page.slice(page.indexOf("const refundEl = document.getElementById('blwp-refund')"), page.indexOf('refundEl.append(backup)') + 40);
+  assert.match(page, /getElementById\('arena-seed-use'\)\.addEventListener\('click'/);
+  const roundPage = page.slice(page.indexOf("const refundEl = document.getElementById('arena-refund')"), page.indexOf('refundEl.append(backup)') + 40);
   assert.ok(roundPage.length > 40, 'the round page block was not found');
   assert.doesNotMatch(roundPage, /use my seed|createElement\('input'\)|importSeed/, 'the round page still has a restore field');
 });

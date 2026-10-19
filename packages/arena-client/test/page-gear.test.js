@@ -14,7 +14,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const PAINT = slice('    function paintMoney() {', '\n    }\n');
-const EARLY = slice("  document.getElementById('blwp-settings-go').addEventListener('click', () => {", '\n  });');
+const EARLY = slice("  document.getElementById('arena-settings-go').addEventListener('click', () => {", '\n  });');
 const CATCH_UP = slice('    if (window.BLWP_SETTINGS_EARLY && settingsPanel()', '\n');
 
 const LOBBY = { showing: true, lobby: true, screen: [430, 932], balance: [56, 468, 318, 34] };
@@ -22,16 +22,16 @@ const LOBBY = { showing: true, lobby: true, screen: [430, 932], balance: [56, 46
 function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, broughtIn = false }) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
-  for (const id of ['blwp-money', 'blwp-settings', 'blwp-lobby-balance', 'blwp-backup-notice', 'blwp-backup-warn', 'blwp-settings-backup',
-    'blwp-lobby-confirmed', 'blwp-bal-confirmed', 'blwp-lobby-pending', 'blwp-bal-pending', 'blwp-balance-line', 'blwp-money-why']) el(id);
+  for (const id of ['arena-money', 'arena-settings', 'arena-lobby-balance', 'arena-backup-notice', 'arena-backup-warn', 'arena-settings-backup',
+    'arena-lobby-confirmed', 'arena-bal-confirmed', 'arena-lobby-pending', 'arena-bal-pending', 'arena-balance-line', 'arena-money-why']) el(id);
   const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 430, height: 932 }) };
   // the backup warning sits in the loading screen: it is gone with #boot
-  const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'blwp-backup-warn' && !boot ? null : els[id] || null) };
+  const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'arena-backup-warn' && !boot ? null : els[id] || null) };
   const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
   pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
     document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
-  return { money: els['blwp-money'].style.display, warn: boot ? els['blwp-backup-warn'].style.display : 'gone', balance: els['blwp-lobby-balance'].style.display };
+  return { money: els['arena-money'].style.display, warn: boot ? els['arena-backup-warn'].style.display : 'gone', balance: els['arena-lobby-balance'].style.display };
 }
 
 test('the strip with the gear is up from the loading screen on: before Unity, over its title, over the lobby', () => {
@@ -49,8 +49,8 @@ test('over a round\'s own screens and while driving the strip is gone', () => {
 function page() {
   const listeners = {};
   const panel = { style: { display: 'none' } };
-  const document = { getElementById: (id) => (id === 'blwp-settings' ? panel
-    : id === 'blwp-settings-go' ? { addEventListener: (ev, fn) => { listeners[ev] = fn; } } : null) };
+  const document = { getElementById: (id) => (id === 'arena-settings' ? panel
+    : id === 'arena-settings-go' ? { addEventListener: (ev, fn) => { listeners[ev] = fn; } } : null) };
   const window = {};
   pageFunction(PAGE, ['document', 'window'], EARLY)(document, window);
   return { click: () => listeners.click(), panel, window };
@@ -80,7 +80,7 @@ test('a click after the main script: opened and filled on the click, once', () =
 });
 
 test('the gear has one click handler: the main script no longer adds its own', () => {
-  assert.equal(HTML.split("getElementById('blwp-settings-go').addEventListener").length - 1, 1);
+  assert.equal(HTML.split("getElementById('arena-settings-go').addEventListener").length - 1, 1);
 });
 
 test('a wallet the player brought in - restored words or a Nostr account - shows no backup warning', () => {

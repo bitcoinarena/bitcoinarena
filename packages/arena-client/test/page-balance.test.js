@@ -18,8 +18,8 @@ assert.ok(at > 0, 'index.html paints its money in paintMoney');
 function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 932], balance: [56, 468, 318, 34] }, driving = false, canvas = { left: 0, top: 0, width: 430, height: 932 } }) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
-  for (const id of ['blwp-money', 'blwp-settings', 'blwp-lobby-balance', 'blwp-backup-notice', 'blwp-backup-warn', 'blwp-settings-backup',
-    'blwp-lobby-confirmed', 'blwp-bal-confirmed', 'blwp-lobby-pending', 'blwp-bal-pending', 'blwp-balance-line', 'blwp-money-why']) el(id);
+  for (const id of ['arena-money', 'arena-settings', 'arena-lobby-balance', 'arena-backup-notice', 'arena-backup-warn', 'arena-settings-backup',
+    'arena-lobby-confirmed', 'arena-bal-confirmed', 'arena-lobby-pending', 'arena-bal-pending', 'arena-balance-line', 'arena-money-why']) el(id);
   const document = { getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => canvas } : id === 'boot' ? null : els[id] || null) };
   const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: balance, unityInstance: {} };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
@@ -30,28 +30,28 @@ function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 93
 
 test('a reported balance: confirmed and pending in sats, in the lobby and in Settings, and no "no balance" line', () => {
   const els = paint({ balance: { sats: 1234, pending: 98 } });
-  for (const id of ['blwp-lobby-confirmed', 'blwp-bal-confirmed']) assert.equal(els[id].textContent, '1,234 sat');
-  for (const id of ['blwp-lobby-pending', 'blwp-bal-pending']) assert.equal(els[id].textContent, '98 sat');
-  assert.equal(els['blwp-balance-line'].textContent, '');
+  for (const id of ['arena-lobby-confirmed', 'arena-bal-confirmed']) assert.equal(els[id].textContent, '1,234 sat');
+  for (const id of ['arena-lobby-pending', 'arena-bal-pending']) assert.equal(els[id].textContent, '98 sat');
+  assert.equal(els['arena-balance-line'].textContent, '');
 });
 
 test('no balance reported yet: a dash for both, never an invented number, and the line says so', () => {
   const els = paint({ balance: null });
-  for (const id of ['blwp-lobby-confirmed', 'blwp-lobby-pending', 'blwp-bal-confirmed', 'blwp-bal-pending']) assert.equal(els[id].textContent, '–');
-  assert.equal(els['blwp-balance-line'].textContent, 'No balance in this wallet yet');
+  for (const id of ['arena-lobby-confirmed', 'arena-lobby-pending', 'arena-bal-confirmed', 'arena-bal-pending']) assert.equal(els[id].textContent, '–');
+  assert.equal(els['arena-balance-line'].textContent, 'No balance in this wallet yet');
 });
 
 test('the balance strip lies on Unity\'s own balance row, scaled from Unity\'s layout to the canvas', () => {
-  const same = paint({ balance: { sats: 0, pending: 0 } })['blwp-lobby-balance'].style;
+  const same = paint({ balance: { sats: 0, pending: 0 } })['arena-lobby-balance'].style;
   assert.deepEqual([same.display, same.left, same.top, same.width, same.height], ['flex', '56px', '468px', '318px', '34px']);
-  const half = paint({ balance: { sats: 0, pending: 0 }, canvas: { left: 10, top: 20, width: 215, height: 466 } })['blwp-lobby-balance'].style;
+  const half = paint({ balance: { sats: 0, pending: 0 }, canvas: { left: 10, top: 20, width: 215, height: 466 } })['arena-lobby-balance'].style;
   assert.deepEqual([half.left, half.top, half.width, half.height], ['38px', '254px', '159px', '17px']);
 });
 
 test('while driving the lobby strip is gone; off the lobby the balance strip is hidden', () => {
   const driving = paint({ balance: { sats: 5, pending: 0 }, driving: true });
-  assert.equal(driving['blwp-money'].style.display, 'none');
+  assert.equal(driving['arena-money'].style.display, 'none');
   const off = paint({ balance: { sats: 5, pending: 0 }, lobby: { showing: false, lobby: true, screen: [430, 932], balance: [56, 468, 318, 34] } });
-  assert.equal(off['blwp-money'].style.display, 'none');
-  assert.equal(off['blwp-lobby-balance'].style.display, 'none');
+  assert.equal(off['arena-money'].style.display, 'none');
+  assert.equal(off['arena-lobby-balance'].style.display, 'none');
 });

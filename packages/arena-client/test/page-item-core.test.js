@@ -51,7 +51,7 @@ test('the core file is the bundle pinned for nextblock, and the page loads it on
 });
 
 test('the shop, the run\'s items and their unlocks are wired into the page', () => {
-  assert.match(html, /id="blwp-shop-go"/);
+  assert.match(html, /id="arena-shop-go"/);
   assert.match(html, /id="arena-shop"/);
   assert.match(html, /BLWPCLIENT\.buyItem\(/);
   assert.match(html, /BLWPCLIENT\.entryItemsFor\(/);

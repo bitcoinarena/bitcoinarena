@@ -248,7 +248,7 @@ const tabView = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK
   refused: window.BLWP_JOIN_REFUSED || null, join: window.BLWP_JOIN || null,
   // WHAT THE PAGE LOOKED AT (W4 / 6d): its lookOwed - nothing spent until the player's Withdraw.
   owed: window.BLWP_OWED || null,
-  settled: (document.getElementById('blwp-settled') || {}).textContent || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`)
+  settled: (document.getElementById('arena-settled') || {}).textContent || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`)
   .then((x) => JSON.parse(x || '{}'));
 
 async function collectAfterRealJoin({ b, round, label, playerLock }) {
@@ -389,7 +389,7 @@ const STATE = `JSON.stringify({
   lock: window.BLWP_STAKE_LOCK ? 1 : 0, pageError: (document.getElementById('err') || {}).textContent || null,
   reloadedDoc: (performance.getEntriesByType('navigation')[0] || {}).type === 'reload',
   depositView: (() => {
-    const el = document.getElementById('blwp-deposit'); if (!el) return null;
+    const el = document.getElementById('arena-deposit'); if (!el) return null;
     const box = el.querySelector('code') || el; const r = box.getBoundingClientRect();
     const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
     return { drawn: r.width > 0 && r.height > 0, onTop: !!hit && (hit === box || box.contains(hit)),
@@ -398,7 +398,7 @@ const STATE = `JSON.stringify({
 })`;
 const VIEW = `JSON.stringify({
   chip: (document.getElementById('blwp-players') || {}).textContent || null,
-  panel: (document.getElementById('blwp-owed') || {}).textContent || null,
+  panel: (document.getElementById('arena-owed') || {}).textContent || null,
   refusedWhy: (() => { const i = window.unityInstance; const m = (i && i.Module) || window.Module;
     return (m && m.blwpNet && m.blwpNet.client && m.blwpNet.client.refusedWhy) || null; })(),
 })`;
