@@ -8,7 +8,7 @@
 // presented with the player's payout key. The e-cash is written to storage BEFORE it is presented and removed only once the
 // arbitration set took it, so a closed tab or a refused post loses nothing: the next start presents the same string again,
 // and notes claimed before are named, not lost.
-const LIQUIDATION_ECASH_PREFIX = 'blwp-liquidation-ecash-';
+const LIQUIDATION_ECASH_PREFIX = 'arena-liquidation-ecash-';   // the arena- names: was blwp- (moved once by movedKey, kanban #522)
 export const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
 
 /**
@@ -24,7 +24,7 @@ export async function presentNotes({ liquidations, held, walletFor, payoutPk, he
     if (!mine.has(fid) || !l.claims) continue;
     if (Number.isInteger(height) && (height < l.liquidatesAt || height > l.lateClaimsUntil)) { out.push({ federation: fid, ok: false, why: height < l.liquidatesAt ? `claims open at ${l.liquidatesAt}` : 'the claims closed' }); continue; }
     // THE NOTES (a wallet with none, or one that could not hand them over, still presents its pending outputs below)
-    let ecash = storage.getItem(pendingClaimKey(fid));
+    let ecash = storage.getItem(movedKey(storage, pendingClaimKey(fid)));
     if (!ecash) {
       let sent = null;
       try { sent = JSON.parse(await (await walletFor(fid)).sendAllEcash()); } catch (e) { out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
@@ -46,7 +46,7 @@ export async function presentNotes({ liquidations, held, walletFor, payoutPk, he
     // their issuance requests. Kept like the e-cash until the arbitration set took them; claimed before counts as taken.
     try {
       const w = await walletFor(fid);
-      let reqs = JSON.parse(storage.getItem(pendingRequestsKey(fid)) || 'null');
+      let reqs = JSON.parse(storage.getItem(movedKey(storage, pendingRequestsKey(fid))) || 'null');
       if (!reqs && w && typeof w.pendingOutputs === 'function') {
         reqs = (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean);
         if (reqs.length) storage.setItem(pendingRequestsKey(fid), JSON.stringify(reqs));
@@ -63,7 +63,7 @@ export async function presentNotes({ liquidations, held, walletFor, payoutPk, he
   }
   return out;
 }
-export const pendingRequestsKey = (fid) => `blwp-liquidation-pending-${String(fid).toLowerCase()}`;
+export const pendingRequestsKey = (fid) => `arena-liquidation-pending-${String(fid).toLowerCase()}`;
 
 // THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
 // round id of its own, H(tag || federation id)), so a seed restored on another device collects what the first presented.
@@ -71,6 +71,7 @@ export const pendingRequestsKey = (fid) => `blwp-liquidation-pending-${String(fi
 import { playerSecretFor } from '../../arena-protocol/src/player-key.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { movedKey } from './storage-keys.js';
 
 export function liquidationKeyFor(seed, federationHex, curve) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a claim key comes from the player\'s 32-byte seed');
@@ -89,7 +90,7 @@ export async function collectLiquidationPayouts({ listed, seed, curve, clientFor
   for (const p of (listed && listed.payouts) || []) {
     const key = liquidationKeyFor(seed, p.federation, curve);
     if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
-    const note = `blwp-liquidation-paid-${p.txid}:${p.outIdx}`;
+    const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
     if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
     try {

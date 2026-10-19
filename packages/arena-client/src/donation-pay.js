@@ -38,6 +38,7 @@ import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { playerFor, TAB_SEED_KEY } from './join.js';
+import { movedKey } from './storage-keys.js';
 
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
@@ -54,12 +55,12 @@ import { playerFor, TAB_SEED_KEY } from './join.js';
  * dies mid-payment never asks twice), then `paid` or `unpaid`. Any note at all
  * means the share is not asked again.
  */
-const DONATION_PAID_PREFIX = 'blwp-donation-paid:';
+const DONATION_PAID_PREFIX = 'arena-donation-paid:';   // was blwp-donation-paid: (moved once by movedKey, kanban #522)
 export const donationPaidKey = ({ roundId, playerPubkey }) => `${DONATION_PAID_PREFIX}${toHex(roundId)}:${toHex(playerPubkey)}`;
 
 export function donationPaidRecord(storage, whose) {
   let raw;
-  try { raw = storage && storage.getItem(donationPaidKey(whose)); } catch { return null; }
+  try { raw = storage && storage.getItem(movedKey(storage, donationPaidKey(whose))); } catch { return null; }
   if (!raw) return null;
   try { const o = JSON.parse(raw); return o && o.shares && typeof o.shares === 'object' ? o : null; } catch { return null; }
 }
@@ -69,7 +70,7 @@ export function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }
   try {
     const was = donationPaidRecord(storage, whose) || { shares: {} };
     was.shares[lnurl] = { ...note, amountMsat: String(amountMsat) };
-    storage.setItem(donationPaidKey(whose), JSON.stringify(was));
+    storage.setItem(movedKey(storage, donationPaidKey(whose)), JSON.stringify(was));
     return true;
   } catch { return false; }
 }
