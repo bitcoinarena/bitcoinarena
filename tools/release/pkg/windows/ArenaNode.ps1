@@ -15,10 +15,10 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = "Arena Node $version"; $form.Width = 720; $form.Height = 520; $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 $title = New-Object System.Windows.Forms.Label
-$title.AutoSize = $false; $title.Left = 14; $title.Top = 12; $title.Width = 680; $title.Height = 48
+$title.AutoSize = $false; $title.Left = 14; $title.Top = 12; $title.Width = 680; $title.Height = 66
 $form.Controls.Add($title)
 $box = New-Object System.Windows.Forms.TextBox
-$box.Multiline = $true; $box.ReadOnly = $true; $box.ScrollBars = 'Vertical'; $box.Left = 14; $box.Top = 64; $box.Width = 676; $box.Height = 340
+$box.Multiline = $true; $box.ReadOnly = $true; $box.ScrollBars = 'Vertical'; $box.Left = 14; $box.Top = 82; $box.Width = 676; $box.Height = 322
 $box.Font = New-Object System.Drawing.Font('Consolas', 9); $box.BackColor = [System.Drawing.Color]::White
 $form.Controls.Add($box)
 $buttons = @{}
@@ -58,7 +58,7 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
 } else {
   # THE INSTALLER, HIDDEN: its lines go to a log file beside this window, read by a timer (an event handler cannot run while the
   # window holds the PowerShell thread)
-  $title.Text = "The installer runs. Its setup page opens in your browser (the link works once, for 30 minutes). Keep this window open until the page says Done."
+  $title.Text = "The installer runs. Its setup page opens in your browser (the link works once, for 30 minutes). Keep this window open until the page says Done. If Windows Firewall asks about cloudflared, choose Cancel: the tunnel only connects out."
   $log = Join-Path $here 'installer.log'
   Set-Content -Path $log -Value '' -Encoding ascii
   $node = Join-Path $release.FullName 'runtime\node.exe'
