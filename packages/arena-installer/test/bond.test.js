@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, taprootAddress, addressScript, scriptHash } from '../src/wallet.js';
-import { buildBond, lockOf, advertRoles, bondKeyAt, BOND_MIN_SATS } from '../src/bond.js';
+import { buildBond, lockOf, advertRoles, bondKeyAt, BOND_MIN_SATS, BOND_SLACK_BLOCKS, bondCounts } from '../src/bond.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
@@ -34,7 +34,7 @@ test('the bond: two transactions, the census reads the second as this node\'s te
   const nodeSecret = new Uint8Array(32).fill(3);
   const coins = [{ txid: 'ae7909350adbc9948f59cb2787a4db003d3dea69f6e117025a8a8ebeac18fa6d', vout: 1, sats: 30000 }, { txid: '11'.repeat(32), vout: 0, sats: 30000 }];
   const b = buildBond({ wallet: w, nodeSecret, coins, tip: 156900, operatorId: 'op-test', roles: ['verify', 'settlement'], endpoint: 'https://node.example.com', payoutPubkey: payoutKeyOf(seed), nowMs: 1792300000000 });
-  assert.equal(b.maturity, 156900 + 1 + 6 + 144);
+  assert.equal(b.maturity, 156900 + 1 + BOND_SLACK_BLOCKS + 144, 'a day of slack to confirm in');
   assert.equal(b.bondSats, BOND_MIN_SATS);
   const fund = parseTransaction(fromHex(b.funding.hex));
   assert.equal(fund.inputs.length, 2, 'every coin of the wallet');
@@ -54,5 +54,9 @@ test('the bond: two transactions, the census reads the second as this node\'s te
   assert.deepEqual(advertRoles(['settlement']), ['settlement']);
   assert.deepEqual(advertRoles(['verify', 'settlement', 'custody', 'liquidity']), ['game', 'verify', 'settlement'], 'custody and liquidity are no advertisement roles (macOS node A: "unknown role: liquidity")');
   const lock = lockOf(156900, { nowMs: 0 });
-  assert.deepEqual([lock.maturity, lock.blocks, lock.estimatedMs], [157051, 151, 151 * 600000]);
+  assert.deepEqual([lock.maturity, lock.blocks, lock.estimatedMs], [157189, 289, 289 * 600000]);
+  // measured on testnet4 2026-10-19: built at 156976 with the old 6 blocks of slack (maturity 157121), confirmed at 157000 - never counted
+  assert.deepEqual(bondCounts({ maturity: 157121, confirmedAt: 157000 }), { counts: false, short: 23 });
+  assert.deepEqual(bondCounts({ maturity: 157156, confirmedAt: 157012 }), { counts: true, short: 0 }, 'installer node B: no block to spare');
+  assert.equal(bondCounts({ maturity: lock.maturity, confirmedAt: 156900 + 1 + BOND_SLACK_BLOCKS }).counts, true, 'now a day late still counts');
 });
