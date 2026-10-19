@@ -59,6 +59,6 @@ test('the shop, the run\'s items and their unlocks are wired into the page', () 
   assert.match(html, /window\.BLWP_ITEM_UNLOCKS = roundManifest \? BLWPCLIENT\.entryUnlocks\(window\.BLWP_ENTRY, roundManifest\) : \[\];/);
   assert.match(html, /await window\.ARENA_LOAD_CORE\(BLWPCLIENT\.roundCoreHex\(named\.round\)\)/);
   const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
-  assert.equal((jslib.match(/b\.core\.init\(net\.seedWord, blwpWithItems\(/g) || []).length, 2, 'both run starts take the unlocks');
+  assert.equal((jslib.match(/b\.core\.init\(net\.seedWord, arenaWithItems\(/g) || []).length, 2, 'both run starts take the unlocks');
   assert.match(jslib, /ArenaTruckBed: function/);
 });

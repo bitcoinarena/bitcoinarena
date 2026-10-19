@@ -126,11 +126,11 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
         BLWP: wrapped,
         BLWPCLIENT: CLIENT,
         BLWP_CURVE: pageCurve,
-        BLWP_ROUND: named.round,
-        BLWP_ENTRY: signerNode,
-        BLWP_NODES: named.nodes,
-        BLWP_CHAIN: named.chain,
-        BLWP_ADVERT: named.advert,
+        ARENA_ROUND: named.round,
+        ARENA_ENTRY: signerNode,
+        ARENA_NODES: named.nodes,
+        ARENA_CHAIN: named.chain,
+        ARENA_ADVERT: named.advert,
       });
 
       // ---- WHAT C# DOES, IN ITS ORDER. ----
@@ -248,8 +248,8 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
       console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
-      BLWP_ROUND: named.round, BLWP_ENTRY: signerNode, BLWP_NODES: named.nodes,
-      BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
+      ARENA_ROUND: named.round, ARENA_ENTRY: signerNode, ARENA_NODES: named.nodes,
+      ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert,
     });
 
     assert.equal(library.ArenaInit(SOLO_SEED), 1);
@@ -401,8 +401,8 @@ test('a join held open while the game steps publishes from the tick the core is 
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
       console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
-      BLWP_ROUND: named.round, BLWP_ENTRY: signerNode, BLWP_NODES: named.nodes,
-      BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
+      ARENA_ROUND: named.round, ARENA_ENTRY: signerNode, ARENA_NODES: named.nodes,
+      ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert,
     });
 
     assert.equal(library.ArenaInit(SOLO_SEED), 1);
