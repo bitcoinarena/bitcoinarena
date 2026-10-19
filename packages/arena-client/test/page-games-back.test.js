@@ -29,12 +29,15 @@ test('a click opens the choice of games: the address without game, round and pla
     querySelector: (q) => (sheet && q.includes(sheet) ? { click: () => { closed++; } } : null) };
   const location = { search: '?game=nextblock&round=ab12&play=1&fed=b' };
   pageFunction(PAGE, ['document', 'location', 'URLSearchParams'], src)(document, location, URLSearchParams);
-  // kanban #405: over the leaderboard or the shop, ← closes that sheet and stays in the game
+  // kanban #529 (was #405): over the leaderboard or the shop in a game, ← closes that sheet AND goes to the arena
   for (const s of ['#arena-season.show .back', '#arena-shop.show .back']) {
-    sheet = s; click();
-    assert.equal(location.search, '?game=nextblock&round=ab12&play=1&fed=b');
+    location.search = '?game=nextblock&round=ab12&play=1&fed=b'; sheet = s; click();
+    assert.equal(location.search, 'fed=b');
   }
   assert.equal(closed, 2);
-  sheet = null; click();
+  sheet = null; location.search = '?game=nextblock&round=ab12&play=1&fed=b'; click();
   assert.equal(location.search, 'fed=b');
+  // a sheet opened from the games screen (no game in the address) closes onto it, nothing reloads
+  location.search = '?fed=b'; sheet = '#arena-season.show .back'; click();
+  assert.deepEqual([closed, location.search], [3, '?fed=b']);
 });
