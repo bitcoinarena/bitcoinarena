@@ -51,7 +51,8 @@ export function guardianOfEntry(dir) {
 }
 
 export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
-  lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now() }) {
+  lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now(),
+  restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }) }) {
   // the federation's custody nodes with their Lightning key and address, from this node's own seat (GET /gateway-seats: the claims it
   // gathered as a guardian, its own among them)
   const membersOf = ringMembers || (async (s) => {
@@ -72,8 +73,26 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     try { return new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
   };
   const commitOf = () => { try { return sha256(readFileSync(join(release, 'COMMIT'))); } catch { return new Uint8Array(32); } };
+  // THE GATEWAY BROUGHT BACK TO ITS LND (measured on the test host, node A rc.25 -> 2026.1.0, 2026-10-19): started in the same moment as LND,
+  // before LND's wallet was unlocked, gatewayd stayed "Disconnected" with LND synced beside it, and only a restart joined them. Two ticks
+  // in a row of a Disconnected gateway while LND answers: the gateway is restarted (a reboot starts every service at once as well).
+  let disconnected = 0;
+  async function gatewayWatch(s) {
+    if (!s.gateway || !s.lightning || typeof gw.testGateway !== 'function') return null;
+    const t = await gw.testGateway(s.gateway).catch(() => ({ ok: false }));
+    if (t.ok || t.state !== 'Disconnected') { disconnected = 0; return null; }
+    const l = await lndInfo(s.lightning).catch(() => ({ ok: false }));
+    if (!l || !l.ok) { disconnected = 0; return null; }   // LND itself is not up yet: the gateway waits for it, nothing to restart
+    if (++disconnected < 2) return null;
+    disconnected = 0;
+    const r = await restartGateway().catch((e) => ({ ok: false, why: e.message }));
+    log(r.ok ? 'the gateway was Disconnected while LND answers: restarted' : `the gateway was Disconnected while LND answers; the restart failed: ${r.why}`);
+    return r.ok ? { ok: true, did: 'gateway-restart' } : { ok: false, why: `the gateway restart failed: ${r.why}` };
+  }
   async function tick() {
     const s = state.read();
+    const watched = await gatewayWatch(s);
+    if (watched) return watched;
     // A LIQUIDITY PROVIDER'S DEPOSIT (§23A.10, kanban #494): 5 x L on testnet4 from the node's wallet into LND's, once - the provider
     // service (bin/liquidity-provider.mjs) opens channels from it
     if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.pubkey && !(s.custody || {}).liquidityFund) {

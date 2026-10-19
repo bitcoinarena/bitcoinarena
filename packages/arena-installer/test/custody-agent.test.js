@@ -126,3 +126,23 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   state.save({ roles: ['verify'] });
   assert.match((await agent.tick()).idle, /no custody role/);
 });
+
+test('the gateway Disconnected while LND answers: restarted on the second tick in a row, not while LND itself is down (macOS node A after its update)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'custody-gw-watch-'));
+  const state = nodeState(home);
+  state.save({ roles: ['verify'], gateway: { apiUrl: 'http://127.0.0.1:1', passwordFile: '/x' }, lightning: { restUrl: 'https://127.0.0.1:10080' } });
+  let gwState = 'Disconnected', lndUp = true; const restarts = [];
+  const agent = createCustodyAgent({ state, release: home,
+    gw: { testGateway: async () => (gwState === 'Running' ? { ok: true, state: 'Running', federations: [] } : { ok: false, why: 'no Lightning node yet', state: gwState }) },
+    lndInfo: async () => (lndUp ? { ok: true, uris: [] } : { ok: false, why: 'connection refused' }),
+    restartGateway: async () => { restarts.push(1); gwState = 'Running'; return { ok: true }; } });
+  lndUp = false;
+  assert.equal((await agent.tick()).did, undefined); assert.equal((await agent.tick()).did, undefined);
+  assert.equal(restarts.length, 0, 'LND down: the gateway waits for it');
+  lndUp = true;
+  assert.equal((await agent.tick()).did, undefined, 'one tick may be the start-up');
+  assert.equal((await agent.tick()).did, 'gateway-restart');
+  assert.equal(restarts.length, 1);
+  assert.equal((await agent.tick()).did, undefined, 'Running again: nothing more');
+  assert.equal(restarts.length, 1);
+});
