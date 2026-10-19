@@ -6,7 +6,7 @@
 // by choosing a message: an attacker would have to find a message beginning
 // with 64 bytes they do not control.
 //
-// sha256 comes from @blwp/core rather than a library. It is integer-only and
+// sha256 comes from nextblock rather than a library. It is integer-only and
 // already carried through the determinism harness, and a hash that pins money
 // should not gain a dependency whose version could change its output.
 

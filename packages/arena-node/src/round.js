@@ -4,7 +4,7 @@
 //
 // The ids are NOT this file's invention: a round is identified by
 // `roundId(contract)` and an entry by `entryId(contract)`, both tagged hashes
-// out of `@blwp/protocol`. The node stores what it is given and can prove what
+// out of `arena-protocol`. The node stores what it is given and can prove what
 // it stored, which is the whole of its job in M2.1 step 1.
 //
 // It does not step the core. There is no `step` in this package and no import

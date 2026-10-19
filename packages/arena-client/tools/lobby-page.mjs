@@ -388,7 +388,7 @@ try {
 } finally {
   keeper.stop();
   for (const b of tabs) {
-    for (const l of b.logs) if (/\[blwp\]|EXCEPTION|refused/i.test(l)) console.log('   ', l.slice(0, 300));
+    for (const l of b.logs) if (/\[(?:arena|blwp)\]|EXCEPTION|refused/i.test(l)) console.log('   ', l.slice(0, 300));
     b.close();
   }
   await round.close();

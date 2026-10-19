@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CURVE THE PAGE BRINGS TO A SIGNER NODE.
 //
-// `@blwp/client` carries no crypto: signing, verifying and this key are
+// `arena-client` carries no crypto: signing, verifying and this key are
 // injected. The daemons already sit on `@noble/curves` secp256k1. This is
 // that same curve, loaded beside the client, so a tab can name a real
 // BIP-340 key. Without it the page fetches the round and then refuses the

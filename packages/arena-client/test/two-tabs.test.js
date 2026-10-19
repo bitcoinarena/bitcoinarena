@@ -444,7 +444,7 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     }
     const [driver, watcher] = tabs;
 
-    // The page's own hop: the jslib asks `@blwp/client` for the field and
+    // The page's own hop: the jslib asks `arena-client` for the field and
     // holds it on `Module.blwpNet`, which is where the ghost export looks.
     Module.blwpNet = {
       ghosts: watchGhosts(watcher.client, {

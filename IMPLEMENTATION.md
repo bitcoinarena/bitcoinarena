@@ -85,7 +85,7 @@ exist because WASM's determinism has exactly four holes:
    crossing the boundary. The module gets ticks and inputs and nothing else.
 
 Under those five, WASM is allowed in the simulation core. It is **not**
-allowed in `@blwp/protocol` — encoding, hashing, contracts, census, sortition
+allowed in `arena-protocol` — encoding, hashing, contracts, census, sortition
 and payout stay pure JS, because those are what a second implementation would
 have to reproduce from the test vectors, and a WASM blob is not a
 specification anybody can read.
@@ -108,7 +108,7 @@ npm workspaces, one repo, one language.
 blwp/
   package.json                    # workspaces, "type": "module", node >= 24
   packages/
-    core/                         # @blwp/core — THE DETERMINISTIC SIMULATION
+    core/                         # nextblock — THE DETERMINISTIC SIMULATION
       src/
         fixed.js                  # Q16.16 fixed-point primitives (§3.2)
         tables.js                 # GENERATED, COMMITTED sine/atan tables (§3.4)
@@ -123,7 +123,7 @@ blwp/
         check-determinism.js      # AST guard, runs in CI (§3.7)
       test/
         vectors/                  # golden input logs -> expected state hashes
-    protocol/                     # @blwp/protocol — isomorphic
+    protocol/                     # arena-protocol — isomorphic
       src/
         encode.js  hash.js  keys.js  contracts.js
         census.js  sortition.js  payout.js
@@ -135,7 +135,7 @@ blwp/
         chain/  census/  rounds/  entries/  ingest/
         store/  replay/  results/ payout/   settlement/
         api/    metrics/
-    client/                       # @blwp/client — browser
+    client/                       # arena-client — browser
       src/session.js  wallet-nwc.js  unity-bridge.js
     replayer/                     # blwp-replay — standalone CLI verifier
   test-vectors/                   # cross-implementation fixtures
@@ -143,7 +143,7 @@ blwp/
 
 Two rules that keep this honest:
 
-1. **`@blwp/core` and `@blwp/protocol` import nothing from `node:`.** The
+1. **`nextblock` and `arena-protocol` import nothing from `node:`.** The
    identical files run in the browser. Anything platform-specific is
    injected by the caller.
 2. **Nothing outside those two packages computes a protocol hash or a
@@ -391,7 +391,7 @@ byte copy — the state has no object graph.
 
 The field named `sim_wasm_hash` in the Round Contract keeps its name for
 protocol compatibility but now means: **sha256 over the canonical
-concatenation of every source file in `@blwp/core`**, in sorted path order,
+concatenation of every source file in `nextblock`**, in sorted path order,
 including `tables.js`. `tools/hash-core.js` prints it; CI publishes it; the
 client checks a round's value against its known-good list (spec §5).
 
@@ -412,7 +412,7 @@ in increasing order of strength:
    in CI and as a pre-commit hook. It walks every core source file and fails
    on: a numeric literal containing `.` or `e`; a `/`, `*` or `%` operator
    outside a whitelisted helper file; any `Math` member not in the whitelist;
-   any `import` from outside `@blwp/core`. This is stronger than lint because
+   any `import` from outside `nextblock`. This is stronger than lint because
    it cannot be silenced with an inline comment.
 3. **Poison tests.** The test harness monkey-patches `Math.sin`, `cos`,
    `tan`, `pow`, `exp`, `log`, `sqrt`, `random` and `Date.now` to throw, then
@@ -586,7 +586,7 @@ GET  /v1/health                        roles, census height, replay throughput
 ```
 
 **WebSocket (`ws`)** — the per-run hot path, binary frames from
-`@blwp/protocol/messages`, never JSON:
+`arena-protocol/messages`, never JSON:
 
 ```
 C -> S  HELLO       { round_id, player_pubkey, session_pubkey, entry_proof }
@@ -759,12 +759,12 @@ performance costume.
 ```js
 const pool = new WorkerPool({
   size: Math.max(1, os.availableParallelism() - 1),
-  script: './replayWorker.js',        // imports @blwp/core directly
+  script: './replayWorker.js',        // imports nextblock directly
 });
 const result = await pool.run({ coreHash, contract, subSeed, inputLogPath });
 ```
 
-- Each worker imports `@blwp/core` once; the JIT warms up over the first few
+- Each worker imports `nextblock` once; the JIT warms up over the first few
   replays, so workers are long-lived and reused rather than spawned per job.
 - Priority queue: objected runs first, then top-ranked runs, then the rest.
   When the result window is tight, this ordering keeps the economically
@@ -806,7 +806,7 @@ JS calls back via `SendMessage`.
 
 ### 11.2 Client session flow
 
-`@blwp/client`, using the same protocol and core packages as the daemon:
+`arena-client`, using the same protocol and core packages as the daemon:
 
 1. Fetch and validate the RoundContract; check the core hash against the
    client's known-good list; refuse real money on an unknown hash.
@@ -844,7 +844,7 @@ caught only by measuring. With a JavaScript core, the harness below is not a
 quality nicety — it is the mechanism that replaces the Rust type system.
 
 **1. Cross-engine determinism harness — build this first.** A CI job that
-runs a corpus of recorded input logs through `@blwp/core` in Node, and via
+runs a corpus of recorded input logs through `nextblock` in Node, and via
 Playwright in headless Chromium, Firefox and WebKit, on x86 and ARM. Assert
 byte-equal state hashes every 100 ticks. Any divergence fails the build.
 Nothing else may be built on top of the core until this is green and stays
@@ -943,13 +943,13 @@ delivering drive would read as a product failure.
 
 | Stage | Content | Done when |
 |---|---|---|
-| 0 | `@blwp/core`: fixed-point, RNG, tables, state, one rule module — plus the cross-engine harness, poison tests and AST guard | Zero divergence across 4 engines × 2 architectures on a 10-minute corpus; **replay throughput measured and published** |
+| 0 | `nextblock`: fixed-point, RNG, tables, state, one rule module — plus the cross-engine harness, poison tests and AST guard | Zero divergence across 4 engines × 2 architectures on a 10-minute corpus; **replay throughput measured and published** |
 | 1 | Port the remaining game rules from C# into the core | Recorded Unity sessions replay to the same score |
-| 2 | `@blwp/protocol`: encoding, hashes, contracts, census, sortition, payout + full vectors | A second implementation could be written from `test-vectors/` alone |
+| 2 | `arena-protocol`: encoding, hashes, contracts, census, sortition, payout + full vectors | A second implementation could be written from `test-vectors/` alone |
 | 3 | `arena-node` skeleton: HTTP + ws, `node:sqlite`, entry receipts, checkpoint ingest, transcripts | Seven local nodes run a play-money round end to end |
 | 4 | Replay pool, result signing, 5-of-7 finality, objection window, equivocation, no-quorum | The adversarial table passes |
 | 5 | Chain integration: bond verification, census build, committee publication, timestamp receipts | A contract with a wrong census root is rejected by every node |
-| 6 | Unity bridge, `@blwp/client`, NWC wallet | A browser plays a play-money round against real nodes |
+| 6 | Unity bridge, `arena-client`, NWC wallet | A browser plays a play-money round against real nodes |
 | 7 | Settlement: VSS, FROST (+ external review), hold invoices, `SettlementBackend` | Testnet round settles; a killed node recovers without double-paying |
 | 8 | Bonds and arbitration on-chain, load tests at 100/1,000, external security review | Real sats at the lowest bracket |
 
@@ -977,11 +977,11 @@ and was invisible.
 |---|---|---|
 | 0 | Core foundation: fixed point, RNG, tables, state layout, AST guard, cross-engine harness | 3–5 |
 | 1 | Port the game rules from C# into the core (armies, terrain, driving, damage, gate, score) | 7–12 |
-| 2 | `@blwp/protocol`: encoding, contracts, census, sortition, payout + vectors | 3–4 |
+| 2 | `arena-protocol`: encoding, contracts, census, sortition, payout + vectors | 3–4 |
 | 3 | `arena-node`: HTTP/WS, `node:sqlite`, entries, checkpoints, transcripts | 4–6 |
 | 4 | Replay pool, 5-of-7 finality, objection, equivocation, no-quorum | 3–5 |
 | 5 | Chain: bond verification, census build, committee publication (regtest) | 3–4 |
-| 6 | Unity bridge, `@blwp/client`, NWC wallet | 4–6 |
+| 6 | Unity bridge, `arena-client`, NWC wallet | 4–6 |
 | 7 | Settlement: VSS, FROST, hold invoices, backends | 5–8 |
 | 8 | Bonds and arbitration on-chain, load tests | 3–5 |
 | | **Total** | **35–55** |

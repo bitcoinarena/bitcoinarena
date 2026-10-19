@@ -26,7 +26,7 @@
 // already opens for AES-GCM, so it adds no dependency. When enough wallets have
 // moved, this is the file that changes.
 //
-// THE CURVE IS INJECTED, like everywhere else in this package: `@blwp/client`
+// THE CURVE IS INJECTED, like everywhere else in this package: `arena-client`
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';

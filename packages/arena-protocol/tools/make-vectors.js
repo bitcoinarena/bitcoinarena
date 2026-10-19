@@ -290,7 +290,7 @@ for (const [name, body] of Object.entries(out))
   writeFileSync(DIR + name + '.json', JSON.stringify(body, null, 1) + '\n');
 
 writeFileSync(DIR + 'index.json', JSON.stringify({
-  package: '@blwp/protocol',
+  package: 'arena-protocol',
   protocolVersion: PROTOCOL_VERSION,
   produced: 'packages/arena-protocol/tools/make-vectors.js',
   claim: 'A second implementation is correct if and only if it reproduces every value here.',

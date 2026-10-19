@@ -304,7 +304,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
     for (; Date.now() - t < ms; await wait(1000)) { o = await view(b).catch((e) => ({ unread: e.message })); if (done(o)) break; }
     return { ...o, lookedMs: Date.now() - t };
   };
-  const said = (b) => b.logs.filter((l) => /\[blwp\] (owed|withdraw|payout|stake|refund)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-8);
+  const said = (b) => b.logs.filter((l) => /\[(?:arena|blwp)\] (owed|withdraw|payout|stake|refund)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-8);
   const res = { round: `${stakeMsat / 1000n} sat`, page: p.want, onScreen: true, stakeLockMsat: p.stake.fields.amountMsat, federationAtStart: await federation() };
 
   // 1. THE FIRST TAB ONLY LOOKS - then three more of its 5 s loops - and is closed with no withdraw.
@@ -385,7 +385,7 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
     return { ...o, lookedMs: Date.now() - t };
   };
   const owedSome = (o) => !!(o && o.owed && o.owed.owedMsat !== '0' && o.owed.payout.state !== 'waiting' && o.owed.stake.state !== 'waiting');
-  const said = (b) => b.logs.filter((l) => /\[blwp\] (owed|withdraw|kept rounds)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-8);
+  const said = (b) => b.logs.filter((l) => /\[(?:arena|blwp)\] (owed|withdraw|kept rounds)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-8);
   const open = async (profile, { reuse = false, at = url } = {}) => {
     const b = await browse(at, { profile, reuse });
     if (!(await pageReady(b))) { const logs = b.logs.slice(-5); await b.close(); return { error: 'the built page never loaded its client', logs }; }
@@ -766,7 +766,7 @@ async function round(stakeMsat) {
           afterWithdraw: { owed: after.owed, settled: after.settled },
           stakeLockStillHeld: !!(await ports[0].status(bare.stake.outpoint)).stored,
           withdraw: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, onScreen: line, screenshot: shot,
-          pageSaid: tab.logs.filter((l) => /\[blwp\] (refund|withdraw|payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 220)).slice(-6) });
+          pageSaid: tab.logs.filter((l) => /\[(?:arena|blwp)\] (refund|withdraw|payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 220)).slice(-6) });
         tab.close();
         if (typeof own.free === 'function') own.free();
       } else nodePath = { kept, own, early, exp, chainAt, mined, counts, t };

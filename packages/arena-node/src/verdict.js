@@ -119,7 +119,7 @@ export function signResult(result, secretKey) {
 }
 
 /**
- * FIVE OF SEVEN, VERIFIED - which is the part `@blwp/protocol` cannot do.
+ * FIVE OF SEVEN, VERIFIED - which is the part `arena-protocol` cannot do.
  *
  * The board says outright that it COUNTS signatures rather than verifying
  * them, because that package carries no curve. This one has a curve, so here a

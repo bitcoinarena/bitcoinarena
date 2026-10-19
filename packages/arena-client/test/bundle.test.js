@@ -8,7 +8,7 @@
 // thing anybody tested - and the difference would show up as a signature over
 // bytes nobody can reproduce, at settlement, months later.
 //
-// `@blwp/core` has exactly this test for exactly this reason. This one holds
+// `nextblock` has exactly this test for exactly this reason. This one holds
 // the client to the same bar: the same ids, the same bytes, the same refusals.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';

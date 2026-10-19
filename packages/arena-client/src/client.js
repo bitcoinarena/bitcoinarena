@@ -20,7 +20,7 @@
 // WHAT IT IS NOT. It is not a simulator and it holds no rule: it never decides
 // a score, a crater, a hit or a winner. It reads a hash the core produced,
 // wraps it in the protocol's own encoding, signs it, and puts it on a socket.
-// Every byte that crosses the wire is written by `@blwp/protocol` - there is
+// Every byte that crosses the wire is written by `arena-protocol` - there is
 // no second encoder here, and there must never be one, because a wire format
 // with two implementations is a wire format with two answers.
 //
