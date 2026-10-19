@@ -265,7 +265,7 @@ export function moveGlyphs(a, b) {
  * THE CHANNEL IS HANDED IN, as `sign` and `verify` are: nothing in this package reads a name off the page (the client's
  * own rule, `discovery.test.js`), and a test drives the same door the page does.
  */
-export function tickClock({ Channel = null, name = 'blwp-ghost-clock', keep = 64 } = {}) {
+export function tickClock({ Channel = null, name = 'arena-ghost-clock', keep = 64 } = {}) {
   const stamps = new Map();
   const put = (e, t, ms) => {
     let a = stamps.get(e);

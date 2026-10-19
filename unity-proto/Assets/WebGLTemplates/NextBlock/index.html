@@ -1457,7 +1457,7 @@
       <section class="settings-card" id="arena-set-advanced">
         <h3>Donation</h3>
         <div class="muted">A share of each paid entry to the protocol and game developers</div>
-        <select id="blwp-donation-select" aria-label="Donation">
+        <select id="arena-donation-select" aria-label="Donation">
           <option value="0">0%</option><option value="1">1%</option><option value="2">2%</option>
           <option value="3">3%</option><option value="4">4%</option><option value="5" selected>5%</option>
         </select>
@@ -5588,7 +5588,7 @@
       if (typeof window.arenaBench === 'function') window.arenaBench();
     });
     // THE DONATION IS A DROPDOWN, 2% UNTIL THE PLAYER PICKS (2026-09-29 12:47): six choices, no custom field (§24B).
-    document.getElementById('blwp-donation-select').addEventListener('change', (e) => {
+    document.getElementById('arena-donation-select').addEventListener('change', (e) => {
       window.ARENA_DONATION_BPS = Number(e.target.value) * 100;
       try { window.sessionStorage.setItem('arena.donation.settings', String(window.ARENA_DONATION_BPS)); } catch { /* kept for this page only */ }
       paintSettings();
@@ -5630,7 +5630,7 @@
       paintSettings();
     });
     function paintSettings() {
-      const sel = document.getElementById('blwp-donation-select');
+      const sel = document.getElementById('arena-donation-select');
       const chosen = String(Math.round(donationBps() / 100));
       if (sel && sel.value !== chosen) sel.value = chosen;
       const rec = document.getElementById('arena-donation-recipients');
