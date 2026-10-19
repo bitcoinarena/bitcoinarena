@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PHRASE IS KEPT IN THE BROWSER (2026-10-01: "safe even if the user closes the browser and loads it again"):
-// the page's own blwpSeedKeeper, run on fake storages and a fake clock - a browser opened again gets its phrase back,
+// the page's own arenaSeedKeeper, run on fake storages and a fake clock - a browser opened again gets its phrase back,
 // a second open tab is still a second player, a reload keeps its own, an imported phrase is kept too.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,9 +10,9 @@ import { tabSeed, importSeed } from '../src/join.js';
 import { pageFunction } from './page-script.js';
 
 const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
-const from = html.indexOf('function blwpSeedKeeper(');
+const from = html.indexOf('function arenaSeedKeeper(');
 const to = html.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', from);
-const Keeper = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), [], html.slice(from, to), '; return blwpSeedKeeper;')();
+const Keeper = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), [], html.slice(from, to), '; return arenaSeedKeeper;')();
 
 const store = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), map: m }; };
 let clock = 1_000_000;

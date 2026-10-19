@@ -364,7 +364,7 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
 /** What one page load shows, painted the way the page paints it after payDonation answers. */
 function shown(load, round, storage) {
   const state = SHIPPED.donationPaidState(SET, load.said);
-  const text = (paintThePage({ round, entry: load.entry, donationPaid: state })['blwp-donation'] || {}).textContent || '';
+  const text = (paintThePage({ round, entry: load.entry, donationPaid: state })['arena-donation'] || {}).textContent || '';
   const rows = state.shares.map((s) => [s.url, s.amountMsat, s.state]);
   const onScreen = state.shares.filter((s) => text.includes(`${s.amountMsat} msat ${({ paid: 'paid', unpaid: 'UNPAID', unknown: 'outcome unknown' })[s.state]} to ${s.url}`)).length;
   // AND THE SCREEN SAYS WHAT THE TAB'S NOTES SAY, share by share.
