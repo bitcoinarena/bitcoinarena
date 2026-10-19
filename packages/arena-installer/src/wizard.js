@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS } from './seed.js';
-import { nextStep, seatEnv, ROLES, guardianSetupOf } from './state.js';
+import { nextStep, seatConf, ROLES, guardianSetupOf } from './state.js';
 import { installService, installProgram } from './service.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
@@ -322,7 +322,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const port = s.reach.port;
       const boot = b.boot !== false;
       const conf = { ...s, port, bridgePort };
-      state.writeSecret('node.env', seatEnv(conf, { home: state.home, release }));
+      state.writeSecret('arena.conf', seatConf(conf, { home: state.home, release }));
       const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
       const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
       const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
@@ -333,7 +333,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       let reachTest = null;
       if (s.reach.mode === 'quick') {
         const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
-        if (url) { s = state.save({ reach: { ...s.reach, url } }); state.writeSecret('node.env', seatEnv({ ...s, port, bridgePort }, { home: state.home, release })); }
+        if (url) { s = state.save({ reach: { ...s.reach, url } }); state.writeSecret('arena.conf', seatConf({ ...s, port, bridgePort }, { home: state.home, release })); }
       }
       // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
       if (s.reach.mode === 'workers') {
@@ -597,9 +597,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     try {
       const addCustody = (s.roles || []).includes('custody') ? null
         : [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'arena-install.mjs'), '--add-custody', '--home', state.home];
-      const l = launch({ home: state.home, s, ownerUrl, addCustody,
+      const l = launch({ home: state.home, s, ownerUrl, addCustody, release,
         run: (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, () => ok())) });
-      state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, atMs: Date.now() } });
+      state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, command: l.command || null, atMs: Date.now() } });
       return l;
     } catch (e) { log(`launchers: ${e.message}`); return null; }
   };
