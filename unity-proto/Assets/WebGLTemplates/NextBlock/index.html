@@ -703,6 +703,11 @@
     #arena-bal-split .row .st { color: #7d8896; font-size: 12px; }
     #arena-bal-split .row b { color: #f7931a; white-space: nowrap; }
     #arena-bal-split .total { border-top: 1px solid #3a4655; font-weight: 600; }
+    #arena-bal-split .hl { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #5b6672; }
+    #arena-bal-split .hl.ok { background: #3fb950; } #arena-bal-split .hl.warn { background: #d29922; } #arena-bal-split .hl.bad { background: #f85149; }
+    #arena-bal-split .note { color: #c9a35a; font-size: 12px; margin-top: 2px; } #arena-bal-split .note.bad { color: #ff8b84; }
+    #arena-bal-split .dbg-h { margin: 12px 0 4px; color: #7d8896; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    #arena-bal-split .dbg-cap { color: #7d8896; font-size: 12px; } #arena-bal-split .row button.dep-here { width: auto; margin: 0; padding: 4px 10px; white-space: nowrap; }
     #arena-bal-split button { margin-top: 10px; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #2a3440; background: #1a222c; color: #e8edf3; }
     #arena-wallet-bar button { padding: 6px 10px; border-radius: 4px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; font: 600 13px system-ui, sans-serif; cursor: pointer; }
     /* THE GEAR AS LARGE AS EVERYWHERE ELSE (2026-10-16: "the gear icon on the "game overview" and the "up and
@@ -1390,6 +1395,13 @@
           <option value="10">10%</option><option value="0">0%</option>
         </select>
         <div class="muted" id="arena-items-share-what"></div>
+      </section>
+      <!-- DEBUG: EVERY FEDERATION IN THE BALANCE (kanban #545: "For debug purposes (advanced settings has a toggle for that) the modal
+           shows all federations, its capacity, and a button to deposit into that exact federation") -->
+      <section class="settings-card" id="arena-set-debug-feds">
+        <h3>Debug</h3>
+        <label class="menu-row" style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="arena-debug-feds">
+          Show every federation in the balance, with its capacity and a deposit into it</label>
       </section>
     </div>
   </div>
@@ -3991,6 +4003,26 @@
           say(''); return openMoney(which, say, Object.assign({}, opts, { seatRound: row }));
         }, (e) => { clearTimeout(slow); say('The wallet could not be opened: ' + (e && e.message ? e.message : e)); return { ok: false, why: String(e) }; });
       }
+      // A DEPOSIT INTO ONE FEDERATION (kanban #545, the balance popup's debug rows): its own invite, not the lowest-load pick
+      if (which === 'deposit' && opts.federation && opts.federation.invite) {
+        const seedF = typeof walletSeed === 'function' ? walletSeed() : null;
+        if (!seedF) { say('Create your wallet first: Settings \u2192 Wallet.'); return Promise.resolve({ ok: false, why: 'no wallet' }); }
+        const fixed = opts.federation;
+        const el = document.getElementById('arena-deposit');
+        if (el) { el.textContent = ''; el.className = 'deposit-modal over-settings'; el.style.width = 'min(92vw, 420px)';
+          const t = document.createElement('div'); t.className = 'dep-why'; t.textContent = 'Opening your wallet in federation ' + String(fixed.federation).slice(0, 8) + '\u2026 and making the invoice'; el.append(t); }
+        return (async () => {
+          try {
+            const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+            const federationId = BLWPCLIENT.fromHex(String(wasm.LockClient.federationIdOf(fixed.invite)));
+            const offer = await BLWPCLIENT.walletDepositOffer({ federationId, invite: fixed.invite, seed: seedF, LockClient: wasm.LockClient, storage: vault(),
+              gateways: window.ARENA_LEDGER_GATEWAYS || [], onClaimed: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+            window.ARENA_DEPOSIT_FIXED = String(fixed.federation);
+            showDepositOffer(offer, { title: 'Deposit into federation ' + String(fixed.federation).slice(0, 8) + '\u2026 (debug)', overSettings: true });
+            say(''); return { ok: true };
+          } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (el) el.textContent = why; return { ok: false, why }; }
+        })();
+      }
       // A DEPOSIT WITH NO ROUND LISTED (2026-10-12 "Yes": Deposit works on the games screen before a game is
       // picked) - after the federation's own record is asked, as any deposit is (below)
       const lob0 = window.ARENA_LEDGER_LOBBY; const seed0 = typeof walletSeed === 'function' ? walletSeed() : null;
@@ -4759,6 +4791,9 @@
     });
     document.getElementById('arena-advanced-back').addEventListener('click', () => { document.getElementById('arena-settings-advanced').style.display = 'none'; });
     // THE IN-GAME ITEMS' DEVELOPERS' SHARE: the buyer's choice, kept in this browser; every buy screen prices by it
+    { const dbg = document.getElementById('arena-debug-feds');
+      try { dbg.checked = window.ARENA_BROWSER_STORE().getItem('arena.debugFederations') === '1'; } catch { /* unchecked */ }
+      dbg.addEventListener('change', () => { try { window.ARENA_BROWSER_STORE().setItem('arena.debugFederations', dbg.checked ? '1' : '0'); } catch { /* this tab only */ } }); }
     document.getElementById('arena-items-share-select').addEventListener('change', (e) => {
       if (window.ARENA_ITEMS_SHARE_SET) window.ARENA_ITEMS_SHARE_SET(Number(e.target.value));
       paintSettings();
@@ -6447,9 +6482,16 @@
           const r = document.createElement('div'); r.className = 'row';
           const left = document.createElement('div');
           const f = document.createElement('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '\u2026';
+          // ITS HEALTH (kanban #545): a dot and a word from its verified record, what happens to the funds, and for a HALTED one when they
+          // are paid back - in blocks and in time at the chain's recent pace (balance-view.js)
+          const hl = BLWPCLIENT.federationHealth ? BLWPCLIENT.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
           const s = document.createElement('div'); s.className = 'st';
-          s.textContent = st ? st.status + (typeof st.load === 'number' ? ' \u00b7 load ' + Math.round(st.load * 100) + ' %' : '') + (st.guardians ? ' \u00b7 ' + st.guardians + ' guardians' : '') : 'status not read yet';
+          const dot = document.createElement('span'); dot.className = 'hl ' + hl.level;
+          s.append(dot, document.createTextNode(hl.label + (st && typeof st.load === 'number' ? ' \u00b7 load ' + Math.round(st.load * 100) + ' %' : '')));
           left.append(f, s);
+          const back = st && st.status === 'HALTED' && BLWPCLIENT.reimbursementOf ? BLWPCLIENT.reimbursementOf({ status: st, ...(chainFor(st) || {}) }) : null;
+          const noteText = back && back.ok ? back.line : back ? 'When it is paid back is read from the chain \u2026' : hl.note;
+          if (noteText) { const n = document.createElement('div'); n.className = 'note' + (hl.level === 'bad' ? ' bad' : ''); n.textContent = noteText; left.append(n); }
           const v = document.createElement('b'); v.textContent = sat(x.sats);
           r.append(left, v); el.append(r);
         }
@@ -6459,10 +6501,58 @@
           const v = document.createElement('b'); v.textContent = sat(bal.sats) + (bal.arriving ? ' + ' + sat(bal.arriving) + ' arriving' : '') + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : ''); t.append(a, v); el.append(t);
         }
       };
+      // THE CHAIN'S TIP AND PACE, for a halted federation's payback (kanban #545): the network's Esplora explorer (mempool.space by
+      // default, `arena.explorer` names another or `off`), read at most once a minute per network
+      const CHAINS = new Map();
+      const chainFor = (st) => { const c = st && st.network ? CHAINS.get(st.network) : null; return c && c.tip !== null ? { tip: c.tip, network: st.network, secondsPerBlock: c.spb } : null; };
+      const readChain = async (network) => {
+        const had = CHAINS.get(network); if (had && Date.now() - had.atMs < 60000) return had;
+        let said = null; try { said = window.ARENA_BROWSER_STORE().getItem('arena.explorer'); } catch { /* the default */ }
+        const base = BLWPCLIENT.explorerBaseFor ? BLWPCLIENT.explorerBaseFor(network, said) : null;
+        const c = { tip: null, spb: 600, atMs: Date.now() }; CHAINS.set(network, c);
+        if (!base) return c;
+        try {
+          const [t, b] = await Promise.all([fetch(base + '/blocks/tip/height', { signal: AbortSignal.timeout(8000) }).then((r) => r.text()),
+            fetch(base + '/blocks', { signal: AbortSignal.timeout(8000) }).then((r) => r.json())]);
+          c.tip = Number(t); c.spb = BLWPCLIENT.medianBlockSeconds(b);
+        } catch (e) { console.log('[arena] the chain for the balance could not be read: ' + (e && e.message ? e.message : e)); }
+        return c;
+      };
+      const debugFeds = () => { try { return window.ARENA_BROWSER_STORE().getItem('arena.debugFederations') === '1'; } catch { return false; } };
+      // DEBUG: EVERY FEDERATION (kanban #545, the toggle in Advanced settings): status, load, reserve against cap and the room left, and a
+      // deposit into exactly that federation - the page's own deposit window, its federation fixed
+      const paintDebug = (el) => {
+        if (!debugFeds()) return;
+        const all = window.ARENA_FED_LOADS ? [...window.ARENA_FED_LOADS.values()] : [];
+        const h = document.createElement('div'); h.className = 'dbg-h'; h.textContent = 'All federations (debug) \u00b7 ' + all.length; el.append(h);
+        if (!all.length) { const r = document.createElement('div'); r.className = 'row'; r.textContent = 'No federation record read yet'; el.append(r); }
+        const sat = (n) => Number(n || 0).toLocaleString('en-US');
+        for (const st of all) {
+          const hl = BLWPCLIENT.federationHealth(st), cap = BLWPCLIENT.capacityOf(st);
+          const r = document.createElement('div'); r.className = 'row';
+          const left = document.createElement('div');
+          const f = document.createElement('div'); f.className = 'fed'; f.textContent = 'Federation ' + String(st.federation).slice(0, 8) + '\u2026';
+          const s = document.createElement('div'); s.className = 'st';
+          const dot = document.createElement('span'); dot.className = 'hl ' + hl.level;
+          s.append(dot, document.createTextNode(String(st.status) + (cap.load !== null ? ' \u00b7 load ' + Math.round(cap.load * 100) + ' %' : '')));
+          const c = document.createElement('div'); c.className = 'dbg-cap';
+          c.textContent = 'reserve ' + sat(cap.reserve) + ' / cap ' + sat(cap.cap) + ' sat \u00b7 room ' + sat(cap.headroom) + ' sat' + (st.signers ? ' \u00b7 ' + st.signers + ' signers' : '');
+          left.append(f, s, c);
+          const b = document.createElement('button'); b.type = 'button'; b.className = 'dep-here'; b.textContent = 'Deposit here';
+          b.disabled = !st.invite; if (!st.invite) b.title = 'its record names no invite';
+          b.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none';
+            openMoney('deposit', (t) => { const w = document.getElementById('arena-hdr-why'); if (w) w.textContent = t; }, { overlay: true, federation: st }); });
+          r.append(left, b); el.append(r);
+        }
+      };
       window.ARENA_SHOW_BALANCE_SPLIT = () => {
         const el = splitEl(); if (!el) return;
-        paintSplit(); el.style.display = '';
-        if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES().then(() => { if (el.style.display !== 'none') paintSplit(); }, () => {});
+        const repaint = () => { if (el.style.display !== 'none') { paintSplit(); paintDebug(el); } };
+        paintSplit(); paintDebug(el); el.style.display = '';
+        if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES().then(repaint, () => {});
+        // a halted federation's payback needs the chain's tip and pace
+        const nets = new Set([...(window.ARENA_FED_LOADS || new Map()).values()].filter((x) => x && x.status === 'HALTED' && x.network).map((x) => x.network));
+        for (const n of nets) readChain(n).then(repaint, () => {});
       };
       for (const sel of ['#arena-wallet-bar .wb-bal', '#arena-hdr-bal', '#arena-lobby-balance', '#arena-set-wallet .bal-grid']) {
         const el = document.querySelector(sel);

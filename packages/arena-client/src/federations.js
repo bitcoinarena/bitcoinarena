@@ -75,7 +75,7 @@ function statusOfRecord(best) {
   const load = best.record.exposureCapSats > 0n ? Number(((best.record.reserveSats ?? 0n) * 10000n) / best.record.exposureCapSats) / 10000 : null;
   const refusesDeposit = loadRefusesDeposit({ load, networkId: best.record.networkId });
   return { status: best.status, allows: refusesDeposit ? { ...FEDERATION_ALLOWS[best.status], deposit: false } : FEDERATION_ALLOWS[best.status],
-    loadRefusesDeposit: refusesDeposit, signers: best.signers, height: best.record.height, from: best.from,
+    loadRefusesDeposit: refusesDeposit, signers: best.signers, height: best.record.height, from: best.from, network: networkOf(best.record.networkId),
     nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats),
     // THE LOAD (§23A.3): the signed reserve over the signed exposure cap - what the federation holds against what
     // its smallest set of leavers' bonds covers; null when the record names no cap
