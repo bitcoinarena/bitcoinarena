@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const a = HTML.indexOf("      window.ARENA_WALLETS = window.ARENA_WALLETS || new Map();");
 const b = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
 const src = HTML.slice(a, b);

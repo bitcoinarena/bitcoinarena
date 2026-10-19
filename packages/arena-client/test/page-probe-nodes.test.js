@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const html = readFileSync(PAGE, 'utf8');
 const at = html.indexOf('    async function probeNodes() {');
 const src = html.slice(at, html.indexOf('\n    }\n', at) + 6);

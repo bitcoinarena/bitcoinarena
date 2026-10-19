@@ -45,7 +45,7 @@ test('a withdraw reads the federation of the summed balance that holds the most'
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby round\'s A, a player holding A too', () => {
-  const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+  const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
   const HTML = readFileSync(PAGE, 'utf8');
   // depositPick (the one pick) and moneyContext, which follows it
   const a = HTML.indexOf('    function depositPick(lobbyInvite) {');

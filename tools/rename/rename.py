@@ -10,11 +10,11 @@ import json, os, re, subprocess, sys
 
 ROOT = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=True, text=True, check=True).stdout.strip()
 EXCLUDE = re.compile(r'(^|/)node_modules/|/dist/|^packages/[^/]+/plugin/|^packages/.*/(plugins?|client)/|^packages/nextblock/(src|frozen|config)/'
-                     r'|^tools/rename/|WebGLTemplates/.*/blwp-core[^/]*\.js$|WebGLTemplates/.*/blwp_lock_client[^/]*$|WebGLTemplates/.*/blwp-curve\.js$')   # Tick Tock's cores and the page's pinned engines: hashed
+                     r'|^tools/rename/|(WebGLTemplates/.*|^src/arena-ui)/blwp-core[^/]*\.js$|(WebGLTemplates/.*|^src/arena-ui)/blwp_lock_client[^/]*$|(WebGLTemplates/.*|^src/arena-ui)/blwp-curve\.js$')   # Tick Tock's cores and the page's pinned engines: hashed
 TEXT = re.compile(r'\.(js|mjs|cjs|jslib|cs|html|css|md|txt|json|sh|py|toml|yml|yaml)$')
 pins = json.load(open(os.path.join(ROOT, 'packages/arena-client/known-good-clients.json')))
 PINNED = set(pins.get('pinned', {})) | {k for g in pins.get('games', {}).values() for k in g.get('pinned', {})}
-pinned = lambda f: '/WebGLTemplates/' in f and f.split('/')[-1] in PINNED
+pinned = lambda f: ('/WebGLTemplates/' in f or f.startswith('src/arena-ui/')) and f.split('/')[-1] in PINNED
 
 pairs = [l.rstrip('\n').split('\t') for l in open(sys.argv[1]) if l.strip() and not l.startswith('#')]
 pairs.sort(key=lambda p: -len(p[0]))

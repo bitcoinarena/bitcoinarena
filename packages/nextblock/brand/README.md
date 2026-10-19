@@ -1,7 +1,7 @@
 # Tick Tock, Next Block - the game's mark
 
 The source of the game's name and mark everywhere a player sees them. Served beside the page (the WebGL template
-`unity-proto/Assets/WebGLTemplates/NextBlock` carries byte-equal copies; `test/brand.test.js` holds them equal), pinned
+`src/arena-ui` carries byte-equal copies; `test/brand.test.js` holds them equal), pinned
 per file in `arena-client/known-good-clients.json` under `games.nextblock`, and named by hash in nextblock's signed
 manifest (`clients`, spec §0A.3) - a second game brings its own.
 

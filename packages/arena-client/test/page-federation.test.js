@@ -15,7 +15,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/sr
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, from.slice(0, 40)); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const PAINT = slice('    window.ARENA_PAINT_FEDERATION = () => {', '\n    };\n');

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 
 test('another game hides only what a Unity download has: never the bar, the step, the link or the build line', () => {

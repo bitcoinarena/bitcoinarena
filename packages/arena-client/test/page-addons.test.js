@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
 const lineOf = (head) => { const at = PAGE.indexOf(head); assert.ok(at > 0, `the page has no ${head.trim()}`); return PAGE.slice(at, PAGE.indexOf('\n', at)); };
 

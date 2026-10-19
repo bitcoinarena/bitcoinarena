@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project improvement proposals (PIPs) · Bitcoin Arena</title>
+<link rel="icon" href="/favicon.ico">
+<!-- PROJECT PROPOSALS, A FORUM (2026-10-17: "Proposals are on a separate page and look like a forum"): one thread per
+     proposal - its post, its stage and its replies - read from the network's nodes, and new threads and replies signed with the
+     reader's own key. The page's script is /js/forum.js. -->
+<style>
+  :root { --bg: #07090d; --panel: #0e131b; --panel2: #121925; --line: #1d2633; --text: #e8edf3; --soft: #c3ccd6; --dim: #8d99a8;
+    --btc: #f7931a; --gold: #ffd166; --bull: #2fd38a; --bear: #ff5d5d; --cyan: #4fd1ff; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(80% 50% at 50% 0%, rgba(247,147,26,.12), transparent 60%), var(--bg); color: var(--text);
+    font: 400 16px/1.55 Inter, system-ui, -apple-system, sans-serif; }
+  a { color: inherit; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+  nav { position: sticky; top: 0; z-index: 5; background: rgba(7,9,13,.82); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 18px; height: 58px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 18px system-ui; text-decoration: none; white-space: nowrap; flex: none; }
+  .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center;
+    font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 15px; color: var(--dim); }
+  nav .links a { text-decoration: none; } nav .links a:hover, nav .links a.on { color: var(--text); }
+  /* ONE LINE ON A PHONE (2026-10-17: "On mobile the title is wrapping"): the brand never wraps; on a narrow
+     screen the menu tightens, and below 410 px the brand keeps its mark only - the four links stay */
+  @media (max-width: 560px) { nav .wrap { gap: 12px; } nav .links { gap: 13px; font-size: 14px; } .brand { font-size: 16px; } .brand i { width: 26px; height: 26px; } }
+  @media (max-width: 410px) { .brand .t { display: none; } }
+  h1 { font: 700 clamp(28px, 5vw, 40px)/1.15 system-ui; margin: 30px 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--soft); margin: 0 0 18px; max-width: 70ch; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--text); font: 600 15px system-ui; cursor: pointer; text-decoration: none; }
+  .btn[hidden] { display: none; }
+  .btn.primary { background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; border: 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
+  .bar .grow { margin-left: auto; }
+  details.rules { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 14px; margin: 0 0 16px; }
+  details.rules summary { cursor: pointer; font-weight: 600; }
+  .balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 22px 0 0; padding: 14px 16px; border: 1px solid rgba(247,147,26,.35); border-radius: 14px; background: linear-gradient(135deg, rgba(247,147,26,.12), rgba(247,147,26,.03)); }
+  .balance .lbl { color: var(--dim); font-size: 14px; text-transform: uppercase; letter-spacing: .06em; } .balance .sats { font: 700 clamp(24px, 5vw, 34px)/1.1 system-ui; color: var(--btc); } .balance .sub { color: var(--soft); font-size: 14px; }
+  .pip { display: inline-block; margin-right: 4px; padding: 0 7px; border-radius: 6px; background: rgba(247,147,26,.14); color: var(--btc); font: 700 13px/1.6 ui-monospace, monospace; vertical-align: 2px; }
+  details.rules ol { margin: 10px 0 4px; padding-left: 22px; color: var(--soft); display: grid; gap: 4px; } details.rules b { color: var(--text); }
+  .key { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin-bottom: 16px; font-size: 14px; }
+  .key .id { color: var(--gold); font-weight: 600; margin-right: auto; }
+  .key form { display: flex; gap: 6px; }
+  input, textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit; }
+  textarea { width: 100%; resize: vertical; }
+  .say { font-size: 14px; color: var(--dim); } .say.bad { color: var(--bear); }
+  /* the thread list */
+  .topics { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); }
+  .topics .th, .topic { display: grid; grid-template-columns: minmax(0, 1fr) 110px 90px 150px; gap: 12px; align-items: center; padding: 12px 16px; }
+  .topics .th { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); border-bottom: 1px solid var(--line); background: var(--panel2); }
+  .topic { border-top: 1px solid var(--line); text-decoration: none; } .topic:first-of-type { border-top: 0; } .topic:hover { background: var(--panel2); }
+  .topic .t { font-weight: 600; } .topic .by { display: block; font-size: 13px; color: var(--dim); font-weight: 400; }
+  .topic .n { text-align: right; color: var(--soft); } .topic .amt { text-align: right; color: var(--btc); font-weight: 700; }
+  .stage { justify-self: end; font-size: 12px; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); white-space: nowrap; }
+  .stage.on { color: var(--cyan); } .stage.ok { color: var(--bull); } .stage.no { color: var(--bear); }
+  .empty { padding: 26px 16px; color: var(--dim); text-align: center; }
+  /* a thread */
+  .post { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin: 0 0 12px; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 14px; padding: 16px; }
+  .ava { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font: 700 15px system-ui; color: #0b0f14; }
+  .post .who { font-size: 14px; color: var(--dim); } .post .who b { color: var(--text); }
+  .post .body { white-space: pre-wrap; margin: 6px 0; }
+  /* a PIP's Markdown */
+  .md { white-space: normal; } .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font: 700 17px/1.3 system-ui; } .md h3.improves { color: var(--btc); }
+  .md p { margin: 6px 0; } .md ul, .md ol { margin: 6px 0; padding-left: 22px; } .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--soft); }
+  .md code { font: 13px ui-monospace, monospace; background: var(--bg); padding: 1px 4px; border-radius: 4px; } .md pre { overflow-x: auto; background: var(--bg); padding: 8px 10px; border-radius: 8px; }
+  .md .tbl { overflow-x: auto; margin: 8px 0; } .md table { border-collapse: collapse; font-size: 14px; } .md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; } .md th { background: var(--panel2); }
+  .md a { color: var(--cyan); } .compose .hint { color: var(--dim); font-size: 13px; font-weight: 400; } .compose input[name=title] { width: 100%; }
+  .preview { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 12px; margin: 6px 0 10px; }
+  .post .facts { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 14px; color: var(--soft); margin-top: 8px; }
+  .post .facts b { color: var(--btc); }
+  .post .acts button { background: none; border: 0; color: var(--gold); cursor: pointer; padding: 0; font-size: 13px; }
+  .reply { margin-left: calc(var(--depth, 0) * 28px); }
+  .compose { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 14px; display: grid; gap: 10px; }
+  .compose .row { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; } .compose label { display: grid; gap: 4px; font-size: 14px; color: var(--soft); }
+  .reserves-line { margin: 0; color: var(--soft); } .reserves-line b { color: var(--btc); }
+  footer { margin: 40px 0 30px; color: var(--dim); font-size: 14px; }
+  @media (max-width: 680px) { .topics .th { display: none; } .topic { grid-template-columns: minmax(0, 1fr) auto; } .topic .n { display: none; } .topic .amt { text-align: left; }
+    .stage { grid-column: 1 / -1; justify-self: start; } .compose .row { grid-template-columns: 1fr; } .reply { margin-left: calc(var(--depth, 0) * 12px); } .post { grid-template-columns: 1fr; } .ava { display: none; } }
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="https://bitcoin-arena.io/" aria-label="Bitcoin Arena"><i>₿</i><span class="t">Bitcoin Arena</span></a>
+  <div class="links"><a href="https://bitcoin-arena.io/">Home</a><a href="/">Play</a><a href="/proposals/" class="on">Proposals</a><a href="https://docs.bitcoin-arena.io/">Docs</a></div>
+</div></nav>
+
+<main class="wrap" id="forum">
+  <!-- THE RESERVES' BALANCE, FIRST THING ON THE PAGE (2026-10-17: "Proposals page shows the current balance on top"): what the
+       protocol reserves hold now, as the network's nodes agree on it, and the most one PIP may ask (10 %) -->
+  <div class="balance" id="balance"><span class="lbl">Protocol reserves</span><b class="sats">…</b><span class="sub">reading the nodes</span></div>
+  <h1>Project improvement proposals</h1>
+  <p class="lead">PIPs improve Bitcoin Arena as a whole: its games, its protocol, its tools and its community, not only the protocol. Each one asks the protocol reserves to fund a project, and anyone can write one. Read them, ask questions and discuss them here, signed in with the key and the name you play with. The bonded nodes decide.</p>
+  <details class="rules">
+    <summary>How a proposal is decided</summary>
+    <ol>
+      <li><b>Signal:</b> at least 15% of the active nodes signal it within a week.</li>
+      <li><b>Who votes:</b> bonds at least 3 months old that stay locked at least 3 months after the vote.</li>
+      <li><b>How much they count:</b> bond &times; age: 1&times; under a year, 2&times; from one year, 3&times; from two.</li>
+      <li><b>When it passes:</b> after 2 weeks of voting, 60% of the votes say YES, and YES is at least 20% of everyone who could vote.</li>
+      <li><b>How much it can take:</b> at most 10% of the reserves per proposal, 25% per 3 months.</li>
+      <li><b>Time to say no:</b> nothing is paid for 2 weeks after the vote, and NO votes in that time stop it. Above 1% of the reserves, it is paid in 4 monthly parts, each stoppable.</li>
+    </ol>
+  </details>
+  <!-- ALWAYS THE IN-GAME KEY AND NAME (2026-10-17: "Proposals always use the ingame key and name, no other options"): the key
+       of the wallet this browser plays with, and the name set in the game's Settings -->
+  <div class="key">
+    <span class="id">Loading…</span>
+    <span class="say key-say"></span>
+  </div>
+  <div id="view"></div>
+</main>
+<footer><div class="wrap">Bitcoin Arena · testnet4 · proposals and replies are signed by their writers and kept by the network's nodes · <a href="https://bitcoin-arena.io/">Home</a> · <a href="https://docs.bitcoin-arena.io/#proposals">How proposals work</a></div></footer>
+<script src="/proposals/forum.js" defer></script>
+</body>
+</html>

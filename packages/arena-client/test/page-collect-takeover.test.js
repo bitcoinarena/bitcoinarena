@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0); const b = HTML.indexOf(end, a); return HTML.slice(a, b + end.length); };
 const PAYOUT = cut('    let payoutAskingSince = 0;', '\n      payoutAsking = false; payoutAskingSince = 0;\n      paintWallet();\n    }\n');

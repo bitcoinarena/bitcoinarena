@@ -14,7 +14,7 @@ import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const SCAN = HTML.slice(HTML.indexOf('    const OWED_LOOKBACK_MS = 24 * 3600 * 1000;'), HTML.indexOf('    // THE SAME SCAN, ASKED BY THE LIVE HARNESS'));
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];

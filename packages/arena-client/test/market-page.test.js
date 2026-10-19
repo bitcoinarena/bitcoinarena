@@ -25,7 +25,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/sr
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
-const PAGE_URL = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE_URL = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const PAGE = readFileSync(PAGE_URL, 'utf8');
 const b32 = (n) => new Uint8Array(32).fill(n);
 const ROUND_ID = b32(0x77);

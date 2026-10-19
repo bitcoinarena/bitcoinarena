@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
 const ROOT = new URL('../../../', import.meta.url).pathname;
-const TEMPLATE = ROOT + 'unity-proto/Assets/WebGLTemplates/NextBlock/';
+const TEMPLATE = ROOT + 'src/arena-ui/';
 const BUILDS = [
   ['arena-client.js', 'packages/arena-client/tools/bundle.js', 'packages/arena-client/dist/arena-client.js'],
   ['arena-curve.js', 'packages/arena-client/tools/bundle-curve.js', 'packages/arena-client/dist/arena-curve.js'],

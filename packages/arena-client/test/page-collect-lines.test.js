@@ -50,7 +50,7 @@ test('all three at once, in order; several records of one kind share one line', 
 });
 
 test('the page hands the lines to Unity in its lobby view, from its records and its failed and held sets', () => {
-  const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const view = html.slice(html.indexOf('window.BLWP_LOBBY_VIEW = () => ('), html.indexOf('window.BLWP_LOBBY_ACT = {'));
   assert.match(view, /collect: BLWPCLIENT\.collectLines \? BLWPCLIENT\.collectLines\(window\.ARENA_RECORDS \|\| \[\], \{ failed: window\.ARENA_COLLECT_FAILED/);
   assert.match(html, /const collectFailed = window\.ARENA_COLLECT_FAILED = new Map\(\);/);
