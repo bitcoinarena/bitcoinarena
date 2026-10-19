@@ -64,8 +64,11 @@ test('at every instant of the series the row read is the soonest round whose ent
 // Date.now() - not the last paint's pick - and nothing in the pick depends on the wallet's balance (no lead).
 test('the page picks the paid row when Unity reads it, with no lead', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url).pathname, 'utf8');
-  const view = page.slice(page.indexOf('window.BLWP_LOBBY_VIEW = () =>'), page.indexOf('refused: refused.map(String)', page.indexOf('window.BLWP_LOBBY_VIEW = () =>')));
-  assert.ok(view.length > 0, 'BLWP_LOBBY_VIEW not found');
+  // the view Unity reads is Tick Tock's page part (kanban #521), handed the lobby's state at each read
+  const unity = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url).pathname, 'utf8');
+  const view = unity.slice(unity.indexOf('function unityLobbyView('), unity.indexOf('refused: refused.map(String)', unity.indexOf('function unityLobbyView(')));
+  assert.ok(view.length > 0, 'unityLobbyView not found');
+  assert.match(page, /window\.BLWP_LOBBY_VIEW = \(\) => unityLobbyView\(\{ me, lobbyNow, /, 'the lobby hands Unity\'s view its own lobbyNow');
   assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
   assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
   assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NEXT PAID ROUND ONLY WITH ITS STAKE IN THE PLAYER WALLET (comment 592: on 0.0.2832, round dcd6cbb6, the
 // page entered the next paid round d8cf7893 with 73 sat for a 100 sat stake; its join waited on a deposit nobody asked for,
-// Unity held that join as its next one, and the result card held the screen past 420 s). index.html's continueToTheNextRound,
+// Unity held that join as its next one, and the result card held the screen past 420 s). The page's continueToTheNextRound,
 // cancelNextJoin and ARENA_ASK_JOIN_DEPOSIT run under the page's name (page-script.js), with the bundle's own nextRoundAfter
 // and lobbyStakeSats. Measured: a next paid round the wallet cannot pay is not entered; one it can pay, a free one, or one
 // with no balance read yet is; a continuing join that reaches a deposit is dropped (Unity reads it refused and shows the
@@ -14,9 +14,9 @@ import { pageFunction } from './page-script.js';
 import { nextRoundAfter } from '../src/next-round.js';
 import { lobbyStakeSats } from '../src/lobby.js';
 
-const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
+const PAGE = new URL('../../nextblock/page/unity-page.js', import.meta.url);   // Tick Tock's page part (kanban #521)
 const HTML = readFileSync(PAGE, 'utf8');
-const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(end, a) + end.length); };
+const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0, `unity-page.js holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(end, a) + end.length); };
 const CONTINUE = cut('    function continueToTheNextRound(played) {', '\n      look();\n    }\n');
 const CANCEL = cut('    function cancelNextJoin(state) {', '\n      return show(offer);\n    };\n');
 
