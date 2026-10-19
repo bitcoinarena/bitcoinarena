@@ -64,7 +64,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // 156538, its guardians' current keys in the newer census) checks a mirrored record against the census the record names
   censusAt = null,
   // THE CHAIN'S TIP (kanban #495): async () -> height, for the census a seat that holds no round builds and checks records from
-  chainTip = null }) {
+  chainTip = null,
+  // THE CHAIN'S CENSUS FIRST (kanban #326): a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
+  // with 14 nodes, before T2's own bonds, so they never built T2's record - takes the chain's census before any held round's
+  chainFirst = false }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5, kanban #323): the lowest-height signed HALTED record of the run of HALTED records
@@ -144,6 +147,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, census: { ok: true, entries: c.entries }, height: h, networkId, fromChain: true };
   }
   function basis(atHeight = null) {
+    if (chainFirst) { const cb = chainBasis(atHeight); if (cb) return cb; }
     const b = roundBasis(atHeight);
     if (b.ok) return b;
     return chainBasis(atHeight) || b;

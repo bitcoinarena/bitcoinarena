@@ -381,3 +381,28 @@ test('seats that hold no round build and sign the record from their chain\'s cen
   assert.equal(seats[0].list()[0].height, 156990);
   assert.equal(seats[0].seatedGuardians(toHex(FED)).length, 7, 'its seated guardians, for the gateway seats');
 });
+
+test('ARENA_RECORD_BASIS=chain: a seat holding only an old round takes the chain\'s newer census, which names the federation (kanban #326: T2\'s relay seats)', async () => {
+  const nodes = Array.from({ length: 4 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 41) }));
+  for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x80 + i)]); n.endpoint = `wss://t2-${i}.example`; }
+  const named = nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xc0 + i), vout: 0, bondSats: 50000n,
+    advert: { operatorId: `t2op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://tg${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }] } }));
+  const old = { ok: true, entries: named.map((e) => ({ ...e, advert: { ...e.advert, guardianOf: [] } })) };   // before the bonds named it
+  const make = (chainFirst) => nodes.map((n) => federationRecords({
+    round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156768, networkId: NET } }),
+    roster: { censusFor: () => old }, inviteFor: () => INVITE, networkId: NET, chainFirst,
+    censusAt: async () => named, chainTip: async () => 156990,
+    fetcher: async (url) => { const u = new URL(url); if (!u.pathname.endsWith('/federation-record')) return new Response('{}', { status: 404 });
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))]; const hp = u.searchParams.get('height');
+      const body = await j.mySignature(u.searchParams.get('federation'), hp === null ? null : Number(hp), u.searchParams.get('reserve'));
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 }); } }));
+  let seats = make(false);
+  for (const s of seats) await s.gatherAll(inviteFederationId);
+  assert.equal(seats[0].censusNow().height, 156768, 'by default the held round\'s census');
+  assert.deepEqual(seats[0].list(), [], 'which names no federation: no record');
+  seats = make(true);
+  for (const s of seats) await s.gatherAll(inviteFederationId);
+  assert.equal(seats[0].censusNow().height, 156984, 'chain first: the census 6 below the tip at a multiple of 6');
+  const got = await seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers], [true, 'OPEN', 4], got.why);
+});

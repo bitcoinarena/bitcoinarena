@@ -3615,6 +3615,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census (kanban #495)
     chainTip: typeof chainTip === 'function' ? async () => Number(await chainTip()) : null,
+    // ARENA_RECORD_BASIS=chain: records from the chain's census before any held round's (kanban #326: seats that run no series)
+    chainFirst: process.env.ARENA_RECORD_BASIS === 'chain',
     absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
