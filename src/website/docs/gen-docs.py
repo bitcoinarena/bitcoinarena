@@ -70,7 +70,7 @@ def openapi():
         'openapi': '3.0.3',
         'info': {'title': 'Bitcoin Arena node API', 'version': date.today().isoformat(),
                  'description': 'Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` '
-                                'by `deploy/doc-site/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/'},
+                                'by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/'},
         'servers': SERVERS,
         'tags': [{'name': t, 'description': d} for _, t, d in TAGS],
         'components': {'securitySchemes': {'operatorToken': {'type': 'http', 'scheme': 'bearer', 'description': 'An operator token minted in the owner area (POST /owner/operator/mint).'}}},
@@ -106,5 +106,5 @@ for p in parts[1:]:
 page = page[:m0] + ''.join(out) + tail + page[m1:]
 open(os.path.join(HERE, 'www', 'index.html'), 'w').write(page)
 # the homepage serves the same page at /docs, so both stay one
-open(os.path.join(HERE, '..', 'home-site', 'www', 'docs', 'index.html'), 'w').write(page)
+open(os.path.join(HERE, '..', 'www', 'docs', 'index.html'), 'w').write(page)
 print('written docs', len(page), 'api', nops_total, 'operations', count)
