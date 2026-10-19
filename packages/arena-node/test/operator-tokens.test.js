@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OPERATOR UI'S PAIRING AND SCOPED TOKENS (spec §27A.7.7): a blwp-operator: URI with a 32-byte token, printed on
+// THE OPERATOR UI'S PAIRING AND SCOPED TOKENS (spec §27A.7.7): an arena-operator: URI with a 32-byte token, printed on
 // first start; read / vote / config scopes, none of which moves money; minted and revoked by the owner's signature only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,8 +17,11 @@ test('first start mints one pairing token with every scope; the store keeps its 
   const t = createOperatorTokens({ store, log: (l) => said.push(l) });
   const first = t.first('https://seat.example/');
   assert.deepEqual(first.scopes, [...OPERATOR_SCOPES]);
-  assert.match(first.uri, /^blwp-operator:https:\/\/seat\.example#[0-9a-f]{64}$/);
+  assert.match(first.uri, /^arena-operator:https:\/\/seat\.example#[0-9a-f]{64}$/);
   assert.deepEqual(readOperatorUri(first.uri), { endpoint: 'https://seat.example', token: first.token });
+  // A URI MINTED BEFORE THE RENAME STILL PAIRS (kanban #522): blwp-operator: reads as the same endpoint and token; another scheme does not
+  assert.deepEqual(readOperatorUri(first.uri.replace(/^arena-operator:/, 'blwp-operator:')), { endpoint: 'https://seat.example', token: first.token });
+  assert.equal(readOperatorUri(first.uri.replace(/^arena-operator:/, 'other-operator:')), null);
   assert.equal(JSON.stringify(store.peek()).includes(first.token), false, 'the token itself is not stored');
   assert.match(said[0], /none can move money/);
   assert.equal(t.first('https://seat.example'), null, 'a second start mints nothing');
@@ -37,7 +40,7 @@ test('a token opens only its scopes; a wrong, malformed or revoked one opens not
   assert.throws(() => t.mint([]), /scopes/);
   assert.equal(t.revoke(r.id).ok, true);
   assert.equal(t.check(`Bearer ${r.token}`, 'read').status, 401, 'revoked');
-  assert.equal(operatorUri({ endpoint: 'http://x:1/', token: 'ab'.repeat(32) }), `blwp-operator:http://x:1#${'ab'.repeat(32)}`);
+  assert.equal(operatorUri({ endpoint: 'http://x:1/', token: 'ab'.repeat(32) }), `arena-operator:http://x:1#${'ab'.repeat(32)}`);
 });
 
 test('on a running seat: the pairing token reads status and signs a vote; config answers by name what is not built; the owner mints and revokes', async () => {
