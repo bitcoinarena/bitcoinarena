@@ -98,7 +98,7 @@ test('start / stop / restart: all in order, stop in reverse, one by name; a rest
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
-test('macOS: launchd agents found by label, a stopped one bootstrapped, a loaded one kickstarted, stop is a bootout', async () => {
+test('macOS: launchd agents found by label, a stopped one bootstrapped, a loaded one kickstarted, a restart booted out and bootstrapped from its file', async () => {
   const root = mkdtempSync(join(tmpdir(), 'arenanode-mac-'));
   try {
     const env = { HOME: join(root, 'user') };
@@ -121,7 +121,8 @@ test('macOS: launchd agents found by label, a stopped one bootstrapped, a loaded
     assert.deepEqual(verbs, ['bootstrap io.bitcoin-arena.node.lnd.plist', 'kickstart io.bitcoin-arena.node', 'kickstart io.bitcoin-arena.node.tunnel']);
     calls.length = 0;
     await control('restart', 'node', { home, platform: 'darwin', env, sh });
-    assert.deepEqual(calls.filter((c) => c[1] === 'kickstart').map((c) => c.slice(2)), [['-k', `gui/${process.getuid()}/io.bitcoin-arena.node`]]);
+    assert.deepEqual(calls.filter((c) => c[1] !== 'print').map((c) => `${c[1]} ${c.at(-1).split('/').pop()}`), ['bootout io.bitcoin-arena.node', 'bootstrap io.bitcoin-arena.node.plist'],
+      'a restart reloads the agent\'s file (a gateway whose plist took the tunnel\'s new name)');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

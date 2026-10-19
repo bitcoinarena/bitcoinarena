@@ -289,13 +289,19 @@ async function act(action, svc, { platform, sh, home }) {
     const dom = `gui/${uidOf()}`;
     const loaded = (await sh('launchctl', ['print', `${dom}/${svc.name}`])).ok;
     if (action === 'stop') { if (!loaded) return { ok: true }; const r = await sh('launchctl', ['bootout', `${dom}/${svc.name}`]); return r.ok ? { ok: true } : { ok: false, why: (r.err || r.out).trim().slice(0, 200) }; }
-    if (!loaded) {
+    // A RESTART RELOADS THE AGENT'S FILE: launchd keeps the definition it loaded, so `kickstart -k` would restart a gateway with the
+    // address its plist named before the tunnel's new name went in - booted out, then bootstrapped from the file
+    if (action === 'restart' && loaded) {
+      const r = await sh('launchctl', ['bootout', `${dom}/${svc.name}`]);
+      if (!r.ok) return { ok: false, why: (r.err || r.out).trim().slice(0, 200) };
+    }
+    if (!loaded || action === 'restart') {
       // launchd refuses a bootstrap while the agent it just booted out still unloads: tried 5 times, a second apart (update.js)
       let r = { ok: false };
       for (let i = 0; i < 5 && !r.ok; i++) { if (i) await new Promise((ok) => setTimeout(ok, 1000)); r = await sh('launchctl', ['bootstrap', dom, svc.file]); }
       return r.ok ? { ok: true } : { ok: false, why: (r.err || r.out).trim().slice(0, 200) };
     }
-    const r = await sh('launchctl', ['kickstart', ...(action === 'restart' ? ['-k'] : []), `${dom}/${svc.name}`]);
+    const r = await sh('launchctl', ['kickstart', `${dom}/${svc.name}`]);
     return r.ok ? { ok: true } : { ok: false, why: (r.err || r.out).trim().slice(0, 200) };
   }
   // WINDOWS: stopped = the launcher's process tree ended; started = the launcher run through WMI (Win32_Process.Create), so it does
