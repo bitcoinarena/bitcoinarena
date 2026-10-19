@@ -9,17 +9,18 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { liquidityWeight, LIQUIDITY_TERMS } from './liquidity.js';
+import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
 
-export const LIQUIDITY_SEATING_TAG = 'BLWP/v1/LIQUIDITY_SEATING';
+export const LIQUIDITY_SEATING_TAG = TAG_PAIRS.liquiditySeating[0];   // the tag before the switch (tag-switch.js, kanban #525)
 
 const norm = (providers) => [...providers].map((p) => ({ node: String(p.node).toLowerCase(), weight: String(p.weight) })).sort((a, b) => (a.node < b.node ? -1 : 1));
 
 /** The 32 bytes a seating's signatures cover: the federation, the epoch, the providers (node keys, sorted) with their weights. */
-export function liquiditySeatingHash({ federationId, epoch, providers }) {
+export function liquiditySeatingHash({ federationId, epoch, providers }, tag = tagAt('liquiditySeating', { epoch })) {
   const w = new Writer();
   w.bytes32(fromHex(federationId)); w.u32(epoch);
   w.vec(norm(providers), (p, ww) => { ww.bytes32(fromHex(p.node)); ww.u64(BigInt(p.weight)); });
-  return taggedHash(LIQUIDITY_SEATING_TAG, w.finish());
+  return taggedHash(tag, w.finish());
 }
 
 /** One guardian's signature on a seating. */
@@ -48,7 +49,7 @@ export function standingLiquiditySeating({ signed = [], federationId, epoch, sea
   for (const s of signed) {
     if (!s || String(s.federationId).toLowerCase() !== String(federationId).toLowerCase() || s.epoch !== epoch || !allowed.has(String(s.guardian).toLowerCase())) continue;
     let good = false;
-    try { good = verify(fromHex(s.signature), liquiditySeatingHash(s), fromHex(s.guardian)); } catch { good = false; }
+    try { good = tagsAccepted('liquiditySeating', { epoch: s.epoch }).some((t) => verify(fromHex(s.signature), liquiditySeatingHash(s, t), fromHex(s.guardian))); } catch { good = false; }
     if (!good) continue;
     const providers = norm(s.providers);
     const key = providers.map((p) => `${p.node}:${p.weight}`).join(',');

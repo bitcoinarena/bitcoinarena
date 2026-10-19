@@ -20,8 +20,10 @@ import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { lndChannels, lndFunds, lndConnect, lndOpenTo, lndCoins, lndSignWithAddr, testLnd } from '../src/lnd.js';
 import { createLiquidityProvider } from '../src/liquidity-provider.js';
+import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 const a = process.argv.slice(2); const opt = (k, d = null) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };
 const lnddir = opt('--lnddir'), net = opt('--network', 'testnet4');
+setTagNetwork(net);   // whose BLWP/v1 -> ARENA/v1 point its claims and coin proofs follow (tag-switch.js, kanban #525)
 const cfg = { restUrl: opt('--rest'), tlsCert: join(lnddir, 'tls.cert'), macaroon: join(lnddir, `data/chain/bitcoin/${net}/admin.macaroon`) };
 const secret = Uint8Array.from(Buffer.from(readFileSync(opt('--key'), 'utf8').trim(), 'hex'));
 const node = Buffer.from(schnorr.getPublicKey(secret)).toString('hex');

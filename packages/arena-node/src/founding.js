@@ -30,22 +30,23 @@
 import { drawGuardians, replaceNoShows } from '../../arena-protocol/src/guardian-founding.js';
 import { Writer } from '../../arena-protocol/src/encode.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { tagAt, tagsAccepted, TAG_PAIRS } from '../../arena-protocol/src/tag-switch.js';
 
-/** The founding's id: H('BLWP/v1/FOUNDING', seed || trigger_height) - one per beacon and trigger. */
+/** The founding's id: H(founding tag, seed || trigger_height) - one per beacon and trigger; the tag by the trigger height (kanban #525). */
 export function foundingId(seed, triggerHeight) {
   const w = new Writer(); w.bytes32(seed); w.u32(triggerHeight);
-  return taggedHash('BLWP/v1/FOUNDING', w.finish());
+  return taggedHash(tagAt('founding', { height: triggerHeight }), w.finish());
 }
-/** What a setup code's signature covers: H('BLWP/v1/FOUNDING_SETUP', id || node || code). */
-export function setupDigest(id, node, code) {
+/** What a setup code's signature covers: H(setup tag, id || node || code) - under the tag of the founding's trigger height, or `tag`. */
+export function setupDigest(id, node, code, tag = TAG_PAIRS.foundingSetup[0]) {
   const c = new TextEncoder().encode(String(code));
   const w = new Writer(); w.bytes32(id); w.bytes32(node); w.u32(c.length);
-  return taggedHash('BLWP/v1/FOUNDING_SETUP', Uint8Array.from([...w.finish(), ...c]));
+  return taggedHash(tag, Uint8Array.from([...w.finish(), ...c]));
 }
 
 export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], foundingWindow,
   ownKey, sign, verify, setup = null, post = async () => {}, name = 'arena', say = () => {} }) {
-  const draw = drawGuardians({ entries, seed, nominal, bondMinGuardian, guardingOpen, seatedFirst });
+  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst });
   const id = foundingId(seed, triggerHeight);
   const own = toHex(ownKey);
   const codes = new Map();                   // node hex -> { code, signature }
@@ -68,7 +69,7 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     const node = String(m.node || '').toLowerCase();
     if (!mayPost(node)) return { ok: false, status: 409, why: 'that node is not drawn in this founding, or is a no-show' };
     let sig; try { sig = fromHex(String(m.signature)); } catch { return { ok: false, status: 400, why: 'a signature in hex' }; }
-    if (!verify(sig, setupDigest(id, fromHex(node), m.code), fromHex(node))) return { ok: false, status: 409, why: 'the code is not signed by its node' };
+    if (!tagsAccepted('foundingSetup', { height: triggerHeight }).some((t) => verify(sig, setupDigest(id, fromHex(node), m.code, t), fromHex(node)))) return { ok: false, status: 409, why: 'the code is not signed by its node' };
     if (codes.has(node)) return { ok: true, status: 200, kept: false };
     codes.set(node, { code: String(m.code), signature: String(m.signature) });
     return { ok: true, status: 201, kept: true };
@@ -108,7 +109,7 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     // THIS NODE'S CODE, once it is seated (position 0 leads: it names the federation and its size)
     if (setup && isSeated(own) && !posted) {
       const code = await setup.localParams({ leader: position(own) === 0, name, size: nominal });
-      const signature = toHex(sign(setupDigest(id, ownKey, code)));
+      const signature = toHex(sign(setupDigest(id, ownKey, code, tagAt('foundingSetup', { height: triggerHeight }))));
       const m = { id: toHex(id), node: own, code, signature };
       take(m); posted = true;
       try { await post(m); } catch { /* the others read GET /founding too */ }
