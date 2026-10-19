@@ -1,0 +1,54 @@
+#!/bin/sh
+# ARENA NODE ON LINUX: THE SETUP (kanban #500). Installed by arena-node_<version>_<arch>.deb as /usr/bin/arena-node-setup, and in the
+# desktop's menu as "Arena Node". The release is under /opt/arena-node/<release> (read-only; the node's services run it from there):
+#   no node yet      the installer runs, its one-time link opens in the browser; with a desktop a small window (zenity) shows its
+#                    progress with Open in browser / Stop, without one the terminal does
+#   a node installed `arenanode status`, with Owner page / Restart (zenity), or printed
+REL=$(ls -d /opt/arena-node/arena-node-* 2>/dev/null | sort | tail -1)
+H="$HOME/.arena-node"
+CMD="$H/bin/arenanode"
+[ -n "$REL" ] || { echo "no Arena node release under /opt/arena-node"; exit 1; }
+gui() { [ -n "$DISPLAY$WAYLAND_DISPLAY" ] && command -v zenity >/dev/null 2>&1; }
+installed() { [ -x "$CMD" ] && [ -f "$H/arena.conf" ]; }
+
+if installed; then
+  if gui; then
+    while :; do
+      out=$("$CMD" status 2>&1 | zenity --text-info --title "Arena Node" --width 760 --height 460 --ok-label "Owner page" --cancel-label "Close" --extra-button "Restart")
+      r=$?
+      if [ $r -eq 0 ]; then "$CMD" open >/dev/null 2>&1
+      elif [ "$out" = "Restart" ]; then "$CMD" restart 2>&1 | zenity --text-info --title "Arena Node: restart" --width 760 --height 300 >/dev/null
+      else break; fi
+    done
+  else
+    "$CMD" status; echo; echo "Manage it with: arenanode help"
+  fi
+  exit 0
+fi
+
+LOG="$HOME/.cache/arena-node-setup.log"
+mkdir -p "$(dirname "$LOG")"; : > "$LOG"
+ARENA_CLOUDFLARED="$REL/runtime/cloudflared" "$REL/runtime/node" "$REL/packages/arena-installer/bin/arena-install.mjs" "$@" >> "$LOG" 2>&1 &
+PID=$!
+trap 'kill $PID 2>/dev/null' INT TERM
+LINK=""
+i=0; while [ $i -lt 60 ]; do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; i=$((i+1)); done
+[ -n "$LINK" ] || { cat "$LOG"; exit 1; }
+xdg-open "$LINK" >/dev/null 2>&1 &
+if gui; then
+  # the window follows the installer's lines; Stop (or closing it) ends the installer
+  tail -n +1 -f "$LOG" --pid=$PID | zenity --text-info --auto-scroll --title "Arena Node setup" --width 760 --height 460 \
+    --ok-label "Open in browser" --cancel-label "Stop" >/dev/null
+  r=$?
+  while [ $r -eq 0 ] && kill -0 $PID 2>/dev/null; do
+    xdg-open "$LINK" >/dev/null 2>&1 &
+    tail -n +1 -f "$LOG" --pid=$PID | zenity --text-info --auto-scroll --title "Arena Node setup" --width 760 --height 460 --ok-label "Open in browser" --cancel-label "Stop" >/dev/null
+    r=$?
+  done
+  if kill -0 $PID 2>/dev/null && ! grep -q '^Done\. Your node runs' "$LOG"; then kill $PID; fi
+else
+  echo "Arena node setup: open this link in your browser (it works once, for 30 minutes):"; echo; echo "  $LINK"; echo
+  echo "Keep this running until the page says Done (Ctrl-C stops it)."
+  tail -n +1 -f "$LOG" --pid=$PID
+fi
+installed && { echo; "$CMD" status; }

@@ -125,8 +125,93 @@ jobs:
           if (-not ((Invoke-WebRequest -UseBasicParsing -WebSession $s http://127.0.0.1:31918/api/state).Content -match '"step":"chain"')) { exit 1 }
           "fresh install of $(Get-Content $R\VERSION) on windows-x64: seat and installer run"
 
+  # THE INSTALLER PACKAGES (kanban #500, the owner 2026-10-19: "for windows we want an exe, for macOS OS we want a deb ... a small gui version
+  # of the installer that launches the browser"): the Windows setup .exe (NSIS) and the Linux .debs made on Linux, the macOS .dmg on a macOS
+  # (hdiutil), each from the assets above (tools/release/package.sh, package-mac.sh); their lines join SHA256SUMS, which the release key signs
+  packages:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: out
+      - name: version
+        id: v
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" | sed 's/=v/=/' >> "$GITHUB_OUTPUT"
+      - name: NSIS
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nsis
+      - name: setup .exe and .debs
+        run: tools/release/package.sh "${{ steps.v.outputs.version }}" out windows linux
+      # the x64 .deb installed here and its setup started: it prints the installer's one-time link (no desktop: the terminal way)
+      - name: the .deb installs and its setup starts
+        run: |
+          sudo apt-get install -y -qq ./out/arena-node_*_amd64.deb
+          (HOME=$PWD/debhome timeout 60 arena-node-setup --port 31938 --seat-port 31939 > setup.log 2>&1 || true)
+          cat setup.log | head -20
+          grep -qE 'http://127.0.0.1:31938/\?t=' setup.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-linux
+          path: |
+            out/*.exe
+            out/*.deb
+            out/SHA256SUMS.packages
+
+  packages-mac:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: out
+      - name: version
+        id: v
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" | sed 's/=v/=/' >> "$GITHUB_OUTPUT"
+      - name: .dmg
+        run: |
+          tools/release/package-mac.sh "${{ steps.v.outputs.version }}" out
+          mv out/SHA256SUMS.packages out/SHA256SUMS.packages-mac
+      # the arm64 image mounts and holds the app with its release; the release's runtime runs from it
+      - name: the .dmg mounts and its app holds the node
+        run: |
+          hdiutil attach -nobrowse -mountpoint /tmp/arenadmg out/ArenaNode-*-darwin-arm64.dmg
+          test -x "/tmp/arenadmg/Arena Node.app/Contents/MacOS/arena-node-app"
+          "/tmp/arenadmg/Arena Node.app/Contents/Resources/release/"arena-node-*/runtime/node --version
+          hdiutil detach /tmp/arenadmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-mac
+          path: |
+            out/*.dmg
+            out/SHA256SUMS.packages-mac
+
+  # the setup .exe installed silently on Windows (no administrator): the node's files and the window's script where the shortcuts point
+  packages-windows:
+    needs: packages
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-linux
+          path: pk
+      - name: silent install
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem pk\ArenaNodeSetup-*.exe).FullName
+          Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+          $d = Join-Path $env:LOCALAPPDATA 'ArenaNode'
+          if (-not (Test-Path "$d\ArenaNode.ps1")) { Get-ChildItem $d; exit 1 }
+          $r = (Get-ChildItem $d -Directory -Filter 'arena-node-*').FullName
+          & "$r\runtime\node.exe" --version; if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Arena Node\Arena Node.lnk")) { exit 1 }
+          "installed: $r"
+
   release:
-    needs: smoke
+    needs: [smoke, packages, packages-mac, packages-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -134,11 +219,19 @@ jobs:
         with:
           name: assets
           path: assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-linux
+          path: assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-mac
+          path: assets
       - name: draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sort -k2 assets/SHA256SUMS > SHA256SUMS
+          cat assets/SHA256SUMS assets/SHA256SUMS.packages assets/SHA256SUMS.packages-mac | sort -k2 > SHA256SUMS
           gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft --title "Arena node ${{ github.ref_name }}" \
-            --notes "Testnet4 only. Download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://testnet.bitcoin-arena.io/release-key.txt." \
-            assets/*.tar.gz assets/*.zip SHA256SUMS
+            --notes "Testnet4 only. Windows: ArenaNodeSetup-*.exe. macOS: ArenaNode-*.dmg (drag Arena Node to Applications; the first time right-click > Open). Linux: arena-node_*.deb (then Arena Node in the menu, or arena-node-setup). Or download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://testnet.bitcoin-arena.io/release-key.txt." \
+            assets/*.tar.gz assets/*.zip assets/*.exe assets/*.deb assets/*.dmg SHA256SUMS
