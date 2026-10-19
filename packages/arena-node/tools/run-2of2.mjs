@@ -6,7 +6,7 @@
  * bonded, and a free round always joinable in the lobby.
  *
  *   RT=/mnt/bitcoin/blwp-2of2/btc RPCPORT=30401 \
- *   BLWP_WSS_18080=wss://seat.example.com/blwp-a \
+ *   ARENA_WSS_18080=wss://seat.example.com/blwp-a \
  *   ARENA_WSS_18081=wss://seat.example.com/blwp-b \
  *   node tools/run-2of2.mjs
  *
