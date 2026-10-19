@@ -224,3 +224,27 @@ test('a quick tunnel whose new name is not in DNS yet is asked again before it c
     assert.deepEqual([w.services.find((x) => x.id === 'tunnel').probe.ok, w.services.find((x) => x.id === 'tunnel').probe.says], [false, 'ENOTFOUND']);
   } finally { s.close(); rmSync(n.root, { recursive: true, force: true }); }
 });
+
+test('Windows, processes this user cannot see into (the Arena Node window in the desktop session): what answers counts as running, the rest unknown, never "stopped"', async () => {
+  const id = 'ef'.repeat(32);
+  const s = await seat(id);
+  const root = mkdtempSync(join(tmpdir(), 'arenanode-win-'));
+  try {
+    const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'arena.conf'), formatConf({ port: String(s.port) }));
+    writeFileSync(join(home, 'state.json'), '{}');
+    for (const id2 of ['node', 'custody']) writeFileSync(join(home, `arena-${id2}.cmd`), '@echo off\r\n');
+    // Win32_Process as a limited user sees other sessions' processes without their command lines
+    const sh = async (cmd) => (cmd === 'powershell' ? { ok: true, out: JSON.stringify([{ ProcessId: 10, ParentProcessId: 4, Name: 'cmd.exe', CommandLine: null },
+      { ProcessId: 11, ParentProcessId: 10, Name: 'node.exe', CommandLine: null }]), err: '' } : { ok: true, out: '', err: '' });
+    const v = await overview({ home, platform: 'win32', env: {}, sh, dnsPauseMs: 10 });
+    const by = Object.fromEntries(v.services.map((x) => [x.id, x]));
+    assert.deepEqual([by.node.running, by.node.detail], [true, 'answers (its process is not visible to this user)'], 'the seat answers: running');
+    assert.deepEqual([by.custody.running, by.custody.detail], [null, 'its process is not visible to this user'], 'nothing to ask: unknown');
+    const out = [];
+    const code = await main(['status'], { home, io: { out: (l) => out.push(l), err: (l) => out.push(l) }, deps: { platform: 'win32', env: {}, sh } });
+    assert.equal(code, 0, 'unknown is no failure');
+    assert.match(out.join('\n'), /• Custody agent\s+unknown/);
+    assert.ok(!/stopped/.test(out.join('\n')));
+  } finally { s.close(); rmSync(root, { recursive: true, force: true }); }
+});
