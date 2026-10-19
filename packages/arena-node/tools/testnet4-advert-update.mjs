@@ -53,7 +53,10 @@ const ONLY = (env.ARENA_ADVERT_NODES || '').split(',').map(Number).filter((n) =>
 // once its ceremony is done, guardian_of names both: the federation it still guards through the drain and its successor. Each
 // guardian's federation is read from its own directory's invite-code (a node drawn into a successor guards the successor, not
 // the federation this machine's invite names); ARENA_ADVERT_NODES may name node numbers past 7 (node 15)
-const GUARDIAN_NEXT = env.ARENA_ADVERT_GUARDIAN_NEXT === '1';
+// ON BY DEFAULT (measured 2026-10-19 ~22:45Z): the 10-15 updates named B's successor 4dc88be7, and every later update (the protocol rolls,
+// run without the flag) rebuilt guardian_of without it - the census lost the successor's guardians and its record could not be built.
+// A finished guardian-next is named unless ARENA_ADVERT_GUARDIAN_NEXT=0.
+const GUARDIAN_NEXT = env.ARENA_ADVERT_GUARDIAN_NEXT !== '0';
 // THE NODE'S DECLARED SCALARS (§27A.2): ARENA_ADVERT_DECLARE="<bond_min sats>:<proposal deposit sats>"
 const DECLARE = /^\d+:\d+$/.test(env.ARENA_ADVERT_DECLARE || '')
   ? (([b, p]) => ({ bondMinSats: BigInt(b), proposalDepositSats: BigInt(p) }))(env.ARENA_ADVERT_DECLARE.split(':')) : null;
@@ -111,7 +114,7 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   const now = (bond.advert.guardianOf || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`);
   const want = entries.map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).join(',');
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
-    otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), advertises: now, updatedBy: bond.updatedBy || null, wants: want });
+    otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), advertises: now, protocolVersions: bond.advert.protocolVersions || [], updatedBy: bond.updatedBy || null, wants: want });
   const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
   const gamesDiffer = ADD_GAMES.length && gamesWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
   const servingDiffers = SERVING !== null && (bond.advert.serving !== false) !== SERVING;
