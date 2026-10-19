@@ -318,11 +318,11 @@ async function servicesPanel() {
   const el = $('services');
   let r; try { r = await post('/owner/services', await signed('services')); } catch (x) { r = { ok: false, why: x.message }; }
   if (!r || !r.ok) { el.innerHTML = `<p class="sub">${esc((r && r.why) || 'this seat does not show its services')}</p>`; return; }
-  const bad = r.services.filter((s) => !s.running || (s.probe && !s.probe.ok)).length;
+  const bad = r.services.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
   el.innerHTML = `${r.services.map((s) => {
-    const ok = !s.running ? false : s.probe ? s.probe.ok : true;
-    return `<div class="row"><span>${ok ? '🟢' : '🔴'} ${esc(s.title)}${s.inside ? ' <span class="sub">(inside the node)</span>' : ''}</span><b>${s.running ? 'running' : 'stopped'}</b></div>
-      <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>`;
+    const ok = s.running === null ? null : !s.running ? false : s.probe ? s.probe.ok : true;
+    return `<div class="row"><span>${ok === null ? '⚪' : ok ? '🟢' : '🔴'} ${esc(s.title)}${s.inside ? ' <span class="sub">(inside the node)</span>' : ''}</span><b>${s.running === null ? 'unknown' : s.running ? 'running' : 'stopped'}</b></div>
+      <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe && s.running !== null ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>`;
   }).join('')}
     <p class="${bad ? 'bad' : 'ok'}">${bad ? `${bad} service(s) need attention.` : 'All services run.'}</p>
     <p class="sub">On the node's machine: <code>${esc(r.command)} status</code>, <code>${esc(r.command)} doctor</code> (each problem with its fix), <code>${esc(r.command)} restart &lt;service&gt;</code>. Settings: ${esc(r.settings || '?')} (<code>${esc(r.command)} config</code>).</p>

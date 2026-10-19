@@ -43,10 +43,10 @@ export function statusLines(v) {
   const w = Math.max(8, ...v.services.map((s) => s.title.length));
   lines.push(`  ${pad('', 2)}${pad('SERVICE', w)}  ${pad('STATE', 9)}${pad('PID', 8)}DETAIL`);
   for (const s of v.services) {
-    const ok = !s.running ? false : s.probe ? s.probe.ok : true;
-    lines.push(`  ${mark(ok)} ${pad(s.title, w)}  ${pad(s.running ? 'running' : 'stopped', 9)}${pad(s.pid || '-', 8)}${s.probe ? s.probe.says : s.detail}`);
+    const ok = s.running === null ? null : !s.running ? false : s.probe ? s.probe.ok : true;
+    lines.push(`  ${mark(ok)} ${pad(s.title, w)}  ${pad(s.running === null ? 'unknown' : s.running ? 'running' : 'stopped', 9)}${pad(s.pid || '-', 8)}${s.probe && s.running !== null ? s.probe.says : s.detail}`);
   }
-  const bad = v.services.filter((s) => !s.running || (s.probe && !s.probe.ok)).length;
+  const bad = v.services.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
   lines.push('', bad ? `  ${bad} service(s) need attention: arenanode doctor` : '  All services run.');
   return lines;
 }
@@ -73,7 +73,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       if (a === 'json' || a === '--json') { io.out(JSON.stringify(v, null, 2)); return 0; }
       if (!v.services.length) { io.err(`No service of an Arena node is installed for ${home}. Install one: arena-install`); return 1; }
       for (const l of statusLines(v)) io.out(l);
-      return v.services.every((s) => s.running) ? 0 : 1;
+      return v.services.every((s) => s.running !== false) ? 0 : 1;
     }
     case 'start': case 'stop': case 'restart': {
       const r = await control(cmd, a, ctx);

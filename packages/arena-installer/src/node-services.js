@@ -126,7 +126,12 @@ async function stateOf(svc, { platform, sh, procs, nodePid }) {
   const file = `\\${svc.name}`.toLowerCase();
   const launcher = procs.find((p) => /^cmd\.exe$/i.test(p.name) && p.cmd.toLowerCase().includes(file));
   const child = launcher && procs.find((p) => p.ppid === launcher.pid && !/^conhost\.exe$/i.test(p.name));
-  return child ? { running: true, pid: child.pid, detail: `${child.name}` } : { running: false, pid: null, detail: launcher ? 'its launcher runs, the program does not' : 'not running' };
+  if (child) return { running: true, pid: child.pid, detail: `${child.name}` };
+  if (launcher) return { running: false, pid: null, detail: 'its launcher runs, the program does not' };
+  // A PROCESS THIS USER CANNOT SEE INTO (measured in the Windows VM: the Arena Node window, in the desktop session, read no command line
+  // of the services an ssh session had started, and called all of them stopped while they ran): unknown here - what it answers decides
+  if (procs.some((p) => !p.cmd)) return { running: null, pid: null, detail: 'its process is not visible to this user' };
+  return { running: false, pid: null, detail: 'not running' };
 }
 
 const portOpen = (port, host = '127.0.0.1', timeoutMs = 3000) => new Promise((resolve) => {
@@ -236,6 +241,14 @@ export async function overview({ home, platform = process.platform, env = proces
   if (probes) {
     const local = { identity: null };
     for (const r of rows) {
+      if (r.running === null) {
+        // not visible: running when it answers (a service with nothing to ask stays unknown)
+        r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs });
+        if (r.probe) r.running = r.probe.ok ? true : null;
+        if (r.probe && r.probe.ok) r.detail = 'answers (its process is not visible to this user)';
+        if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
+        continue;
+      }
       if (!r.running) { r.probe = null; continue; }
       r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs });
       if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
@@ -407,6 +420,7 @@ export async function doctor({ home, platform = process.platform, env = process.
   const view = await overview({ home, platform, env, sh, fetcher });
   for (const s of view.services) {
     const fix = s.inside ? `${name} restart node` : `${name} restart ${s.id}`;
+    if (s.running === null) { add(s.title, null, `${s.detail}${s.probe ? `; ${s.probe.says}` : ''}`); continue; }
     if (!s.running) { add(s.title, false, s.detail, `${name} start ${s.inside ? 'node' : s.id}   (then: ${name} logs ${s.id})`); continue; }
     if (s.probe === null || s.probe === undefined) add(s.title, true, `running${s.pid ? ` (pid ${s.pid})` : ''}`);
     else add(s.title, s.probe.ok, s.probe.says, s.probe.ok ? null : s.id === 'tunnel' ? `${name} restart tunnel` : `${fix}   (then: ${name} logs ${s.id})`);
