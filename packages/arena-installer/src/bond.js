@@ -68,9 +68,10 @@ export function bondKeyAt(nodeKey, maturity) {
 
 /**
  * THE OWNER'S EMERGENCY KEY IN THE ADVERT (§23A.5a, protocol 17) - only once every seat reads it: a seat before protocol 17 refuses an
- * advertisement with the field ("trailing bytes"), so a bond posted with it too early is in no census. ARENA_EMERGENCY_ADVERT=1 turns it on.
+ * advertisement with the field ("trailing bytes"), so a bond posted with it too early is in no census. Since 2026-10-19 19:33Z all 14
+ * testnet4 seats run protocol 18 (kanban #525, #528), so it is on; ARENA_EMERGENCY_ADVERT=0 leaves it out (a network whose seats are older).
  */
-export const EMERGENCY_IN_ADVERT = process.env.ARENA_EMERGENCY_ADVERT === '1';
+export const EMERGENCY_IN_ADVERT = process.env.ARENA_EMERGENCY_ADVERT !== '0';
 
 /** The node's advertisement, unsigned. */
 export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null }) {

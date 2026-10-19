@@ -21,7 +21,7 @@ test('the emergency code is the seed\'s, reads back to the key the advert names,
 });
 
 test('the bond advert names the emergency key when asked, and decodes back with it; off by default until the seats read protocol 17', () => {
-  assert.equal(EMERGENCY_IN_ADVERT, process.env.ARENA_EMERGENCY_ADVERT === '1');
+  assert.equal(EMERGENCY_IN_ADVERT, process.env.ARENA_EMERGENCY_ADVERT !== '0', 'on unless ARENA_EMERGENCY_ADVERT=0 (every seat reads it since protocol 17)');
   const { seed } = newSeed();
   const base = { nodeKey: new Uint8Array(32).fill(1), operatorId: 'op', roles: ['verify'], endpoint: 'https://n.example', payoutPubkey: new Uint8Array(32).fill(2),
     maturity: 160000, softwareHash: new Uint8Array(32), nowMs: 1788700000000 };
