@@ -8,6 +8,9 @@ import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
 const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+// the run's end is Tick Tock's page part (kanban #521)
+const UNITY_PAGE = new URL('../../nextblock/page/unity-page.js', import.meta.url);
+const unity = readFileSync(UNITY_PAGE, 'utf8');
 const from = html.indexOf('// A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY');
 const to = html.indexOf("const boot = document.getElementById('boot');", from);
 const boot = html.slice(from, to);
@@ -79,14 +82,14 @@ test('a reload after the start: no funding unless the kept lock answers new, the
 
 // AND ITS ADDRESS STAYS WHILE IT CATCHES UP: the run-end handler, run on a fake tab.
 test('the run-end handler leaves a resumed round\'s address until that run ends, or its round closes', () => {
-  const a = html.indexOf('    window.BLWP_RUN_OVER = (word, run) => {');
-  const b = html.indexOf('      window.ARENA_RUN_ENDED = String(word || \'\');', a);
+  const a = unity.indexOf('    window.BLWP_RUN_OVER = (word, run) => {');
+  const b = unity.indexOf('      window.ARENA_RUN_ENDED = String(word || \'\');', a);
   assert.ok(a > 0 && b > a);
-  const body = html.slice(a, b).replace('    window.BLWP_RUN_OVER = (word, run) => {', '');
+  const body = unity.slice(a, b).replace('    window.BLWP_RUN_OVER = (word, run) => {', '');
   const runOver = (win, run) => {
     const location = { pathname: '/', search: '?round=aa&play=1' };
     const history = { replaceState: (_s, _t, url) => { const i = url.indexOf('?'); location.search = i < 0 ? '' : url.slice(i); } };
-    pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['window', 'location', 'history', 'prefetchReplayNodes', 'URLSearchParams', 'word', 'run'], body)(
+    pageFunction(UNITY_PAGE, ['window', 'location', 'history', 'prefetchReplayNodes', 'URLSearchParams', 'word', 'run'], body)(
       win, location, history, () => {}, URLSearchParams, 'FINISHED', run);
     return location.search;
   };
