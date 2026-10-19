@@ -24,7 +24,7 @@ const at = (p) => new URL(p, import.meta.url).pathname;
 const OUT = at('../known-good-clients.json');
 const SOURCES = {
   'arena-client.js': at('../dist/arena-client.js'),
-  'blwp-curve.js': at('../dist/blwp-curve.js'),
+  'arena-curve.js': at('../dist/arena-curve.js'),
   // THE LOCK CLIENT (W1b): the player's stake is locked by this code, so it
   // decides money. Its glue and its wasm, as wasm-bindgen wrote them.
   'blwp_lock_client.js': at('../dist/blwp_lock_client.js'),

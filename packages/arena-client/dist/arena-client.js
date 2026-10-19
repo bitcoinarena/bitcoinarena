@@ -25544,7 +25544,7 @@ function paymentOutLine(o) {
 // where people can comment and review"; "Anyone can do a proposal to pay out"). The homepage reads the proposals the network's nodes
 // hold (GET /funding) and shows one only when at least `needed` of them hold it; it builds a proposal or a comment as the seats read
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
-// every node (POST /funding), which keep it and pass it on. The curve is the page's (blwp-curve.js, globalThis.BLWP_CURVE: pointX,
+// every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.BLWP_CURVE: pointX,
 // signSchnorr), passed in as `curve` - this bundle carries no crypto of its own.
 
 
@@ -25555,7 +25555,7 @@ function paymentOutLine(o) {
 const fundingBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const fundingMost = (xs) => { const c = new Map(); for (const x of xs) c.set(x, (c.get(x) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0]; };
 
-const curveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (blwp-curve.js)'); return c; };
+const curveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 /** A visitor's key: 32 random bytes the curve takes, or the one an nsec names. */
 function newProposalKey(curve) {
   const c = curveOf(curve);
@@ -25860,7 +25860,7 @@ const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, now
 
 
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-const feesCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (blwp-curve.js)'); return c; };
+const feesCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
 /**
  * THE FEES AS THE NODES ANSWER THEM: every node asked GET /fees (with ?height=H when `height` is given); the set most of them name, kept
@@ -26046,7 +26046,7 @@ function emergencyDepartureEffect(request, { guardian, lastSeenHeight = null, ab
 
 
 
-const lbCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (blwp-curve.js)'); return c; };
+const lbCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 /** A block about every 10 minutes: the height a date falls at, from the tip now. */
 const LB_BLOCK_MS = 600000;
 const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.ceil((Number(dateMs) - Number(nowMs)) / LB_BLOCK_MS));
