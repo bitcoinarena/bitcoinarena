@@ -126,7 +126,7 @@ export function pickFederation(statuses, { known = () => true } = {}) {
 export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
   // EVERY DEPOSIT TO THE LOWEST LOAD (RULED 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
-  // it's evened out"): a returning player too - the page sums every federation's wallet (BLWP_SUM_BALANCES), so where the money
+  // it's evened out"): a returning player too - the page sums every federation's wallet (ARENA_SUM_BALANCES), so where the money
   // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
   if (!always && held && held.length) {
     const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));

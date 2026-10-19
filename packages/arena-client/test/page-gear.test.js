@@ -15,7 +15,7 @@ const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const PAINT = slice('    function paintMoney() {', '\n    }\n');
 const EARLY = slice("  document.getElementById('arena-settings-go').addEventListener('click', () => {", '\n  });');
-const CATCH_UP = slice('    if (window.BLWP_SETTINGS_EARLY && settingsPanel()', '\n');
+const CATCH_UP = slice('    if (window.ARENA_SETTINGS_EARLY && settingsPanel()', '\n');
 
 const LOBBY = { showing: true, lobby: true, screen: [430, 932], balance: [56, 468, 318, 34] };
 
@@ -27,7 +27,7 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
   const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 430, height: 932 }) };
   // the backup warning sits in the loading screen: it is gone with #boot
   const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'arena-backup-warn' && !boot ? null : els[id] || null) };
-  const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
+  const window = { BLWP_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
   pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
     document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
@@ -61,7 +61,7 @@ test('a click before the main script: Settings opens at once, and the main scrip
   click();
   assert.equal(panel.style.display, '', 'open on the click, with no bundle, wallet or Unity');
   let filled = 0;
-  window.BLWP_PAINT_SETTINGS = () => { filled++; };
+  window.ARENA_PAINT_SETTINGS = () => { filled++; };
   const catchUp = pageFunction(PAGE, ['window', 'settingsPanel'], CATCH_UP);
   catchUp(window, () => panel);
   catchUp(window, () => panel);
@@ -71,7 +71,7 @@ test('a click before the main script: Settings opens at once, and the main scrip
 test('a click after the main script: opened and filled on the click, once', () => {
   const { click, panel, window } = page();
   let filled = 0;
-  window.BLWP_PAINT_SETTINGS = () => { filled++; };
+  window.ARENA_PAINT_SETTINGS = () => { filled++; };
   pageFunction(PAGE, ['window', 'settingsPanel'], CATCH_UP)(window, () => panel);
   assert.equal(filled, 0, 'nothing to catch up on: Settings was never opened');
   click();

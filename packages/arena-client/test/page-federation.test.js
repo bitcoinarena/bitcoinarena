@@ -30,7 +30,7 @@ function page(status, extra = {}) {
   // the wallet's own federation (its chip) holds the round's status unless a test names another
   const st = status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined;
   const mine = wallet || (st ? st.federation || 'f'.repeat(64) : undefined);
-  const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, BLWP_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
+  const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
   const did = [];
   const BLWPCLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
   const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
@@ -121,7 +121,7 @@ test('the note follows the wallet\'s federation; rounds of another federation ch
   const q = page(null, { wallet: B }); q.window.ARENA_FED_LOADS = new Map([[A, a], [B, b]]);
   for (const [fed, st] of [[A, a], [B, b]]) { q.window.ARENA_FED_STATUS = { ...st, federation: fed }; q.paint(); assert.notEqual(q.els['arena-fed-note'].style.display, ''); }
   // no chip yet: nothing said, whatever round was checked
-  const r = page('OPEN', { wallet: A }); r.window.BLWP_LEDGER_FEDERATION = undefined; r.window.ARENA_FED_STATUS = { ...a, federation: A }; r.paint();
+  const r = page('OPEN', { wallet: A }); r.window.ARENA_LEDGER_FEDERATION = undefined; r.window.ARENA_FED_STATUS = { ...a, federation: A }; r.paint();
   assert.equal(r.els['arena-fed-note'].textContent, '');
 });
 

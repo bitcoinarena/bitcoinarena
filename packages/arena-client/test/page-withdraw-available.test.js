@@ -24,22 +24,22 @@ const withdrawNotice = (w) => !w || !w.available ? '' : w.elsewhere ? 'Withdrawa
   : (BigInt(w.msat) > 0n ? `Withdrawal available: ${BigInt(w.msat) / 1000n} sat - press Withdraw in the wallet panel` : '');
 
 test('the owner\'s state: 98,000 msat owed at the last look, already collected into the player wallet, round wallet empty - nothing available, no lobby line', () => {
-  const w = available({ BLWP_OWED: { owedMsat: 98000n }, BLWP_WITHDRAWABLE: 0n, BLWP_ELSEWHERE: null });
+  const w = available({ ARENA_OWED: { owedMsat: 98000n }, ARENA_WITHDRAWABLE: 0n, ARENA_ELSEWHERE: null });
   assert.deepEqual(w, { available: false, msat: '0', elsewhere: false });
   assert.equal(withdrawNotice(w), '');
 });
 
 test('after a failed Withdraw: 98,000 msat in the round\'s own wallet - available, the lobby line, and the panel warning', () => {
-  const window = { BLWP_OWED: { owedMsat: 0n }, BLWP_WITHDRAWABLE: 98000n, BLWP_ELSEWHERE: null };
+  const window = { ARENA_OWED: { owedMsat: 0n }, ARENA_WITHDRAWABLE: 98000n, ARENA_ELSEWHERE: null };
   const w = available(window);
   assert.deepEqual(w, { available: true, msat: '98000', elsewhere: false });
   assert.equal(withdrawNotice(w), 'Withdrawal available: 98 sat - press Withdraw in the wallet panel');
-  assert.equal(withdrawLine(undefined, window.BLWP_WITHDRAWABLE),
+  assert.equal(withdrawLine(undefined, window.ARENA_WITHDRAWABLE),
     '98000 msat is in this tab\'s wallet - withdraw it to your own wallet before you close the tab');
 });
 
 test('another tab of this browser holds the round: said as before', () => {
-  const w = available({ BLWP_OWED: { owedMsat: 98000n }, BLWP_WITHDRAWABLE: undefined, BLWP_ELSEWHERE: 'e4b6a534' });
+  const w = available({ ARENA_OWED: { owedMsat: 98000n }, ARENA_WITHDRAWABLE: undefined, ARENA_ELSEWHERE: 'e4b6a534' });
   assert.deepEqual(w, { available: true, msat: '0', elsewhere: true });
   assert.equal(withdrawNotice(w), 'Withdrawal available - open in another tab of this browser');
 });

@@ -23,8 +23,8 @@ function page({ note = true, warm = 'open', fed = FED, owed = 0n, inTab = 0n, he
   const vault = () => ({ getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) });
   const asked = []; const joins = []; const looks = [];
   const player = { lockStatus: async (t, i) => { asked.push([t, i]); return '{"stored":null}'; }, withdrawableMsat: async () => '999000' };
-  const window = { BLWP_WALLET_WARM: warm === 'open' ? Promise.resolve(player) : warm === 'failed' ? Promise.resolve(undefined) : undefined,
-    BLWP_WALLET_FEDERATION: fed, BLWP_LOCK_WASM: async () => ({ LockClient: 'LC' }) };
+  const window = { ARENA_WALLET_WARM: warm === 'open' ? Promise.resolve(player) : warm === 'failed' ? Promise.resolve(undefined) : undefined,
+    ARENA_WALLET_FEDERATION: fed, ARENA_LOCK_WASM: async () => ({ LockClient: 'LC' }) };
   const BLWPCLIENT = { toHex: (x) => x, lookOwed: async (a) => {
     looks.push(a.client);
     if (a.client.lockStatus) await a.client.lockStatus('tx', 0);

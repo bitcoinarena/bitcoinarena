@@ -94,7 +94,7 @@ const at = page.indexOf('      let combining = null;\n      function combineWall
 const end = page.indexOf('        return combining;\n      }\n', at);
 const SRC = page.slice(at, end + '        return combining;\n      }\n'.length);
 const logs = [];
-const pageWindow = { BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient }) };
+const pageWindow = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient }) };
 const combineWallets = pageFunction(PAGE, ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
   SRC, 'return combineWallets;')(() => L, S, BLWPCLIENT, pageWindow, {}, () => {}, { log: (s) => logs.push(String(s)) });
 const t0 = Date.now();

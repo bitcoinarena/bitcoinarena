@@ -97,14 +97,14 @@ const STATE = `(() => {
   const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   return JSON.stringify({
     href: location.search.slice(0, 40),
-    lobby: f(() => window.BLWP_LOBBY || null),
+    lobby: f(() => window.ARENA_LOBBY || null),
     lobbyShown: f(() => { const l = document.getElementById('arena-lobby'); return !!l && getComputedStyle(l).display !== 'none'; }),
     round: f(() => (window.BLWP_ROUND ? hex(BLWPCLIENT.roundId(window.BLWP_ROUND)) : null)),
     // The page's BLWP_ENTRY is entryFor's fields - no round id or session key -
     // so the tab is named by its player key and the signer node is found at the nodes.
     player: f(() => { const e = window.BLWP_ENTRY; return e && e.playerPubkey ? hex(e.playerPubkey) : null; }),
     unity: f(() => !!window.unityInstance),
-    deposit: f(() => window.BLWP_DEPOSIT || null),
+    deposit: f(() => window.ARENA_DEPOSIT || null),
     pageError: f(() => (document.getElementById('err') || {}).textContent || null),
     walletShown: f(() => { const w = document.getElementById('arena-wallet'); return !!w && getComputedStyle(w).display !== 'none'; }),
     chip: f(() => (document.getElementById('blwp-players') || {}).textContent || null),
@@ -157,7 +157,7 @@ try {
 
   // WHO TAB 1 IS: the generated key and name, then the player's own name, a
   // name the page must refuse, and a reload that must keep both key and name.
-  const identity = async (b) => { const v = await b.evaluate('JSON.stringify(window.BLWP_IDENTITY || null)'); try { return JSON.parse(v); } catch { return v; } };
+  const identity = async (b) => { const v = await b.evaluate('JSON.stringify(window.ARENA_IDENTITY || null)'); try { return JSON.parse(v); } catch { return v; } };
   const idBefore = await identity(one);
   const typed = await one.evaluate(`(() => { const i = document.getElementById('blwp-name'); if (!i) return false;
     i.value = 'Night Hauler 7'; document.getElementById('blwp-name-save').click(); return true; })()`);
@@ -166,7 +166,7 @@ try {
   const shownName = await one.evaluate(`(document.querySelector('#arena-lobby b') || {}).textContent || null`);
   const refusedName = await one.evaluate(`(() => { const i = document.getElementById('blwp-name'); i.value = '<b>x</b>';
     document.getElementById('blwp-name-save').click();
-    return { why: (document.getElementById('arena-name-why') || {}).textContent || null, nameAfter: (window.BLWP_IDENTITY || {}).name || null }; })()`);
+    return { why: (document.getElementById('arena-name-why') || {}).textContent || null, nameAfter: (window.ARENA_IDENTITY || {}).name || null }; })()`);
   await one.evaluate('location.reload(); true');
   await wait(1500);
   await until(one, 60000, (x) => x.lobbyShown === true && Array.isArray(x.lobby) && x.lobby.length > 0);
@@ -275,7 +275,7 @@ try {
   await one.shot(`${P}/names-tab1.png`);
   const chipTwoLater = (await stateOf(two)).chip;
   const exchangedOne = await Promise.all([one, two].map(async (b) => {
-    const v = await b.evaluate('JSON.stringify(window.BLWP_NAMES_SAID || null)');
+    const v = await b.evaluate('JSON.stringify(window.ARENA_NAMES_SAID || null)');
     try { return JSON.parse(v); } catch { return v; }
   }));
   say({ step: 'names shown to others', tab2Generated: TWO_NAME, tab1Joined: seen(s.chip), tab1JoinedLater: seen(chipLater),
@@ -340,7 +340,7 @@ try {
   }
   for (const b of [one, two]) await b.key('keyUp');
   const exchanged = await Promise.all([one, two].map(async (b) => {
-    const v = await b.evaluate('JSON.stringify(window.BLWP_NAMES_SAID || null)');
+    const v = await b.evaluate('JSON.stringify(window.ARENA_NAMES_SAID || null)');
     try { return JSON.parse(v); } catch { return v; }
   }));
   if (typeof again[1].player === 'string') twoKeys.push(again[1].player.slice(0, 8));

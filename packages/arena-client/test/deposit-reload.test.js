@@ -80,7 +80,7 @@ test('a reload after the start: no funding unless the kept lock answers new, the
 // AND ITS ADDRESS STAYS WHILE IT CATCHES UP: the run-end handler, run on a fake tab.
 test('the run-end handler leaves a resumed round\'s address until that run ends, or its round closes', () => {
   const a = html.indexOf('    window.BLWP_RUN_OVER = (word, run) => {');
-  const b = html.indexOf('      window.BLWP_RUN_ENDED = String(word || \'\');', a);
+  const b = html.indexOf('      window.ARENA_RUN_ENDED = String(word || \'\');', a);
   assert.ok(a > 0 && b > a);
   const body = html.slice(a, b).replace('    window.BLWP_RUN_OVER = (word, run) => {', '');
   const runOver = (win, run) => {

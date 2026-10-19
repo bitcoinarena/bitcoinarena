@@ -16,8 +16,8 @@ const FED = 'ab'.repeat(32), SAFE = 'ef'.repeat(32);
 
 const run = async (liquidations) => {
   const calls = [];
-  const window = { BLWP_LEDGER_LOBBY: { nodes: ['https://seat-1'] }, BLWP_CURVE: {}, ARENA_FED_LOADS: new Map([[FED, { federation: FED, invite: 'inv-a' }], [SAFE, { federation: SAFE, invite: 'inv-safe' }]]),
-    BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), BLWP_READ_BALANCE: () => calls.push('balance') };
+  const window = { ARENA_LEDGER_LOBBY: { nodes: ['https://seat-1'] }, BLWP_CURVE: {}, ARENA_FED_LOADS: new Map([[FED, { federation: FED, invite: 'inv-a' }], [SAFE, { federation: SAFE, invite: 'inv-safe' }]]),
+    ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_READ_BALANCE: () => calls.push('balance') };
   const BLWPCLIENT = { presentNotes: async (o) => { calls.push(['present', o.liquidations[0].federation, o.payoutPk, (await o.walletFor(FED)).invite]); return [{ federation: FED, ok: true, accepted: [1] }]; },
     collectLiquidationPayouts: async (o) => { calls.push(['collect', o.listed.payouts.length, (await o.clientFor(SAFE)).invite]); return [{ ok: true, msat: '768000' }]; },
     liquidationKeyFor: () => ({ payoutPk: '02' + '11'.repeat(32) }), ledgerFederations: () => [FED],

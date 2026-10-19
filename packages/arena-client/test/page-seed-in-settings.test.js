@@ -18,7 +18,7 @@ test('Create makes the wallet and goes straight on: no 24-word dialog is opened'
   const els = {}; const clicked = [];
   const $ = (id) => (els[id] = els[id] || { id, style: {}, click: () => clicked.push(id) });
   const box = $('arena-wallet-start'); box.style.display = 'flex';
-  const window = { ARENA_WALLET_SCREEN: { shown: true }, sessionStorage: {}, BLWP_SEED_KEEPER: { beat: () => clicked.push('beat') } };
+  const window = { ARENA_WALLET_SCREEN: { shown: true }, sessionStorage: {}, ARENA_SEED_KEEPER: { beat: () => clicked.push('beat') } };
   let minted = 0;
   const BLWPCLIENT = { tabSeed: () => { minted++; return new Uint8Array(32); } };
   const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };

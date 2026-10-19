@@ -52,7 +52,7 @@ test('the page: a round refused for a seat\'s committee or seating is kept out o
   const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
   const at = html.indexOf('          const refuse = (why) => {');
   const body = html.slice(at, html.indexOf('\n          };\n', at));
-  assert.match(body, /if \(\/the round is refused: \/\.test\(join\.why\)\) \(window\.BLWP_CLOSED_ROUNDS = window\.BLWP_CLOSED_ROUNDS \|\| new Set\(\)\)\.add\(id\);/);
+  assert.match(body, /if \(\/the round is refused: \/\.test\(join\.why\)\) \(window\.ARENA_CLOSED_ROUNDS = window\.ARENA_CLOSED_ROUNDS \|\| new Set\(\)\)\.add\(id\);/);
 });
 
 // GENESIS-BOUND PARAMETERS AT JOIN TIME (2026-10-16: "On a test genesis that binds, a deviating contract is

@@ -962,7 +962,7 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'withdrawCollected', 'collectOwed'])
     assert.ok(!page.includes(`BLWPCLIENT.${f}(`), `the page calls ${f} itself`);
   const calls = [...page.matchAll(/BLWPCLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
-  const withdrawAt = page.indexOf('window.BLWP_WITHDRAW = async function');
+  const withdrawAt = page.indexOf('window.ARENA_WITHDRAW = async function');
   assert.equal(calls.length, 1);
   assert.ok(calls[0] > withdrawAt && calls[0] < page.indexOf('\n    };\n', withdrawAt), 'collect-and-withdraw is called outside the Withdraw action');
   // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called only inside a Withdraw press: the lobby's Withdraw action, and
