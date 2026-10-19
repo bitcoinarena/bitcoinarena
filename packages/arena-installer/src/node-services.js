@@ -13,7 +13,8 @@
 // The guardian (fedimintd) is no service of its own on an installed node: the seat starts it (guardian.js) and it ends with the seat.
 // It is shown on its own line; starting or restarting it is starting or restarting the node.
 import { existsSync, readFileSync, writeFileSync, statfsSync, openSync, readSync, closeSync, fstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import net from 'node:net';
@@ -49,14 +50,20 @@ const run = (cmd, args, { timeout = 60000 } = {}) => new Promise((resolve) => ex
   (e, out, err) => resolve({ ok: !e, code: e ? e.code : 0, out: String(out || ''), err: String(err || '') })));
 
 /** This node's settings: { file, values, errors } (values {} when there is no arena.conf), its state.json, its release. */
-export function nodeOf(home) {
+// THE RELEASE THIS CODE IS PART OF (<release>/packages/arena-installer/src): the arenanode command, the seat and the wizard all load it from
+// the node's own release. A node installed fresh had no release in state.json - only an update wrote one - so `arenanode status` said
+// "version unknown" and the auto update refused ("this node does not know the release it runs"): measured on the test host 2026-10-19,
+// 2026.1.0 installed fresh through the wizard. A checkout (no VERSION file) is no release.
+const OWN_RELEASE = (() => { const r = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'); return existsSync(join(r, 'VERSION')) ? r : null; })();
+
+export function nodeOf(home, { ownRelease = OWN_RELEASE } = {}) {
   const file = join(home, 'arena.conf');
   let values = {}, errors = [], present = existsSync(file);
   if (present) ({ values, errors } = parseConf(readFileSync(file, 'utf8')));
   let state = {}; try { state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')); } catch { state = {}; }
   const port = Number(values.port || (state.reach && state.reach.port) || (state.service && state.service.port) || 0) || null;
   const publicUrl = values.public_url || (state.reach && state.reach.url) || null;
-  const release = (state.release && state.release.path) || null;
+  const release = (state.release && state.release.path) || ownRelease || null;
   let version = null; try { version = release ? readFileSync(join(release, 'VERSION'), 'utf8').trim() : null; } catch { version = null; }
   return { home, conf: { file, present, values, errors }, state, port, publicUrl, release, version, legacyEnv: !present && existsSync(join(home, 'node.env')) };
 }

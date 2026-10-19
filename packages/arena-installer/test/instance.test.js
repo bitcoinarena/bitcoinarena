@@ -31,3 +31,13 @@ test('the CLI\'s own port defaults move with the offset too: wizard, seat, bridg
   const bin = readFileSync(join(dir, 'bin', 'arena-install.mjs'), 'utf8');
   for (const [flag, p] of [['--port', 7800], ['--seat-port', 8470], ['--bridge-port', 8471]]) assert.match(bin, new RegExp(`opt\\('${flag}', offsetPort\\(${p}\\)\\)`), flag);
 });
+
+test('a second node\'s wizard reads its own quick tunnel\'s name, not the first node\'s (2026.1.0 as instance t471 on the test host: "the quick tunnel gave no name")', () => {
+  const asked = (env) => execFileSync(process.execPath, ['--input-type=module', '-e', `
+    const r = await import('./src/reach.js'); let unit = null;
+    const url = await r.quickTunnelUrl({ platform: 'linux', waitMs: 1000, sh: async (c, a) => { unit = a[a.indexOf('-u') + 1];
+      return { ok: true, out: 'INF |  https://harris-preventing-experiences-turning.trycloudflare.com   |' }; } });
+    console.log(JSON.stringify({ unit, url }));`], { cwd: dir, env: { PATH: process.env.PATH, ARENA_HOME: '/nonexistent-arena-home', ...env }, encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(asked({ ARENA_INSTANCE: 't471' })), { unit: 'arena-tunnel--t471.service', url: 'https://harris-preventing-experiences-turning.trycloudflare.com' });
+  assert.equal(JSON.parse(asked({})).unit, 'arena-tunnel.service', 'one node: as always');
+});
