@@ -9826,6 +9826,44 @@
  },
  {
   "method": "POST",
+  "path": "/owner/services",
+  "params": "body JSON signed request, action \"services\"",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, version, instance, port, publicUrl, roles, settings, command, services:[{id, title, running, pid, detail, inside, probe:{ok, says}}]}; 401/403 when not the owner; 501 for a node not started from the installer's arena.conf",
+  "purpose": "The owner page's Services card: every service of the installed node - Bitcoin Core or the chain bridge, Tor, LND, the gateway, the guardian (inside the seat), the seat, its tunnel, the liquidity provider - running or not, with what it answers (LND synced, the gateway's federations, the public address reaching this node). The same view as `arenanode status` on the node's machine.",
+  "audience": "operator/monitoring",
+  "line": 4649,
+  "summary": "The node's services and their state",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"services\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs]), or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, version, instance, port, publicUrl, roles, settings:\"arena.conf\", command:\"arenanode\", services:[{id:\"lnd\", title:\"Lightning (LND)\", running:true, pid, detail, probe:{ok:true, says:\"synced at block …\"}}]}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node was not started from the installer's arena.conf."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
   "path": "/owner/liquidity/new-address",
   "params": "body JSON signed request, action \"liquidity/new-address\"",
   "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",

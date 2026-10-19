@@ -113,6 +113,7 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   const pub = (state.read().reach || {}).url;
   console.log(`\nDone. Your node runs as the user service arena-node.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/Dashboard/owner${pub ? '' : ' (this machine only)'}`);
   const l = state.read().launchers;
+  if (l && l.command && l.command.name) console.log(`On the command line: ${l.command.name} status | doctor | restart <service> | logs | config${l.command.note ? ` (${l.command.note})` : ''}`);
   if (l) console.log(`To start it again: ${l.app ? `open "Arena Node" in Applications (${l.app})` : l.menu && /Start Menu/.test(l.menu) ? 'Start menu > Arena Node' : 'Arena Node in your desktop menu'}, or run ${l.start}`);
   if (tunnel) tunnel.close();
   server.close(); setTimeout(() => process.exit(0), 300);

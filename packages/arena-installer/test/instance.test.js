@@ -11,7 +11,7 @@ const read = (env) => JSON.parse(execFileSync(process.execPath, ['--input-type=m
   const [s, l, g, t, r, st] = await Promise.all(['service', 'lnd', 'gateway', 'tor', 'reach', 'state'].map((m) => import('./src/' + m + '.js')));
   console.log(JSON.stringify({ unit: s.UNIT, bridge: s.BRIDGE_UNIT, tunnel: s.TUNNEL_UNIT, lndUnit: s.unitName('lnd'), label: s.LAUNCHD_LABEL, task: s.WINDOWS_TASK,
     lnd: l.LND_PORTS, gateway: g.GATEWAY_PORT, tor: t.TOR_PORTS, seat: r.DEFAULT_NODE_PORT, liquidity: st.LIQUIDITY_PROVIDER_PORT }));`],
-  { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: 'utf8' }));
+  { cwd: dir, env: { PATH: process.env.PATH, ARENA_HOME: '/nonexistent-arena-home', ...env }, encoding: 'utf8' }));
 
 test('one node: the names and ports as always', () => {
   assert.deepEqual(read({}), { unit: 'arena-node.service', bridge: 'arena-chain-bridge.service', tunnel: 'arena-tunnel.service', lndUnit: 'arena-lnd.service',
@@ -22,8 +22,8 @@ test('a second node: every service named apart, every fixed port moved; a bad na
   assert.deepEqual(read({ ARENA_INSTANCE: 'b', ARENA_PORT_OFFSET: '100' }), { unit: 'arena-node--b.service', bridge: 'arena-chain-bridge--b.service', tunnel: 'arena-tunnel--b.service',
     lndUnit: 'arena-lnd--b.service', label: 'io.bitcoin-arena.node--b', task: 'Arena node b', lnd: { rpc: 10109, rest: 10180, p2p: 9835 }, gateway: 8576,
     tor: { socks: 19150, control: 19151 }, seat: 8570, liquidity: 8577 });
-  assert.throws(() => read({ ARENA_INSTANCE: 'B/x' }), /ARENA_INSTANCE is a-z0-9/);
-  assert.throws(() => read({ ARENA_PORT_OFFSET: '-5' }), /ARENA_PORT_OFFSET is a whole number/);
+  assert.throws(() => read({ ARENA_INSTANCE: 'B/x' }), /instance is a-z0-9/);
+  assert.throws(() => read({ ARENA_PORT_OFFSET: '-5' }), /port_offset is a whole number/);
 });
 
 test('the CLI\'s own port defaults move with the offset too: wizard, seat, bridge (measured on the test host with rc.16: the second node\'s seat took 8470, the first\'s)', async () => {

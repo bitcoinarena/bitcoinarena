@@ -9,11 +9,11 @@
 //
 // Every script names the services it acts on, so a user can read what it does. A node without custody also gets "add custody": it opens
 // the installer's custody screens again (arena-install --add-custody, wizard.js beginAddCustody).
-import { mkdirSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
+import { mkdirSync, writeFileSync, chmodSync, accessSync, constants, existsSync, lstatSync, readFileSync, rmSync, symlinkSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { UNIT, BRIDGE_UNIT, TUNNEL_UNIT, LAUNCHD_LABEL, WINDOWS_TASK, startupDir, unitName } from './service.js';
-import { named } from './instance.js';
+import { named, INSTANCE } from './instance.js';
 
 /** The services of a node from its state: { linux: units, darwin: launchd labels, win32: task names }. */
 export function servicesOf(s) {
@@ -42,7 +42,10 @@ const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
  * Write the launchers. `ownerUrl` the owner page (the public address when the node has one). Answers { files: [paths], app, menu } -
  * what was written, for the Done page and the installer's last lines.
  */
-export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform = process.platform, env = process.env, applicationsDir = null, run = null }) {
+export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform = process.platform, env = process.env, applicationsDir = null, run = null, release = null, node = process.execPath, pathDirs = null }) {
+  // the arenanode command first (kanban #499): what the scripts below are the clickable form of
+  let command = null;
+  if (release) { try { command = writeCommand({ home, release, node, platform, env, run, pathDirs }); } catch (e) { command = { why: e.message }; } }
   const svc = servicesOf(s)[platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux'];
   const bin = join(home, 'bin');
   mkdirSync(bin, { recursive: true });
@@ -58,7 +61,7 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
     mkdirSync(apps, { recursive: true });
     const menu = put(join(apps, 'arena-node.desktop'), ['[Desktop Entry]', 'Type=Application', 'Name=Arena Node', 'Comment=Start the Arena node and open its owner page',
       `Exec=sh -c '${start} && xdg-open ${ownerUrl}'`, 'Terminal=false', 'Categories=Network;', ''].join('\n'), 0o644);
-    return { files, menu, app: null, start };
+    return { files, menu, app: null, start, command };
   }
   if (platform === 'darwin') {
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
@@ -83,7 +86,7 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
 </dict></plist>
 `);
     put(join(app, 'Contents', 'MacOS', 'arena-node'), sh([...startLines, `open ${q(ownerUrl)}`]));
-    return { files, menu: null, app, start };
+    return { files, menu: null, app, start, command };
   }
   // WINDOWS: the tasks the installer made (schtasks), and the Start menu's own folder of shortcuts to these scripts
   const cmd = (lines) => ['@echo off', ...lines, ''].join('\r\n');
@@ -102,5 +105,57 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
   const ps = [[start, 'Start Arena node'], [stop, 'Stop Arena node'], [open, 'Arena node owner page'], ...(custody ? [[custody, 'Add custody to the Arena node']] : [])]
     .map(([target, name]) => `$s = $w.CreateShortcut('${join(menu, `${name}.lnk`).replace(/'/g, "''")}'); $s.TargetPath = '${target.replace(/'/g, "''")}'; $s.WorkingDirectory = '${bin.replace(/'/g, "''")}'; $s.Save()`);
   if (run) run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ['$w = New-Object -ComObject WScript.Shell', ...ps].join('; ')]);
-  return { files, menu, app: null, start };
+  return { files, menu, app: null, start, command };
+}
+
+// THE ARENANODE COMMAND ON THE PATH (kanban #499, the owner 2026-10-19: "Make a command arenanode that can stop start the service, status
+// and diagnosis commands"): <home>/bin/arenanode runs this release's bin/arenanode.mjs with the node's home in it, so the user types no
+// flags; a second node on the machine (instance.js) has arenanode-<instance>. Put on the PATH:
+//   Linux    a link in ~/.local/bin (Ubuntu's ~/.profile puts it on the PATH once it exists; else a line is added there)
+//   macOS    a link in /opt/homebrew/bin or /usr/local/bin when the user may write there, else ~/.local/bin and a line in ~/.zprofile
+//   Windows  <home>\bin\arenanode.cmd, and <home>\bin added to the user's PATH (a new console window finds it)
+// An update writes it again for the new release (update.js). A file of that name that is not ours is never replaced.
+export const commandName = () => (INSTANCE ? `arenanode-${INSTANCE}` : 'arenanode');
+export function writeCommand({ home, release, node, platform = process.platform, env = process.env, run = null, pathDirs = null }) {
+  const name = commandName();
+  const bin = join(home, 'bin');
+  mkdirSync(bin, { recursive: true });
+  const script = join(release, 'packages', 'arena-installer', 'bin', 'arenanode.mjs');
+  const what = `The ${name} command (kanban #499), written by the installer: ${name} status, ${name} restart lnd, ${name} doctor, ${name} help`;
+  if (platform === 'win32') {
+    const file = join(bin, `${name}.cmd`);
+    writeFileSync(file, ['@echo off', `rem ${what}`, `"${node}" "${script}" --home "${home}" --name ${name} %*`].join('\r\n') + '\r\n');
+    const d = bin.replace(/'/g, "''");
+    if (run) run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `$p = [Environment]::GetEnvironmentVariable('Path', 'User'); if (-not (($p -split ';') -contains '${d}')) { [Environment]::SetEnvironmentVariable('Path', $(if ($p) { $p + ';${d}' } else { '${d}' }), 'User') }`]);
+    return { name, file, link: null, dir: bin, note: 'open a new console window to use it' };
+  }
+  const file = join(bin, name);
+  writeFileSync(file, sh([`# ${what}`, `exec ${q(node)} ${q(script)} --home ${q(home)} --name ${name} "$@"`]), { mode: 0o755 });
+  chmodSync(file, 0o755);
+  // a link only into this user's own folders and, on a macOS, the PATH folders the user may write - never anywhere when the environment
+  // names no home (a test's)
+  const H = env.HOME;
+  if (!H && !pathDirs) return { name, file, link: null, dir: null, note: `run it as ${file}` };
+  const local = join(H || homedir(), '.local', 'bin');
+  const dirs = pathDirs || (platform === 'darwin' && process.platform === 'darwin' ? ['/opt/homebrew/bin', '/usr/local/bin', local] : [local]);
+  for (const d of dirs) {
+    if (d === local) mkdirSync(d, { recursive: true });
+    if (!existsSync(d) || !writable(d)) continue;
+    const link = join(d, name);
+    let mine = true;
+    try { const st = lstatSync(link); mine = st.isSymbolicLink() || readFileSync(link, 'utf8').includes('arenanode.mjs'); } catch { mine = true; }
+    if (!mine) continue;
+    rmSync(link, { force: true });
+    symlinkSync(file, link);
+    let note = null;
+    if (!String(env.PATH || '').split(':').includes(d)) {
+      const profile = join(H || homedir(), platform === 'darwin' ? '.zprofile' : '.profile');
+      let text = ''; try { text = readFileSync(profile, 'utf8'); } catch { text = ''; }
+      if (!text.includes(d) && !(platform === 'linux' && text.includes('$HOME/.local/bin'))) appendFileSync(profile, `\n# the arenanode command (Arena node)\nexport PATH="${d}:$PATH"\n`);
+      note = `open a new terminal to use it (${d} goes on the PATH at login)`;
+    }
+    return { name, file, link, dir: d, note };
+  }
+  return { name, file, link: null, dir: null, note: `run it as ${file}` };
 }

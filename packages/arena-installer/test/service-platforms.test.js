@@ -23,7 +23,7 @@ test('macOS: the node and its tunnel as launchd agents, replaced on a second run
     assert.equal(r.ok, true, r.why);
     const plist = readFileSync(join(root, 'Library/LaunchAgents', `${LAUNCHD_LABEL}.plist`), 'utf8');
     assert.match(plist, /<key>RunAtLoad<\/key><true\/>/);
-    assert.match(plist, /exec '\/r\/runtime\/node' src\/main.js 8470/);
+    assert.match(plist, /<array><string>\/r\/runtime\/node<\/string><string>src\/run\.js<\/string><string>[^<]+\/arena\.conf<\/string><\/array>/);
     const t = readFileSync(join(root, 'Library/LaunchAgents', `${LAUNCHD_LABEL}.tunnel.plist`), 'utf8');
     assert.match(t, /<string>io.bitcoin-arena.node.tunnel<\/string>/);
     assert.match(t, /<string>\/r\/runtime\/cloudflared<\/string><string>tunnel<\/string>/);
@@ -43,8 +43,8 @@ test('Windows: launchers and logon tasks; without "start after reboot" started o
     assert.equal(r.ok, true, r.why);
     const cmd = readFileSync(join(home, 'arena-node.cmd'), 'utf8');
     assert.match(cmd, /^@echo off\r\n/);
-    assert.match(cmd, /for \/f "usebackq eol=# tokens=1,\* delims==" %%a in/);
-    assert.match(cmd, /"C:\\r\\runtime\\node.exe" src\\main.js 8470/);
+    assert.match(cmd, /"C:\\r\\runtime\\node.exe" src\\run\.js "[^"]+\\arena\.conf"/);
+    assert.ok(!cmd.includes('node.env'), 'no environment file: the settings are arena.conf');
     const create = calls.find((c) => c[0] === 'schtasks' && c[1] === '/create');
     assert.deepEqual(create.slice(1, 9), ['/create', '/f', '/tn', WINDOWS_TASK, '/sc', 'onlogon', '/rl', 'limited']);
     assert.ok(calls.some((c) => c[0] === 'schtasks' && c[1] === '/run'));

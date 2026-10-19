@@ -10,9 +10,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode } from '../src/update.js';
-import { seatUnit, unitDir, UNIT, waitHealthy } from '../src/service.js';
+import { unitDir, UNIT, waitHealthy } from '../src/service.js';
 
 const REPO = resolve(fileURLToPath(import.meta.url), '../../../..');
+// THE SERVICES AN INSTALLER BEFORE KANBAN #499 WROTE: the settings in node.env, the seat started as main.js <port> <database> - what an
+// update finds on every node installed before arena.conf, and moves to it
+const legacySeatUnit = ({ node, release, home, port }) => `[Unit]\nDescription=Arena node (testnet4) on port ${port}\n\n[Service]\nWorkingDirectory=${join(release, 'packages/arena-node')}\n`
+  + `EnvironmentFile=${join(home, 'node.env')}\nExecStart=${node} src/main.js ${port} ${join(home, 'node.db')}\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n`;
+const legacyPlist = ({ node, release, home, port }) => `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n  <key>Label</key><string>io.bitcoin-arena.node</string>\n`
+  + `  <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>set -a; . &apos;${home}/node.env&apos;; set +a; exec &apos;${node}&apos; src/main.js ${port} &apos;${home}/node.db&apos;</string></array>\n`
+  + `  <key>WorkingDirectory</key><string>${release}/packages/arena-node</string>\n  <key>RunAtLoad</key><true/>\n</dict>\n</plist>\n`;
 const freePort = () => new Promise((ok) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)); }); });
 
 /** A release tree from the repo at HEAD (what build-linux.sh archives), its npm dependencies linked. */
@@ -23,7 +30,7 @@ function releaseFrom(dir) {
   return dir;
 }
 
-/** systemctl --user, played: start runs the unit's ExecStart in its WorkingDirectory with its EnvironmentFile; stop kills it. */
+/** systemctl --user, played: start runs the unit's ExecStart in its WorkingDirectory (with its EnvironmentFile, an older unit's); stop kills it. */
 function fakeSystemd(env) {
   const running = new Map();
   const unitFile = (u) => readFileSync(join(unitDir(env), u), 'utf8');
@@ -39,9 +46,9 @@ function fakeSystemd(env) {
         const text = unitFile(u);
         const exec = /ExecStart=(.*)/.exec(text)[1].split(' ');
         const cwd = /WorkingDirectory=(.*)/.exec(text)[1];
-        const envFile = /EnvironmentFile=(.*)/.exec(text)[1];
+        const envFile = (/EnvironmentFile=(.*)/.exec(text) || [])[1];
         const e = { PATH: process.env.PATH };
-        for (const l of readFileSync(envFile, 'utf8').split('\n')) { const m = /^([A-Z0-9_]+)=(.*)$/.exec(l); if (m) e[m[1]] = m[2]; }
+        if (envFile) for (const l of readFileSync(envFile, 'utf8').split('\n')) { const m = /^([A-Z0-9_]+)=(.*)$/.exec(l); if (m) e[m[1]] = m[2]; }
         const c = spawn(exec[0], exec.slice(1), { cwd, env: e, stdio: 'ignore' });
         running.set(u, c);
       }
@@ -63,23 +70,30 @@ test('an update keeps the node, its settings and data; a broken release is rolle
   const broken = releaseFrom(join(root, 'releases/0.1.2-broken'));
   writeFileSync(join(broken, 'packages/arena-node/src/main.js'), "throw new Error('this release does not start');\n");
 
-  // the node as the installer leaves it: settings, state, an owner, its unit on release 0.1.0, running
+  // the node as an installer before arena.conf left it: node.env, state, an owner, its unit on release 0.1.0, running
   const settings = `ARENA_BIND=127.0.0.1\nARENA_DONATION_NETWORK=testnet4\nARENA_GAMES=${join(v1, 'packages/nextblock/plugin/nextblock.js')}\nARENA_ROLES=verify\n`;
   writeFileSync(join(home, 'node.env'), settings);
   writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
   writeFileSync(join(home, 'node.db.owner.json'), JSON.stringify({ pubkey: 'ab'.repeat(32), claimedAtMs: 1 }) + '\n');
   mkdirSync(unitDir(env), { recursive: true });
-  writeFileSync(join(unitDir(env), UNIT), seatUnit({ node: process.execPath, release: v1, home, port }));
+  writeFileSync(join(unitDir(env), UNIT), legacySeatUnit({ node: process.execPath, release: v1, home, port }));
   await sys.sh('systemctl', ['--user', 'start', UNIT]);
   const first = await waitHealthy({ port, waitMs: 60000, everyMs: 300 });
   assert.equal(first.ok, true, first.why);
   assert.equal(releaseOfUnit(readFileSync(join(unitDir(env), UNIT), 'utf8')), v1);
 
-  // to 0.1.1: the same node, the same settings file, its database and owner kept, a backup taken
+  // to 0.1.1: the same node, the same settings - moved into arena.conf (kanban #499) - its database and owner kept, a backup taken
   const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0 });
   assert.equal(up.ok, true, up.why);
   assert.deepEqual([up.from, up.to, up.identity], [v1, v2, first.identity], 'the same node answers from the new release');
-  assert.equal(readFileSync(join(home, 'node.env'), 'utf8'), settings, 'the settings untouched');
+  assert.equal(up.migrated, true);
+  const { parseConf } = await import('../../arena-node/src/arena-conf.js');
+  assert.deepEqual(parseConf(readFileSync(join(home, 'arena.conf'), 'utf8')).values, { network: 'testnet4', port: String(port), database: join(home, 'node.db'), bind: '127.0.0.1',
+    donation_network: 'testnet4', games: join(v1, 'packages/nextblock/plugin/nextblock.js'), roles: 'verify' }, 'the same settings (a release folder not named arena-node-<version> is not moved: envForRelease)');
+  assert.equal(readFileSync(join(home, 'node.env.migrated'), 'utf8'), settings, 'node.env kept aside as it was');
+  assert.ok(!existsSync(join(home, 'node.env')), 'and nothing reads it any more');
+  assert.match(readFileSync(join(unitDir(env), UNIT), 'utf8'), /^ExecStart=\S+ src\/run\.js \S+\/arena\.conf$/m, 'the unit starts from arena.conf');
+  assert.ok(!/EnvironmentFile/.test(readFileSync(join(unitDir(env), UNIT), 'utf8')));
   assert.equal(JSON.parse(readFileSync(join(home, 'node.db.owner.json'), 'utf8')).pubkey, 'ab'.repeat(32), 'the owner kept');
   assert.ok(existsSync(join(up.backup, 'node.db')) && existsSync(join(up.backup, 'node.env')), 'the backup holds the database and settings');
   assert.equal(releaseOfUnit(readFileSync(join(unitDir(env), UNIT), 'utf8')), v2);
@@ -127,7 +141,7 @@ function fakeLaunchd() {
       const label = /<key>Label<\/key><string>(.+?)<\/string>/.exec(text)[1];
       const argv = [...(/<key>ProgramArguments<\/key><array>(.*?)<\/array>/s.exec(text)[1].matchAll(/<string>(.*?)<\/string>/g))].map((m) => m[1].replace(/&apos;/g, "'").replace(/&amp;/g, '&'));
       const cwd = (/<key>WorkingDirectory<\/key><string>(.+?)<\/string>/.exec(text) || [])[1];
-      if (argv[0] === '/bin/sh') running.set(label, spawn(argv[0], argv.slice(1), { cwd, env: { PATH: process.env.PATH }, stdio: 'ignore' }));
+      if (argv[0] === '/bin/sh' || argv[0] === process.execPath) running.set(label, spawn(argv[0], argv.slice(1), { cwd, env: { PATH: process.env.PATH }, stdio: 'ignore' }));
     }
     return { ok: true, out: '', err: '' };
   };
@@ -151,7 +165,7 @@ test('macOS: the launchd agents that run the old release move to the new one, it
   writeFileSync(join(home, 'node.env'), 'ARENA_BIND=127.0.0.1\nARENA_DONATION_NETWORK=testnet4\nARENA_ROLES=verify\n');
   writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
   const seat = join(agents, `${LAUNCHD_LABEL}.plist`), tor = join(agents, `${LAUNCHD_LABEL}.tor.plist`), lnd = join(agents, `${LAUNCHD_LABEL}.lnd.plist`);
-  writeFileSync(seat, launchdPlist({ node: process.execPath, release: v1, home, port }));
+  writeFileSync(seat, legacyPlist({ node: process.execPath, release: v1, home, port }));
   const agent = (label, prog) => `<plist><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>${prog}</string></array></dict></plist>\n`;
   writeFileSync(tor, agent(`${LAUNCHD_LABEL}.tor`, join(v1, 'runtime/tor/tor')));
   writeFileSync(lnd, agent(`${LAUNCHD_LABEL}.lnd`, join(home, 'lnd-bin/lnd')));
@@ -162,6 +176,8 @@ test('macOS: the launchd agents that run the old release move to the new one, it
   const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0, platform: 'darwin' });
   assert.equal(up.ok, true, up.why);
   assert.deepEqual([up.from, up.to, up.identity], [v1, v2, first.identity], 'the same node answers from rc.13');
+  assert.match(readFileSync(seat, 'utf8'), /<string>src\/run\.js<\/string><string>[^<]+\/arena\.conf<\/string>/, 'the agent starts from arena.conf');
+  assert.match(readFileSync(join(home, 'arena.conf'), 'utf8'), /^roles=verify$/m);
   assert.equal(releaseOfPlist(readFileSync(seat, 'utf8')), v2);
   assert.match(readFileSync(tor, 'utf8'), new RegExp(`${v2}/runtime/tor/tor`), 'tor moved to the new release');
   assert.match(readFileSync(lnd, 'utf8'), /lnd-bin\/lnd/, 'LND, which names no release, untouched');
@@ -200,6 +216,8 @@ test('Windows: the launchers that run the old release move to the new one; stopp
   assert.match(readFileSync(join(home, 'arena-tor.cmd'), 'utf8'), /rc\.13-windows-x64\\runtime\\tor\\tor\.exe/, 'tor moved');
   assert.match(readFileSync(join(home, 'arena-lnd.cmd'), 'utf8'), /lnd-bin\\lnd\.exe/, 'LND untouched');
   assert.deepEqual(r.moved.map((f) => f.split(/[\\/]/).pop()).sort(), ['arena-node.cmd', 'arena-tor.cmd']);
+  assert.match(readFileSync(join(home, 'arena.conf'), 'utf8'), /\r\nroles=verify\r\n/, 'the settings moved into arena.conf, in CRLF');
+  assert.match(readFileSync(join(home, 'arena-node.cmd'), 'utf8'), /src\\run\.js "[^"]+\\arena\.conf"/);
   const kill = calls.find((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1)));
   assert.ok(kill && kill.at(-1).includes(`*${v1}*`), 'the processes of rc.12 are ended, by command line');
   assert.deepEqual(calls.filter((c) => c[0] === 'schtasks').map((c) => c.at(-1)).sort(), ['Arena node', 'Arena tor']);
@@ -243,7 +261,7 @@ test('a node on a quick tunnel: the tunnel starts first, its new name goes into 
   writeFileSync(join(home, 'node.env'), `ARENA_BIND=127.0.0.1\nARENA_WSS_${port}=${old}\nARENA_GUARDIAN_ENDPOINT_${port}=${old.replace('https:', 'wss:')}/guardian\n`);
   writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 }, reach: { mode: 'quick', port, url: old } }));
   const seat = join(agents, `${LAUNCHD_LABEL}.plist`), tunnel = join(agents, `${LAUNCHD_LABEL}.tunnel.plist`);
-  writeFileSync(seat, launchdPlist({ node: process.execPath, release: v1, home, port }));
+  writeFileSync(seat, legacyPlist({ node: process.execPath, release: v1, home, port }));
   writeFileSync(tunnel, `<plist><dict><key>Label</key><string>${LAUNCHD_LABEL}.tunnel</string><key>ProgramArguments</key><array><string>${join(v1, 'runtime/cloudflared')}</string></array></dict></plist>\n`);
   await sys.sh('launchctl', ['bootstrap', 'gui/501', seat]);
   const first = await waitHealthy({ port, waitMs: 60000, everyMs: 300 });
@@ -258,8 +276,8 @@ test('a node on a quick tunnel: the tunnel starts first, its new name goes into 
   const boots = sys.calls.slice(at).filter((c) => c[0] === 'launchctl' && c[1] === 'bootstrap').map((c) => c[3].split('/').pop());
   assert.deepEqual(boots, [`${LAUNCHD_LABEL}.tunnel.plist`, `${LAUNCHD_LABEL}.plist`], 'the tunnel first, the seat after the settings changed');
   assert.deepEqual(order, [['read the name', true]], 'the name logged after the tunnel started');
-  const envNow = readFileSync(join(home, 'node.env'), 'utf8');
-  assert.ok(!envNow.includes('conventional-cube') && envNow.includes(`ARENA_WSS_${port}=${fresh}`) && envNow.includes(`=wss://cult-turns-subscriptions-monitors.trycloudflare.com/guardian`), envNow);
+  const confNow = readFileSync(join(home, 'arena.conf'), 'utf8');
+  assert.ok(!confNow.includes('conventional-cube') && confNow.includes(`public_url=${fresh}`) && confNow.includes('guardian_endpoint=wss://cult-turns-subscriptions-monitors.trycloudflare.com/guardian'), confNow);
   assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).reach.url, fresh);
   assert.equal(up.identity, first.identity);
 });

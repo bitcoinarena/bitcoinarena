@@ -1,9 +1,10 @@
 // THE WIZARD'S STATE, ON DISK (kanban #471 step B.4: "the wizard can be left and resumed; every step's state is kept on disk").
 //
-// One directory holds everything the node is: the wizard state (state.json), the seat's settings (node.env, what the service hands
-// main.js), the seed (seed.hex) and the seat's database (node.db and the files main.js keeps beside it). Every file is the user's only
+// One directory holds everything the node is: the wizard state (state.json), the node's settings (arena.conf, what its services start
+// from - kanban #499), the seed (seed.hex) and the seat's database (node.db and the files main.js keeps beside it). Every file is the user's only
 // (0600, the directory 0700). An update keeps this directory as it is; the release is elsewhere.
-import { port } from './instance.js';
+import { port, INSTANCE, PORT_OFFSET } from './instance.js';
+import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -95,4 +96,16 @@ export function seatEnv(s, { home, release }) {
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
   lines.push(`ARENA_ROLES=${(s.roles || []).join(',')}`);
   return lines.join('\n') + '\n';
+}
+
+/**
+ * THE NODE'S SETTINGS FILE (kanban #499, the owner 2026-10-19: "Every setting must be in a config file arena.conf not in some PARAMETER
+ * env vars. the installer writes that config file"): the seat's settings above, with its port and store, this node's instance and port
+ * offset, as arena.conf (arena-node/src/arena-conf.js). The service starts `src/run.js <home>/arena.conf` and nothing else.
+ */
+export function seatConf(s, { home, release, platform = process.platform }) {
+  const values = { network: s.network || 'testnet4', ...envToConfValues(seatEnv(s, { home, release }), { port: s.port, database: join(home, 'node.db') }) };
+  if (INSTANCE) values.instance = INSTANCE;
+  if (PORT_OFFSET) values.port_offset = String(PORT_OFFSET);
+  return formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n' });
 }

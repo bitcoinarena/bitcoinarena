@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,11 +61,10 @@ function fakeBitcoind(cookie, { genesis = TESTNET4_GENESIS } = {}) {
   return new Promise((ok) => server.listen(0, '127.0.0.1', () => ok({ url: `http://127.0.0.1:${server.address().port}/`, close: () => server.close() })));
 }
 
-// THE SERVICE, WITHOUT SYSTEMD: the seat started from the unit's own command line and the env file the wizard wrote
+// THE SERVICE, WITHOUT SYSTEMD: the seat started from the unit's own command line - src/run.js and the arena.conf the wizard wrote
 function directInstall(children) {
   return async ({ release, home, port }) => {
     const env = { PATH: process.env.PATH, HOME: home };
-    for (const l of readFileSync(join(home, 'node.env'), 'utf8').split('\n')) { const m = /^([A-Z0-9_]+)=(.*)$/.exec(l); if (m) env[m[1]] = m[2]; }
     const unit = seatUnit({ node: process.execPath, release, home, port });
     const exec = /ExecStart=(.*)/.exec(unit)[1].split(' ');
     const cwd = /WorkingDirectory=(.*)/.exec(unit)[1];
@@ -172,11 +171,13 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(svc.ok, true, svc.why);
   assert.match(svc.identity, /^[0-9a-f]{64,66}$/);
   assert.equal(svc.login.ok, true, 'the running seat accepted the owner\'s signed login');
-  const env = readFileSync(join(home, 'node.env'), 'utf8');
-  assert.equal(env.includes(`ARENA_BITCOIND_URL=${btc.url}`), true);
-  assert.equal(env.includes('ARENA_BIND=0.0.0.0'), true, 'a direct node listens on every interface');
-  assert.equal(env.includes(`ARENA_WSS_${seatPort}=http://127.0.0.1:${seatPort}`), true, 'and names its public address');
-  assert.equal(statSync(join(home, 'node.env')).mode & 0o777, 0o600);
+  const conf = readFileSync(join(home, 'arena.conf'), 'utf8');
+  assert.equal(conf.includes(`\nbitcoind_url=${btc.url}\n`), true);
+  assert.equal(conf.includes('\nbind=0.0.0.0\n'), true, 'a direct node listens on every interface');
+  assert.equal(conf.includes(`\npublic_url=http://127.0.0.1:${seatPort}\n`), true, 'and names its public address');
+  assert.equal(conf.includes(`\nport=${seatPort}\n`), true, 'and its port');
+  assert.equal(existsSync(join(home, 'node.env')), false, 'no environment file (kanban #499)');
+  assert.equal(statSync(join(home, 'arena.conf')).mode & 0o777, 0o600);
   // a stranger's key is not the owner: the seat itself refuses it (proof the binding is the seat's, not the wizard's)
   const { signOwnerRequest } = await import('../../arena-node/src/owner.js');
   const { schnorr } = await import('@noble/curves/secp256k1.js');
@@ -268,6 +269,11 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(s.step, 'done');
   assert.match(readFileSync(join(home, 'bin', 'arena-node-start'), 'utf8'), /systemctl --user start .*arena-lnd.service .*arena-gateway.service .*arena-node.service/, 'the start script names this node\'s services');
   assert.ok((await c.get('/api/state')).json.launchers.start.endsWith('arena-node-start'));
+  // THE ARENANODE COMMAND (kanban #499): written with this node's home in it, and on the PATH (~/.local/bin)
+  const cmd = readFileSync(join(home, 'bin', 'arenanode'), 'utf8');
+  assert.match(cmd, /exec '[^']+' '[^']+\/packages\/arena-installer\/bin\/arenanode\.mjs' --home '[^']+' --name arenanode "\$@"/);
+  assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), join(home, 'bin', 'arenanode'), 'linked into ~/.local/bin');
+  assert.equal((await c.get('/api/state')).json.launchers.command.name, 'arenanode');
   const fin = (await c.post('/api/finish')).json;
   assert.deepEqual([fin.ok, fin.mode, fin.owner], [true, 'direct', `http://127.0.0.1:${seatPort}/Dashboard/owner`], 'the user is told how to reach the node');
   assert.equal((await c.get('/api/state')).status, 401, 'after finish the wizard answers nothing');

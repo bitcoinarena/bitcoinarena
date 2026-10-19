@@ -19,7 +19,7 @@ export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(h
 
 /** The seat's unit text. `node` is the runtime the release ships (process.execPath when run from it). */
 export function seatUnit({ node, release, home, port }) {
-  return `# The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${home}/node.env.
+  return `# The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${join(home, 'arena.conf')} (arenanode config).
 [Unit]
 Description=Arena node (testnet4) on port ${port}
 After=network-online.target ${BRIDGE_UNIT}
@@ -27,8 +27,7 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=${join(release, 'packages/arena-node')}
-EnvironmentFile=${join(home, 'node.env')}
-ExecStart=${node} src/main.js ${port} ${join(home, 'node.db')}
+ExecStart=${node} src/run.js ${join(home, 'arena.conf')}
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=60
@@ -98,18 +97,17 @@ export async function installService({ node = process.execPath, release, home, p
 }
 
 // MACOS: A LAUNCHD AGENT (kanban #471 slice 4) - ~/Library/LaunchAgents/io.bitcoin-arena.node.plist, the seat from the release with
-// its settings file read by a small shell line (launchd has no EnvironmentFile), kept alive, logged beside the node's home.
+// its settings file (src/run.js <home>/arena.conf, kanban #499), kept alive, logged beside the node's home.
 export const LAUNCHD_LABEL = named('io.bitcoin-arena.node');
 const xml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function launchdPlist({ node, release, home, port, boot = true }) {
-  const cmd = `set -a; . '${home}/node.env'; set +a; exec '${node}' src/main.js ${port} '${home}/node.db'`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${xml(home)}/node.env. -->
+<!-- The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${xml(home)}/arena.conf (arenanode config). -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
-  <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>${xml(cmd)}</string></array>
+  <key>ProgramArguments</key><array><string>${xml(node)}</string><string>src/run.js</string><string>${xml(home)}/arena.conf</string></array>
   <key>WorkingDirectory</key><string>${xml(release)}/packages/arena-node</string>
   <key>RunAtLoad</key><${boot ? 'true' : 'false'}/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
@@ -122,13 +120,12 @@ export function launchdPlist({ node, release, home, port, boot = true }) {
 }
 
 // WINDOWS: A SCHEDULED TASK (kanban #471 slice 4; ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
-// at logon (or at start-up with the user's password), restarted on failure, running a .cmd that reads node.env and starts the seat.
+// at logon (or at start-up with the user's password), restarted on failure, running a .cmd that starts the seat from arena.conf.
 export const WINDOWS_TASK = named('Arena node', ' ');
 export function windowsLauncher({ node, release, home, port }) {
-  return ['@echo off', 'rem The Arena node (kanban #471), written by the installer: node.env read, then the seat started.',
-    `for /f "usebackq eol=# tokens=1,* delims==" %%a in ("${home}\\node.env") do set "%%a=%%b"`,
+  return ['@echo off', 'rem The Arena node (kanban #471), written by the installer: the seat started from its settings, arena.conf (arenanode config).',
     `cd /d "${release}\\packages\\arena-node"`,
-    `"${node}" src\\main.js ${port} "${home}\\node.db" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
+    `"${node}" src\\run.js "${home}\\arena.conf" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
 }
 /**
  * START A PROGRAM AT EVERY LOGON, AND NOW, ON WINDOWS. A scheduled task at logon first; Windows refuses that to a user without

@@ -6438,6 +6438,45 @@
     }
    }
   },
+  "/owner/services": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] The node's services and their state",
+    "description": "The owner page's Services card: every service of the installed node - Bitcoin Core or the chain bridge, Tor, LND, the gateway, the guardian (inside the seat), the seat, its tunnel, the liquidity provider - running or not, with what it answers (LND synced, the gateway's federations, the public address reaching this node). The same view as `arenanode status` on the node's machine.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, version, instance, port, publicUrl, roles, settings, command, services:[{id, title, running, pid, detail, inside, probe:{ok, says}}]}; 401/403 when not the owner; 501 for a node not started from the installer's arena.conf\n\nSource: `packages/arena-node/src/server.js` line 4649.",
+    "operationId": "post_owner_services",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"services\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs]), or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, version, instance, port, publicUrl, roles, settings:\"arena.conf\", command:\"arenanode\", services:[{id:\"lnd\", title:\"Lightning (LND)\", running:true, pid, detail, probe:{ok:true, says:\"synced at block \u2026\"}}]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node was not started from the installer's arena.conf.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/owner/settings": {
    "post": {
     "tags": [

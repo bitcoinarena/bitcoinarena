@@ -194,6 +194,7 @@ async function area() {
       <div class="row"><span>Node key</span><b>${esc(state.node.slice(0, 16))}…</b></div>
       <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
+    <h2>Services</h2><div class="card" id="services"><p class="sub">reading this node's services…</p></div>
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Bond</h2><div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
     <h2>Custody</h2><div class="card" id="custody"><p class="sub">reading whether this node holds custody…</p></div>
@@ -236,6 +237,7 @@ async function area() {
   devClients();
   ballotsPanel();
   standingPanel();
+  servicesPanel();
   bondPanel();
   custodyPanel();
   liquidityPanel();
@@ -310,6 +312,22 @@ async function liquidityPanel() {
     if (!r.ok) { e.target.disabled = false; $('liq-msg').textContent = r.why || 'no new address'; return; }
     await liquidityPanel(); $('liq-msg').textContent = `New address: ${r.address}`;
   };
+}
+// THE NODE'S SERVICES (kanban #499): each one's state and what it answers, as `arenanode status` shows them on the node's machine
+async function servicesPanel() {
+  const el = $('services');
+  let r; try { r = await post('/owner/services', await signed('services')); } catch (x) { r = { ok: false, why: x.message }; }
+  if (!r || !r.ok) { el.innerHTML = `<p class="sub">${esc((r && r.why) || 'this seat does not show its services')}</p>`; return; }
+  const bad = r.services.filter((s) => !s.running || (s.probe && !s.probe.ok)).length;
+  el.innerHTML = `${r.services.map((s) => {
+    const ok = !s.running ? false : s.probe ? s.probe.ok : true;
+    return `<div class="row"><span>${ok ? '🟢' : '🔴'} ${esc(s.title)}${s.inside ? ' <span class="sub">(inside the node)</span>' : ''}</span><b>${s.running ? 'running' : 'stopped'}</b></div>
+      <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>`;
+  }).join('')}
+    <p class="${bad ? 'bad' : 'ok'}">${bad ? `${bad} service(s) need attention.` : 'All services run.'}</p>
+    <p class="sub">On the node's machine: <code>${esc(r.command)} status</code>, <code>${esc(r.command)} doctor</code> (each problem with its fix), <code>${esc(r.command)} restart &lt;service&gt;</code>. Settings: ${esc(r.settings || '?')} (<code>${esc(r.command)} config</code>).</p>
+    <p><button id="svc-again">Check again</button></p>`;
+  $('svc-again').onclick = () => { el.innerHTML = '<p class="sub">reading this node\'s services…</p>'; servicesPanel(); };
 }
 async function releasePanel() {
   let v = null;

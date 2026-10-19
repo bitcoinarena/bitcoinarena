@@ -1,0 +1,49 @@
+// THE OWNER AREA'S SERVICES CARD (kanban #499, the owner 2026-10-19: "Also have a service overview in the owners area with the status of all
+// services"): the owner signs it, the seat answers its installed node's services from the node's home (ARENA_HOME, set by src/run.js
+// from arena.conf) without a local path in it; another key is refused; a seat not started from arena.conf says so.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { ownerSecretFromSeed, signOwnerRequest } from '../src/owner.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
+import { joinedWithLock } from './lock-fixture.js';
+
+test('on a running seat: the owner\'s signed ask answers every service of the node, no local paths; another key refused', async () => {
+  const secret = ownerSecretFromSeed(new Uint8Array(32).fill(7));
+  const ownerRec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
+  const store = { read: () => ownerRec, write: (o) => Object.assign(ownerRec, o), writeCode: () => {} };
+  const root = mkdtempSync(join(tmpdir(), 'owner-services-'));
+  const was = { home: process.env.ARENA_HOME, xdg: process.env.XDG_CONFIG_HOME };
+  const s = await joinedWithLock({ owner: { store } });
+  try {
+    const base = `http://127.0.0.1:${s.d.port}`;
+    const node = (await (await fetch(`${base}/owner`)).json()).node;
+    const req = (k) => signOwnerRequest({ node, action: 'services', args: {}, secret: k, sign: (m, x) => schnorr.sign(m, x), pubkeyOf: (x) => schnorr.getPublicKey(x) });
+    const post = (body) => fetch(`${base}/owner/services`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    delete process.env.ARENA_HOME;
+    const none = await post(req(secret));
+    assert.equal(none.status, 501); assert.match((await none.json()).why, /not installed by the Arena installer/);
+    // an installed node: its arena.conf and the seat's unit (the unit's state is asked of systemctl, which this machine may not have)
+    const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'arena.conf'), `port=${s.d.port}\nroles=verify\n`);
+    writeFileSync(join(home, 'state.json'), '{}');
+    process.env.XDG_CONFIG_HOME = join(root, 'config');
+    mkdirSync(join(root, 'config', 'systemd', 'user'), { recursive: true });
+    writeFileSync(join(root, 'config', 'systemd', 'user', 'arena-node.service'), '[Service]\n');
+    process.env.ARENA_HOME = home;
+    assert.equal((await post(req(ownerSecretFromSeed(new Uint8Array(32).fill(9))))).status, 403, 'another key: refused');
+    const r = await post(req(secret));
+    assert.equal(r.status, 200);
+    const j = await r.json();
+    assert.deepEqual([j.ok, j.port, j.roles, j.settings, j.command], [true, s.d.port, 'verify', 'arena.conf', 'arenanode']);
+    assert.deepEqual(j.services.map((x) => [x.id, x.title]), [['node', 'Arena node (seat)']]);
+    assert.equal(typeof j.services[0].running, 'boolean');
+    assert.ok(!JSON.stringify(j).includes(root), 'no local paths in the answer');
+  } finally {
+    for (const [k, v] of [['ARENA_HOME', was.home], ['XDG_CONFIG_HOME', was.xdg]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await s.d.close(); rmSync(root, { recursive: true, force: true });
+  }
+});
