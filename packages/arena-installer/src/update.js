@@ -22,6 +22,7 @@ import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
 import { writeCommand } from './launchers.js';
+import { control } from './node-services.js';
 import { quickTunnelUrl } from './reach.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
@@ -50,6 +51,33 @@ export function envForRelease(text, newRelease, exists = existsSync) {
     const moved = newRelease + (m[3] || '');
     return exists(moved) ? `${m[1]}=${moved}${cr}` : line;
   }).join('\n');
+}
+
+/**
+ * THE PEER PORTS OF AN OLDER INSTALL ON THIS MACHINE ONLY (kanban #471, the Windows VM 2026-10-19: Windows Firewall asked to open bitcoind
+ * and lnd to public networks). What a new install writes (bitcoind.js, lnd.js), applied to the node's own files when they still have the
+ * old default: the node's Bitcoin Core gets bind=127.0.0.1:<its port> when it names no bind; LND behind Tor (and no outside address)
+ * listens on 127.0.0.1 instead of 0.0.0.0. Answers the services whose settings changed ('bitcoind-<network>', 'lnd'), to restart.
+ */
+export function peerPortsLocal(home) {
+  const changed = [];
+  for (const net of ['testnet4', 'mainnet']) {
+    const f = join(home, `bitcoin-${net}`, 'bitcoin.conf');
+    if (!existsSync(f)) continue;
+    const t = readFileSync(f, 'utf8');
+    if (/^bind=/m.test(t) || !/^port=\d+\r?$/m.test(t)) continue;
+    writeFileSync(f, t.replace(/^port=(\d+)(\r?)$/m, 'port=$1$2\nbind=127.0.0.1:$1$2'));
+    changed.push(`bitcoind-${net}`);
+  }
+  const l = join(home, 'lnd', 'lnd.conf');
+  if (existsSync(l)) {
+    const t = readFileSync(l, 'utf8');
+    if (/^tor\.active=true\r?$/m.test(t) && !/^externalip=/m.test(t) && /^listen=0\.0\.0\.0:/m.test(t)) {
+      writeFileSync(l, t.replace(/^listen=0\.0\.0\.0:/m, 'listen=127.0.0.1:'), { mode: 0o600 });
+      changed.push('lnd');
+    }
+  }
+  return changed;
 }
 
 /** Copy the node's files into backups/<stamp>/: { dir, files }. */
@@ -174,7 +202,7 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
-  quickUrl = quickTunnelUrl }) {
+  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o) }) {
   // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
   // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
   waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
@@ -246,13 +274,19 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, ...(reachUrl ? { reach: { ...state.reach, url: reachUrl } } : {}),
       release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
     if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
+    // the peer ports on this machine only, for a node installed before that was the default; those services restarted to take it
+    let local = [];
+    try {
+      local = peerPortsLocal(home);
+      for (const id of local) await restartService(id, { home, platform, env, sh });
+    } catch (e) { local = [`not changed: ${e.message}`]; }
     // the arenanode command runs the new release from now on
     let command = null;
     try {
       command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
       if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
     } catch (e) { command = { why: e.message }; }
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating,
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local,
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
   // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows
