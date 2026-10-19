@@ -305,3 +305,31 @@ test('a rollback puts the backup back even while Windows still holds a file: bus
   const other = await restoreNode('H', { dir: 'B', files: ['x'] }, { copy: () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); }, pause: async () => { throw new Error('no retry'); } });
   assert.deepEqual(other.failed, ['x: ENOENT'], 'only a busy file is tried again');
 });
+
+test('a launcher left on an OLDER release moves too, and that release\'s processes end (Windows VM, 2026-10-19: custody stayed on rc.25)', async () => {
+  const { windowsLauncher } = await import('../src/service.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-older-'));
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const rel = 'C:\\Users\\arena\\.arena-node\\releases';
+  const rc25 = `${rel}\\arena-node-0.1.0-rc.25-windows-x64`, v1 = `${rel}\\arena-node-2026.1.0-windows-x64`, v2 = `${rel}\\arena-node-2026.1.1-windows-x64`;
+  writeFileSync(join(home, 'arena.conf'), 'network=testnet4\r\nroles=verify\r\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+  writeFileSync(join(home, 'arena-node.cmd'), windowsLauncher({ node: `${v1}\\runtime\\node.exe`, release: v1, home, port: 8470 }));
+  writeFileSync(join(home, 'arena-custody.cmd'), `@echo off\r\n"${rc25}\\runtime\\node.exe" "${rc25}\\packages\\arena-installer\\bin\\arena-custody.mjs"\r\n`);
+  writeFileSync(join(home, 'arena-lnd.cmd'), `@echo off\r\n"${home}\\lnd-bin\\lnd.exe"\r\n`);
+  const calls = [];
+  const sh = async (cmd, args) => { calls.push([cmd, ...args]); return { ok: true, out: '', err: '' }; };
+  const fetcher = async () => ({ status: 200, arrayBuffer: async () => new Uint8Array(32).fill(0xab).buffer });
+  try {
+    const r = await updateNode({ home, newRelease: v2, port: 8470, node: `${v2}\\runtime\\node.exe`, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 2000 });
+    assert.equal(r.ok, true, r.why);
+    const custody = readFileSync(join(home, 'arena-custody.cmd'), 'utf8');
+    assert.match(custody, /2026\.1\.1-windows-x64\\runtime\\node\.exe/, 'custody moved to the new release');
+    assert.doesNotMatch(custody, /rc\.25/);
+    assert.match(readFileSync(join(home, 'arena-lnd.cmd'), 'utf8'), /lnd-bin\\lnd\.exe/, 'a launcher naming no release is untouched');
+    assert.deepEqual(r.moved.map((f) => f.split(/[\\/]/).pop()).sort(), ['arena-custody.cmd', 'arena-node.cmd']);
+    const kills = calls.filter((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1))).map((c) => c.at(-1));
+    assert.ok(kills.some((k) => k.includes("'*\\arena-node-2026.1.0-windows-x64\\*'")), 'the release it updates from ends');
+    assert.ok(kills.some((k) => k.includes("'*\\arena-node-0.1.0-rc.25-windows-x64\\*'")), 'and the older one custody still ran');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
