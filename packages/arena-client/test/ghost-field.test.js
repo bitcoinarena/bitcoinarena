@@ -247,15 +247,19 @@ test('the page ships the client it is written against, and one consumer of onGho
   const exported = new Set(Object.keys(await import(root + 'packages/arena-client/dist/arena-client.js')
     .then(() => ({})).catch(() => ({}))));
   const { createRequire: requireFrom } = await import('node:module');
-  const bundle = requireFrom(import.meta.url)(root + 'packages/arena-client/dist/arena-client.js');
+  // AS THE PAGE HAS IT: the engine's bundle, then Tick Tock's ghost page, which puts the ghosts on it (§0A.2, kanban #525)
+  const window = { BLWPCLIENT: { ...requireFrom(import.meta.url)(root + 'packages/arena-client/dist/arena-client.js') } };
+  new Function('window', readFileSync(root + 'packages/nextblock/page/ghost-page.js', 'utf8'))(window);
+  const bundle = window.BLWPCLIENT;
   for (const name of new Set([...jslib.matchAll(/BLWPCLIENT\.([A-Za-z0-9_]+)/g)].map((m) => m[1])))
     assert.ok(bundle[name] !== undefined || exported.has(name),
-      `blwp.jslib calls BLWPCLIENT.${name} and the bundle does not export it`);
+      `blwp.jslib calls BLWPCLIENT.${name} and neither the bundle nor Tick Tock's ghost page puts it there`);
 
   // ONE CONSUMER OF onGhost IN THE SOURCE, and it is the measured one.
   // the client's source and Tick Tock's page part (packages/nextblock/page, where the field lives since kanban #521)
   const dirs = [new URL('../src/', import.meta.url).pathname, new URL('../../nextblock/page/', import.meta.url).pathname];
-  const sets = dirs.flatMap((dir) => readdirSync(dir).filter((f) => /onGhost\s*=/.test(readFileSync(dir + f, 'utf8'))));
+  // (ghost-page.js is the build of ghost-field.js - ghost-page.test holds it to that - so it is not a second consumer)
+  const sets = dirs.flatMap((dir) => readdirSync(dir).filter((f) => f !== 'ghost-page.js' && /onGhost\s*=/.test(readFileSync(dir + f, 'utf8'))));
   assert.deepEqual(sets.sort(), ['client.js', 'ghost-field.js'],
     'onGhost is declared or set somewhere other than the client and the field');
 });
