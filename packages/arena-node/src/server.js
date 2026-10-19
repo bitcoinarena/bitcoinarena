@@ -42,6 +42,7 @@ import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/ga
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { capacityView } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -3760,6 +3761,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // THE FEDERATION'S GATEWAY SEATS (spec §23A.9gateway-watch.js): a guardian probes, every 10 min, the gateways its
   // federation's seated guardians claim, and ranks them per epoch; GET /gateway-seats says its ranking
+  const capacityWas = {};   // the band each federation was in at this seat's last /capacity (§23A.3a's gap)
   let gatewayWatch = null;
   if (guardian && guardian.dataDir && typeof chainTip === 'function' && fedRecords) {
     gatewayWatch = createGatewayWatch({ federationId: async () => federationOfDir(guardian.dataDir),
@@ -7618,6 +7620,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/seating-sig') { const m = seating.mySignature(rid, role); return m ? json(res, 200, m) : text(res, 404, 'this node signed no seating for that round and role'); }
         const cert = seating.certOf(rid, role);
         return cert ? json(res, 200, { cert }) : text(res, 404, 'no seating certificate for that round and role here');
+      }
+      // CAPACITY PRESSURE (spec §23A.3a, kanban #543): every federation this seat holds a record of - its load, band, headroom, the bond B*
+      // that would relieve it and the seated guardians below it, the gateways' peg-ins against P* (this seat's own federation: the gateways
+      // its guardian watches) - and the network's band, B*_net and the installer's minimum bond. Public, read by the health page, the
+      // node dashboard, the owner page and the installer
+      if (req.method === 'GET' && url.pathname === '/capacity') {
+        const bondMin = BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000), pegInMin = BigInt(process.env.ARENA_PEG_IN_MIN || 50000);
+        const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
+        const entries = now.ok ? now.entries : [];
+        const gw = gatewayWatch ? await gatewayWatch.view().catch(() => null) : null;
+        const feds = (fedRecords ? fedRecords.list() : []).map((f) => {
+          const rec = fedRecords.recordOf(f.federation);
+          const seated = (fedRecords.seatedGuardians(f.federation) || []).map((k) => toHex(k));
+          return { federation: f.federation, status: f.status, nominal: rec && rec.record ? rec.record.nominal : seated.length || 1,
+            reserveSats: f.reserveSats || '0', exposureCapSats: f.exposureCapSats || '0',
+            guardianBonds: seated.map((node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return { node, bondSats: e ? BigInt(e.bondSats) : 0n }; }),
+            gateways: gw && gw.ok && gw.federationId === f.federation ? Object.entries(gw.gateways || {}).map(([node, g]) => ({ node, pegInSats: BigInt(g.pegInSats || 0) })) : [] };
+        });
+        const v = capacityView({ federations: feds, bondMinSats: bondMin, pegInMinSats: pegInMin, was: capacityWas });
+        for (const r of v.federations) capacityWas[r.federation] = r.band;
+        return claimJson(200, { ok: true, node: toHex(round.pubkey), censusHeight: now.ok ? now.height : null, ...v });
       }
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
