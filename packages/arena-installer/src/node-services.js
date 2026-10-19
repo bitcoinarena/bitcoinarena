@@ -103,10 +103,13 @@ async function unixProcesses(sh) {
 const uidOf = () => (typeof process.getuid === 'function' ? process.getuid() : 501);
 
 /** One service's state: { running, pid, detail }. `procs` the machine's processes (Windows, the guardian). */
-async function stateOf(svc, { platform, sh, procs, nodePid }) {
+async function stateOf(svc, { platform, sh, procs, nodePid, nodeRunning }) {
   if (svc.inside) {
     const g = procs.find((p) => /fedimintd(\.exe)?$/i.test(p.name) && nodePid && p.ppid === nodePid);
-    return g ? { running: true, pid: g.pid, detail: 'runs inside the node' } : { running: false, pid: null, detail: nodePid ? 'the node runs without it' : 'the node is not running' };
+    if (g) return { running: true, pid: g.pid, detail: 'runs inside the node' };
+    // the node's own process not visible to this user (the Windows window, v0.1.1 in the VM): neither is its guardian - its API decides
+    if (nodeRunning === null) return { running: null, pid: null, detail: 'its process is not visible to this user' };
+    return { running: false, pid: null, detail: nodePid ? 'the node runs without it' : 'the node is not running' };
   }
   if (platform === 'linux') {
     const r = await sh('systemctl', ['--user', 'show', svc.name, '-p', 'ActiveState', '-p', 'SubState', '-p', 'MainPID', '-p', 'NRestarts']);
@@ -232,10 +235,10 @@ export async function overview({ home, platform = process.platform, env = proces
   const svcs = installedServices({ home, platform, env, node });
   const procs = platform === 'win32' ? await windowsProcesses(sh) : svcs.some((x) => x.inside) ? await unixProcesses(sh) : [];
   const rows = [];
-  let nodePid = null;
+  let nodePid = null, nodeRunning = false;
   for (const svc of svcs) {
-    const st = await stateOf(svc, { platform, sh, procs, nodePid });
-    if (svc.id === 'node') nodePid = st.pid;
+    const st = await stateOf(svc, { platform, sh, procs, nodePid, nodeRunning });
+    if (svc.id === 'node') { nodePid = st.pid; nodeRunning = st.running; }
     rows.push({ id: svc.id, title: svc.title, name: svc.name, file: svc.file, inside: svc.inside || null, ...st });
   }
   if (probes) {
@@ -246,6 +249,7 @@ export async function overview({ home, platform = process.platform, env = proces
         r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs });
         if (r.probe) r.running = r.probe.ok ? true : null;
         if (r.probe && r.probe.ok) r.detail = 'answers (its process is not visible to this user)';
+        else if (r.probe) r.detail = `its process is not visible to this user, and ${r.probe.says}`;
         if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
         continue;
       }

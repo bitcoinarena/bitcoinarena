@@ -233,6 +233,7 @@ test('Windows, processes this user cannot see into (the Arena Node window in the
     const home = join(root, 'home'); mkdirSync(home, { recursive: true });
     writeFileSync(join(home, 'arena.conf'), formatConf({ port: String(s.port) }));
     writeFileSync(join(home, 'state.json'), '{}');
+    writeFileSync(join(home, 'arena.conf'), formatConf({ port: String(s.port), fedimintd: 'C:\\r\\fedimintd.exe' }));
     for (const id2 of ['node', 'custody']) writeFileSync(join(home, `arena-${id2}.cmd`), '@echo off\r\n');
     // Win32_Process as a limited user sees other sessions' processes without their command lines
     const sh = async (cmd) => (cmd === 'powershell' ? { ok: true, out: JSON.stringify([{ ProcessId: 10, ParentProcessId: 4, Name: 'cmd.exe', CommandLine: null },
@@ -241,6 +242,8 @@ test('Windows, processes this user cannot see into (the Arena Node window in the
     const by = Object.fromEntries(v.services.map((x) => [x.id, x]));
     assert.deepEqual([by.node.running, by.node.detail], [true, 'answers (its process is not visible to this user)'], 'the seat answers: running');
     assert.deepEqual([by.custody.running, by.custody.detail], [null, 'its process is not visible to this user'], 'nothing to ask: unknown');
+    assert.equal(by.guardian.running, null, 'the guardian inside a node this user cannot see: not "stopped"');
+    assert.match(by.guardian.detail, /not visible to this user, and nothing listens on its API port/, 'and why it is unknown');
     const out = [];
     const code = await main(['status'], { home, io: { out: (l) => out.push(l), err: (l) => out.push(l) }, deps: { platform: 'win32', env: {}, sh } });
     assert.equal(code, 0, 'unknown is no failure');
