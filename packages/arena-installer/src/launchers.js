@@ -126,9 +126,11 @@ export function writeCommand({ home, release, node, platform = process.platform,
     const file = join(bin, `${name}.cmd`);
     writeFileSync(file, ['@echo off', `rem ${what}`, `"${node}" "${script}" --home "${home}" --name ${name} %*`].join('\r\n') + '\r\n');
     const d = bin.replace(/'/g, "''");
-    if (run) run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-      `$p = [Environment]::GetEnvironmentVariable('Path', 'User'); if (-not (($p -split ';') -contains '${d}')) { [Environment]::SetEnvironmentVariable('Path', $(if ($p) { $p + ';${d}' } else { '${d}' }), 'User') }`]);
-    return { name, file, link: null, dir: bin, note: 'open a new console window to use it' };
+    // `pathSet`: the PATH change, for the caller to await - measured in the Windows VM (rc.25 --update over ssh): not awaited, the
+    // update's process ended first and Windows ended the PowerShell with its session, so the user PATH never got the folder
+    const pathSet = run ? Promise.resolve(run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `$p = [Environment]::GetEnvironmentVariable('Path', 'User'); if (-not (($p -split ';') -contains '${d}')) { [Environment]::SetEnvironmentVariable('Path', $(if ($p) { $p + ';${d}' } else { '${d}' }), 'User') }`])) : null;
+    return { name, file, link: null, dir: bin, note: 'open a new console window to use it', pathSet };
   }
   const file = join(bin, name);
   writeFileSync(file, sh([`# ${what}`, `exec ${q(node)} ${q(script)} --home ${q(home)} --name ${name} "$@"`]), { mode: 0o755 });

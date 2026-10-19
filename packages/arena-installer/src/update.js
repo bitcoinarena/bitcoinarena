@@ -248,7 +248,10 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
     // the arenanode command runs the new release from now on
     let command = null;
-    try { command = writeCommand({ home, release: newRelease, node, platform, env, run: sh }); } catch (e) { command = { why: e.message }; }
+    try {
+      command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
+      if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
+    } catch (e) { command = { why: e.message }; }
     return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating,
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }

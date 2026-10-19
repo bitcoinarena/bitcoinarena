@@ -599,7 +599,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         : [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'arena-install.mjs'), '--add-custody', '--home', state.home];
       const l = launch({ home: state.home, s, ownerUrl, addCustody, release,
         run: (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, () => ok())) });
-      state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, command: l.command || null, atMs: Date.now() } });
+      const { pathSet, ...command } = l.command || {};
+      if (pathSet) pathSet.catch(() => {});   // the wizard runs on: the PATH change finishes while it does
+      state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, command: l.command ? command : null, atMs: Date.now() } });
       return l;
     } catch (e) { log(`launchers: ${e.message}`); return null; }
   };
