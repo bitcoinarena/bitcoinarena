@@ -4890,6 +4890,7 @@ Bitcoin cannot check liveness either.
 |---|---|---|
 | **Down** for less than `abandon_blocks` | an outage | nothing; Fedimint absorbs up to `f`; not recorded |
 | **Departure with notice** | a signed `(federation_id, peer, leave_after_height)` with `leave_after >= now + departure_notice`, posted like a record | recorded `DEPARTED` at that height; if the federation would then be DRAINING, succession starts **now** (§23A.6) so the successor is OPEN before he goes; he serves until the earlier of the federation's CLOSED and the successor's OPEN, then his seat is gone with no offence and **his bond is untouched**: he stays a bonded census node, keeps sitting as a seat, and may be drawn as a guardian again (below) |
+| **Emergency departure** (protocol 17) | the node's owner, with the node offline, posts a leave request signed by the node's **emergency key** (§23A.5a) at any seat | a node with no guardian role leaves the seating at once, its bond untouched; a guardian whose request arrives **before** `abandon_blocks` from his last seen height is recorded `DEPARTED` at once, the succession starts at once (§23A.6), and his bond is untouched; a request that arrives later changes nothing: the absence is abandonment |
 | **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
 
 **Leaving is legitimate, and costs nothing (RULED 2026-09-21).**
@@ -5077,6 +5078,36 @@ What the bond is *not*: restitution. A slash does not refill a reserve and
 does not unfreeze a halt (§24A.3's second property, unchanged). It makes
 walking away cost more than staying, which is the whole and only job of a
 bond here.
+
+### 23A.5a The owner's emergency key: leaving while the node is offline (protocol 17)
+
+*(RULED 2026-10-19: "owner emergency key when node is offline ... derived von den 24 words, und erlaubt es bei jeder anderen Node sich
+da einzuloggen und einen leave request abzusetzen"; "einloggen mit einem Emergency key. Es ist fishy sich mit den 24 Wörtern
+einzuloggen"; the two cases below: "It works the way you proposed. Keep the bond.")*
+
+A node that will be offline longer than it may be absent - its owner travelling, its machine broken - would otherwise lose its bond
+to the abandonment rule. The owner takes it out instead, from anywhere, with a key that can do nothing else.
+
+- **The key.** Derived from the node's 24 words on its own path (`ARENA/v1/EmergencyKey`), never stored on the node. The owner keeps it
+  as a short **emergency code** (written down at install, shown again on the owner page). The 24 words are never typed anywhere else.
+- **Named in the bond advert.** The advertisement carries the key's public key (an optional field, marker `0x5e`, protocol 17), so every
+  seat checks a request against the census. A node without it in its advert has no emergency path.
+- **The request.** `(node_key, posted_at)`, signed by the emergency key under `ARENA/v1/EmergencyDeparture`, posted to any seat (any
+  node's page or the Arena site sign it in the browser from the code); seats pass it on as they pass departure notices.
+- **Taken only fresh.** `posted_at` is the signer's own word, so a seat takes a request only while its tip is at most 6 blocks past
+  `posted_at` (`EMERGENCY_FRESH_BLOCKS`), and signs a guardian `DEPARTED` only for a request it took itself: a late owner cannot date a
+  request back into time without most of the federation's guardian seats.
+- **What it does**, by role:
+
+| The node | Its emergency departure | Bond |
+|---|---|---|
+| no guardian role (game/verify, settlement, liquidity) | out of every seating from `posted_at` on | untouched |
+| a guardian, request **before** `abandon_blocks` from his last seen height | `DEPARTED` at once; the federation's succession starts at once, as for a notice that would make it DRAINING | untouched |
+| a guardian, request **after** `abandon_blocks` | nothing changes: the absence is abandonment (§23A.4), attested and slashed | slashed |
+
+- **A node online leaves as before**: the notice of `departure_notice` blocks. Only the emergency key skips the notice, and only while
+  the node is gone - a node that answers again after its request is a new seat only by a new advertisement.
+- **Leaked, the code can only take the node out** - no money, no settings, nothing signed in the node's name.
 
 ## 23A.6 Succession: back to nominal size
 

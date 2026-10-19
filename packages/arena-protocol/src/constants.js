@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -115,6 +115,8 @@ export const GATEWAY_SEAT_VERSION = 15;
 /** 2026.0.16 (§23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
  * federation's liquidity providers, who open incoming channels to new nodes). */
 export const LIQUIDITY_VERSION = 16;
+/** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
+export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -348,6 +350,8 @@ export const TYPE_CONFIG_PROPOSAL = 0x23;
 // A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5); 0x23 is the ballot's
 export const TYPE_ABSENCE_ATTESTATION = 0x24;
 export const TYPE_DEPARTURE_NOTICE = 0x25;
+/** A leave request signed by a node's emergency key, for a node that is offline (§23A.5a). */
+export const TYPE_EMERGENCY_DEPARTURE = 0x35;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -567,6 +571,9 @@ export const TAG = {
   // ABSENCE AND DEPARTURE (§23A.4-5): what a guardian signs, and an abandonment proof's id
   absenceAttestation: 'ARENA/v1/AbsenceAttestation',
   departureNotice: 'ARENA/v1/DepartureNotice',
+  emergencyKey: 'ARENA/v1/EmergencyKey',
+  emergencySecret: 'ARENA/v1/EmergencySecret',
+  emergencyDeparture: 'ARENA/v1/EmergencyDeparture',
   abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 

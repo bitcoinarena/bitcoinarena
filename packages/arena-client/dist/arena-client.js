@@ -614,7 +614,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -704,6 +704,8 @@ const GATEWAY_SEAT_VERSION = 15;
 /** 2026.0.16 (§23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
  * federation's liquidity providers, who open incoming channels to new nodes). */
 const LIQUIDITY_VERSION = 16;
+/** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
+const EMERGENCY_VERSION = 17;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -937,6 +939,8 @@ const TYPE_CONFIG_PROPOSAL = 0x23;
 // A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5); 0x23 is the ballot's
 const TYPE_ABSENCE_ATTESTATION = 0x24;
 const TYPE_DEPARTURE_NOTICE = 0x25;
+/** A leave request signed by a node's emergency key, for a node that is offline (§23A.5a). */
+const TYPE_EMERGENCY_DEPARTURE = 0x35;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1156,6 +1160,9 @@ const TAG = {
   // ABSENCE AND DEPARTURE (§23A.4-5): what a guardian signs, and an abandonment proof's id
   absenceAttestation: 'ARENA/v1/AbsenceAttestation',
   departureNotice: 'ARENA/v1/DepartureNotice',
+  emergencyKey: 'ARENA/v1/EmergencyKey',
+  emergencySecret: 'ARENA/v1/EmergencySecret',
+  emergencyDeparture: 'ARENA/v1/EmergencyDeparture',
   abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
@@ -5428,6 +5435,12 @@ function encodeAdvert(a) {
       throw new Error('a node declares bond_min and proposal_deposit in BigInt sats');
     w.u8(DECLARES_MARKER); w.u64(d.bondMinSats); w.u64(d.proposalDepositSats);
   }
+  // THE OWNER'S EMERGENCY KEY (§23A.5a, protocol 17): its 32-byte public key after its marker, after the declared scalars and before
+  // serving; none is no bytes, so every advertisement before this keeps its bytes. A request it signs takes the offline node out.
+  if (a.emergencyPubkey !== undefined && a.emergencyPubkey !== null) {
+    if (!(a.emergencyPubkey instanceof Uint8Array) || a.emergencyPubkey.length !== 32) throw new Error('an emergency key is a 32-byte public key');
+    w.u8(EMERGENCY_MARKER); w.bytes32(a.emergencyPubkey);
+  }
   if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
   if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
@@ -5435,6 +5448,8 @@ function encodeAdvert(a) {
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
 const DECLARES_MARKER = 0x5d;
+/** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
+const EMERGENCY_MARKER = 0x5e;
 /** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
 const NOT_SERVING_MARKER = 0x5f;
 
@@ -5490,9 +5505,11 @@ function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
-  // the declared scalars (17 bytes) and serving = false (1), each only when written: 0, 1, 17 or 18 bytes left
+  // the declared scalars (17 bytes), the emergency key (33) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
-  if ((left === 17 || left === 18) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  if ([17, 18, 50, 51].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  const left2 = bytes.length - r.at;
+  if ((left2 === 33 || left2 === 34) && bytes[r.at] === EMERGENCY_MARKER) { r.u8(); a.emergencyPubkey = r.bytes32(); }
   // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
   if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
@@ -6915,6 +6932,9 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 15, year: 2026, x: 0 }),
   // liquidity providers: the node fee in four pools of a quarter, the fourth to the federation's providers (§23A.10)
   Object.freeze({ version: 16, year: 2026, x: 0 }),
+  // the owner's emergency key: the advert names it; a request it signs takes an offline node out - a non-guardian at once, a guardian
+  // before abandon_blocks as DEPARTED - with its bond untouched (§23A.5a)
+  Object.freeze({ version: 17, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -7579,8 +7599,15 @@ const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString
  * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
  * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
  */
-function guardianSlashStands({ proof, departure = null }) {
+function guardianSlashStands({ proof, departure = null, emergency = null, abandonBlocks = null }) {
   if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  // THE OWNER'S EMERGENCY DEPARTURE (§23A.5a, protocol 17): `emergency` emergencyDepartureStands' answer for this guardian's node.
+  // Posted before abandon_blocks from the height he was last seen: DEPARTED, the bond untouched. Later: abandonment, as without it.
+  if (emergency && emergency.ok) {
+    if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('an emergency departure is judged against abandon_blocks');
+    if (emergency.postedAt < proof.sinceHeight + abandonBlocks)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `the owner's emergency departure at ${emergency.postedAt}, before abandon_blocks (${abandonBlocks}) from last seen ${proof.sinceHeight}: departed, the bond untouched (§23A.5a)` };
+  }
   if (departure && departure.ok) {
     if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
     if (proof.sinceHeight >= departure.leaveAfterHeight)
@@ -25895,6 +25922,119 @@ const marketFeeBpsOf = (fees) => { const r = marketBps(fees); return r.nodeBps +
 /** Each fee's unit as the form shows it: bps for rounds and markets, percent for items and the website share. */
 const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => [k, /Bps$/.test(k) ? 'bps' : 'pct'])));
 
+// ---- arena-protocol/src/emergency.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE OWNER'S EMERGENCY KEY (spec §23A.5a, protocol 17): a node that will be offline longer than it may be absent is taken out by its
+// owner, from any other node or the Arena site, with a key that can do nothing else - and keeps its bond.
+//
+//   THE CODE     16 bytes derived from the node's 24 words (seed) under ARENA/v1/EmergencyKey, written as ARN-XXXX-... (Crockford
+//                base32 with a check byte). The owner writes it down at install; the 24 words are never typed anywhere else.
+//   THE KEY      its secret is ARENA/v1/EmergencySecret over the code's 16 bytes; the bond advert names its public key (advert.js).
+//   THE REQUEST  (node_key, posted_at), signed by that key under ARENA/v1/EmergencyDeparture, posted to any seat.
+//   THE EFFECT   no guardian role: out of the seating from posted_at, bond untouched. A guardian: DEPARTED at once when the request
+//                was posted before abandon_blocks from his last seen height, bond untouched; later, abandonment as before.
+//
+// NO CURVE: `sign(digest)` and `verify(signature, digest, pubkey)` are injected (BIP-340), as in absence.js.
+
+
+
+const emIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const emHeight = (h, what) => { if (!Number.isInteger(h) || h < 0 || h > 0xffffffff) throw new Error(`${what} is a block height`); };
+
+/**
+ * A REQUEST IS TAKEN ONLY FRESH: posted_at is the signer's own word, so a seat takes a request (POST /emergency-departure, or from a
+ * peer) only while its tip is at most this many blocks past posted_at - a late owner cannot date a request back into time. A seat
+ * signs a guardian DEPARTED only for a request it took itself (federation-records.js).
+ */
+const EMERGENCY_FRESH_BLOCKS = 6;
+
+// THE CODE: Crockford base32 (no I, L, O, U; read I/L as 1 and O as 0), 16 bytes and 1 check byte = 136 bits = 28 characters
+const EM_B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const EM_CODE_BYTES = 16;
+const emCheckByte = (bytes) => taggedHash(TAG.emergencyKey, bytes)[0];
+
+/** The 16 bytes of a node's emergency code, from its seed (the 24 words' 32 bytes). */
+function emergencyCodeBytes(seed) {
+  if (!(seed instanceof Uint8Array) || seed.length < 16) throw new Error('an emergency code is derived from the node\'s seed');
+  return taggedHash(TAG.emergencyKey, seed).slice(0, EM_CODE_BYTES);
+}
+
+/** The code as the owner writes it: ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX. */
+function emergencyCodeText(codeBytes) {
+  if (!(codeBytes instanceof Uint8Array) || codeBytes.length !== EM_CODE_BYTES) throw new Error('an emergency code is 16 bytes');
+  const all = new Uint8Array(EM_CODE_BYTES + 1); all.set(codeBytes); all[EM_CODE_BYTES] = emCheckByte(codeBytes);
+  let bits = 0, acc = 0, out = '';
+  for (const b of all) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { out += EM_B32[(acc >> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits) out += EM_B32[(acc << (5 - bits)) & 31];
+  return 'ARN-' + out.match(/.{1,4}/g).join('-');
+}
+
+/** The code's 16 bytes from what the owner typed (case, spaces and dashes ignored; I/L read as 1, O as 0), or throws why not. */
+function parseEmergencyCode(text) {
+  const raw = String(text || '').toUpperCase().replace(/^\s*ARN[-\s]*/, '').replace(/[\s-]/g, '').replace(/[IL]/g, '1').replace(/O/g, '0');
+  if (!/^[0-9A-HJKMNP-TV-Z]{28}$/.test(raw)) throw new Error('an emergency code is ARN- and 28 letters and digits');
+  let bits = 0, acc = 0; const out = [];
+  for (const ch of raw) { acc = (acc << 5) | EM_B32.indexOf(ch); bits += 5; if (bits >= 8) { out.push((acc >> (bits - 8)) & 255); bits -= 8; } }
+  const all = Uint8Array.from(out.slice(0, EM_CODE_BYTES + 1));
+  const codeBytes = all.slice(0, EM_CODE_BYTES);
+  if (all[EM_CODE_BYTES] !== emCheckByte(codeBytes)) throw new Error('that emergency code is mistyped (its check does not match)');
+  return codeBytes;
+}
+
+/** The emergency key's 32-byte secret, from the code's 16 bytes (the caller's curve makes its public key). */
+const emergencySecret = (codeBytes) => taggedHash(TAG.emergencySecret, codeBytes);
+
+// THE REQUEST
+function encodeEmergencyDeparture(d) {
+  if (!emIs32(d.nodePubkey) || !emIs32(d.emergencyPubkey)) throw new Error('a leave request names the node (32) and its emergency key (32)');
+  emHeight(d.postedAt, 'the height it was posted at');
+  const w = new Writer();
+  w.u8(TYPE_EMERGENCY_DEPARTURE); w.u16(PROTOCOL_VERSION);
+  w.bytes32(d.nodePubkey); w.bytes32(d.emergencyPubkey); w.u32(d.postedAt);
+  return w.finish();
+}
+function decodeEmergencyDeparture(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_EMERGENCY_DEPARTURE) throw new Error('not an emergency leave request');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const d = { nodePubkey: r.bytes32(), emergencyPubkey: r.bytes32(), postedAt: r.u32() };
+  r.end(); encodeEmergencyDeparture(d); return d;
+}
+const emergencyDepartureId = (d) => taggedHash(TAG.emergencyDeparture, encodeEmergencyDeparture(d));
+const signEmergencyDeparture = (d, sign) => ({ ...d, signature: sign(emergencyDepartureId(d)) });
+
+/**
+ * A LEAVE REQUEST THAT STANDS: for a node in the census whose advertisement names this emergency key, signed by that key, posted at a
+ * height the seat has seen (not ahead of its tip). `advert` the node's census advertisement; `fresh`: on taking it, posted at most
+ * EMERGENCY_FRESH_BLOCKS before the tip. Answers { ok, nodePubkey, postedAt } or why not.
+ */
+function emergencyDepartureStands(d, { advert, tip, verify, fresh = false }) {
+  try { encodeEmergencyDeparture(d); } catch (e) { return { ok: false, why: e.message }; }
+  if (!advert) return { ok: false, why: 'that node is not in the census' };
+  if (!emIs32(advert.emergencyPubkey)) return { ok: false, why: 'that node\'s advertisement names no emergency key' };
+  if (toHex(advert.emergencyPubkey) !== toHex(d.emergencyPubkey)) return { ok: false, why: 'the request names another emergency key than the node\'s advertisement' };
+  if (Number.isInteger(tip) && d.postedAt > tip) return { ok: false, why: `posted at ${d.postedAt}, ahead of the tip ${tip}` };
+  if (fresh && !(Number.isInteger(tip) && tip - d.postedAt <= EMERGENCY_FRESH_BLOCKS))
+    return { ok: false, why: `posted at ${d.postedAt}, more than ${EMERGENCY_FRESH_BLOCKS} blocks before the tip ${tip}: a request is taken only fresh` };
+  if (!d.signature || !verify(d.signature, emergencyDepartureId(d), d.emergencyPubkey)) return { ok: false, why: 'the request is not signed by the node\'s emergency key' };
+  return { ok: true, nodePubkey: d.nodePubkey, postedAt: d.postedAt };
+}
+
+/**
+ * WHAT A STANDING REQUEST DOES (§23A.5a). `guardian`: the node is a seated guardian of a federation; `lastSeenHeight`: the height
+ * its federation last saw it in consensus (from the absence attestations), when known; `abandonBlocks`: the network's.
+ * Answers { leaves: true, departed: bool, slash: bool, why }.
+ */
+function emergencyDepartureEffect(request, { guardian, lastSeenHeight = null, abandonBlocks }) {
+  if (!request || !request.ok) return { leaves: false, departed: false, slash: false, why: 'no standing leave request' };
+  if (!guardian) return { leaves: true, departed: true, slash: false, why: `no guardian role: out of the seating from ${request.postedAt}, the bond untouched` };
+  if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('abandon_blocks is a positive block count');
+  if (Number.isInteger(lastSeenHeight) && request.postedAt >= lastSeenHeight + abandonBlocks)
+    return { leaves: true, departed: false, slash: true, why: `posted at ${request.postedAt}, not before abandon_blocks (${abandonBlocks}) from last seen ${lastSeenHeight}: abandonment` };
+  return { leaves: true, departed: true, slash: false, why: `a guardian's emergency departure at ${request.postedAt}, in time: DEPARTED at once, the succession starts, the bond untouched` };
+}
+
 // ---- arena-client/src/leaderboard-page.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -34040,6 +34180,8 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,
          playersLine: playersLine, newestPose: newestPose,
          stakeLine: stakeLine,
+         parseEmergencyCode: parseEmergencyCode, emergencySecret: emergencySecret, signEmergencyDeparture: signEmergencyDeparture,
+         encodeEmergencyDeparture: encodeEmergencyDeparture, EMERGENCY_FRESH_BLOCKS: EMERGENCY_FRESH_BLOCKS,
          centsToTapeUnits: centsToTapeUnits,
          joinQuery: joinQuery, joinFromQuery: joinFromQuery,
          verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,

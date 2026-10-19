@@ -230,8 +230,15 @@ const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString
  * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
  * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
  */
-export function guardianSlashStands({ proof, departure = null }) {
+export function guardianSlashStands({ proof, departure = null, emergency = null, abandonBlocks = null }) {
   if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  // THE OWNER'S EMERGENCY DEPARTURE (§23A.5a, protocol 17): `emergency` emergencyDepartureStands' answer for this guardian's node.
+  // Posted before abandon_blocks from the height he was last seen: DEPARTED, the bond untouched. Later: abandonment, as without it.
+  if (emergency && emergency.ok) {
+    if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('an emergency departure is judged against abandon_blocks');
+    if (emergency.postedAt < proof.sinceHeight + abandonBlocks)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `the owner's emergency departure at ${emergency.postedAt}, before abandon_blocks (${abandonBlocks}) from last seen ${proof.sinceHeight}: departed, the bond untouched (§23A.5a)` };
+  }
   if (departure && departure.ok) {
     if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
     if (proof.sinceHeight >= departure.leaveAfterHeight)
