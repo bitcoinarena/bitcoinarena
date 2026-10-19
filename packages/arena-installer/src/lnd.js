@@ -72,7 +72,10 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
     // neither: a node reached from outside announces externalip, one that is not runs Tor. LND STOPS when no router answers
     // (measured on the test host, rc.12: "unable to discover a NAT-PMP enabled device on the local network ... Shutting down"), so it is
     // never set beside Tor or an outside address.
-    '[Application Options]', `alias=${alias}`, `listen=0.0.0.0:${ports.p2p}`, ...(!tor && !externalIp ? ['nat=true'] : []), ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
+    // BEHIND TOR, ITS PEER PORT ON THIS MACHINE ONLY (kanban #471, the Windows VM 2026-10-19: listening on every network, lnd made Windows
+    // Firewall ask to open it to public networks): inbound peers come through its onion, which Tor connects to locally (LND's own advice
+    // for a Tor node, listen=localhost); a node reached from outside (externalip) or by its router (nat) listens on every interface
+    '[Application Options]', `alias=${alias}`, `listen=${tor && !externalIp ? '127.0.0.1' : '0.0.0.0'}:${ports.p2p}`, ...(!tor && !externalIp ? ['nat=true'] : []), ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
     `wallet-unlock-password-file=${passwordFile}`, 'wallet-unlock-allow-create=true',
     '[Bitcoin]', 'bitcoin.active=true', 'bitcoin.testnet4=true', 'bitcoin.node=bitcoind',
     '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true',
