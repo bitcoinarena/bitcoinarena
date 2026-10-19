@@ -3,7 +3,7 @@
 // A FAILED WITHDRAW KEEPS ITS WARNING (comment 574): lookRound (b8e0b064) looks at a round through the player
 // wallet while arena.tabempty.<round> says the round's own wallet was read empty - and a zero read that way is not proof it
 // is empty. Withdraw collects INTO the round's wallet and then pays; when the pay fails the ecash stays there. index.html's
-// BLWP_WITHDRAW and lookRound run under the page's name (page-script.js) with fake wallets; the warning is page-lock.js's
+// ARENA_WITHDRAW and lookRound run under the page's name (page-script.js) with fake wallets; the warning is page-lock.js's
 // own owedToLine. Measured: after a failed pay - or a pay that throws - the note is gone, the next load's lookRound joins
 // the round's wallet, reads the ecash and the warning says it; a later Withdraw still finds it.
 import { test } from 'node:test';
@@ -16,7 +16,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const HTML = readFileSync(PAGE, 'utf8');
 const cut = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const LOOK = cut("    const TAB_EMPTY = 'arena.tabempty.';", '\n      return { look, held: true, LockClient: w.LockClient };\n    }\n');
-const WITHDRAW = cut('    window.BLWP_WITHDRAW = async function (invoice) {', '\n    };\n');
+const WITHDRAW = cut('    window.ARENA_WITHDRAW = async function (invoice) {', '\n    };\n');
 
 const FED = 'ab'.repeat(32), RID = 'cd'.repeat(32);
 const round = { roundIdHex: RID, round: { federationId: FED } };
@@ -28,7 +28,7 @@ function load(store, roundWalletState, { collect } = {}) {
   const joins = []; const collects = [];
   const roundClient = { lockStatus: async () => '{"stored":null}', withdrawableMsat: async () => String(roundWalletState.ecash) };
   const player = { lockStatus: async () => '{"stored":null}', withdrawableMsat: async () => '5000000' };
-  const window = { BLWP_WALLET_WARM: Promise.resolve(player), BLWP_WALLET_FEDERATION: FED, BLWP_LOCK_WASM: async () => ({ LockClient: 'LC' }) };
+  const window = { ARENA_WALLET_WARM: Promise.resolve(player), ARENA_WALLET_FEDERATION: FED, ARENA_LOCK_WASM: async () => ({ LockClient: 'LC' }) };
   const lookOwed = async ({ client }) => ({ payout: { state: 'waiting' }, stake: { state: 'waiting' }, payoutMsat: 0n, stakeMsat: 0n, refundMsat: 0n,
     owedMsat: 0n, final: false, settled: false,
     inTabMsat: client !== player && typeof client.withdrawableMsat === 'function' ? BigInt(await client.withdrawableMsat()) : 0n });
@@ -37,7 +37,7 @@ function load(store, roundWalletState, { collect } = {}) {
     withdrawPlayerWallet: async () => ({ ok: false, why: 'nothing in the player wallet to withdraw' }) };
   const roundWallet = async () => { joins.push(1); return { LockClient: 'LC', client: roundClient }; };
   const page = pageFunction(PAGE, ['vault', 'window', 'BLWPCLIENT', 'roundAsk', 'roundWallet', 'newestKept', 'wallet', 'paintWallet', 'payoutAsking', 'performance'],
-    [LOOK, WITHDRAW], 'return { lookRound, withdraw: window.BLWP_WITHDRAW };')(
+    [LOOK, WITHDRAW], 'return { lookRound, withdraw: window.ARENA_WITHDRAW };')(
     vault, window, BLWPCLIENT, () => ({}), roundWallet, () => round, null, () => {}, false, { now: () => 6000 });
   return { ...page, window, joins, collects };
 }
@@ -50,7 +50,7 @@ test('a failed pay leaves no empty note: the next load joins the round\'s wallet
   const first = load(store, st, { collect: failedPay });
   const said = await first.withdraw('lnbc1pasted');
   assert.equal(said.ok, false);
-  assert.equal(first.window.BLWP_WITHDRAWABLE, 98000n, 'Withdraw\'s last look reads the ecash left in the round\'s wallet');
+  assert.equal(first.window.ARENA_WITHDRAWABLE, 98000n, 'Withdraw\'s last look reads the ecash left in the round\'s wallet');
   assert.equal(store.has('arena.tabempty.' + RID), false, 'the empty note is gone');
   const next = load(store, st);
   const { look } = await next.lookRound(round);

@@ -25,7 +25,7 @@ function gate(rows) {
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, children: [], appendChild(c) { this.children.push(c); } });
   for (const id of ['awc-list', 'arena-warn-confirm', 'awc-go', 'awc-cancel']) el(id);
   const document = { getElementById: (id) => els[id] || null, createElement: () => ({ textContent: '' }) };
-  const window = { BLWP_LOBBY_ROWS: rows };
+  const window = { ARENA_LOBBY_ROWS: rows };
   const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT'], [
     (() => { const html = require_(); const a = html.indexOf('    window.ARENA_WARNINGS_GATE = async'); return html.slice(a, html.indexOf('\n    };\n', a) + 7); })()],
     'return window.ARENA_WARNINGS_GATE;');

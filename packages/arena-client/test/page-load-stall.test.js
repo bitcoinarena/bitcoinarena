@@ -30,7 +30,7 @@ function run({ seconds, covered = () => false, startPending = () => false, hidde
     document, window, boot, err, pct, stage, [], (m) => failed.push(m), (fn) => { tick = fn; return 1; }, () => { tick = null; },
     { now: () => now }, { error: () => {} });
   for (; now <= seconds * 1000 && tick; now += 1000) tick();
-  return { failedAt: failed.length ? now / 1000 - 1 : null, stalled: window.BLWP_LOAD_STALLED || null };
+  return { failedAt: failed.length ? now / 1000 - 1 : null, stalled: window.ARENA_LOAD_STALLED || null };
 }
 
 test('a loading screen the player looks at still fails after 90 s', () => {

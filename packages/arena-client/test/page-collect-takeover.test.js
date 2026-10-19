@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TAKEOVER WHOSE COLLECT FAILS NO LONGER SAYS "HELD" ((a), 2026-10-07): measured on 0.0.2842 (comment 695),
 // tab B kept "a2a2a2a2 held by another tab" for 24 s after tab A closed, beside the red failed line - the catch path set
-// BLWP_COLLECT_FAILED but left BLWP_COLLECT_HELD. index.html's own lookThePayout, lifted, with fakes.
+// ARENA_COLLECT_FAILED but left ARENA_COLLECT_HELD. index.html's own lookThePayout, lifted, with fakes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

@@ -333,7 +333,7 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   });
   pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget'],
     src, ' return paintWallet();')(
-    { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
+    { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, ARENA_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
     SHIPPED, { connected: false }, spent, owed, false, '', null);
   return made;
 }
@@ -354,7 +354,7 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
     return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold, holdMsat: '98000', poolMsat: '98000', finality: 'FINAL' }), { status: 200 });
   };
   const client = { joinedEntry: { stakeCommitment }, where: { entryId: 'ee'.repeat(32) } };
-  const win = { BLWP_ROUND: round, BLWP_STAKE: { signerNodeKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
+  const win = { BLWP_ROUND: round, ARENA_STAKE: { signerNodeKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
   const BL = { ...SHIPPED, settlementBy: (o) => SHIPPED.settlementBy({ ...o, fetcher }) };
   await pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet'], src, ' return askTheSettlement();')(
     win, BL, () => client, spent, () => {});

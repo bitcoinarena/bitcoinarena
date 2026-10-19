@@ -60,7 +60,7 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     phraseWalletEntries: (_L, h, _f, { ancestor = false } = {}) => { const w = (ancestor ? ancestors : wallets).get(h); return w ? w.entries : 0; },
     playerWallet: async ({ seed, ancestor }) => { const w = (ancestor ? ancestors : wallets).get(seed); opened.push(w.name); return w; },
   };
-  const window = { BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
+  const window = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
   const locked = [];
   const navigator = { locks: { request: async (name, _o, fn) => { locked.push(name); return fn(heldLocks.some((h) => name === 'arena.phrase.' + h.slice(0, 16)) ? null : { name }); } } };
   const sessionStorage = { getItem: (k) => (k === 'arena.player.seed' ? SEEDS.cur : null) };

@@ -17642,7 +17642,7 @@ function recordsToCollect(storage, { tabSeed = null } = {}) {
 /**
  * THE COLLECT'S LINES FOR THE LOBBY (2026-10-07): at most three, only those that apply, in the words of
  * the collect's records line - another kept seed's records (open / done, collected too; or held by another tab), a failed
- * collect, an uncollectable record. `records` as the page keeps them in BLWP_RECORDS ({ round, seed, own, state });
+ * collect, an uncollectable record. `records` as the page keeps them in ARENA_RECORDS ({ round, seed, own, state });
  * `failed` a Map round -> the error; `held` a Set of rounds another tab holds. Each: { text, kind }.
  */
 function collectLines(records = [], { failed = new Map(), held = new Set() } = {}) {
@@ -28039,7 +28039,7 @@ function pickFederation(statuses, { known = () => true } = {}) {
 function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
   // EVERY DEPOSIT TO THE LOWEST LOAD (RULED 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
-  // it's evened out"): a returning player too - the page sums every federation's wallet (BLWP_SUM_BALANCES), so where the money
+  // it's evened out"): a returning player too - the page sums every federation's wallet (ARENA_SUM_BALANCES), so where the money
   // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
   if (!always && held && held.length) {
     const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));
@@ -33581,7 +33581,7 @@ function seasonView(answer, { title = null, viewer = [], limit = SEASON_ROWS_SHO
  * ONE SEASON FROM THE FIRST SEAT THAT ANSWERS IT, in the order given: a seat that does not answer within `answerMs`, answers
  * anything but 200, sends no JSON or sends one seasonView refuses falls through to the next. Answers the view with the
  * seat it came from, or `{ ok: false, why, tried }` when none answered. `via` maps a seat's URL to the route the page
- * reaches it by (BLWP_ROUTED_URL).
+ * reaches it by (ARENA_ROUTED_URL).
  */
 async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)

@@ -363,9 +363,9 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("if (watch == null) return;\n        // not under the result card", hud.Replace("\r\n", "\n"));
         StringAssert.Contains("if (ArrivalShowing) return;", hud);
         string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
-        StringAssert.Contains("window.BLWP_CARD_UP = true;", page);
+        StringAssert.Contains("window.ARENA_CARD_UP = true;", page);
         // the node strip still steps aside under the card; since the console (427bab76) it also tells the Console button so
-        StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
+        StringAssert.Contains("if (!window.BLWP_ROUND || window.ARENA_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
     }
 
     // THE COPIED REPLAY IS THE CARD'S RUN (2026-09-26 14:08): a session is its page join's (BLWP_ENTRY); another

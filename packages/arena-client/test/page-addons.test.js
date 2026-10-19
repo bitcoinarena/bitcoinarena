@@ -18,7 +18,7 @@ test('from which round a purchase plays: the round being joined, its entry made,
   assert.equal(from({ state: 'joining', round: 'bb' }, 'aa'), 'next', 'its entry not made yet: the purchase is in it');
   assert.equal(from({ state: 'joined', round: 'aa' }, 'aa'), 'next', 'the run going: the next entry');
   assert.equal(from(null, undefined), 'next', 'in the lobby');
-  assert.match(PAGE, /window\.BLWP_ENTRY_ROUND = named\.roundIdHex;/, 'the page notes whose entry it made');
+  assert.match(PAGE, /window\.ARENA_ENTRY_ROUND = named\.roundIdHex;/, 'the page notes whose entry it made');
 });
 
 test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a purchase is the shop sheet\'s own', () => {

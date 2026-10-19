@@ -203,23 +203,23 @@ const injectFor = (p, c, rid, urls) => `(() => {
       window.BLWP_ROUND = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
       // THE LOCK AS THE JOIN HOLDS IT - every field lockFromClient gives the page (measured:
       // amount and expiry alone did not encode, and saveCollect kept nothing).
-      window.BLWP_STAKE_LOCK = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
+      window.ARENA_STAKE_LOCK = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
         fields: { paymentImage: { kind: 'point', bytes: BLWPCLIENT.fromHex('${toHex(p.stake.fields.paymentImage.bytes)}') },
           amountMsat: ${p.stake.fields.amountMsat}n, claimPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.claimPk)}'),
           refundPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.refundPk)}'), expiration: ${p.stake.fields.expiration} } };
-      window.BLWP_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
+      window.ARENA_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
       // AND WHAT THE JOIN KEEPS for the collect - in the browser's storage, as index.html's vault() does.
       const saved = BLWPCLIENT.saveCollect ? BLWPCLIENT.saveCollect(window.localStorage,
-        Object.assign({}, window.BLWP_LOCK_JOIN, { round: window.BLWP_ROUND, stakeLock: window.BLWP_STAKE_LOCK })) : 'no saveCollect in the bundle';
+        Object.assign({}, window.ARENA_LOCK_JOIN, { round: window.BLWP_ROUND, stakeLock: window.ARENA_STAKE_LOCK })) : 'no saveCollect in the bundle';
       // INSTRUMENTED (the reload pair did not move on 0.0.1236): what saveCollect swallows.
       const probe = (f) => { try { f(); return 'ok'; } catch (e) { return String(e && e.message || e); } };
       window.BLWP_HARNESS_SAVE = { saved,
         encodeRound: probe(() => BLWPCLIENT.encodeRoundContract(window.BLWP_ROUND)),
-        encodeLock: BLWPCLIENT.lockFieldsToJson ? probe(() => BLWPCLIENT.lockFieldsToJson(window.BLWP_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
+        encodeLock: BLWPCLIENT.lockFieldsToJson ? probe(() => BLWPCLIENT.lockFieldsToJson(window.ARENA_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
         keys: Object.keys(window.localStorage) };
       return true; })()`;
-// WHAT THE PAGE LOOKED AT (W4 / 6d): BLWP_OWED, its lookOwed - nothing spent until the Withdraw.
-const OWED = '(window.BLWP_OWED || null)';
+// WHAT THE PAGE LOOKED AT (W4 / 6d): ARENA_OWED, its lookOwed - nothing spent until the Withdraw.
+const OWED = '(window.ARENA_OWED || null)';
 // THE PLAYER'S WALLET HANDED TO THE PAGE'S WITHDRAW: asked for an invoice of the exact sum, as the
 // connected (NWC) wallet is - here alice's lnd, through the page server's /harness-invoice.
 const MAKER = `async (msat) => { const r = await fetch('/harness-invoice?msat=' + msat); const j = await r.json();
@@ -227,7 +227,7 @@ const MAKER = `async (msat) => { const r = await fetch('/harness-invoice?msat=' 
 // A LONG PAGE PROMISE IS NEVER AWAITED INSIDE ONE BOUNDED ASK (each ask is 30 s; measured, the
 // on-screen withdraw ran past it): started, it writes its answer on window, and short asks poll.
 async function withdrawWith(b, arg) {
-  await b.evaluate(`(window.__harnessWithdrawn = null, window.__harnessInvoice = null, window.BLWP_WITHDRAW(${arg})
+  await b.evaluate(`(window.__harnessWithdrawn = null, window.__harnessInvoice = null, window.ARENA_WITHDRAW(${arg})
     .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
       (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
   // 600 s: the page's Withdraw collects, redeems and pays out (live: collect 239.7 s + pay 90.6 s);
@@ -243,13 +243,13 @@ const pageReady = async (b) => {
 };
 // WHAT THE PAGE ACTUALLY HOLDS (instrumented: on 0.0.1236 the reload left 978000 + 980000 in
 // the federation and even a fresh tab collected nothing, with no console line): the kept
-// collect records, the tab's storage keys, BLWP_COLLECT, and the harness's own save probe.
-const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, owed: ${OWED},
+// collect records, the tab's storage keys, ARENA_COLLECT, and the harness's own save probe.
+const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.ARENA_LOCK_JOIN, owed: ${OWED},
   settled: (document.getElementById('arena-settled') || {}).textContent || '',
   collects: (() => { try { return BLWPCLIENT.savedCollects(window.sessionStorage).map((r) => ({ round: r.roundIdHex.slice(0, 12),
     locks: BLWPCLIENT.roundLocks(r.round), lock: !!r.stakeLock, done: !!r.done })); } catch (e) { return 'savedCollects threw: ' + e.message; } })(),
   keys: (() => { try { return Object.keys(window.sessionStorage); } catch (e) { return e.message; } })(),
-  collect: window.BLWP_COLLECT ? { round: window.BLWP_COLLECT.roundIdHex.slice(0, 12), lock: !!window.BLWP_COLLECT.stakeLock } : null,
+  collect: window.ARENA_COLLECT ? { round: window.ARENA_COLLECT.roundIdHex.slice(0, 12), lock: !!window.ARENA_COLLECT.stakeLock } : null,
   harnessSave: window.BLWP_HARNESS_SAVE || null },
   (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}'));
 
@@ -272,11 +272,11 @@ async function tabReloadedBeforeClose({ p, c, rid, urls }) {
 
 /**
  * ONE PLAYER'S TAB, ON SCREEN, CLOSED BEFORE THE WITHDRAW (W4 / 6d): the built page, handed the
- * join state its own join sets for a lock round (the round, its lock, and BLWP_LOCK_JOIN - the
+ * join state its own join sets for a lock round (the round, its lock, and ARENA_LOCK_JOIN - the
  * invite, the round and the tab's seed) - harness instrumentation, as page-lock's reload mutants
  * are. The page's own lookThePayout looks; the tab is closed with no withdraw; what the federation
  * then holds; a fresh tab handed the same seed (the player's backup) and join record looks again;
- * a pasted invoice for the owed sum is refused; the page's own BLWP_WITHDRAW, with the player's
+ * a pasted invoice for the owed sum is refused; the page's own ARENA_WITHDRAW, with the player's
  * wallet handed in (alice's lnd asked for the exact sum, as the connected wallet is), collects and
  * pays out; that tab and a third one look after.
  */
@@ -360,7 +360,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
  * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE, AND A WITHDRAW CUT OFF AFTER ITS COLLECT (spec §24,
  * 2026-09-14). alice's desktop looks and is closed with no withdraw; her "iPhone" - another
  * browser profile - holds only her seed (the page's importSeed) and runs the page's own scan over
- * the signer nodes (BLWP_FIND_OWED: /settled, its key matched locally); its Withdraw collects and is cut
+ * the signer nodes (ARENA_FIND_OWED: /settled, its key matched locally); its Withdraw collects and is cut
  * off before the pay-out (the wallet never answers the invoice ask) and the browser is closed; the
  * phone's next start - the same profile - reopens the kept round and its wallet from the browser's
  * storage, and its Withdraw pays alice.
@@ -373,9 +373,9 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
   const federation = async () => ({ payoutHeld: payoutAt ? await held(payoutAt) : null, stakeLockHeld: await held(p.stake.outpoint) });
   const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('arena-settled') || {}).textContent || '',
     withdrawLine: (document.getElementById('arena-wallet-withdraw') || {}).textContent || '',
-    forUnity: window.BLWP_WITHDRAW_AVAILABLE ? window.BLWP_WITHDRAW_AVAILABLE() : null,
+    forUnity: window.ARENA_WITHDRAW_AVAILABLE ? window.ARENA_WITHDRAW_AVAILABLE() : null,
     kept: Object.keys(window.localStorage).filter((k) => k.startsWith('arena.collect.')).length,
-    step: window.BLWP_WITHDRAW_STEP || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((x) => JSON.parse(x || '{}'));
+    step: window.ARENA_WITHDRAW_STEP || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((x) => JSON.parse(x || '{}'));
   // THE LOBBY THE PHONE COMES BACK TO: a lobby link of the Daily's form (both signer nodes, the bond at signer node
   // A, the federation) - the advertisement a placeholder of its form, which the lobby never reads.
   const lobbyUrl = `${url}?node=${urls.join(',')}&bond=${urls[0]}/bond&advert=${'00'.repeat(64)}&federation=${env.INVITE}`;
@@ -406,12 +406,12 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
     res.phone = { keptBefore: (await view(ph.b)).kept };
     await ph.b.evaluate(`(BLWPCLIENT.importSeed('${toHex(p.seed)}', { storage: window.sessionStorage }), true)`);
     const t = Date.now();
-    res.phone.found = await ph.b.evaluate(`window.BLWP_FIND_OWED(${JSON.stringify(urls)}, '${env.INVITE}')`);
+    res.phone.found = await ph.b.evaluate(`window.ARENA_FIND_OWED(${JSON.stringify(urls)}, '${env.INVITE}')`);
     res.phone.foundMs = Date.now() - t;
     Object.assign(res.phone, await lookIn(ph.b, owedSome));
     res.phone.federation = await federation();
     // 3. ITS WITHDRAW, CUT OFF AFTER THE COLLECT: the wallet never answers the invoice ask; the browser closes there.
-    await ph.b.evaluate('(window.BLWP_WITHDRAW(async () => new Promise(() => {})), true)');
+    await ph.b.evaluate('(window.ARENA_WITHDRAW(async () => new Promise(() => {})), true)');
     const cut = await lookIn(ph.b, (o) => /invoice/.test(o.step || ''), 600000);
     res.cut = { step: cut.step, ms: cut.lookedMs, withdrawLine: cut.withdrawLine, federation: await federation() };
     res.phone.pageSaid = said(ph.b);
@@ -710,7 +710,7 @@ async function round(stakeMsat) {
     // The Node path's values from the one mining pass, when there is no tab (the page's own code, from Node).
     let nodePath = null;
     const refundView = (t) => t.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('arena-settled') || {}).textContent || '',
-      withdrawable: String(window.BLWP_WITHDRAWABLE ?? '') }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}')).catch((e) => ({ unread: e.message }));
+      withdrawable: String(window.ARENA_WITHDRAWABLE ?? '') }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}')).catch((e) => ({ unread: e.message }));
 
     if (bare) {
       const kept = { lock: { outpoint: bare.stake.outpoint, fields: bare.stake.fields } };

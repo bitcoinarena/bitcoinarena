@@ -14,7 +14,7 @@ const from = html.indexOf('      const donationFetch = (u) => {');
 const to = html.indexOf('      };', from) + '      };'.length;
 const make = (routes) => {
   const asked = [];
-  const f = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'fetch'], html.slice(from, to), 'return donationFetch;')({ BLWP_ALT_ROUTES: routes }, (u) => { asked.push(u); return 'answer'; });
+  const f = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'fetch'], html.slice(from, to), 'return donationFetch;')({ ARENA_ALT_ROUTES: routes }, (u) => { asked.push(u); return 'answer'; });
   return { f, asked };
 };
 

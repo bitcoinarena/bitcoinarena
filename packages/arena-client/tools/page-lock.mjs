@@ -107,7 +107,7 @@ const RELOAD_ONCE = `<script>(function () {
 // committed it.
 const RELOAD_AFTER_LOCK = `<script>(function () {
   var t = setInterval(function () {
-    if (window.BLWP_STAKE_LOCK && !sessionStorage.getItem('arena.harness.reloaded')) {
+    if (window.ARENA_STAKE_LOCK && !sessionStorage.getItem('arena.harness.reloaded')) {
       sessionStorage.setItem('arena.harness.reloaded', '1');
       clearInterval(t);
       location.reload();
@@ -244,10 +244,10 @@ function worldFor(base, lastTick, roundRandomness) {
   }
   throw new Error(`no world in 600 where the drive is DELIVERED by tick ${lastTick}`);
 }
-const tabView = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, stakeLock: !!window.BLWP_STAKE_LOCK,
+const tabView = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.ARENA_LOCK_JOIN, stakeLock: !!window.ARENA_STAKE_LOCK,
   refused: window.BLWP_JOIN_REFUSED || null, join: window.BLWP_JOIN || null,
   // WHAT THE PAGE LOOKED AT (W4 / 6d): its lookOwed - nothing spent until the player's Withdraw.
-  owed: window.BLWP_OWED || null,
+  owed: window.ARENA_OWED || null,
   settled: (document.getElementById('arena-settled') || {}).textContent || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`)
   .then((x) => JSON.parse(x || '{}'));
 
@@ -385,15 +385,15 @@ const pathOf = (q) => { try { return new URL(q.url).pathname; } catch { return q
 // reload resets the globals). `depositView` is whether the invoice a player
 // must pay is on screen: something drawn, and the topmost thing at its centre.
 const STATE = `JSON.stringify({
-  deposit: window.BLWP_DEPOSIT || null, entry: !!window.BLWP_ENTRY, refused: window.BLWP_JOIN_REFUSED || null,
-  lock: window.BLWP_STAKE_LOCK ? 1 : 0, pageError: (document.getElementById('err') || {}).textContent || null,
+  deposit: window.ARENA_DEPOSIT || null, entry: !!window.BLWP_ENTRY, refused: window.BLWP_JOIN_REFUSED || null,
+  lock: window.ARENA_STAKE_LOCK ? 1 : 0, pageError: (document.getElementById('err') || {}).textContent || null,
   reloadedDoc: (performance.getEntriesByType('navigation')[0] || {}).type === 'reload',
   depositView: (() => {
     const el = document.getElementById('arena-deposit'); if (!el) return null;
     const box = el.querySelector('code') || el; const r = box.getBoundingClientRect();
     const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
     return { drawn: r.width > 0 && r.height > 0, onTop: !!hit && (hit === box || box.contains(hit)),
-      carriesInvoice: !!window.BLWP_DEPOSIT && (box.textContent || '').includes(window.BLWP_DEPOSIT.invoice) };
+      carriesInvoice: !!window.ARENA_DEPOSIT && (box.textContent || '').includes(window.ARENA_DEPOSIT.invoice) };
   })(),
 })`;
 const VIEW = `JSON.stringify({
@@ -479,7 +479,7 @@ async function one({ label, dir }, i) {
     if (s.lock) await b.shot(`${P}/${label}-playing.png`);
     const entry = await b.evaluate(`(() => { const e = window.BLWP_ENTRY; if (!e) return null; const h = BLWPCLIENT.toHex;
       return { outpoint: h(e.stakeLockOutpoint.txid) + ':' + String(e.stakeLockOutpoint.outIdx) }; })()`);
-    const lock = await b.evaluate(`(() => { const l = window.BLWP_STAKE_LOCK; return l ? BLWPCLIENT.toHex(l.outpoint.txid) + ':' + String(l.outpoint.outIdx) : null; })()`);
+    const lock = await b.evaluate(`(() => { const l = window.ARENA_STAKE_LOCK; return l ? BLWPCLIENT.toHex(l.outpoint.txid) + ':' + String(l.outpoint.outIdx) : null; })()`);
     let federation = null;
     if (lock) {
       const [txid, outIdx] = lock.split(':');

@@ -24,7 +24,7 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
     playerWithdrawable: async () => { if (can instanceof Error) throw can; return can; },
     withdrawPlayerWallet: async (o) => { calls.withdraw.push(o); return withdraw(o); },
   };
-  const window = { BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
+  const window = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
   const document = { getElementById: (id) => els[id] };
   const openWithdraw = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
     document, window, BLWPCLIENT, () => status, () => ({}), () => {});

@@ -99,17 +99,17 @@ test('the page\'s sheet: drawn from the pinned list, Cancel makes nothing, a cho
   const open = liftSheet(window, dom.document);
   await open(CONTRACT, id, ['http://seat-a'], (i) => picked.push(i));
   const shown = buttons(dom.sheet);
-  console.log('  PAGE SHEET:', JSON.stringify({ shown: dom.root.classList.contains('show'), buttons: shown.map((b) => b.textContent), said: window.BLWP_PICK_SHEET.lines }));
+  console.log('  PAGE SHEET:', JSON.stringify({ shown: dom.root.classList.contains('show'), buttons: shown.map((b) => b.textContent), said: window.ARENA_PICK_SHEET.lines }));
   assert.equal(dom.root.classList.contains('show'), true);
   assert.deepEqual(shown.map((b) => b.textContent), [...MARKET_OUTCOMES, 'Cancel']);
   shown.at(-1).click();                                                         // Cancel
   assert.equal(dom.root.classList.contains('show'), false);
-  assert.equal(window.BLWP_PICK_CHOSEN, null, 'Cancel made a pick');
+  assert.equal(window.ARENA_PICK_CHOSEN, null, 'Cancel made a pick');
   assert.deepEqual(picked, []);
   await open(CONTRACT, id, ['http://seat-a'], (i) => picked.push(i));
   buttons(dom.sheet)[1].click();                                                // "between"
   assert.deepEqual(picked, [1]);
-  assert.deepEqual({ ...window.BLWP_PICK_CHOSEN, manifestHex: undefined }, { round: id, pick: 1, label: 'between', gameId: toHex(MARKET.registration.gameId), confirmed: false, manifestHex: undefined });
+  assert.deepEqual({ ...window.ARENA_PICK_CHOSEN, manifestHex: undefined }, { round: id, pick: 1, label: 'between', gameId: toHex(MARKET.registration.gameId), confirmed: false, manifestHex: undefined });
 
   // UNPINNED: the manifest from a seat; no confirmation, no pick; confirmed, the pick and the confirmed game
   const other = testAttestedGame({ name: 'eth-close', outcomes: ['up', 'down'] }).registration;
@@ -124,13 +124,13 @@ test('the page\'s sheet: drawn from the pinned list, Cancel makes nothing, a cho
   buttons(dom.sheet)[0].click();
   assert.equal(asked.length, 1);
   assert.deepEqual(picked, [], 'an unpinned market was picked without the second confirmation');
-  assert.equal(w2.BLWP_PICK_CHOSEN, undefined);
+  assert.equal(w2.ARENA_PICK_CHOSEN, undefined);
   yes = true;
   buttons(dom.sheet)[0].click();
   assert.deepEqual(picked, [0]);
-  assert.equal(w2.BLWP_PICK_CHOSEN.confirmed, true);
-  assert.equal(w2.BLWP_PICK_CHOSEN.gameId, toHex(other.gameId));
-  assert.ok(w2.BLWP_PICK_CHOSEN.manifestHex.length > 100, 'the confirmed manifest is not kept with the pick');
+  assert.equal(w2.ARENA_PICK_CHOSEN.confirmed, true);
+  assert.equal(w2.ARENA_PICK_CHOSEN.gameId, toHex(other.gameId));
+  assert.ok(w2.ARENA_PICK_CHOSEN.manifestHex.length > 100, 'the confirmed manifest is not kept with the pick');
 });
 
 test('the pick: the entry carries it, every seat is handed the entry, the stake lock and the fee lock', async () => {
@@ -168,7 +168,7 @@ test('a hidden move is the tab\'s once the seats took its entry: onEntries befor
 });
 
 test('picked: the join of a pick ends \'picked\' before the session\'s globals - and Unity adopts only joining/joined', () => {
-  const then = PAGE.indexOf("if (window.BLWP_PICKED && window.BLWP_PICKED.round === id) {");
+  const then = PAGE.indexOf("if (window.ARENA_PICKED && window.ARENA_PICKED.round === id) {");
   const entryBranch = PAGE.indexOf("if (window.BLWP_ENTRY && Number(window.BLWP_ENTRY.joinTick) > 0", then);
   assert.ok(then > 0 && entryBranch > then, 'the picked branch does not come before the run\'s');
   const branch = PAGE.slice(then, PAGE.indexOf('\n                return;\n', then));

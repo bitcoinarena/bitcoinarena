@@ -28,7 +28,7 @@ function page({ record, theLook, collect }) {
   const marked = [];
   const els = {};
   const document = { getElementById: (id) => (els[id] = els[id] || { textContent: '', parentNode: { title: '' } }) };
-  const window = { sessionStorage: { getItem: () => null }, BLWP_WALLET_BALANCE: { sats: 173, pending: 0 } };
+  const window = { sessionStorage: { getItem: () => null }, ARENA_WALLET_BALANCE: { sats: 173, pending: 0 } };
   const BLWPCLIENT = {
     savedCollects: () => [record], roundLocks: () => true, owedToLine: () => 'line', toHex: () => '00'.repeat(32),
     markCollectDone: (v, rid) => { marked.push(rid); record.done = { payout: 'line' }; },
@@ -51,8 +51,8 @@ test('a stake owed back on a round not done, its collect failing: 98 sat pending
   await p.lookThePayout();
   await p.lookThePending();
   assert.equal(p.marked.length, 0, 'not collected, not done');
-  assert.equal(p.window.BLWP_PENDING_SATS, 98);
-  assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 98, 'the lobby\'s pending chip');
+  assert.equal(p.window.ARENA_PENDING_SATS, 98);
+  assert.equal(p.window.ARENA_WALLET_BALANCE.pending, 98, 'the lobby\'s pending chip');
 });
 
 test('a refund by the player\'s key after expiry counts the same', async () => {
@@ -61,7 +61,7 @@ test('a refund by the player\'s key after expiry counts the same', async () => {
     collect: async () => { throw new Error('the federation did not answer'); } });
   await p.lookThePayout();
   await p.lookThePending();
-  assert.equal(p.window.BLWP_PENDING_SATS, 98);
+  assert.equal(p.window.ARENA_PENDING_SATS, 98);
 });
 
 test('collected: the stake leaves pending (it is in the confirmed balance then), never shown twice', async () => {
@@ -69,20 +69,20 @@ test('collected: the stake leaves pending (it is in the confirmed balance then),
   let fail = true;
   const p = page({ record, theLook: look(), collect: async () => { if (fail) throw new Error('the federation did not answer'); return { collected: true, creditedMsat: 98000n }; } });
   await p.lookThePayout(); await p.lookThePending();
-  assert.equal(p.window.BLWP_PENDING_SATS, 98);
+  assert.equal(p.window.ARENA_PENDING_SATS, 98);
   fail = false;
   await p.lookThePayout(); await p.lookThePending();
   assert.deepEqual(p.marked, [RID]);
-  assert.equal(p.window.BLWP_PENDING_SATS, 0);
+  assert.equal(p.window.ARENA_PENDING_SATS, 0);
 });
 
 test('the owner\'s case: a round already done adds nothing to pending, whatever the last look owed', async () => {
   const record = { roundIdHex: RID, round: {}, done: { payout: 'Payout 98000 msat collected' } };
   const p = page({ record, theLook: look(), collect: async () => ({ collected: false }) });
-  p.window.BLWP_WITHDRAWABLE = 0n;   // the round looked at once in this tab: a done record is not looked at again
-  p.window.BLWP_OWED = look();
+  p.window.ARENA_WITHDRAWABLE = 0n;   // the round looked at once in this tab: a done record is not looked at again
+  p.window.ARENA_OWED = look();
   await p.lookThePayout(); await p.lookThePending();
-  assert.equal(p.window.BLWP_PENDING_SATS, 0);
+  assert.equal(p.window.ARENA_PENDING_SATS, 0);
 });
 
 test('winnings owed are not counted here: pending winnings come from the signer nodes\' /standing alone', async () => {
@@ -90,5 +90,5 @@ test('winnings owed are not counted here: pending winnings come from the signer 
   const p = page({ record, theLook: look({ payout: { state: 'owed', msat: 500000n }, payoutMsat: 500000n, stake: { state: 'lost', msat: 98000n }, stakeMsat: 0n, owedMsat: 500000n }),
     collect: async () => { throw new Error('the federation did not answer'); } });
   await p.lookThePayout(); await p.lookThePending();
-  assert.equal(p.window.BLWP_PENDING_SATS, 0);
+  assert.equal(p.window.ARENA_PENDING_SATS, 0);
 });

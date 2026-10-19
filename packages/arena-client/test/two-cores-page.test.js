@@ -33,7 +33,7 @@ function page() {
 }
 
 test('the page names the current core as its default, and both bundles are the cores their hashes name', () => {
-  assert.ok(html.includes(`window.BLWP_CORE_DEFAULT = '${NEW}'`), `the page's default is not the core this tree hashes to (${NEW.slice(0, 16)})`);
+  assert.ok(html.includes(`window.ARENA_CORE_DEFAULT = '${NEW}'`), `the page's default is not the core this tree hashes to (${NEW.slice(0, 16)})`);
   assert.equal(coreHashHex(FROZEN), OLD, 'core/frozen/2069b4c2 is not 2069b4c2');
   assert.equal(readFileSync(new URL('blwp-core.js', T), 'utf8'), readFileSync(new URL('../../nextblock/dist/blwp-core.js', import.meta.url), 'utf8'),
     'the page carries a stale current core');
@@ -43,7 +43,7 @@ test('the page names the current core as its default, and both bundles are the c
 
 test('the round\'s hash picks its core: under Unity\'s state and as the global the jslib reads; an unknown one is refused', () => {
   const w = page();
-  const cores = w.BLWP_CORES;
+  const cores = w.ARENA_CORES;
   assert.deepEqual(Object.keys(cores).sort(), [OLD, DE2F, S7E, NEW].sort());
   assert.equal(readFileSync(new URL('blwp-core-7e2123d1.js', T), 'utf8'), readFileSync(new URL('../../nextblock/dist/blwp-core-7e2123d1.js', import.meta.url), 'utf8'),
     'the page carries another 7e2123d1 bundle');
@@ -58,12 +58,12 @@ test('the round\'s hash picks its core: under Unity\'s state and as the global t
   assert.equal(cores[NEW].cargoOf(fresh(cores[NEW])), 0);
   w.unityInstance = { Module: { blwp: { core: cores[NEW], st: fresh(cores[NEW]) } } };
   const hexBytes = Uint8Array.from(Buffer.from(OLD, 'hex'));
-  assert.equal(w.BLWP_USE_CORE(hexBytes).ok, true);
+  assert.equal(w.ARENA_USE_CORE(hexBytes).ok, true);
   assert.equal(w.unityInstance.Module.blwp.core, cores[OLD], 'Unity still runs the current core for a 2069b4c2 round');
   assert.equal(w.BLWP, cores[OLD], 'the jslib\'s BlwpInit would make the round\'s world on the current core');
-  assert.equal(w.BLWP_USE_CORE(NEW).ok, true);
+  assert.equal(w.ARENA_USE_CORE(NEW).ok, true);
   assert.equal(w.unityInstance.Module.blwp.core, cores[NEW]);
-  const no = w.BLWP_USE_CORE('ab'.repeat(32));
+  const no = w.ARENA_USE_CORE('ab'.repeat(32));
   assert.equal(no.ok, false);
   assert.match(no.why, /carries no such core/);
   assert.equal(w.unityInstance.Module.blwp.core, cores[NEW], 'a refused hash moved the core');
@@ -71,7 +71,7 @@ test('the round\'s hash picks its core: under Unity\'s state and as the global t
 
 test('the join takes the round\'s core before anything of the round is made, and refuses a core it does not carry', () => {
   const a = html.indexOf('      window.BLWP_ROUND = named.round;\n');
-  const b = html.indexOf('window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round))', a);
-  assert.ok(a > 0 && b > a && b - a < 800, 'the join does not hand the round\'s core hash to BLWP_USE_CORE right after naming the round');
+  const b = html.indexOf('window.ARENA_USE_CORE(BLWPCLIENT.roundCoreHex(named.round))', a);
+  assert.ok(a > 0 && b > a && b - a < 800, 'the join does not hand the round\'s core hash to ARENA_USE_CORE right after naming the round');
   assert.ok(html.slice(b, b + 500).includes("window.BLWP_JOIN_REFUSED = core.why"), 'an unknown core is not refused by name');
 });

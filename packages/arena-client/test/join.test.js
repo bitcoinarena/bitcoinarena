@@ -327,14 +327,14 @@ test('the page joins a named round and still invents none', () => {
   // 2026-10-01: "safe even if the user closes the browser and loads it again"), in blwpSeedKeeper - which hands a tab
   // only a phrase no open tab holds, so two tabs stay two players (seed-keeper.test.js). Named twice, nowhere else.
   // AND THE BROWSER'S OWN STORE (PAID-NIGHT-2155): the client log, the console's verbose switch and the one-paid-run
-  // heartbeat - named once, in BLWP_BROWSER_STORE, holding no player and no money.
+  // heartbeat - named once, in ARENA_BROWSER_STORE, holding no player and no money.
   // (The one-time blwp.* to arena.* movenames it once more before all of these: storage-move.test.js.)
   const pageAfterMove = page.replace(/<script id="arena-storage-move">[\s\S]*?<\/script>/, '');
-  assert.equal((pageAfterMove.match(/localStorage/g) || []).length, 3, 'the page names localStorage outside vault(), the seed keeper and BLWP_BROWSER_STORE (every preference, cache and connection goes through that door)');
+  assert.equal((pageAfterMove.match(/localStorage/g) || []).length, 3, 'the page names localStorage outside vault(), the seed keeper and ARENA_BROWSER_STORE (every preference, cache and connection goes through that door)');
   // THE ONE DOOR, FROM THE FIRST PAINT ON: defined in the first-paint script, so even the splash's game-name lookup uses it
-  assert.match(page, /window\.BLWP_BROWSER_STORE = function \(\) \{ try \{ return window\.localStorage; \}/, 'the browser\'s own store is not the one named helper');
-  assert.match(page, /const browserStore = window\.BLWP_BROWSER_STORE;/, 'the console\'s store is not that helper');
-  assert.match(page, /window\.BLWP_SEED_KEEPER = blwpSeedKeeper\(\{ L: window\.localStorage, T: window\.sessionStorage,/, 'the phrases are not kept by blwpSeedKeeper');
+  assert.match(page, /window\.ARENA_BROWSER_STORE = function \(\) \{ try \{ return window\.localStorage; \}/, 'the browser\'s own store is not the one named helper');
+  assert.match(page, /const browserStore = window\.ARENA_BROWSER_STORE;/, 'the console\'s store is not that helper');
+  assert.match(page, /window\.ARENA_SEED_KEEPER = blwpSeedKeeper\(\{ L: window\.localStorage, T: window\.sessionStorage,/, 'the phrases are not kept by blwpSeedKeeper');
   assert.match(page, /function vault\(\) \{\n\s+try \{ const s = window\.localStorage;/, 'localStorage is not the kept rounds\' vault()');
   for (const call of ['tabSeed', 'seedOrigin', 'importSeed', 'tabIdentity', 'setPlayerName', 'nameRecordFor'])
     assert.ok(!new RegExp(`${call}\\([^)]*vault\\(\\)`).test(page), `the page keeps the player (${call}) in storage every tab shares`);

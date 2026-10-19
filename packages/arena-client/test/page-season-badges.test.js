@@ -73,7 +73,7 @@ function fakePage() {
 }
 
 /**
- * The view lifted from the page over the three seats, reached through a route (BLWP_ROUTED_URL: https://r.<seat>), badge
+ * The view lifted from the page over the three seats, reached through a route (ARENA_ROUTED_URL: https://r.<seat>), badge
  * answers (never the season's) held back while `hold.on`. `observer`: a fake IntersectionObserver class, or none (every drawn row is asked).
  */
 function liftSeason({ observer } = {}) {
@@ -103,7 +103,7 @@ function liftSeason({ observer } = {}) {
   const timers = new Map(); let nextTimer = 1;
   const setTimeout = (f, ms) => { const id = nextTimer++; timers.set(id, { f, ms }); return id; };
   const clearTimeout = (id) => { timers.delete(id); };
-  const window = { BLWP_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, BLWP_ROUTED_URL: (u) => u.replace('https://', 'https://r.') };
+  const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ARENA_ROUTED_URL: (u) => u.replace('https://', 'https://r.') };
   pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'fetch', 'setTimeout', 'clearTimeout', 'AbortSignal', 'IntersectionObserver'], SEASON)(
     dom.document, window, BUNDLE, fetch, setTimeout, clearTimeout, { timeout: () => undefined }, observer);
   const fire = async () => { const [[id, t]] = [...timers]; timers.delete(id); t.f(); await settle(); };

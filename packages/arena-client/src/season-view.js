@@ -144,7 +144,7 @@ export function seasonView(answer, { title = null, viewer = [], limit = SEASON_R
  * ONE SEASON FROM THE FIRST SEAT THAT ANSWERS IT, in the order given: a seat that does not answer within `answerMs`, answers
  * anything but 200, sends no JSON or sends one seasonView refuses falls through to the next. Answers the view with the
  * seat it came from, or `{ ok: false, why, tried }` when none answered. `via` maps a seat's URL to the route the page
- * reaches it by (BLWP_ROUTED_URL).
+ * reaches it by (ARENA_ROUTED_URL).
  */
 export async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)

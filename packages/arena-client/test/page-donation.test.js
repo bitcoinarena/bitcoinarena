@@ -22,7 +22,7 @@ function lift(name) {
   return PAGE.slice(at, end + 6);
 }
 const storage = (init = {}) => { const m = new Map(Object.entries(init)); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }; };
-// a fresh window per page load: donationBps reads the store once and keeps it on window.BLWP_DONATION_BPS
+// a fresh window per page load: donationBps reads the store once and keeps it on window.ARENA_DONATION_BPS
 function pageWith(sessionStorage) {
   const window = { sessionStorage };
   const donationBps = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window'], lift('donationBps'), 'return donationBps;')(window);
@@ -45,8 +45,8 @@ test('donationBps: 500 by default; a stored 0-500 in steps of 100 is taken; anyt
   const p = pageWith(s);
   assert.equal(p.donationBps(), 300);
   s.setItem('arena.donation.settings', '100');
-  assert.equal(p.donationBps(), 300, 'kept on window.BLWP_DONATION_BPS: the store is read once per page');
-  assert.equal(p.window.BLWP_DONATION_BPS, 300);
+  assert.equal(p.donationBps(), 300, 'kept on window.ARENA_DONATION_BPS: the store is read once per page');
+  assert.equal(p.window.ARENA_DONATION_BPS, 300);
   const throws = { getItem: () => { throw new Error('denied'); } };
   assert.equal(pageWith(throws).donationBps(), DEFAULT_BPS, 'a store that throws: the default');
 });

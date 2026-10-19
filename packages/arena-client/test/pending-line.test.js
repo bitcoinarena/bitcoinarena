@@ -17,7 +17,7 @@ function page({ answers, done = [] }) {
   const kept = new Map([['arena.pending.r1', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e1', nodes: ['http://a', 'http://b', 'http://c'] })]]);
   const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
   const els = { 'arena-bal-pending-when': { textContent: '' }, 'arena-lobby-pending': { parentNode: { title: '' } } };
-  const window = { BLWP_WALLET_BALANCE: { sats: 10, pending: 0 } };
+  const window = { ARENA_WALLET_BALANCE: { sats: 10, pending: 0 } };
   const fetch = async (u) => { const a = answers[new URL(u).host]; return a ? { ok: true, json: async () => a } : { ok: false }; };
   // the page's own line functions (3f1e2674 had the page call them; this stub lacked them since)
   const BLWPCLIENT = { savedCollects: () => done.map((r) => ({ roundIdHex: r, done: { payout: 'x' } })), pendingWindowLine, savedLockExpiration };
@@ -30,8 +30,8 @@ const signed = (msat, more = {}) => ({ kind: 'payout', pendingMsat: msat, window
 test('signed: the majority figure is pending at once, with the window close in UTC', async () => {
   const p = page({ answers: { a: signed('196000'), b: signed('196000'), c: signed('98000') } });
   await p.go();
-  assert.equal(p.window.BLWP_PENDING_SATS, 196, 'the pending is not the majority figure');
-  assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 196);
+  assert.equal(p.window.ARENA_PENDING_SATS, 196, 'the pending is not the majority figure');
+  assert.equal(p.window.ARENA_WALLET_BALANCE.pending, 196);
   assert.equal(p.els['arena-bal-pending-when'].textContent, 'window closes 12:11:22 UTC');
 });
 
@@ -40,7 +40,7 @@ test('past the close the line says the window closed and the payout is on its wa
   const closed = signed('192000', { windowCloseMs: String(closeMs) });
   const p = page({ answers: { a: closed, b: closed } });
   await p.go();
-  assert.equal(p.window.BLWP_PENDING_SATS, 192);
+  assert.equal(p.window.ARENA_PENDING_SATS, 192);
   assert.equal(p.els['arena-bal-pending-when'].textContent, `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`);
   // AND NOT "PAYING OUT" FOREVER (MF 18, 3f1e2674): long past the close it is "not paid yet"
   const old = signed('192000', { windowCloseMs: String(Date.UTC(2026, 9, 3, 6, 43, 21)) });
@@ -52,7 +52,7 @@ test('past the close the line says the window closed and the payout is on its wa
 test('while other results still arrive the figure is marked provisional', async () => {
   const p = page({ answers: { a: signed('98000', { provisional: true }), b: signed('98000', { provisional: true }) } });
   await p.go();
-  assert.equal(p.window.BLWP_PENDING_SATS, 98);
+  assert.equal(p.window.ARENA_PENDING_SATS, 98);
   assert.match(p.els['arena-bal-pending-when'].textContent, /provisional/);
 });
 
@@ -60,7 +60,7 @@ test('a result that becomes invalid takes the line away: no figure, or 0, is no 
   for (const answers of [{ a: { pendingMsat: null, state: 'SUSPENDED' }, b: { pendingMsat: null } }, { a: signed('0'), b: signed('0') }, {}]) {
     const p = page({ answers });
     await p.go();
-    assert.equal(p.window.BLWP_PENDING_SATS, 0, `a pending stayed: ${JSON.stringify(answers)}`);
+    assert.equal(p.window.ARENA_PENDING_SATS, 0, `a pending stayed: ${JSON.stringify(answers)}`);
     assert.equal(p.els['arena-bal-pending-when'].textContent, '');
   }
 });
@@ -68,7 +68,7 @@ test('a result that becomes invalid takes the line away: no figure, or 0, is no 
 test('collected into the wallet: the round\'s note goes and nothing is pending', async () => {
   const p = page({ answers: { a: signed('196000'), b: signed('196000') }, done: ['r1'] });
   await p.go();
-  assert.equal(p.window.BLWP_PENDING_SATS, 0);
+  assert.equal(p.window.ARENA_PENDING_SATS, 0);
   assert.equal(p.kept.size, 0, 'the collected round is still asked about');
 });
 
@@ -80,12 +80,12 @@ test('a round the nodes report settled - PROVISIONALLY_FINAL, no pending amount 
     windowCloseMs: String(Date.UTC(2026, 8, 30, 22, 13, 30)), why: `the round's settlement ${'ab'.repeat(32)} is ACCEPTED by the federation and pays this entry's share: nothing is pending` };
   const p = page({ answers: { a: settled, b: settled, c: settled } });
   await p.go();
-  assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a settled round left a pending amount');
-  assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 0);
+  assert.equal(p.window.ARENA_PENDING_SATS, 0, 'a settled round left a pending amount');
+  assert.equal(p.window.ARENA_WALLET_BALANCE.pending, 0);
   assert.equal(p.els['arena-bal-pending-when'].textContent, '', 'a settled round left its window line');
   const live = page({ answers: { a: signed('196000', { state: 'PROVISIONALLY_FINAL' }), b: signed('196000', { state: 'PROVISIONALLY_FINAL' }), c: settled } });
   await live.go();
-  assert.equal(live.window.BLWP_PENDING_SATS, 196);
+  assert.equal(live.window.ARENA_PENDING_SATS, 196);
 });
 
 // TWO PLAYERS IN ONE BROWSER (ORDER-2116, measured 2026-10-02 01:56Z): the notes share one store; keyed by round alone the
@@ -101,9 +101,9 @@ test('two entries of one round in one browser: each tab asks only about its own 
   const fetch = async (u) => { const e = new URL(u).searchParams.get('entry'); asked.push(e); return { ok: true, json: async () => signed(e === 'e1' ? '192000' : '0') }; };
   const tab = (mine) => {
     const session = new Map(mine ? [['arena.pending.mine', JSON.stringify(mine)]] : []);
-    const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
+    const window = { ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
     const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
-    return run(() => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.BLWP_PENDING_SATS);
+    return run(() => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.ARENA_PENDING_SATS);
   };
   const winner = await tab(['arena.pending.r1.e1']);
   const winnerAsked = asked.splice(0);
@@ -129,7 +129,7 @@ test('four seats VOID with a refund, three still PROVISIONALLY_FINAL with winnin
   const note = JSON.parse(p.kept.get('arena.pending.r1')); note.nodes = Object.keys(answers).map((h) => 'http://' + h);
   p.kept.set('arena.pending.r1', JSON.stringify(note));
   await p.go();
-  assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a refund or a minority figure was shown as pending winnings');
+  assert.equal(p.window.ARENA_PENDING_SATS, 0, 'a refund or a minority figure was shown as pending winnings');
   assert.equal(p.els['arena-bal-pending-when'].textContent, '');
 });
 
@@ -141,7 +141,7 @@ test('a settled answer is asked again only after 30 s, a provisional one at ever
   const run = (provisional) => {
     const counted = { asked: 0 };
     const fetch = async () => { counted.asked++; await new Promise((r) => setTimeout(r, 20)); return { ok: true, json: async () => signed('192000', { provisional }) }; };
-    const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
+    const window = { ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
     const look = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending;')(
       () => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {});
     return { look, counted, window };
@@ -151,7 +151,7 @@ test('a settled answer is asked again only after 30 s, a provisional one at ever
   assert.equal(settled.counted.asked, 2, 'one look, both signer nodes asked once');
   await settled.look(); await settled.look();
   assert.equal(settled.counted.asked, 2, 'a settled answer is not asked again within 30 s');
-  assert.equal(settled.window.BLWP_PENDING_SATS, 192, 'its last answer still counts');
+  assert.equal(settled.window.ARENA_PENDING_SATS, 192, 'its last answer still counts');
   const moving = run(true);
   await moving.look(); await moving.look(); await moving.look();
   assert.equal(moving.counted.asked, 6, 'a provisional answer is asked at every look');
@@ -162,12 +162,12 @@ test('a round no signer node answers for is asked again after 10 s, not at every
   const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
   let asked = 0;
   const fetch = async () => { asked++; return { ok: false, status: 404, json: async () => null }; };
-  const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
+  const window = { ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
   const look = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending;')(
     () => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {});
   for (let k = 0; k < 5; k++) await look();
   assert.equal(asked, 3, 'asked once (three signer nodes), not five times');
-  assert.equal(window.BLWP_PENDING_SATS, 0);
+  assert.equal(window.ARENA_PENDING_SATS, 0);
   look.st.seen.get('arena.pending.r9.e9').at -= 10001;              // ten seconds on
   await look();
   assert.equal(asked, 6, 'asked again after 10 s');

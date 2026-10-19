@@ -21,7 +21,7 @@ function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 93
   for (const id of ['arena-money', 'arena-settings', 'arena-lobby-balance', 'arena-backup-notice', 'arena-backup-warn', 'arena-settings-backup',
     'arena-lobby-confirmed', 'arena-bal-confirmed', 'arena-lobby-pending', 'arena-bal-pending', 'arena-balance-line', 'arena-money-why']) el(id);
   const document = { getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => canvas } : id === 'boot' ? null : els[id] || null) };
-  const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: balance, unityInstance: {} };
+  const window = { BLWP_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: balance, unityInstance: {} };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
   pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], SRC, 'return paintMoney();')(
     document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => false);
