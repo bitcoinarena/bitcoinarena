@@ -233,7 +233,9 @@ export async function installProgram({ id, description, args, home, boot = true,
     // ends with 75 to come back from the new release)
     writeFileSync(file, ['@echo off', `rem ${description}, written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
       ...(againOn ? [':again'] : []),
-      `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`,
+      // CALL a batch file (measured 2026-10-19 22:43Z in the Windows VM: "ending: this service starts again from the new release", exit 75,
+      // and nothing started it - a .cmd run from a .cmd without `call` never returns to the caller, so `goto again` never ran)
+      `${/\.(cmd|bat)$/i.test(String(args[0])) ? 'call ' : ''}${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`,
       ...(againOn ? [`if %errorlevel%==${againOn} goto again`] : [])].join('\r\n') + '\r\n', { mode: 0o600 });
     const name = named(`Arena ${id}`, ' ');
     if (boot) {

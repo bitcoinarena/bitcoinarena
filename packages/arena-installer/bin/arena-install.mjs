@@ -72,8 +72,9 @@ if (args.includes('--update')) {
   const { installUpdater } = await import('../src/launchers.js');
   const { installProgram } = await import('../src/service.js');
   const { serviceFile } = await import('../src/node-services.js');
-  const installUpdaterFn = async (o) => (existsSync(serviceFile('updater', { home, platform: process.platform, env: process.env })) ? { ok: true, already: true }
-    : installUpdater({ ...o, installProgram }));
+  const { updaterLauncherStale } = await import('../src/launchers.js');
+  const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
+    return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
     node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn });
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
