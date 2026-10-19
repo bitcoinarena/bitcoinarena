@@ -15,7 +15,8 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { abandonmentProof } from '../../arena-protocol/src/absence.js';
-import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture } from './absences.js';
+import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
+import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
@@ -263,12 +264,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // AND WHO GAVE NOTICE (§23A.5): a standing departure notice due at this height - DEPARTED from its leave_after, under its id
     // BOTH HELD for one guardian (FEDERATION.md rehearsal 14): "a departure that stops serving before its leave_after"
     // is abandonment (§23A.5) - the proof wins when the absence it attests began before the notice's leave_after
+    // AND WHOSE OWNER TOOK IT OUT IN TIME (§23A.5a): DEPARTED from the request's posted_at, before the proof is weighed
     const departed = [];
     const absent = [];
+    const emergent = [];
     if (absences) for (const g of plain.guardians) {
       if (gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))) continue;
       const d = Number.isInteger(departureNotice) ? absences.departureFor(plain.record, g.peerKey, departureNotice, b.height) : { ok: false };
       const p = Number.isInteger(abandonBlocks) ? absences.proofFor(plain.record, g.peerKey, abandonBlocks) : { ok: false };
+      const em = absences.emergencyFor ? absences.emergencyFor(g.nodePubkey) : null;
+      const out = emergencyDeparted(b, g, em, p);
+      if (out) { gone.push(out); emergent.push(em); continue; }
       if (p.ok && (!d.ok || p.sinceHeight < d.sinceHeight)) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id }); absent.push(...p.attestations); }
       else if (d.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); departed.push(d.notice); }
     }
@@ -282,7 +288,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       answers = await Promise.all(plain.guardians.map(async (g) => {
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(final.record) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
     }
@@ -335,6 +341,20 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
   }
 
+  // THE OWNER'S EMERGENCY DEPARTURE OF A GUARDIAN (§23A.5a, protocol 17): a leave request `d` that stands against the census this record
+  // is built on (the node's advertisement names its emergency key, posted at or before the record's height) and arrived before
+  // abandon_blocks from the guardian's last seen height (`proof`, the absence attestations held about it, when they make one) is
+  // DEPARTED from its posted_at under its id, the bond untouched; a late one changes nothing (the absence is abandonment)
+  const emergencyVerify = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
+  function emergencyDeparted(b, g, d, proof) {
+    if (!d || !Number.isInteger(abandonBlocks)) return null;
+    const entry = (b.census.entries || []).find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(g.nodePubkey));
+    const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: b.height, verify: emergencyVerify });
+    if (!st.ok) return null;
+    const eff = emergencyDepartureEffect(st, { guardian: true, lastSeenHeight: proof && proof.ok ? proof.sinceHeight : null, abandonBlocks });
+    return eff.departed ? { peerKey: g.peerKey, sinceHeight: d.postedAt, kind: GONE.DEPARTED, proofRef: emergencyDepartureId(d) } : null;
+  }
+
   /** A body this seat builds anyway (with the gone it was told), signed: the second ask of `gather`. */
   function signBody(record) {
     const id = federationRecordId(record);
@@ -342,7 +362,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
-  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = []) {
+  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = []) {
     const b = basis(atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
@@ -357,10 +377,24 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const plainId = federationRecordId(plain.record);
     // a peer the attestations handed along are about is ABANDONED - only if they prove it to this seat, on its own record
     let absent; let notices;
-    try { absent = absentHex.map(readAbsenceHex); notices = departedHex.map(readDepartureHex); } catch (e) { return { ok: false, why: e.message }; }
+    let requests;
+    try { absent = absentHex.map(readAbsenceHex); notices = departedHex.map(readDepartureHex); requests = emergencyHexes.map(readEmergencyHex); } catch (e) { return { ok: false, why: e.message }; }
     const sv = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
     const gone = [];
     for (const g of plain.guardians.filter((x) => goneHex.includes(toHex(x.peerKey)))) {
+      // an owner's leave request handed along for this guardian's node (§23A.5a): DEPARTED from its posted_at - only if it stands here
+      // and arrived in time against the absence attestations this seat holds itself
+      // ... and only one this seat took itself, fresh (emergency.js EMERGENCY_FRESH_BLOCKS): a handed request it never held could be dated back
+      const handed = requests.find((d) => toHex(d.nodePubkey) === toHex(g.nodePubkey));
+      const mine = handed && absences && absences.emergencyFor ? absences.emergencyFor(g.nodePubkey) : null;
+      if (handed && !(mine && mine.postedAt === handed.postedAt)) return { ok: false, why: 'that emergency departure is not one this seat took itself' };
+      const req = mine;
+      if (req) {
+        const own = absences && Number.isInteger(abandonBlocks) ? absences.proofFor(plain.record, g.peerKey, abandonBlocks) : { ok: false };
+        const out = emergencyDeparted(b, g, req, own);
+        if (!out) return { ok: false, why: 'that emergency departure does not stand here, or came after abandon_blocks' };
+        gone.push(out); continue;
+      }
       // a notice handed along for this peer: DEPARTED from its leave_after - only if it stands here and is due at this height
       if (notices.some((d) => toHex(d.peerKey) === toHex(g.peerKey))) {
         if (!Number.isInteger(departureNotice)) return { ok: false, why: 'this seat runs no departure_notice clock' };

@@ -140,6 +140,12 @@ export function encodeAdvert(a) {
       throw new Error('a node declares bond_min and proposal_deposit in BigInt sats');
     w.u8(DECLARES_MARKER); w.u64(d.bondMinSats); w.u64(d.proposalDepositSats);
   }
+  // THE OWNER'S EMERGENCY KEY (§23A.5a, protocol 17): its 32-byte public key after its marker, after the declared scalars and before
+  // serving; none is no bytes, so every advertisement before this keeps its bytes. A request it signs takes the offline node out.
+  if (a.emergencyPubkey !== undefined && a.emergencyPubkey !== null) {
+    if (!(a.emergencyPubkey instanceof Uint8Array) || a.emergencyPubkey.length !== 32) throw new Error('an emergency key is a 32-byte public key');
+    w.u8(EMERGENCY_MARKER); w.bytes32(a.emergencyPubkey);
+  }
   if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
   if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
@@ -147,6 +153,8 @@ export function encodeAdvert(a) {
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
 export const DECLARES_MARKER = 0x5d;
+/** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
+export const EMERGENCY_MARKER = 0x5e;
 /** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
 export const NOT_SERVING_MARKER = 0x5f;
 
@@ -202,9 +210,11 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
-  // the declared scalars (17 bytes) and serving = false (1), each only when written: 0, 1, 17 or 18 bytes left
+  // the declared scalars (17 bytes), the emergency key (33) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
-  if ((left === 17 || left === 18) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  if ([17, 18, 50, 51].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  const left2 = bytes.length - r.at;
+  if ((left2 === 33 || left2 === 34) && bytes[r.at] === EMERGENCY_MARKER) { r.u8(); a.emergencyPubkey = r.bytes32(); }
   // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
   if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');

@@ -159,8 +159,8 @@ test('a template\'s rules, each refused by name', () => {
   assert.throws(() => encodeManifestBody({ ...BODY, resultType: RESULT_TYPE.REPLAY, cores: [{ hash: b32(1), configs: [b32(2)] }], runTicksMax: 10,
     payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4, minScore: 1, template: TEMPLATE, requiredProtocolVersion: 4 }), /only an attested game is a market template/);
   // A TEMPLATE UNDER A VERSION THIS BUILD DOES NOT SPEAK IS NOT A GAME IT HOSTS (manifestStands), as a top split
-  const v10 = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 17 });   // 13..16 are spoken since /#471/#494; 17 is not
-  assert.match(manifestStands(v10, { verify: verifyEd }).why, /is a market template under protocol version 17, which this build does not speak/);
+  const v10 = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 18 });   // 13..17 are spoken (17: the owner's emergency key); 18 is not
+  assert.match(manifestStands(v10, { verify: verifyEd }).why, /is a market template under protocol version 18, which this build does not speak/);
   assert.equal(manifestStands(TPL, { verify: verifyEd }).ok, true);
   console.log('  refusals:', JSON.stringify(said, null, 1));
 });

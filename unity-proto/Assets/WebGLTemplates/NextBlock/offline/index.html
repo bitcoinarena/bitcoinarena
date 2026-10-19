@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My node is offline</title>
+<meta name="description" content="Take your own Bitcoin Arena node out of the network while it is offline, with its emergency code, so it keeps its bond.">
+<!-- MY NODE IS OFFLINE ON THE ARENA SITE (spec §23A.5a, protocol 17): the same as /Dashboard/emergency on every node. The owner types the
+     emergency code written down at install; this page makes the emergency key from it (the code never leaves the browser), asks the
+     network's seats (daily.json) which node's bond advert names that key, signs the leave request at a seat's tip and posts it to every
+     seat. -->
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f6f8fa; --panel: #ffffff; --line: #d0d7de; --text: #1f2328; --muted: #57606a; color-scheme: light; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } .lead { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 0 0 14px; }
+  .card h2 { font-size: 16px; margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; } td, th { text-align: left; padding: 6px; border-top: 1px solid var(--line); vertical-align: top; }
+  tr:first-child td, tr:first-child th { border-top: 0; }
+  label { display: block; color: var(--muted); margin: 0 0 6px; }
+  input { width: 100%; font: 16px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  button { margin-top: 12px; background: var(--accent); color: #1a1000; border: 0; border-radius: 8px; padding: 10px 16px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 10px; padding: 5px 0; border-top: 1px solid var(--line); } .row:first-of-type { border-top: 0; }
+  .row b { overflow-wrap: anywhere; text-align: right; }
+  .warn { border-left: 3px solid var(--accent); padding: 8px 12px; background: rgba(247,147,26,.08); border-radius: 0 8px 8px 0; margin: 10px 0 0; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); min-height: 1.4em; margin-top: 8px; } .foot { color: var(--muted); font-size: 12px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>My node is offline</h1>
+  <p class="lead">Take your own node out of the network while it is away, so it keeps its bond. You need the emergency code you wrote down
+  when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</b> - this page does not want them.</p>
+  <div class="card">
+    <h2>What it does</h2>
+    <table>
+      <tr><th>Your node</th><th>Taken out</th><th>Bond</th></tr>
+      <tr><td>no guardian role</td><td>at once, from every seating</td><td>yours</td></tr>
+      <tr><td>a guardian, in time</td><td>at once; its federation's succession starts now</td><td>yours</td></tr>
+      <tr><td>a guardian, too late (away longer than the network allows: ~48 h on mainnet, 12 blocks on testnet4)</td><td>nothing changes: it is abandonment</td><td>slashed</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <label for="code">Emergency code</label>
+    <input id="code" placeholder="ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" autocapitalize="characters">
+    <button id="find">Find my node</button>
+    <div class="bad" id="err1"></div>
+  </div>
+  <div class="card" id="step2" hidden></div>
+  <p class="foot">The code can only take the node out - no money, no settings. Coming back needs a new advertisement from the node. <a href="../">← Bitcoin Arena</a></p>
+</main>
+<script src="../blwp-curve.js"></script>
+<script src="../arena-client.js"></script>
+<script>
+(() => {
+  const C = window.BLWPCLIENT, K = window.BLWP_CURVE;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const bytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+  const base = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  let seats = [], secret = null, found = null;
+  const seatsP = fetch('../daily.json', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+    const list = (d.testnet && d.testnet.node) || d.node || [];
+    seats = [...new Set(list.map(base))];
+  }).catch(() => { seats = []; });
+  const ask = async (path, init) => {
+    for (const s of seats) { try { const r = await fetch(s + path, { ...init, signal: AbortSignal.timeout(8000) }); if (r.ok) return { seat: s, body: await r.json() }; } catch { /* the next seat */ } }
+    return null;
+  };
+  $('find').onclick = async () => {
+    $('err1').textContent = ''; $('step2').hidden = true;
+    let codeBytes; try { codeBytes = C.parseEmergencyCode($('code').value); } catch (e) { $('err1').textContent = e.message; return; }
+    secret = C.emergencySecret(codeBytes);
+    const key = hex(K.pointX(secret));
+    await seatsP;
+    if (!seats.length) { $('err1').textContent = 'The network\'s seats could not be read from daily.json. Try again in a moment.'; return; }
+    const got = await ask('/emergency-departures?key=' + key);
+    if (!got) { $('err1').textContent = 'No seat answered. Try again in a moment.'; return; }
+    if (!got.body.named) { $('err1').textContent = 'No node of the census names this emergency code in its bond advertisement. Check the code - or your node\'s bond was posted before protocol 17 and has no emergency path.'; return; }
+    found = { ...got.body.named, tip: got.body.tip, key };
+    const s2 = $('step2'); s2.hidden = false;
+    s2.innerHTML = `<h2>Your node</h2>
+      <div class="row"><span>Node key</span><b>${esc(found.node.slice(0, 16))}…</b></div>
+      <div class="row"><span>Address</span><b>${esc(found.endpoint || '-')}</b></div>
+      <div class="row"><span>Roles</span><b>${esc(found.roles.join(', ') || '-')}</b></div>
+      <div class="row"><span>Guardian of</span><b>${found.guardianOf.length ? found.guardianOf.map((f) => esc(f.slice(0, 8))).join(', ') : 'no federation'}</b></div>
+      <div class="row"><span>Signed at block</span><b>${esc(found.tip)}</b></div>
+      ${found.held ? '<p class="ok">The network already holds a leave request for it.</p>' : ''}
+      <div class="warn">Taking it out cannot be undone: the node serves again only with a new advertisement.</div>
+      <button id="go">Take my node out</button><div class="bad" id="err2"></div>`;
+    $('go').onclick = send;
+  };
+  async function send() {
+    $('go').disabled = true; $('err2').textContent = '';
+    try {
+      const d = C.signEmergencyDeparture({ nodePubkey: bytes(found.node), emergencyPubkey: bytes(found.key), postedAt: Number(found.tip) }, (m) => K.signSchnorr(m, secret));
+      const body = hex(C.encodeEmergencyDeparture(d)) + hex(d.signature);
+      const sent = await Promise.all(seats.map(async (s) => { try { const r = await fetch(s + '/emergency-departure', { method: 'POST', body, signal: AbortSignal.timeout(15000) }); return { ok: r.ok, why: r.ok ? '' : (await r.text()).trim() }; } catch (e) { return { ok: false, why: e.message }; } }));
+      const took = sent.filter((x) => x.ok).length;
+      if (!took) throw new Error(sent.map((x) => x.why).filter(Boolean)[0] || 'no seat took the request');
+      $('step2').innerHTML = `<h2 class="ok">Your node is out ✓</h2><p>${took} of ${seats.length} seats took the leave request (block ${esc(found.tip)}); each passes it on.
+        ${found.guardianOf.length ? 'Its federation\'s succession starts now; its bond stays yours if it was in time.' : 'It is in no seating from now on; its bond stays yours.'}</p>`;
+      secret = null;
+    } catch (e) { $('err2').textContent = e.message; $('go').disabled = false; }
+  }
+})();
+</script>
+</body>
+</html>

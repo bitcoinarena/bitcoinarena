@@ -31,11 +31,12 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [], successor = null, closed = false, reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null } = {}) {
+function seven({ leaving = [], successor = null, closed = false, reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {} } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
-    advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }] } })) };
+    advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }],
+      ...(emergencyKeys[i] ? { emergencyPubkey: emergencyKeys[i] } : {}) } })) };
   const seats = nodes.map((n, i) => federationRecords({
     round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
@@ -48,7 +49,8 @@ function seven({ leaving = [], successor = null, closed = false, reserves = null
       const rv = u.searchParams.get('reserve');
       const absent = (u.searchParams.get('absent') || '').split(',').filter(Boolean);
       const departed = (u.searchParams.get('departed') || '').split(',').filter(Boolean);
-      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent, departed) : j.mySignature(u.searchParams.get('federation'), null, rv));
+      const emergency = (u.searchParams.get('emergency') || '').split(',').filter(Boolean);
+      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent, departed, emergency) : j.mySignature(u.searchParams.get('federation'), null, rv));
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     },
   }));
@@ -407,4 +409,55 @@ test('ARENA_RECORD_BASIS=chain: a seat holding only an old round takes the chain
   assert.equal(seats[0].censusNow().height, 156984, 'chain first: the census 6 below the tip at a multiple of 6');
   const got = await seats[0].gather(FED, inviteFederationId);
   assert.deepEqual([got.ok, got.status, got.signers], [true, 'OPEN', 4], got.why);
+});
+
+test('the owner\'s emergency departure of a guardian (§23A.5a, protocol 17): in time DEPARTED from posted_at, bond untouched; late it is abandonment, slashed', async () => {
+  const { createAbsences, emergencyHex } = await import('../src/absences.js');
+  const { signAbsence } = await import('../../arena-protocol/src/absence.js');
+  const { emergencyCodeBytes, emergencySecret, signEmergencyDeparture } = await import('../../arena-protocol/src/emergency.js');
+  const ABANDON = 288; const POSTED = 156000;
+  const secret = emergencySecret(emergencyCodeBytes(new Uint8Array(32).fill(0x44)));
+  const pub = schnorr.getPublicKey(secret);
+  const run = async (lastSeen, { key = pub } = {}) => {
+    const stores = Array.from({ length: 7 }, () => createAbsences({ verify }));
+    const held = stores[0];
+    const s = seven({ absencesOf: (i) => stores[i], abandonBlocks: ABANDON, emergencyKeys: { 3: key } });
+    const leaver = s.nodes[3];
+    const req = signEmergencyDeparture({ nodePubkey: leaver.pubkey, emergencyPubkey: pub, postedAt: POSTED }, (m) => schnorr.sign(m, secret));
+    // every seat took it (POST /emergency-departure passes it on); the attestations are the gatherer's alone, as in the tests above
+    for (const st of stores) assert.equal(st.offerEmergency(req).kept, true);
+    if (lastSeen !== null) for (const n of s.nodes.filter((x) => x !== leaver).slice(0, 5))
+      assert.equal(held.offer(signAbsence({ federationId: FED, peerKey: leaver.guardianKey, lastSeenHeight: lastSeen, height: lastSeen + ABANDON, attester: n.pubkey }, (m) => schnorr.sign(m, n.secret))).kept, true);
+    const got = await s.seats[0].gather(FED, inviteFederationId);
+    const kept = s.seats[0].list()[0];
+    const v = kept ? verifyFederationRecord(fromHex(kept.record), { census: s.census.entries, verify, inviteFederationId }) : null;
+    return { s, req, got, gone: v ? v.record.gone : [] };
+  };
+  // IN TIME: last seen 155900, posted 156000 < 155900 + 288 - DEPARTED from posted_at, though 5 guardians attest the absence
+  const inTime = await run(155900);
+  assert.deepEqual([inTime.got.status, inTime.got.gone, inTime.got.signers, inTime.gone[0].kind, inTime.gone[0].sinceHeight], ['DRAINING', 1, 7, 1, POSTED], inTime.got.why);
+  // and with no attestation at all (the owner was quicker than the guardians' daily attestation): DEPARTED too
+  const noProof = await run(null);
+  assert.deepEqual([noProof.got.gone, noProof.gone[0].kind, noProof.gone[0].sinceHeight], [1, 1, POSTED]);
+  // LATE: last seen 155700, posted 156000 >= 155700 + 288 - nothing changes: ABANDONED since last seen, the slash stands ("Do not soften that case")
+  const late = await run(155700);
+  assert.deepEqual([late.got.gone, late.got.signers, late.gone[0].kind, late.gone[0].sinceHeight], [1, 7, 2, 155700], 'late: ABANDONED');
+  // the last block in time: posted 156000 with last seen 155713 (155713 + 288 = 156001) is still in time
+  const edge = await run(155713);
+  assert.deepEqual([edge.gone[0].kind, edge.gone[0].sinceHeight], [1, POSTED]);
+  // a request the node's advertisement does not name the key of stands nowhere: the guardian stays seated
+  const foreign = await run(null, { key: new Uint8Array(32).fill(9) });
+  assert.deepEqual([foreign.got.status, foreign.got.gone], ['OPEN', 0]);
+  // a guardian seat handed a request it never took itself does not sign it DEPARTED (it could be dated back)
+  const never = await inTime.s.seats[1].mySignatureWithGone(toHex(FED), [toHex(inTime.s.nodes[3].guardianKey)], null, null, [], [],
+    [emergencyHex(signEmergencyDeparture({ nodePubkey: inTime.s.nodes[3].pubkey, emergencyPubkey: pub, postedAt: POSTED - 50 }, (m) => schnorr.sign(m, secret)))]);
+  assert.match(never.why, /not one this seat took itself/);
+  // a guardian seat handed a late request does not sign it DEPARTED when it holds the attestations itself
+  const lateSeat = createAbsences({ verify });
+  lateSeat.offerEmergency(late.req);
+  const s2 = seven({ absencesOf: (i) => (i === 1 ? lateSeat : createAbsences({ verify })), abandonBlocks: ABANDON, emergencyKeys: { 3: pub } });
+  for (const n of s2.nodes.filter((x) => x !== s2.nodes[3]).slice(0, 5))
+    lateSeat.offer(signAbsence({ federationId: FED, peerKey: s2.nodes[3].guardianKey, lastSeenHeight: 155700, height: 155988, attester: n.pubkey }, (m) => schnorr.sign(m, n.secret)));
+  const said = await s2.seats[1].mySignatureWithGone(toHex(FED), [toHex(s2.nodes[3].guardianKey)], null, null, [], [], [emergencyHex(late.req)]);
+  assert.match(said.why, /emergency departure does not stand here, or came after abandon_blocks/);
 });

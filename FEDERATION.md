@@ -222,6 +222,16 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
 Full rules: multiplayer_p2p.md §23A.9. Code: arena-protocol `gateway-seats.js`, `gateway-claim.js`, `gateway-seating.js`, `fee.js`
 (the 2026.0.15 split); arena-node `gateway-watch.js`; the installer's `gateway.js` and `custody-agent.js`.
 
+## Leaving while offline: the owner's emergency key (spec §23A.5a, protocol 17)
+
+From the 24 words the installer derives an **emergency key** and shows it as a short code to write down. The bond advert names its
+public key. With the node offline, the owner opens any node's page (or the Arena site), types the code, and posts a signed leave
+request. A node with no guardian role leaves the seating at once; a guardian whose request arrives before `abandon_blocks` is
+`DEPARTED` at once and the succession starts. In both cases the bond is untouched. A guardian whose request comes later is abandoned
+and slashed, as before. The code can do nothing else. A seat takes a request only within 6 blocks of its tip and signs a
+guardian `DEPARTED` only for one it took itself, so a late request cannot be dated back. Pages: `/Dashboard/emergency` on every node,
+`offline/` on the Arena site.
+
 ## Residuals (§22)
 
 - **Guardians.** A threshold of guardians colluding can take the

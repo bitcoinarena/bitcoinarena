@@ -12,6 +12,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { phraseFromSeed, seedFromPhrase } from '../../arena-client/src/bip39.js';
 import { ownerSecretFromSeed } from '../../arena-node/src/owner.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { emergencyCodeBytes, emergencyCodeText, emergencySecret } from '../../arena-protocol/src/emergency.js';
 
 export const CONFIRM_WORDS = 3;
 
@@ -38,6 +39,16 @@ export function checkConfirm(words, positions, answers) {
 export function ownerKeyOf(seed) {
   const secret = ownerSecretFromSeed(seed);
   return { secret, pubkey: toHex(schnorr.getPublicKey(secret)) };
+}
+
+/**
+ * THE OWNER'S EMERGENCY CODE (spec §23A.5a, protocol 17): derived from the same 24 words on its own path, written down beside them, and
+ * typed at any other node's page or the Arena site to take this node out of the network while it is offline - it can do nothing else.
+ * Never stored: the installer shows it from the seed. { code: 'ARN-XXXX-...', pubkey (x-only hex, the one the bond advert names) }.
+ */
+export function emergencyOf(seed) {
+  const bytes = emergencyCodeBytes(seed);
+  return { code: emergencyCodeText(bytes), pubkey: toHex(schnorr.getPublicKey(emergencySecret(bytes))) };
 }
 
 /** A typed phrase back to its seed (restore): { ok, seed } or { ok: false, why } - a wrong word or checksum is refused by name. */
