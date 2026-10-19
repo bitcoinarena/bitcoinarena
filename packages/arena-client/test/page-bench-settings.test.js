@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+// the switch and the benchmark itself are Tick Tock's page part (kanban #521); the Settings button is the page's
+const UNITY = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 const HANDLER = (() => {
   const head = "    document.getElementById('arena-bench-go').addEventListener('click', () => {\n";
   const at = PAGE.indexOf(head); assert.ok(at > 0, 'the page has no Benchmark handler');
@@ -29,14 +31,14 @@ test('Settings has a Benchmark card with its button, inside the settings sheet',
 });
 
 test('the switch: off with nothing kept, on only with "1" kept; a blocked store is off', () => {
-  const line = PAGE.slice(PAGE.indexOf('    window.ARENA_BENCH_ON = '), PAGE.indexOf('\n', PAGE.indexOf('    window.ARENA_BENCH_ON = ')));
+  const line = UNITY.slice(UNITY.indexOf('    window.ARENA_BENCH_ON = '), UNITY.indexOf('\n', UNITY.indexOf('    window.ARENA_BENCH_ON = ')));
   // the page reaches the browser's store through its one door, window.ARENA_BROWSER_STORE
   const on = (localStorage) => { const window = { ARENA_BROWSER_STORE: () => localStorage }; new Function('window', 'localStorage', line)(window, localStorage); return window.ARENA_BENCH_ON(); };
   assert.equal(on({ getItem: () => null }), false, 'off by default');
   assert.equal(on({ getItem: () => '0' }), false);
   assert.equal(on({ getItem: (k) => (k === 'arena.bench.on' ? '1' : null) }), true);
   assert.equal(on({ getItem: () => { throw new Error('blocked'); } }), false);
-  assert.match(PAGE, /box\.addEventListener\('click', \(e\) => \{ e\.stopPropagation\(\); if \(window\.ARENA_BENCH_ON\(\)\) run\(\); \}\);/, 'the FPS tap asks the switch');
+  assert.match(UNITY, /box\.addEventListener\('click', \(e\) => \{ e\.stopPropagation\(\); if \(window\.ARENA_BENCH_ON\(\)\) run\(\); \}\);/, 'the FPS tap asks the switch');
 });
 
 test('switched off, the button does nothing', () => {

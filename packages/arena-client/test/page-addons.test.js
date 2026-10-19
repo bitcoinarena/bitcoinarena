@@ -8,6 +8,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+// the countdown box - its markup, code and CSS - is Tick Tock's page part (kanban #521)
+const UNITY_JS = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
+const UNITY_CSS = readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
 const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
 const lineOf = (head) => { const at = PAGE.indexOf(head); assert.ok(at > 0, `the page has no ${head.trim()}`); return PAGE.slice(at, PAGE.indexOf('\n', at)); };
 
@@ -34,9 +37,9 @@ test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a p
 test('the countdown box offers Buy add-ons beside exit game, shown when the game sells something, opening Unity\'s panel', () => {
   // the donate button sits between add-ons and exit game
   // never one letter a line (2026-10-18, 390 px: three buttons left the words 0 px): the box wraps, the words keep 10em, a phone gives them a row
-  assert.match(PAGE, /#blwp-next \{ flex-wrap: wrap; justify-content: center; \} #arena-next-say \{ min-width: min\(10em, 100%\); \}/);
-  assert.match(PAGE, /@media \(max-width: 520px\) \{ #blwp-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #arena-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
-  assert.match(PAGE, /<div id="blwp-next" role="status"><span id="arena-next-say"><\/span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="arena-next-donate" type="button">[^<]*<\/button>)?<button id="arena-next-exit"/);
-  assert.match(PAGE, /ad\.style\.display = window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance \? '' : 'none';/);
-  assert.match(PAGE, /getElementById\('arena-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
+  assert.match(UNITY_CSS, /#blwp-next \{ flex-wrap: wrap; justify-content: center; \} #arena-next-say \{ min-width: min\(10em, 100%\); \}/);
+  assert.match(UNITY_CSS, /@media \(max-width: 520px\) \{ #blwp-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #arena-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
+  assert.match(UNITY_JS, /<div id="blwp-next" role="status"><span id="arena-next-say"><\/span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="arena-next-donate" type="button">[^<]*<\/button>)?<button id="arena-next-exit"/);
+  assert.match(UNITY_JS, /ad\.style\.display = window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance \? '' : 'none';/);
+  assert.match(UNITY_JS, /getElementById\('arena-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
 });
