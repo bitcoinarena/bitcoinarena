@@ -34,15 +34,15 @@ if (!RT) throw new Error('RT=<a private regtest datadir>');
 const out = (o) => console.log(JSON.stringify({ at: new Date().toISOString().slice(11, 19), ...o }));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const cli = (...a) => execFileSync('/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli', ['-regtest', `-datadir=${RT}`, `-rpcport=${RPCPORT}`,
-  '-rpcwallet=blwp', ...a], { encoding: 'utf8' }).trim();
-const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPCPORT}/wallet/blwp`, cookiePath: `${RT}/regtest/.cookie` });
+  '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();
+const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPCPORT}/wallet/arena`, cookiePath: `${RT}/regtest/.cookie` });
 const ports = [41221, 41231, 41241, 41251, 41261, 41271, 41281];   // clear of the testnet4 nodes (31221+) and their guardians (+1000, +2000)
 const dir = mkdtempSync(join(env.ATTACH_DIR || '/mnt/bitcoin', 'attach-regtest-'));
 const stores = ports.map((_, i) => join(dir, `node-${i + 1}.db`));
 
 // ---- 1. keys and bonds (setup)
 const rt = regtest((...a) => execFileSync('/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli', ['-regtest', `-datadir=${RT}`, `-rpcport=${RPCPORT}`,
-  ...(a[0] === 'listwallets' || a[0] === 'loadwallet' || a[0] === 'createwallet' ? [] : ['-rpcwallet=blwp']), ...a], { encoding: 'utf8' }).trim());
+  ...(a[0] === 'listwallets' || a[0] === 'loadwallet' || a[0] === 'createwallet' ? [] : ['-rpcwallet=arena']), ...a], { encoding: 'utf8' }).trim());
 if (rt.height() < 110) rt.mine(110 - rt.height());
 const posted = [];
 for (const [i, path] of stores.entries()) {
@@ -84,7 +84,7 @@ out({ step: 'nodes up', pids, ports });
 
 // ---- 3. the runner, attached
 const round = await standUpRound({ host: '127.0.0.1', portA: ports[0], portB: ports[1], extraPorts: ports.slice(2),
-  store: join(dir, 'runner'), network: 'regtest', wallet: 'blwp', cli, rpc, entryWindowMs: 120000n,
+  store: join(dir, 'runner'), network: 'regtest', wallet: 'arena', cli, rpc, entryWindowMs: 120000n,
   signerNode: { closeAtEnd: true }, attach: { fundedFile: join(dir, 'funded.txt'), proofDir: join(dir, 'proof') } });
 out({ step: 'attached', firstRound: round.id.slice(0, 16), nodes: round.contract.nodes.length, daemonsStartedHere: round.daemons.filter((d) => !d.attached).length });
 const opened = [round.id];

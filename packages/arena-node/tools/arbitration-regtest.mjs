@@ -79,7 +79,7 @@ const leaf = tapLeafHash(slashLeafScript);
 const control = controlBlockFor('slash', bondBuilt).controlBlock;
 
 const build = (slashHeight, signers = K, tamper = null) => {
-  const built = arbitrationSpend({ bond, proofId, slashHeight, hint: new TextEncoder().encode('blwp'), distribution,
+  const built = arbitrationSpend({ bond, proofId, slashHeight, hint: new TextEncoder().encode('arena'), distribution,
     escrowScript: escrow.script, nodesScript, developersScript, feeSats: 3000n });
   if (!built.ok) return { built };
   const h = arbitrationSighash(built, leaf);

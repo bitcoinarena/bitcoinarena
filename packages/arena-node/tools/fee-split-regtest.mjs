@@ -111,7 +111,7 @@ out({ step: 'the federation\'s fee rule', rule });
 
 // THE GUARDIANS' BLOCK COUNT REACHES THE CHAIN BEFORE ANY LOCK (settle-live-regtest's measured lag)
 const nowhere = { txid: new Uint8Array(32), outIdx: 0n };
-const chainHeight = async () => Number((await run(`${env.BITCOIN_BIN}/bitcoin-cli`, [`-datadir=${P}/btc`, '-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', 'getblockcount'])).so.trim());
+const chainHeight = async () => Number((await run(`${env.BITCOIN_BIN}/bitcoin-cli`, [`-datadir=${P}/btc`, '-regtest', '-rpcport=30101', '-rpcuser=arena', '-rpcpassword=arena', 'getblockcount'])).so.trim());
 for (const t = Date.now(); Date.now() - t < 300000; await wait(5000)) {
   const [count, tip] = [(await port.status(nowhere)).blockCount, await chainHeight()];
   if (count >= tip) { out({ step: 'the guardians\' block count reaches the chain', count, tip, afterMs: Date.now() - t }); break; }
