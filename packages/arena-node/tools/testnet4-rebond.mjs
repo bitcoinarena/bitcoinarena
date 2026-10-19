@@ -92,11 +92,15 @@ for (const x of nodes) {
   say({ node: x.n, nodeKey: toHex(x.pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     template: bond.advert.bondScriptTemplateVersion, maturity: bond.maturity, ancestor: !!bond.ancestor, updatedBy: bond.updatedBy || null,
     otherBonds: x.bonds.slice(1).map((b) => `${b.txid}:${b.vout}`) });
-  if (bond.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V2) { say({ node: x.n, rebond: 'not needed: its bond is template 2' }); continue; }
+  // A TEMPLATE-2 BOND THE CENSUS NEVER COUNTS is moved too (kanban #326, measured 2026-10-19: T2's four guardians' bonds confirmed at
+  // 156669 with maturity 156807, "6 block(s) short of its confirmation 156669 plus 144" - so T2 was never named and had no record)
+  const stands = maturityStands(bond.advert, bond.height, 'testnet4');
+  if (bond.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V2 && stands.ok) { say({ node: x.n, rebond: 'not needed: its bond is template 2 and counts' }); continue; }
+  if (!stands.ok) say({ node: x.n, rebond: `its bond never counts: ${stands.why}` });
   const advert = { ...bond.advert, timestamp: BigInt(Date.now()) };
   plans.push({ n: x.n, secret: x.secret, bond, prepared: rt.prepareRebond(x.secret, bond, advert, { slackBlocks: SLACK }) });
 }
-if (!plans.length) { say({ done: 'every bond is template 2 already; nothing posted' }); process.exit(0); }
+if (!plans.length) { say({ done: 'every bond is template 2 and counts already; nothing posted' }); process.exit(0); }
 
 // THE CARRIER KEYS, WRITTEN FIRST
 const keysPath = join(home, `rebond-carriers-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}.json`);
