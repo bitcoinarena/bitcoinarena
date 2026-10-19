@@ -19,7 +19,7 @@ import {
   TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, TYPE_ADVERT, TYPE_CENSUS_LEAF,
   TYPE_CHECKPOINT, TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_INPUT_BATCH,
   TYPE_TRANSCRIPT, TYPE_CHECKPOINT_RECEIPT, TYPE_OBJECTION, TYPE_SLASH_PROOF,
-  TYPE_SETTLEMENT_RECORD, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD,
+  TYPE_SETTLEMENT_RECORD, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, TYPE_FEE_PROPOSAL, TYPE_FEE_APPROVAL, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_SIGNAL, TYPE_LEADERBOARD_PAYOUT, TYPE_FUNDING_COMMENT, TYPE_PLAYER_NAME,
   TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
@@ -98,6 +98,19 @@ export const FRAMES = new Map([
   // THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a new split proposed, and a recipient's yes or no - once more than half
   // of the set accepted, it decides who the donations pay
   [TYPE_DONATION_PROPOSAL, { name: 'DonationProposal', authority: true }],
+  // A FEE PROPOSAL AND ITS APPROVALS (§27A.9.1 fee sets, kanban #462): accepted, they decide the fee split rounds pay - declared with the
+  // fee proposals (9b79a975) and never entered here, so bearsAuthority refused both as unknown (frames.test: "TYPE_FEE_APPROVAL (0x33) has no entry")
+  [TYPE_FEE_PROPOSAL, { name: 'FeeProposal', authority: true }],
+  [TYPE_FEE_APPROVAL, { name: 'FeeApproval', authority: true }],
+  // THE PROTOCOL RESERVES' PROJECT FUNDING (§27A.9.3, kanban #397), A PLAYER'S NAME (§0A, kanban #460's leaderboard) AND THE LEADERBOARD'S
+  // PAYOUT (kanban #460): declared and never entered here (frames.test on main 2026-10-19). A proposal and a signal decide what the reserves
+  // pay and when a proposal goes to the vote; a payout moves money. A comment and a name are signed words a page shows: authority too, as
+  // every frame but the ghost ("exactly one frame is a picture" - frames.test), so neither is ever assumed harmless.
+  [TYPE_FUNDING_PROPOSAL, { name: 'FundingProposal', authority: true }],
+  [TYPE_FUNDING_SIGNAL, { name: 'FundingSignal', authority: true }],
+  [TYPE_LEADERBOARD_PAYOUT, { name: 'LeaderboardPayout', authority: true }],
+  [TYPE_FUNDING_COMMENT, { name: 'FundingComment', authority: true }],
+  [TYPE_PLAYER_NAME, { name: 'PlayerName', authority: true }],
   [TYPE_DONATION_APPROVAL, { name: 'DonationApproval', authority: true }],
   // a donation set of keys whose entries vest day by day (§27A.4.1): who the donations pay, and how that moves
   [TYPE_DONATION_SET_KEYS_VESTING, { name: 'DonationSetKeysVesting', authority: true }],
