@@ -13,7 +13,7 @@
  *   PATH=<patched fedimintd, fedimint-cli>:$PATH HOME=<fedimint bundle home> \
  *   ARENA_BITCOIND_URL=http://127.0.0.1:48332 ARENA_BITCOIND_COOKIE=/mnt/bitcoin/tn4/testnet4/.cookie \
  *   ARENA_STAKE_LOCK_BIN=... ARENA_FEDERATION_CLIENT_DIR=... ARENA_FEDERATION_INVITE_FILE=... \
- *   BLWP_WSS_31221=wss://seat.example.com/guardian-1 ... \
+ *   ARENA_WSS_31221=wss://seat.example.com/guardian-1 ... \
  *   node tools/run-testnet4-paid.mjs
  *
  * ARENA_ATTACH=1 (2026-09-29: the seven blwp-tn4-node units own the guardians): the seven nodes already run, one

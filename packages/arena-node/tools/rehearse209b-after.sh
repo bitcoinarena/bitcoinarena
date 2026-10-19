@@ -35,7 +35,7 @@ GAMES_A="$(cd "$ARENA_NODE/.." && pwd)/nextblock/plugin/nextblock.js,$ARENA_NODE
 i=0; for p in ${ARENA_PORTS//,/ }; do i=$((i+1))
   ( cd "$ARENA_NODE" && HOME=$FORK_HOME ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR ARENA_CLOSE_AT_END=1 \
     ARENA_DONATION_NETWORK=regtest ARENA_GAMES=$GAMES_A ARENA_SERIES_FILE=$H/arena/series.txt \
-    ARENA_BITCOIND_URL=$BLWP_BITCOIND_URL ARENA_BITCOIND_COOKIE=$BLWP_BITCOIND_COOKIE \
+    ARENA_BITCOIND_URL=${ARENA_BITCOIND_URL:-$BLWP_BITCOIND_URL} ARENA_BITCOIND_COOKIE=${ARENA_BITCOIND_COOKIE:-$BLWP_BITCOIND_COOKIE} \
     setsid "$NODE" src/main.js $p $H/arena/node-$i.db > $H/arena/node-$i.log 2>&1 < /dev/null & echo "$! arena-node-$i" >> $PIDS )
 done
 for p in ${ARENA_PORTS//,/ }; do until_ "Arena seat $p" 180 curl -s -o /dev/null --max-time 3 http://127.0.0.1:$p/identity; done

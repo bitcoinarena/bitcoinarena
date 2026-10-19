@@ -110,12 +110,13 @@ MERGE
 fi
 
 
-# PHONES GET ASTC (2026-10-08): BLWP_ASTC_BUILD_DIR names the same commit built with
+# PHONES GET ASTC (2026-10-08): ARENA_ASTC_BUILD_DIR (the old name BLWP_ASTC_BUILD_DIR still read) names the same commit built with
 # ARENA_WEBGL_SUBTARGET=ASTC. Its data file goes beside the DXT one as <name>-astc.data.unityweb, its StreamingAssets (the
 # Addressables catalog) as StreamingAssets-astc, its streamed bundles into ServerData, and textures.json names them - the page
 # loads them on a GPU with ASTC and no S3TC. The code files must be byte-identical to this build's, or nothing is added.
-if [ -n "${BLWP_ASTC_BUILD_DIR:-}" ]; then
-  A="$BLWP_ASTC_BUILD_DIR"
+ASTC_DIR="${ARENA_ASTC_BUILD_DIR:-${BLWP_ASTC_BUILD_DIR:-}}"
+if [ -n "$ASTC_DIR" ]; then
+  A="$ASTC_DIR"
   N=$(basename "$(ls "$BUILD"/Build/*.data.unityweb | grep -v -- '-astc\.data' | head -1)" .data.unityweb)
   for k in wasm framework.js; do
     cmp -s "$(ls "$BUILD"/Build/*.$k.unityweb | head -1)" "$(ls "$A"/Build/*.$k.unityweb | head -1)" \
