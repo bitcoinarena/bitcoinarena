@@ -266,6 +266,13 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     if (url && url !== state.reach.url) {
       const oldHost = new URL(state.reach.url).host, newHost = new URL(url).host;
       writeFileSync(confFile, readFileSync(confFile, 'utf8').split(oldHost).join(newHost), { mode: 0o600 });
+      // and every service started after it that names the host - the gateway's --api-addr above all (measured in the Windows VM, 0.1.0 ->
+      // 0.1.1: arena.conf took the new name, arena-gateway.cmd kept the old one, and the gateway announced a host that no longer answers)
+      for (const f of moving) {
+        if (tunnels.includes(f)) continue;
+        const t = readFileSync(f, 'utf8');
+        if (t.includes(oldHost)) writeFileSync(f, t.split(oldHost).join(newHost));
+      }
       reachUrl = url;
     }
   }
