@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0 */
+/* Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE. */
+/* UP/DOWN'S PART OF THE ARENA PAGE'S STYLE (kanban #521): the pick sheet, moved out of the page's <style> as it was */
+/* THE PICK SHEET: a market is joined by choosing one of its outcomes - over the lobby, above its
+   chrome (z 30-36) and below an invoice to pay (which the pick's deposit may raise next) */
+#arena-pick { position: fixed; inset: 0; z-index: 38; display: none; align-items: center; justify-content: center;
+  background: rgba(13, 16, 20, 0.82); font-family: system-ui, sans-serif; color: #e6edf3; }
+#arena-pick.show { display: flex; }
+#arena-pick .sheet { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 18px 20px; width: min(440px, calc(100vw - 32px)); box-sizing: border-box; }
+#arena-pick h3 { margin: 0 0 6px; font-size: 18px; }
+#arena-pick .lines { color: #8b949e; font-size: 13px; line-height: 1.5; margin: 8px 0 12px; }
+#arena-pick .outcomes { display: flex; flex-direction: column; gap: 8px; }
+#arena-pick button { font: 600 15px/1.2 system-ui, sans-serif; padding: 10px 12px; border-radius: 4px; border: 0; cursor: pointer; }
+#arena-pick button.outcome { background: #f7931a; color: #0d1014; text-align: left; }
+#arena-pick button.cancel { background: transparent; color: #8b949e; border: 1px solid #30363d; margin-top: 12px; width: 100%; }
+#arena-pick .confirm { color: #f0b72f; font-size: 13px; margin-top: 8px; }
