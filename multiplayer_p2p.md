@@ -12,8 +12,8 @@
 > donation of 2.5% to the protocol devs and 2.5% to the game dev, which the
 > player may lower as today. Every wire tag is renamed, so every id changes;
 > BLWP never ran on a public network, so Bitcoin Arena starts as protocol
-> version **1** (§0A.9, 2026-10-06). Where this document says BLWP it
-> means the Bitcoin Arena protocol; where it describes the truck, it describes
+> version **1** (§0A.9, 2026-10-06). Where this document still says BLWP it
+> means the ancestor network (§0A.9) whose bonds carried over; where it describes the truck, it describes
 > nextblock.
 
 **Status:** architecture concept, security-hardened
@@ -1073,7 +1073,7 @@ version 1, not a version 2 of anything (2026-10-06).** RULED HERE:
 
 # 0. Original game concept — the foundation BLWP preserves
 
-BLWP is the P2P/network/settlement redesign of the existing **BTC Logistics
+Arena is the P2P/network/settlement redesign of the existing **BTC Logistics
 War** real-money concept. This section defines the game the protocol exists
 to run. The later sections replace the original central authority and money
 architecture; they do not replace the game's trucks, freight, terrain,
@@ -1131,7 +1131,7 @@ inputs.
 Parcels are central, not cosmetic. Their appearance and properties derive
 from the real Bitcoin mempool: transaction appearance, size, fee/heat band.
 
-BLWP simplifies the financial model to **fixed-stake round brackets** but
+Arena simplifies the financial model to **fixed-stake round brackets** but
 preserves the cargo fantasy and the relationship between truck, loadout,
 cargo and run. A Round Contract may define stake bracket, allowed cargo
 tiers, truck capacity and cargo configuration rules — without reintroducing
@@ -1149,7 +1149,7 @@ The economic principle from the original concept remains:
 > **A better truck may change capacity, survival probability and variance,
 > but must not secretly create guaranteed positive expected value.**
 
-Because BLWP replaces house odds with player-versus-player pooled
+Because Arena replaces house odds with player-versus-player pooled
 competition, truck balance belongs to the Round Contract and the game rules
 rather than to a recalibrated house multiplier.
 
@@ -1218,7 +1218,7 @@ edge / boundary route     = lower exposure and danger
 ```
 
 The original house-banked design turned exposure into payout multipliers.
-BLWP does **not** keep the house multiplier, because the economics are now a
+Arena does **not** keep the house multiplier, because the economics are now a
 P2P success pool. Route choice instead affects survival, delivery, time,
 score and ranking. The scoring function may reward risk, speed, cargo
 objective or exposure, but it is fixed in the Round Contract and
@@ -1273,7 +1273,7 @@ financially relevant world.
 > without allowing them to manipulate your outcome.
 
 A future play-money convoy mode may use real interaction; it is outside the
-settled BLWP competition.
+settled Arena competition.
 
 ## 0.10 Private financial world per player
 
@@ -1329,7 +1329,7 @@ hex**, not the display name (2026-09-08). It is omitted if
 with a backup download/import the player triggers. It is never uploaded to a
 node.
 
-## 0.13 Original money model vs BLWP money model
+## 0.13 Original money model vs Arena money model
 
 **Original centralized concept:**
 
@@ -1348,7 +1348,7 @@ fixed stake + player-vs-player success pool + deterministic rank distribution
 There is no house bankroll, no RTP target, no centrally adjusted odds, no
 house-funded multiplier, no standing custodial player balance.
 
-## 0.14 BLWP P2P success pool
+## 0.14 Arena P2P success pool
 
 ```text
 61 players x 100 sat
@@ -1382,7 +1382,7 @@ picks a truck and cargo, commits 100 sat from her player wallet (topped up
 from her external Lightning wallet when it runs low, §24A.1),
 and rolls out. She steers, brakes, chooses her route, meets deterministic
 armies and fire, takes damage, sees competitors as ghosts, reaches the gate.
-Independent BLWP nodes replay her authenticated input history and confirm
+Independent Arena nodes replay her authenticated input history and confirm
 `DELIVERED, score 18,321, THE BULLS WIN (+0.42%)` - the price rose over the
 round, the bull line pressed while she drove, and the end screen says so
 beside her score and her sats. After membership and results are finalized, her
@@ -1397,7 +1397,7 @@ BEFORE:  Unity WebGL -> authoritative shard -> central ledger
          -> wallet daemon -> Lightning
 
 AFTER:   Unity WebGL -> deterministic Rust/WASM
-         -> independent BLWP node quorum
+         -> independent Arena node quorum
          -> independent settlement quorum -> Lightning
          -> external player wallets
 ```
@@ -1947,7 +1947,7 @@ itself public evidence against the arbitration set.
 > any slashing mechanism needs an off-chain party to attest that the proof
 > checks — and that party can, in principle, slash without cause.
 
-BLWP therefore does not claim trustless slashing. It bounds the trust:
+Arena therefore does not claim trustless slashing. It bounds the trust:
 
 - **Arbitration is disjoint from the round committees** and from settlement.
   It touches bonds only; it can never move a player stake, delay a round, or
@@ -2974,7 +2974,7 @@ rewritten.
 
 ---
 
-# 8. One downloadable BLWP node software
+# 8. One downloadable Arena node software
 
 One open-source package, `arena-node`. Depending on enabled roles, an
 installation can accept and timestamp entries, receive checkpoints and
@@ -3057,7 +3057,7 @@ This proves the player committed to that state at approximately that real
 time.
 
 It does **not** prove that a human played, that no bot was used, or that no
-local forward simulation was performed. BLWP makes no such claim.
+local forward simulation was performed. Arena makes no such claim.
 
 **Receipt gossip.** Committee members exchange digests of the
 checkpoint receipts they issued once per window. This is what makes player
@@ -3184,7 +3184,7 @@ commit-before-reveal, the contract may declare a second beacon at
 `start_time` mixed into `player_seed`; that is a contract option, not a
 protocol requirement. Because the client must know the
 resulting randomness to simulate, advanced bots may forward-simulate future
-states. That is accepted and stated; BLWP does not claim bot resistance
+states. That is accepted and stated; Arena does not claim bot resistance
 (§33).
 
 ---
@@ -3950,7 +3950,7 @@ result/payout quorum before any settlement authorization.
 
 # 22. Node trust model
 
-BLWP does not pretend browser-only Lightning settlement is perfectly
+Arena does not pretend browser-only Lightning settlement is perfectly
 trustless. The honest statement:
 
 > Anyone can download the same node software and, with a bond, become
@@ -4843,7 +4843,7 @@ Nothing here is a new protocol; it is which stock channel carries what.
 
 | Who | To whom | How |
 |---|---|---|
-| guardian | guardian | Fedimint's own consensus P2P, stock; BLWP never speaks it |
+| guardian | guardian | Fedimint's own consensus P2P, stock; Arena never speaks it |
 | client | federation | Fedimint client API over WebSocket to **any** guardian's `guardian_endpoint`; answers are threshold-verified by the stock client; the invite is the census's (below), never a link somebody sent |
 | settlement seat | federation | the same API, from the Rust client crates: it reads locks to verify them (§23.1 step 5), submits the settlement transaction (§23.2), and watches confirmations |
 | gateway | federation | stock LNv2 gateway, registered with the federation; the client reads the gateway list from the federation itself |
@@ -5638,7 +5638,7 @@ withdraw   the external wallet issues a BOLT11 invoice for any part of the
 
 Why this is not custody, stated the way §22 states things:
 
-- **Nobody holds it.** No BLWP node, seat, committee or gateway holds a
+- **Nobody holds it.** No Arena node, seat, committee or gateway holds a
   note or can move one. The seats never see the wallet; a gateway sees one
   payment at a time and is paid only against its preimage. A client that
   is closed, deleted or offline keeps its notes; nothing needs anyone to

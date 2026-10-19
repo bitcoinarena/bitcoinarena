@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild the BLWP wasm lock client with whole-msat e-cash (2026-10-01: "we want 1 sat = 1 sat").
+# Rebuild the Arena wasm lock client with whole-msat e-cash (2026-10-01: "we want 1 sat = 1 sat").
 set -euxo pipefail
 # WHERE: the the test host's /mnt/bitcoin by default; ARENA_LOCK_BUILD and ARENA_FORK_DIR move it (the test host,: a whole
 # wasm build of the fork is a job that takes the test host past load 12)
