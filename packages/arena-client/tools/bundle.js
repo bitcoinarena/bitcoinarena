@@ -63,6 +63,8 @@ walk(SRC + 'join.js');
 walk(SRC + 'committee.js');
 // AND WHAT IT BELIEVES ABOUT A FEDERATION: the guardians' signed record, checked against that census
 walk(SRC + 'federations.js');
+// AND THE BALANCE, FEDERATION BY FEDERATION (kanban #545): each one's health, a halted one's payback time, the debug view's capacity
+walk(SRC + 'balance-view.js');
 // AND THE WARNINGS BEFORE ENTRY (§18A.7 / §22A): what a paid join shows and the player confirms
 walk(SRC + 'entry-warnings.js');
 // AND A HALTED FEDERATION'S CLAIMS: the page presents its notes and collects what the arbitration set paid
@@ -182,6 +184,8 @@ out += '         parseEmergencyCode: parseEmergencyCode, emergencySecret: emerge
 out += '         encodeEmergencyDeparture: encodeEmergencyDeparture, EMERGENCY_FRESH_BLOCKS: EMERGENCY_FRESH_BLOCKS,\n';
 // THE COMMITTEE'S PRICE (§11): the page turns a signed price in cents into the tape's unit for its core
 out += '         centsToTapeUnits: centsToTapeUnits,\n';
+out += '         federationHealth: federationHealth, humanDuration: humanDuration, medianBlockSeconds: medianBlockSeconds, reimbursementOf: reimbursementOf,\n';
+out += '         capacityOf: capacityOf, explorerBaseFor: explorerBaseFor,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,\n';
 out += '         isVerified: isVerified, backupLine: backupLine, NO_BACKUP_LINE: NO_BACKUP_LINE,\n';
