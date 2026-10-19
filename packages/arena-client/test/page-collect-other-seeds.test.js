@@ -16,9 +16,9 @@ import { pageFunction } from './page-script.js';
 
 const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
 const html = readFileSync(PAGE, 'utf8');
-const kFrom = html.indexOf('function blwpSeedKeeper('), kTo = html.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', kFrom);
+const kFrom = html.indexOf('function arenaSeedKeeper('), kTo = html.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', kFrom);
 globalThis.BLWPCLIENT = { phraseWalletEntries: PL.phraseWalletEntries };
-const Keeper = pageFunction(PAGE, [], html.slice(kFrom, kTo), '; return blwpSeedKeeper;')();
+const Keeper = pageFunction(PAGE, [], html.slice(kFrom, kTo), '; return arenaSeedKeeper;')();
 // the page's readers, lifted as they are
 const slice = (start, end) => { const a = html.indexOf(start), b = html.indexOf(end, a); assert.ok(a > 0 && b > a, `no slice ${start}`); return html.slice(a, b); };
 const readers = pageFunction(PAGE, ['BLWPCLIENT', 'vault', 'collectSeed', 'sessionStorage', 'navigator', 'window'], [
