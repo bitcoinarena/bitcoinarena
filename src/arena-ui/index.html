@@ -707,7 +707,7 @@
     #arena-bal-split .hl.ok { background: #3fb950; } #arena-bal-split .hl.warn { background: #d29922; } #arena-bal-split .hl.bad { background: #f85149; }
     #arena-bal-split .note { color: #c9a35a; font-size: 12px; margin-top: 2px; } #arena-bal-split .note.bad { color: #ff8b84; }
     #arena-bal-split .dbg-h { margin: 12px 0 4px; color: #7d8896; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-    #arena-bal-split .dbg-cap { color: #7d8896; font-size: 12px; } #arena-bal-split .row button.dep-here { width: auto; margin: 0; padding: 4px 10px; white-space: nowrap; }
+    #arena-bal-split .dbg-cap { color: #7d8896; font-size: 12px; } #arena-bal-split .row button.dep-here { width: auto; margin: 0; padding: 4px 10px; white-space: nowrap; } #arena-bal-split .row button.dep-here:disabled { opacity: .35; cursor: not-allowed; }
     #arena-bal-split button { margin-top: 10px; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #2a3440; background: #1a222c; color: #e8edf3; }
     #arena-wallet-bar button { padding: 6px 10px; border-radius: 4px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; font: 600 13px system-ui, sans-serif; cursor: pointer; }
     /* THE GEAR AS LARGE AS EVERYWHERE ELSE (2026-10-16: "the gear icon on the "game overview" and the "up and
@@ -6539,6 +6539,8 @@
           const c = document.createElement('div'); c.className = 'dbg-cap';
           c.textContent = 'reserve ' + sat(cap.reserve) + ' / cap ' + sat(cap.cap) + ' sat \u00b7 room ' + sat(cap.headroom) + ' sat' + (st.signers ? ' \u00b7 ' + st.signers + ' signers' : '');
           left.append(f, s, c);
+          if (st.status === 'HALTED') { const back = BLWPCLIENT.reimbursementOf({ status: st, ...(chainFor(st) || {}) });
+            const n = document.createElement('div'); n.className = 'note bad'; n.textContent = back.ok ? back.line : 'When it is paid back is read from the chain \u2026'; left.append(n); }
           const b = document.createElement('button'); b.type = 'button'; b.className = 'dep-here'; b.textContent = 'Deposit here';
           b.disabled = !st.invite; if (!st.invite) b.title = 'its record names no invite';
           b.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none';
