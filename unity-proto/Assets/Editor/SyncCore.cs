@@ -61,6 +61,7 @@ public static class SyncCore
             string cTo = Path.Combine(Application.dataPath,
                                       "WebGLTemplates/NextBlock/arena-client.js");
             File.Copy(cFrom, cTo, true);
+            ToArenaUi(cFrom, "arena-client.js");
             UnityEngine.Debug.Log(
                 $"[SyncCore] copied client ({new FileInfo(cTo).Length / 1024} KB) into the template");
             if (!Node(clientRoot, "tools/bundle-curve.js", out string curveOut)) return;
@@ -68,15 +69,27 @@ public static class SyncCore
             File.Copy(Path.Combine(clientRoot, "dist/arena-curve.js"),
                       Path.Combine(Application.dataPath,
                                    "WebGLTemplates/NextBlock/arena-curve.js"), true);
+            ToArenaUi(Path.Combine(clientRoot, "dist/arena-curve.js"), "arena-curve.js");
             // AND THE LOCK CLIENT (W1b), which a page joining a lock round loads
             // to make the player's stake lock. Built outside Unity (the stock
             // fedimint crates to wasm) and committed in dist; copied as it is.
             foreach (string lockFile in new[] { "blwp_lock_client.js", "blwp_lock_client_bg.wasm" })
+            {
                 File.Copy(Path.Combine(clientRoot, "dist", lockFile),
                           Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock", lockFile), true);
+                ToArenaUi(Path.Combine(clientRoot, "dist", lockFile), lockFile);
+            }
         }
 
         AssetDatabase.Refresh();
+    }
+
+    // THE ARENA UI'S SOURCE IS src/arena-ui (#521); this template is its copy (tools/sync-arena-ui.mjs). A file copied into the
+    // template is copied there too, so the two stay equal (packages/arena-client/test/arena-ui-sync.test.js).
+    static void ToArenaUi(string from, string name)
+    {
+        string dir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "src", "arena-ui"));
+        if (Directory.Exists(dir)) File.Copy(from, Path.Combine(dir, name), true);
     }
 
     static bool Node(string cwd, string script, out string stdout)

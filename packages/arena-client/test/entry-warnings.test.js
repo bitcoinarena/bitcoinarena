@@ -19,7 +19,7 @@ test('the engine\'s warnings come from the contract; the seats\' only as codes t
   assert.deepEqual(warningsSay(['exposure_ignored', 'nope']), [WARNING_SAYS.exposure_ignored]);
 });
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 function gate(rows) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, children: [], appendChild(c) { this.children.push(c); } });

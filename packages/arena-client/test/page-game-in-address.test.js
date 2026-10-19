@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const URL_ = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const URL_ = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const PAGE = readFileSync(URL_, 'utf8');
 const line = (head) => { const at = PAGE.indexOf(head); assert.ok(at > 0, `index.html has no ${head}`); return PAGE.slice(at, PAGE.indexOf('\n', at) + 1); };
 const at = (search) => pageFunction(URL_, ['location'], [line('    function gameOnly() '), line('    function withGame(search) ')], 'return { gameOnly, withGame };')({ search });

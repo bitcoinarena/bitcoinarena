@@ -40,7 +40,7 @@ const PHASE0 = env.PHASE0_TREE;
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 300000 }, (err, so, se) => done({ err: err ? String(err.message).split('\n')[0] : null, so: String(so), se: String(se) })));
 const lncli = (who, rpc, ...a) => run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/${who}`, `--rpcserver=127.0.0.1:${rpc}`, '--network=regtest', ...a]);
-const PAGE = join(HERE, '../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html');
+const PAGE = join(HERE, '../../../src/arena-ui/index.html');
 
 // THE PAGE'S LOCK CLIENT, loaded in Node as the donor client loads it (fee-split-regtest's way)
 if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;

@@ -9,10 +9,10 @@ import { readFileSync } from 'node:fs';
 import { tabSeed, importSeed } from '../src/join.js';
 import { pageFunction } from './page-script.js';
 
-const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const from = html.indexOf('function arenaSeedKeeper(');
 const to = html.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', from);
-const Keeper = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), [], html.slice(from, to), '; return arenaSeedKeeper;')();
+const Keeper = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), [], html.slice(from, to), '; return arenaSeedKeeper;')();
 
 const store = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), map: m }; };
 let clock = 1_000_000;

@@ -49,7 +49,7 @@ test('a derivation that failed, or no seating yet, refuses as before', () => {
 
 test('the page: a round refused for a seat\'s committee or seating is kept out of the lobby, as a closed round is', async () => {
   const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const at = html.indexOf('          const refuse = (why) => {');
   const body = html.slice(at, html.indexOf('\n          };\n', at));
   assert.match(body, /if \(\/the round is refused: \/\.test\(join\.why\)\) \(window\.ARENA_CLOSED_ROUNDS = window\.ARENA_CLOSED_ROUNDS \|\| new Set\(\)\)\.add\(id\);/);

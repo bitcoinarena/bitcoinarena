@@ -13,9 +13,9 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
-const BUNDLE = createRequire(import.meta.url)('../../../unity-proto/Assets/WebGLTemplates/NextBlock/arena-client.js');
+const BUNDLE = createRequire(import.meta.url)('../../../src/arena-ui/arena-client.js');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const SEASON = slice('    (function seasonBoard() {', '\n    })();\n');
 

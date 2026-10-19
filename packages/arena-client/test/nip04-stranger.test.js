@@ -57,7 +57,7 @@ import { createHash } from 'node:crypto';
 const ROOT = new URL('../../../', import.meta.url).pathname;
 const SHIPPED = {
   dist: ROOT + 'packages/arena-client/dist/arena-client.js',
-  template: ROOT + 'unity-proto/Assets/WebGLTemplates/NextBlock/arena-client.js',
+  template: ROOT + 'src/arena-ui/arena-client.js',
 };
 const loadShipped = (path) => {
   const src = readFileSync(path, 'utf8');

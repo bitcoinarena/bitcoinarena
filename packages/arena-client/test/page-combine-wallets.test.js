@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const SRC = (() => {
   const at = PAGE.indexOf('      let combining = null;\n      function combineWallets(main, named, round) {');
   assert.ok(at > 0, 'index.html has no combineWallets');
@@ -64,7 +64,7 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
   const locked = [];
   const navigator = { locks: { request: async (name, _o, fn) => { locked.push(name); return fn(heldLocks.some((h) => name === 'arena.phrase.' + h.slice(0, 16)) ? null : { name }); } } };
   const sessionStorage = { getItem: (k) => (k === 'arena.player.seed' ? SEEDS.cur : null) };
-  const combineWallets = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
+  const combineWallets = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
     SRC, 'return combineWallets;')(() => proxy, sessionStorage, BLWPCLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
   const run = () => combineWallets(main, { federation: 'fed1invite' }, { federationId: FED });
   const pendingKeys = () => [...store.keys()].filter((k) => k.startsWith('arena.ecash.pending.'));

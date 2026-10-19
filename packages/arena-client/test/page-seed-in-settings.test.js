@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, from.slice(0, 50)); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 
@@ -45,7 +45,7 @@ test('Settings keeps the 24 words and their check; the lobby\'s backup line lead
 // to do it. Needs to fit mobile as well"): the reason, above the words, small on a phone
 test('the seed modal says why the words must be written down, above them', async () => {
   const { readFileSync } = await import('node:fs');
-  const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+  const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const box = HTML.slice(HTML.indexOf('<div id="arena-seed-words">'), HTML.indexOf('<div id="arena-verify-step"'));
   assert.ok(box.indexOf('id="arena-seed-why"') > box.indexOf('<h3>Your seed phrase</h3>') && box.indexOf('id="arena-seed-why"') < box.indexOf('id="arena-phrase"'));
   assert.match(box, /These 24 words are your wallet\.<\/b> Your sats are kept only in this browser/);

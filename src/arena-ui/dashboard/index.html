@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bitcoin Arena · Node Dashboards</title>
+<link rel="icon" href="../favicon.ico">
+<style>:root{--bg:#0f1218;--card:#171b23;--text:#e6e9ef;--dim:#8b93a3;--line:#262c38}@media (prefers-color-scheme: light){:root{--bg:#f5f6f8;--card:#fff;--text:#1b2230;--dim:#5d6676;--line:#dfe3ea}}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif;padding:24px 16px}main{max-width:760px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}p{color:var(--dim);margin:0 0 18px}a{color:#4fa3ff;text-decoration:none}
+.row{display:flex;justify-content:space-between;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 8px;flex-wrap:wrap}
+.k{font-variant-numeric:tabular-nums;color:var(--dim);font-size:13px}.v{font-variant-numeric:tabular-nums}</style>
+</head><body><main>
+<h1>Bitcoin Arena · Node Dashboards</h1>
+<p>Each testnet4 node serves its own dashboard: its own earnings, the rounds it checked, its settlements and federations.</p>
+<div id="list">Reading the nodes' routes…</div>
+</main>
+<script>
+// THE NODES' DASHBOARDS, ONE PAGE EACH (2026-10-03 22:15: "Dashboard is not unified, it is PER node"). This is only a
+// way in: each node's route is the Cloudflare tunnel daily.json names for it (testnet.alt, renamed when a tunnel restarts),
+// else its Funnel path; today's profit is read from that node's own /dashboard.json.
+const FUNNEL = 'seat.example.com';
+const fmt = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' sat';
+(async () => {
+  let alt = {};
+  try { const d = await (await fetch('../daily.json', { cache: 'no-store' })).json(); alt = (d && d.testnet && d.testnet.alt) || {}; } catch { /* the Funnel paths */ }
+  const list = document.getElementById('list'); list.textContent = '';
+  for (let n = 1; n <= 7; n++) {
+    const host = alt[`${FUNNEL}/guardian-${n}`] || FUNNEL;
+    const base = `https://${host}/guardian-${n}`;
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = `<a href="${base}/dashboard">Node ${n}</a><span class="k">reading…</span>`;
+    list.appendChild(row);
+    fetch(`${base}/dashboard.json`, { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+      row.querySelector('.k').innerHTML = `<span>${d.node.slice(0, 12)}…</span> · today <span class="v">${fmt(d.totals.day.profitMsat)}</span> · ${d.roundsChecked} rounds checked`;
+    }).catch(() => { row.querySelector('.k').textContent = 'not answering now'; });
+  }
+})();
+</script>
+</body></html>

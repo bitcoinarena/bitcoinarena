@@ -295,7 +295,7 @@ test('the signer node a page takes carries the round\'s own amounts', () => {
 // already is.
 test('the page joins a named round and still invents none', () => {
   const page = readFileSync(
-    new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html',
+    new URL('../../../src/arena-ui/index.html',
       import.meta.url).pathname, 'utf8');
 
   for (const call of ['joinFromQuery', 'entryFor', 'tabSeed', 'playerFor'])

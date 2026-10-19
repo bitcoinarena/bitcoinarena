@@ -95,7 +95,7 @@ test('no string the player can be shown says seat: the client library', () => {
 });
 
 test('no string the player can be shown says seat: the page', () => {
-  const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const hits = [];
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
   for (const js of scripts) for (const s of stringLiterals(js)) if (SEAT.test(s)) hits.push(`script: ${JSON.stringify(s.slice(0, 90))}`);

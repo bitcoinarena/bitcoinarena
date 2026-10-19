@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const body = HTML.slice(HTML.indexOf('    window.ARENA_SECURE_RUN = async'), HTML.indexOf('    window.BLWP_RUN_OVER = (word, run) => {'));
 
 function page(answers) {

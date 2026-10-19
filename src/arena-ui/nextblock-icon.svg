@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Tick Tock, Next Block</title>
+  <!-- the square icon (#228): a clock on the page's dark ground; its hour hand is a block -->
+  <rect width="512" height="512" rx="112" fill="#0d1014"/>
+  <circle cx="256" cy="256" r="178" fill="none" stroke="#f7931a" stroke-width="44"/>
+  <g fill="#f7931a"><rect x="244" y="96" width="24" height="40" rx="6"/><rect x="244" y="376" width="24" height="40" rx="6"/><rect x="96" y="244" width="40" height="24" rx="6"/><rect x="376" y="244" width="40" height="24" rx="6"/></g>
+  <rect x="240" y="132" width="32" height="140" rx="16" fill="#ffffff"/>
+  <g transform="rotate(60 256 256)"><rect x="244" y="190" width="24" height="70" rx="12" fill="#ffffff"/><rect x="214" y="122" width="84" height="84" rx="14" fill="#f7931a" stroke="#ffffff" stroke-width="10"/></g>
+  <circle cx="256" cy="256" r="26" fill="#ffffff"/>
+</svg>

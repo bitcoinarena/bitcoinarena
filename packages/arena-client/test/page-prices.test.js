@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 import { centsToTapeUnits } from '../../arena-protocol/src/price-sample.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const from = '    (function () {\n      var P = window.ARENA_PRICES';
 const at = HTML.indexOf(from); assert.ok(at > 0);
