@@ -7,7 +7,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import bcrypt from 'bcryptjs';
-import { findGatewayd, configureGateway, gatewayMnemonicOf, testGateway, joinFederation, TESTNET4_ESPLORA } from '../src/gateway.js';
+import { findGatewayd, configureGateway, gatewayMnemonicOf, testGateway, joinFederation, TESTNET4_ESPLORA, gatewayMetricsOwn } from '../src/gateway.js';
+import { LIQUIDITY_PROVIDER_PORT } from '../src/state.js';
 import { phraseFromSeed } from '../../arena-client/src/bip39.js';
 
 test('gatewayd only from the release; its command line, password and mnemonic', () => {
@@ -52,4 +53,20 @@ test('info read (lightning_info as serde writes it), not connected said so; join
   assert.deepEqual(JSON.parse(asked[0].o.body), { invite_code: 'fed1qqq', use_tor: false, recover: false });
   assert.match((await joinFederation({ ...g, invite: 'hello' })).why, /starts with fed1/);
   assert.match((await joinFederation({ ...g, invite: 'fed1zz', fetcher: answer(500, { text: 'Failed to create a federation client' }) })).why, /refused: .*federation client/);
+});
+
+test('the gateway\'s metrics port is its own, not the liquidity provider\'s (measured on the test host: EADDRINUSE 8477); an older service gets it', () => {
+  const home = mkdtempSync(join(tmpdir(), 'gw-metrics-'));
+  const g = configureGateway({ home, gatewayd: '/r/gatewayd', seed: new Uint8Array(32).fill(7), cost: 4, lnd: { tlsCert: '/l/tls.cert', macaroon: '/l/admin.macaroon' } });
+  assert.ok(g.args.includes('--metrics-listen=127.0.0.1:8478'));
+  assert.notEqual(8478, LIQUIDITY_PROVIDER_PORT);
+  // the three service formats of an older install, as service.js writes them
+  assert.equal(gatewayMetricsOwn('ExecStart=/r/gatewayd --data-dir=/h/gateway/data --listen=127.0.0.1:8576 --api-addr=https://x/gateway/'),
+    'ExecStart=/r/gatewayd --data-dir=/h/gateway/data --listen=127.0.0.1:8576 --metrics-listen=127.0.0.1:8578 --api-addr=https://x/gateway/');
+  assert.equal(gatewayMetricsOwn('<array><string>/r/gatewayd</string><string>--listen=127.0.0.1:8476</string><string>--api-addr=a</string></array>'),
+    '<array><string>/r/gatewayd</string><string>--listen=127.0.0.1:8476</string><string>--metrics-listen=127.0.0.1:8478</string><string>--api-addr=a</string></array>');
+  assert.equal(gatewayMetricsOwn('"C:\\r\\gatewayd.exe" "--listen=127.0.0.1:8476" "--api-addr=a"'), '"C:\\r\\gatewayd.exe" "--listen=127.0.0.1:8476" "--metrics-listen=127.0.0.1:8478" "--api-addr=a"');
+  const done = 'x --listen=127.0.0.1:8476 --metrics-listen=127.0.0.1:9999';
+  assert.equal(gatewayMetricsOwn(done), done, 'one it names already stays');
+  assert.equal(gatewayMetricsOwn('ExecStart=/r/tor -f torrc'), 'ExecStart=/r/tor -f torrc');
 });
