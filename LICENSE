@@ -1,0 +1,28 @@
+Bitcoin Arena License 1.0
+
+Copyright (c) 2026 The Bitcoin Arena authors
+
+In short: everything is allowed, except replacing the original protocol developers.
+
+This license covers everything in this repository - the protocol, the nodes, the installer, the user interface and the games - except
+files that name another license.
+
+Permission is granted, free of charge, to anyone who obtains a copy of this software and its documentation (the "Software") to use,
+copy, modify, merge, publish, distribute, sublicense, sell and fork it, and to run it for others, under these conditions:
+
+1. Notice. This license and the copyright notice above are included in all copies and substantial portions of the Software.
+
+2. Protected values. No copy, fork or derived work that is distributed or run for others may change, remove, replace or bypass:
+   a. the network identifier: the network ids in packages/arena-protocol/src/genesis-ids.js, the genesis parameters they are
+      computed from, and any network id the authors publish later, such as mainnet's;
+   b. the original protocol developers: the network's donation set (the protocol developers' share of every round), the donation
+      authority and recovery keys that sign it, and the rule that every round pays the network's donation set in force.
+   A fork stays on the same network and pays the original protocol developers. Their donation set changes only by updates signed
+   with the donation authority key, as the protocol provides. A game's own donation set belongs to that game's developers.
+
+3. Termination. Use that breaks section 2 is not licensed, and the rights granted here end for whoever commits it.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

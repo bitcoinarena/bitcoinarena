@@ -74,6 +74,14 @@ A round is a signed contract. Players enter with a stake locked in a Fedimint fe
 | `multiplayer_p2p.md`, `FEDERATION.md` | the specification |
 | `index.html`, `src/` | the original single-player browser prototype ([its notes](docs/original-browser-prototype.md)) |
 
+## License
+
+The **Bitcoin Arena License 1.0** ([LICENSE](LICENSE)) covers everything here: the protocol, the nodes, the installer, the UI and the
+games. In short: **everything is allowed, except replacing the original protocol developers.** Use, copy, change, sell and fork it
+as with MIT; a fork keeps the **network id** (it stays on the same network) and the **network's donation set** (every round still pays
+the original protocol developers). That set changes only by updates signed with the donation authority key; a game's own donation
+set belongs to its developers.
+
 ## Develop
 
 Each package's tests run with Node.js 24:
