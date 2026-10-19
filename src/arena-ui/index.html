@@ -832,6 +832,39 @@
     #arena-deposit .arena-deposit-qr { margin-top: 12px; margin-bottom: 12px; }
     #arena-deposit .dep-inv-row { margin-top: 12px; }
     #arena-deposit .pay-status { margin-top: 12px; }
+    /* ONE PHONE SCREEN, NO SCROLLING (kanban #539, the owner 2026-10-19 ~20:02Z: "Deposit needs to fit to one screen on mobile no scrolling";
+       measured at 390x660, Safari's visible area: 696 px of content in 588, the QR cut off). Safari's vh is the screen with its bars hidden,
+       so the box and the QR are sized by dvh, the part actually visible; on a short screen the gaps, the warning and the buttons are tighter. */
+    @supports (height: 1dvh) {
+      #arena-deposit.deposit-modal, #arena-withdraw { max-height: 94dvh; }
+      #arena-deposit .arena-deposit-qr { width: min(80vw, 320px, 28dvh) !important; }
+      /* under the header (top 56 px): no lower than the visible screen's foot (measured at 360x640: the box ran to 658) */
+      #arena-deposit.deposit-modal.over-settings, #arena-deposit.deposit-modal { max-height: min(94dvh, calc(100dvh - 64px - env(safe-area-inset-top, 0px))); }
+    }
+    /* A VERY SHORT SCREEN (an iPhone SE under Safari's bars is 375x553): the "Pay N sat from any Lightning wallet" line goes - the chosen
+       amount button and the status line under the QR ("Waiting for your Lightning payment of N sat") say it - so the amounts keep whole
+       labels on two rows (measured at 375 px: one row cut every label, or ran off both edges) */
+    @media (max-height: 620px) {
+      #arena-deposit .dep-amount { display: none; }
+      #arena-deposit .dep-tabs { margin: 4px 0 6px; }
+    }
+    @media (max-height: 760px) {
+      #arena-deposit.deposit-modal { padding: 10px 12px; }
+      #arena-deposit .dep-title { margin-bottom: 6px; }
+      #arena-deposit .dep-backup { margin-bottom: 6px; padding: 5px 8px; font-size: 12px; line-height: 1.3; }
+      #arena-deposit .dep-backup button { padding: 5px 8px; font-size: 12px; }
+      #arena-deposit .dep-tabs { gap: 6px; margin: 6px 0; }
+      #arena-deposit .dep-tabs button { padding: 6px 10px; font-size: 13px; }
+      #arena-deposit .dep-amount { margin: 6px 0; height: 2.6em; font-size: 13px; line-height: 1.3; }
+      #arena-deposit .dep-nwc { margin: 0 0 6px; }
+      #arena-deposit .dep-nwc-pay { padding: 6px 10px !important; font-size: 13px !important; }
+      #arena-deposit .arena-deposit-qr { margin-top: 6px !important; margin-bottom: 6px !important; }
+      /* the QR takes what is left of the visible screen under the rest (about 500 px with the header), never under 110 px
+         (measured: 360x640 needs it at most 147 px, 375x553 at most 131) */
+      @supports (height: 1dvh) { #arena-deposit .arena-deposit-qr { width: clamp(110px, calc(100dvh - 500px), min(80vw, 320px, 28dvh)) !important; } }
+      #arena-deposit .dep-inv-row { margin-top: 6px; }
+      #arena-deposit .pay-status { margin-top: 6px; }
+    }
     /* A LAYER UNDER THE OVERLAYS ("make a slightly lighter layer underneath the overlays that covers the main page and also catches
        the clicks, so no click through is possible until the overlay is closed ... from bellow the header up to the footer";: "when an
        overlay is open, selecting a game loads the game without closing the overlay first"): balance, deposit and withdraw lie on it */
@@ -4487,8 +4520,19 @@
       let canMsat = null; let chosen = null;
       // off until the wallet says how much it can send; off for good at 0
       const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; go.disabled = !on; };
-      usable(false);
-      amountEl.textContent = 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.';
+      // THE BALANCE THE PAGE ALREADY READ, AT ONCE (kanban #539, the owner 2026-10-19 ~20:02Z: "Withdrawing ... just says checking for a long
+      // time. Eventually it works"). The exact amount after fees (playerWithdrawable) asks every gateway the federation lists, and one
+      // that does not answer from the player's network is waited out - measured: gateway A's Funnel address gave no answer in 26-30 s from
+      // our own LAN while it answered the internet in under 2 s. So the wallet's own balance in this federation, read for the header, is
+      // said and usable now; the exact amount replaces it when it comes. A withdrawal sent first is checked by the wallet as before.
+      const fidHex = ctx.round && ctx.round.federationId ? BLWPCLIENT.toHex(ctx.round.federationId) : '';
+      const part = window.ARENA_WALLET_BALANCE && (window.ARENA_WALLET_BALANCE.parts || []).find((x) => x.federation === fidHex);
+      const knownSat = part ? Number(part.sats) : null;
+      usable(knownSat > 0);
+      window.ARENA_WITHDRAW_SAID = { atMs: Date.now(), knownSat, exact: null };
+      amountEl.textContent = knownSat > 0
+        ? `You have ${knownSat.toLocaleString('en-US')} sat. Make an invoice in your own wallet for a little less (the Lightning fee comes off) and paste it here - the exact most is being read.`
+        : 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.';
       const readInvoice = () => {
         const a = BLWPCLIENT.invoiceAmountMsat(inv.value);
         chosen = a.ok ? a.msat : null;
@@ -4502,6 +4546,8 @@
           const can = await BLWPCLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient, storage: vault() });
           canMsat = can;
           usable(can > 0n);
+          if (window.ARENA_WITHDRAW_SAID) { window.ARENA_WITHDRAW_SAID.exact = String(can); window.ARENA_WITHDRAW_SAID.exactAfterMs = Date.now() - window.ARENA_WITHDRAW_SAID.atMs; }
+          if (can > 0n && inv.value) readInvoice();   // an invoice pasted meanwhile is checked against the exact amount
           amountEl.textContent = can > 0n ? `You can withdraw up to ${satOf(can)}. Make an invoice in your own wallet for any amount up to that and paste it here.`
             : 'Your wallet is empty, so there is nothing to withdraw.';
         } catch (e) { amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
