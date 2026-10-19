@@ -12,11 +12,13 @@ import { pageFunction } from './page-script.js';
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
+// the creep and its square end are Tick Tock's loading-screen CSS (kanban #521): the page's style and the game's, read together
+const STYLE = HTML + '\n' + readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
 
 test('the bar and the creep join as one: square end while creeping, the creep starting on the bar\'s end colour', () => {
-  assert.match(HTML, /#track\.creeping #bar \{ border-top-right-radius: 0; border-bottom-right-radius: 0; \}/);
-  const barEnd = HTML.match(/#bar \{[^}]*linear-gradient\(90deg, #f7931a, (#[0-9a-f]{6})\)/)[1];
-  const creepStart = HTML.match(/#creep \{[^}]*linear-gradient\(90deg, (#[0-9a-f]{6}),/)[1];
+  assert.match(STYLE, /#track\.creeping #bar \{ border-top-right-radius: 0; border-bottom-right-radius: 0; \}/);
+  const barEnd = STYLE.match(/#bar \{[^}]*linear-gradient\(90deg, #f7931a, (#[0-9a-f]{6})\)/)[1];
+  const creepStart = STYLE.match(/#creep \{[^}]*linear-gradient\(90deg, (#[0-9a-f]{6}),/)[1];
   assert.equal(creepStart, barEnd, 'the creep starts on the colour the bar ends on');
 });
 

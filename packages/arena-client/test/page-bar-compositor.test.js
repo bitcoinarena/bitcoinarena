@@ -11,7 +11,9 @@ import { pageFunction } from './page-script.js';
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
-const rule = (sel) => { const m = HTML.match(new RegExp('\\n\\s*' + sel.replace(/[.#]/g, '\\$&') + ' \\{([^}]*)\\}')); assert.ok(m, sel); return m[1]; };
+// the creep's rules are Tick Tock's loading-screen CSS (kanban #521): the page's style and the game's, read together
+const STYLE = HTML + '\n' + readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
+const rule = (sel) => { const m = STYLE.match(new RegExp('\\n\\s*' + sel.replace(/[.#]/g, '\\$&') + ' \\{([^}]*)\\}')); assert.ok(m, sel); return m[1]; };
 const seconds = (t) => Number(t.replace(/s$/, ''));
 
 test('the bar is moved by a transform, never by its width', () => {
