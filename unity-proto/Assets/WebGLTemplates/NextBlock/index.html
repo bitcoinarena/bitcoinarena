@@ -1597,7 +1597,7 @@
   // CLIENT LOGS TO PASTE (2026-10-02: "Add a function that I can paste to you like copy client logs" - his Firefox
   // run stopped reaching the signer nodes at tick 2066 and nothing on the page or the seats said why, and Unity's render
   // debug lines flood the console so nothing could be copied from it). From the first script on, the page keeps the
-  // lines that say something - every "[blwp]" line, every console error and warning, uncaught errors - and every
+  // lines that say something - every "[arena]" line, every console error and warning, uncaught errors - and every
   // socket's open, close (with its code) and error, the last 800, in this browser's own store so a reload keeps them.
   // Settings' "Copy client logs" and ARENA_COPY_LOGS() in the console copy them with the run's session state, the join and
   // the balance as one JSON block. Never in it: a seed phrase, a seed, a key or e-cash - those are cut out by value.
@@ -1622,9 +1622,10 @@
     document.addEventListener('DOMContentLoaded', () => { const el = document.getElementById('sub'); version = el ? el.textContent : ''; keep('page', version); });
     keep('page', 'loaded ' + location.pathname + (/[?&]round=([0-9a-f]{8})/.exec(location.search) ? ' round ' + /[?&]round=([0-9a-f]{8})/.exec(location.search)[1] : ''));
     // UNITY'S OWN NOISE IS NOT KEPT (measured PAID-NIGHT-2155: "Ran out of virtual channels" warnings, dozens a second in a
-    // fight, pushed every [blwp] line out of the 800 within a minute)
+    // fight, pushed every [arena] line out of the 800 within a minute)
     // AND UNITY'S OWN WORD ON WHAT IT WROTE INTO THE CORE: a live or simulated liquidation offered or held back ([feed], [sim])
-    const KEEP = /\[blwp\]|\[feed\]|\[sim\]|\[spawnmark\]/;
+    // the page's own lines say [arena] (kanban #522); Unity's still say [blwp] until its next build (#524)
+    const KEEP = /\[arena\]|\[blwp\]|\[feed\]|\[sim\]|\[spawnmark\]/;
     const SPAM = /Ran out of virtual channels|\[UnityCache\]|kinematic body|JS_FileSystem_Sync|world is still settling/;
     const QUIET = /^(FMOD returns error code|Ran out of virtual channels|\[render\]|\[ground\]|\[tanks\]|\[paper\]|\[bars\]|\[cloud\]|\[UnityCache\]|\[ghost\])/;
     let verbose = /[?&]verbose=1\b/.test(location.search);
@@ -1766,7 +1767,7 @@
       constructor(url, protocols) {
         const r = routed(url);
         // a NUL in a socket address is the lock client's memory mixed up (see ARENA_LOCK_WASM): said, so it shows in the logs
-        if (/\u0000|%00/.test(String(url))) console.error('[blwp] a socket address with NUL bytes - the lock client\'s memory is mixed up; reload the page: ' + String(url).replace(/\u0000/g, '\\0'));
+        if (/\u0000|%00/.test(String(url))) console.error('[arena] a socket address with NUL bytes - the lock client\'s memory is mixed up; reload the page: ' + String(url).replace(/\u0000/g, '\\0'));
         if (protocols === undefined) super(r.url); else super(r.url, protocols);
         const log = window.ARENA_LOG_SOCKET || (() => {});
         log('new', r.url);
@@ -2015,7 +2016,7 @@
       window.BLWP = core; window.ARENA_ROUND_CORE = hex;
       if (window.ARENA_PRICES && window.ARENA_PRICES.wrap) window.ARENA_PRICES.wrap(core);
       var b = window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwp;
-      if (b && b.core !== core) { b.core = core; console.log('[blwp] core ' + hex.slice(0, 8) + ' for this round'); }
+      if (b && b.core !== core) { b.core = core; console.log('[arena] core ' + hex.slice(0, 8) + ' for this round'); }
       return { ok: true, hex: hex };
     };
     // A CORE LOADED ONLY WHEN A ROUND NAMES IT: f0cc7b7b - the truck that knows the larger truck, named by manifest
@@ -2040,7 +2041,7 @@
             var core = (new Function('var module;\n' + new TextDecoder().decode(buf) + '\nreturn BLWP;'))();
             if (!core || typeof core.init !== 'function') throw new Error(f.file + ' defines no core');
             window.ARENA_CORES[hex] = core;
-            console.log('[blwp] core ' + hex.slice(0, 8) + ' loaded for this round (' + buf.byteLength + ' bytes, pinned hash checked)');
+            console.log('[arena] core ' + hex.slice(0, 8) + ' loaded for this round (' + buf.byteLength + ' bytes, pinned hash checked)');
             return { ok: true, hex: hex };
           });
         })
@@ -2223,7 +2224,7 @@
         every: (fn, ms) => setInterval(fn, ms), on: (n, fn) => window.addEventListener(n, fn),
         locks: (navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null, reload: () => location.reload(),
         random: () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('') });
-    } catch (e) { console.log('[blwp] the phrase is not kept in this browser: ' + (e && e.message ? e.message : e)); }
+    } catch (e) { console.log('[arena] the phrase is not kept in this browser: ' + (e && e.message ? e.message : e)); }
     // THE START SCREEN IS DECIDED HERE, ONCE (2026-10-11: "Logout goes straight into a newly created
     // account. It must go to an overview"): a tab that holds no phrase after the keeper - a first visit, or a tab whose
     // account was just deleted - opens on the start screen, and until the player picks a way in nothing mints one behind it
@@ -2451,7 +2452,7 @@
           else if (v.getItem(k) === null) v.setItem(k, t.getItem(k));
         }
         for (const [d, ks] of dbs) if (!has(d)) for (const k of ks) v.setItem(k, t.getItem(k));
-      } catch (e) { console.error('[blwp] kept rounds: ' + e.message); }
+      } catch (e) { console.error('[arena] kept rounds: ' + e.message); }
     })();
 
     // Unity reports one number for the whole load. Naming what is happening at
@@ -2534,7 +2535,7 @@
       [/Input Manager initialize|Input System initialize/, 96, 'Preparing the controls …'],
       [/UnloadTime/, 97, 'Building the battlefield …'],
       [/\[Bootstrap\]/, 98, 'Placing the truck …'],
-      [/\[strike\] theatre ready|\[blwp\] core is driving/, 99, 'Almost there …'],
+      [/\[strike\] theatre ready|\[(?:arena|blwp)\] core is driving/, 99, 'Almost there …'],
     ];
     let subStep = 0;
     window.ARENA_SUB_STEPS = [];
@@ -2618,7 +2619,7 @@
       if (Date.now() - loadChangedAt < LOAD_STALL_S * 1000) return;
       clearInterval(loadWatch);
       window.ARENA_LOAD_STALLED = { stage: stage.textContent, pct: pct.textContent, afterS: LOAD_STALL_S };
-      console.error('[blwp] loading stalled at "' + stage.textContent + '" (' + pct.textContent + ') for ' + LOAD_STALL_S + ' s');
+      console.error('[arena] loading stalled at "' + stage.textContent + '" (' + pct.textContent + ') for ' + LOAD_STALL_S + ' s');
       fail(stallMessage(stage.textContent, pct.textContent));
     }, 1000);
     // A SCREEN THAT WAITS ON THE PLAYER IS NOT A STALL (playtest 2026-10-16: the red "Nothing has loaded for
@@ -2644,7 +2645,7 @@
       // loader runs its error handler on the first uncaught error, and its default is alert() - a modal that held the tab
       // (no script ran, CDP unanswered) after a refused join's socket dropped. Answering true here skips that alert.
       errorHandler: (message, filename, lineno) => {
-        console.error('[blwp] uncaught page error (logged, not alerted): ' + message + (filename ? ' at ' + filename + ':' + lineno : ''));
+        console.error('[arena] uncaught page error (logged, not alerted): ' + message + (filename ? ' at ' + filename + ':' + lineno : ''));
         return true;
       },
       dataUrl: 'Build/{{{ DATA_FILENAME }}}',
@@ -2696,7 +2697,7 @@
           Object.assign({}, opts, { verify: verify, stakeLock: window.ARENA_STAKE_LOCK || undefined }))
           .then(function (client) {
             if (client && client.provedChain) window.ARENA_PROVED_CHAIN = client.provedChain;
-            console.log('[blwp] the chain was ' + (client && client.reusedChain ? 'REUSED from this page\'s last round'
+            console.log('[arena] the chain was ' + (client && client.reusedChain ? 'REUSED from this page\'s last round'
               : 'read afresh') + ' to open this session');
             return client;
           });
@@ -2711,7 +2712,7 @@
     // anybody opened this page, `node=` names who holds it, and the contract
     // is fetched and then HASHED - a node that answers with a different round
     // is refused rather than played. Every rule in that sentence is in
-    // `@blwp/client`, where `node --test` drives it against real daemons; this
+    // `arena-client`, where `node --test` drives it against real daemons; this
     // is only where the answer is put.
     //
     // BEFORE UNITY, not beside it: `NetSession` reads once, at Start, whether
@@ -2769,10 +2770,10 @@
       window.BLWP_REPLAY_COPIED = '';
       const endpoints = await prefetchReplayNodes(roundHex, nodes);
       const link = BLWPCLIENT.replayLinkFor({ endpoints, roundHex, entryHex });
-      if (!link.ok) { console.error('[blwp] copy game replay: ' + link.why); return link; }
+      if (!link.ok) { console.error('[arena] copy game replay: ' + link.why); return link; }
       window.BLWP_REPLAY_URL = link.url;
-      try { await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url; console.log('[blwp] copy game replay: copied ' + link.url); }
-      catch (e) { console.error('[blwp] copy game replay: the clipboard refused (' + e.message + '); the link is ' + link.url); }
+      try { await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url; console.log('[arena] copy game replay: copied ' + link.url); }
+      catch (e) { console.error('[arena] copy game replay: the clipboard refused (' + e.message + '); the link is ' + link.url); }
       return link;
     };
     // THE RESULT SUMMARY ON THE END CARD (2026-10-04): the round's own /api/round-result, read from its signer nodes
@@ -2830,9 +2831,9 @@
       holdTimer = setInterval(() => {
         if (window.BLWP_RESULT !== kept || !window.ARENA_CARD_UP) { clearInterval(holdTimer); holdTimer = null; return; }
         const was = kept.hold;
-        if (was && !(Date.now() < kept.holdUntil)) { writeResultSummary(kept); console.log('[blwp] result summary: the card lets go (the round closed + 20 s)'); }
+        if (was && !(Date.now() < kept.holdUntil)) { writeResultSummary(kept); console.log('[arena] result summary: the card lets go (the round closed + 20 s)'); }
       }, 500);
-      console.log('[blwp] result summary: the card holds until ' + (kept.holdUntil ? new Date(kept.holdUntil).toISOString().slice(11, 19) + 'Z (the round closed + 20 s)' : 'no close known: no hold'));
+      console.log('[arena] result summary: the card holds until ' + (kept.holdUntil ? new Date(kept.holdUntil).toISOString().slice(11, 19) + 'Z (the round closed + 20 s)' : 'no close known: no hold'));
       clearInterval(resultTimer);
       setTimeout(() => readResultSummary(run, nodes), 1000);
       resultTimer = setInterval(() => readResultSummary(run, nodes), 2000);
@@ -2908,8 +2909,8 @@
       if (noLobby && !window.ARENA_LOBBY_STARTING) {
         window.ARENA_LOBBY_STARTING = true;
         showTheLobbyIfOneWasNamed()
-          .then((shown) => console.log('[blwp] the run is over: ' + (shown ? 'the lobby is up' : 'this page names no lobby')))
-          .catch((e) => console.error('[blwp] the run is over, and that lobby cannot be read: ' + e.message));
+          .then((shown) => console.log('[arena] the run is over: ' + (shown ? 'the lobby is up' : 'this page names no lobby')))
+          .catch((e) => console.error('[arena] the run is over, and that lobby cannot be read: ' + e.message));
       }
       // CONTINUING IS THE DEFAULT (2026-09-28, option 1 of A; spec "Timing - every network, every round"): the
       // page enters the next round of the same kind for the player now - its entry is open until its start - and holds
@@ -2948,13 +2949,13 @@
         const bal = window.ARENA_WALLET_BALANCE; const stakeSats = r.free ? 0 : BLWPCLIENT.lobbyStakeSats(r);
         if (stakeSats > 0 && bal && Number.isFinite(Number(bal.sats)) && Number(bal.sats) < stakeSats) {
           next.state = 'none';
-          console.log(`[blwp] next round ${r.id.slice(0, 16)}: not entered - its stake is ${stakeSats} sat and the player wallet holds ${bal.sats} sat`);
+          console.log(`[arena] next round ${r.id.slice(0, 16)}: not entered - its stake is ${stakeSats} sat and the player wallet holds ${bal.sats} sat`);
           return;
         }
         Object.assign(next, { state: 'joining', round: r.id, startMs: Number(r.startTimeMs) });
         const act = window.BLWP_LOBBY_ACT;
         const took = act && act.join(r.id, { holdUntilMs: Number(r.startTimeMs), next: true });
-        console.log(`[blwp] next round ${r.id.slice(0, 16)}: ${took ? 'entering it now, joined at its start' : 'not joinable'} `
+        console.log(`[arena] next round ${r.id.slice(0, 16)}: ${took ? 'entering it now, joined at its start' : 'not joinable'} `
           + `(starts ${new Date(Number(r.startTimeMs)).toISOString()})`);
         if (!took) next.state = 'none';
       };
@@ -3016,21 +3017,21 @@
       const j = window.BLWP_JOIN;
       if (j && j.next) {
         cancelNextJoin('none');
-        console.log('[blwp] next round: not entered - it needs a deposit into the player wallet, and nobody pressed PLAY on it');
+        console.log('[arena] next round: not entered - it needs a deposit into the player wallet, and nobody pressed PLAY on it');
         return Promise.reject(new Error('the next round needs a deposit; it is not entered'));
       }
       return show(offer);
     };
     document.getElementById('arena-next-donate').addEventListener('click', () => { if (window.ARENA_DONATE_OPEN) window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || 'nextblock'); });
     document.getElementById('arena-next-addons').addEventListener('click', () => {
-      try { window.unityInstance.SendMessage('Bootstrap', 'OpenAddons'); } catch (e) { console.error('[blwp] add-ons: ' + e.message); }
+      try { window.unityInstance.SendMessage('Bootstrap', 'OpenAddons'); } catch (e) { console.error('[arena] add-ons: ' + e.message); }
     });
     document.getElementById('arena-next-exit').addEventListener('click', () => {
       // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
       // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
       window.BLWP_CONTINUE = false;
       cancelNextJoin('exited');
-      console.log('[blwp] exit game: no next round');
+      console.log('[arena] exit game: no next round');
       document.getElementById('blwp-next').style.display = 'none';
     });
     // A PAID ROUND'S SIGNER NODES AND ITS ATTESTED CLAIM KEY, ASKED WHILE THE LOBBY SHOWS IT (2026-10-02, PRIORITIES
@@ -3094,8 +3095,8 @@
       try {
         const t0 = Date.now();
         BLWPCLIENT.fetchRandomness(named.roundIdHex, named.nodes)
-          .then(() => console.log('[blwp] warm: the round\'s randomness in ' + (Date.now() - t0) + ' ms'))
-          .catch((e) => console.log('[blwp] warm: no randomness ahead (' + e.message + ')'));
+          .then(() => console.log('[arena] warm: the round\'s randomness in ' + (Date.now() - t0) + ' ms'))
+          .catch((e) => console.log('[arena] warm: no randomness ahead (' + e.message + ')'));
         const c = named.chain, d = named.advert;
         if (!c || !c.headers || !c.bonds || !BLWPCLIENT.Client) return;
         const discovery = { headers: c.headers, bonds: c.bonds, committee: named.round.nodes,
@@ -3103,9 +3104,9 @@
         BLWPCLIENT.Client.at(discovery, { core: { hash: () => new Uint8Array(32) }, sign: async () => new Uint8Array(64),
           contract: named.round, roundIdGiven: BLWPCLIENT.fromHex(named.roundIdHex) })
           .then((client) => client.openRound(named.round))
-          .then(() => console.log('[blwp] warm: chain proved and the round opened at the node in ' + (Date.now() - t0) + ' ms'))
-          .catch((e) => console.log('[blwp] warm: the session reads were not done ahead (' + e.message + ')'));
-      } catch (e) { console.log('[blwp] warm: not started (' + e.message + ')'); }
+          .then(() => console.log('[arena] warm: chain proved and the round opened at the node in ' + (Date.now() - t0) + ' ms'))
+          .catch((e) => console.log('[arena] warm: the session reads were not done ahead (' + e.message + ')'));
+      } catch (e) { console.log('[arena] warm: not started (' + e.message + ')'); }
     }
     // ---------------------------------------------------------------- markets (§0A.7a)
     // THE PICK THE SHEET CHOSE, read by the join it starts: { round, pick, gameId, confirmed, manifestHex }
@@ -3193,7 +3194,7 @@
         }
       }
     }
-    setInterval(() => { readMarketOutcomes().catch((e) => console.warn('[blwp] market outcomes: ' + e.message)); }, 10000);
+    setInterval(() => { readMarketOutcomes().catch((e) => console.warn('[arena] market outcomes: ' + e.message)); }, 10000);
     // MY ORDERS FROM THE SEATS (2026-10-17: "When I reload the page my open orders are gone and still no closed
     // orders"; "Have the open orders from the nodes not from local storage"): the tab's picks live in sessionStorage, which a reload,
     // a new tab or another device does not have. Every 15 s, in a market game, each paid round of it the lobby lists is read from its
@@ -3276,7 +3277,7 @@
           window.ARENA_RESTORED_ORDERS.push({ round: r.id, entry: m.entryIdHex, pick: m.pick, index: m.orderIndex });
           try { const k = 'arena.order.next.' + r.id; if ((Number(window.sessionStorage.getItem(k)) || 0) <= m.orderIndex) window.sessionStorage.setItem(k, String(m.orderIndex + 1)); } catch { /* this tab's only */ }
         }
-        if (mine.length) { console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats'); readMarketOutcomes().catch(() => {}); }
+        if (mine.length) { console.log('[arena] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats'); readMarketOutcomes().catch(() => {}); }
       }));
     }
     // EVERY ORDER NAMED UNDER THE PLAYER (2026-10-17: "The leaderboard is still empty" - measured: each order of a
@@ -3292,13 +3293,13 @@
             random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE, order: Number(p.order.index) || 0 });
           const said = await BLWPCLIENT.postName(signed, p.nodes || [], { fetcher: (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) })) });
           if (said.some((x) => x.status === 201 || x.status === 200)) rememberPick(Object.assign({}, p, { named: true }));
-        } catch (e) { console.warn('[blwp] naming an order: ' + e.message); }
+        } catch (e) { console.warn('[arena] naming an order: ' + e.message); }
       }
     }
     setInterval(() => { nameOrders().catch(() => {}); }, 30000);
     // ONE PASS AT A TIME (measured: a slow pass and the next one read the same rounds side by side)
     let restoring = null;
-    const restoreOnce = () => { if (!restoring) restoring = restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)).finally(() => { restoring = null; }); };
+    const restoreOnce = () => { if (!restoring) restoring = restoreOrdersFromSeats().catch((e) => console.warn('[arena] orders from the seats: ' + e.message)).finally(() => { restoring = null; }); };
     setTimeout(restoreOnce, 4000);
     setInterval(restoreOnce, 15000);
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
@@ -3369,11 +3370,11 @@
       box.append(h, lines, outs);
       if (sheet.confirm) { const c = document.createElement('div'); c.className = 'confirm'; c.textContent = sheet.confirm; box.append(c); }
       const cancel = document.createElement('button'); cancel.className = 'cancel'; cancel.type = 'button'; cancel.textContent = 'Cancel';
-      cancel.addEventListener('click', () => { close(); window.ARENA_PICK_CHOSEN = null; console.log('[blwp] pick sheet ' + id.slice(0, 16) + ': cancelled, nothing made'); });
+      cancel.addEventListener('click', () => { close(); window.ARENA_PICK_CHOSEN = null; console.log('[arena] pick sheet ' + id.slice(0, 16) + ': cancelled, nothing made'); });
       box.append(cancel);
       el.classList.add('show');
       window.ARENA_PICK_SHEET = { round: id, market: market.name, outcomes: sheet.outcomes.map((x) => x.label), lines: sheet.lines, confirm: sheet.confirm };
-      console.log('[blwp] pick sheet ' + id.slice(0, 16) + ': ' + market.name + ' - ' + sheet.outcomes.map((x) => x.label).join(' / '));
+      console.log('[arena] pick sheet ' + id.slice(0, 16) + ': ' + market.name + ' - ' + sheet.outcomes.map((x) => x.label).join(' / '));
     }
 
     async function joinTheRoundIfOneWasNamed() {
@@ -3422,7 +3423,7 @@
         if (!core.ok) {
           window.BLWP_JOIN_REFUSED = core.why;
           if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: core.why });
-          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
+          console.error('[arena] join refused: ' + window.BLWP_JOIN_REFUSED);
           return;
         }
       }
@@ -3533,11 +3534,11 @@
       // join was neither completing nor refusing, and `Runtime.evaluate` goes silent after a join, so the
       // page could not be asked. It has to say it. One line in, one line out, per await that can hold it.
       const joinStep = async (name, f) => {
-        console.log('[blwp] join step -> ' + name);
-        try { const r = await f(); console.log('[blwp] join step <- ' + name); return r; }
-        catch (e) { console.error('[blwp] join step !! ' + name + ': ' + (e && e.message ? e.message : e)); throw e; }
+        console.log('[arena] join step -> ' + name);
+        try { const r = await f(); console.log('[arena] join step <- ' + name); return r; }
+        catch (e) { console.error('[arena] join step !! ' + name + ': ' + (e && e.message ? e.message : e)); throw e; }
       };
-      console.log('[blwp] join: pays=' + !!pays + ' locks=' + !!BLWPCLIENT.roundLocks(named.round)
+      console.log('[arena] join: pays=' + !!pays + ' locks=' + !!BLWPCLIENT.roundLocks(named.round)
         + ' round=' + String(named.roundIdHex).slice(0, 16));
       // THE PLAYER'S DONATION (M3.2 6e, §22A): asked here in the browser's own
       // prompt, like the name, and only for a round that asks a stake. Default 0
@@ -3557,14 +3558,14 @@
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
             const offer = await BLWPCLIENT.earlyDepositOffer({ round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault(),
               gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
-              onStep: (step) => console.log('[blwp] early deposit: ' + step),
-              onDeposit: (d) => { window.ARENA_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) }; console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice); } });
+              onStep: (step) => console.log('[arena] early deposit: ' + step),
+              onDeposit: (d) => { window.ARENA_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) }; console.log('[arena] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice); } });
             if (offer) {
-              console.log('[blwp] join step: the deposit asked at the press (the wallet holds less than the stake)');
+              console.log('[arena] join step: the deposit asked at the press (the wallet holds less than the stake)');
               Promise.resolve(window.ARENA_ASK_JOIN_DEPOSIT(offer, (o) => showDepositOffer(o, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT }))).catch(() => {});
             }
             return offer;
-          } catch (e) { console.log('[blwp] early deposit: ' + (e && e.message ? e.message : e)); return null; }
+          } catch (e) { console.log('[arena] early deposit: ' + (e && e.message ? e.message : e)); return null; }
         })();
       }
       // THE ROUND'S DONATION SET FIRST (M3.2 6e, §22A): from every signer node of the
@@ -3584,10 +3585,10 @@
         // join went on to lock 100 sat, which the session then refused - the stake back only after its expiry)
         else if (/donation set in force/.test(String(ds.why))) {
           window.BLWP_JOIN_REFUSED = 'the signer nodes refuse this round: ' + String(ds.why).replace(/^not every signer node of this round serves its donation set: /, '').slice(0, 240);
-          console.error('[blwp] join refused before any lock: ' + window.BLWP_JOIN_REFUSED);
+          console.error('[arena] join refused before any lock: ' + window.BLWP_JOIN_REFUSED);
           return;
         }
-        else { window.ARENA_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
+        else { window.ARENA_DONATION_SET_WHY = ds.why; console.error('[arena] no donation: ' + ds.why); }
       }
       window.ARENA_DONATION_SET = donationSet;
       window.ARENA_DONATION_TARGET = donationTarget;
@@ -3611,7 +3612,7 @@
       // this tab as before, so a reload over a kept lock writes the same donation. Paid to the recipients once the
       // signer nodes count the stake (payDonation, below); a recipient no wallet can reach is reported unpaid there.
       if (pays && donationSet && onlyLoopback)
-        console.log('[blwp] donation recipients are loopback, which no wallet can reach - the share will show unpaid: '
+        console.log('[arena] donation recipients are loopback, which no wallet can reach - the share will show unpaid: '
           + recipientsLine);
       const settingsPct = String(donationBps() / 100);
       // A MARKET'S OWN RATES (2026-10-09: a market's fee is its manifest's, 0.5 % + 0.5 % by default), BOTH
@@ -3634,23 +3635,23 @@
       const marketReserve = !!(marketHere && marketHere.fee && marketHere.fee.reserveBps > 0);
       if (pays && BLWPCLIENT.fetchFees && named.round.censusHeight !== undefined && (marketReserve || (BLWPCLIENT.roundPaysReserves && BLWPCLIENT.roundPaysReserves(named.round)))) {
         const fs = await joinStep('fetchFees', () => BLWPCLIENT.fetchFees({ nodes: named.nodes, height: Number(named.round.censusHeight) }));
-        if (!fs.ok) { window.BLWP_JOIN_REFUSED = 'the fees at this round could not be read: ' + fs.why; console.error('[blwp] join refused before any lock: ' + window.BLWP_JOIN_REFUSED); return; }
+        if (!fs.ok) { window.BLWP_JOIN_REFUSED = 'the fees at this round could not be read: ' + fs.why; console.error('[arena] join refused before any lock: ' + window.BLWP_JOIN_REFUSED); return; }
         named.round.feeSet = fs.fees;
         if (marketReserve) named.round.feeBps = BLWPCLIENT.marketFeeBpsOf(fs.fees);
         window.ARENA_JOIN_FEES = { round: named.roundIdHex, height: Number(named.round.censusHeight), fees: fs.fees, agreeing: fs.agreeing, asked: fs.asked,
           line: marketReserve ? BLWPCLIENT.marketFeesLine(fs.fees) : BLWPCLIENT.roundFeesLine(fs.fees) };
-        console.log(`[blwp] fees at census height ${named.round.censusHeight}: ${window.ARENA_JOIN_FEES.line} (${fs.agreeing} of ${fs.asked} nodes agree)`);
+        console.log(`[arena] fees at census height ${named.round.censusHeight}: ${window.ARENA_JOIN_FEES.line} (${fs.agreeing} of ${fs.asked} nodes agree)`);
       }
       let reservesHere = null;
       if (pays && donationSet && BLWPCLIENT.roundPaysReserves && BLWPCLIENT.roundPaysReserves(named.round)) {
         const fid = named.round.federationId;   // the entry's federation (on a round that takes any, the one the page chose)
         const rk = await joinStep('fetchReserveKey', () => BLWPCLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
-        if (!rk.ok) { window.BLWP_JOIN_REFUSED = 'this round pays the protocol reserves, and ' + rk.why; console.error('[blwp] join refused before any lock: ' + window.BLWP_JOIN_REFUSED); return; }
+        if (!rk.ok) { window.BLWP_JOIN_REFUSED = 'this round pays the protocol reserves, and ' + rk.why; console.error('[arena] join refused before any lock: ' + window.BLWP_JOIN_REFUSED); return; }
         const rd = BLWPCLIENT.reservesDonationForRound(named.round);
         reservesHere = { ...rd, key: rk.key };
         donationTarget = Object.assign({}, donationTarget, { reserve: { recipientPk: rk.key, amountMsat: rd.reserveMsat } });
         window.ARENA_DONATION_TARGET = donationTarget;
-        console.log(`[blwp] protocol 11: ${rd.donationMsat} msat to the developers and the reserves (${rd.reserveMsat} to reserve key ${BLWPCLIENT.toHex(rk.key).slice(0, 16)}, ${rk.agreeing} of ${rk.asked} nodes agree)`);
+        console.log(`[arena] protocol 11: ${rd.donationMsat} msat to the developers and the reserves (${rd.reserveMsat} to reserve key ${BLWPCLIENT.toHex(rk.key).slice(0, 16)}, ${rk.agreeing} of ${rk.asked} nodes agree)`);
       }
       const donation = marketHere && marketHere.fee
         ? { bps: 0, donationMsat: 0n, inFee: marketHere.fee.donationBps }
@@ -3659,8 +3660,8 @@
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
           ask: () => settingsPct, confirm: () => false, storage: window.sessionStorage, recipientsLine })
         : { bps: 0, donationMsat: 0n };
-      console.log(donation.inFee !== undefined ? `[blwp] donation ${donation.inFee / 100}% in the fee lock, due when the market resolves`
-        : `[blwp] donation ${donation.bps / 100}% = ${donation.donationMsat} msat${donation.kept ? ' (kept for this round)' : ''}`);
+      console.log(donation.inFee !== undefined ? `[arena] donation ${donation.inFee / 100}% in the fee lock, due when the market resolves`
+        : `[arena] donation ${donation.bps / 100}% = ${donation.donationMsat} msat${donation.kept ? ' (kept for this round)' : ''}`);
       window.ARENA_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;
       let claimKey = null;
@@ -3698,7 +3699,7 @@
             if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
             // A ROUND ALREADY SHOWN LOADED keeps its countdown on the line; the lock's steps go to the console
             if (window.BLWP_JOIN && !window.BLWP_JOIN.loaded) window.BLWP_JOIN.stage = 'stake lock: ' + step;
-            console.log('[blwp] stake lock: ' + step);
+            console.log('[arena] stake lock: ' + step);
           };
           const wallet = {
             round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
@@ -3707,7 +3708,7 @@
             // `gateway` list, never the lock client's random pick when one is named.
             gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
           };
-          console.log('[blwp] join step -> deposit (beside the rest)');
+          console.log('[arena] join step -> deposit (beside the rest)');
           // THE DONATION IS PAID FROM THE PLAYER WALLET (2026-10-01): its own send pays each recipient's invoice
           window.ARENA_PLAYER_PAYER = async (invoice) => {
             const c = await BLWPCLIENT.playerWallet({ round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
@@ -3765,10 +3766,10 @@
             entryClosesMs: BLWPCLIENT.entryOpenUntilMs ? Number(BLWPCLIENT.entryOpenUntilMs(named.round)) : null,
             onDeposit: (d) => {
               window.ARENA_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
-              console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
+              console.log('[arena] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
             },
           }));
-          console.log('[blwp] join step <- deposit (in the player wallet)');
+          console.log('[arena] join step <- deposit (in the player wallet)');
           if (depositEl) depositEl.textContent = '';
           return wallet;
         })();
@@ -3798,12 +3799,12 @@
           // this letter closed.
           window.BLWP_JOIN_REFUSED = 'this round pays and its settlement committee '
             + 'could not be learned, so no stake could be dealt: ' + e.message;
-          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
+          console.error('[arena] join refused: ' + window.BLWP_JOIN_REFUSED);
           return;
         }
         // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK NAMES AN ATTESTED
         // CLAIM KEY (23.1 step 0): the settlement signer nodes' signatures, counted in
-        // `@blwp/client` against the same signer nodes, at the round's threshold. A
+        // `arena-client` against the same signer nodes, at the round's threshold. A
         // key short of it refuses the signer node by name - one signer node serving its own
         // key must not be the key a stake is locked to.
         if (BLWPCLIENT.roundLocks(named.round)) {
@@ -3824,8 +3825,8 @@
           });
           if (!att.ok) {
             window.BLWP_JOIN_REFUSED = att.why;
-            console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
-            console.error('[blwp] join refused: ' + att.why);
+            console.error('[arena] join refused: ' + window.BLWP_JOIN_REFUSED);
+            console.error('[arena] join refused: ' + att.why);
             return;
           }
           claimKey = att;
@@ -3844,18 +3845,18 @@
         // 980000 + 20000 msat. The join stops and says why; the collect runs from the
         // record the first join kept.
         const use = keptUseOf(kept);
-        if (use.resumed === true) console.log('[blwp] the lock is committed to the entry this tab kept, and the round has not started: the same entry is sent again');
+        if (use.resumed === true) console.log('[arena] the lock is committed to the entry this tab kept, and the round has not started: the same entry is sent again');
         // THE RUN ALREADY STARTED: the bridge takes it back from the seats (blwp.jslib net.opened, BLWP_RESUME) - the same
         // entry, lock and session key, its transcript replayed into the core, and it goes on from the tick the seats are owed.
         if (use.resumed === 'running') {
           window.BLWP_RESUME = { roundIdHex: named.roundIdHex, entryIdHex: String(use.kept.committedTo), closeMs: closeMsOf(), caughtUp: false };
-          console.log('[blwp] the round started before this reload: its run is resumed from the signer nodes, entry '
+          console.log('[arena] the round started before this reload: its run is resumed from the signer nodes, entry '
             + String(use.kept.committedTo).slice(0, 16) + ', no second deposit');
         }
         if (use.use === 'staked') {
           window.BLWP_JOIN_REFUSED = use.why;
-          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
-          console.error('[blwp] join refused: ' + use.why);
+          console.error('[arena] join refused: ' + window.BLWP_JOIN_REFUSED);
+          console.error('[arena] join refused: ' + use.why);
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
@@ -3870,15 +3871,15 @@
         // page joined joined the player 201 while every other node refused the
         // entry 400, and the stake could never have been settled.
         //
-        // The posting and the threshold are in `@blwp/client` for the reason
+        // The posting and the threshold are in `arena-client` for the reason
         // `roundPays` is: this file is the one `node --test` cannot load.
         // A kept stake's handout was taken by the signer nodes before its lock was made.
         const put = reuse ? { ok: true, accepted: signerNodes.signerNodes.length, refused: [] }
           : await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
         if (!put.ok) {
           window.BLWP_JOIN_REFUSED = put.why;
-          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
-          console.error('[blwp] join refused: ' + put.why + ' — ' + put.refused.join('; '));
+          console.error('[arena] join refused: ' + window.BLWP_JOIN_REFUSED);
+          console.error('[arena] join refused: ' + put.why + ' — ' + put.refused.join('; '));
           return;
         }
         // AND A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK GETS ITS LOCK
@@ -3886,7 +3887,7 @@
         // the lock's outpoint, so there is no entry without one - this page used
         // to write zeros there and every signer node could only refuse it. The lock
         // client is the stock fedimint client built to wasm; what it is asked is
-        // decided in `@blwp/client` (`lockStake`), where `node --test` drives it.
+        // decided in `arena-client` (`lockStake`), where `node --test` drives it.
         // THE STAKE IS SPENT FROM THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one wallet per seed and
         // federation. When it is short, a deposit INTO THE PLAYER WALLET is asked first, as its own act
         // (`fundPlayerWallet`) - the invoice shown here for the player's own Lightning wallet to pay - and
@@ -3919,7 +3920,7 @@
               handUntilMs: BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             window.ARENA_STAKE_LOCK = stakeLock;
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
-            console.log('[blwp] stake lock kept from before the reload, at '
+            console.log('[arena] stake lock kept from before the reload, at '
               + BLWPCLIENT.toHex(stakeLock.outpoint.txid) + ':' + String(stakeLock.outpoint.outIdx));
           } else try {
             // THE DEPOSIT ASKED AT THE START OF THE JOIN (above), IN THE PLAYER WALLET BY NOW OR PAID WHILE THIS WAITS.
@@ -3957,23 +3958,23 @@
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo,
               handUntilMs: BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
-            console.log('[blwp] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
+            console.log('[arena] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
             // on uses this lock, not a second deposit.
             BLWPCLIENT.saveLock(vault(), Object.assign({ stake, lock: made, federationId: named.round.federationId }, whose));
             window.ARENA_STAKE_LOCK = stakeLock;
             if (depositEl) depositEl.textContent = '';
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
-            console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx)
+            console.log('[arena] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx)
               + (made.accepted ? ' (submitted; the guardians accept it while the entry goes out)' : ''));
             // THE ACCEPTANCE BEHIND THE ENTRY (OPEN-LIST-2140 item 3): the entry names the submitted outpoints at once; a lock
             // the guardians refuse refuses the join by name - its stake is never counted, and no money moved.
             if (made.accepted) {
               const t0 = Date.now();
-              made.accepted.then((a) => console.log('[blwp] TIMED lock accepted ' + (Date.now() - t0) + ' ms after the entry went out'
+              made.accepted.then((a) => console.log('[arena] TIMED lock accepted ' + (Date.now() - t0) + ' ms after the entry went out'
                 + (a && a.walletAfterMsat !== undefined ? '; the player wallet holds ' + String(a.walletAfterMsat) + ' msat' : '')))
                 .catch((e) => {
-                  console.error('[blwp] the stake lock was not accepted: ' + e.message);
+                  console.error('[arena] the stake lock was not accepted: ' + e.message);
                   window.BLWP_JOIN_REFUSED = 'the stake lock was not accepted by the guardians: ' + String(e.message).slice(0, 160);
                   if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: window.BLWP_JOIN_REFUSED });
                 });
@@ -3984,11 +3985,11 @@
             // "PLAY joins round" line): guardians that could not be reached are named by number, the rest of the error is
             // the console's.
             const unreached = [...String(e.message).matchAll(/(\d+) => Transport error/g)].map((m) => m[1]);
-            console.error('[blwp] the stake lock was not made: ' + e.message);
+            console.error('[arena] the stake lock was not made: ' + e.message);
             window.BLWP_JOIN_REFUSED = unreached.length
               ? 'the stake lock was not made: guardian' + (unreached.length > 1 ? 's ' : ' ') + unreached.join(', ') + ' could not be reached. Try PLAY again.'
               : 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
-            console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
+            console.error('[arena] join refused: ' + window.BLWP_JOIN_REFUSED);
             return;
           }
           // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
@@ -4007,12 +4008,12 @@
         // chip prints that rather than this page's assumption. Dealing is not funding, and a
         // page that printed "not paid" as a constant would be reporting its
         // own guess as the player's balance.
-        console.log('[blwp] stake dealt to ' + signerNodes.signerNodes.length + ' settlement signer node(s), '
+        console.log('[arena] stake dealt to ' + signerNodes.signerNodes.length + ' settlement signer node(s), '
           + put.accepted + ' accepted the handout. Paying it is M3.2; the chip says '
           + 'what the node holds.');
       } else {
         window.ARENA_STAKE = { dealt: false, paid: false, free: true };
-        console.log('[blwp] this round asks no stake, so none is dealt');
+        console.log('[arena] this round asks no stake, so none is dealt');
       }
 
       // THE SAME ENTRY AFTER A RELOAD (2026-10-03, PAID-NIGHT-2155: "Keep the run's signing key across a reload, in
@@ -4039,7 +4040,7 @@
       // round's own; its run is the round's run less those ticks and ends at start + 82 s with everybody's.
       const late = keptEntry ? { joinTick: Number(keptEntry.joinTick) || 0, atMs: null } : BLWPCLIENT.lateJoinTick(named.round, Date.now());
       window.ARENA_LATE_AT_MS = late.atMs;
-      if (late.joinTick > 0) console.log('[blwp] late join: entry at round tick ' + late.joinTick + ', its first tick due at '
+      if (late.joinTick > 0) console.log('[arena] late join: entry at round tick ' + late.joinTick + ', its first tick due at '
         + (late.atMs ? new Date(late.atMs).toISOString().slice(11, 23) + 'Z' : 'its reload'));
       // A MARKET'S PICK (§0A.7a): the entry backs the outcome the player chose on the pick sheet, and
       // this page hands it and its locks to the seats itself - no session, no run, nothing for Unity to open. Kept in the
@@ -4070,9 +4071,9 @@
         const all = BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
         const sent = await tookEntries;
-        all.then((done) => { if (done && done.lock) console.log('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
-          + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
-        console.log('[blwp] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
+        all.then((done) => { if (done && done.lock) console.log('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
+          + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
+        console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: BLWPCLIENT.toHex(hidden.salt),
           nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: BLWPCLIENT.toHex(named.round.gameId),
@@ -4101,7 +4102,7 @@
             ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         const sent = await BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes });
-        console.log('[blwp] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
+        console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return; }
         window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick };
         rememberPick(Object.assign(BLWPCLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick,
@@ -4117,7 +4118,7 @@
       if (!keptEntry && roundManifest && window.ARENA_ITEMS_FOR_ENTRY) {
         try { runItems = await window.ARENA_ITEMS_FOR_ENTRY({ round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey,
           manifest: roundManifest, nodes: named.nodes }); }
-        catch (e) { console.error('[blwp] items for this entry: ' + (e && e.message ? e.message : e)); runItems = []; }
+        catch (e) { console.error('[arena] items for this entry: ' + (e && e.message ? e.message : e)); runItems = []; }
       }
       if (keptEntry) window.BLWP_ENTRY = keptEntry;
       else window.BLWP_ENTRY = BLWPCLIENT.entryFor(
@@ -4128,8 +4129,8 @@
         });
       window.ARENA_ENTRY_ROUND = named.roundIdHex;   // whose entry this is (an add-on bought after it counts from the round after)
       window.BLWP_ITEM_UNLOCKS = roundManifest ? BLWPCLIENT.entryUnlocks(window.BLWP_ENTRY, roundManifest) : [];
-      if (window.BLWP_ITEM_UNLOCKS.length) console.log('[blwp] this run plays with ' + (window.BLWP_ENTRY.items || []).map((x) => x.itemId).join(', '));
-      if (keptEntry) console.log('[blwp] the entry of this round kept from before the reload');
+      if (window.BLWP_ITEM_UNLOCKS.length) console.log('[arena] this run plays with ' + (window.BLWP_ENTRY.items || []).map((x) => x.itemId).join(', '));
+      if (keptEntry) console.log('[arena] the entry of this round kept from before the reload');
       else if (stakeLock) {
         try {
           window.sessionStorage.setItem(entrySlot, JSON.stringify(window.BLWP_ENTRY, (k, v) => (v instanceof Uint8Array ? { u8: BLWPCLIENT.toHex(v) }
@@ -4138,14 +4139,14 @@
       }
       window.BLWP_CHAIN = named.chain;
       window.BLWP_ADVERT = named.advert;
-      console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
+      console.log('[arena] joining round ' + named.roundIdHex + ' from ' + named.from);
     }
 
     // ------------------------------------------------------------ the wallet
     //
     // M3.2 item 6, the player's half. FOUR THINGS AND NOT ONE RULE: paste a
     // connection, show what this entry owes, show the running total, and call
-    // `payStake`. Everything that DECIDES is in `@blwp/client` where
+    // `payStake`. Everything that DECIDES is in `arena-client` where
     // `node --test` drives it - `tabWallet` holds the connection, `spendLog`
     // is what §24A.1 requires a client to show, `spentLine` turns it into a
     // sentence, and `payStake` refuses a quote this entry did not sign. This
@@ -4313,7 +4314,7 @@
           sinceMs: Date.now() - OWED_LOOKBACK_MS });
         for (const hex of seeds) {
           const mine = found.filter((f) => BLWPCLIENT.toHex(f.seed) === hex);
-          console.log('[blwp] collect scan (' + (hex === tabHex ? 'this tab\'s phrase ' : 'kept phrase ') + hex.slice(0, 8) + '): the last 24 h settled rounds over '
+          console.log('[arena] collect scan (' + (hex === tabHex ? 'this tab\'s phrase ' : 'kept phrase ') + hex.slice(0, 8) + '): the last 24 h settled rounds over '
             + named.nodes.length + ' signer node(s), read once for ' + seeds.length + ' phrase(s) - ' + mine.length + ' new round(s) name its key'
             + (mine.length ? ' (' + mine.map((f) => f.roundIdHex.slice(0, 8) + (f.payout ? ' payout' : '') + (f.lock ? ' lock' : '')).join(', ') + ')' : '')
             + ', ' + knownBySeed.get(hex).length + ' already kept');
@@ -4321,9 +4322,9 @@
         for (const f of found)
           BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed: f.seed, order: f.order || 0 });
         window.ARENA_FOUND_OWED = found.map((f) => f.roundIdHex);
-        if (found.length) { console.log('[blwp] owed: ' + found.length + ' round(s) settled in the last 24 h name a key of this browser'); lookThePayout(); }
+        if (found.length) { console.log('[arena] owed: ' + found.length + ' round(s) settled in the last 24 h name a key of this browser'); lookThePayout(); }
         return window.ARENA_FOUND_OWED;
-      } catch (e) { console.error('[blwp] owed: ' + e.message); return []; }
+      } catch (e) { console.error('[arena] owed: ' + e.message); return []; }
     }
     // THE SAME SCAN, ASKED BY THE LIVE HARNESS over its signer nodes (as ARENA_WITHDRAW is the page's own Withdraw).
     window.ARENA_FIND_OWED = (nodes, federation) => findTheRoundsOwed({ nodes, federation });
@@ -4346,7 +4347,7 @@
       if (collectSaid.get(key) === text) return;
       collectSaid.set(key, text);
       window.ARENA_COLLECT_DEBUG[key] = { text, at: new Date().toISOString() };
-      console.log('[blwp] collect ' + key + ': ' + text);
+      console.log('[arena] collect ' + key + ': ' + text);
     }
     function lookSaid(lo) {
       if (!lo) return 'no look';
@@ -4395,9 +4396,9 @@
           if (BLWPCLIENT.slashPayoutKept(ask.storage, ask.roundId, ask.order) || !BLWPCLIENT.slashPayoutMine(listed, ask)) continue;
           const got = await withRecordPhrase(r, () => BLWPCLIENT.collectSlashPayout({ ...ask, arbiter, listed }));
           if (got === null) continue;   // that phrase is held by another tab of this browser: collected there
-          if (got && got.ok) { console.log('[blwp] slash payout (round ' + r.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + got.creditedMsat + ' msat'); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); paintHistory(); }
-          else if (got) console.warn('[blwp] slash payout (round ' + r.roundIdHex.slice(0, 8) + '): ' + got.why);
-        } catch (e) { console.warn('[blwp] slash payout (round ' + r.roundIdHex.slice(0, 8) + '): ' + e.message); }
+          if (got && got.ok) { console.log('[arena] slash payout (round ' + r.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + got.creditedMsat + ' msat'); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); paintHistory(); }
+          else if (got) console.warn('[arena] slash payout (round ' + r.roundIdHex.slice(0, 8) + '): ' + got.why);
+        } catch (e) { console.warn('[arena] slash payout (round ' + r.roundIdHex.slice(0, 8) + '): ' + e.message); }
       }
     }
     window.ARENA_COLLECT_SLASH = collectSlashPayouts;
@@ -4425,14 +4426,14 @@
       for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
         const key = BLWPCLIENT.liquidationKeyFor(seed, l.federation, window.BLWP_CURVE);
         const said = await BLWPCLIENT.presentNotes({ liquidations: [l], held, walletFor, payoutPk: key.payoutPk, storage: vault() });
-        for (const x of said) console.log('[blwp] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? x.accepted.length + ' note(s) presented' : x.why));
+        for (const x of said) console.log('[arena] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? x.accepted.length + ' note(s) presented' : x.why));
       }
       // each arbitration set once, however a seat wrote its door
       for (const a of [...new Set(liq.map((l) => l.claims).filter(Boolean).map((c) => String(c).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '')))]) {
         let listed;
         try { const r = await fetch(a + '/liquidation-payouts', { cache: 'no-store' }); if (!r.ok) continue; listed = await r.json(); } catch { continue; }
         const got = await BLWPCLIENT.collectLiquidationPayouts({ listed, seed, curve: window.BLWP_CURVE, clientFor: walletFor, storage: vault() });
-        for (const g of got.filter((x) => !x.kept)) console.log('[blwp] liquidation payout ' + g.msat + ' msat: ' + (g.ok ? 'collected' : g.why));
+        for (const g of got.filter((x) => !x.kept)) console.log('[arena] liquidation payout ' + g.msat + ' msat: ' + (g.ok ? 'collected' : g.why));
         if (got.some((g) => g.ok && !g.kept) && window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
       }
     }
@@ -4478,7 +4479,7 @@
           noteStakeBack(older.roundIdHex, lo);
           const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
-            console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + (older.order ? ' order ' + older.order : '') + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
+            console.log('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + (older.order ? ' order ' + older.order : '') + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
             stakeBack.delete(older.roundIdHex);
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
@@ -4492,7 +4493,7 @@
           });
           if (res === null) { collectHeld.add(older.roundIdHex); collectNote(older.roundIdHex.slice(0, 8), 'kept phrase ' + BLWPCLIENT.toHex(older.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free'); }
           else { collectHeld.delete(older.roundIdHex); collectFailed.delete(older.roundIdHex); }
-        } catch (e) { collectFailed.set(older.roundIdHex, e.message); collectHeld.delete(older.roundIdHex); console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
+        } catch (e) { collectFailed.set(older.roundIdHex, e.message); collectHeld.delete(older.roundIdHex); console.error('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
       }
       try {
         // THE NEWEST RECORD MAY BE ANOTHER KEPT PHRASE'S: the whole look and collect runs while this tab holds
@@ -4509,7 +4510,7 @@
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
           const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, lcn) });
           if (c.collected) {
-            console.log('[blwp] owed (round ' + newest.roundIdHex.slice(0, 8) + (newest.order ? ' order ' + newest.order : '') + '), collected into the player wallet: ' + c.creditedMsat + ' msat');
+            console.log('[arena] owed (round ' + newest.roundIdHex.slice(0, 8) + (newest.order ? ' order ' + newest.order : '') + '), collected into the player wallet: ' + c.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0);
             stakeBack.delete(newest.roundIdHex);
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
@@ -4522,14 +4523,14 @@
           const line = BLWPCLIENT.owedToLine(look);
           BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0);
           stakeBack.delete(newest.roundIdHex);
-          console.log('[blwp] owed: ' + line);
+          console.log('[arena] owed: ' + line);
           collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
         return true;
         });
         if (newestDone === null) { collectHeld.add(newest.roundIdHex); collectNote(newest.roundIdHex.slice(0, 8), 'kept phrase ' + BLWPCLIENT.toHex(newest.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free'); }
         else { collectHeld.delete(newest.roundIdHex); collectFailed.delete(newest.roundIdHex); }
-      } catch (e) { if (newest) { collectFailed.set(newest.roundIdHex, e.message); collectHeld.delete(newest.roundIdHex); } console.error('[blwp] owed: ' + e.message); }
+      } catch (e) { if (newest) { collectFailed.set(newest.roundIdHex, e.message); collectHeld.delete(newest.roundIdHex); } console.error('[arena] owed: ' + e.message); }
       payoutAsking = false; payoutAskingSince = 0;
       paintWallet();
     }
@@ -4572,19 +4573,19 @@
       try {
         done = await BLWPCLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, pasted,
           canInvoice: !!(maker || pasted || (conn && conn.ok)),
-          onStep: (step) => { console.log('[blwp] withdraw: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } }));
+          onStep: (step) => { console.log('[arena] withdraw: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } }));
         window.ARENA_WITHDRAWN = done.withdraw;
         // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the one wallet per seed and federation the stakes are
         // spent from - its whole withdrawable balance to the player's own invoice, in this press and nowhere else.
         window.ARENA_WITHDRAWN_WALLET = await BLWPCLIENT.withdrawPlayerWallet({ round: r.round, invite: r.invite, seed: r.seed,
           LockClient: own.LockClient, storage: vault(), invoiceFor,
-          onStep: (step) => { console.log('[blwp] withdraw, player wallet: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } });
+          onStep: (step) => { console.log('[arena] withdraw, player wallet: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } });
         window.ARENA_OWED = await BLWPCLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
         window.ARENA_WITHDRAWABLE = window.ARENA_OWED.inTabMsat;
         // STILL ECASH IN THE ROUND'S WALLET AFTER THE PAY (it failed): no empty note for it - the warning stays
         if (window.ARENA_WITHDRAWABLE > 0n) dropTabEmpty(r.roundIdHex);
       } finally { payoutAsking = false; window.ARENA_WITHDRAWING = false; }
-      console.log('[blwp] withdraw: ' + BLWPCLIENT.withdrawLine(done.withdraw, window.ARENA_WITHDRAWABLE));
+      console.log('[arena] withdraw: ' + BLWPCLIENT.withdrawLine(done.withdraw, window.ARENA_WITHDRAWABLE));
       paintWallet();
       return done.withdraw;
     };
@@ -5457,7 +5458,7 @@
             if (win) win.opener = null;
             const endpoints = await prefetchReplayNodes(r.round, lob.nodes);
             const link = BLWPCLIENT.replayLinkFor({ endpoints, roundHex: r.round, entryHex: r.entry });
-            if (!link.ok) { console.error('[blwp] history replay: ' + link.why); if (win) win.close(); return; }
+            if (!link.ok) { console.error('[arena] history replay: ' + link.why); if (win) win.close(); return; }
             window.ARENA_HISTORY_REPLAY = link.url;
             if (win) win.location.href = link.url; else window.open(link.url, '_blank', 'noopener');
           });
@@ -5706,10 +5707,10 @@
       let kept = null; try { kept = vault(); } catch { kept = null; }   // the browser's store, as the keeper's (vault)
       const liveRun = !!(window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing === false);
       const got = BLWPCLIENT.restoreSeed({ text, session: window.sessionStorage, kept, now: Date.now(), liveRun });
-      if (!got.ok) { console.log('[blwp] seed restore refused: ' + got.why); return got; }
+      if (!got.ok) { console.log('[arena] seed restore refused: ' + got.why); return got; }
       try { BLWPCLIENT.markSeedRecover(vault(), got.hex); } catch { /* the wallet opens as joined */ }
       if (window.ARENA_SEED_KEEPER) window.ARENA_SEED_KEEPER.beat();   // kept in the browser before the reload
-      console.log('[blwp] seed restored from ' + got.from + ' in Settings: this tab\'s seed replaced');
+      console.log('[arena] seed restored from ' + got.from + ' in Settings: this tab\'s seed replaced');
       location.reload();
       return got;
     };
@@ -5842,7 +5843,7 @@
       // logged when it appears, when it changes kind, every 10 s while it stays, and when it clears - not every second
       const kind = !say ? '' : say === bar.dataset.ended ? 'ended' : 'behind';
       if (kind !== linkSaid || (kind && Date.now() - linkLoggedAt > 10000)) {
-        if (say) console.warn('[blwp] ' + say); else if (linkSaid) console.log('[blwp] the run reaches the signer nodes again');
+        if (say) console.warn('[arena] ' + say); else if (linkSaid) console.log('[arena] the run reaches the signer nodes again');
         linkSaid = kind; linkLoggedAt = Date.now();
       }
       bar.textContent = say;
@@ -5891,7 +5892,7 @@
       const field = document.getElementById('arena-withdraw-invoice');
       // THE BUTTON IS THE LOCK ROUND'S WITHDRAW AND NOTHING ELSE. A hold round's winnings are SENT
       // (the owner 13:25): there is no Collect to press, so nothing here branches into them.
-      window.ARENA_WITHDRAW(field ? field.value : null).catch((e) => console.error('[blwp] withdraw: ' + e.message));
+      window.ARENA_WITHDRAW(field ? field.value : null).catch((e) => console.error('[arena] withdraw: ' + e.message));
     });
     // CLOSING THE TAB LOSES WHAT IS IN ITS WALLET (the notes are kept in this tab's
     // sessionStorage): while a Withdraw runs, or money is in the tab, the browser asks first.
@@ -6224,7 +6225,7 @@
           && !c.stakeWatch && !c.stakeCommitted && !c.ended && !c.stakeWatchStopped) {
         net.client.watchStake({
           signerNodes: window.ARENA_STAKE.signerNodeKeys, nodes: window.ARENA_STAKE.nodes, contract: window.BLWP_ROUND,
-        }).catch((e) => console.error('[blwp] stake count: ' + e.message));
+        }).catch((e) => console.error('[arena] stake count: ' + e.message));
       }
       const stake = window.ARENA_STAKE
         ? Object.assign({}, window.ARENA_STAKE, {
@@ -6263,7 +6264,7 @@
               said.posted.push(s.node + ' ' + s.status);
               if (s.status === 201 || s.status === 200) namesKept.add(s.node);
             }
-          } catch (e) { said.error = 'name: ' + e.message; console.error('[blwp] name: ' + e.message); }
+          } catch (e) { said.error = 'name: ' + e.message; console.error('[arena] name: ' + e.message); }
         }
         try {
           const mine = window.BLWP_ENTRY.playerPubkey ? BLWPCLIENT.toHex(window.BLWP_ENTRY.playerPubkey) : null;
@@ -6272,7 +6273,7 @@
           window.ARENA_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
           // AND WHOSE NAME IS WHOSE, for the debug label over each ghost (2026-09-17 19:15).
           window.BLWP_NAMES_BY_PLAYER = Object.fromEntries(all.map((x) => [x.player, x.name]));
-        } catch (e) { said.error = 'names: ' + e.message; console.error('[blwp] names: ' + e.message); }
+        } catch (e) { said.error = 'names: ' + e.message; console.error('[arena] names: ' + e.message); }
       } finally {
         // WHAT THE LAST EXCHANGE DID, for a harness or a player's console.
         window.ARENA_NAMES_SAID = { posted: said.posted, kept: [...namesKept], shown: window.ARENA_OTHER_NAMES || [],
@@ -7536,7 +7537,7 @@
               const st = statuses.find((x) => x && x.invite && String(x.federation).toLowerCase() === fid);
               if (!st) continue;
               try { window.ARENA_KEEP_WALLET(fid, await BLWPCLIENT.openPlayerWallet({ federationId: BLWPCLIENT.fromHex(fid), invite: st.invite, seed, LockClient: wasm.LockClient, storage: vault() })); }
-              catch (e) { console.log('[blwp] the wallet in federation ' + fid.slice(0, 16) + ' did not open: ' + (e && e.message ? e.message : e)); }
+              catch (e) { console.log('[arena] the wallet in federation ' + fid.slice(0, 16) + ' did not open: ' + (e && e.message ? e.message : e)); }
             }
           }
           // NOTES STILL ARRIVING: a restore's re-issue, a deposit's notes, a payment's change count in the balance
@@ -7546,13 +7547,13 @@
           for (const [fid, c] of window.ARENA_WALLETS) {
             try { const m = BigInt(await c.balanceMsat()); const i = BLWPCLIENT.issuingMsat ? await BLWPCLIENT.issuingMsat(c) : 0n; sum += m; arriving += i;
               parts.push({ federation: fid, sats: Number(m / 1000n), arriving: Number(i / 1000n) }); }
-            catch (e) { console.log('[blwp] the balance in federation ' + fid.slice(0, 16) + ' could not be read: ' + (e && e.message ? e.message : e)); }
+            catch (e) { console.log('[arena] the balance in federation ' + fid.slice(0, 16) + ' could not be read: ' + (e && e.message ? e.message : e)); }
           }
           if (parts.length) {
             window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), parts,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
-            if (arriving > 0n) { console.log('[blwp] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 3000); }
-            if (parts.length > 1) console.log('[blwp] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
+            if (arriving > 0n) { console.log('[arena] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 3000); }
+            if (parts.length > 1) console.log('[arena] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
           }
         } finally { window.ARENA_BALANCE_TRIED = true; if (window.ARENA_PAINT_SETTINGS) window.ARENA_PAINT_SETTINGS(); }
       })().finally(() => { summing = null; }));
@@ -7647,7 +7648,7 @@
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
           const federationId = BLWPCLIENT.fromHex(String(wasm.LockClient.federationIdOf(lobby.federation)));
           const client = await BLWPCLIENT.openPlayerWallet({ federationId, invite: lobby.federation, seed, LockClient: wasm.LockClient, storage: vault(),
-            onStep: (step) => console.log('[blwp] player wallet (early): ' + step + ', ' + (Date.now() - t0) + ' ms') });
+            onStep: (step) => console.log('[arena] player wallet (early): ' + step + ', ' + (Date.now() - t0) + ' ms') });
           window.ARENA_WALLET_EARLY_MS = Date.now() - t0;
           // AND THE BALANCE READER, until a round's warm-up puts its own (a deposit from the games screen reads the balance again)
           window.ARENA_KEEP_WALLET(BLWPCLIENT.toHex(federationId), client);
@@ -7655,14 +7656,14 @@
           // ITS BALANCE AT ONCE, for the wallet bar and Settings (a round's warm-up reads it again later)
           await window.ARENA_SUM_BALANCES();
           if (window.ARENA_PAINT_SETTINGS) window.ARENA_PAINT_SETTINGS();
-          console.log('[blwp] player wallet open before any round, ' + (Date.now() - t0) + ' ms');
+          console.log('[arena] player wallet open before any round, ' + (Date.now() - t0) + ' ms');
           return client;
-        })().catch((e) => { console.log('[blwp] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.ARENA_WALLET_EARLY = null; });
+        })().catch((e) => { console.log('[arena] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.ARENA_WALLET_EARLY = null; });
       };
       window.ARENA_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
-      if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
+      if (testnet) { findTheRoundsOwed(testnet.named); console.log('[arena] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
-      if (!window.ARENA_LIQ_TIMER) { const liq = () => claimLiquidations().catch((e) => console.warn('[blwp] liquidation claims: ' + (e && e.message ? e.message : e))); liq(); window.ARENA_LIQ_TIMER = setInterval(liq, 600000); }
+      if (!window.ARENA_LIQ_TIMER) { const liq = () => claimLiquidations().catch((e) => console.warn('[arena] liquidation claims: ' + (e && e.message ? e.message : e))); liq(); window.ARENA_LIQ_TIMER = setInterval(liq, 600000); }
       // THE GAME, BEFORE ITS ROUNDS: the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
@@ -7828,15 +7829,15 @@
           const lobbyMarket = BLWPCLIENT.marketForRound ? BLWPCLIENT.marketForRound(r.raw.contract) : null;
           const warmRound = lobbyMarket && lobbyMarket.terms ? Object.assign({}, r.raw.contract, { marketTerms: lobbyMarket.terms }) : r.raw.contract;
           const client = await BLWPCLIENT.playerWallet({ round: warmRound, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault(),
-            onStep: (step) => console.log('[blwp] player wallet: ' + step + ', ' + (Date.now() - t0) + ' ms') });
-          console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
+            onStep: (step) => console.log('[arena] player wallet: ' + step + ', ' + (Date.now() - t0) + ' ms') });
+          console.log('[arena] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
           // THE LOCK QUOTES ASKED AHEAD for this round, at the donation the join will write (the join's 2-3 s; page-lock
           // warmLockQuotes): this round's kept choice when this tab joined it already, else the one Settings chose
           try {
             BLWPCLIENT.warmLockQuotes({ round: warmRound, client, LockClient: wasm.LockClient,
               donationMsat: BLWPCLIENT.depositDonationMsat({ roundIdHex: r.id, stake: BigInt(BLWPCLIENT.lobbyStakeSats(r.raw)) * 1000n,
                 settingsBps: donationBps(), storage: window.sessionStorage }) })
-              .then(() => console.log('[blwp] warm: lock quotes in ' + (Date.now() - t0) + ' ms'), () => { /* the join quotes itself */ });
+              .then(() => console.log('[arena] warm: lock quotes in ' + (Date.now() - t0) + ' ms'), () => { /* the join quotes itself */ });
           } catch { /* the join quotes itself */ }
           // AND THE BLOCK COUNT A LOCK IS BUILT ON, kept by the lock client for a minute: read now and every 45 s while the lobby
           // is open, so PLAY's lock skips a consensus read of its own (lib.rs count_for_lock)
@@ -7851,14 +7852,14 @@
           if (window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(fed, client);
           window.ARENA_READ_BALANCE = () => (window.ARENA_SUM_BALANCES ? window.ARENA_SUM_BALANCES() : Promise.resolve());
           await window.ARENA_READ_BALANCE();
-          combineWallets(client, named, r.raw.contract).catch((e) => console.log('[blwp] wallets not combined: ' + (e && e.message ? e.message : e)));
+          combineWallets(client, named, r.raw.contract).catch((e) => console.log('[arena] wallets not combined: ' + (e && e.message ? e.message : e)));
           // A DEPOSIT AN EARLIER PAGE LEFT (a reload between the payment and the claim): finished here, its history row
           // written once, the balance read again
           BLWPCLIENT.resumeDeposits({ client, storage: vault(), federationId: r.raw.contract.federationId,
-            onClaimed: (d) => { console.log('[blwp] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat'); window.ARENA_READ_BALANCE(); paintHistory(); } })
+            onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat'); window.ARENA_READ_BALANCE(); paintHistory(); } })
             .catch(() => {});
           return client;
-        })().catch((e) => { window.ARENA_WALLET_WARM = null; console.log('[blwp] player wallet not opened in the lobby: ' + (e && e.message ? e.message : e)); });
+        })().catch((e) => { window.ARENA_WALLET_WARM = null; console.log('[arena] player wallet not opened in the lobby: ' + (e && e.message ? e.message : e)); });
       }
       // EVERY WALLET THIS BROWSER KEEPS, COMBINED INTO THE ONE THIS TAB PLAYS WITH (2026-10-02: "Can't we show all
       // wallets we have and combine all of them when playing a round? Switching wallets is very user inconvenient" - his
@@ -7877,7 +7878,7 @@
               let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
               if (!rec || !rec.ecash) { L.removeItem(k); continue; }
               const said = JSON.parse(await main.receiveEcash(rec.ecash));
-              console.log('[blwp] combined ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + said.state);
+              console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + said.state);
               if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
             }
           };
@@ -7919,7 +7920,7 @@
               if (x.hex !== cur && navigator.locks && navigator.locks.request) {
                 await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
               } else await take();
-            } catch (e) { console.log('[blwp] wallet ' + from + ' not combined: ' + (e && e.message ? e.message : e)); }
+            } catch (e) { console.log('[arena] wallet ' + from + ' not combined: ' + (e && e.message ? e.message : e)); }
           }
           if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
         })().finally(() => { combining = null; });
@@ -7975,7 +7976,7 @@
           // unnamed): window.BLWP_JOIN_ANSWER { ok, why, at, round, ... } and one line; Unity still gets true or false.
           const answer = (ok, why, more) => {
             window.BLWP_JOIN_ANSWER = Object.assign({ ok: !!ok, why, at: Date.now(), round: String(id) }, more || {});
-            if (!ok) console.warn('[blwp] join ' + String(id).slice(0, 16) + ' not-started: ' + why + ' ' + JSON.stringify(more || {}));
+            if (!ok) console.warn('[arena] join ' + String(id).slice(0, 16) + ' not-started: ' + why + ' ' + JSON.stringify(more || {}));
             return !!ok;
           };
           // THE LOBBY'S OWN ROW, or - for the next round after a run - any row this page last read (a series lists more
@@ -8014,7 +8015,7 @@
             if (there && there !== id) {
               window.BLWP_JOIN = { state: 'refused', why: 'another tab of this browser is playing a paid round - finish it there first',
                 stage: '', round: id, kindKnown: true, free: false, stakeSats: Number(r.stakeSats) || 0, next: !!next };
-              console.warn('[blwp] join ' + String(id).slice(0, 16) + ' refused: another tab of this browser is in paid round ' + there.slice(0, 16));
+              console.warn('[arena] join ' + String(id).slice(0, 16) + ' refused: another tab of this browser is in paid round ' + there.slice(0, 16));
               return answer(true, 'elsewhere', { there });
             }
           }
@@ -8041,14 +8042,14 @@
             }
             going.cancelled = true; going.state = 'refused'; going.why = ''; going.stage = ''; going.held = false; going.loaded = false;
             if (window.ARENA_NEXT && window.ARENA_NEXT.round === going.round) window.ARENA_NEXT.state = 'none';
-            console.log(`[blwp] join ${String(id).slice(0, 16)}: the join on ${String(going.round).slice(0, 16)} (no lock yet) is dropped`);
+            console.log(`[arena] join ${String(id).slice(0, 16)}: the join on ${String(going.round).slice(0, 16)} (no lock yet) is dropped`);
           }
           // A MARKET'S ROW: joined by its pick sheet. PLAY opens the sheet and Unity is answered no -
           // it stays in the lobby, takes nothing over and starts no run; the sheet's choice joins again, with the pick.
           if (r.raw && (r.raw.market || r.raw.marketLike) && !pickFor(id)) {
             const rowNodes = ((() => { try { return BLWPCLIENT.lobbyQuery(rowSearch.get(id) || search); } catch { return null; } })() || {}).nodes || [];
             openPickSheet(r.raw.contract, id, rowNodes, () => window.BLWP_LOBBY_ACT.join(id, { holdUntilMs: 0, next: false, link }))
-              .catch((e) => console.error('[blwp] pick sheet ' + String(id).slice(0, 16) + ': ' + e.message));
+              .catch((e) => console.error('[arena] pick sheet ' + String(id).slice(0, 16) + ': ' + e.message));
             return answer(false, 'a market: its pick sheet is open', { market: true });
           }
           const back = location.search;
@@ -8108,7 +8109,7 @@
               setTimeout(tick, 1000);
             };
             tick();
-            console.log('[blwp] TIMED round loaded ' + (Date.now() - since) + ' ms (starts in ' + s0 + ' s; the lock and the entry go on behind it)');
+            console.log('[arena] TIMED round loaded ' + (Date.now() - since) + ' ms (starts in ' + s0 + ' s; the lock and the entry go on behind it)');
           };
           // MISSED THE CLOSE: the next round of this series, of the same stake, joined with the deposit already in
           // the player wallet - no second invoice. Only while this join is still the page's join. BOTH REFUSALS CALL IT: measured
@@ -8119,7 +8120,7 @@
             const start = Number((r.raw && r.raw.startTimeMs) || 0);
             const after = (window.ARENA_LOBBY_ROWS || []).filter((x) => x.joinable && !x.free && BLWPCLIENT.lobbyStakeSats(x) === Number(r.stakeSats)
               && Number(x.startTimeMs) > start && Number(x.entryCloseMs) > Date.now()).sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
-            console.warn('[blwp] join ' + String(id).slice(0, 16) + ': the entry closed before the deposit arrived; '
+            console.warn('[arena] join ' + String(id).slice(0, 16) + ': the entry closed before the deposit arrived; '
               + (after ? 'joining the next round ' + String(after.id).slice(0, 16) : 'no next round listed'));
             if (after) window.BLWP_LOBBY_ACT.join(after.id, { link });
           };
@@ -8129,7 +8130,7 @@
               // CANCELLED: refused by time, or by the session (ARENA_REFUSED_JOIN cancels it)
               if (join.cancelled) {
                 if (window.BLWP_JOIN === join) { window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined; window.BLWP_ROUND = undefined; }
-                console.error('[blwp] a join answered after it was refused' + (join.why ? ' (' + String(join.why).slice(0, 120) + ')' : '') + ': dropped');
+                console.error('[arena] a join answered after it was refused' + (join.why ? ' (' + String(join.why).slice(0, 120) + ')' : '') + ': dropped');
                 return;
               }
               // A MARKET'S PICK: handed to the seats, no run - the join ends 'picked', the lobby's address
@@ -8140,7 +8141,7 @@
                 join.stage = 'picked \'' + (c && c.label ? c.label : window.ARENA_PICKED.pick) + '\'';
                 window.BLWP_ROUND = undefined; window.ARENA_PICK_CHOSEN = null;
                 history.replaceState(null, '', location.pathname + back);
-                console.log('[blwp] pick ' + String(id).slice(0, 16) + ': ' + join.stage + ', no run');
+                console.log('[arena] pick ' + String(id).slice(0, 16) + ': ' + join.stage + ', no run');
                 readMarketOutcomes().catch(() => {});
                 return;
               }
@@ -8162,7 +8163,7 @@
                   if (!window.ARENA_JOIN_GOES_ON(join)) return;
                   if (Date.now() < holdUntilMs) { join.stage = startsIn(); setTimeout(release, Math.min(1000, holdUntilMs - Date.now())); return; }
                   join.held = false; join.stage = ''; join.state = 'joined';
-                  console.log(`[blwp] next round ${String(id).slice(0, 16)}: joined at its start (${new Date(holdUntilMs).toISOString()})`);
+                  console.log(`[arena] next round ${String(id).slice(0, 16)}: joined at its start (${new Date(holdUntilMs).toISOString()})`);
                 };
                 release();
               } else if (window.BLWP_ENTRY) { join.held = false; join.stage = ''; join.state = 'joined'; }   // shown loaded, committed after the start
@@ -8171,7 +8172,7 @@
               // exceptions, and not one line naming why, because every refusal below the first set
               // `BLWP_JOIN_REFUSED` and returned in silence. A headless client can only read a log line.
               else { refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
-                     console.error('[blwp] join refused: ' + join.why); moveOnIfMissed(); }
+                     console.error('[arena] join refused: ' + join.why); moveOnIfMissed(); }
             })
             .catch((e) => {
               if (join.cancelled) return;
@@ -8233,8 +8234,8 @@
     // the nodes that did not answer 201 - and never asked for again.
     if (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.resendWinnings)
       BLWPCLIENT.resendWinnings({ storage: vault() })
-        .then((sent) => { for (const x of sent) if (x.posted.length) console.log('[blwp] winnings address posted again to ' + x.posted.length + ' signer node(s); ' + x.acked.length + ' hold it'); })
-        .catch((e) => console.error('[blwp] winnings: ' + e.message));
+        .then((sent) => { for (const x of sent) if (x.posted.length) console.log('[arena] winnings address posted again to ' + x.posted.length + ' signer node(s); ' + x.acked.length + ' hold it'); })
+        .catch((e) => console.error('[arena] winnings: ' + e.message));
     // A ROUND LINK THAT CANNOT BE JOINED GOES BACK TO THE LOBBY (2026-09-25 21:13, phone: build 0.0.1866 put the
     // old title screen up under "the node refused the entry: the round is closed" - a tab brought back on a round's
     // address after that round had closed). A closed round is a line in the lobby, not a reason to leave it: the
@@ -8286,7 +8287,7 @@
       }
       if (!(startMs - Date.now() > 5000)) return false;
       window.BLWP_LINK_AUTOPLAY = false;   //: held - Unity, loaded after this, does not drive on the address's play=1
-      console.log(`[blwp] round link ${id.slice(0, 16)} starts at ${new Date(startMs).toISOString()}: joined from the lobby, held to its start`);
+      console.log(`[arena] round link ${id.slice(0, 16)} starts at ${new Date(startMs).toISOString()}: joined from the lobby, held to its start`);
       const was = location.search;
       history.replaceState(null, '', location.pathname + gameOnly());
       if (!(await showTheLobbyIfOneWasNamed())) { history.replaceState(null, '', location.pathname + was); window.BLWP_LINK_AUTOPLAY = null; return false; }
@@ -8295,7 +8296,7 @@
         await new Promise((r) => setTimeout(r, 500));
       }
       const took = !!(window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(id, { holdUntilMs: startMs, next: true, link: true }));
-      console.log(`[blwp] round link ${id.slice(0, 16)}: ${took ? 'joined, held to its start' : 'not joinable from the lobby - PLAY it there'}`);
+      console.log(`[arena] round link ${id.slice(0, 16)}: ${took ? 'joined, held to its start' : 'not joinable from the lobby - PLAY it there'}`);
       // ON SCREEN, NOT ONLY IN THE CONSOLE (MF 18: "committee pending: silent"): a round whose committee has not formed
       // says when its entry opens, in the lobby's red box
       if (!took && committeeMs > Date.now()) {
@@ -8309,7 +8310,7 @@
     // the address again, and Unity, loaded after it, read that and drove). null: not decided yet; false: held to the start; true: drive.
     window.BLWP_LINK_AUTOPLAY = /(^|[?&])round=/.test(location.search) && /(^|[?&])play=1(&|$)/.test(location.search) ? null : true;
     const joinOrBackToTheLobby = async () => {
-      const held = await heldRoundLink().catch((e) => { console.error('[blwp] round link not held: ' + e.message); return false; });
+      const held = await heldRoundLink().catch((e) => { console.error('[arena] round link not held: ' + e.message); return false; });
       window.BLWP_LINK_AUTOPLAY = !held;
       if (held) return;
       const onARound = /(^|[?&])round=/.test(location.search);
@@ -8322,7 +8323,7 @@
         const why = e && e.message ? e.message : String(e);
         window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined;
         window.BLWP_JOIN = window.ARENA_REFUSED_JOIN(why, new URLSearchParams(location.search.replace(/^\?/, '')).get('round'));
-        console.error('[blwp] that round link cannot be joined (' + why + '): back to the lobby');
+        console.error('[arena] that round link cannot be joined (' + why + '): back to the lobby');
         const q = new URLSearchParams(location.search.replace(/^\?/, ''));
         q.delete('round'); q.delete('play');
         history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
@@ -8343,7 +8344,7 @@
       window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined;
       const lobbyUp = !!window.BLWP_LOBBY_ACT;
       window.BLWP_JOIN = window.ARENA_REFUSED_JOIN(why, new URLSearchParams(location.search.replace(/^\?/, '')).get('round'));
-      console.error('[blwp] the node refused the entry (' + why + '): back to the lobby');
+      console.error('[arena] the node refused the entry (' + why + '): back to the lobby');
       const q = new URLSearchParams(location.search.replace(/^\?/, ''));
       q.delete('round'); q.delete('play');
       if (lobbyUp) { history.replaceState(null, '', location.pathname + (typeof window.ARENA_LOBBY_BACK === 'string' ? window.ARENA_LOBBY_BACK : (q.toString() ? '?' + q.toString() : ''))); return; }
@@ -8352,7 +8353,7 @@
         if (await showTheLobbyIfOneWasNamed()) return;
         history.replaceState(null, '', location.pathname + gameOnly());
         await showTheLobbyIfOneWasNamed();
-      } catch (e) { console.error('[blwp] the run is refused, and that lobby cannot be read: ' + e.message); }
+      } catch (e) { console.error('[arena] the run is refused, and that lobby cannot be read: ' + e.message); }
     };
     // THE GAME'S SHOP AND ITS ITEMS IN A RUN (2026-10-15: "people can buy a larger truck for 500
     // satoshis"). An item is bought once with the player's wallet (item-buy.js buyItem: 50 % to the nodes that served a round in the
@@ -8471,7 +8472,7 @@
           const arriving = held < need && BLWPCLIENT.issuingMsat ? await BLWPCLIENT.issuingMsat(c) : 0n;
           if (arriving > 0n && held + arriving >= need) {
             addons.said = 'Your wallet\'s ' + String(arriving / 1000n) + ' sat are still arriving \u2026';
-            held = (await BLWPCLIENT.awaitIssued(c, { onStep: (x) => console.log('[blwp] buy: ' + x) })).have;
+            held = (await BLWPCLIENT.awaitIssued(c, { onStep: (x) => console.log('[arena] buy: ' + x) })).have;
           }
           if (held >= need) { wallet = c; federationId = fid; break; }
         } catch { /* the next federation */ }
@@ -8668,7 +8669,7 @@
           const from = window.ARENA_ADDONS_FROM(window.BLWP_JOIN, window.ARENA_ENTRY_ROUND);
           addons.seq += 1; addons.bought = { seq: addons.seq, id: it.id, name: it.name, txid: String(got.txid || ''), from };
           addons.said = it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'; addons.bad = false;
-          console.log('[blwp] add-on bought in Unity: ' + it.id + ', tx ' + String(got.txid).slice(0, 16) + ', plays from ' + from);
+          console.log('[arena] add-on bought in Unity: ' + it.id + ', tx ' + String(got.txid).slice(0, 16) + ', plays from ' + from);
           await addonsRead();
           if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE().catch(() => {});
         } else { addons.said = 'Not bought (' + got.step + '): ' + got.why; addons.bad = true; }
@@ -8684,7 +8685,7 @@
     };
     {
       const go = document.getElementById('arena-shop-go');
-      if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[blwp] shop: ' + e.message)));
+      if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[arena] shop: ' + e.message)));
       const back = document.querySelector('#arena-shop .back');
       if (back) back.addEventListener('click', () => document.getElementById('arena-shop').classList.remove('show'));
     }
@@ -8721,7 +8722,7 @@
       window.ARENA_OVERLAYS = OVERLAYS;
     }
     showTheLobbyIfOneWasNamed()
-      .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
+      .catch((e) => { console.error('[arena] that lobby cannot be read: ' + e.message); return false; })
       .then((lobby) => (lobby ? null : joinOrBackToTheLobby()))
       // NEXTBLOCK'S CLIENT IS UNITY; ANY OTHER GAME'S IS ITS OWN, loaded by its manifest's hash
       .then(() => (window.ARENA_UNITY === false

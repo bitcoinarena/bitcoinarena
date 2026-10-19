@@ -73,7 +73,7 @@ async function bot(name) {
       const c = [...m.querySelectorAll('.dep-tabs button')].find((x) => /custom/i.test(x.textContent)); const f = m.querySelector('.dep-custom input');
       if (!c || !f || f.value === '${depositSat}') return 0; c.click(); f.value = '${depositSat}'; f.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`).catch(() => 0);
     const want = BigInt(depositSat) * 1000n;
-    const line = logs.map(([, s]) => s).find((s) => s.startsWith('[blwp] player wallet deposit: ' + String(want) + ' msat, ') && !paid.has(s.split(', ')[1]));
+    const line = logs.map(([, s]) => s).find((s) => s.startsWith('[arena] player wallet deposit: ' + String(want) + ' msat, ') && !paid.has(s.split(', ')[1]));
     if (!line) return;
     const inv = line.split(', ')[1].trim(); paid.add(inv);
     const rec = { at: Date.now(), msat: String(want) }; deposits.push(rec);

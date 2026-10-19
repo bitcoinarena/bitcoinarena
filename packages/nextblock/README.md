@@ -1,4 +1,4 @@
-# @blwp/core
+# nextblock
 
 The deterministic simulation core. Integer arithmetic only, no floating point
 in settled state, no transcendental functions ever called.

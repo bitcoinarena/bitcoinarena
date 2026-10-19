@@ -1,0 +1,5 @@
+[blwp]	[arena]
+@blwp/client	arena-client
+@blwp/node	arena-node
+@blwp/protocol	arena-protocol
+@blwp/core	nextblock

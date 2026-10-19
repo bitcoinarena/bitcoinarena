@@ -489,7 +489,7 @@ async function one({ label, dir }, i) {
     const exceptions = b.logs.filter((l) => l.startsWith('EXCEPTION'));
     const facts = {
       run: label, joinRefused: s.refused || null, pageError: s.pageError || null, deposits, depositView,
-      holding: b.logs.filter((l) => /stake lock: (holding|recovering)/.test(l)).map((l) => l.replace('[blwp] stake lock: ', '')),
+      holding: b.logs.filter((l) => /stake lock: (holding|recovering)/.test(l)).map((l) => l.replace('[arena] stake lock: ', '')),
       lockMadeAt: lock, entryOutpoint: entry && entry.outpoint,
       entryOutpointIsZero: entry ? /^0{64}:0$/.test(entry.outpoint) : null,
       entryNamesTheLock: !!(entry && lock && entry.outpoint === lock), federation,
@@ -518,7 +518,7 @@ async function one({ label, dir }, i) {
     await round.close();
     page.server.close();
     console.log(`--- ${label}: page console ---`);
-    for (const l of b.logs) if (/\[blwp\]|EXCEPTION|lock|refused/i.test(l) && !/\[signer node\]/.test(l)) console.log('   ', l.slice(0, 400));
+    for (const l of b.logs) if (/\[(?:arena|blwp)\]|EXCEPTION|lock|refused/i.test(l) && !/\[signer node\]/.test(l)) console.log('   ', l.slice(0, 400));
   }
 }
 
