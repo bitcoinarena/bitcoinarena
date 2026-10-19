@@ -22071,6 +22071,27 @@ async function approvedDonationSets({ networkId, known = [], ballots = [], verif
   return { sets, refused };
 }
 
+// ---- arena-client/src/storage-keys.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A KEPT VALUE MOVES TO ITS arena- NAME ONCE (kanban #522): the page kept donation records and liquidation claims under blwp- names.
+// Before a key is read or written, `movedKey(storage, 'arena-…')` moves the value of its old 'blwp-…' twin: copied only when the arena-
+// key holds nothing (a newer arena- value is never overwritten), and the old key removed either way - so a claim removed after it was
+// paid cannot come back from its old copy on the next load. Answers the arena- key.
+function movedKey(storage, key) {
+  if (!storage || typeof key !== 'string' || !key.startsWith('arena-')) return key;
+  const old = 'blwp-' + key.slice('arena-'.length);
+  try {
+    const was = storage.getItem(old);
+    if (was !== null && was !== undefined) {
+      const now = storage.getItem(key);
+      if (now === null || now === undefined) storage.setItem(key, was);
+      storage.removeItem(old);
+    }
+  } catch { /* a storage that refuses: the key as it is */ }
+  return key;
+}
+
 // ---- arena-client/src/donation-pay.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -22109,6 +22130,7 @@ async function approvedDonationSets({ networkId, known = [], ballots = [], verif
 
 
 
+
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
  * key, share by share (M3.2 6e). Measured before: the page's once-only flag
@@ -22124,12 +22146,12 @@ async function approvedDonationSets({ networkId, known = [], ballots = [], verif
  * dies mid-payment never asks twice), then `paid` or `unpaid`. Any note at all
  * means the share is not asked again.
  */
-const DONATION_PAID_PREFIX = 'blwp-donation-paid:';
+const DONATION_PAID_PREFIX = 'arena-donation-paid:';   // was blwp-donation-paid: (moved once by movedKey, kanban #522)
 const donationPaidKey = ({ roundId, playerPubkey }) => `${DONATION_PAID_PREFIX}${toHex(roundId)}:${toHex(playerPubkey)}`;
 
 function donationPaidRecord(storage, whose) {
   let raw;
-  try { raw = storage && storage.getItem(donationPaidKey(whose)); } catch { return null; }
+  try { raw = storage && storage.getItem(movedKey(storage, donationPaidKey(whose))); } catch { return null; }
   if (!raw) return null;
   try { const o = JSON.parse(raw); return o && o.shares && typeof o.shares === 'object' ? o : null; } catch { return null; }
 }
@@ -22139,7 +22161,7 @@ function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }) {
   try {
     const was = donationPaidRecord(storage, whose) || { shares: {} };
     was.shares[lnurl] = { ...note, amountMsat: String(amountMsat) };
-    storage.setItem(donationPaidKey(whose), JSON.stringify(was));
+    storage.setItem(movedKey(storage, donationPaidKey(whose)), JSON.stringify(was));
     return true;
   } catch { return false; }
 }
@@ -25209,7 +25231,7 @@ function moveGlyphs(a, b) {
  * THE CHANNEL IS HANDED IN, as `sign` and `verify` are: nothing in this package reads a name off the page (the client's
  * own rule, `discovery.test.js`), and a test drives the same door the page does.
  */
-function tickClock({ Channel = null, name = 'blwp-ghost-clock', keep = 64 } = {}) {
+function tickClock({ Channel = null, name = 'arena-ghost-clock', keep = 64 } = {}) {
   const stamps = new Map();
   const put = (e, t, ms) => {
     let a = stamps.get(e);
@@ -28243,7 +28265,7 @@ const warningsSay = (codes) => (codes || []).map((k) => WARNING_SAYS[k]).filter(
 // presented with the player's payout key. The e-cash is written to storage BEFORE it is presented and removed only once the
 // arbitration set took it, so a closed tab or a refused post loses nothing: the next start presents the same string again,
 // and notes claimed before are named, not lost.
-const LIQUIDATION_ECASH_PREFIX = 'blwp-liquidation-ecash-';
+const LIQUIDATION_ECASH_PREFIX = 'arena-liquidation-ecash-';   // the arena- names: was blwp- (moved once by movedKey, kanban #522)
 const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
 
 /**
@@ -28259,7 +28281,7 @@ async function presentNotes({ liquidations, held, walletFor, payoutPk, height, s
     if (!mine.has(fid) || !l.claims) continue;
     if (Number.isInteger(height) && (height < l.liquidatesAt || height > l.lateClaimsUntil)) { out.push({ federation: fid, ok: false, why: height < l.liquidatesAt ? `claims open at ${l.liquidatesAt}` : 'the claims closed' }); continue; }
     // THE NOTES (a wallet with none, or one that could not hand them over, still presents its pending outputs below)
-    let ecash = storage.getItem(pendingClaimKey(fid));
+    let ecash = storage.getItem(movedKey(storage, pendingClaimKey(fid)));
     if (!ecash) {
       let sent = null;
       try { sent = JSON.parse(await (await walletFor(fid)).sendAllEcash()); } catch (e) { out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
@@ -28281,7 +28303,7 @@ async function presentNotes({ liquidations, held, walletFor, payoutPk, height, s
     // their issuance requests. Kept like the e-cash until the arbitration set took them; claimed before counts as taken.
     try {
       const w = await walletFor(fid);
-      let reqs = JSON.parse(storage.getItem(pendingRequestsKey(fid)) || 'null');
+      let reqs = JSON.parse(storage.getItem(movedKey(storage, pendingRequestsKey(fid))) || 'null');
       if (!reqs && w && typeof w.pendingOutputs === 'function') {
         reqs = (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean);
         if (reqs.length) storage.setItem(pendingRequestsKey(fid), JSON.stringify(reqs));
@@ -28298,11 +28320,12 @@ async function presentNotes({ liquidations, held, walletFor, payoutPk, height, s
   }
   return out;
 }
-const pendingRequestsKey = (fid) => `blwp-liquidation-pending-${String(fid).toLowerCase()}`;
+const pendingRequestsKey = (fid) => `arena-liquidation-pending-${String(fid).toLowerCase()}`;
 
 // THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
 // round id of its own, H(tag || federation id)), so a seed restored on another device collects what the first presented.
 // A payout is a pre-expired lock to refundKeyOf(that key), collected by Refund under it - as a slash payout is.
+
 
 
 
@@ -28323,7 +28346,7 @@ async function collectLiquidationPayouts({ listed, seed, curve, clientFor, stora
   for (const p of (listed && listed.payouts) || []) {
     const key = liquidationKeyFor(seed, p.federation, curve);
     if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
-    const note = `blwp-liquidation-paid-${p.txid}:${p.outIdx}`;
+    const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
     if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
     try {
