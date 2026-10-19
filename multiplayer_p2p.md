@@ -4837,6 +4837,166 @@ federation is founded (§23A.2); the seats show `load` beside every round.
   among those its own bond qualifies it to serve; a creator who names
   another has the client show why.
 
+## 23A.3a Capacity pressure: paying for bigger bonds and bigger peg-ins *(2026-10-19)*
+
+> Owner, 2026-10-19 ~22:05Z: "when the network is approaching capacity and deposits are likely to be halted due to bonds not being big
+> enough there needs to be incentive to increase a nodes bond by receiving a far larger fee share when other nodes are not doing it.
+> Warnings of this event must be on the health page, the node's dashboard and owner page, a plea to increase the bond. Also new installs
+> should increase their minimum so the new node remains useful from the start." ~22:10Z: "Also peg ins may not be enough when capacity
+> is stalling and needs to be incentivised to be bigger."
+
+Deposits into a federation stop for two reasons:
+
+1. **The bonds.** At `load >= 1` (§23A.3) the client refuses deposits. `exposure_cap = (f + 1) × the smallest seated bond`, so the cap
+   only rises when the **smallest** bonds rise.
+2. **The peg-ins.** A deposit arrives over Lightning, and the gateway pays it out of its own e-cash in the federation (its peg-in,
+   §23A.9). When the seated gateways' e-cash runs low, deposits fail even while the cap still has room.
+
+Today nothing pays a node to fix either. A guardian with a bigger bond earns the same even share as one at the floor, and a gateway's
+share does not depend on its peg-in. This section adds that payment. It only applies while a federation is under pressure, and it ends
+by itself once enough guardians and gateways have raised.
+
+### The signal: everyone computes the same numbers
+
+All inputs are public, and each is read at the **census height of the round** that pays:
+
+| Input | Where it comes from |
+|---|---|
+| `bond_i` of each seated guardian | the census (the sum of its bond outputs, §"Multiple bond outputs") |
+| `reserve`, `exposure_cap` | the federation record in force at that height (§23A.4, signed at threshold) |
+| `f` | the record's `nominal` (§23A.1) |
+| `pegin_g` of each seated gateway | the gateway's claim, proved as below |
+
+```text
+load      = reserve / exposure_cap                        (§23A.3)
+headroom  = exposure_cap - reserve                        (sat a federation can still take in)
+B*        = ceil( reserve / (0.5 × (f + 1)) )             the per-guardian bond at which load would be 50 %
+                                                          (never below bond_min_guardian)
+```
+
+**Bands**, per federation:
+
+| Band | Enters at | Leaves below | Meaning |
+|---|---|---|---|
+| CALM | - | - | as today |
+| **PRESSURE** | `load >= 0.70` | `load < 0.60` | the bond weighting below applies; warnings start |
+| **CRITICAL** | `load >= 0.90` | `load < 0.80` | deposits close soon; the warnings are urgent |
+| **FULL** | `load >= 1` | `load < 1` | deposits refused (§23A.3) |
+
+The gap between "enters" and "leaves" keeps a federation from flapping at a boundary. The band is part of the federation record from the
+next record on, so every seat reads the same one.
+
+**The network is under pressure** when the OPEN federation with the **lowest** load is in PRESSURE or worse. New deposits go there
+first (§23A.3), so that one federation decides whether the network can still take money in.
+
+### 1. Bigger bonds earn a far larger custody share
+
+While a federation is in PRESSURE, CRITICAL or FULL, its guardians' part of the GUARDIAN pool (§"Node fee", §23A.9: two thirds of it) is
+**no longer split evenly**. Each seated guardian `i` gets the weight
+
+```text
+w_i = ( min(bond_i, B*) / B* ) ^ 2
+share_i = guardians' part × w_i / Σ w
+```
+
+- **Squared, so one raiser is paid a lot more while the others don't.** Example: 7 guardians (`f = 2`), all at 50,000 sat, so
+  `exposure_cap = 150,000`. The reserve is 130,000 sat, so `load = 0.87` and `B* = 86,667`.
+
+  | Who has raised to B* | Raiser's share of the guardians' part | Each other's share | Raiser vs even (14.3 %) |
+  |---|---|---|---|
+  | nobody | - | 14.3 % | - |
+  | one guardian | **33.3 %** | 11.1 % | **2.3×** |
+  | three | 23.1 % each | 7.7 % | 1.6× |
+  | all seven | 14.3 % | - | 1× (even again) |
+
+- **Capped at B\*.** A bond beyond what the cap needs earns nothing extra. A whale cannot take the pool.
+- **It costs real capital.** A bond added (a second bond output, §"Multiple bond outputs") is timelocked until `bond_maturity`, and it
+  counts once it has 6 confirmations (§5A). It cannot be borrowed for a day to farm the share.
+- **It is what lifts the cap.** The cap is `(f + 1) ×` the smallest bond, so the share is paid exactly for the move that frees capacity:
+  every guardian below B\* holds the cap down, and every one at B\* stops doing so.
+- **CALM: even, as today.** Guardians who raised keep their larger bond for the next pressure.
+
+Rounds settle as before: one payout contract per guardian, sized by these weights. The weights use only the record and census of the
+round's census height, so every signer node builds the same outputs.
+
+**The founding draw under pressure** (§23A.2). When the network is under pressure and a new federation is founded, candidates with a
+bond of at least the network's `B*_net` (below) are seated first. So a non-guardian node that raises its bond is first in line for
+the federation that adds capacity.
+
+### 2. Bigger peg-ins earn a larger gateway share
+
+A deposit of `x` sat needs `x` of e-cash at a seated gateway. **Peg-in pressure** is the same idea for the gateways:
+
+```text
+P*        = max( peg_in_min, ceil( 0.25 × headroom / gateway_seats ) )
+            the peg-in each of the 2 seated gateways should hold so that a quarter of the cap's headroom can arrive at once
+pegin_pressure  when Σ min(pegin_g, P*) < gateway_seats × P*   (some seated gateway holds less than P*)
+```
+
+While a federation is in PRESSURE or worse **and** under peg-in pressure, the **gateways' part** of the GUARDIAN pool (its third,
+§23A.9) is split
+
+```text
+v_g = ( min(pegin_g, P*) / P* ) ^ 2
+share_g = gateways' part × v_g / Σ v
+```
+
+The same squared rule: the gateway that raises its peg-in to P\* while the other one doesn't takes about **80 %** of the gateways' part
+(1 against 0.25 at half of P\*), not 50 %. In the ranking of §23A.9 ("The best two"), peg-in up to P\* comes **before** routed volume
+while peg-in pressure lasts, so a gateway that can take the deposits is seated ahead of one that has routed more but cannot.
+
+**What counts as the peg-in.** A claim states `pegInSats` (§23A.9). The weight counts it only if it is **proved**:
+- the claim names its peg-in outpoints (`txid:vout`), each a deposit to F's on-chain wallet address that the gateway's own client
+  requested;
+- every guardian checks those outputs in F's wallet module (they are F's own UTXOs), and that they are not older than the gateway's
+  current seat;
+- the counted peg-in is their sum.
+
+**Open.** A peg-in proves money went in, not that the gateway still holds it as e-cash. A balance proof needs a guardian-side check
+of the gateway's notes, which stock Fedimint does not offer. Until there is one, the proved peg-in is the weight, and a seated gateway
+that fails a receive in the epoch (§23A.9's probes, extended with a receive test of `min(P*, 10,000 sat)`) is unseated as before.
+
+### 3. The warnings: health page, node dashboard, owner page
+
+Every seat answers **`GET /capacity`** (public, no authentication): per OPEN federation its `load`, band, `headroom`, `B*`, how many
+seated guardians are below `B*`, its seated gateways' proved peg-ins against `P*`, and for the network `B*_net`, the lowest load and
+the network band. The three pages read it. The wording escalates like the `bond_min` notices of §27A.3:
+
+| Band | Health page (everyone) | Node dashboard (`/Dashboard`) | Owner page (the operator, signed in) |
+|---|---|---|---|
+| PRESSURE | yellow line per federation: "*Federation X holds 74 % of what its bonds cover. Deposits stop at 100 %.*" plus guardians below B\* and gateways below P\* | **a plea:** "*Federation X is filling up. Your bond is 50,000 sat. Raise it to 86,667 sat and your custody share grows from 14.3 % to up to 33 % while others haven't.*" (a gateway: the same for its peg-in and P\*) | the same plea, with **Add a bond** (a second bond output: amount B\* - bond, the fee now, and when it counts) and, for a gateway, **Add to peg-in** |
+| CRITICAL | red, at the top of the page: "*Deposits into X will close soon (92 %).*" | the plea at the top, urgent: "*Deposits close at 100 %. A bond added now counts after 6 confirmations, about an hour on mainnet.*" | the same, plus a notification on every sign-in until it is answered or the band ends |
+| FULL | "*Deposits into X are closed until bonds rise or a new federation is founded.*" | "*Deposits are closed. Your bond decides how fast they reopen.*" | the same, with the shortfall in sat |
+
+A node that is no guardian sees, while the **network** is under pressure: "*The network is near capacity. A bond of at least B\*_net
+puts this node first in line for the next federation.*"
+
+### 4. New installs start with a useful bond
+
+The installer's bond step (§8) no longer offers `bond_min_guardian` as the minimum when the network is under pressure:
+
+```text
+B*_net          = ceil( Σ reserve / (0.5 × Σ (f + 1)) )   over the OPEN federations: the per-guardian bond at which the
+                                                         whole network would sit at 50 % load
+install_minimum = max( bond_min_guardian, B*_net )        rounded up to 10,000 sat
+```
+
+- The installer reads it from the seats' `GET /capacity` (two seats agreeing, as it reads the release) and says why: "*The network is at
+  78 %. A bond below 86,667 sat would not help it take deposits, so this node starts at 90,000 sat.*"
+- CALM: `B*_net` is below the floor, and the minimum is `bond_min_guardian` as today.
+- This is the installer's floor, not the protocol's. The protocol's floor stays `bond_min_guardian` and changes only with notice
+  (§27A.3), so nodes already running are never cut off by it.
+- A gateway set up by the installer takes `max(peg_in_min, P*)` of the federation it joins as its peg-in, by the same reading.
+
+### Versions and tests
+
+- The weighting of 1 and 2 is a **protocol version** (the next after 18): every signer node must build the same payout outputs.
+  Rounds of earlier versions pay evenly as before.
+- The bands in the record, `GET /capacity`, the warnings and the installer minimum need no protocol version. They ship with the seats,
+  the page and the installer.
+- Tests: the example table above to the msat; flapping at 0.69 / 0.71 / 0.61; `B*` and `P*` at the floors; a guardian above `B*`
+  earning no more than at `B*`; a peg-in whose outpoint is not F's earning nothing; the same payout outputs from every signer node.
+
 ## 23A.4 How guardians, seats and clients talk
 
 Nothing here is a new protocol; it is which stock channel carries what.
@@ -5373,6 +5533,9 @@ GUARDIAN pool (4/3 %)
   2026.0.13).
 - This split is **protocol 2026.0.15**. Rounds of earlier versions pay the
   guardian pool as before.
+- **Under capacity pressure** (§23A.3a) both parts are weighted instead of
+  even: the guardians' by bond up to `B*`, the gateways' by proved peg-in up
+  to `P*`, each squared.
 
 ### In the installer
 
