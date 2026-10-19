@@ -4,131 +4,84 @@
 > Windows `ArenaNodeSetup-*.exe` · macOS `ArenaNode-*.dmg` · Linux `arena-node_*.deb` · or the plain archives.
 > All releases: [Releases](https://github.com/a tester/bitcoin-arena/releases). Guide: [docs.bitcoin-arena.io](https://docs.bitcoin-arena.io/#run).
 
-A real-time 3D browser game where the **live Bitcoin price chart is the battlefield** and **real
-unconfirmed mempool transactions are your cargo**.
+Bitcoin Arena is a set of games and prediction markets played for bitcoin, with **no central server**. The nodes *are* the arena:
 
-You are the Logistics Commander. Load pending transactions onto armoured mail trucks, pick a route
-across a warzone that redraws itself every time the price moves, and get your packages through the
-Blockchain Gate before the next real block is found.
+- they hold the rounds;
+- they check every run and every outcome;
+- they sign the results;
+- their federations keep the players' stakes.
 
-```
-open http://localhost:8080     # after starting a static server, see "Running" below
-```
+Anyone can run a node. A node posts a bond on Bitcoin, gets drawn onto rounds, and earns a share of every paid entry. It is checked by the other nodes in everything it signs; a node that cheats is slashed with the proof made public.
 
-## What is actually live
+It runs on **testnet4** today.
 
-| In the game | Real source |
-| --- | --- |
-| Terrain shape, frontline position | `btcusdt@aggTrade` / `@ticker` — Binance spot |
-| Troop strength, unit density | live trade flow imbalance (buys vs sells) |
-| Translucent ramparts near the seam | `btcusdt@depth20@100ms` order book |
-| Airstrikes and craters | `!forceOrder@arr` — Binance futures liquidations |
-| Every package | `mempool.space/api/mempool/recent` — real unconfirmed txs (txid, vsize, fee, value) |
-| Package colour / tier | fee rate vs. the *current* next-block median from `/v1/fees/recommended` |
-| Block found → convoy, confetti, ×3 window | mempool.space websocket `blocks` |
-| Block height, miner, tx count, total fees | mempool.space block payload |
+## Play
 
-If any socket is unreachable (geo-block, offline, corporate proxy) the game **transparently falls
-back to a simulator** — mean-reverting price walk, synthetic order book, Poisson blocks at a 10 min
-mean, plausible fee distribution — and switches back to live the moment the socket returns. The
-status pills top-left always say which mode each feed is in.
+| Game | Kind | What it is |
+|---|---|---|
+| **Tick Tock, Next Block** | skill, replayed | Drive a truck through the next Bitcoin block. Load mempool transactions, cross the price war front, deliver before time runs out. Every player gets the same block and seed, every node replays every run, and the best run wins the pot. |
+| **Rock Paper Scissors** | head to head | Commit a hidden move, reveal it, and the winner takes the pot. Rounds every 8 seconds. |
+| **Bitcoin Up or Down** | prediction market | Will BTC be higher at the end of the 15-minute window? Three independent attestors sign the price, and the winning side shares the pot. 96 markets a day. |
 
-## Running
+The game page is at [testnet.bitcoin-arena.io](https://testnet.bitcoin-arena.io). Your wallet is your 24 words or your Nostr key; your stake is locked in a federation until the round settles.
 
-It's a static site with no build step. Any static server works:
+## Run a node
 
-```bash
-python3 -m http.server 8080        # then open http://localhost:8080
-# or
-npx serve .
-```
+1. **Download** the package for your system from the [latest release](https://github.com/a tester/bitcoin-arena/releases/latest) and open it. A small *Arena Node* window starts the installer and opens its setup page in your browser.
+2. **Set it up** in the browser wizard. It tests each step before saving it:
+   - **chain:** your own Bitcoin Core, or an Electrum server;
+   - **roles:** verify, settlement, custody, liquidity;
+   - **24 words:** your node's keys and your wallet;
+   - **public address:** direct, a Cloudflare tunnel, Tailscale Funnel or workers.dev;
+   - **Lightning and the gateway**, for custody;
+   - **the bond.**
+3. **Manage it** with one command:
 
-`three.js` is vendored in `vendor/` so the whole folder is self-contained and deployable to any
-static host (GitHub Pages, Netlify, S3) by copying it as-is. Opening `index.html` via `file://`
-will **not** work — ES modules need a real origin.
+   | Command | What it does |
+   |---|---|
+   | `arenanode status` | every service and what it answers |
+   | `arenanode doctor` | finds problems and names the fix |
+   | `arenanode restart lnd` | restarts one service, or all with plain `arenanode restart` |
+   | `arenanode logs` | shows a service's log |
+   | `arenanode config` | shows and changes the settings |
 
-## Controls
+   Every setting is in one file, `arena.conf`. The owner page (`/dashboard/owner`, signed with your owner key) shows the same services, plus the bond, earnings and updates.
+4. **Update** in place with `arena-install --update <new release>`. It checks the release's signature, backs the node up, and rolls back by itself if the new release does not come up.
 
-| Key | Action |
-| --- | --- |
-| `1` – `6` | camera: cinematic · god · follow · plaza · driver · free |
-| Click / drag | select package · drag a box to multi-select |
-| Double-click | load that package straight onto the selected truck |
-| `Space` | auto-load the highest fee-rate packages that fit (greedy, like a real miner) |
-| `L` | load the current selection |
-| `Z` / `X` / `C` | route: Bull Flank · Frontline · Bear Flank |
-| `Enter` | dispatch the convoy |
-| `B` | boost (burns banked fees) |
-| `P` | repair |
-| `R` | RBF-bump selected packages to VIP |
-| `Tab` | cycle trucks |
-| `WASD` | free camera, or steer while in follow/driver mode |
-| `E` | field manual · `M` mute · `Esc` clear selection |
+Each paid entry pays **4 % to the nodes** (four pools: game/verify, settlement, custody, liquidity), **4 % to the developers** and **2 % to the protocol reserves**, a treasury the bonded nodes vote to spend. Prediction markets pay 0.4 % / 0.4 % / 0.2 %.
 
-Mobile: tap to select packages and trucks, use the on-screen quick-action bar.
+The full guide, the node API and how to build your own game are at **[docs.bitcoin-arena.io](https://docs.bitcoin-arena.io)**.
 
-## Gameplay
+## How it works, in one paragraph
 
-1. Packages pile up in the **Sorting Plaza** at the rate the real mempool produces transactions.
-   Size = vsize, colour and glow = fee rate *relative to what the next block is paying*. Low-fee
-   packages visibly sulk. ≥50 BTC transactions arrive as whales.
-2. Fill a truck. Capacity is in vB — your truck is a block template, and the same greedy
-   fee-rate knapsack a miner solves applies.
-3. Pick a route. All three are **visible streets** you can watch your truck drive down: two
-   winding flank highways with kerbs and centre lines that climb over the hills, and the
-   Frontline road, which is redrawn every frame because it follows the live price. They fan out
-   of the plaza and converge again on the Blockchain Gate. The Bull Flank is safe and pays ×1.0;
-   the Frontline pays ×2.6 while under fire from both sides.
-4. Survive the crossing. Every liquidation scrambles a **bomber**: it flies in from off-map
-   trailing contrails, runs over the target, releases a bomb that falls ballistically (with the
-   whistle), then banks away while the blast craters the terrain, damages trucks and scatters
-   cargo. Some packages RBF themselves back to the mempool out of sheer self-preservation.
-5. Deliver through the Blockchain Gate. When a **real block** is found: bass drop, confetti,
-   armoured convoy parade, and a ×3 scoring window for 25 seconds. Any packages in the plaza paying
-   above that block's median fee get confirmed without you — because that is what actually happens.
-6. Banked fees buy boosts, repairs, RBF bumps and better trucks.
+A round is a signed contract. Players enter with a stake locked in a Fedimint federation (10 guardians, all of them nodes) and play against a deterministic game core. A committee of 7 nodes, drawn by a fair lottery from the bonded nodes in the on-chain census, replays every input (or checks the attestors' signed outcome for a market). The result holds when 5 of the 7 sign the same one. The federation then pays the winners from the locked stakes. Every rule is a protocol version: rounds carry the version they run on, and old and new versions run side by side.
 
-## Modes
+## Repository layout
 
-- **Commander** — the full game.
-- **War Room** — pure spectator. Hides the player chrome and just runs the visualisation, driven
-  entirely by live data. Cinematic camera, killfeed, the whole war.
+| Path | What |
+|---|---|
+| `packages/arena-protocol` | the protocol: canonical encodings, contracts, census, sortition, payouts, reserves. Isomorphic JavaScript |
+| `packages/arena-node` | the node (seat): rounds, entries, replay, signing, settlement, federations, the owner page |
+| `packages/arena-client` | the player's half: joining, stake locks, the page's bundle |
+| `packages/arena-installer` | the installer wizard, `arenanode`, updates, services on Linux/macOS/Windows |
+| `packages/nextblock` | Tick Tock, Next Block's deterministic core (integer arithmetic only) and plugin |
+| `packages/rock-paper-scissors`, `packages/btc-updown` | the other games: decide adapters, signed manifests, clients |
+| `packages/arena-attestor` | a market attestor: reads price sources, signs outcomes |
+| `packages/arena-donor` | a developer's donation client |
+| `unity-proto/` | the Unity WebGL client of Tick Tock, Next Block (input and rendering only; outcomes come from the core) |
+| `deploy/` | the websites: homepage, docs and API reference |
+| `tools/release/` | the release build (`build-release.sh`), the installer packages (`package.sh`, `package-mac.sh`) and signing |
+| `multiplayer_p2p.md`, `FEDERATION.md` | the specification |
+| `index.html`, `src/` | the original single-player browser prototype ([its notes](docs/original-browser-prototype.md)) |
 
-## Layout
+## Develop
+
+Each package's tests run with Node.js 24:
 
 ```
-index.html          HUD markup + import map
-styles.css          HUD / panels / responsive
-vendor/             three.js r169 (vendored, MIT)
-src/
-  main.js           boot + render loop
-  game.js           orchestration, scoring, progression, block events
-  config.js         every tunable number
-  feeds.js          Binance + mempool.space, reconnection, simulation fallback
-  audio.js          all SFX synthesised with WebAudio (no assets)
-  input.js          picking, box select, hotkeys, touch, manual driving
-  ui.js             HUD binding, minimap, order book canvas, tooltips, field manual
-  render/scene.js   renderer, sky, market-driven atmosphere, 6 camera modes
-  render/fx.js      pooled GPU particles, ballistic rounds, shockwaves, floating text
-  render/geom.js    model kit — merges multi-part models into one vertex-coloured
-                    geometry so a whole army is a single instanced draw call
-  world/battlefield.js   price-chart terrain, frontline, units, order book, bomber raids
-  world/roads.js         the three visible routes + the mountains they wind through
-  world/logistics.js     plaza, packages, fleet, routes, depot, convoys
+cd packages/arena-node && node --test --test-timeout=120000 test/<file>.test.js
 ```
 
-Rendering notes: soldiers (helmet, pack, rifle) and tanks (hull, turret, barrel, tracks, road
-wheels) are built from ~15–25 primitives each, then baked down to one geometry with vertex
-colours. Team colour rides on `instanceColor` and multiplies with the baked colours, so a
-near-black rifle stays near-black on both a green and a red soldier — 500 units, two draw calls.
-Mountains are static, so they are baked into the terrain's base height once rather than evaluated
-per vertex per frame.
+The release workflow (`.github/workflows/release.yml`) runs the installer tests, builds every asset for Linux, macOS and Windows, installs each one fresh on its own system, and builds and installs the packages. Every release's `SHA256SUMS` is signed with the Arena release key (published at [testnet.bitcoin-arena.io/release-key.txt](https://testnet.bitcoin-arena.io/release-key.txt)).
 
-## Notes on accuracy
-
-The educational claims in the field manual (`E`) are the real mechanics: fee *rate* not total fee
-decides queue position, ~1M vB per block, RBF, why liquidations cascade, what order book walls are.
-The scoring model deliberately mirrors a miner's incentive — fill the template, prefer high fee
-rate, and race the next block.
-
-Not financial advice. It's a game about mail trucks.
+The repository and its releases are private for now: invited users only.
