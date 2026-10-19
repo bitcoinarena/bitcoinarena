@@ -12,18 +12,20 @@
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
 // is rolled back from.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher } from './service.js';
 import { adhocSign } from './tor.js';
-import { INSTANCE } from './instance.js';
+import { INSTANCE, PORT_OFFSET } from './instance.js';
+import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
+import { writeCommand } from './launchers.js';
 import { quickTunnelUrl } from './reach.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
-export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
+export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'arena.conf', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
   'node.db.operator-tokens.json', 'bitcoind.auth', 'cloudflared.yml']);
 
 /** Is it inside a market seating window now (minutes 11-14 of a quarter hour)? The update waits it out. */
@@ -180,7 +182,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
   }
-  if (!existsSync(join(home, 'state.json')) || !existsSync(join(home, 'node.env'))) return { ok: false, why: `no node is installed at ${home}` };
+  if (!existsSync(join(home, 'state.json')) || !(existsSync(join(home, 'arena.conf')) || existsSync(join(home, 'node.env')))) return { ok: false, why: `no node is installed at ${home}` };
   const svc = servicesOf({ platform, env, sh, home, port, node });
   const oldSeat = svc.seatText();
   const from = svc.releaseOf(oldSeat);
@@ -197,10 +199,22 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   if (!stop.ok) return { ok: false, why: stop.why };
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
+  // THE SETTINGS (kanban #499): arena.conf, its paths into an older release moved to the new one. A node from before it ran from
+  // node.env: its settings are moved into arena.conf here, once (node.env stays until the new release answers, then is kept as
+  // node.env.migrated; a rollback takes arena.conf away again and the old release reads node.env as before)
   const envFile = join(home, 'node.env');
-  const envText = readFileSync(envFile, 'utf8');
-  const envNew = envForRelease(envText, newRelease);
-  if (envNew !== envText) writeFileSync(envFile, envNew, { mode: 0o600 });
+  const confFile = join(home, 'arena.conf');
+  const migrating = !existsSync(confFile);
+  if (migrating) {
+    const values = { network: state.network || 'testnet4', ...envToConfValues(envForRelease(readFileSync(envFile, 'utf8'), newRelease), { port, database: join(home, 'node.db') }) };
+    if (INSTANCE && !values.instance) values.instance = INSTANCE;
+    if (PORT_OFFSET && !values.port_offset) values.port_offset = String(PORT_OFFSET);
+    writeFileSync(confFile, formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n', header: 'moved from node.env by an update' }), { mode: 0o600 });
+  } else {
+    const confText = readFileSync(confFile, 'utf8');
+    const confNew = envForRelease(confText, newRelease);
+    if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
+  }
   for (const f of moving) {
     const text = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
@@ -220,7 +234,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     const url = await quickUrl({ unit: TUNNEL_UNIT, home, platform, sh, sinceMs: startAt });
     if (url && url !== state.reach.url) {
       const oldHost = new URL(state.reach.url).host, newHost = new URL(url).host;
-      writeFileSync(envFile, readFileSync(envFile, 'utf8').split(oldHost).join(newHost), { mode: 0o600 });
+      writeFileSync(confFile, readFileSync(confFile, 'utf8').split(oldHost).join(newHost), { mode: 0o600 });
       reachUrl = url;
     }
   }
@@ -231,13 +245,18 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   if (same) {
     writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, ...(reachUrl ? { reach: { ...state.reach, url: reachUrl } } : {}),
       release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()),
+    if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
+    // the arenanode command runs the new release from now on
+    let command = null;
+    try { command = writeCommand({ home, release: newRelease, node, platform, env, run: sh }); } catch (e) { command = { why: e.message }; }
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating,
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
   // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows
   // VM: copying the backup back threw while the stopped seat still held its database, and the node was left with nothing running)
   try { await svc.stop(moving, newRelease); } catch { /* the start below is what matters */ }
   for (const [f, t] of oldTexts) writeFileSync(f, t);
+  if (migrating) rmSync(confFile, { force: true });
   let put = { ok: false, failed: ['not tried'] };
   try { put = await restoreNode(home, backup, { pause: sleep }); } catch (e) { put = { ok: false, failed: [e.message] }; }
   await svc.start(moving);

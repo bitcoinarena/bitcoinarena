@@ -4642,6 +4642,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return answer(200, { ok: true, psig: toHex(psig) });
           } catch (e) { return answer(422, { ok: false, why: e.message }); }
         }
+        // THE NODE'S SERVICES (kanban #499, the owner 2026-10-19: "Also have a service overview in the owners area with the status of all
+        // services"): what `arenanode status` shows - each service of the installed node (Bitcoin Core / the chain bridge, Tor, LND, the
+        // gateway, the guardian, the seat, its tunnel, ...) running or not, and what it answers. Signed by the owner: it names processes
+        // and local ports. A seat not started from an installer's arena.conf (src/run.js sets ARENA_HOME) has none to show.
+        if (url.pathname === '/owner/services') {
+          const a = owner.authorize(body, 'services');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not installed by the Arena installer (it runs without arena.conf): its services are its operator\'s own' });
+          try {
+            const { overview } = await import('../../arena-installer/src/node-services.js');
+            const v = await overview({ home });
+            return answer(200, { ok: true, version: v.version, instance: v.instance, port: v.port, publicUrl: v.publicUrl, roles: v.roles, settings: v.conf ? 'arena.conf' : v.legacyEnv ? 'node.env' : null,
+              services: v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })),
+              command: v.instance ? `arenanode-${v.instance}` : 'arenanode' });
+          } catch (e) { return answer(500, { ok: false, why: `the services could not be read: ${e.message}` }); }
+        }
         // SET UP, WITHDRAW, REMOVE (kanban #358): signed by the owner like every owner door
         // A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (kanban #494, the owner 2026-10-18: "a button generate a new address for
         // the lp wallet"): signed by the owner, asked of this node's provider service, which owns the LND and re-signs its claim
