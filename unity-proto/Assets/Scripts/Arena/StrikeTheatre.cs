@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// The liquidation strike, as the player sees it: an aircraft comes in, an
@@ -146,7 +146,7 @@ namespace Blwp
 
         void Update()
         {
-            if (!BlwpCore.Available) return;
+            if (!ArenaCore.Available) return;
             Fly(Time.deltaTime);
             Column(Time.deltaTime);
             Glow();
@@ -158,13 +158,13 @@ namespace Blwp
             // gone before anything can see it. Measured - the first cut of this
             // watched `StrikeArmed` and never launched once. `K_SERIAL` only
             // goes up, so an increment cannot be missed however slow the frame.
-            int strikes = BlwpCore.StrikeCount;
+            int strikes = ArenaCore.StrikeCount;
             if (strikes == _seenStrikes) return;
             bool first = _seenStrikes < 0;
             _seenStrikes = strikes;
             Spent(strikes);
             if (first) return;                    // a reload, not a fresh strike
-            Launch(BlwpCore.StrikeAt(0f));
+            Launch(ArenaCore.StrikeAt(0f));
         }
 
         /* ------------------------------------------------------- the run-in */
@@ -397,7 +397,7 @@ namespace Blwp
 
         /// <summary>
         /// One step of the cloud. `Update` runs this, and it is reachable so a
-        /// PlayMode test can drive it: `Update` gives up on `BlwpCore.Available`
+        /// PlayMode test can drive it: `Update` gives up on `ArenaCore.Available`
         /// and the editor's core is a stub, so nothing here would ever run in
         /// a test otherwise.
         /// </summary>
@@ -516,7 +516,7 @@ namespace Blwp
             _countedWreckage = false;
             _cloudAt = at;
             _cloud = 0f;
-            _impactTick = BlwpCore.Available ? BlwpCore.State[Layout.O_TICK] : -1;
+            _impactTick = ArenaCore.Available ? ArenaCore.State[Layout.O_TICK] : -1;
             _saidRest = -1f;
             _saidSkirt = -1f;    // or the second cloud says nothing until t=3.0s
             _saidHeat = -99f;
@@ -864,27 +864,27 @@ namespace Blwp
                             // consume tick is `dig - CRATER_DELAY` and that arithmetic is done off the core's
                             // own numbers, where the constant lives. A radius of 0 with a dig tick set is a
                             // slot armed and not yet dug, which is exactly the state this is here to catch.
-                            int tickNow = BlwpCore.Available ? BlwpCore.State[Layout.O_TICK] : -1;
+                            int tickNow = ArenaCore.Available ? ArenaCore.State[Layout.O_TICK] : -1;
                             int slot = -1, dig = 0, radw = 0;
                             float near = float.MaxValue;
-                            if (BlwpCore.Available)
+                            if (ArenaCore.Available)
                                 for (int i = 0; i < Layout.MAX_CRATERS; i++)
                                 {
                                     int b = Layout.O_CRATERS + i * Layout.C_WORDS;
-                                    if (BlwpCore.State[b + Layout.C_DIG] == 0 && BlwpCore.State[b + Layout.C_R] <= 0) continue;
-                                    float dx = BlwpCore.Metres(BlwpCore.State[b + Layout.C_X]) - _cloudAt.x;
-                                    float dz = BlwpCore.Metres(BlwpCore.State[b + Layout.C_Z]) - _cloudAt.z;
+                                    if (ArenaCore.State[b + Layout.C_DIG] == 0 && ArenaCore.State[b + Layout.C_R] <= 0) continue;
+                                    float dx = ArenaCore.Metres(ArenaCore.State[b + Layout.C_X]) - _cloudAt.x;
+                                    float dz = ArenaCore.Metres(ArenaCore.State[b + Layout.C_Z]) - _cloudAt.z;
                                     float d2 = dx * dx + dz * dz;
                                     if (d2 >= near) continue;
                                     near = d2; slot = i;
-                                    dig = BlwpCore.State[b + Layout.C_DIG];
-                                    radw = BlwpCore.State[b + Layout.C_R];
+                                    dig = ArenaCore.State[b + Layout.C_DIG];
+                                    radw = ArenaCore.State[b + Layout.C_R];
                                 }
                             Debug.Log($"[cloud] clock t={_cloud:F1}s: impact tick {_impactTick}, tick now {tickNow}, "
                                       + $"nearest slot {slot}"
                                       + (slot < 0 ? " none" : $" {Mathf.Sqrt(near):F1} m from the cloud")
                                       + $", dig tick {dig}, radius "
-                                      + (radw > 0 ? $"{BlwpCore.Metres(radw):F1} m dug" : "0 (armed, not dug)"));
+                                      + (radw > 0 ? $"{ArenaCore.Metres(radw):F1} m dug" : "0 (armed, not dug)"));
                         }
                     }
                 }
@@ -948,8 +948,8 @@ namespace Blwp
                         if (_cloud - _saidSkirt > 1.2f || _saidSkirt < 0f)
                         {
                             _saidSkirt = _cloud;
-                            float coreAtSkirt = BlwpCore.HasSurface ? BlwpCore.SurfaceAt(sb.center.x, sb.center.z) : float.NaN;
-                            float coreAtImpact = BlwpCore.HasSurface ? BlwpCore.SurfaceAt(_cloudAt.x, _cloudAt.z) : float.NaN;
+                            float coreAtSkirt = ArenaCore.HasSurface ? ArenaCore.SurfaceAt(sb.center.x, sb.center.z) : float.NaN;
+                            float coreAtImpact = ArenaCore.HasSurface ? ArenaCore.SurfaceAt(_cloudAt.x, _cloudAt.z) : float.NaN;
                             Debug.Log($"[cloud] skirt footing t={_cloud:F1}s: underside {_skirtUnderside:F2}, "
                                       + $"Ground(skirt) {Ground(sb.center.x, sb.center.z):F2}, "
                                       + $"SurfaceAt(skirt) {coreAtSkirt:F2}; anchor y {_cloudAt.y:F2} re-read from the core, "
@@ -1213,7 +1213,7 @@ namespace Blwp
         /// </summary>
         void Glow()
         {
-            if (terrain == null || !BlwpCore.HasSurface) return;
+            if (terrain == null || !ArenaCore.HasSurface) return;
             if (terrain.Version != _seenTerrain)
             {
                 _seenTerrain = terrain.Version;
@@ -1280,11 +1280,11 @@ namespace Blwp
         ///
         /// So the floor is left alone and the shape carries itself. The band
         /// sits between 0.90 and 1.00 of the crater's radius, which is the very
-        /// line `BlwpCore.Irradiated` tests - `dx*dx + dz*dz < r*r` - so the
+        /// line `ArenaCore.Irradiated` tests - `dx*dx + dz*dz < r*r` - so the
         /// player is shown where the dose actually begins rather than a painted
         /// guess at it. The patches say the inside is not clean.
         ///
-        /// Every vertex is `BlwpCore.SurfaceAt` plus a little clearance, so this
+        /// Every vertex is `ArenaCore.SurfaceAt` plus a little clearance, so this
         /// cannot disagree with the ground it lies on however the crater rule
         /// changes. Nothing here is a second bowl and nothing is simulated.
         /// </summary>
@@ -1366,11 +1366,11 @@ namespace Blwp
         /// lies below a fine one - so a thin offset buried the glow in the very
         /// bowl it is drawn to fill.
         /// </summary>
-        float Surface(float x, float z) => BlwpCore.SurfaceAt(x, z) + 0.25f;
+        float Surface(float x, float z) => ArenaCore.SurfaceAt(x, z) + 0.25f;
 
         float Ground(float x, float z) =>
             roads != null ? roads.SurfaceHeight(x, z)
-                          : (BlwpCore.HasSurface ? BlwpCore.SurfaceAt(x, z)
+                          : (ArenaCore.HasSurface ? ArenaCore.SurfaceAt(x, z)
                                                  : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
 
         /// <summary>
@@ -1389,10 +1389,10 @@ namespace Blwp
         ///
         /// The fallback is the bare terrain, not `Ground`, so no road can reach
         /// the cloud by another route; it exists only for the Editor, where
-        /// `BlwpInit` returns 0 and there is no core to ask.
+        /// `ArenaInit` returns 0 and there is no core to ask.
         /// </summary>
         float CoreGround(float x, float z) =>
-            BlwpCore.HasSurface ? BlwpCore.SurfaceAt(x, z)
+            ArenaCore.HasSurface ? ArenaCore.SurfaceAt(x, z)
                                 : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
 
         /* --------------------------------------------------- the stand-ins */
@@ -1481,7 +1481,7 @@ namespace Blwp
             // and $5,000,005 are one size to it and it keeps the FIRST. In raw
             // dollars this latch would have kept the second and dressed the
             // bomber in its side over the other one's crater - the same fault
-            // one resolution down. `BlwpCore.Scale` is the one place that says
+            // one resolution down. `ArenaCore.Scale` is the one place that says
             // what a size is worth.
             //
             // READ THE SERIAL HERE, do not wait for Update to notice it. The
@@ -1492,7 +1492,7 @@ namespace Blwp
             // size the core had already spent, lose to a dead one, and leave
             // the airframe wearing the wrong side. Measured with a forced
             // order, not guessed: StrikeLatchTests.
-            Spent(BlwpCore.StrikeCount);
+            Spent(ArenaCore.StrikeCount);
 
             // A COLLISION is two liquidations arriving before the core has
             // consumed the pending one - one drain of the sockets, one frame.
@@ -1509,7 +1509,7 @@ namespace Blwp
                           $", drop ${dropped:N0} {Side(droppedSide)}");
             }
 
-            int size = BlwpCore.Scale(usd);
+            int size = ArenaCore.Scale(usd);
             if (size <= _pendingSize) return;
             _pendingSize = size;
             _pendingUsd = usd;
@@ -1547,7 +1547,7 @@ namespace Blwp
         /// handed-over side alone rather than wiping it.
         ///
         /// Public because `Update` cannot stand in for it in a test: it returns
-        /// at once unless `BlwpCore.Available`, and the core is a stub outside
+        /// at once unless `ArenaCore.Available`, and the core is a stub outside
         /// a WebGL player. StrikeLatchTests drives this instead.
         /// </summary>
         public void Spent(int serial)

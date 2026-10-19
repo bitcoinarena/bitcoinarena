@@ -24,6 +24,6 @@ public static class CleanHud
         if (!Input.GetKeyDown(KeyCode.H) || !(Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))) return;
 #endif
         On = !On;
-        Blwp.DailyLobby.HudClean(On);
+        Arena.DailyLobby.HudClean(On);
     }
 }

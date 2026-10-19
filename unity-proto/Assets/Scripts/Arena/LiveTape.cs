@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// THE LIVE TAPE, FRESH (2026-09-17 16:44: "reload always shows the SAME world candles - not live"; 16:46: "the
@@ -38,7 +38,7 @@ namespace Blwp
             {
                 long at = newest - (Prices - 1 - k) * (long)StepMs;
                 while (j + 1 < open.Count && open[j + 1] <= at) j++;       // the last kline at or before the mark
-                words[k] = BlwpCore.PriceWord(close[j]);
+                words[k] = ArenaCore.PriceWord(close[j]);
                 if (words[k] <= 0) return null;
             }
             return words;

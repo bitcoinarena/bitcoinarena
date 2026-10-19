@@ -7,13 +7,13 @@ using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// TWO NODES, ONE PAGE, THE OTHER TRUCK ON SCREEN.
 ///
 /// The pictures below are not numbers invented in C#. They are the exact
-/// twelve ints `BlwpNextGhost` hands across, captured from a real two-node run
+/// twelve ints `ArenaNextGhost` hands across, captured from a real two-node run
 /// by `arena-client/test/two-nodes-play.test.js`: two daemons, two identities,
 /// one contract naming both signer nodes, a page that subscribed, and the other
 /// player's transcript replayed by the node through `replay.js`. That test

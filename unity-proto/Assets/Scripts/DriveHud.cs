@@ -27,7 +27,7 @@ public class DriveHud : MonoBehaviour
     public CargoBay bay;
     public LoadoutPanel loadout;
     public BlockClock block;
-    public Blwp.StrikeTheatre strike;
+    public Arena.StrikeTheatre strike;
     int _saidStrike = -1, _strikeSeen = -1;
     float _strikeAt = -99f;
     public RunScore runScore;
@@ -48,7 +48,7 @@ public class DriveHud : MonoBehaviour
     // font, size, style, padding, rich text, wrap and text. The same objects and the same sizes, so the same pixels.
     SpectatorCamera _spectatorFound;
     ChaseCamera _chaseFound;
-    Blwp.CoreDrivenTruck _coreFound;
+    Arena.CoreDrivenTruck _coreFound;
 
     static T Found<T>(ref T cached) where T : Component
     {
@@ -186,7 +186,7 @@ public class DriveHud : MonoBehaviour
         // own readout said tick 824 and DANGER read x1.00 while SCORE read 0,
         // and the core's `runScore` on the same drive returns 432 at ten
         // seconds and 642 by the time the truck is at the far end.
-        bool live = runScore != null && (runScore.Running || Blwp.PracticeMode.On);
+        bool live = runScore != null && (runScore.Running || Arena.PracticeMode.On);
         int pending = runScore == null ? 0 : (live ? runScore.Projected : runScore.LastScore);
 
         // Stacked bottom-up so adding a row never silently overlaps the one
@@ -238,7 +238,7 @@ public class DriveHud : MonoBehaviour
         if (scoreBlock != _scoreBlockWas)
         {
             _scoreBlockWas = scoreBlock;
-            Debug.Log("[blwp] score block " + (scoreBlock ? "drawn" : "stepped aside") + (_wreckSummaryUp ? " (the wreck's summary is up)" : ArrivalShowing ? " (the result card is up)" : ""));
+            Debug.Log("[arena] score block " + (scoreBlock ? "drawn" : "stepped aside") + (_wreckSummaryUp ? " (the wreck's summary is up)" : ArrivalShowing ? " (the result card is up)" : ""));
         }
         if (scoreBlock)
         {
@@ -305,8 +305,8 @@ public class DriveHud : MonoBehaviour
         var box = PracticeBox(w, h);
 
         // A SIGNED RUN SENDS NO PRACTICE (2026-10-04): the box says so and does nothing, like SIM
-        bool signedRun = Blwp.BlwpNet.Live;
-        bool on = Blwp.PracticeMode.On && !signedRun;
+        bool signedRun = Arena.ArenaNet.Live;
+        bool on = Arena.PracticeMode.On && !signedRun;
         var tint = on ? new Color(0.45f, 0.75f, 1f) : new Color(1f, 0.55f, 0.30f);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
@@ -326,10 +326,10 @@ public class DriveHud : MonoBehaviour
         var text = new Rect(box.x + 12f, box.y + 2f, box.width - 16f, box.height * 0.52f);
         Shadowed(text, on ? "PRACTICE  ·  ON" : "PRACTICE  ·  OFF", label, tint);
         Shadowed(new Rect(box.x + 12f, box.y + box.height * 0.48f, box.width - 16f, box.height * 0.46f),
-                 Blwp.PracticeMode.Words(on, signedRun),
+                 Arena.PracticeMode.Words(on, signedRun),
                  sub, new Color(1f, 1f, 1f, 0.7f));
 
-        if (GUI.Button(box, GUIContent.none, GUIStyle.none) && !signedRun) Blwp.PracticeMode.Toggle();
+        if (GUI.Button(box, GUIContent.none, GUIStyle.none) && !signedRun) Arena.PracticeMode.Toggle();
 
         // THE SIM SWITCH, under PRACTICE and only while PRACTICE is on. It is
         // a rehearsal control: a player who wants to see what a liquidation
@@ -356,7 +356,7 @@ public class DriveHud : MonoBehaviour
                  sim ? "SIM  ·  ON" : "SIM  ·  OFF", label, simTint);
         Shadowed(new Rect(simBox.x + 12f, simBox.y + simBox.height * 0.50f,
                           simBox.width - 16f, simBox.height * 0.46f),
-                 SimWords(sim, Blwp.BlwpNet.Live),
+                 SimWords(sim, Arena.ArenaNet.Live),
                  sub, new Color(1f, 1f, 1f, 0.7f));
 
         if (GUI.Button(simBox, GUIContent.none, GUIStyle.none)) Bootstrap.ToggleSim();
@@ -476,16 +476,16 @@ public class DriveHud : MonoBehaviour
 
         if (core != null && core.Driving)
         {
-            float ONE = Blwp.BlwpCore.ONE;
-            var st = Blwp.BlwpCore.State;
-            lines.Add($"tick {Blwp.BlwpCore.Tick}");
-            lines.Add($"speed {Blwp.BlwpCore.TruckSpeed:0.0} m/s   {Blwp.BlwpCore.TruckSpeed * 3.6f:0} km/h");
-            lines.Add($"pos {st[Blwp.Layout.O_TRUCK + Blwp.Layout.T_X] / ONE:0.0}, " +
-                      $"{st[Blwp.Layout.O_TRUCK + Blwp.Layout.T_Z] / ONE:0.0}");
-            lines.Add($"heading {Blwp.BlwpCore.TruckHeading:0}   wheel {Blwp.BlwpCore.TruckSteerDegrees:0.0}");
+            float ONE = Arena.ArenaCore.ONE;
+            var st = Arena.ArenaCore.State;
+            lines.Add($"tick {Arena.ArenaCore.Tick}");
+            lines.Add($"speed {Arena.ArenaCore.TruckSpeed:0.0} m/s   {Arena.ArenaCore.TruckSpeed * 3.6f:0} km/h");
+            lines.Add($"pos {st[Arena.Layout.O_TRUCK + Arena.Layout.T_X] / ONE:0.0}, " +
+                      $"{st[Arena.Layout.O_TRUCK + Arena.Layout.T_Z] / ONE:0.0}");
+            lines.Add($"heading {Arena.ArenaCore.TruckHeading:0}   wheel {Arena.ArenaCore.TruckSteerDegrees:0.0}");
             lines.Add($"surface {core.LastSurface:0.00} m   grade {core.LastGrade:0.000} " +
                       $"({Mathf.Atan(core.LastGrade) * Mathf.Rad2Deg:0.0} deg)");
-            lines.Add($"practice {(Blwp.PracticeMode.On ? "on" : "off")} ({Blwp.PracticeMode.Source})");
+            lines.Add($"practice {(Arena.PracticeMode.On ? "on" : "off")} ({Arena.PracticeMode.Source})");
         }
 
         var style = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft };
@@ -577,7 +577,7 @@ public class DriveHud : MonoBehaviour
     void DrawConnectionTrouble(int w, int h, GUIStyle style, bool spectating)
     {
         bool priceOk = market != null && PriceFeedOk(market.Price, market.Status);
-        bool roundOk = RoundFeedOk(Blwp.BlwpNet.Live, Blwp.BlwpNet.Ended, Blwp.BlwpNet.FeedDown());
+        bool roundOk = RoundFeedOk(Arena.ArenaNet.Live, Arena.ArenaNet.Ended, Arena.ArenaNet.FeedDown());
         string say = ConnectionTrouble(priceOk, roundOk, spectating);
         if (say.Length == 0) return;
         Shadowed(TroubleBox(w, h), say, style, new Color(1f, 0.72f, 0.3f, 0.95f));
@@ -664,7 +664,7 @@ public class DriveHud : MonoBehaviour
         // of that were wrong in the first cut of this.
         //
         // A SIMULATED strike never enters `market.Liquidations` at all - the
-        // clock hands its size straight to `BlwpCore.Liquidation` - so gating
+        // clock hands its size straight to `ArenaCore.Liquidation` - so gating
         // on that list left the HUD silent about a crater the core had just
         // dug. And the list holds an order for ninety seconds, so the line
         // also stopped fading: it stood for as long as anything was in the
@@ -676,9 +676,9 @@ public class DriveHud : MonoBehaviour
         // stood. The theatre publishes the cap's position for exactly as long
         // as a cloud is standing, so that is the same clock the player's eye
         // is on.
-        if (!Blwp.BlwpCore.Available) return;
-        if (Blwp.BlwpCore.StrikeCount <= 0) return;
-        if (!Blwp.StrikeTheatre.CapCentre.HasValue) return;
+        if (!Arena.ArenaCore.Available) return;
+        if (Arena.ArenaCore.StrikeCount <= 0) return;
+        if (!Arena.StrikeTheatre.CapCentre.HasValue) return;
 
         // WHAT THE FEED SAW, which is not what ran. Kept only to say so in the
         // log: this summed every forced order of the last eight seconds and
@@ -702,7 +702,7 @@ public class DriveHud : MonoBehaviour
         // the one carried by the liquidation the latch was holding when the
         // strike serial moved, and that latch follows the core's rule - largest
         // wins, first of a tie, compared in the core's units.
-        float load = Blwp.BlwpCore.Available ? Blwp.BlwpCore.StrikeLoad : 0f;
+        float load = Arena.ArenaCore.Available ? Arena.ArenaCore.StrikeLoad : 0f;
         string venue = strike != null ? strike.ArmedVenue : null;
         if (load <= 0f) return;
 
@@ -717,9 +717,9 @@ public class DriveHud : MonoBehaviour
                                       : $"${dollars:0}";
         string line = $"LIQUIDATED  {money}  ·  {venue ?? "simulated"}";
 
-        if (Blwp.BlwpCore.StrikeCount != _saidStrike)
+        if (Arena.ArenaCore.StrikeCount != _saidStrike)
         {
-            _saidStrike = Blwp.BlwpCore.StrikeCount;
+            _saidStrike = Arena.ArenaCore.StrikeCount;
             string was = usd >= 1e6 ? $"${usd / 1e6:0.0}M"
                        : usd >= 1e3 ? $"${usd / 1e3:0.0}k" : $"${usd:0}";
             Debug.Log($"[hud] strike {_saidStrike}: the feed's summary said "
@@ -1021,9 +1021,9 @@ public class DriveHud : MonoBehaviour
         float head0 = CardHead(w, h, true);
         var probe = CardIn(w, h, 10f);
         // COPY GAME REPLAY, on the card whenever the run that just ended is one the bridge kept (2026-09-27 13:19:
-        // every ending, the run that just ended and not the one before - `BlwpCore.ReplayForThisRun`, taken at the end
+        // every ending, the run that just ended and not the one before - `ArenaCore.ReplayForThisRun`, taken at the end
         // from the session ROLL OUT found for this run). No longer waiting for the session's closing word as well.
-        bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;
+        bool replay = runScore != null && Arena.ArenaCore.ReplayForThisRun;
         // THE RESULT SUMMARY (2026-10-04): under SCORE, above "copy game replay", on a networked run's card
         if (replay) ReadSummary(w, h, head0); else { _summaryLines.Clear(); ResultHolding = false; }
         int summary = _summaryLines.Count;
@@ -1114,7 +1114,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// THE RESULT SUMMARY'S LINES, from the round result the page read (BlwpCore.ResultSummary, refreshed by the page every
+    /// THE RESULT SUMMARY'S LINES, from the round result the page read (ArenaCore.ResultSummary, refreshed by the page every
     /// 2 s while the card is up), re-read here twice a second. All of them while the card fits unshrunk; when it would have
     /// to shrink and more than three players are listed, the balance list is cut to three rows and "and N more".
     /// </summary>
@@ -1122,7 +1122,7 @@ public class DriveHud : MonoBehaviour
     {
         if (Time.unscaledTime - _summaryReadAt < 0.5f) return;
         _summaryReadAt = Time.unscaledTime;
-        string json = Blwp.BlwpCore.ResultSummary();
+        string json = Arena.ArenaCore.ResultSummary();
         if (json == _summaryJson) return;
         _summaryJson = json;
         var wire = ResultSummary.Parse(json);
@@ -1130,7 +1130,7 @@ public class DriveHud : MonoBehaviour
         _summaryLines = ResultSummary.Lines(wire);
         if (wire != null && wire.players.Length > 3 && ArrivalScale(w, h, head0, 0f, false, true, _summaryLines.Count) < 1f)
             _summaryLines = ResultSummary.Lines(wire, 3);
-        Debug.Log("[blwp] result summary" + (ResultHolding ? " (holding)" : "") + ": " + string.Join(" | ", _summaryLines));
+        Debug.Log("[arena] result summary" + (ResultHolding ? " (holding)" : "") + ": " + string.Join(" | ", _summaryLines));
     }
 
     System.Collections.Generic.List<string> _summaryLines = new System.Collections.Generic.List<string>();
@@ -1157,16 +1157,16 @@ public class DriveHud : MonoBehaviour
             var rect = new Rect(row.x + (row.width - pairW) * 0.5f, row.y + row.height * 0.15f, bw, row.height * 0.7f);
             if (GUI.Button(rect, CopyReplayLabel, button))
             {
-                _replayCopied = Blwp.BlwpCore.CopyReplay() == 1;
-                Debug.Log("[blwp] copy game replay: " + (_replayCopied ? "handed to the page" : "no networked run to copy"));
+                _replayCopied = Arena.ArenaCore.CopyReplay() == 1;
+                Debug.Log("[arena] copy game replay: " + (_replayCopied ? "handed to the page" : "no networked run to copy"));
                 if (_replayCopied) { _copyPressedAt = Time.unscaledTime; _copiedAt = -1f; }
             }
             // "copied!" (2026-09-26 07:12): once the page says the clipboard holds the link - its write resolved -
             // not on the press. Beside the button on its own row, so it covers no other line of the card.
-            if (_copyPressedAt >= 0f && _copiedAt < 0f && Blwp.BlwpCore.ReplayCopied)
+            if (_copyPressedAt >= 0f && _copiedAt < 0f && Arena.ArenaCore.ReplayCopied)
             {
                 _copiedAt = Time.unscaledTime;
-                Debug.Log("[blwp] copy game replay: copied! shown");
+                Debug.Log("[arena] copy game replay: copied! shown");
             }
             if (CopiedTooltipShows(_copiedAt, Time.unscaledTime))
             {
@@ -1234,7 +1234,7 @@ public class DriveHud : MonoBehaviour
     {
         if (_splash == null) _splash = Object.FindFirstObjectByType<SplashScreen>();
         bool lobby = _splash != null && _splash.Showing;
-        bool alone = CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalHeld, lobby);
+        bool alone = CopyReplayAlone(Arena.ArenaCore.ReplayForThisRun, ArrivalHeld, lobby);
         if (CopyStateResets(ArrivalHeld, alone)) { _copyPressedAt = -1f; _copiedAt = -1f; }
         if (!alone) { _wreckSummaryUp = false; return; }
         var row = CopyReplayAloneRow(w, h);
@@ -1262,7 +1262,7 @@ public class DriveHud : MonoBehaviour
         if (panelTag != _wreckPanelLogged && Event.current.type == EventType.Repaint)
         {
             _wreckPanelLogged = panelTag;
-            Debug.Log($"[blwp] wreck summary panel at {panelTag} (x {panel.xMin:0}..{panel.xMax:0}, y {panel.yMin:0}..{panel.yMax:0}); score block {(_scoreBlockWas ? "drawn" : "stepped aside")}");
+            Debug.Log($"[arena] wreck summary panel at {panelTag} (x {panel.xMin:0}..{panel.xMax:0}, y {panel.yMin:0}..{panel.yMax:0}); score block {(_scoreBlockWas ? "drawn" : "stepped aside")}");
         }
         for (int i = 0; i < _summaryLines.Count; i++)
         {
@@ -1436,9 +1436,9 @@ public class DriveHud : MonoBehaviour
         // on delivery. Without a gate they would hang over the score card of a
         // run that is already settled. Still one source: this is the core's
         // own run state, not a second opinion about the load.
-        if (Blwp.BlwpCore.RunState != 0) return;
+        if (Arena.ArenaCore.RunState != 0) return;
 
-        float heat = Blwp.BlwpCore.Heat;
+        float heat = Arena.ArenaCore.Heat;
         int stars = StarsFor(heat);
         if (stars <= 0) return;
 
@@ -1686,7 +1686,7 @@ public class DriveHud : MonoBehaviour
     /// <summary>
     /// THE NEXT ROUND'S BOX IS THE CARD'S FLOOR (MF 19 - measured unattended on 0.0.2523: "joining next round ·
     /// exit game" stood over the result summary's lines, "1 still driving" and "YOU PENDING"). From the run's end until the
-    /// next start the page draws that box at 18% above the bottom (index.html #blwp-next), and the card here was let down to
+    /// next start the page draws that box at 18% above the bottom (index.html #arena-next), and the card here was let down to
     /// 98% of the screen, so a card with its summary ran under the box. While the page takes the player to the next round
     /// (SplashScreen.Continuing) the card - and the fold control under it, `foldReserve` - ends above the box: at the top
     /// the page reports (`nextBoxTop`, a fraction of the canvas from its top), or at NextBoxTopDefault before it has drawn it.
@@ -2598,7 +2598,7 @@ public class DriveHud : MonoBehaviour
         //
         // In practice it reads what it reads and banks nothing, which is the
         // truth about practice and worth seeing.
-        if (!runScore.Running && !Blwp.PracticeMode.On) return;
+        if (!runScore.Running && !Arena.PracticeMode.On) return;
 
         var box = ExposureBox(w, h);
         float lh = _small.fontSize * 1.5f;
@@ -2992,8 +2992,8 @@ public class DriveHud : MonoBehaviour
 
     void DrawFallout(int w, int h)
     {
-        if (!Blwp.BlwpCore.Available || truck == null) return;
-        int open = Blwp.BlwpCore.CraterCount;
+        if (!Arena.ArenaCore.Available || truck == null) return;
+        int open = Arena.ArenaCore.CraterCount;
         if (open == 0) return;
 
         var cam = Camera.main;
@@ -3014,7 +3014,7 @@ public class DriveHud : MonoBehaviour
 
         for (int i = 0; i < open; i++)
         {
-            if (!Blwp.BlwpCore.CraterAt(i, truck.transform.position.y + 1.5f,
+            if (!Arena.ArenaCore.CraterAt(i, truck.transform.position.y + 1.5f,
                                         out var at, out float _)) continue;
             var vp = cam.WorldToScreenPoint(at);
             if (vp.z <= 0f) continue;                       // behind the camera
@@ -3024,7 +3024,7 @@ public class DriveHud : MonoBehaviour
         }
 
         var p = truck.transform.position;
-        if (!Blwp.BlwpCore.Irradiated(p.x, p.z)) return;
+        if (!Arena.ArenaCore.Irradiated(p.x, p.z)) return;
 
         // Pulsed, like the wanted stars, because a warning that does not move
         // reads as part of the furniture.
@@ -3096,7 +3096,7 @@ public class DriveHud : MonoBehaviour
         Shadowed(new Rect(x - 90f, y - style.fontSize * 1.6f, 180f, style.fontSize * 1.6f),
                  offScreen ? "▲ DROP-OFF" : "DROP-OFF", style, colour);
         Shadowed(new Rect(x - 90f, y, 180f, style.fontSize * 1.6f),
-                 DropOffWords(Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == 1, distance),
+                 DropOffWords(Arena.ArenaCore.Available && Arena.ArenaCore.RunState == 1, distance),
                  style, new Color(1f, 1f, 1f, 0.9f));
     }
 
@@ -3120,7 +3120,7 @@ public class DriveHud : MonoBehaviour
     void DrawSpectating(int w, int h)
     {
         if (_afterRun == null) _afterRun = Object.FindFirstObjectByType<RunEndSpectate>();
-        if (_afterRun == null || !_afterRun.Active || !Blwp.BlwpCore.Available || Blwp.BlwpCore.RunState != Blwp.Layout.RUN_WRECKED) return;
+        if (_afterRun == null || !_afterRun.Active || !Arena.ArenaCore.Available || Arena.ArenaCore.RunState != Arena.Layout.RUN_WRECKED) return;
         var style = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold,
@@ -3246,7 +3246,7 @@ public class DriveHud : MonoBehaviour
         label.normal.textColor = Color.white;
         Shadowed(new Rect(box.x, box.y, box.width, lh),
                  health.IsDestroyed
-                     ? (DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)
+                     ? (DeliveryGate.BackToTheBay(Arena.ArenaNet.RoundSeed)
                         ? $"WRECKED — back in {Mathf.CeilToInt(health.RespawnIn)}s"
                         : "WRECKED")      // a live round's wreck does not come back (2026-09-27 13:25)
                      : health.IsInvulnerable
@@ -3366,7 +3366,7 @@ public class DriveHud : MonoBehaviour
         if (Event.current.type == EventType.Repaint)
         {
             string slot = ConsoleSlot(Screen.width, Screen.height);
-            if (slot != _consoleSlotSent) { _consoleSlotSent = slot; Blwp.BlwpCore.HudCorner(slot); }
+            if (slot != _consoleSlotSent) { _consoleSlotSent = slot; Arena.ArenaCore.HudCorner(slot); }
         }
         if (CleanHud.On) return;
         Styles();
@@ -3529,9 +3529,9 @@ public class DriveHud : MonoBehaviour
             // already reads, so the screen carries one speed and not two.
             // Drift is `TruckSlip`, the chassis-frame projection from (t) -
             // not a second formula worked out here.
-            bool core = Blwp.BlwpCore.Available;
-            float tempo = core ? Blwp.BlwpCore.TruckSpeed * 3.6f : truck.SpeedKmh;
-            float drift = core ? Blwp.BlwpCore.TruckSlip : truck.Slip;
+            bool core = Arena.ArenaCore.Available;
+            float tempo = core ? Arena.ArenaCore.TruckSpeed * 3.6f : truck.SpeedKmh;
+            float drift = core ? Arena.ArenaCore.TruckSlip : truck.Slip;
             Line(SpeedRow(tempo));
             Line(InputRow(DriveInput.Throttle, DriveInput.Steer, DriveInput.Handbrake));
             Line(DriftRow(drift, grounded));
@@ -3542,20 +3542,20 @@ public class DriveHud : MonoBehaviour
             Line(FlowRow(market.Flow));
             Line($"Liquid. {market.Liquidations.Count} / 90 s");
         }
-        if (Blwp.BlwpCore.Available)
+        if (Arena.ArenaCore.Available)
         {
             // Counted off the CORE, which is what is on the screen now. This
             // read `field.Army`, a simulation that no longer runs.
             int ab = 0, ar = 0, ib = 0, ir = 0, heli = 0, bomb = 0;
-            for (int i = 0; i < Blwp.Layout.UNITS; i++)
+            for (int i = 0; i < Arena.Layout.UNITS; i++)
             {
-                if (!Blwp.BlwpCore.UnitAlive(i)) continue;
-                bool bull = Blwp.BlwpCore.UnitSide(i) < 0;
-                if (Blwp.BlwpCore.UnitIsArmour(i)) { if (bull) ab++; else ar++; }
+                if (!Arena.ArenaCore.UnitAlive(i)) continue;
+                bool bull = Arena.ArenaCore.UnitSide(i) < 0;
+                if (Arena.ArenaCore.UnitIsArmour(i)) { if (bull) ab++; else ar++; }
                 else { if (bull) ib++; else ir++; }
             }
-            for (int i = 0; i < Blwp.Layout.MAX_HELIS; i++) if (Blwp.BlwpCore.HeliAlive(i)) heli++;
-            for (int i = 0; i < Blwp.Layout.MAX_BOMBS; i++) if (Blwp.BlwpCore.BombAlive(i)) bomb++;
+            for (int i = 0; i < Arena.Layout.MAX_HELIS; i++) if (Arena.ArenaCore.HeliAlive(i)) heli++;
+            for (int i = 0; i < Arena.Layout.MAX_BOMBS; i++) if (Arena.ArenaCore.BombAlive(i)) bomb++;
             Line(ArmourRow(ab, ar));
             Line(InfantryRow(ib, ir));
             Line(AirRow(heli, bomb));

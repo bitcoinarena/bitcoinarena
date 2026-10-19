@@ -136,8 +136,8 @@ public class GameAudio : MonoBehaviour
         // `linearVelocity=0.00` at speed, so the engine note followed the
         // throttle alone and never the road. `T_WHEEL` is the core's own wheel
         // speed and is what the HUD already reads.
-        float speed = Blwp.BlwpCore.Available
-            ? Blwp.BlwpCore.TruckSpeed
+        float speed = Arena.ArenaCore.Available
+            ? Arena.ArenaCore.TruckSpeed
             : _body.linearVelocity.magnitude;
         float throttle = Mathf.Abs(DriveInput.Throttle);
 
@@ -178,7 +178,7 @@ public class GameAudio : MonoBehaviour
         // works the same projection out every tick to spend its friction
         // circle on; `TruckSlip` reads it back off the published words. One
         // source, not two formulas side by side.
-        float across = Blwp.BlwpCore.Available ? Blwp.BlwpCore.TruckSlip : truck.Slip;
+        float across = Arena.ArenaCore.Available ? Arena.ArenaCore.TruckSlip : truck.Slip;
         float slip = Mathf.Clamp01(across / 6f) * Mathf.Clamp01(speed / 6f);
         _tyres.pitch = Mathf.Lerp(0.8f, 1.5f, slip);
         _tyres.volume = Mathf.Lerp(_tyres.volume, effectVolume * 0.5f * slip * _engineGain,

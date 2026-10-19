@@ -3,13 +3,13 @@
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// THE HUD'S CHART (WAR_TACTICS.md §0.3, 2026-09-16 21:50): one TradingView chart with the truck on it.
 ///
 /// A television. Every candle, the seam, the lead, the trend, YOU, the gate, the objectives and the assault are words
-/// the core lays out in `src/chart.js` and hands over through `BlwpCore.ChartView`; this file turns those words into
+/// the core lays out in `src/chart.js` and hands over through `ArenaCore.ChartView`; this file turns those words into
 /// rectangles and paints them. It works out no price, no range, no position and no market reading - a painter that
 /// did would be a second chart that could disagree with the war.
 ///
@@ -53,7 +53,7 @@ public class ChartHud : MonoBehaviour
     SpectatorCamera _spectator;
     /// <summary>Chart frames painted while the free camera was flying (for the probe).</summary>
     public int SpectateFrames { get; private set; }
-    Blwp.GhostField _field;
+    Arena.GhostField _field;
     float _toldAt = -99f;
     int _toldRange = -1;
 
@@ -439,14 +439,14 @@ public class ChartHud : MonoBehaviour
     {
         if (Event.current.type == EventType.Repaint) ChartsPainted = 0;
         if (CleanHud.On) return;
-        if (!Blwp.BlwpCore.Available) return;
+        if (!Arena.ArenaCore.Available) return;
         if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
         if (_spectator == null) _spectator = FindFirstObjectByType<SpectatorCamera>();
         if (_splash != null && _splash.Showing) return;
         // ON IN SPECTATE (2026-09-17 16:38: "put the HUD back onto spectate"): the same chart as the drive, in the same
         // panel, over the free camera - the page's core keeps stepping while it flies, so the chart moves there too.
         if (_spectator != null && _spectator.Active) SpectateFrames++;
-        if (Blwp.BlwpCore.ChartView(Range, _view) == 0) return;
+        if (Arena.ArenaCore.ChartView(Range, _view) == 0) return;
 
         // ONCE A FRAME, not once a GUI event: IMGUI runs OnGUI for layout and again for the repaint, and the
         // banner's clock would then start on whichever pass came first. The watch ignores an unchanged phase
@@ -454,8 +454,8 @@ public class ChartHud : MonoBehaviour
         if (Event.current.type == EventType.Repaint)
         {
             int said = Watch.Revision;
-            Watch.Observe(_view, LocalWall.Now, Time.unscaledTime, Blwp.BlwpCore.Tick);
-            if (Watch.Revision != said) Blwp.DailyLobby.AssaultShown(Watch.AsJson());
+            Watch.Observe(_view, LocalWall.Now, Time.unscaledTime, Arena.ArenaCore.Tick);
+            if (Watch.Revision != said) Arena.DailyLobby.AssaultShown(Watch.AsJson());
         }
 
         // THE WAR DOES NOT PAUSE FOR THE CARGO BAY (2026-09-21, measured). This return used to sit ABOVE the
@@ -472,11 +472,11 @@ public class ChartHud : MonoBehaviour
         // too: in a named profile of spectate (phone at 4x) ChartHud.OnGUI was 400 ms of every 5 s.
         if (Event.current.type != EventType.Repaint) return;
 
-        if (_field == null) _field = FindFirstObjectByType<Blwp.GhostField>();
+        if (_field == null) _field = FindFirstObjectByType<Arena.GhostField>();
         _ghosts.Clear();
         if (_field != null)
             foreach (var kv in _field.Pictures)
-                if (Blwp.BlwpCore.ChartPoint(Range, kv.Value.X, kv.Value.Z, _point))
+                if (Arena.ArenaCore.ChartPoint(Range, kv.Value.X, kv.Value.Z, _point))
                     _ghosts.Add(new Ghost(kv.Key.Length > 8 ? kv.Key.Substring(0, 8) : kv.Key, _point[0], _point[1], _point[2]));
 
         if (_drive == null) _drive = GetComponent<DriveHud>();
@@ -503,7 +503,7 @@ public class ChartHud : MonoBehaviour
     {
         if (f.Range == _toldRange && Time.unscaledTime - _toldAt < 2f) return;
         _toldRange = f.Range; _toldAt = Time.unscaledTime;
-        var t = Blwp.BlwpCore.TruckPosition(0f);
+        var t = Arena.ArenaCore.TruckPosition(0f);
         string a(int s) { int b = L.CH_ASSAULT + s * L.CH_ASSAULT_WORDS; return $"{_view[b]}/{_view[b + 1]}"; }
         Debug.Log("[chart] " + string.Join(" ", new[]
         {
@@ -950,8 +950,8 @@ public class ChartHud : MonoBehaviour
 static class LocalWall
 {
 #if UNITY_WEBGL && !UNITY_EDITOR
-    [System.Runtime.InteropServices.DllImport("__Internal")] static extern int BlwpLocalOffsetMinutes();
-    public static System.DateTime Now => System.DateTime.SpecifyKind(System.DateTime.UtcNow.AddMinutes(BlwpLocalOffsetMinutes()), System.DateTimeKind.Unspecified);
+    [System.Runtime.InteropServices.DllImport("__Internal")] static extern int ArenaLocalOffsetMinutes();
+    public static System.DateTime Now => System.DateTime.SpecifyKind(System.DateTime.UtcNow.AddMinutes(ArenaLocalOffsetMinutes()), System.DateTimeKind.Unspecified);
 #else
     public static System.DateTime Now => System.DateTime.Now;
 #endif

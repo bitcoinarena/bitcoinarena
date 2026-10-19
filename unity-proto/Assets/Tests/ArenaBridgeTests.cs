@@ -5,7 +5,7 @@ using System.IO;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// The bridge, tested for the things that can be tested without a browser.
@@ -17,7 +17,7 @@ using Blwp;
 /// index the same ArrayBuffer by word offset; a disagreement does not throw,
 /// it just renders the truck's health as its heading.
 /// </summary>
-public class BlwpBridgeTests
+public class ArenaBridgeTests
 {
 
     /// <summary>
@@ -46,7 +46,7 @@ public class BlwpBridgeTests
     /// The drawer takes its units from the core, not from an `Army`.
     ///
     /// WIRING ONLY, and that limit is the point rather than a shortcut:
-    /// `BlwpCore` is stubbed unless `UNITY_WEBGL &amp;&amp; !UNITY_EDITOR`, so
+    /// `ArenaCore` is stubbed unless `UNITY_WEBGL &amp;&amp; !UNITY_EDITOR`, so
     /// in PlayMode there is no core to draw and no picture to check. What can
     /// be checked here is that `ArmyRenderer` no longer carries an `Army` to
     /// read - the picture itself is a browser run against a WebGL build.
@@ -86,7 +86,7 @@ public class BlwpBridgeTests
 
             var field = typeof(Layout).GetField(m.Groups[1].Value);
             Assert.IsNotNull(field,
-                $"state.js exports {m.Groups[1].Value} but BlwpLayout.cs has no such constant - " +
+                $"state.js exports {m.Groups[1].Value} but ArenaLayout.cs has no such constant - " +
                 "run Tools > BTC Logistics > Sync Deterministic Core");
             Assert.AreEqual(int.Parse(m.Groups[2].Value), (int)field.GetValue(null),
                 m.Groups[1].Value + " disagrees between C# and JavaScript");
@@ -105,8 +105,8 @@ public class BlwpBridgeTests
         // PhysX and nothing of M1 ever ran on a screen. This test was green
         // throughout, because it asserted the same wrong formula the code used.
         // Found by running a WebGL build in a browser, which no editor test can
-        // do: `BlwpCore` is stubbed outside WebGL.
-        Assert.AreEqual(Layout.WORDS, BlwpCore.State.Length,
+        // do: `ArenaCore` is stubbed outside WebGL.
+        Assert.AreEqual(Layout.WORDS, ArenaCore.State.Length,
                         "the state array and the layout disagree about the buffer");
     }
 
@@ -116,13 +116,13 @@ public class BlwpBridgeTests
         // Q16.16 metres, and turns rather than degrees. Getting either wrong is
         // a truck that is 65,536 times too far away or spinning 182 times per
         // revolution, so it is worth pinning.
-        Assert.AreEqual(1f, BlwpCore.Metres(BlwpCore.ONE), 1e-6f);
-        Assert.AreEqual(-2.5f, BlwpCore.Metres(-BlwpCore.ONE * 5 / 2), 1e-4f);
-        Assert.AreEqual(0f, BlwpCore.Degrees(0), 1e-4f);
-        Assert.AreEqual(90f, BlwpCore.Degrees(16384), 1e-3f);
-        Assert.AreEqual(180f, BlwpCore.Degrees(32768), 1e-3f);
+        Assert.AreEqual(1f, ArenaCore.Metres(ArenaCore.ONE), 1e-6f);
+        Assert.AreEqual(-2.5f, ArenaCore.Metres(-ArenaCore.ONE * 5 / 2), 1e-4f);
+        Assert.AreEqual(0f, ArenaCore.Degrees(0), 1e-4f);
+        Assert.AreEqual(90f, ArenaCore.Degrees(16384), 1e-3f);
+        Assert.AreEqual(180f, ArenaCore.Degrees(32768), 1e-3f);
         // and it wraps, because the core keeps heading masked to one turn
-        Assert.AreEqual(0f, BlwpCore.Degrees(65536), 1e-3f);
+        Assert.AreEqual(0f, ArenaCore.Degrees(65536), 1e-3f);
     }
 
     [Test]
@@ -131,9 +131,9 @@ public class BlwpBridgeTests
         // The editor has no JavaScript. Falling back to PhysX is correct
         // behaviour rather than a degraded one, and the flag has to be honest
         // about it or a play-mode test would silently measure the wrong thing.
-        Assert.IsFalse(BlwpCore.Compiled, "this test runs outside a WebGL build");
-        Assert.IsFalse(BlwpCore.Init(1), "a core answered where there is no JavaScript");
-        Assert.IsFalse(BlwpCore.Available);
+        Assert.IsFalse(ArenaCore.Compiled, "this test runs outside a WebGL build");
+        Assert.IsFalse(ArenaCore.Init(1), "a core answered where there is no JavaScript");
+        Assert.IsFalse(ArenaCore.Available);
     }
 
     [Test]
@@ -184,7 +184,7 @@ public class PracticeModeTests
 {
     [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
 
-    [SetUp] public void Reset() => Blwp.PracticeMode.On = true;
+    [SetUp] public void Reset() => Arena.PracticeMode.On = true;
 
     [Test]
     public void TheSceneSettingDecidesWhenTheUrlIsSilent()
@@ -192,12 +192,12 @@ public class PracticeModeTests
         // No page in the editor, so QueryParam is null and the scene's own
         // value has to stand on its own - both ways round, because a default
         // that can only be turned on is not configurable.
-        Blwp.PracticeMode.Configure(false);
-        Assert.IsFalse(Blwp.PracticeMode.On, "die Szene wollte aus");
-        Assert.AreEqual("scene", Blwp.PracticeMode.Source);
+        Arena.PracticeMode.Configure(false);
+        Assert.IsFalse(Arena.PracticeMode.On, "die Szene wollte aus");
+        Assert.AreEqual("scene", Arena.PracticeMode.Source);
 
-        Blwp.PracticeMode.Configure(true);
-        Assert.IsTrue(Blwp.PracticeMode.On, "die Szene wollte an");
+        Arena.PracticeMode.Configure(true);
+        Assert.IsTrue(Arena.PracticeMode.On, "die Szene wollte an");
     }
 
     [Test]
@@ -205,16 +205,16 @@ public class PracticeModeTests
     {
         // Worth separating from the starting value: "practice was on" and
         // "the player turned it on" are different facts.
-        Blwp.PracticeMode.Configure(true);
-        Blwp.PracticeMode.Toggle();
-        Assert.IsFalse(Blwp.PracticeMode.On);
-        Assert.AreEqual("player", Blwp.PracticeMode.Source);
+        Arena.PracticeMode.Configure(true);
+        Arena.PracticeMode.Toggle();
+        Assert.IsFalse(Arena.PracticeMode.On);
+        Assert.AreEqual("player", Arena.PracticeMode.Source);
     }
 
     [Test]
     public void ItIsOnByDefaultInThisBuild()
     {
-        Assert.IsTrue(Blwp.PracticeMode.On,
+        Assert.IsTrue(Arena.PracticeMode.On,
             "this build exists to be driven and judged, not survived");
     }
 
@@ -223,10 +223,10 @@ public class PracticeModeTests
     {
         // Q16.16, because that is what every other input is. A boolean crossing
         // the boundary would be the one value with its own convention.
-        Blwp.PracticeMode.On = true;
-        Assert.AreEqual(Blwp.BlwpCore.ONE, Blwp.PracticeMode.Input);
-        Blwp.PracticeMode.On = false;
-        Assert.AreEqual(0, Blwp.PracticeMode.Input);
+        Arena.PracticeMode.On = true;
+        Assert.AreEqual(Arena.ArenaCore.ONE, Arena.PracticeMode.Input);
+        Arena.PracticeMode.On = false;
+        Assert.AreEqual(0, Arena.PracticeMode.Input);
     }
 
     [UnityTest]
@@ -240,7 +240,7 @@ public class PracticeModeTests
         yield return new WaitForSeconds(1.5f);
 
         var health = Object.FindFirstObjectByType<TruckHealth>();
-        Blwp.PracticeMode.On = true;
+        Arena.PracticeMode.On = true;
         Assert.IsTrue(health.IsInvulnerable, "practice did not reach TruckHealth");
 
         // What practice actually shields is the fire, and it does that in the
@@ -257,7 +257,7 @@ public class PracticeModeTests
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
-        Blwp.PracticeMode.On = true;
+        Arena.PracticeMode.On = true;
     }
 }
 
@@ -285,7 +285,7 @@ public class TruckLieTests
     [Test]
     public void FlatGroundLeavesItLevel()
     {
-        var q = Blwp.CoreDrivenTruck.Lie(37f, 2f, 2f, 2f, 2f, Half, Track);
+        var q = Arena.CoreDrivenTruck.Lie(37f, 2f, 2f, 2f, 2f, Half, Track);
         Assert.AreEqual(0f, PitchOf(q), 0.01f, "auf ebenem Boden neigt sich nichts");
         Assert.AreEqual(37f, q.eulerAngles.y, 0.5f, "die Fahrtrichtung darf sich nicht aendern");
     }
@@ -294,7 +294,7 @@ public class TruckLieTests
     public void GoingDownhillPutsTheNoseDown()
     {
         // Front wheels a metre lower than the rear over a 4 m wheelbase.
-        var q = Blwp.CoreDrivenTruck.Lie(0f, 1f, 1f, 2f, 2f, Half, Track);
+        var q = Arena.CoreDrivenTruck.Lie(0f, 1f, 1f, 2f, 2f, Half, Track);
         float pitch = PitchOf(q);
         Assert.Less(pitch, -10f, $"bergab zeigt die Nase nach unten, gemessen {pitch:0.0} Grad");
         Assert.AreEqual(-Mathf.Atan2(1f, 4f) * Mathf.Rad2Deg, pitch, 1f,
@@ -304,7 +304,7 @@ public class TruckLieTests
     [Test]
     public void GoingUphillPutsTheNoseUp()
     {
-        var q = Blwp.CoreDrivenTruck.Lie(0f, 2f, 2f, 1f, 1f, Half, Track);
+        var q = Arena.CoreDrivenTruck.Lie(0f, 2f, 2f, 1f, 1f, Half, Track);
         Assert.Greater(PitchOf(q), 10f, "bergauf zeigt die Nase nach oben");
     }
 
@@ -312,7 +312,7 @@ public class TruckLieTests
     public void ACrossSlopeRollsIt()
     {
         // Left wheels low, right wheels high.
-        var q = Blwp.CoreDrivenTruck.Lie(0f, 1f, 2f, 1f, 2f, Half, Track);
+        var q = Arena.CoreDrivenTruck.Lie(0f, 1f, 2f, 1f, 2f, Half, Track);
         float roll = q.eulerAngles.z; if (roll > 180f) roll -= 360f;
         Assert.Greater(Mathf.Abs(roll), 10f, "quer zum Hang legt sich der Truck");
         Assert.AreEqual(0f, PitchOf(q), 1f, "quer zum Hang aendert sich die Neigung nicht");
@@ -322,7 +322,7 @@ public class TruckLieTests
     public void TheLieFollowsTheHeading()
     {
         // Same slope, truck turned 90 degrees: what was pitch is now roll.
-        var q = Blwp.CoreDrivenTruck.Lie(90f, 1f, 1f, 2f, 2f, Half, Track);
+        var q = Arena.CoreDrivenTruck.Lie(90f, 1f, 1f, 2f, 2f, Half, Track);
         Assert.Less(PitchOf(q), -10f,
             "bergab bleibt bergab, in welche Himmelsrichtung auch immer");
     }
@@ -391,8 +391,8 @@ public class TruckSpawnTests
         Assert.IsTrue(post.HasBay, "die Bucht steht noch nicht fest");
 
         var bay = post.BayPosition;
-        float coreX = Blwp.Layout.START_X / 65536f;
-        float coreZ = Blwp.Layout.START_Z / 65536f;
+        float coreX = Arena.Layout.START_X / 65536f;
+        float coreZ = Arena.Layout.START_Z / 65536f;
 
         Assert.AreEqual(bay.x, coreX, 0.6f,
             $"der Core startet bei x={coreX:0.0}, die Bucht liegt bei x={bay.x:0.0} " +
@@ -432,9 +432,9 @@ public class WorldSolidsTests
     [Test]
     public void TheBuildingsAreInIt()
     {
-        var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
+        var boxes = Arena.WorldSolids.Gather(_truck.transform, out int n);
         Assert.Greater(n, 10, "die Gebaeude fehlen - der Truck faehrt durch alles hindurch");
-        Assert.AreEqual(n * Blwp.WorldSolids.Words, boxes.Length);
+        Assert.AreEqual(n * Arena.WorldSolids.Words, boxes.Length);
     }
 
     [Test]
@@ -442,7 +442,7 @@ public class WorldSolidsTests
     {
         var post = Object.FindFirstObjectByType<PostOffice>();
         Assert.IsNotNull(post);
-        var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
+        var boxes = Arena.WorldSolids.Gather(_truck.transform, out int n);
 
         float lane = post.BayPosition.z, spawnX = post.BayPosition.x;
         bool inLaneLow = false, lintel = false, buildingLow = false;
@@ -484,7 +484,7 @@ public class WorldSolidsTests
     public void TheTruckIsNotAnObstacleToItself()
     {
         foreach (var c in _truck.GetComponentsInChildren<BoxCollider>())
-            Assert.IsFalse(Blwp.WorldSolids.IsWorld(c, _truck.transform),
+            Assert.IsFalse(Arena.WorldSolids.IsWorld(c, _truck.transform),
                 "der Truck wuerde sich selbst im Weg stehen");
     }
 
@@ -495,7 +495,7 @@ public class WorldSolidsTests
         var go = new GameObject("Movable");
         go.AddComponent<Rigidbody>();
         var box = go.AddComponent<BoxCollider>();
-        Assert.IsFalse(Blwp.WorldSolids.IsWorld(box, _truck.transform));
+        Assert.IsFalse(Arena.WorldSolids.IsWorld(box, _truck.transform));
         Object.Destroy(go);
     }
 }

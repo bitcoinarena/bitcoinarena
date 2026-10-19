@@ -188,7 +188,7 @@ test('its ways in: a link on each tile, the strip beside the gear and the wallet
   assert.match(HTML, /window\.ARENA_GAME_CHOSEN = game;\n(?:.*\n){1,6}\s+document\.body\.classList\.add\('arena-game-chosen'\);/);
   assert.match(HTML, /<button id="arena-season-go" type="button"/);
   assert.match(HTML, /<button id="arena-wb-season" type="button"/);
-  assert.match(HTML, /body\.blwp-clean #arena-season, body\.blwp-clean #arena-season-go, body\.blwp-clean #arena-wb-season \{ display: none !important; \}/);
+  assert.match(HTML, /body\.arena-clean #arena-season, body\.arena-clean #arena-season-go, body\.arena-clean #arena-wb-season \{ display: none !important; \}/);
   assert.match(HTML, /#arena-season-go, #arena-wb-season \{ display: none; \}/, 'not before a game is chosen');
   // the strip's button opens the chosen game's board
   const p = liftSeason();

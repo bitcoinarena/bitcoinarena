@@ -6,7 +6,7 @@ using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// Other players' trucks are pictures, and PhysX must never learn about them.
@@ -150,7 +150,7 @@ public class GhostTests
         wall.transform.position = new Vector3(50f, 0f, 50f);
         wall.transform.localScale = new Vector3(8f, 4f, 8f);
 
-        Blwp.WorldSolids.Gather(truck.transform, out int withoutGhost);
+        Arena.WorldSolids.Gather(truck.transform, out int withoutGhost);
         Assert.Greater(withoutGhost, 0, "the control building was not gathered either");
 
         // a ghost that has somehow been given a collider AFTER Awake - a
@@ -165,10 +165,10 @@ public class GhostTests
             "the fixture's collider has a rigidbody, so IsWorld would exclude it for the wrong reason");
         Assert.IsFalse(late.isTrigger);
 
-        Assert.IsFalse(Blwp.WorldSolids.IsWorld(late, truck.transform),
+        Assert.IsFalse(Arena.WorldSolids.IsWorld(late, truck.transform),
             "a ghost's collider counted as part of the solid world");
 
-        Blwp.WorldSolids.Gather(truck.transform, out int withGhost);
+        Arena.WorldSolids.Gather(truck.transform, out int withGhost);
         Assert.AreEqual(withoutGhost, withGhost,
             "a ghost was uploaded to the core as a wall the truck cannot pass");
     }
@@ -218,7 +218,7 @@ public class GhostTests
                 .Select(p => p.PropertyType.Name))
             .ToArray();
 
-        foreach (var name in new[] { "BlwpCore", "CoreDrivenTruck", "TruckController", "Rigidbody" })
+        foreach (var name in new[] { "ArenaCore", "CoreDrivenTruck", "TruckController", "Rigidbody" })
             CollectionAssert.DoesNotContain(fields, name,
                 "a ghost holds a reference it could write the run through");
     }
@@ -239,7 +239,7 @@ public class GhostTests
 
         // A QUARTER TURN, NOT "90 IN Q16.16". The heading word is the core's
         // own T_HEADING and the core measures a heading in TURNS - which is
-        // what `BlwpCore.TruckHeading` reads for the local truck, and why the
+        // what `ArenaCore.TruckHeading` reads for the local truck, and why the
         // M1 build reads out "heading 90" from the word 16384. This line used
         // to pass `90 * 65536` and expect 90 degrees, which asserted a unit the
         // core does not use; the ghost's own conversion was written to match
@@ -250,7 +250,7 @@ public class GhostTests
         Assert.AreEqual(3f, go.transform.position.x, 0.0001f);
         Assert.AreEqual(-4f, go.transform.position.z, 0.0001f);
         Assert.AreEqual(90f, go.transform.rotation.eulerAngles.y, 0.01f);
-        Assert.AreEqual(BlwpCore.Degrees(16384), go.transform.rotation.eulerAngles.y, 0.01f,
+        Assert.AreEqual(ArenaCore.Degrees(16384), go.transform.rotation.eulerAngles.y, 0.01f,
             "a ghost reads the heading word differently from the local truck");
 
         // negative and fractional words survive: a truck west of the origin at

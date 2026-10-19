@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// A CLOSED ROUND IS NOT A CHOICE (2026-09-26 16:56, phone, build 0.0.2109): "Not joined: the node refused the entry:

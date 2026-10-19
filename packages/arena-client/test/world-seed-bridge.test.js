@@ -3,13 +3,13 @@
 // EVERY READ OF `CoreDrivenTruck.seed` ON A LIVE ROUND, PRINTED.
 //
 // The constant is still in the player: `public int seed = 0x5eed1234`, read in
-// two places - `Start` calls `BlwpCore.Init(seed)` before any round exists, and
-// `StartRound` falls back to it when `BlwpNet.RoundSeed` is zero. A constant
+// two places - `Start` calls `ArenaCore.Init(seed)` before any round exists, and
+// `StartRound` falls back to it when `ArenaNet.RoundSeed` is zero. A constant
 // that can put this player's core back in the harness world is the whole of
 // the 17:05 fault waiting to happen again, so the question is not whether it
 // EXISTS but whether anything a live round does still reads it.
 //
-// Asked of the SHIPPED bridge rather than of the source: `blwp.jslib` is
+// Asked of the SHIPPED bridge rather than of the source: `arena.jslib` is
 // evaluated here the way Emscripten evaluates it, `$blwpDiscovery` included,
 // and driven against two real daemons. Every call into the core's `init` is
 // logged with the seed it was given, and every `record` is logged with the
@@ -51,13 +51,13 @@ const METRES = (w) => w / 65536;
  * THE SHIPPED JSLIB, EVALUATED TWICE.
  *
  * `$blwpDiscovery` is an Emscripten library dependency: in a real build it
- * becomes a top-level function that `BlwpNetStart` calls by its bare name. The
+ * becomes a top-level function that `ArenaNetStart` calls by its bare name. The
  * first pass captures it off the object the file builds; the second binds it
  * so the SHIPPED discovery is the one that runs, rather than one written here.
  */
 function shippedBridge(globals) {
   const src = readFileSync(
-    new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+    new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const names = Object.keys(globals);
   // EVERY `$`-PREFIXED MEMBER, not just the one this file happened to need.
   // Emscripten turns each into a top-level function that the exported ones
@@ -138,23 +138,23 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
       // `CoreDrivenTruck.Start` runs at scene start, before any round is
       // joined, and it passes the constant. That is READ SITE ONE and this
       // makes it happen rather than assuming it away.
-      assert.equal(library.BlwpInit(SOLO_SEED), 1, 'the core did not come up');
+      assert.equal(library.ArenaInit(SOLO_SEED), 1, 'the core did not come up');
       assert.equal(inits.length, 1);
       assert.equal(inits[0].seed, SOLO_SEED >>> 0, 'the first init was not the constant');
 
       // The truck steps while the page is still joining - a player sitting in
       // the bay - and NOTHING may be recorded out of the constant world.
-      for (let t = 0; t < 30; t++) library.BlwpStep(45875, 0, 0, 0, 0);
+      for (let t = 0; t < 30; t++) library.ArenaStep(45875, 0, 0, 0, 0);
       assert.equal(records.length, 0,
         'a tick was recorded before the round\'s world existed');
 
       // ---- AND THEN THE PAGE JOINS. ----
-      assert.equal(library.BlwpNetStart(0, 6, 60), 1, 'the bridge would not start');
+      assert.equal(library.ArenaNetStart(0, 6, 60), 1, 'the bridge would not start');
       // UNTIL RECORDING BEGINS, not until the client exists: the round's world
       // is entered in the same step that starts recording (the 16/24-tick
       // gap, 2026-09-10), so a client that exists has not yet been put there.
-      for (let i = 0; i < 200 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
-      assert.ok(Module.blwpNet.client, `the session never opened: ${Module.blwpNet.error}`);
+      for (let i = 0; i < 200 && !(Module.arenaNet.client && Module.arenaNet.client.where); i++) await wait(50);
+      assert.ok(Module.arenaNet.client, `the session never opened: ${Module.arenaNet.error}`);
 
       // ---- WHAT WAS READ, PRINTED. ----
       console.log('');
@@ -167,7 +167,7 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
       }
       console.log(`  ticks recorded before the round's init: ${
         records.filter((r) => r.initsSoFar < 2).length}`);
-      console.log(`  BlwpRoundSeed() answers 0x${(library.BlwpRoundSeed() >>> 0).toString(16)}`);
+      console.log(`  ArenaRoundSeed() answers 0x${(library.ArenaRoundSeed() >>> 0).toString(16)}`);
 
       // THE CORE IS IN THE COMMITTEE'S WORLD, and it is the state the next
       // tick will step - not a second core kept beside it.
@@ -175,30 +175,30 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
       assert.equal(inits[1].seed, want >>> 0,
         'the bridge seeded a world the committee will not replay this entry in');
       assert.notEqual(inits[1].seed, SOLO_SEED >>> 0);
-      assert.equal(Module.blwp.st.i32[O_TRUCK + T_Z], bayZ(spawnBay(want)),
+      assert.equal(Module.arenaCore.st.i32[O_TRUCK + T_Z], bayZ(spawnBay(want)),
         'the core the page will step is not standing where this round parks this player');
 
       // ---- AND NOW IT DRIVES. ----
       const before = records.length;
-      for (let t = 0; t < 30; t++) library.BlwpStep(45875, 22000, 0, 0, 0);
+      for (let t = 0; t < 30; t++) library.ArenaStep(45875, 22000, 0, 0, 0);
       assert.ok(records.length > before, 'the bridge recorded nothing after joining');
       assert.equal(records.filter((r) => r.initsSoFar < 2).length, 0,
         'a tick was recorded while the core was still in the constant world');
       assert.equal(inits.length, 2, 'the core was re-seeded again after ticks were recorded');
 
-      // READ SITE TWO: `StartRound` takes `BlwpNet.RoundSeed` and only falls
+      // READ SITE TWO: `StartRound` takes `ArenaNet.RoundSeed` and only falls
       // back to the constant when it is zero. On a live round it is not.
-      assert.equal(library.BlwpRoundSeed() >>> 0, want >>> 0,
+      assert.equal(library.ArenaRoundSeed() >>> 0, want >>> 0,
         'C# would restart this round\'s core into a world nobody replays');
-      assert.notEqual(library.BlwpRoundSeed(), 0);
+      assert.notEqual(library.ArenaRoundSeed(), 0);
     } finally {
       CLIENT.Client.prototype.record = realRecord;
       try {
-      const cl = Module.blwpNet && Module.blwpNet.client;
+      const cl = Module.arenaNet && Module.arenaNet.client;
       if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
       // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
       // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
-      if (Module && Module.blwpTickClock) Module.blwpTickClock.close();
+      if (Module && Module.arenaTickClock) Module.arenaTickClock.close();
       } catch { /* gone */ }
     }
   } finally { await round.close(); }
@@ -208,7 +208,7 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
  * AND C# CANNOT TAKE THE WORLD BACK, WHENEVER IT ASKS.
  *
  * Two callers seed the core and nothing orders them: `CoreDrivenTruck.Start`
- * calls `BlwpCore.Init` with its own constant, and this bridge calls
+ * calls `ArenaCore.Init` with its own constant, and this bridge calls
  * `core.init` when the join resolves. Whichever ran last won - and both
  * outcomes were photographed in ONE two-Chrome look, one tab driving the
  * round's world at bay 14 (z 17.000 m) while every other page was shown it
@@ -252,25 +252,25 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
       BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
     });
 
-    assert.equal(library.BlwpInit(SOLO_SEED), 1);
-    assert.equal(library.BlwpNetStart(0, 6, 60), 1);
+    assert.equal(library.ArenaInit(SOLO_SEED), 1);
+    assert.equal(library.ArenaNetStart(0, 6, 60), 1);
     // until recording begins - where the round's world is entered
-    for (let i = 0; i < 200 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
-    assert.ok(Module.blwpNet.client, `the session never opened: ${Module.blwpNet.error}`);
+    for (let i = 0; i < 200 && !(Module.arenaNet.client && Module.arenaNet.client.where); i++) await wait(50);
+    assert.ok(Module.arenaNet.client, `the session never opened: ${Module.arenaNet.error}`);
 
-    const roundZ = Module.blwp.st.i32[O_TRUCK + T_Z];
+    const roundZ = Module.arenaCore.st.i32[O_TRUCK + T_Z];
     assert.equal(roundZ, bayZ(spawnBay(want)), 'the join did not put the core in the round\'s world');
 
     // NOW C# ASKS AGAIN, LATE, with its own constant - which is exactly the
     // race the look caught. The round's world has to survive it.
-    assert.equal(library.BlwpInit(SOLO_SEED), 1);
-    assert.equal(Module.blwp.st.i32[O_TRUCK + T_Z], roundZ,
+    assert.equal(library.ArenaInit(SOLO_SEED), 1);
+    assert.equal(Module.arenaCore.st.i32[O_TRUCK + T_Z], roundZ,
       'a late Init from C# put the player back in the harness world');
-    assert.notEqual(Module.blwp.st.i32[O_TRUCK + T_Z], bayZ(spawnBay(SOLO_SEED)));
+    assert.notEqual(Module.arenaCore.st.i32[O_TRUCK + T_Z], bayZ(spawnBay(SOLO_SEED)));
 
     // AND SO DOES A RESTART, which is what a roll-out would do on the daily.
-    library.BlwpRestart(SOLO_SEED);
-    assert.equal(Module.blwp.st.i32[O_TRUCK + T_Z], roundZ,
+    library.ArenaRestart(SOLO_SEED);
+    assert.equal(Module.arenaCore.st.i32[O_TRUCK + T_Z], roundZ,
       'a restart put the player back in the harness world');
     console.log(`  the round parks this player at z ${(roundZ / 65536).toFixed(3)} m and `
       + `two late calls with 0x${(SOLO_SEED >>> 0).toString(16)} left it there`);
@@ -280,7 +280,7 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
         if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
         // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
         // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
-        if (Module && Module.blwpTickClock) Module.blwpTickClock.close();
+        if (Module && Module.arenaTickClock) Module.arenaTickClock.close();
     } catch { /* gone */ }
     await round.close();
   }
@@ -289,7 +289,7 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
 /**
  * AND WITH NO ROUND, THE CONSTANT IS THE ANSWER AND MUST BE.
  *
- * `BlwpRoundSeed` is 0 when there is no session, which is what keeps the
+ * `ArenaRoundSeed` is 0 when there is no session, which is what keeps the
  * single-player daily on the solo apron - bay 13, the harness seed, the world
  * the golden vectors were measured in.
  */
@@ -300,7 +300,7 @@ test('with no round the bridge names no seed, which is what holds the daily on b
     Module, HEAP32: heap, UTF8ToString: () => '', window: { location: { search: '' } },
     console, crypto, BLWP: core, BLWPCLIENT: CLIENT,
   });
-  assert.equal(library.BlwpRoundSeed(), 0, 'a page with no round named a round seed');
+  assert.equal(library.ArenaRoundSeed(), 0, 'a page with no round named a round seed');
   assert.equal(spawnBay(SOLO_SEED), 13, 'the harness seed left the solo bay');
 });
 
@@ -308,7 +308,7 @@ test('with no round the bridge names no seed, which is what holds the daily on b
  * AND WHAT A ROLL-OUT DOES TO A TRANSCRIPT THAT IS ALREADY RUNNING.
  *
  * `LoadoutPanel` calls `CoreDrivenTruck.StartRound` when the bay shuts, and
- * that calls `BlwpCore.Restart(world)` - the core's own `init` again. On the
+ * that calls `ArenaCore.Restart(world)` - the core's own `init` again. On the
  * single-player daily that is the point: one core, many rounds, and the score
  * card is read before the next one starts. On a LIVE round there is one run,
  * it began when the page was seeded, and the client has been recording since
@@ -322,7 +322,7 @@ test('a restart in the middle of a live run is not the run the committee replays
   const words = [45875, 22000, 0, 0, 0];
 
   // WHAT THE PLAYER PUBLISHES: sixty ticks, a roll-out, sixty more. Every one
-  // of them is recorded - `BlwpStep` hands them over whatever the game is
+  // of them is recorded - `ArenaStep` hands them over whatever the game is
   // doing - so the transcript is one hundred and twenty ticks long.
   const page = core.init(seed);
   for (let t = 0; t < 60; t++) core.step(page, ...words);
@@ -386,7 +386,7 @@ test('a join held open while the game steps publishes from the tick the core is 
     const marks = [];
     CLIENT.Client.prototype.record = function (words) {
       const ok = realRecord.call(this, words);
-      if (ok !== false && !first) first = { core: Module.blwp.st.i32[0], published: this.nextTick + this.held };
+      if (ok !== false && !first) first = { core: Module.arenaCore.st.i32[0], published: this.nextTick + this.held };
       return ok;
     };
     // THE LABEL THE BRIDGE HANDS A CHECKPOINT IS WHAT IS PINNED, not the
@@ -394,7 +394,7 @@ test('a join held open while the game steps publishes from the tick the core is 
     // checkpoint sent to these daemons starts a replay worker that outlives
     // `round.close()` - measured, two pipes left open and the file never exits.
     CLIENT.Client.prototype.markNow = function (hash, tick) {
-      marks.push({ tick, core: Module.blwp.st.i32[0] });
+      marks.push({ tick, core: Module.arenaCore.st.i32[0] });
       return null;
     };
     const library = shippedBridge({
@@ -405,21 +405,21 @@ test('a join held open while the game steps publishes from the tick the core is 
       BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
     });
 
-    assert.equal(library.BlwpInit(SOLO_SEED), 1);
-    assert.equal(library.BlwpNetStart(0, 6, 60), 1);
+    assert.equal(library.ArenaInit(SOLO_SEED), 1);
+    assert.equal(library.ArenaNetStart(0, 6, 60), 1);
     for (let i = 0; i < 200 && gated === 0; i++) await wait(50);
-    assert.ok(gated > 0, `the join never reached the round trips this holds open: ${Module.blwpNet.error}`);
+    assert.ok(gated > 0, `the join never reached the round trips this holds open: ${Module.arenaNet.error}`);
 
     // THE GAME STEPS WHILE THE JOIN IS HELD - the slow tab, on purpose.
     const HELD_STEPS = 24;
-    for (let t = 0; t < HELD_STEPS; t++) library.BlwpStep(45875, 0, 0, 0, 0);
+    for (let t = 0; t < HELD_STEPS; t++) library.ArenaStep(45875, 0, 0, 0, 0);
     release();
-    for (let i = 0; i < 200 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
-    const c = Module.blwpNet.client;
-    assert.ok(c && c.where, `recording never began: ${Module.blwpNet.error}`);
+    for (let i = 0; i < 200 && !(Module.arenaNet.client && Module.arenaNet.client.where); i++) await wait(50);
+    const c = Module.arenaNet.client;
+    assert.ok(c && c.where, `recording never began: ${Module.arenaNet.error}`);
 
-    for (let t = 0; t < 90; t++) library.BlwpStep(45875, 0, 0, 0, 0);
-    const coreNow = Module.blwp.st.i32[0];
+    for (let t = 0; t < 90; t++) library.ArenaStep(45875, 0, 0, 0, 0);
+    const coreNow = Module.arenaCore.st.i32[0];
     // A BATCH IN FLIGHT IS IN NEITHER NUMBER: `drain` slices it out of the
     // hold and `nextTick` moves only on the node's answer, so next-plus-held
     // is short by exactly the batch mid-air (6 here, measured). `offered` is
@@ -455,7 +455,7 @@ test('a join held open while the game steps publishes from the tick the core is 
       if (cl) { cl.ended = true; cl.close(); }
       // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
       // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
-      if (Module && Module.blwpTickClock) Module.blwpTickClock.close();
+      if (Module && Module.arenaTickClock) Module.arenaTickClock.close();
     } catch { /* gone */ }
     await round.close();
   }

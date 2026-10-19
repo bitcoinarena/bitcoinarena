@@ -6,13 +6,13 @@ using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE OTHER TRUCK IS DRAWN FROM THE PAGE'S PICTURES, AND FROM NOTHING ELSE.
 ///
 /// Measured before this slice: `GhostTruck.Show` had no caller in this project
-/// at all, and `blwp.jslib` had no ghost entry point - a picture was produced
+/// at all, and `arena.jslib` had no ghost entry point - a picture was produced
 /// by the node, delivered on the socket and decoded by the client, and then
 /// drawn by nobody.
 ///
@@ -156,7 +156,7 @@ public class GhostFieldTests
         Assert.AreEqual(9f, made.transform.position.x, 0.001f,
             "the new round's truck is not at its first picture's x: it is where the last round left one");
         Assert.AreEqual(4f, made.transform.position.z, 0.001f, "the new round's truck is not at its first picture's z");
-        Assert.AreEqual(0f, Mathf.DeltaAngle(BlwpCore.Degrees(QUARTER), made.transform.rotation.eulerAngles.y), 0.01f,
+        Assert.AreEqual(0f, Mathf.DeltaAngle(ArenaCore.Degrees(QUARTER), made.transform.rotation.eulerAngles.y), 0.01f,
             "the new round's truck is not pointing the way its first picture says");
     }
 

@@ -79,7 +79,7 @@ public class RunScore : MonoBehaviour
     /// With no core answering these read zero, and that is the honest answer:
     /// no core, no score.
     /// </summary>
-    static bool FromCore => Blwp.BlwpCore.Available;
+    static bool FromCore => Arena.ArenaCore.Available;
 
     /// <summary>E in the spec: 0..1, danger integrated over ground made good.</summary>
     ///
@@ -93,7 +93,7 @@ public class RunScore : MonoBehaviour
     // AND AS THE CORE'S FACTOR, NOT ITS METRES (2026-09-26): this was Clamp01 of the exposure in METRES - the fault the
     // arrival card had at 18:29 - so the HUD's DANGER meter read x1.00 past the first metre while the core's E was, on
     // the live run of round 14bff641, 0.31721. E is the exposure word over the 320 m reference on the core's 1e-5 grid.
-    public float Exposure => CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);
+    public float Exposure => CoreScoreFactors.Exposure(Arena.ArenaCore.ExposureWord);
 
     /// <summary>
     /// The instantaneous rate, unnormalised. Zero at the map edge, 1 on the
@@ -119,7 +119,7 @@ public class RunScore : MonoBehaviour
     public float CargoFactor => bay != null ? Mathf.Clamp01(bay.Fill) : 0f;
 
     /// <summary>What this run would score if it were delivered right now.</summary>
-    public int Projected => Blwp.BlwpCore.RunScore();
+    public int Projected => Arena.ArenaCore.RunScore();
 
     /// <summary>Score of the last delivered run, for the breakdown card.</summary>
     public int LastScore { get; private set; }
@@ -215,7 +215,7 @@ public class RunScore : MonoBehaviour
             // on. The core integrates `exposure += rate * gained`, so the rate
             // IS the exposure it gained per metre of new ground, and that is
             // read back rather than recomputed.
-            // NO MULTIPLIER. `BlwpCore.Exposure` is the core's exposure word in
+            // NO MULTIPLIER. `ArenaCore.Exposure` is the core's exposure word in
             // its own units - the live daily reads 94.63 of a 320 reference -
             // and this multiplied it by `exposureReference`, a C# constant
             // still carrying 190, the value the core replaced with 320 in a13.
@@ -226,7 +226,7 @@ public class RunScore : MonoBehaviour
             // 323, and the clamp pinned it at 2.00 for the whole run. The
             // bright cap, the "cold" test and the stalled warning were all
             // reading a saturated constant.
-            float now = Blwp.BlwpCore.Exposure;
+            float now = Arena.ArenaCore.Exposure;
             Rate = RateFrom(now, _coreExposure, MakingProgress ? gained : 0f);
             _coreExposure = now;
             if (Rate > 0.0001f) LastLiveRate = Rate;
@@ -356,11 +356,11 @@ public class RunScore : MonoBehaviour
         // was Clamp01 of the raw exposure METRES (anything past 1 m printed 1.00), speed Unity's wall-clock cap, load
         // Unity's bed. The score is the core's (Projected), so its factors are read from the same words at the same moment
         // and formed as scoreOf forms them: E = exposure / 320 m, T = 1800 / ticks, C = the core's cargo word.
-        if (Blwp.BlwpCore.Available)
+        if (Arena.ArenaCore.Available)
         {
-            LastExposure = CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);
-            LastTime = CoreScoreFactors.Time(Blwp.BlwpCore.ElapsedTicks);
-            LastCargo = CoreScoreFactors.Cargo(Blwp.BlwpCore.CargoWord);
+            LastExposure = CoreScoreFactors.Exposure(Arena.ArenaCore.ExposureWord);
+            LastTime = CoreScoreFactors.Time(Arena.ArenaCore.ElapsedTicks);
+            LastCargo = CoreScoreFactors.Cargo(Arena.ArenaCore.CargoWord);
         }
         else
         {
@@ -371,7 +371,7 @@ public class RunScore : MonoBehaviour
         // THE SCORE IS THE CORE'S OWN WORD (the arrival card, 2026-09-25: "S on the card is the S_DELIVERED integer
         // as-is"): measured, S_EXPOSURE, S_ELAPSED, S_CARGO and S_DELIVERED do not move after DELIVERED (72 runs, 600 ticks
         // each, throttle, idle and steering), so the words read here are the delivery tick's.
-        LastScore = Blwp.BlwpCore.Available ? Blwp.BlwpCore.DeliveredScore : Projected;
+        LastScore = Arena.ArenaCore.Available ? Arena.ArenaCore.DeliveredScore : Projected;
         Total += LastScore;
         if (LastScore > Best) Best = LastScore;
         SinceDelivery = 0f;

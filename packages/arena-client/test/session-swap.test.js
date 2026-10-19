@@ -8,7 +8,7 @@
 // a half minutes later, and it kept publishing into a run that had already ended: 902 ticks of it. Neither tab was in
 // the second round at all, which is why neither was ever shown the other, and that is the owner's 12:02 shot.
 //
-// `blwp.jslib` is the one file these suites cannot import - it is Emscripten glue, not a module - so what is checked
+// `arena.jslib` is the one file these suites cannot import - it is Emscripten glue, not a module - so what is checked
 // here is the same thing the ghost rules check: that the rule is written in it, and that every BLWPCLIENT function it
 // leans on is actually exported by the bundle the page loads. A guard that calls an undefined function would throw in
 // the browser and nowhere else.
@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const root = new URL('../../../', import.meta.url).pathname;
-const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/blwp.jslib', 'utf8');
+const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/arena.jslib', 'utf8');
 const bundle = readFileSync(root + 'packages/arena-client/dist/arena-client.js', 'utf8');
 
 test('the bridge closes a session whose round is not the one the page has joined', () => {

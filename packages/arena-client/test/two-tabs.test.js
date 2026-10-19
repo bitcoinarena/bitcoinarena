@@ -4,7 +4,7 @@
 //
 // This is the page's own path, in `node --test`: the URL an operator prints,
 // parsed the way `index.html` parses it, handed to `Client.at` the way
-// `blwp.jslib` hands it - the whole discovery, so the chain is asked for from
+// `arena.jslib` hands it - the whole discovery, so the chain is asked for from
 // two providers, the bond is proven into it, the advertisement's signature is
 // checked, and the node's address is READ OFF that bond rather than taken from
 // the query. Then two players join, one drives, and the other is shown a
@@ -227,7 +227,7 @@ test('a tab that has not driven is still shown the truck that is driving', async
     const [driver, watcher] = tabs;
 
     // THE WATCHER SUBSCRIBES THE MOMENT IT HAS A ROUND AND AN ENTRY, which is
-    // what `blwp.jslib` does - before anybody has driven anything.
+    // what `arena.jslib` does - before anybody has driven anything.
     const field = watchGhosts(watcher.client, {
       roundId: watcher.entry.roundId, entryId: watcher.eid,
     });
@@ -266,7 +266,7 @@ test('a tab that has not driven is still shown the truck that is driving', async
 /**
  * WHAT THE RENDERER ACTUALLY DOES, which is drain and not look.
  *
- * `BlwpNextGhost` takes ONE picture per call and `GhostField.Draw(PerFrame)`
+ * `ArenaNextGhost` takes ONE picture per call and `GhostField.Draw(PerFrame)`
  * calls it up to 24 times a frame, so in a real page the queue is empty
  * almost always. The test above asked `latest()` without ever draining, which
  * is not what the page does - and `latest()` used to read the queue, so a
@@ -376,7 +376,7 @@ test('two daemons whose chains disagree stop the join by name', async () => {
  * THE TWELVE INTS C# ACTUALLY READS, off the real jslib, off a real driver.
  *
  * Everything above stops at `field.drain(24)`, and the renderer does not call
- * that: it calls `BlwpNextGhost`, which lives in `blwp.jslib` - the one file
+ * that: it calls `ArenaNextGhost`, which lives in `arena.jslib` - the one file
  * these suites were said not to be able to load. So the 11:51 failure had a
  * whole hop with no measurement in it, between a queue this file proved full
  * and a `GhostField` the built player proved it constructs.
@@ -394,14 +394,14 @@ test('two daemons whose chains disagree stop the join by name', async () => {
  * that agree with each other but not with the game do not both pass.
  */
 test('the shipped bridge writes the driver\'s entry and pose in the twelve ints C# reads', async () => {
-  const cs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Blwp/GhostField.cs', import.meta.url), 'utf8');
+  const cs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Arena/GhostField.cs', import.meta.url), 'utf8');
   const WORDS = Number(/public const int Words = (\d+)/.exec(cs)[1]);
   const PER_FRAME = Number(/public const int PerFrame = (\d+)/.exec(cs)[1]);
   assert.equal(WORDS, 12, 'the game reads a different picture size than the bridge writes');
 
   // The jslib, evaluated: `mergeInto` keeps what it is handed, and the bare
   // `HEAP32` the ghost export writes through is a real Int32Array here.
-  const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const heap = new Int32Array(64);
   const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
   let library = null;
@@ -411,7 +411,7 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
 
   /** `GhostField.FromBridge`, in the words the C# uses. */
   const fromBridge = () => {
-    if (library.BlwpNextGhost(0, WORDS) !== WORDS) return null;
+    if (library.ArenaNextGhost(0, WORDS) !== WORDS) return null;
     let entry = '';
     for (let i = 0; i < 8; i++) entry += (heap[i] >>> 0).toString(16).padStart(8, '0');
     return { entry, x: heap[8], z: heap[9], heading: heap[10], tick: heap[11] };
@@ -445,21 +445,21 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     const [driver, watcher] = tabs;
 
     // The page's own hop: the jslib asks `arena-client` for the field and
-    // holds it on `Module.blwpNet`, which is where the ghost export looks.
-    Module.blwpNet = {
+    // holds it on `Module.arenaNet`, which is where the ghost export looks.
+    Module.arenaNet = {
       ghosts: watchGhosts(watcher.client, {
         roundId: watcher.entry.roundId, entryId: watcher.eid,
       }),
     };
-    await Module.blwpNet.ghosts.watching;
+    await Module.arenaNet.ghosts.watching;
 
     // WHAT THE PAGE HELD, next to what C# was given. A bridge that agrees with
     // itself proves nothing: the picture that comes out has to be the picture
     // that went in, field for field, or a truck is drawn somewhere its
     // transcript never said it was.
     const handed = [];
-    const drainAsPage = Module.blwpNet.ghosts.drain;
-    Module.blwpNet.ghosts.drain = (max) => {
+    const drainAsPage = Module.arenaNet.ghosts.drain;
+    Module.arenaNet.ghosts.drain = (max) => {
       const took = drainAsPage(max);
       for (const g of took) handed.push(g);
       return took;
@@ -468,10 +468,10 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     // BEFORE ANYTHING ARRIVES. A field Unity has not seen hands it the CLEAR record first (tick -2, entry all zero:
     // `GhostField.ClearTick`), so no truck of the last round stands in this one - the rule the 17:12 ghost letter added.
     // Then an empty field hands out nothing.
-    assert.equal(library.BlwpNextGhost(0, WORDS), WORDS, 'a new field did not clear the last round\'s trucks');
+    assert.equal(library.ArenaNextGhost(0, WORDS), WORDS, 'a new field did not clear the last round\'s trucks');
     assert.equal(heap[11], -2, 'the first record of a new field is not the clear');
     assert.deepEqual([...heap.slice(0, 8)], [0, 0, 0, 0, 0, 0, 0, 0], 'the clear record names an entry');
-    assert.equal(library.BlwpNextGhost(0, WORDS), 0, 'an empty field handed out a picture');
+    assert.equal(library.ArenaNextGhost(0, WORDS), 0, 'an empty field handed out a picture');
 
     const drawn = [];
     for (let batch = 0; batch < 8; batch++) {
@@ -515,7 +515,7 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     // twelve ints a line, for the PlayMode test to put on screen.
     if (process.env.DUMP_GHOSTS_DRIVE) {
       const lines = [
-        '# What the SHIPPED BlwpNextGhost wrote, driving, over a real 2-of-2 round.',
+        '# What the SHIPPED ArenaNextGhost wrote, driving, over a real 2-of-2 round.',
         '# Twelve ints a line - the entry id as eight words, then x, z, heading, tick.',
         `# entry ${mine}`,
         `# ${his.length} pictures, ticks ${his[0].tick}..${his[his.length - 1].tick}`,
@@ -548,13 +548,13 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
       await driver.client.drain();
       await wait(120);
     }
-    const backlog = Module.blwpNet.ghosts.size;
+    const backlog = Module.arenaNet.ghosts.size;
     assert.ok(backlog >= 3, `the field held ${backlog} pictures, so a backlog was never made`);
 
     // A PICTURE TOO SMALL TO HOLD ONE takes nothing and writes nothing, with
     // the queue full - the answer an empty field gives is the same either way.
-    assert.equal(library.BlwpNextGhost(0, WORDS - 1), 0, 'the bridge wrote past what it was given');
-    assert.equal(Module.blwpNet.ghosts.size, backlog,
+    assert.equal(library.ArenaNextGhost(0, WORDS - 1), 0, 'the bridge wrote past what it was given');
+    assert.equal(Module.arenaNet.ghosts.size, backlog,
       'the bridge ate a picture it could not hand over');
 
     const after = [];
@@ -563,12 +563,12 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
       if (picture == null) break;
       after.push(picture);
     }
-    const trucks = new Set(Module.blwpNet.ghosts.latest().map((g) => toHex(g.entryId))).size;
+    const trucks = new Set(Module.arenaNet.ghosts.latest().map((g) => toHex(g.entryId))).size;
     assert.equal(after.length, trucks,
       `the frame drew ${after.length} pictures of ${trucks} truck(s) from a backlog of ${backlog}`);
-    assert.equal(Module.blwpNet.ghosts.size, 0, 'a picture was left in the page after the frame drained it');
-    assert.ok(Module.blwpNet.ghosts.collapsed >= backlog - trucks,
-      `${backlog} pictures collapsed to ${after.length} and the page counted ${Module.blwpNet.ghosts.collapsed}`);
+    assert.equal(Module.arenaNet.ghosts.size, 0, 'a picture was left in the page after the frame drained it');
+    assert.ok(Module.arenaNet.ghosts.collapsed >= backlog - trucks,
+      `${backlog} pictures collapsed to ${after.length} and the page counted ${Module.arenaNet.ghosts.collapsed}`);
     for (const d of after) assert.equal(d.tick, Math.max(...his.map((h) => h.tick), d.tick), 'a truck was drawn at an older picture than the page held');
   } finally {
     for (const t of tabs) { try { t.client.close(); } catch { /* gone */ } }

@@ -55,7 +55,7 @@ public class SpawnMark : MonoBehaviour
         // IN ITS BAY IS A TWO-DIMENSIONAL QUESTION, BECAUSE THE CORE'S IS (2026-09-16).
         //
         // This used to measure a THREE-dimensional distance against a mark whose height moves with the
-        // ground. The core's rule is two-dimensional: `BlwpCore.Teleport` takes x and z and drops y,
+        // ground. The core's rule is two-dimensional: `ArenaCore.Teleport` takes x and z and drops y,
         // because the core recomputes height from its own surface. A 3-D budget therefore treats a
         // HEIGHT-ONLY terrain rebuild as having moved the truck, and skips a re-seat on a truck the
         // core still counts as standing in its bay. That is the C# fault, and the core keeps the

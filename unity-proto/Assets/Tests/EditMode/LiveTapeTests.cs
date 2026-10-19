@@ -15,12 +15,12 @@ public class LiveTapeTests
     [Test]
     public void SixtyFourFiveSecondPricesEndingAtTheNewestKline()
     {
-        var words = Blwp.LiveTape.FromKlines(Fixture);
+        var words = Arena.LiveTape.FromKlines(Fixture);
         Assert.IsNotNull(words, "a full 320 s answer gave no tape");
         Assert.AreEqual(64, words.Length);
         foreach (var w in words) Assert.Greater(w, 0);
         // the newest mark is the newest kline's close, in the tape's unit
-        Assert.AreEqual(Blwp.BlwpCore.PriceWord(76722.37), words[63]);
+        Assert.AreEqual(Arena.ArenaCore.PriceWord(76722.37), words[63]);
         float lo = float.MaxValue, hi = 0f;
         foreach (var w in words) { lo = Mathf.Min(lo, w / 256f); hi = Mathf.Max(hi, w / 256f); }
         Debug.Log($"[live-tape] 64 prices ${words[0] / 256f:0.00} .. ${words[63] / 256f:0.00}, range ${lo:0.00} - ${hi:0.00}");
@@ -30,8 +30,8 @@ public class LiveTapeTests
     [Test]
     public void AnAnswerShortOfFiveMinutesOrEmptyLeavesTheSeed()
     {
-        Assert.IsNull(Blwp.LiveTape.FromKlines(""));
-        Assert.IsNull(Blwp.LiveTape.FromKlines("[]"));
-        Assert.IsNull(Blwp.LiveTape.FromKlines("[[1789656629000,\"76717.74\",\"76722.37\",\"76717.74\",\"76722.37\",\"0.1\"]]"));
+        Assert.IsNull(Arena.LiveTape.FromKlines(""));
+        Assert.IsNull(Arena.LiveTape.FromKlines("[]"));
+        Assert.IsNull(Arena.LiveTape.FromKlines("[[1789656629000,\"76717.74\",\"76722.37\",\"76717.74\",\"76722.37\",\"0.1\"]]"));
     }
 }

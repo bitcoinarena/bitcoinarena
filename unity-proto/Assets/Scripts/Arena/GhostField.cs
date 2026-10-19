@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// One picture of somebody else's truck, as it crosses the bridge.
@@ -48,12 +48,12 @@ namespace Blwp
     public class GhostField : MonoBehaviour
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
-        [DllImport("__Internal")] private static extern int BlwpNextGhost(IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpGhostLabels(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaNextGhost(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaGhostLabels(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
-        private static int BlwpNextGhost(IntPtr ptr, int cap) => 0;
-        private static int BlwpGhostLabels(IntPtr ptr, int cap) => 0;
+        private static int ArenaNextGhost(IntPtr ptr, int cap) => 0;
+        private static int ArenaGhostLabels(IntPtr ptr, int cap) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -158,7 +158,7 @@ namespace Blwp
             var handle = GCHandle.Alloc(labelBytes, GCHandleType.Pinned);
             try
             {
-                var n = BlwpGhostLabels(handle.AddrOfPinnedObject(), labelBytes.Length);
+                var n = ArenaGhostLabels(handle.AddrOfPinnedObject(), labelBytes.Length);
                 return n > 0 ? System.Text.Encoding.UTF8.GetString(labelBytes, 0, n) : "";
             }
             finally { handle.Free(); }
@@ -314,7 +314,7 @@ namespace Blwp
             var handle = GCHandle.Alloc(words, GCHandleType.Pinned);
             try
             {
-                if (BlwpNextGhost(handle.AddrOfPinnedObject(), Words) != Words) return null;
+                if (ArenaNextGhost(handle.AddrOfPinnedObject(), Words) != Words) return null;
             }
             finally { handle.Free(); }
 
@@ -382,7 +382,7 @@ namespace Blwp
 
             var x = picture.X / GhostTruck.ONE;
             var z = picture.Z / GhostTruck.ONE;
-            var heading = BlwpCore.Degrees(picture.Heading);
+            var heading = ArenaCore.Degrees(picture.Heading);
             var resting = Rest != null ? Rest(x, z, heading) : (float?)null;
             var lying = Lie != null ? Lie(x, z, heading) : (Quaternion?)null;
             ghost.Show(picture.X, picture.Z, picture.Heading, resting, lying);

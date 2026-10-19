@@ -4,7 +4,7 @@
 //
 // Letter 40. How hard the war hunts a truck is decided by what is on its bed,
 // and until this the page wrote that number straight into its own core through
-// `BlwpSetHeat` - a host write in no batch, no mark and no transcript. The
+// `ArenaSetHeat` - a host write in no batch, no mark and no transcript. The
 // page's core carried 57229 and every replay of the same transcript carried 0,
 // so a committee, and every GHOST a committee draws, walked a run the war was
 // hunting less hard than the one the player was driving.

@@ -24,7 +24,7 @@ public class OnlyTheLobbyTests
     [Test]
     public void APolledLobbyIsKeptAndNoPageKeepsTheTitle()
     {
-        var polled = new Blwp.LobbyState { mode = "lobby", from = "daily.json" };
+        var polled = new Arena.LobbyState { mode = "lobby", from = "daily.json" };
         Assert.AreSame(polled, SplashScreen.LobbyOrReading(polled, inAPage: true));
         Assert.IsNull(SplashScreen.LobbyOrReading(null, inAPage: false), "the editor and a page-less build keep their title");
     }
@@ -34,7 +34,7 @@ public class OnlyTheLobbyTests
     {
         string src = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/SplashScreen.cs"));
         int gui = src.IndexOf("void OnGUI()");
-        int made = src.IndexOf("_lobby = LobbyOrReading(_lobby, Blwp.DailyLobby.Compiled);", gui);
+        int made = src.IndexOf("_lobby = LobbyOrReading(_lobby, Arena.DailyLobby.Compiled);", gui);
         int depth = src.IndexOf("GUI.depth = -200", gui);
         Assert.IsTrue(gui >= 0 && made > gui && made < depth, "OnGUI can draw the title before the lobby is made");
     }
@@ -49,11 +49,11 @@ public class OnlyTheLobbyTests
         Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("refused", sessionLive: false, atTheRamp: false), "a rolled-out truck is not taken away");
         Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("joined", sessionLive: false, atTheRamp: true));
         Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("", sessionLive: false, atTheRamp: true), "no page lobby, no refusal");
-        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        StringAssert.Contains("window.BLWP_ENTRY_REFUSED(net.error)", lib);
+        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
+        StringAssert.Contains("window.ARENA_ENTRY_REFUSED(net.error)", lib);
         StringAssert.Contains("if (n && !n.client && n.state === 'error') return 1;", lib);
         string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
-        StringAssert.Contains("window.BLWP_ENTRY_REFUSED = async (why) =>", page);
+        StringAssert.Contains("window.ARENA_ENTRY_REFUSED = async (why) =>", page);
     }
 
     // THE NODE STRIP IS NOT ON THE CARGO PANEL, AND IT CUTS NO NAME (2026-09-26 14:02): hidden while the panel is
@@ -62,12 +62,12 @@ public class OnlyTheLobbyTests
     public void TheNodeStripHidesDuringLoadoutAndCutsNoName()
     {
         string panel = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
-        StringAssert.Contains("if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);", panel);
-        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        StringAssert.Contains("window.BLWP_LOADOUT_OPEN = open !== 0;", lib);
+        StringAssert.Contains("if (_isOpen != value) Arena.ArenaCore.LoadoutOpen(value);", panel);
+        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
+        StringAssert.Contains("window.ARENA_LOADOUT_OPEN = open !== 0;", lib);
         string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         // and the Console is told the strip is gone (427bab76, the console collapse: the strip lives behind its button)
-        StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
+        StringAssert.Contains("|| window.ARENA_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
         int a = page.IndexOf("const nodeHealth = {};"), b = page.IndexOf("function paintPlayers()");
         int c = page.IndexOf("const ab = ['A', 'B']");
         string strip = page.Substring(a, b - a) + page.Substring(c, page.IndexOf('\n', c) - c);

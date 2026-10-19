@@ -7,7 +7,7 @@ using UnityEngine;
 using System.Runtime.InteropServices;
 #endif
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>One round as the lobby lists it - every field the page's own, checked there.</summary>
     [Serializable]
@@ -120,28 +120,28 @@ namespace Blwp
     public static class DailyLobby
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
-        [DllImport("__Internal")] static extern string BlwpLobbyState();
-        [DllImport("__Internal")] static extern int BlwpLobbyJoin(string id);
-        [DllImport("__Internal")] static extern string BlwpLobbyEditName();
-        [DllImport("__Internal")] static extern void BlwpLobbyKeyBackup();
-        [DllImport("__Internal")] static extern void BlwpLobbyShown(string json);
-        [DllImport("__Internal")] static extern void BlwpAssaultShown(string json);
-        [DllImport("__Internal")] static extern void BlwpHudClean(int on);
-        [DllImport("__Internal")] static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
-        [DllImport("__Internal")] static extern float BlwpUiScale();
-        [DllImport("__Internal")] static extern int BlwpLinkAutoPlay();
+        [DllImport("__Internal")] static extern string ArenaLobbyState();
+        [DllImport("__Internal")] static extern int ArenaLobbyJoin(string id);
+        [DllImport("__Internal")] static extern string ArenaLobbyEditName();
+        [DllImport("__Internal")] static extern void ArenaLobbyKeyBackup();
+        [DllImport("__Internal")] static extern void ArenaLobbyShown(string json);
+        [DllImport("__Internal")] static extern void ArenaAssaultShown(string json);
+        [DllImport("__Internal")] static extern void ArenaHudClean(int on);
+        [DllImport("__Internal")] static extern int ArenaQueryParam(IntPtr name, IntPtr outp, int cap);
+        [DllImport("__Internal")] static extern float ArenaUiScale();
+        [DllImport("__Internal")] static extern int ArenaLinkAutoPlay();
         public const bool Compiled = true;
 #else
-        static float BlwpUiScale() => 1f;
-        static string BlwpLobbyState() => "";
-        static int BlwpLobbyJoin(string id) => 0;
-        static string BlwpLobbyEditName() => "";
-        static void BlwpLobbyKeyBackup() { }
-        static void BlwpLobbyShown(string json) { }
-        static void BlwpAssaultShown(string json) { }
-        static void BlwpHudClean(int on) { }
-        static int BlwpQueryParam(IntPtr name, IntPtr outp, int cap) => 0;
-        static int BlwpLinkAutoPlay() => 2;
+        static float ArenaUiScale() => 1f;
+        static string ArenaLobbyState() => "";
+        static int ArenaLobbyJoin(string id) => 0;
+        static string ArenaLobbyEditName() => "";
+        static void ArenaLobbyKeyBackup() { }
+        static void ArenaLobbyShown(string json) { }
+        static void ArenaAssaultShown(string json) { }
+        static void ArenaHudClean(int on) { }
+        static int ArenaQueryParam(IntPtr name, IntPtr outp, int cap) => 0;
+        static int ArenaLinkAutoPlay() => 2;
         public const bool Compiled = false;
 #endif
 
@@ -149,7 +149,7 @@ namespace Blwp
         public static LobbyState Poll()
         {
             if (!Compiled) return null;
-            try { return Parse(BlwpLobbyState()); } catch (Exception e) { Debug.LogWarning($"[lobby] {e.Message}"); return null; }
+            try { return Parse(ArenaLobbyState()); } catch (Exception e) { Debug.LogWarning($"[lobby] {e.Message}"); return null; }
         }
 
         /// <summary>The page's JSON as a lobby, or null: nothing, not a lobby, or not JSON.</summary>
@@ -395,22 +395,22 @@ namespace Blwp
         }
 
         /// <summary>Asks the page to join that round - the round's own link, so the round is joined as a shared link takes it.</summary>
-        public static bool Join(string id) => Compiled && !string.IsNullOrEmpty(id) && BlwpLobbyJoin(id) == 1;
+        public static bool Join(string id) => Compiled && !string.IsNullOrEmpty(id) && ArenaLobbyJoin(id) == 1;
 
         /// <summary>The page asks for the name (the browser's own prompt, which a phone keyboard can type into); answers why it was refused, or "".</summary>
-        public static string EditName() => Compiled ? (BlwpLobbyEditName() ?? "") : "";
+        public static string EditName() => Compiled ? (ArenaLobbyEditName() ?? "") : "";
 
         /// <summary>The page shows this tab's private-key backup, where it can be copied.</summary>
-        public static void KeyBackup() { if (Compiled) BlwpLobbyKeyBackup(); }
+        public static void KeyBackup() { if (Compiled) ArenaLobbyKeyBackup(); }
 
         /// <summary>What Unity drew, told back to the page - so what a player sees can be measured, not assumed.</summary>
-        public static void Shown(string json) { if (Compiled) BlwpLobbyShown(json); }
+        public static void Shown(string json) { if (Compiled) ArenaLobbyShown(json); }
 
         /// <summary>The same for the assault banner and the desktop log, so a browser run can be asked what the war said.</summary>
-        public static void AssaultShown(string json) { if (Compiled) BlwpAssaultShown(json); }
+        public static void AssaultShown(string json) { if (Compiled) ArenaAssaultShown(json); }
 
         /// <summary>CleanHud's half in the page: hides the HTML overlays that sit over the canvas.</summary>
-        public static void HudClean(bool on) { if (Compiled) BlwpHudClean(on ? 1 : 0); }
+        public static void HudClean(bool on) { if (Compiled) ArenaHudClean(on ? 1 : 0); }
 
         /// <summary>
         /// The screen's pixels per CSS pixel, 1 outside a page. The title screen
@@ -422,7 +422,7 @@ namespace Blwp
         {
             if (!Compiled) return 1f;
             float s;
-            try { s = BlwpUiScale(); } catch { return 1f; }
+            try { s = ArenaUiScale(); } catch { return 1f; }
             return float.IsNaN(s) ? 1f : Mathf.Clamp(s, 1f, 4f);
         }
 
@@ -430,7 +430,7 @@ namespace Blwp
         public static bool AutoPlay() => Query("play") == "1";
 
         /// <summary>The page's word on the address's play=1: -1 not decided, 0 held to the round's start, 1 drive, 2 none.</summary>
-        public static int LinkAutoPlay() => BlwpLinkAutoPlay();
+        public static int LinkAutoPlay() => ArenaLinkAutoPlay();
 
         /// <summary>
         /// WHAT THE ADDRESS'S play=1 DOES NOW (measured on preview UI 137: a reload during a join held to its start drove
@@ -450,7 +450,7 @@ namespace Blwp
             var oh = GCHandle.Alloc(outBytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpQueryParam(nh.AddrOfPinnedObject(), oh.AddrOfPinnedObject(), outBytes.Length);
+                int n = ArenaQueryParam(nh.AddrOfPinnedObject(), oh.AddrOfPinnedObject(), outBytes.Length);
                 return n > 0 ? System.Text.Encoding.UTF8.GetString(outBytes, 0, n) : "";
             }
             finally { nh.Free(); oh.Free(); }

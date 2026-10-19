@@ -10,7 +10,7 @@ using UnityEngine;
 /// win or loss, and a preliminary balance list - four lines under SCORE, above "copy game replay".
 ///
 /// Display only. Every number is the seats' own, from the round's /api/round-result as the page read it (index.html
-/// BLWP_RESULT, through BlwpCore.ResultSummary): the outcome and score the signers signed, how many signed it, and the
+/// ARENA_RESULT, through ArenaCore.ResultSummary): the outcome and score the signers signed, how many signed it, and the
 /// result and netMsat the seats' playerBalance worked out. Nothing here decides a win, a loss or a balance.
 /// </summary>
 public static class ResultSummary

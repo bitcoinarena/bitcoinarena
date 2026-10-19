@@ -22,7 +22,7 @@ public class WastedSequenceTests
     /// back deliberately rather than assumed.
     /// </summary>
     [SetUp]
-    public void PracticeOffSoDamageIsReal() => Blwp.PracticeMode.On = false;
+    public void PracticeOffSoDamageIsReal() => Arena.PracticeMode.On = false;
 
     GameObject _boot;
     TruckHealth _health;

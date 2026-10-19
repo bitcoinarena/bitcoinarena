@@ -37,7 +37,7 @@ public static class DriveInput
     public static bool RunIsOver(bool coreAvailable, int runState, bool sessionEnded)
         => (coreAvailable && runState != 0) || sessionEnded;
 
-    static bool Over => RunIsOver(Blwp.BlwpCore.Available, Blwp.BlwpCore.Available ? Blwp.BlwpCore.RunState : 0, Blwp.BlwpNet.Ended);
+    static bool Over => RunIsOver(Arena.ArenaCore.Available, Arena.ArenaCore.Available ? Arena.ArenaCore.RunState : 0, Arena.ArenaNet.Ended);
 
     /// <summary>Whether the run is over now, as the inputs read it.</summary>
     public static bool RunOver => Over;

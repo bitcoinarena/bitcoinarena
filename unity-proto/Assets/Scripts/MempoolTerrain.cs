@@ -93,13 +93,13 @@ public class MempoolTerrain : MonoBehaviour
     void CollectRevealed()
     {
         _revealed.Clear();
-        if (!Blwp.BlwpCore.HasSurface) return;
+        if (!Arena.ArenaCore.HasSurface) return;
 
         _live.Clear();
-        int n = Blwp.BlwpCore.CraterCount;
+        int n = Arena.ArenaCore.CraterCount;
         for (int i = 0; i < n; i++)
         {
-            if (!Blwp.BlwpCore.CraterAt(i, 0f, out var at, out float r)) continue;
+            if (!Arena.ArenaCore.CraterAt(i, 0f, out var at, out float r)) continue;
             long key = ((long)Mathf.RoundToInt(at.x * 8f) << 24) ^ Mathf.RoundToInt(at.z * 8f);
             _live.Add(key);
             if (!_due.TryGetValue(key, out float due))
@@ -136,15 +136,15 @@ public class MempoolTerrain : MonoBehaviour
     /// </summary>
     void Update()
     {
-        if (!Blwp.BlwpCore.HasSurface) return;
+        if (!Arena.ArenaCore.HasSurface) return;
         // THE CORE'S RELIEF CHANGED, SO THE PICTURE OF IT IS WRONG NOW (2026-09-16 12:38: "truck
         // buried in dirt, only the cab roof showing" at 2:14 of a 2:30 block). A new round restarts the
         // core into its own seed, and the seed moves the hills. Before this nothing rebuilt the mesh on
         // that: only a crater change or the mempool poll every `refreshSeconds` did - and the poll skips
         // the rebuild when no host answers - so for up to twenty seconds, or indefinitely, the truck rode
         // the new round's ground through the last round's hills. Measured here, then rebuilt at once.
-        if (Blwp.BlwpCore.ReliefEpoch != _drawnEpoch) { SayStale(); Build(); return; }
-        if (Blwp.BlwpCore.CraterCount != _drawnCraters) { Build(); return; }
+        if (Arena.ArenaCore.ReliefEpoch != _drawnEpoch) { SayStale(); Build(); return; }
+        if (Arena.ArenaCore.CraterCount != _drawnCraters) { Build(); return; }
 
         CollectRevealed();
         if (_revealed.Count != _drawnRevealed) Build();
@@ -301,8 +301,8 @@ public class MempoolTerrain : MonoBehaviour
         // the Editor, where PhysX drives - so the game still looks like
         // something to work on without a browser.
         // Without the candle layer (WAR_TACTICS.md §4.15): CandleTerrain draws the candles on this ground.
-        if (Blwp.BlwpCore.HasSurface)
-            return Blwp.BlwpCore.TerrainAt((u - 0.5f) * width, (v - 0.5f) * depth);
+        if (Arena.ArenaCore.HasSurface)
+            return Arena.ArenaCore.TerrainAt((u - 0.5f) * width, (v - 0.5f) * depth);
 
         int c = Mathf.Clamp(Mathf.RoundToInt(u * (columns - 1)), 0, columns - 1);
         float fee = Mathf.Max(_profile[c], subSat);
@@ -355,11 +355,11 @@ public class MempoolTerrain : MonoBehaviour
     public void Build()
     {
         Revision++;
-        _drawnEpoch = Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.ReliefEpoch : -1;
+        _drawnEpoch = Arena.ArenaCore.HasSurface ? Arena.ArenaCore.ReliefEpoch : -1;
 
         Version++;
         CollectRevealed();
-        _drawnCraters = Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.CraterCount : 0;
+        _drawnCraters = Arena.ArenaCore.HasSurface ? Arena.ArenaCore.CraterCount : 0;
         _drawnRevealed = _revealed.Count;
         int vx = columns, vz = rows;
         if (_verts == null || _verts.Length != vx * vz) _verts = new Vector3[vx * vz];
@@ -391,7 +391,7 @@ public class MempoolTerrain : MonoBehaviour
                     // (x, radius, z) - see CollectRevealed.
                     float dx = wx - _revealed[k].x, dz = wz - _revealed[k].z;
                     if (dx * dx + dz * dz >= _revealed[k].y * _revealed[k].y) continue;
-                    h = Blwp.BlwpCore.TerrainAt(wx, wz);
+                    h = Arena.ArenaCore.TerrainAt(wx, wz);
                     break;
                 }
 
@@ -455,7 +455,7 @@ public class MempoolTerrain : MonoBehaviour
                 if (Mathf.Abs(d) > 0.5f) over++;
                 n++;
             }
-        Debug.Log($"[ground] relief changed (drawn for {_drawnEpoch}, core now {Blwp.BlwpCore.ReliefEpoch}): the drawn "
+        Debug.Log($"[ground] relief changed (drawn for {_drawnEpoch}, core now {Arena.ArenaCore.ReliefEpoch}): the drawn "
                   + $"terrain stood up to {above:F2} m above and {-below:F2} m below the core's surface, {over} of {n} "
                   + "vertices off by more than 0.5 m - rebuilt now");
     }

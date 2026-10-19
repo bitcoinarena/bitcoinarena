@@ -7,7 +7,7 @@ using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE BODY THAT IS DRAWN, AGAINST THE TWELVE INTS IT WAS DRAWN FROM.
@@ -15,7 +15,7 @@ using Blwp;
 /// Letter 36's two-Chrome retests failed with the chip saying five players and
 /// one truck on the screen. Everything up to C# is now measured without a
 /// browser: the daemon's replay, the socket, the page's field, and - since
-/// `two-tabs.test.js` learned to call the SHIPPED `BlwpNextGhost` - the twelve
+/// `two-tabs.test.js` learned to call the SHIPPED `ArenaNextGhost` - the twelve
 /// ints themselves, field for field. `GhostField` is in no scene; `Bootstrap`
 /// builds it, and the strings prove that wiring is inside the player that
 /// shipped.
@@ -126,7 +126,7 @@ public class GhostDrawnPoseTests
             seen++;
             Assert.AreEqual(seen, next, $"frame {seen} did not take exactly one picture");
 
-            // AND THEN THE FRAMES BETWEEN PICTURES. `BlwpNet.BatchEvery` is a
+            // AND THEN THE FRAMES BETWEEN PICTURES. `ArenaNet.BatchEvery` is a
             // tenth of a second and a page draws sixty times a second, so a
             // ghost that only moved when a picture landed would stand still
             // for six frames and jump. It eases onto the newest picture and
@@ -149,8 +149,8 @@ public class GhostDrawnPoseTests
             var facing = ghost.transform.rotation.eulerAngles.y;
             var wantX = want.X / ONE;
             var wantZ = want.Z / ONE;
-            var wantY = driver.RideAt(wantX, wantZ, BlwpCore.Degrees(want.Heading));
-            var wantFacing = BlwpCore.Degrees(want.Heading);
+            var wantY = driver.RideAt(wantX, wantZ, ArenaCore.Degrees(want.Heading));
+            var wantFacing = ArenaCore.Degrees(want.Heading);
             TestContext.WriteLine(
                 $"tick {want.Tick,4}  ints x {want.X,9} z {want.Z,9} h {want.Heading,6}"
                 + $"  ->  drawn ({at.x,8:F3}, {at.y,7:F3}, {at.z,8:F3}) facing {facing,7:F3} deg"
@@ -197,7 +197,7 @@ public class GhostDrawnPoseTests
         // place had just lost: measured on the Daily against the same land-frame clock over 5813 pictures, the place
         // was 38 ms old at the median and the facing 138 ms, p90 52 against 156, 32 places over 300 ms against 67 facings.
         var facingOneFrameIn = moving.transform.rotation.eulerAngles.y;
-        var wantedFacing = BlwpCore.Degrees(jump[10]);
+        var wantedFacing = ArenaCore.Degrees(jump[10]);
         TestContext.WriteLine($"one frame after a 45 deg picture the ghost points {facingOneFrameIn:F3} deg, "
                               + $"from {wasFacing:F3}, wanted {wantedFacing:F3}");
         Assert.AreEqual(0f, Mathf.DeltaAngle(wantedFacing, facingOneFrameIn), 0.01f,
