@@ -1927,6 +1927,87 @@
     "x-changes-state": true
    }
   },
+  "/emergency-departure": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Owner's emergency leave request",
+    "description": "The owner's emergency leave request (spec \u00a723A.5a, protocol 17): takes an offline node out - no guardian role: out of every seating; a guardian in time: DEPARTED, its federation's succession starts. Taken only fresh (posted at most 6 blocks before the tip) and passed on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the node's emergency key (BIP-340), which its census advertisement names\n\nReturns: 201 {ok, kept, node, postedAt} when taken, 200 when held already; 400/422/503\n\nSource: `packages/arena-node/src/server.js` line 7544.",
+    "operationId": "post_emergency_departure",
+    "requestBody": {
+     "required": true,
+     "description": "Hex: type 0x35, version, node key (32), emergency key (32), posted_at (u32), then the BIP-340 signature (64) by the emergency key.",
+     "content": {
+      "text/plain": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{ok, kept: true, node, postedAt}: taken and passed on.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "200": {
+      "description": "{ok, kept: false, ...}: an earlier request for that node is held.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a leave request in hex.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "422": {
+      "description": "It does not stand: no census node names that emergency key, a wrong signature, ahead of the tip, or not fresh.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "503": {
+      "description": "This seat reads no census yet.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/emergency-departures": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Held emergency leave requests",
+    "description": "The leave requests this seat holds and its tip; with key, the census node whose bond advertisement names that emergency key (spec \u00a723A.5a).\n\nAccess: none\n\nReturns: 200 {node, tip, named?, requests}\n\nSource: `packages/arena-node/src/server.js` line 7552.",
+    "operationId": "get_emergency_departures",
+    "parameters": [
+     {
+      "name": "key",
+      "in": "query",
+      "required": false,
+      "description": "An emergency public key (x-only, 64 hex).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, tip, named: {node, endpoint, operatorId, roles, guardianOf, held} | null, requests: [hex]}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/entry": {
    "post": {
     "tags": [
