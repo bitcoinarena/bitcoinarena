@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// CAPACITY PRESSURE (spec §23A.3a, kanban #543): how full each federation is against what its bonds cover, the band that says it, and the
+// bond and peg-in that would relieve it - the numbers the seats serve at GET /capacity, the health page, the node dashboard and the owner
+// page warn with, and the installer's minimum bond follows. Pure arithmetic over public inputs (the signed records, the census's bonds,
+// the gateways' claims), so every seat that reads the same inputs says the same thing.
+import { faultsOf } from './federation-record.js';
+
+/** The bands of §23A.3a: enter at, leave below (the gap keeps a federation from flapping at a boundary). */
+export const CAPACITY_BANDS = Object.freeze([
+  Object.freeze({ band: 'FULL', enter: 1.0, leave: 1.0 }),
+  Object.freeze({ band: 'CRITICAL', enter: 0.9, leave: 0.8 }),
+  Object.freeze({ band: 'PRESSURE', enter: 0.7, leave: 0.6 }),
+]);
+const ORDER = ['CALM', 'PRESSURE', 'CRITICAL', 'FULL'];
+
+/**
+ * A federation's band at `load`, given the band it was in (`was`, CALM when none): a band is entered at its `enter` load and left only
+ * below its `leave` load. A load that is not a number (no cap in the record) is CALM.
+ */
+export function capacityBand(load, was = 'CALM') {
+  if (typeof load !== 'number' || !Number.isFinite(load)) return 'CALM';
+  const entered = CAPACITY_BANDS.find((b) => load >= b.enter);
+  const kept = CAPACITY_BANDS.find((b) => ORDER.indexOf(b.band) <= ORDER.indexOf(was) && load >= b.leave);
+  const pick = [entered, kept].filter(Boolean).sort((a, b) => ORDER.indexOf(b.band) - ORDER.indexOf(a.band))[0];
+  return pick ? pick.band : 'CALM';
+}
+
+/** B*: the per-guardian bond at which the federation's load would be 50 % - ceil(reserve / (0.5 × (f + 1))), never below the floor. */
+export function targetBond({ reserveSats, nominal, bondMinSats }) {
+  const f1 = BigInt(faultsOf(Number(nominal)) + 1);
+  const need = (2n * BigInt(reserveSats) + f1 - 1n) / f1;   // ceil(reserve / (0.5 × (f + 1)))
+  return need > BigInt(bondMinSats) ? need : BigInt(bondMinSats);
+}
+
+/** B*_net over the OPEN federations: ceil(Σ reserve / (0.5 × Σ (f + 1))), never below the floor. */
+export function networkTargetBond(federations, bondMinSats) {
+  let reserve = 0n, f1 = 0n;
+  for (const x of federations || []) if (x && x.status === 'OPEN') { reserve += BigInt(x.reserveSats || 0); f1 += BigInt(faultsOf(Number(x.nominal)) + 1); }
+  if (f1 === 0n) return BigInt(bondMinSats);
+  const need = (2n * reserve + f1 - 1n) / f1;
+  return need > BigInt(bondMinSats) ? need : BigInt(bondMinSats);
+}
+
+/** P*: the peg-in each of the gateway seats should hold so a quarter of the cap's headroom can arrive at once, never below the floor. */
+export function targetPegIn({ headroomSats, pegInMinSats, seats = 2 }) {
+  const quarter = (BigInt(headroomSats) + BigInt(4 * seats) - 1n) / BigInt(4 * seats);
+  return quarter > BigInt(pegInMinSats) ? quarter : BigInt(pegInMinSats);
+}
+
+/** The installer's minimum bond: max(bond_min_guardian, B*_net), rounded up to 10,000 sat. */
+export function installMinimumBond({ bondMinSats, networkTarget }) {
+  const m = BigInt(networkTarget) > BigInt(bondMinSats) ? BigInt(networkTarget) : BigInt(bondMinSats);
+  return ((m + 9999n) / 10000n) * 10000n;
+}
+
+/**
+ * THE CAPACITY VIEW (§23A.3a "the signal"): per federation its load, band (with the band it was in, `was`), headroom, B*, the seated
+ * guardians below B*, and P* with the gateways below it; for the network the lowest load among the OPEN ones, its band, B*_net and the
+ * installer's minimum. `federations` [{ federation, status, nominal, reserveSats, exposureCapSats, guardianBonds: [{ node, bondSats }],
+ * gateways: [{ node, pegInSats }] }]; amounts as strings in the answer (JSON).
+ */
+export function capacityView({ federations, bondMinSats, pegInMinSats, was = {}, gatewaySeats = 2 }) {
+  const rows = (federations || []).map((x) => {
+    const reserve = BigInt(x.reserveSats || 0), cap = BigInt(x.exposureCapSats || 0);
+    const load = cap > 0n ? Number((reserve * 10000n) / cap) / 10000 : null;
+    const band = capacityBand(load, was[x.federation] || 'CALM');
+    const headroom = cap > reserve ? cap - reserve : 0n;
+    const bStar = targetBond({ reserveSats: reserve, nominal: x.nominal || 1, bondMinSats });
+    const pStar = targetPegIn({ headroomSats: headroom, pegInMinSats, seats: gatewaySeats });
+    const below = (x.guardianBonds || []).filter((g) => BigInt(g.bondSats || 0) < bStar).map((g) => ({ node: g.node, bondSats: String(g.bondSats), addSats: String(bStar - BigInt(g.bondSats || 0)) }));
+    const gwBelow = (x.gateways || []).filter((g) => BigInt(g.pegInSats || 0) < pStar).map((g) => ({ node: g.node, pegInSats: String(g.pegInSats), addSats: String(pStar - BigInt(g.pegInSats || 0)) }));
+    return { federation: x.federation, status: x.status, load, band, reserveSats: String(reserve), exposureCapSats: String(cap), headroomSats: String(headroom),
+      targetBondSats: String(bStar), guardians: (x.guardianBonds || []).length, guardiansBelowTarget: below,
+      targetPegInSats: String(pStar), gateways: (x.gateways || []).length, gatewaysBelowTarget: gwBelow };
+  });
+  const open = rows.filter((r) => r.status === 'OPEN' && typeof r.load === 'number');
+  const lowest = open.length ? open.reduce((a, b) => (b.load < a.load ? b : a)) : null;
+  const bNet = networkTargetBond(federations, bondMinSats);
+  return { federations: rows,
+    network: { lowestLoad: lowest ? lowest.load : null, lowestFederation: lowest ? lowest.federation : null, band: lowest ? lowest.band : 'CALM',
+      targetBondSats: String(bNet), installMinimumBondSats: String(installMinimumBond({ bondMinSats, networkTarget: bNet })) } };
+}
