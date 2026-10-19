@@ -901,6 +901,14 @@
     #arena-deposit .dep-custom input { padding: 7px 10px; border-radius: 6px; border: 1px solid #3a4250; background: #0d1014; color: #e8eaed; }
     #arena-deposit .dep-why { font-size: 12px; margin: 4px 4px 12px; }
     #arena-deposit .dep-nwc { margin: 0 0 12px; }
+    /* THE GAPS HALVED (kanban #538: "the spacing between the elements on the screenshot are to big. reduce them by 50%"; measured on UI 238:
+       57 px from the amount tabs to "Pay … sat", 49 px from there to "Connect my wallet"): the Custom row and the why-line keep no empty
+       place - shown, they take their room (choosing Custom moves what is below it) - and the amount line holds small margins */
+    #arena-deposit .dep-custom[style*="hidden"] { display: none; }
+    #arena-deposit .dep-why:empty { display: none; }
+    #arena-deposit .dep-amount { margin: 27px 0 23px; }   /* the tabs' 12 px bottom margin collapses into the 27 */
+    #arena-deposit .dep-custom:not([style*="hidden"]) { margin-bottom: 0; }
+    #arena-deposit .dep-custom:not([style*="hidden"]) + .dep-amount { margin-top: 4px; }   /* the Custom field shown: the amount line right under it */
     #arena-deposit .arena-deposit-qr { margin-top: 12px; margin-bottom: 12px; }
     #arena-deposit .dep-inv-row { margin-top: 12px; }
     #arena-deposit .pay-status { margin-top: 12px; }
