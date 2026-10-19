@@ -52,7 +52,7 @@ const { LockClient } = glue;
 const federationId = fromHex(LockClient.federationIdOf(env.INVITE));
 
 const bcn = (...a) => execFileSync(`${env.BITCOIN_BIN}/bitcoin-cli`,
-  ['-regtest', '-rpcport=30101', `-datadir=${P}/btc`, '-rpcuser=blwp', '-rpcpassword=blwp', ...a], { encoding: 'utf8' }).trim();
+  ['-regtest', '-rpcport=30101', `-datadir=${P}/btc`, '-rpcuser=arena', '-rpcpassword=arena', ...a], { encoding: 'utf8' }).trim();
 const lncli = (...a) => new Promise((done) => execFile(`${env.LND_BIN}/lncli`,
   [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest', ...a],
   { timeout: 120000 }, (err, out) => done({ err: err ? err.message.slice(0, 160) : null, out: String(out) })));

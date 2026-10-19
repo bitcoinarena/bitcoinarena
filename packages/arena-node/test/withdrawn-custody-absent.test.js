@@ -53,7 +53,7 @@ test('a byte-0 contract posted to /round is refused as bytes that do not parse, 
 });
 
 test('a store holding byte-0 rows from before the ruling answers them as absent after a restart: not listed, not read, not closed-over - and their bytes stay', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'blwp-withdrawn-'));
+  const dir = mkdtempSync(join(tmpdir(), 'arena-withdrawn-'));
   const path = join(dir, 'node.db');
   try {
     // BEFORE THE RULING: a node that ran under the old decoder kept a byte-0 round open and one closed,
@@ -130,7 +130,7 @@ test('the same contract is taken under byte 1 (201) and refused under byte 0 as 
 // settled list and the rounds a restart settles again do not name it, and a settle or a close asked of it is "no such
 // round" - the answer bytes that do not parse get.
 test('a stored byte-0 round is never replayed, settled or counted: not in the lobby list, not in /settled, and a settle or close of it is no such round', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'blwp-withdrawn-'));
+  const dir = mkdtempSync(join(tmpdir(), 'arena-withdrawn-'));
   const path = join(dir, 'node.db');
   try {
     const first = openStore(path);
@@ -174,7 +174,7 @@ test('a byte-0 and a byte-2 post of the same contract are one refusal, only the 
 });
 
 test('a restart on a store holding byte-0 and byte-2 rows answers every one the same: unlisted, unsettled, 404, no such round, counted nowhere', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'blwp-withdrawn-'));
+  const dir = mkdtempSync(join(tmpdir(), 'arena-withdrawn-'));
   const path = join(dir, 'node.db');
   try {
     const first = openStore(path);

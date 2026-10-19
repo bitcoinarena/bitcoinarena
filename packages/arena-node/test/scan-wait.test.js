@@ -9,7 +9,7 @@ import { regtest } from '../tools/regtest-bond.mjs';
 test('a scan already in progress is waited for, then asked again; another error is thrown at once', () => {
   let busy = 2, scans = 0;
   const cli = (...a) => {
-    if (a[0] === 'listwallets') return '["blwp"]';
+    if (a[0] === 'listwallets') return '["arena"]';
     if (a[0] === 'scantxoutset') {
       scans++;
       if (busy-- > 0) { const e = new Error('Command failed'); e.stderr = 'error code: -8\nerror message:\nScan already in progress, use action "abort" or "status"\n'; throw e; }
@@ -27,6 +27,6 @@ test('a scan already in progress is waited for, then asked again; another error 
   console.log('  SCANS:', scans, 'waited', Date.now() - t0, 'ms', 'found', Array.isArray(found) ? found.length : typeof found);
   assert.ok(scans >= 3, 'asked again after each busy answer');
   assert.ok(Date.now() - t0 >= 4000, 'two waits of 2 s');
-  const broken = (...a) => { if (a[0] === 'listwallets') return '["blwp"]'; if (a[0] === 'scantxoutset') throw new Error('error code: -1 something else'); return '100'; };
+  const broken = (...a) => { if (a[0] === 'listwallets') return '["arena"]'; if (a[0] === 'scantxoutset') throw new Error('error code: -1 something else'); return '100'; };
   assert.throws(() => regtest(broken, { network: 'regtest' }).bondsOf({ pubkey: new Uint8Array(32).fill(2) }), /something else/);
 });

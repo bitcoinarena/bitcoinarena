@@ -112,7 +112,7 @@ out({ step: '3b. a second page', arena: BigInt(await main.balanceMsat()), saidAg
   pendingLeft: [...L.m.keys()].filter((k) => k.startsWith('arena.ecash.pending.')).length });
 
 // ---- 4. THE SEATS' BONDS: POSTED BY PHASE0, CARRIED BY THIS TREE ----
-const bare = (...a) => execFileSync(`${env.BITCOIN_BIN}/bitcoin-cli`, [`-datadir=${P}/btc`, '-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
+const bare = (...a) => execFileSync(`${env.BITCOIN_BIN}/bitcoin-cli`, [`-datadir=${P}/btc`, '-regtest', '-rpcport=30101', '-rpcuser=arena', '-rpcpassword=arena', ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 // THIS RUN'S OWN WALLET, NAMED ON EVERY CALL: the probe's bitcoind has its own loaded (measured: "Multiple wallets are loaded")
 if (!JSON.parse(bare('listwallets')).includes('rehearse209')) { try { bare('loadwallet', 'rehearse209'); } catch { bare('createwallet', 'rehearse209'); } }
 const cli = (...a) => bare('-rpcwallet=rehearse209', ...a);

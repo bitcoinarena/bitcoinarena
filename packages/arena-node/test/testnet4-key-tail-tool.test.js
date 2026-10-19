@@ -37,7 +37,7 @@ const BLOCKS = new Map();
 async function bitcoind() {
   const srv = createServer((req, res) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => { const { method, params } = JSON.parse(b);
     const result = method === 'getblockhash' ? `hash${params[0]}` : method === 'getblock' ? hex(BLOCKS.get(Number(String(params[0]).slice(4)))) : null;
-    res.end(JSON.stringify({ result, error: result === null ? { message: `no ${method}` } : null, id: 'blwp' })); }); });
+    res.end(JSON.stringify({ result, error: result === null ? { message: `no ${method}` } : null, id: 'arena' })); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const dir = mkdtempSync(join(tmpdir(), 'tn4-cookie-'));
   writeFileSync(join(dir, '.cookie'), '__cookie__:test');

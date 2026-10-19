@@ -31,7 +31,7 @@ if (!existsSync(join(rt, 'regtest', '.cookie'))) {
 }
 for (let i = 0; ; i++) { try { cli('getblockcount'); break; } catch (e) { if (i > 60) throw e; await new Promise((r) => setTimeout(r, 500)); } }
 // the wallet regtest-bond.mjs pays the bonds from
-try { cli('createwallet', 'blwp'); } catch { try { cli('loadwallet', 'blwp'); } catch { /* loaded */ } }
+try { cli('createwallet', 'arena'); } catch { try { cli('loadwallet', 'arena'); } catch { /* loaded */ } }
 if (Number(cli('getblockcount')) < 101) cli('generatetoaddress', '101', cli('getnewaddress'));
 const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPC}/`, cookiePath: join(rt, 'regtest', '.cookie') });
 

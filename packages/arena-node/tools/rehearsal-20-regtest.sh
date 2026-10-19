@@ -14,7 +14,7 @@ P=${PROBE_DIR:-$(mktemp -d /tmp/r20-XXXXXX)}
 B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 RPC=30101
-BTC_ARGS="-datadir=$P/btc -regtest -rpcport=$RPC -rpcuser=blwp -rpcpassword=blwp"
+BTC_ARGS="-datadir=$P/btc -regtest -rpcport=$RPC -rpcuser=arena -rpcpassword=arena"
 bcn() { $B/bitcoin-cli $BTC_ARGS "$@"; }
 mkdir -p $P/btc $FH; : > $P/pids
 stop() {
@@ -25,7 +25,7 @@ stop() {
 trap stop EXIT
 until_() { local what=$1 n=$2; shift 2; for i in $(seq $n); do "$@" && return 0; sleep 1; done; echo "GAVE UP waiting for $what"; exit 1; }
 t0=$(date +%s)
-$B/bitcoind -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=blwp -rpcpassword=blwp -port=30102 -listen=0 -listenonion=0 -fallbackfee=0.0001 -txindex -daemon >/dev/null
+$B/bitcoind -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=arena -rpcpassword=arena -port=30102 -listen=0 -listenonion=0 -fallbackfee=0.0001 -txindex -daemon >/dev/null
 until_ bitcoind 60 bcn getblockcount
 bcn createwallet probe >/dev/null
 bcn -rpcwallet=probe generatetoaddress 150 "$(bcn -rpcwallet=probe getnewaddress)" >/dev/null

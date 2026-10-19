@@ -44,7 +44,7 @@ DOWN=3
 HERE=$(cd "$(dirname "$0")" && pwd)
 say() { echo "$@"; }
 js() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write(String(($1)(JSON.parse(s))))}catch(e){process.stdout.write('?')}})"; }
-bcn() { $B/bitcoin-cli -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp "$@"; }
+bcn() { $B/bitcoin-cli -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena "$@"; }
 fc() { HOME=$FH timeout 120 $F/fedimint-cli --data-dir $P/client "$@"; }
 declare -A LRPC=([alice]=30107 [bob]=30110 [carol]=30113)
 ln_() { local who=$1; shift; timeout 60 $L/lncli --lnddir=$P/$who --rpcserver=127.0.0.1:${LRPC[$who]} --network=regtest "$@"; }

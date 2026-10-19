@@ -449,7 +449,7 @@ if (PHASE === 'pass') {
     invoiceOnAlice: first ? (await invoiceOf(first.paymentHash)).state : null });
   // PAST THE CONTRACT'S EXPIRATION, on this probe's own chain: mined, and waited for in the federation's own height.
   const cli = (...x) => execFileSync('/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli', ['-regtest', `-rpcport=${env.BTC_RPCPORT}`,
-    '-rpcuser=blwp', '-rpcpassword=blwp', `-rpcwallet=${env.BTC_WALLET}`, ...x], { encoding: 'utf8' }).trim();
+    '-rpcuser=arena', '-rpcpassword=arena', `-rpcwallet=${env.BTC_WALLET}`, ...x], { encoding: 'utf8' }).trim();
   const need = Number(first.expiration);
   let fedHeight = (await port.gateways()).height;
   const addr = cli('getnewaddress');

@@ -26,7 +26,7 @@ L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAY_MSAT=${PAY_MSAT:-300000000}       # 300,000 sat per wallet
 SPEND_MSAT=${SPEND_MSAT:-100000000}   # what p3 hands to p1
-BTC_ARGS="-datadir=$P/btc -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp"
+BTC_ARGS="-datadir=$P/btc -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena"
 bcn() { $B/bitcoin-cli $BTC_ARGS "$@"; }
 bc() { bcn -rpcwallet=probe "$@"; }
 stop() {

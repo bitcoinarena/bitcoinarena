@@ -109,12 +109,12 @@ let guardianOf = [];
 if (onChain) {
   const RT = join(P, 'btc');
   const BIN = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
-  const base = ['-regtest', `-datadir=${RT}`, `-rpcport=${env.RPCPORT}`, '-rpcuser=blwp', '-rpcpassword=blwp'];
+  const base = ['-regtest', `-datadir=${RT}`, `-rpcport=${env.RPCPORT}`, '-rpcuser=arena', '-rpcpassword=arena'];
   const cliRaw = (...a) => execFileSync(BIN, [...base, ...a], { encoding: 'utf8' }).trim();
-  const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=blwp', ...a], { encoding: 'utf8' }).trim();
-  try { cliRaw('createwallet', 'blwp'); } catch { try { cliRaw('loadwallet', 'blwp'); } catch { /* loaded */ } }
+  const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();
+  try { cliRaw('createwallet', 'arena'); } catch { try { cliRaw('loadwallet', 'arena'); } catch { /* loaded */ } }
   cli('generatetoaddress', '101', cli('getnewaddress'));
-  chain = { cli, rpc: bitcoindRpc({ url: `http://127.0.0.1:${env.RPCPORT}/wallet/blwp`, readCookie: () => 'blwp:blwp' }) };
+  chain = { cli, rpc: bitcoindRpc({ url: `http://127.0.0.1:${env.RPCPORT}/wallet/arena`, readCookie: () => 'arena:arena' }) };
   const fed = await port.guardians();
   // THREE OPERATORS ADVERTISE A GUARDIAN, WHATEVER THE COMMITTEE'S SIZE. §23.6
   // counts distinct bonded census nodes against the FEDERATION's threshold (3 of

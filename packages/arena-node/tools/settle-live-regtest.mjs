@@ -88,7 +88,7 @@ out({ step: 'the federation\'s fee rule', rule });
 const nowhere = { txid: new Uint8Array(32), outIdx: 0n };
 const countsNow = async () => Promise.all(ports.map(async (p) => (await p.status(nowhere)).blockCount));
 const chainHeight = async () => Number((await run(`${env.BITCOIN_BIN}/bitcoin-cli`,
-  ['-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', 'getblockcount'])).so.trim());
+  ['-regtest', '-rpcport=30101', '-rpcuser=arena', '-rpcpassword=arena', 'getblockcount'])).so.trim());
 {
   const t = Date.now();
   const seen = [];
@@ -724,7 +724,7 @@ async function round(stakeMsat) {
         }
       }
       const exp = Number(bare.stake.fields.expiration);
-      const cli = (...a) => run(`${env.BITCOIN_BIN}/bitcoin-cli`, ['-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', ...a]);
+      const cli = (...a) => run(`${env.BITCOIN_BIN}/bitcoin-cli`, ['-regtest', '-rpcport=30101', '-rpcuser=arena', '-rpcpassword=arena', ...a]);
       // THE SETUP'S OWN WALLET (federation-hold-probe: createwallet, then -rpcwallet for every address) -
       // measured: getnewaddress without it answered nothing and the mining was refused, "Invalid address".
       const listed = JSON.parse((await cli('listwallets')).so || '[]');

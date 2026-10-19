@@ -43,7 +43,7 @@ test('the players\' escrow is the arbitration set\'s k-of-m leaf - the script bi
 });
 
 test('three outputs and the commitment, nLockTime = slash_height, the amounts slash.js hands out, the fee off the nodes and never the players', () => {
-  const built = arbitrationSpend({ bond, proofId, slashHeight: 104, hint: new TextEncoder().encode('blwp'), distribution: dist(),
+  const built = arbitrationSpend({ bond, proofId, slashHeight: 104, hint: new TextEncoder().encode('arena'), distribution: dist(),
     escrowScript: escrow.script, nodesScript: NODES, developersScript: DEVS, feeSats: 3000n });
   assert.equal(built.ok, true, built.why);
   assert.equal(built.tx.locktime, 104);
@@ -52,7 +52,7 @@ test('three outputs and the commitment, nLockTime = slash_height, the amounts sl
     [['commitment', '0'], ['players\' escrow', '50000000'], ['nodes\'', '37497000'], ['developers\'', '12500000']]);
   assert.equal(built.tx.outputs.reduce((s, o) => s + o.value, 0n) + 3000n, bond.value);
   const read = arbitrationCommitmentIn(built.tx.outputs);
-  assert.deepEqual([toHex(read.proofId), read.slashHeight, new TextDecoder().decode(read.hint)], [toHex(proofId), 104, 'blwp']);
+  assert.deepEqual([toHex(read.proofId), read.slashHeight, new TextDecoder().decode(read.hint)], [toHex(proofId), 104, 'arena']);
   assert.equal(spendCommitsTo(built.tx.outputs, proofId).ok, true, 'bond-spend.js reads the same proof id');
   // A FEE LARGER THAN THE NODES' OUTPUT is taken on from the developers', and one larger than both is refused.
   const big = arbitrationSpend({ bond, proofId, slashHeight: 104, distribution: dist(), escrowScript: escrow.script,

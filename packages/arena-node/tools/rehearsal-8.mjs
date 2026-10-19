@@ -57,11 +57,11 @@ const tab = () => {
 // four bond one guardian each, read off the federation itself through the signer nodes' own lock port; three bond none.
 const rpcport = env.RPCPORT || '30101';
 const BIN = `${env.BITCOIN_BIN}/bitcoin-cli`;
-const base = ['-regtest', `-datadir=${P}/btc`, `-rpcport=${rpcport}`, '-rpcuser=blwp', '-rpcpassword=blwp'];
+const base = ['-regtest', `-datadir=${P}/btc`, `-rpcport=${rpcport}`, '-rpcuser=arena', '-rpcpassword=arena'];
 const cliRaw = (...a) => execFileSync(BIN, [...base, ...a], { encoding: 'utf8' }).trim();
-const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=blwp', ...a], { encoding: 'utf8' }).trim();
-const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/wallet/blwp`, readCookie: () => 'blwp:blwp' });
-try { cliRaw('createwallet', 'blwp'); } catch { try { cliRaw('loadwallet', 'blwp'); } catch { /* already loaded */ } }
+const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();
+const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/wallet/arena`, readCookie: () => 'arena:arena' });
+try { cliRaw('createwallet', 'arena'); } catch { try { cliRaw('loadwallet', 'arena'); } catch { /* already loaded */ } }
 cli('generatetoaddress', '101', cli('getnewaddress'));
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 const fed = await port.guardians();

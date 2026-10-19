@@ -54,7 +54,7 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
         return await fetcher(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(kept).toString('base64')}` },
-          body: JSON.stringify({ jsonrpc: '1.0', id: 'blwp', method, params }),
+          body: JSON.stringify({ jsonrpc: '1.0', id: 'arena', method, params }),
         });
       } catch (e) {
         throw new Error(`bitcoind at ${url} did not answer ${method}: ${e.message}`);

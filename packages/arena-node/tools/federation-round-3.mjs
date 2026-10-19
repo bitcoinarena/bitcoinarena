@@ -41,23 +41,23 @@ if (!P || !env.LOCK_BIN) {
 const rpcport = env.RPCPORT || '30101';
 const RT = join(P, 'btc');
 // THE PROBE'S CHAIN ANSWERS TO A USER AND PASSWORD, not a cookie - it is started
-// with -rpcuser=blwp -rpcpassword=blwp - so both doors are opened the same way.
-const AUTH = ['-rpcuser=blwp', '-rpcpassword=blwp'];
+// with -rpcuser=arena -rpcpassword=arena - so both doors are opened the same way.
+const AUTH = ['-rpcuser=arena', '-rpcpassword=arena'];
 const BIN = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
 const base = ['-regtest', `-datadir=${RT}`, `-rpcport=${rpcport}`, ...AUTH];
 const cliRaw = (...a) => execFileSync(BIN, [...base, ...a], { encoding: 'utf8' }).trim();
 // THE FEDERATION'S OWN WALLET IS ALREADY LOADED HERE, so every wallet call has to
 // say which one it means - "Multiple wallets are loaded" is what it answers
 // otherwise, and that refusal reached the harness as a bond it could not pay for.
-const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=blwp', ...a], { encoding: 'utf8' }).trim();
+const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();
 // AND THE SAME WALLET OVER HTTP: the /wallet/<name> path is how the JSON-RPC door
 // is told which one, and chain calls answer through it unchanged.
-const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/wallet/blwp`, readCookie: () => 'blwp:blwp' });
+const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/wallet/arena`, readCookie: () => 'arena:arena' });
 
 // THE HARNESS'S OWN WALLET, WITH COINS IN IT. `regtest()` loads or creates
-// `blwp` and pays the bonds out of it; on this chain that wallet is new, and a
+// `arena` and pays the bonds out of it; on this chain that wallet is new, and a
 // new wallet has nothing, so it is funded here before a bond is asked for.
-try { cliRaw('createwallet', 'blwp'); } catch { try { cliRaw('loadwallet', 'blwp'); } catch { /* already loaded */ } }
+try { cliRaw('createwallet', 'arena'); } catch { try { cliRaw('loadwallet', 'arena'); } catch { /* already loaded */ } }
 cli('generatetoaddress', '101', cli('getnewaddress'));
 
 const invite = readFileSync(join(P, 'g0', 'invite-code'), 'utf8').replace(/["\n ]/g, '');

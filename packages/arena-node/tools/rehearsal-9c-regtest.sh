@@ -14,7 +14,7 @@ P=${PROBE_DIR:-$(mktemp -d /tmp/rehearsal9c-XXXXXX)}
 B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
 L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
-bcn() { $B/bitcoin-cli -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp "$@"; }
+bcn() { $B/bitcoin-cli -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena "$@"; }
 stop() {
   for pid in $(cut -d' ' -f1 $P/pids 2>/dev/null); do kill -TERM -- -$pid 2>/dev/null; done
   bcn stop >/dev/null 2>&1; sleep 5

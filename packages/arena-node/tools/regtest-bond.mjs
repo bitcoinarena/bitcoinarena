@@ -34,7 +34,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tweakPoint, combine } from '../src/curve.js';
 
 /** Everything a caller needs against one running regtest. */
-export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
+export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
   const g = genesisFor(network);
 
   if (!JSON.parse(cli('listwallets')).includes(wallet)) {

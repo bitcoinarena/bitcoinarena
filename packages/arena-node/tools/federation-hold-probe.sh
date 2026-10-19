@@ -66,7 +66,7 @@ if [ -n "$EXT" ]; then
 else
   RPC=30101
   BTC_USER=blwp; BTC_PASS=blwp
-  BTC_AUTH=("-datadir=$P/btc" -rpcuser=blwp -rpcpassword=blwp); WALLET=probe
+  BTC_AUTH=("-datadir=$P/btc" -rpcuser=arena -rpcpassword=arena); WALLET=probe
   BOB_DIR=$P/bob; BOB_RPC=127.0.0.1:${LRPC[bob]}
 fi
 say() { echo "$@"; }
@@ -96,7 +96,7 @@ until_() { local what=$1 n=$2; shift 2; for i in $(seq $n); do "$@" && return 0;
 
 # ---- THE CHAIN AND THE TWO LIGHTNING NODES, the rehearsal's shape ----
 if [ -z "$EXT" ]; then
-$B/bitcoind -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=blwp -rpcpassword=blwp -port=30102 -listen=0 \
+$B/bitcoind -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=arena -rpcpassword=arena -port=30102 -listen=0 \
   -listenonion=0 -fallbackfee=0.0001 -txindex -zmqpubrawblock=tcp://127.0.0.1:$ZB \
   -zmqpubrawtx=tcp://127.0.0.1:$ZT -daemon >/dev/null
 until_ bitcoind 60 bcn getblockcount >/dev/null 2>&1
@@ -106,7 +106,7 @@ bc generatetoaddress 250 $MINE >/dev/null
 for who in $WHO; do
   mkdir -p $P/$who
   setsid nohup $L/lnd --lnddir=$P/$who --bitcoin.regtest --bitcoin.node=bitcoind \
-    --bitcoind.rpchost=127.0.0.1:$RPC --bitcoind.rpcuser=blwp --bitcoind.rpcpass=blwp \
+    --bitcoind.rpchost=127.0.0.1:$RPC --bitcoind.rpcuser=arena --bitcoind.rpcpass=arena \
     --bitcoind.zmqpubrawblock=tcp://127.0.0.1:$ZB --bitcoind.zmqpubrawtx=tcp://127.0.0.1:$ZT \
     --rpclisten=127.0.0.1:${LRPC[$who]} --listen=127.0.0.1:${LLIS[$who]} --restlisten=127.0.0.1:${LREST[$who]} \
     --noseedbackup --nobootstrap --alias=$who > $P/$who/lnd.out 2>&1 < /dev/null &
