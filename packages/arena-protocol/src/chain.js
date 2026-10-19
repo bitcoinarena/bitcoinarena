@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Reading Bitcoin without trusting whoever handed it to you.
 //
 // Section 25.1 is normative about this, and says why it is normative rather

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODES, FOUND ON THE FLY (kanban #351): a checked census names the network's nodes by their advertised endpoints.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DONATION TO THE DEVELOPERS, AS A SEAT KEEPS IT (kanban #431, protocol donation-gift.js): the donor's signed record checked twice -
 // by its own terms against the set this seat holds for its target (giftStands: the split of its total over those keys), and against
 // the federation, output by output, as an item purchase's are (item-purchase-seat.js): at each outpoint the federation holds the

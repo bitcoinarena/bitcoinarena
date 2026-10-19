@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ZAPS BETWEEN PLAYERS AND TIPS TO DEVELOPERS (kanban #362 item 14; NIP-57 rules in arena-protocol/src/zap.js).
 //
 // THE PLAYER'S OWN WALLET PAYS, OVER NWC, AND NOTHING ELSE MOVES. A zap is the recipient's Lightning address (LUD-16) asked

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SEGWIT ADDRESSES, WRITTEN AND READ (BIP173 bech32 for v0, BIP350 bech32m for v1+), for the node's wallet (kanban #471) and the
 // address an owner withdraws a bond to. The network is its human-readable part: 'tb' for testnet4 (and testnet3/signet), 'bc'
 // for mainnet, 'bcrt' for regtest.

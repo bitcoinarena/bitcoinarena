@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUND'S ONE SETTLEMENT OF STAKE LOCKS (FEDERATION.md, money flow step 5;
 // W4 - the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed
 // into the pool. Winners are paid from that.").

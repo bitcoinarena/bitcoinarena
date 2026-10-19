@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THRESHOLD_LN CUT (the owner 2026-10-03: "Cut lnd-port.js and lnd-settings.js"): the two files are gone, nothing imports
 // either path again, and what their callers still use - lndPort, lightningFromEnv, LND_SETTINGS - lives in node-start.js,
 // the module both main.js and tools/round-2of2.mjs already import. No shim re-exports the old paths.

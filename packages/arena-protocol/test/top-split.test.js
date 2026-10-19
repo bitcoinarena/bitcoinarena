@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TOP-N PRIZE SPLITS (kanban #362 feature 3): a payout rule a replayed game's manifest may pick - fixed shares of the pot over
 // its top places ([10000] winner takes all, [5000, 3000, 2000]) - encoded so every existing manifest keeps its bytes and its
 // game id, required to name protocol version 4 (#349), and computed by the one F every caller shares.

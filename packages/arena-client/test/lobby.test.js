@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S LOBBY (M3.3-34, §25): a link naming nodes and no round lists what
 // they hold, every row is checked against its own contract, and Join is offered
 // only at the round's threshold of its own signer nodes - 2 of 2 here.

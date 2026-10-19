@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CONTRADICTED SIGNERS OF A RE-RUN RESULT, AND THE PROOF THAT SLASHES THEM (§13A, §5A.3B).
 //
 // §13A: once the committee's re-run is authoritative, "every node that signed

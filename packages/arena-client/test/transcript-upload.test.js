@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RUN IS SAFE BEFORE THE VICTORY SCREEN (§13A client duty, kanban #315): at least two committee nodes hold the same whole transcript
 // (one hash, up to the run's last tick); then the mirror, if configured, is handed bytes checked against that hash.
 import { test } from 'node:test';

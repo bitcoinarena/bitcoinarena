@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3 ROW 6: CLAIMING A FEE SHARE 22A DOES NOT ALLOW.
 //
 // 22A: "A selected node earns its share only if it performed the

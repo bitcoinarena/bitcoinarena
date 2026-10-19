@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TOOLS THAT SIGN TESTNET4'S DONATION SETS REFUSE EVERY KEY BUT TESTNET4'S AUTHORITY, AND WRITE NOTHING WHEN THEY DO;
 // AND, ON A COPY WHOSE AUTHORITY IS A TEST KEY, WHAT THEY WRITE WHEN THEY SIGN (below)
 // (kanban #148, plan comment 222). tools/sign-testnet4-donation-set.mjs and sign-testnet4-key-donation-set.mjs run as they are

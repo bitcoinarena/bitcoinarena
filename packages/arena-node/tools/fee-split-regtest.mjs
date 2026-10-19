@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE 10% ON A REAL FEDERATION (kanban #205, the owner 2026-10-07): one paid round of each game on a regtest federation of the
 // patched fork, settled by its two signer nodes, and the game dev's own key collecting its 2.5% through the donor client.
 //   - nextblock: its game set is the network's protocol devs (one output per key, both halves merged);

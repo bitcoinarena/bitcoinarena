@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ADVERTISEMENT UPDATE REPLACES A BOND'S ADVERTISEMENT, NOT THE BOND (§5A.2; the owner 2026-09-28, the
 // advertisement-update letter: "Node 1 must resolve to 027acbea, not the old 034d69fa").
 //

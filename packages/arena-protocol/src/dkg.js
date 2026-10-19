@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COMMITTEE MAKES ITS OWN KEY, AND NOBODY EVER HOLDS IT.
 //
 // M3.3 item 14. Item 10 closed FROST against RFC 9591's own vectors and said

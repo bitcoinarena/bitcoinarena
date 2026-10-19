@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 27A.4, MEASURED: which set, from when, and whose signature.
 //
 // The suite before this one tested a list of payees against its own shares.

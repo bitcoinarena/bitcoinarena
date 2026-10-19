@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FIRST DEPOSIT GOES TO THE LOWEST-LOAD FEDERATION (§23A.3, kanban #324 step 1): depositFederation over verified statuses -
 // the lobby round's federation is not used when another OPEN, known one has a lower load; since the owner 2026-10-13 ("always
 // the federation with less funds") a returning player's deposit goes there too, and a withdraw reads the federation holding the most.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ONE PARSE OF A LAUNCHER'S LIGHTNING SETTINGS. main-settings.test.js
 // pins what src/main.js does with the answer; this pins the answer itself, so a
 // second launcher reading it cannot accept what the first refuses.

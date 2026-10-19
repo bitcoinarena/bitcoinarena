@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEVNET'S PORTS (kanban #362, PLATFORM-RESEARCH item 15; tools/devnet-plan.mjs): one base, every port derived from it,
 // all private and below 32768, none of the live stacks'; what listens read from either ss or lsof; the devnet's own running
 // parts never counted as a clash against it.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY READ OF `CoreDrivenTruck.seed` ON A LIVE ROUND, PRINTED.
 //
 // The constant is still in the player: `public int seed = 0x5eed1234`, read in

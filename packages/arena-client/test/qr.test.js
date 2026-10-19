@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEPOSIT QR (the owner 2026-09-30): an SVG of lightning:<INVOICE>, and nothing drawn for what is not an invoice.
 import test from 'node:test';
 import assert from 'node:assert/strict';

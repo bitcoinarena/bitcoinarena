@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # ---- 8. SUCCESSION (kanban #325, §23A.6): sourced by tn4-tools-regtest.sh when SUCCESSION=1, after its readings ----
 # Federation B is founded on seven MORE nodes (one node is one guardian; the old federation's guardians keep serving its
 # drain), both gateways join B and peg into it, A's seats are told the successor (ARENA_DRAINING) and sign A's record

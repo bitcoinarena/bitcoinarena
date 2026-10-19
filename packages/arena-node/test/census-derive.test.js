@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.4, ALL FIVE STEPS, AND THE ONLY PLACE A CENSUS ROOT COMES FROM.
 //
 // "Given `census_height`, EVERY PARTICIPANT RUNS THE SAME FIVE STEPS."

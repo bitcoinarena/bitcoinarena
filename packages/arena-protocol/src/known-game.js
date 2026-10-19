@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
 // kanban #202).
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE'S DOORS AFTER THE CLOSE (ruled 2026-09-23): shut, as ever - except, for a run whose final mark it holds
 // back its close for, the batches that mark commits to and then that same mark. Nothing else: not a batch past the
 // mark's tick, not another mark, not a node that holds no such ask, and not after the hold is dropped.

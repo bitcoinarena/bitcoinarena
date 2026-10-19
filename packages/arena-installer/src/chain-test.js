@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER'S CHAIN TESTS (kanban #471 step C.2; the owner 2026-10-18 rulings 1 and 4: testnet4 only, and Electrum only if testnet4
 // servers exist - they do). A connection passes when it answers, is TESTNET4 BY ITS GENESIS - not by a name it reports - and its tip
 // agrees with a second source; the latency is measured on every answer.

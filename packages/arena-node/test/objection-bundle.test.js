@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24, RULED the owner 2026-10-04). Measured on a 2-of-2
 // round of two running signer nodes (lockRound: their own DKG, a real played run each for a winner and a loser):
 //   (a) POST /objection with an empty body is 400 "an objection carries its transcript and receipts (13A)", nothing is

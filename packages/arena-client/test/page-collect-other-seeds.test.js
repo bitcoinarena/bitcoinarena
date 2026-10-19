@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CLOSED TAB'S ROUND IS COLLECTED INTO ITS OWN SEED'S WALLET BY A LATER TAB (kanban #153, ruled the owner 2026-10-07): the
 // page's own seed keeper picks a later tab's phrase (a kept one no tab holds, the one with the most wallet entries first);
 // the page's own keptRecords / withRecordPhrase / roundAsk then walk EVERY saved phrase's records - the collect, the newest

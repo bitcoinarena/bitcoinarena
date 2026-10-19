@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH FAILURES A READ ASKS AGAIN, AND WHICH IT NEVER DOES (M3.3-27).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Builds a bond funding transaction the shape section 25.1 describes, for
 // tests and vectors. NOT part of the protocol: nothing in `src/` imports it,
 // and a node does not build transactions.

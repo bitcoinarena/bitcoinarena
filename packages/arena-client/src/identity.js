@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO THIS TAB IS IN THE LOBBY (M3.3-34): a key the page generated, a name
 // made from that key, and the name the player chose instead, if they did.
 //

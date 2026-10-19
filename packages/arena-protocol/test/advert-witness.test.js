@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ADVERTISEMENT RIDES IN PIECES, AND THE CENSUS STILL READS IT BACK.
 //
 // Measured on a real node (regtest, same standardness policy as testnet4 and mainnet): a bond whose

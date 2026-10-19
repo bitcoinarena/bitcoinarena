@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO SITS AT A HEAD-TO-HEAD ROUND'S TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You are
 // alone in this round" until one picked - the table counted moves, not players). Each tab says it is at the round's table
 // with its identity key, signed over (round, key); a seat answers who said so within PRESENCE_MS, each with the name made

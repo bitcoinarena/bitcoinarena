@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RESULTS ON NOSTR (kanban #362 feature 2): a node signs one parameterized replaceable event (kind 30762, d = arena:result:<round>)
 // with a settled round's public result. Built deterministically (same result, same bytes; the id NIP-01's hash; the signature
 // BIP-340 by the node's key), published once per round to every relay named - retried with backoff, bounded per minute - kept by

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GAME IS A MANIFEST (§0A.3, kanban #202, the owner 2026-10-06/07). The engine never imports a game's code: what it needs
 // from a game - which cores, which configs, how long a run may be, which of the engine's payout rules and with which
 // numbers - it reads from the game's manifest, and from the game's core only through the adapter a node installed.

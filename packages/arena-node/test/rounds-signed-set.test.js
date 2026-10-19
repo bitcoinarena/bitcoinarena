@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LISTING'S ROW SIGNATURES, SIGNED ON DEMAND ONE WINDOW AT A TIME (kanban #232, the owner 2026-10-08; it was kanban #197's
 // background set). Measured live before: every ~45 s each testnet4 seat signed every announced row - 1,857, ~6.5 s of
 // BIP-340 in a new worker - about 23 of its 29 % CPU, while the lobby asks for a handful. Now a row is signed the first time

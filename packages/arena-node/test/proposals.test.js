@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #329: the proposals a seat keeps and serves - taken when they stand and their deposit is on the seat's chain (option A)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY BUDGET, MEASURED (§34, kanban #303): after a seat replayed a real run, GET /replay-budget answers its measured speed - the
 // median of its own replays, game time over wall time - and the players an 82 s round holds in the 600 s window at it.
 import { test } from 'node:test';

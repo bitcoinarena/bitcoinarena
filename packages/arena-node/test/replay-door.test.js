@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY PAGE IS THE ROUND'S GAME'S (kanban #202, hole 1 of comment 747): /replay serves the replay page the round's
 // game registered - nextblock's draws the truck - and the engine draws no game. A round of a game with no replay page,
 // or a round this node does not hold, has none.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TEST UP/DOWN MARKET AT THE SEATS (kanban #236, the owner 2026-10-09): rounds on the market's own 15-minute clock, locks
 // sized to outlive a whole round, locked orders resolved by the attestors' core and settled to the msat; a deadline missed
 // voids and returns every lock; two attestations naming different outcomes - disputed - void too.

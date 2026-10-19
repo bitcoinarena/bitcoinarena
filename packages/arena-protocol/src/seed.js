@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Player sub-seed, the owner 2026-09-08: secret lives on the Entry Contract so
 // a node can replay. IMPLEMENTATION.md: H(round_randomness || pubkey || secret || join_tick).
 import { Writer } from './encode.js';

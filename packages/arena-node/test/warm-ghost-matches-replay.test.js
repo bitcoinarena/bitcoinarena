@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LIVE GHOST IS THE POSE THE TRANSCRIPT REPLAYS TO (the owner 2026-09-18 12:02: "Drawn pose must match the other
 // client's truck").
 //

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * DOES A PAYING FEDERATION ROUND OPEN WHEN THREE BONDED OPERATORS COVER THE FEDERATION?
  *

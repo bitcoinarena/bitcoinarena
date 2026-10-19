@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GAME STAYS IN THE ADDRESS (kanban #372, measured on live UI 136 03:37Z): PLAY on a Tick Tock round ahead wrote the round's
 // link without game=, and a reload - holding the join to its start on the bare path - came up on the game chooser, Unity not
 // loaded. index.html's gameOnly and withGame are lifted out of the page by their text and run under a stand-in location; the

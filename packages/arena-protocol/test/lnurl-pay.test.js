@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LNURL-PAY, THE DONOR'S CHECKS (LUD-06, LUD-12; M3.2 6e). An invoice is paid
 // only if it is exactly the share, under the endpoint's own metadata hash.
 import { test } from 'node:test';

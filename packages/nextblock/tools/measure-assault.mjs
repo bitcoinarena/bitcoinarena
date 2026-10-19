@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §4.12 THE ASSAULT and its §0.1 rows, read from the state only.
 //
 //     node tools/measure-assault.mjs [--core=DIR/src] [--seeds=1,2,3,4,5] [--ticks=10800]

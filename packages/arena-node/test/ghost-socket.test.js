@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SECOND IDENTITY'S TRUCK ARRIVES ON THE SOCKET.
 //
 // Slice 1 made a picture; nothing could be sent one. The /play socket was

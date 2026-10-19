@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WITHDRAWN CUSTODY IS GONE FROM THE SCRIPT THE PAGE RUNS, TOO (§23.6, RULED the owner 2026-09-22 22:59; this cut
 // RULED 2026-09-24: "decoding a byte-0 contract must throw the same sentence the source throws ... the bundle text must
 // not contain THRESHOLD_LN").

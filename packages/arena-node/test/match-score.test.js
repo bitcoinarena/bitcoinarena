@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SCORE ACROSS ROUNDS (kanban #280, the owner 2026-10-09: "I win: 1:0. Opponent wins: 1:1. It keeps counting until one
 // player or both leave. The protocol counts it up, attests it, and shows it in the results"; "On /dashboard ... which kind of
 // game was played, and the score"). Two identities play Rock Paper Scissors round after round on the same two seats: each

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FINAL MARK, RE-OFFERED UNTIL EVERY SIGNER NODE HOLDS IT - client.js #catchUpFinal (kanban #147, surface 4 part 2,
 // plan comment 210, Go 2026-10-05), driven through the public mark(..., { final: true }) only. A 2-of-2 committee: seat A's
 // answers come through send(), seat B's through sendPeer(), both scripted on the instance (the public doors the client

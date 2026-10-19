@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PICK'S RESULT FROM THE SEAT THAT HOLDS ITS ROW (kanban #447, measured live 2026-10-17 18:05Z): a seat outside the round's committee
 // answers GET /outcome ATTESTED with an empty table marked refunded; the page kept the first answer, so a won and a lost order read
 // "your pick is not in the signer nodes' table" and stayed "waiting for the result". The page's own readMarketOutcomes, on fake seats.

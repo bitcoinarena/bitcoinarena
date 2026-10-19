@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // workers.dev (kanban #471, the owner 2026-10-18: "Implement workers dev tunnel"; "we are out of the game, don't host them"): the
 // operator's own account and token, a Worker that forwards to the node's quick tunnel, re-uploaded by the keeper when the name changes.
 import { test } from 'node:test';

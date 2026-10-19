@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PUBLISHER NAMES THE SET THE DEVELOPERS APPROVED (§27A.4.1, kanban #382): the duty and grid runners read a seat's ballots and
 // tally them themselves, so their new rounds name the approved split from its block on - and a seat that does not answer
 // leaves the last tally standing.

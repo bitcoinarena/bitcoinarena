@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CENSUS AGAINST REAL BLOCKS. Letter 15, slice 3.
 //
 // Every census measurement before this one ran on fixtures: blocks a test

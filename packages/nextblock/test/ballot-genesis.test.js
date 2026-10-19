@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BALLOT'S GENESIS IS NEXTBLOCK'S v4 CONFIG (kanban #329, arena-protocol/src/ballot-chain.js BALLOT_GENESIS): the engine writes
 // the bytes out because it imports no game; here they are held to the encoder that makes them and to the hash every truck round names.
 import { test } from 'node:test';

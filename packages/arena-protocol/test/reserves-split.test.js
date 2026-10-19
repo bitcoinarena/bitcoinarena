@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL RESERVES' SPLIT (§27A.9.1, kanban #397 slice 1): a paid round's mandatory 4 / 2 / 2 / 2 %, an item's 40 % nodes and
 // 20 % reserves with the player's developers' share of 40/30/20/10/0 %, the reserve output - and today's versions untouched.
 import test from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WALLET'S BUDGET, BALANCE AND PAYMENT LINES - nwc.js on its own (kanban #147, surface 2 of "The player's money lines",
 // plan comment 202, accepted 2026-10-05): what the player reads about the wallet the page is connected to, and the record of
 // what left it - pending, returned, kept - by its exact words. The wallet is a fake NIP-47 wallet on a local relay, scripted

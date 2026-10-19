@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE RUNS A GUARDIAN ONLY IF IT HOLDS A GUARDIAN KEY (spec §23A.2; the owner 2026-09-27: "Starting a node is not
 // enough. Holding that node's guardian key is the test"). The key is <store>.guardian/private.json and consensus.json,
 // what a completed ceremony leaves. A launcher starts nodes only; a node that holds a key starts its own guardian and

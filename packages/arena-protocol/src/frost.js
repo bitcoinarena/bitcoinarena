@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNATURE SEVEN OPERATORS MAKE AND NO ONE OF THEM CAN.
 //
 // 23.5: "Settled loser stakes accumulate in a wallet whose every operation

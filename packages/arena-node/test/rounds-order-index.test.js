@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUNDS ARE LISTED FROM AN INDEX, NOT SORTED (2026-10-02, the the test host's load): openRounds and finishedRounds sorted
 // every held contract in a temporary B-tree, which spilled to disk on every sweep of ~2,950 rounds (~1.6 MB/s per idle
 // testnet4 seat). Their query plans now read an index and use no temporary B-tree.

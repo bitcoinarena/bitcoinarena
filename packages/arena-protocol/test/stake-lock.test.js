@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY FIELD OF A LOCK, BEFORE A STAKE COUNTS (§23.1 step 5, v4.6.2, F4 and
 // F5). The player builds the lock; a signer node that only saw it exist would count a
 // lock with a short expiry, the wrong amount or somebody else's keys.

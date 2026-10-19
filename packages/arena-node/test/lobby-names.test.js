@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A JOINED PLAYER'S NAME, AS A SIGNER NODE KEEPS AND SERVES IT (M3.3-34).
 //
 // The other players of a round are shown the name each player chose. A signer node

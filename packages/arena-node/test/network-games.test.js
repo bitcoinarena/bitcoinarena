@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NETWORK'S GAMES AND MARKETS, FOUND BY A SEAT ITSELF (kanban #276, the owner 2026-10-11: "Es soll automatisch nach anderen
 // Spielen suchen nicht manuell ... games/market found on the Network ... Name/Typ/Version und der Action Install. Mach eine
 // Art hello world game/market die nur eine node hat ... Das Manifest soll auch eine Description und Webseite haben die

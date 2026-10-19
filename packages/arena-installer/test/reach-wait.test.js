@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PUBLIC ADDRESS GIVEN TIME TO RESOLVE (kanban #471, measured on the test host 2026-10-19 with 2026.1.0: a new quick tunnel's name had no
 // DNS record anywhere for 4 min 45 s, and the wizard's service step gave up after ~2 min with ENOTFOUND): the default waits about 8 minutes.
 import { test } from 'node:test';

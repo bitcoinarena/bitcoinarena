@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT SIGNS A STATE HASH AND A NODE STORES IT.
 //
 // Everything under this was already built and none of it had ever been driven

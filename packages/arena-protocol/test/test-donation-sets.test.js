@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TEST NETWORKS' DONATION SETS, AS COMMITTED (M3.2 6e): signed once offline
 // by each network's Ed25519 donation authority (tools/sign-donation-set.mjs),
 // public bytes only. Their signatures are checked on the real curve in

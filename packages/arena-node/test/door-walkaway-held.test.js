@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A WALK-AWAY'S DONATION SHARE WHEN THE RECIPIENT DOES NOT ANSWER (RULED the owner 2026-09-30, hole 1 (a)): nobody
 // qualifies, nothing answers at the donation set's addresses (127.0.0.1:18777) - the settlement still completes. The
 // walker's stake lock is claimed, never refunded; 75% to the sitting signer nodes; the unanswered 25% sits in

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ENTRY'S ITEMS REACH THE CORE'S START AS THEIR UNLOCKS (kanban #365, #369): the seat maps each item the entry names to its game's
 // catalogue unlock (core.items, plugins.js itemUnlocksOf) and the sandbox's driver hands them to start() - only when there are some, so
 // a core that sells nothing is started exactly as before; an item the game does not sell is not replayed. The same in a warm ghost.

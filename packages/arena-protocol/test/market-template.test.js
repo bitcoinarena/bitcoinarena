@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVENT-MARKET TEMPLATES (kanban #362 feature 5, docs/PLATFORM-RESEARCH.md): a manifest may be a TEMPLATE - its attestors,
 // threshold, fees, deadline and source rule, a category, the most outcomes a round may name and the latest it may resolve -
 // and each ROUND of it carries its own question, 2 to 16 outcome labels and its resolution time, so anyone opens a question

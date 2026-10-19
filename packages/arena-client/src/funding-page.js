@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PROJECT PROPOSALS ON BITCOIN-ARENA.IO (§27A.9.3, kanban #397, the owner 2026-10-17: "Add a Project Proposals section to the website
 // where people can comment and review"; "Anyone can do a proposal to pay out"). The homepage reads the proposals the network's nodes
 // hold (GET /funding) and shows one only when at least `needed` of them hold it; it builds a proposal or a comment as the seats read

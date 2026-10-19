@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION'S GUARDIAN ADDRESSES, FROM ITS OWN CONFIGURATION (kanban #326, the owner 2026-10-15: the endpoint gap). A node advertises
 // one guardian_endpoint; during a succession a guardian seated first runs two fedimintd - its old federation's at /guardian and its
 // successor's at /guardian-next (node-start.js) - so the advert cannot name both. Each federation's key ceremony wrote its own

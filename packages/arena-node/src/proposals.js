@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROPOSALS A SEAT KEEPS AND SERVES (spec §27A.7.2-3, kanban #329): a vote carries only proposal_id[0:8] (ballot.js), so a voter
 // needs the full proposal from somewhere - the seats. A proposal is taken only when it stands on its face (proposalStands: signed by
 // its proposer, activation after cooldown, deposit within the cap) and its deposit is on this seat's chain (depositOf, RULED option

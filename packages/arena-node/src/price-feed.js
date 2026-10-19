@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COMMITTEE'S PRICE FEED (§11, kanban #311): "the committee nodes publish one attested sample every 5 s of round time
 // from the contract's named feed - and, with the first, the 64 samples before start_time from the feed's history ... The
 // player never chooses the price; he can only replay it or not play."

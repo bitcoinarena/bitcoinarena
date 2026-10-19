@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TWO NODES, ONE PAGE, THE OTHER TRUCK.
 //
 // The 2-of-2 already runs: two daemons, two identities, one contract naming

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PRICE ROUND'S PLAYER RESULT CARRIES ITS FRONT (§13 front_*, kanban #312): its own type (0x28, 178 bytes); every other result keeps
 // its 168 bytes and id; streams of results, re-runs and slash proofs cut record by record by the type byte.
 import { test } from 'node:test';

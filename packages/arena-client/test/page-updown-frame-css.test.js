@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S OWN CSS FOR THE UP/DOWN FRAME (kanban #447 / #451, the owner 2026-10-17: "pending final breaks the layout"; "Fix the alignment
 // so columns have the same width always"): injected into the client's frame on load, for btc-updown-15m only - a past order's status on
 // its own line, and one fixed side column so every card's amount and window start at the same x (measured in the harness at 390:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TABLES OF TWO, SEATED (kanban #293, the owner 2026-10-10: "When one player is waiting, one round is being opened. A 2nd player
 // joins that round. A 3rd player gets a second round, the 4th player joins that round. 5th player gets the 3rd round and so
 // on"; and a pair stays a pair). The client's seatAt, run as the client ships it (between its SEATING markers), over slots of

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SHARES A PLAYER PUBLISHED, AND THE POLYNOMIAL THEY WERE CUT FROM.
 //
 // 23.1 step 2: "The player splits P with verifiable secret sharing (Shamir,

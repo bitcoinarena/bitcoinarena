@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GET /block-random (kanban #366): a seat draws from its own chain, once the block is six deep - the protocol's numbers exactly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

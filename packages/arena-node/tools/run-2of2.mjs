@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE DAILY'S 2-OF-2 (M3.3-34): two arena-nodes on one machine, threshold 2,
  * bonded, and a free round always joinable in the lobby.

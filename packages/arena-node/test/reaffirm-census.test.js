@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A BOND OF THE ANCESTOR NETWORK, CARRIED INTO THIS ONE BY ITS OPERATOR (§27A.8.3, spec 0A.9; kanban #209, the owner
 // 2026-10-08). testnet4's seven bonds were posted by the BLWP network: they pay the BLWP bond marker's dust and commit to
 // an advertisement under the BLWP advert tag, in the layout of before hosted_games. After #207 every tag is ARENA/v1, so

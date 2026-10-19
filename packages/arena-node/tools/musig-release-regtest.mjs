@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE COOPERATIVE RELEASE, ACCEPTED BY BITCOIND (kanban #307, spec §5A.3B key path: MuSig2(node_key, arbitration aggregate)):
  * on a regtest chain a bond output is funded at the key bond-script.js builds for a node and the regtest arbitration set; a

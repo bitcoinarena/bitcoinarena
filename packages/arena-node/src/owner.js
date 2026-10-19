@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S OWNER (kanban #276, the owner 2026-10-09: "Under Node /Dashboard, a separate owner area. The owner must
 // authenticate. First time: 24 Bitcoin words for restore, stored in local storage").
 //

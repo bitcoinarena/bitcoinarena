@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER PAGE'S LIQUIDITY CARD (kanban #494, §23A.10): the free coins against the deposit minimum - below it, no share - the channels
 // given, and the top-up address; a node that is no provider is told how to become one.
 import { test } from 'node:test';

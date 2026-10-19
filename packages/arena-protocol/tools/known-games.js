@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WRITES packages/arena-protocol/src/known-games.js (kanban #202, #203; §0A.6, §5): the games this client lets a player stake
 // on - each by game_id, with the cores and configs its signed manifest lists and the configs it plays as one world per
 // round. It imports no game: each game is a module GIVEN AS AN ARGUMENT that exports

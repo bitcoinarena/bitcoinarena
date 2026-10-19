@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // __TITLE__: THE MANIFEST BODY (made from the devnet's game template, packages/arena-node/tools/devnet-template). Your signed
 // record of the game: its rules (the core's hash and the configs it may run), its run length, how it pays, its clients and
 // whose donation set its share goes to. Signed by your developer key with the dev client:

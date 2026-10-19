@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Checkpoints on one node: stored, repeated, and the one that must not be.
 //
 // The node never checks a state hash here and cannot: nothing in `src/`

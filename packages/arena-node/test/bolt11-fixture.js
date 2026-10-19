@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A BOLT11 INVOICE FOR A TEST, built from the fields `decodeBolt11` reads - prefix and amount, a timestamp, the
 // payment hash (p), the description hash (h) - and a signature-sized tail of zeros. Test code only: no product path
 // mints an invoice, and no signature is claimed (decodeBolt11 does not check one, and nothing here pays it).

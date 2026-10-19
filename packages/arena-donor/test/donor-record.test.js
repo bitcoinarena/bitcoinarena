@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEV CLIENT'S PERMANENT RECORD AND ITS READ RECEIPT (kanban #156 measure 4; the owner 2026-10-05 08:15-08:17; the rate
 // source ruled the same day: a public price API the dev client calls itself, the provider named in each record, no seat asks).
 // Each donation the seats list is recorded for good - sender key, round id, amount, time, the USD and EUR rate at that time

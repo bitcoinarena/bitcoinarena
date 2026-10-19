@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RESERVE SEATS ON A PRIVATE REGTEST, NINE SEATS (multiplayer_p2p.md §5A.7, kanban #301). Never testnet4, nothing paid:
 // free rounds of nextblock on a census of exactly nine bonded seats, so each role draws all nine (9 for 7 seats) and every
 // round's contract names the nine (decision A: the contract names the draw; the seating is the certificate).

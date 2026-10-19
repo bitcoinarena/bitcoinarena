@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEAT'S OWN FETCHES, ROUTED AND CAPPED (kanban #348, measured 2026-10-13 ~13:2xZ on the test host: each of the 7 testnet4 seats
 // held 770-910 established HTTPS connections to its own host's Tailscale address - its peers' public URLs, test-host.tail...ts.net
 // /guardian-N and /fed2-N, reached through tailscaled for every call, and Node's fetch opens a new connection for every request in

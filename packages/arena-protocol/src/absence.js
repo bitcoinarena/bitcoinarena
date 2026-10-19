@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GUARDIAN WHO IS GONE, AND ONE WHO LEAVES (spec §23A.4-§23A.5, kanban #322), the first slice: the signed objects and their
 // checks. Producing an attestation needs a guardian's per-peer consensus view (the fork's API) and is the next slice.
 //

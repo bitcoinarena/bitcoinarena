@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GET /rounds: EVERY ANNOUNCED ROUND, ITS TIMES, AND WHO IS RESPONSIBLE (the owner 2026-09-28 16:12, ROUNDS-EP-1612).
 //
 // On a bonded round both holders list it with its start and end as ISO-8601 UTC and its committees drawn from the

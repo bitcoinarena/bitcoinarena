@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SUSPENDED RESULT AND THE COMMITTEE'S RE-RUN (v4.6.2 §13A).
 //
 // "A valid objection suspends finality. The full committee re-runs the

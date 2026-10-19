@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DONATION SET'S TWO LOCAL TEST RECIPIENTS, ANSWERING (M3.2 6e). What a
 // paid round's launcher binds at 127.0.0.1:18777 - bound here on a free port.
 // Measured before: nothing listened there, and both shares came back "the

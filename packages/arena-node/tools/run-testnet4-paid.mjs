@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE PAYING TESTNET4 ROUND (the owner 2026-09-27 07:51: "A paid testnet4 round must be open and testable"). Seven signer
  * nodes, 5-of-7, on the testnet4 bitcoind - bonds broadcast and six deep in somebody else's blocks, the round published

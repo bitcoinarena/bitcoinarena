@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE VERIFIES THE PLAYER'S STAKE LOCK BEFORE THE STAKE IS COMMITTED (§23.1 step 5).
 //
 // Custody is the stake lock (FEDERATION.md, the owner 2026-09-11): the player's

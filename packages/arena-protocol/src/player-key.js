@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S KEY COMES FROM THE PLAYER'S SEED, AND THE PLAYER CAN CHECK IT.
 //
 // Section 24 (v4.6.2, F2): "Under the stake lock the money returns to

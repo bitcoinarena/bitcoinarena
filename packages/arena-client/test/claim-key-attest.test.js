@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLAIM KEY A LOCK MAY NAME (v4.6.2 §23.1 step 0, F3).
 //
 // "Once selected, the settlement signer nodes run a dealerless DKG for this round's

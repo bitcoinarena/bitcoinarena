@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §5A.3's three rulings of 2026-09-22: the slashing height, who was affected, and one round with
 // several slashed nodes.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TALLY: THE SECOND, MINIMAL TEST GAME (kanban #202, the owner 2026-10-07: "a round of a second, minimal test plugin opens,
 // replays and settles on the same nodes as nextblock").
 //

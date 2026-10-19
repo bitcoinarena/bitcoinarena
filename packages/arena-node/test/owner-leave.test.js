@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LEAVE WITHOUT BEING SLASHED (kanban #276 step 2): the owner signs Leave; from then the seat takes no new round and serves
 // the ones it holds - past their end and objection window, a paying one until its settlement is accepted; custody may go only
 // if the federation keeps its threshold without this guardian.

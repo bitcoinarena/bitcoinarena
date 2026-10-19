@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER PAGE'S CUSTODY CARD (kanban #471, the owner 2026-10-18: "if custody is setup later in the UI we need the same screens"): a node
 // without custody is told how to add it - "Add custody" or arena-install --add-custody opens the installer's custody screens and updates
 // the bond; a guardian shows its endpoint.

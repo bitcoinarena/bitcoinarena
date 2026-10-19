@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TRANSACTION FUNDED AND SIGNED BY THE WALLET AT A FEE RATE UNDER ITS OWN FLOOR.
 //
 // the owner 2026-10-12, "Mach das deutlich sparsamer": a 450-round RPS grid paid 21,000 sat at 1 sat/vB. Bitcoin Core's

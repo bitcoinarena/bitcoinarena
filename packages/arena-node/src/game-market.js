@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET ON A GAME AT A SEAT (kanban #362 feature 6; protocol 2026.0.6): THE NODE SIDE. A market round of a game market
 // (manifest.js `gameSource`) is decided by its source round's own signed result, never by an attestation (attested.js refuses
 // one for it). This is where a seat checks such a result, holds it, and settles the market on it:

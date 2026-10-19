@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 32 BYTES -> 24 WORDS -> THE SAME 32 BYTES, and a phrase that does not check is not a seed.
 //
 // The player writes these words down and has to get this wallet back, here or in any other tool. So the

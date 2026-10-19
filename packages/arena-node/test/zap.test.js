@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ZAPS AND TIPS (kanban #362 item 14, NIP-57): the request and receipt rules, the zap-taking Lightning address, the page's
 // client paying it, the receipt read back from the game's relay, and the developer's signed tip address beside a manifest.
 import { test } from 'node:test';

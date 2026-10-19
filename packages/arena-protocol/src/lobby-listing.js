@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SIGNER NODE'S SIGNED WORD ABOUT ONE ROUND IN ITS LOBBY (M3.3-34).
 //
 // A round is played by its committee at the committee's threshold - 2 of 2 on

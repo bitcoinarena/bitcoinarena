@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
 // slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role; kanban #314; 2026.0.3). Until now these were bound only
 // implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash

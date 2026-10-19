@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REGISTRATION RUNS NO CORE (kanban #328, spec §0A.6): truck-cores.js writes out what it would otherwise have to run a
 // core to know - the config hashes (config/game-config.js computes them from the cores' rule files), the truck's name and
 // its longest run - so a node importing nextblock's registration evaluates no core module in its own thread. Here, where

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OUTPUT KEY, ON THE REAL CURVE.
 //
 // `bond-script.js` does the hashing and refuses to do the one point addition,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LISTING'S ROW SIGNATURES, SIGNED OFF THE SEAT'S THREAD (kanban #197). A listed row is a BIP-340 signature of its
 // lobbyListingId (~3.2 ms each on the live testnet4 seats); a listing that names many rows not yet signed in its window
 // would hold the seat's loop for seconds. Here the messages (made on the seat's thread) cross to a worker, which signs

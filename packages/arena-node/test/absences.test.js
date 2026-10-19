@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT'S ABSENCE ATTESTATIONS (spec §23A.4, kanban #322): POST /absence takes them, the newest per peer and attester.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

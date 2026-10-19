@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLAIMS ON A HALTED FEDERATION'S ESCROW, AS THE ARBITRATION SET TAKES THEM (spec §23A.5 steps 2-4, RULED the owner
 // 2026-09-21, kanban #323): "The arbitration set opens a claim window of claim_blocks ... The client ... presents each unspent
 // note it holds for that federation, as it would present them to the federation itself ... A claim is valid if the note carries

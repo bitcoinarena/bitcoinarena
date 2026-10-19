@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RELEASE IS OURS ONLY WHEN SIGNED (kanban #471 A.3, ruling 6): SHA256SUMS verifies with the release key, and the asset is the file
 // its line names. Measured 2026-10-18 on a 0.1.0-test.1 Linux x64 asset signed by tools/release/sign.sh: verified, a changed byte refused.
 import { test } from 'node:test';

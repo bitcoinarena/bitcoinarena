@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 9, SIGNED BY ITS DEVELOPER (kanban #447, the owner 2026-10-17: "Don't forget past orders also for the
 // desktop view and mobile. Shows round (human readable name eg 18:45-19:00), result, stake, p/l"): version 8 in every term, with its new
 // client - past orders - beside version 8's and the older ones, so any of them runs a round of it. Parent: version 8.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// Protected by LICENSE section 2: no copy or fork may change the network id or the protocol developers' donation set here.
 // 22A: THE PLAYER'S DONATION, WHICH GOES TO A SET AND NOT TO AN ADDRESS.
 //
 // "A donation goes to a set of recipients with declared shares, not to one

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE THE CLIENT LEARNS TO TALK, AND WHO GETS TO DECIDE IT.
 //
 // Before this, the answer was `BLWP_NODE`: a global written into the page.

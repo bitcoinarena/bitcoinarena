@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOARD AFTER A ROUND, AND IT DECIDES NOTHING.
 //
 // 0.11: "Derived from signed final protocol results. It may show pseudonym,

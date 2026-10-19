@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A JOIN OF ANOTHER ROUND CLOSES THE SESSION ON THE ONE BEFORE (the owner 2026-09-18 18:00).
 //
 // Measured in two real browsers: pressing PLAY again joined the next round at the page's level - both tabs on one

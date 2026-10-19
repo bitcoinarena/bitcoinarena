@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SECTION 13C'S NO-QUORUM RULE, ON ONE NODE.
 //
 // "If, after the result window, no result has 5-of-7 signatures: if the

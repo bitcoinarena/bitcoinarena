@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE SERVES A CHAIN ONLY WHEN IT WAS GIVEN ONE.
 //
 // The join URL names four things and the daemons used to publish one of them.

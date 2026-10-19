@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * POST A PUBLISHED GRID'S ROUNDS FROM ITS FILE (kanban #344): the contracts the keeper saved at publication
  * (paid/rps-grid-<txid>.json), each round still at least LEAD_MS from its start, to every seat - a few at a time, a

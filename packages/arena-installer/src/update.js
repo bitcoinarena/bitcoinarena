@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN EXISTING NODE UPDATED IN PLACE (kanban #471 part E, slice 3; the owner 2026-10-18: "also supports updating an existing node that
 // applies, updates and supports existing settings and doesn't break it").
 //

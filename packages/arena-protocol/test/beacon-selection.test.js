@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH BLOCK SEEDS A COMMITTEE, AND WHY IT CANNOT BE THE TIP.
 //
 // 5A.5 (spec v4.6.2) names the beacon by TIME - the first Bitcoin block whose

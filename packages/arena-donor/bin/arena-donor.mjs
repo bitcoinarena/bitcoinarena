@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEV'S DONATION CLIENT (the owner 2026-10-03): one instance per dev, one directory each.
 //
 //   arena-donor init <dir> --label "dev a" [--lnddir D --rpcserver H:P]   makes the key (key.json, 0600) and donor.json

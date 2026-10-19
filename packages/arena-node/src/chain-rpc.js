@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE A NODE'S OWN CHAIN VIEW COMES FROM: its bitcoind, over RPC.
 //
 // The committee seed is a Bitcoin block hash published after `committee_time`

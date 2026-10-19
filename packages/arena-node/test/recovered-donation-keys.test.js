@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SETTLEMENT RECOVERED AFTER A RESTART INDEXES ITS DONATION-KEY OUTPUTS (kanban #152, the owner 2026-10-07). A seat restarted
 // between submitting a walk-away's settlement and finding it in the federation marked it ACCEPTED ("found in the federation
 // after this signer node was inside it") but indexed its donation-key payouts only from the plan kept in memory - gone with

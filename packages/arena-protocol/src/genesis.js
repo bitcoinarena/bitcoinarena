@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Canonical genesis_parameters and the network_id they produce.
 //
 // 27A.6: genesis is a block, not a word. 27A.4: network_id is the tagged hash

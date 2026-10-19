@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HUB'S RETURN CHANNEL (hub-return.js): once per new gateway that opened >= 100,000 sat to the hub, from the hub's own wallet only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

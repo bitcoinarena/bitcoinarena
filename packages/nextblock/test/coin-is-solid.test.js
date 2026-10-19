@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COIN STACKS ARE SOLID, AND THE FINISH IS STILL DRIVEABLE (the owner 2026-09-20 18:56).
 //
 // Photographed twice: the truck nose-deep inside a gold coin stack at the miner, the camera inside the coins.

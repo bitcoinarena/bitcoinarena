@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TWO PROVIDERS, OR NO ANSWER.
 //
 // Section 25.1 is normative about where a client's chain comes from: "block

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 const say = (m) => { if (typeof print === 'function') print(m); else console.log(m); };
 const view = new DataView(new ArrayBuffer(8));
 function digest(fn, n) {

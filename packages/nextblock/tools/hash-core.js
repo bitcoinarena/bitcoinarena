@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // sim_wasm_hash: sha256 over every core source file, sorted by path.
 //
 // The Round Contract's field keeps its historical name but means this. Sorted

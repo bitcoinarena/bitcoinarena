@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ENDPOINT OF A CARRIED BOND (kanban #209, measured 2026-10-10 05:35Z: a paid join on testnet4 was refused at the
 // session - "no proven endpoint: the bond output commits to a different advertisement").
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT BONDED ON TESTNET4 ITSELF IS REACHED AT THE PLAYER'S DOOR (kanban #376, the owner 2026-10-16 06:24Z on his phone, live UI 143:
 // "Not joined PAID · 100 sats round e8003e9e: no proven endpoint: that transaction has no dust output to BOND_MARKER"). The door,
 // `discover`, proved the seat's bond with acceptAdvert and never told it the round's network, so acceptAdvert looked for REGTEST's

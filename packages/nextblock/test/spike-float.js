@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Spike B, part one: is plain floating-point arithmetic identical across
 // engines, once the transcendental library is out of the picture?
 //

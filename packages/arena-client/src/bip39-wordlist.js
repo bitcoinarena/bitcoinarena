@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BIP-39 ENGLISH WORDLIST, 2048 WORDS, TAKEN AND NOT TYPED.
 //
 // SOURCE: the reference list from bitcoin/bips `bip-0039/english.txt`, copied out of Trezor's

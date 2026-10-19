@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SIGN NEW GAMES AND MARKETS IN THE OWNER AREA (kanban #276 step 4): the page's signer gives the same bytes as the developer's
 // command-line client (arena-donor signManifest) for the same body and key; the key is the owner's, from the 24 words.
 import test from 'node:test';

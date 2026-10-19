@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BADGES ON NOSTR (kanban #362, PLATFORM-RESEARCH item 13): a seat signs NIP-58 events - one Badge Definition (kind 30009) per
 // catalogue badge, a Badge Award (kind 8: an `a` tag 30009:<seat>:<d>, a `p` tag the player's x-only identity key) per badge
 // earned - each id NIP-01's hash and each signature BIP-340 by the seat's key. An award is issued once, across a restart; a

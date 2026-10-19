@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLUGIN STORE (kanban #276 step 5, the owner 2026-10-09: "See what other nodes host. Install it. Always scan for malicious
 // code before install"; 2026-10-10: "games can be downloaded from other nodes"): a seat hands a hosted game over as a package;
 // another seat's owner installs it - its manifest, donation set and every file checked byte for byte, its code scanned -

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAID ROW A FUNDED SEAT READS IS THE ROUND IT CAN STILL ENTER (kanban #121, the owner 2026-10-05: "A funded seat reads one
 // lobby row before it pays. That row is the round it can still enter. It is not the round after next."). The playtest of
 // 10-04 13:45 saw the round after next ("closes 1:52"); measured 10-05 01:30-01:33Z on 0.0.2740 with a seat holding 100 sat,

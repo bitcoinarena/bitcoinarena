@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER AND THE COMMITTEE DRIVE ONE GROUND, AND NOBODY IS TOLD WHAT IT IS.
 //
 // Two two-Chrome looks disagreed and both were honest. 19:27 measured each

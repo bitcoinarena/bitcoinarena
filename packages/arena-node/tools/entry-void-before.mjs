@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ENTRY_VOID (§16), MEASURED BEFORE ANY CODE: what the node records today when
 // a joined, locked player's first mark reaches both signer nodes in time, and when it
 // reaches only one (the other signer node down at the start). Two in-process signer nodes of

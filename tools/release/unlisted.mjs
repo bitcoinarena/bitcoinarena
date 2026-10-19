@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RELEASE FOR NODES ONLY (kanban #505, the owner 2026-10-19: "Publish it on a but unlisted for now, only nodes see it. Later it's going to be
 // on public GitHub"): each asset of <dir> split into pieces under Cloudflare Pages' 25 MiB file limit, written beside SHA256SUMS and its
 // signature into <page>/release/u/<folder>/v<version>/ - a path no page links; the signed latest.json names it (latest.mjs's 5th argument).

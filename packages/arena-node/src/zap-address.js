@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * A LIGHTNING ADDRESS THAT TAKES ZAPS (NIP-57; kanban #362 item 14).
  *

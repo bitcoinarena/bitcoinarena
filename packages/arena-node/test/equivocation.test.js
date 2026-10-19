@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SECTION 13B: THE PLAYER WHO SIGNED TWO WORLDS AT ONE TICK.
 //
 // "A player who publishes two different checkpoints for the same

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THE DAEMON DOES WHEN A ROUND CLOSES.
 //
 // Everything under it was already built and nothing called it: the pool, the

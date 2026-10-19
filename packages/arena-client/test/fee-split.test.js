@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE 10% ON A KNOWN STAKE (kanban #205, §0A.8 and §22A, RULED the owner 2026-10-06/07): out of the stake the player chose,
 // 5% to the nodes - mandatory, the entry's fee lock, three equal pools of 5/3 % (two halves when no guardian is eligible)
 // - and a donation of 0-5% (default 5%), half to the protocol devs (the network's set) and half to the game dev (the

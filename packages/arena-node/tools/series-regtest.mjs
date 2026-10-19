@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE REFUSES WHAT A SERIES DOES NOT DERIVE, AS A PROCESS (the owner 2026-09-29, the accepted series sequence, step 3):
 // "Private regtest: bitcoind on 30601, nodes on 41221+, two main.js processes, one series. Accept a genuine round i. Refuse
 // a moved window, index 960, an id that is not the hash, and an entry, a lock, and a settlement commit that name such a

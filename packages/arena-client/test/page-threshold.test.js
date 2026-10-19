@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE DEALS A STAKE AT THE ROUND'S THRESHOLD (M3.3-26, item 23 folded in).
 //
 // The page dealt `needed: settlementSlots` - 7 of 7 on seven signer nodes, which the

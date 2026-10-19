@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CURVE THE PROTOCOL PACKAGE REFUSES TO CARRY.
 //
 // `packages/protocol` does the hashing and refuses the one point addition,

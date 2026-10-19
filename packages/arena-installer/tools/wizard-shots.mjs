@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // #471: the wizard, step by step, for screenshots. Real: the Bitcoin Core test (this machine's testnet4 node), the direct reach check
 // (the live seats), the seed, the owner binding, a real seat process started from the settings the wizard wrote (on a one-block fake
 // bitcoind, so no seat reads the real chain here), the owner login it checks. Faked so nothing is installed into this machine's

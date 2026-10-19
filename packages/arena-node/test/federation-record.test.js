@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FEDERATION RECORD (spec §23A.1 / §23A.4, kanban #321). The status bands exactly as §23A.1's table for 10, 7 and 4
 // guardians; the record's bytes and id; and seven guardian seats (federation-records.js) signing one record over the
 // census: all seated -> OPEN with 7 signatures; one guardian saying it leaves -> DRAINING; two -> CRITICAL; the seat then

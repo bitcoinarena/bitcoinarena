@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COMMITTEE'S FORFEIT OF ONE STAKE LOCK (FEDERATION.md, rehearsal step 2).
 //
 // A forfeit is a BIP-340 signature by the lock's claim_pk over its contract id

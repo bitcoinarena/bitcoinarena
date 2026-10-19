@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §15 THE WALK-AWAY, MEASURED (read-only probe, M3.3-34's ENTRY_VOID piece): a
 // player is joined at both signer nodes of a 2-of-2 - entry, handout and stake lock
 // committed (or a free round) - and then:

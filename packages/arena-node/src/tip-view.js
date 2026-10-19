@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CHAIN A WINDOW IS READ ON FOLLOWS THE TIP (testnet4 2026-09-30, the first paid series round fbd8294e).
 //
 // Measured: the round closed FAILED, all 7 signer nodes agreed and posted, and the settlement never came - 17 min past

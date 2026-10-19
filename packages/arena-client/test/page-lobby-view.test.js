@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOBBY ROW UNITY DRAWS, AS THE PAGE HANDS IT OVER (kanban #43, the owner 2026-10-06: "the lobby row must not read as if a
 // round lasted 2 minutes"). index.html's lobbyViewRow is lifted out of the page by its text and run as it is. Each row
 // carries startS - whole seconds until the round starts, 0 once it has started - and leftS, the seconds until its entry

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The truck under fire, laid beside csharp-infantry.json's `courier` pass.
 //
 // That pass parks a truck at x=0, z=0 and leaves it there for ninety seconds,

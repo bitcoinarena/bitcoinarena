@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SCALAR TEMPLATE'S ROUND, SETTLED BY A SEAT (2026.0.8, kanban #362): the table the settlement, the stake-share handout and
 // GET /outcome all read (game-market.js attestedTable) is paid between THE ROUND'S bounds, never the template's.
 import { test } from 'node:test';

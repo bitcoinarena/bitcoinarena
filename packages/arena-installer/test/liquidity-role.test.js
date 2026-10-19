@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIQUIDITY PROVIDER ROLE IN THE INSTALLER (kanban #494, §23A.10): it needs LND (the Lightning step) but no federation or bond rules;
 // its deposit (5 x L = 500,000 sat on testnet4) is part of what the node's wallet must hold; the agent sends it to LND once.
 import { test } from 'node:test';

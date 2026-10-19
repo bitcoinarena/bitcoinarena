@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SEVERAL NODES ON ONE MACHINE (kanban #495, the owner 2026-10-18: "3 macOS os native nodes newly installed via the installer"). The
 // installer assumed one node per machine: fixed service names (arena-node.service, io.bitcoin-arena.node, the task "Arena node")
 // and fixed ports (LND 9735/10009/10080, the gateway 8476, Tor 19050/19051, the seat 8470, the chain bridge 8471, the liquidity

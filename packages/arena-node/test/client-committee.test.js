@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT BUILDS THE COMMITTEE ITSELF (kanban #296, spec 5A.6: "a client MUST NOT take a census, a committee or an
 // endpoint on the word of any API"). Measured on the seat's own fixture chain: the census evidence a seat hands over
 // (Roster.censusEvidenceFor, GET /census), checked by the client against headers alone - every bond proven, rebuilt and

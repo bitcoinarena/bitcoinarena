@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EACH NODE CHOOSES WHICH GAMES IT HOSTS - THE NODE HALF (kanban #204, §0A.4, comment 756; the owner 2026-10-07: a node
 // whose advertisement names a game it does not host refuses to start, by name).
 //

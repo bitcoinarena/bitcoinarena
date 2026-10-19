@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RESERVES OF A DRAINED FEDERATION MOVED TO A HEALTHY ONE (§27A.9.2, kanban #397, decision A): two fake federations X and Y, seven
 // guardian seats each, in one process - X's 5-of-7 pays an invoice whose incoming contract only Y's 5-of-7 reserve key can claim, and Y's
 // 5-of-7 claims it into a reserve output. the owner's tests: a draining federation moves exactly once, an open or halted one does not, the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §15 AT THE DOOR, NEVER A REFUND (the accepted series sequence, step 5, the owner 2026-09-29): in a lock round with a winner,
 // a seated player whose stake is locked and who sends no first mark is FORFEIT 0 at both signer nodes at the door, never
 // ENTRY_VOID - and at the round's settlement that stake lock is claimed with the losers', not left to expire back.

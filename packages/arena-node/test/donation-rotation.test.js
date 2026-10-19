@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROTATION, ON THE REAL CURVE.
 //
 // `packages/protocol` carries no curve, so its own suite checks 27A.4's rules

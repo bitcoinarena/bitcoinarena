@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // NEXTBLOCK'S MANIFEST VERSION 4, SIGNED BY ITS DEVELOPER (kanban #397 slice 5, the owner 2026-10-16: "Go" on (A) - a game version decides
 // an item's terms): version 3 in every term - its cores, its clients, its items (the larger truck, 500 sat) - requiring protocol
 // version 11, so its items sell on the protocol reserves' terms (nodes 40 %, reserves 20 %, the developers 40/30/20/10/0 %).

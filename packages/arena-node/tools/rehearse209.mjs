@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE MIGRATION, REHEARSED ON A REGTEST FEDERATION (kanban #209 step 2, the owner 2026-10-08): what the testnet4 cutover will
 // do, end to end, before anything of it touches testnet4. Driven by rehearse209-regtest.sh after the patched fork's
 // federation is up (federation-hold-probe's setup: 4 guardians, 3 of 4, two gateways); the arena paid round runs after it

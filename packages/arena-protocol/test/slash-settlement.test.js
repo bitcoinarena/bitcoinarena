@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3 ROW 4: A SETTLEMENT ACTION WITHOUT THE AUTHORITY IT NEEDED.
 //
 // "Settlement action without the required 5-of-7 result and payout signatures

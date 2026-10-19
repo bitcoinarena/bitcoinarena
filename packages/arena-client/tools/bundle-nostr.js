@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Bundles the Nostr login (nostr/nostr-login.js, kanban #277) into one script the template loads ONLY when a player picks
 // "Login with Nostr" (window.ARENA_NOSTR): nostr-tools 2.25.2 (pinned) with its noble/scure dependencies. Kept apart from the
 // client bundle, which carries no crypto and no npm code; this file never touches a round's money - it hands the page a seed.

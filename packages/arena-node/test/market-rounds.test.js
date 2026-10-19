@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUNDS THAT TOOK ORDERS HERE LATELY (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and still no
 // closed orders"; "Have the open orders from the nodes not from local storage"): GET /market-rounds names them - newest first, at most
 // 200, at most 2 days back - so a page reads its player's own orders back from their books, closed rounds too.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WIZARD'S STATE, ON DISK (kanban #471 step B.4: "the wizard can be left and resumed; every step's state is kept on disk").
 //
 // One directory holds everything the node is: the wizard state (state.json), the node's settings (arena.conf, what its services start

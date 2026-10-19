@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // NEXTBLOCK'S MANIFEST, SIGNED BY ITS DEVELOPER WITH THE DEV CLIENT (kanban #202, the owner 2026-10-07 15:40; moved here from
 // arena-donor/bin by #203: the body is nextblock's, so the step is the game's, and the engine imports no game). It calls the
 // dev client's signer (arena-donor/src/manifest-sign.js) with the game developer's key, held in the dev client's own

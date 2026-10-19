@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SOONEST ROUND WHEN NOTHING MUST BE DEPOSITED FIRST (the owner 2026-10-03: "I always have to wait for the next round that
 // starts in XX minutes"): a funded wallet's paid row is the soonest series round with 15 s of entry left; a wallet that must
 // deposit first keeps the 90 s lead. The next round after a run skips one about to close.

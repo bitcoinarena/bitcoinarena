@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE DOES NOT SIT A ROUND AGAINST A FEDERATION THAT CHARGES A BASE FEE (§22A, FEDERATION.md item 4).
 //
 // The spec's own words: "The 2% stays. Fedimint's own base fees are 0: the federation runs with

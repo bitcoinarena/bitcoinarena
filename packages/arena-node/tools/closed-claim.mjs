@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C, §23.2) ON A REAL FEDERATION.
 // Run by outage-regtest.sh with OUTAGE_SCRIPT=closed-claim.mjs.
 //

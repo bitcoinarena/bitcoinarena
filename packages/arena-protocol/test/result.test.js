@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PLAYER RESULT, SECTION 13.
 //
 // "Each committee node independently replays the player's canonical transcript

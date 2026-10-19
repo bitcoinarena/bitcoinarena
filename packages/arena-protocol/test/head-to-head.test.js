@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HEAD-TO-HEAD ROUNDS (kanban #233): the manifest's third result type, the entry's hidden move, its reveal, and every
 // entry's result decided over all the reveals - mapped onto the engine's payout rule so settlement does not change.
 import { test } from 'node:test';

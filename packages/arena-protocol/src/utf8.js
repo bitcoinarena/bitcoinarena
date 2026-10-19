@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // UTF-8 in plain JavaScript.
 //
 // TextEncoder and TextDecoder are Web APIs, not ECMAScript. Node and browsers

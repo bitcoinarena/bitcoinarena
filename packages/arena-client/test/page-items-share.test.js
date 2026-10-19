@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE IN-GAME ITEMS' DEVELOPERS' SHARE (kanban #377, the owner 2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game devs (25/25)
 // but are fully optional. There is a screen in settings called advanced settings which has two select boxes, the existing donation
 // dropdown and a new one for ingame options: 50% 40% 30% 20% 10% 0%. The price shown in the buy screens is this dynamic, if the ingame

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOCK CLIENT'S ANSWER, READ INTO AN ENTRY'S OUTPOINT AND A SIGNER NODE'S CONTRACT (W1a glue).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SERIES PUBLISHER'S FEE, PROVEN AT THE SEAT (§5A.5, kanban #304; 2026.0.3): POST /series-publication { series, tx, parents }. The tx
 // must be the series' first confirmed publication on the seat's own chain, its parents must prove its fee; then the seat keeps it and
 // answers what the publisher is paid back (min(fee, 10,000 sat)). Anything else is refused by name.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HALT, PROVEN BY THE SEATS (spec §23A.5 "How a halt is proven, and what it slashes", RULED 2026-10-14 on the owner's delegation;
 // kanban #323). A federation that has lost 2f + 1 cannot sign for itself - rehearsal 17 measured it: with two of four guardians
 // gone neither a HALTED record nor the second abandonment proof reached three signatures. So the census seats attest it:

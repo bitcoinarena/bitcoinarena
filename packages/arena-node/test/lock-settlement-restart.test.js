@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W6 SPLIT OUT OF lock-settlement.test.js (2026-09-23) so each file runs inside the 180 s cap: the restart cases
 // grew a send plan each when a paid winner came to name a Lightning address.
 // W4: THE LOSER'S STAKE LOCK IS CLAIMED INTO THE ROUND'S ONE SETTLEMENT, AND THE

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S GATEWAY AT ITS PUBLIC ADDRESS (kanban #471 slice 5, spec §23A.9): with ARENA_GATEWAY_PORT the seat carries /gateway/...
 // to the gateway on this machine - method, path without /gateway, query, body and the answer as they are - and says so when it is down.
 import { test } from 'node:test';

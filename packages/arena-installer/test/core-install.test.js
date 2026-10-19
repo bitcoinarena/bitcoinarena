@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN CORE INSTALLED BY THE WIZARD (kanban #471 ruling 8): the plan, a refusal when the disk is too small, the install with a service
 // per network, the sync's progress with an ETA over a sliding window, and - once testnet4 is synced - the chain step saved by itself.
 // Measured 2026-10-18 on the test host: Bitcoin Core 31.1 downloaded, checked (b80d9c3e...) and unpacked in 5.8 s; a fresh pruned

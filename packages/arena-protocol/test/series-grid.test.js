@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GRID SERIES (kanban #293, the owner 2026-10-12, S: an RPS grid published as one short series per table): lead >= 45 min,
 // any start, at most 24 h of rounds (the owner 2026-10-12 ~09:55Z; 30 min before), its own entry window; `grid`, period and count in its id; every round derived.
 import { test } from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE ON A VERSION-11 ROUND (§27A.9, kanban #397 slice 3): the nodes' fee is 4 %, the developers' 4 % and the reserves' 2 % are
 // mandatory and leave in the lock transaction - the developers' over their sets, the reserves' to the federation's reserve key,
 // which the page takes only when at least five of the round's signer nodes name the same one.

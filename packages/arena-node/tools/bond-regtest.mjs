@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ORACLE FOR `bond-spend.js`, AND THE ONLY ONE THIS TREE HAS.
 //
 // There are no BIP-341 vectors here offline, so the way to know a witness is

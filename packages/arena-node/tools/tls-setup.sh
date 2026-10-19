@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # A NODE'S CERTIFICATE, AS A SETUP STEP (spec §25.3, kanban #335: "A browser on an HTTPS page may not open ws:// - mixed
 # content is blocked - so every node serving players needs a valid certificate ... Node software SHOULD make certificate
 # provisioning a first-class setup step"). Gets a certificate for the node's public host name and prints the two lines the

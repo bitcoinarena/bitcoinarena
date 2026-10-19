@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE OF A PAYING FEDERATION ROUND, a player's stake dealt and joined, and a
 // federation port that holds locks by outpoint - shared by signer-node-lock.test.js
 // (W2) and lock-client.test.js (W1a). Moved here unchanged, except that the

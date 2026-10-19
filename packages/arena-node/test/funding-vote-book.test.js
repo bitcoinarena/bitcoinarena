@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE VOTE AS A SEAT DECIDES IT (§27A.9.3 stage 2, kanban #397 slice 7): opened only by a signal the seat decided passed; the census
 // taken once at the vote's start; undecided while the last voting block is 5 deep, decided at 6, written once - later votes and a
 // later census do not move it - and reopened only when the counted last block is reorged away. The short schedule (a 1-block signal,

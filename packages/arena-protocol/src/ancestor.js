@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NETWORK BEFORE THIS ONE, AS ITS CHAIN STILL CARRIES IT (spec 0A.9, §27A.8.3; kanban #209, the owner 2026-10-08).
 //
 // Every wire tag moved from BLWP/v1/... to ARENA/v1/... (kanban #207). What was already on Bitcoin did not: testnet4's

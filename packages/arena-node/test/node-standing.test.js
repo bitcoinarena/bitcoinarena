@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE THAT IS FALLING BEHIND SAYS SO (§5A.10B, kanban #310): own weight, brackets served, headroom against the bracket now common; a
 // warning while headroom is still above 1 at the 1.5x margin, with the capital that restores it; a falling share told apart, not urgent.
 import { test } from 'node:test';

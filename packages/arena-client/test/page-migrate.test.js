@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NOTES FOLLOW THE SUCCESSOR (§23A.6 step 3, kanban #325): a wallet in a DRAINING federation moves everything it can
 // send to the successor named by the verified record - in chunks, each a stock send paying the successor's receive invoice,
 // no press; nothing moves on an OPEN record, a record naming no successor, or a wallet that is not the successor's; a failed

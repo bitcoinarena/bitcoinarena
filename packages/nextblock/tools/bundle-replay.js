@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY PAGE'S CORE (the owner 2026-09-25 18:39: "the page ... steps the core the round names. No second simulator").
 //
 // The same smallest bundler as tools/bundle.js (tools/concat-bundle.js), walked from adapter.js - the one face a seat

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A COMMITTEE MAKES ITS OWN KEY, AND NOBODY EVER HOLDS IT.
 //
 // The curve half of item 14. `arena-protocol/test/dkg.test.js` measures the epoch id

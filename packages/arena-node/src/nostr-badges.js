@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BADGES ON NOSTR (kanban #362, docs/PLATFORM-RESEARCH.md item 13): the badges protocol badges.js says a player earned, as
 // NIP-58 events signed by this seat's node key - beside its signed round results (nostr-results.js), on the same clock.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CUSTODY FIELD HAS ONE VALUE, AND BYTE 0 IS NOT IT (RULED, the owner 2026-09-22 22:59, §23.6).
 //
 // "THRESHOLD_LN does not exist, past rounds included, no decode-only value ... A round that names

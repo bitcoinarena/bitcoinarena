@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // UP/DOWN'S ORDER HISTORY, AS ITS CLIENT SHOWS IT (kanban #450, the tests of #447 - the owner 2026-10-17: "also show closed orders with
 // the history with how much you won or lost, and also show there if it's still pending (10 minute delay)"; "Don't forget past orders
 // ... round (human readable name eg 18:45-19:00), result, stake, p/l"). The client's own <history> block, cut out of

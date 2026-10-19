@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * SIGN THE TEST NETWORKS' DONATION SETS, ONCE, OFFLINE (M3.2 item 6e; the owner
  * 2026-09-13: the donation authority signs with Ed25519).

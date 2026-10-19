@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE KNOWN-GOOD FEDERATIONS (spec §23.6, kanban #318): the page's own list, like the known games - federation 337ae01a on
 // testnet4 and the regtest test federation are on it, any other id is not. Adding one is a reviewed code change.
 import { test } from 'node:test';

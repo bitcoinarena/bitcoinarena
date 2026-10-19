@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): the object, its front, and the result a node makes from its samples.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

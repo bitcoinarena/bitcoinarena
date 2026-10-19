@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROVEN FREE BALANCE (§23A.10, kanban #494): a provider's coins, each signed by its address key (Bitcoin signmessage, as LND's
 // SignMessageWithAddr makes it) for this provider's node; a guardian counts a coin only when the signature is good and its own chain
 // shows it unspent paying that address, at the chain's amount. The claim's freeSats alone weighs nothing.

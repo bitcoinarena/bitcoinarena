@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARRIVAL CARD'S FACTORS ARE THE CORE'S (the owner's playtest 2026-09-25 18:29). The shot: DELIVERED at tick 4596,
 // SCORE +137, and the card read "load 0.85 x danger 1.00 x speed 1.50 x 1000" - 1275. The card now prints factors formed
 // from the core's three score words by Unity's CoreScoreFactors (unity-proto/Assets/Scripts/Cargo/RunScore.cs). This file

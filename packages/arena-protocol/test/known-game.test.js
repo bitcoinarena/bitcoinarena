@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE KNOWN-GOOD LIST HOLDS THE GAME THIS TREE BUILDS, WITH THE CORE AND CONFIG IT BUILDS (§5, §0A.6; kanban #202).
 //
 // The list is generated from each game's signed manifest (`node packages/arena-protocol/tools/known-games.js`), and this

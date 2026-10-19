@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A BITCOIN TRANSACTION, READ WELL ENOUGH TO FIND AN ENDPOINT IN IT.
 //
 // Measured against real mainnet transactions, fetched once and written down

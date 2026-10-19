@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUND'S CLAIM KEY IS MADE BY ITS OWN SIGNER NODES - the shipping path, nothing
 // injected (v4.6.2 §23.1 step 0; W5 step 1).
 //

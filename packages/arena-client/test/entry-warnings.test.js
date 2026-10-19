@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WARNINGS BEFORE ENTRY (spec §18A.7 / §22A, kanban #316): the engine's from the contract, the game's from the seats (known
 // codes only), each a sentence; the page's gate shows them and takes the player's answer before anything is locked.
 import { test } from 'node:test';

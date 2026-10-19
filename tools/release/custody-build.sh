@@ -1,4 +1,6 @@
 #!/opt/homebrew/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # #471 slice 5: the custody binaries for every release system, built on the test host (the owner 2026-10-18: "use the mac to compile things
 # as much") from the patched fork 76012ad9119 (the copy in src/: crunchy 0.2.4; gatewayd without jemalloc on Windows): stripped, no
 # debug info. Linux against glibc 2.31 (zig), so older systems run it; macOS natively for both architectures; Windows through zig.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PEER THAT REFUSES THE ENTRY IS NOT ASKED AT EVERY BATCH (kanban #376; the owner 2026-10-16: "Lower the amount of concurrent
 // connections and network load"). Measured on live UI 154: three fed2 peers answered the entry 400, and the client sent them every
 // batch and the entry again after each "no such entry" - a refused POST /entry every 1-2 s for the whole round.

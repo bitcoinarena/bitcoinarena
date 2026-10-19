@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLED NODE'S START (kanban #499): node src/run.js <home>/arena.conf - the one argument its service names. The file's settings
 // become the seat's (arena-conf.js confToRun), then the seat starts as `main.js <port> <database>` would. A file that does not read
 // stops the start with the line that is wrong.

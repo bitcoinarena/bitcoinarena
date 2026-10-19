@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CENSUS TOO SMALL TO HOLD A ROUND SAYS SO.
 //
 // `census_min_nodes` is a genesis parameter - "everything a network cannot

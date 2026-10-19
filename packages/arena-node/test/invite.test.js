@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDIMINT INVITE NAMING EVERY GUARDIAN (src/invite.js): byte for byte the stock one-guardian invite of the testnet
 // federation, and one naming all seven reads back as all seven.
 import { test } from 'node:test';

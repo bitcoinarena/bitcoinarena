@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # A GATEWAY'S E-CASH IN THE FEDERATION, PEGGED IN FROM ITS OWN LND'S ON-CHAIN WALLET (item 5, measured 2026-09-28: both
 # testnet gateways held 0 msat in the federation, and an LNv2 gateway funds a player's incoming deposit from its own
 # e-cash - gateway B refused the first paid deposit "Error relaying incoming lightning payment err=Insufficient funds").

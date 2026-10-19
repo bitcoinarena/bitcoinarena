@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL RESERVES ON BITCOIN-ARENA.IO (kanban #397, the owner 2026-10-17: "Find a prominent place on the website under the
 // USPs to show the reserves ... Under the fees"): the homepage's own script asks the testnet's nodes (daily.json) for /reserves
 // and shows the total only when five name the same one; the games screen no longer carries the reserves box.

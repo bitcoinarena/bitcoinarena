@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE TESTNET4 DONATION SET WITH REAL RECIPIENTS (LNURL-0822, the owner 2026-10-02: "The donation set on testnet4 must use real
  * LNURL addresses. Not a placeholder. Not an address nothing reachable can pay. Use the local testnet4 LNDs").

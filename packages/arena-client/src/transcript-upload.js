@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RUN IS SAFE BEFORE THE VICTORY SCREEN (§13A "Client duty", kanban #315): "on delivery, the reference client uploads its complete
 // transcript to at least two committee nodes and, if configured, to an independent mirror before showing the victory screen. This is
 // what makes the veto work for a player who closes the browser immediately afterwards."

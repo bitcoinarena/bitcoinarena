@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # W5a ON A REAL FEDERATION: the player's refund after the stake lock's own
 # expiry, from a later session holding only the seed, and a withdraw over the
 # federation's listed gateway to the player's lnd - on the signer nodes' own claim key

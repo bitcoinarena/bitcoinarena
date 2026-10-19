@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 10, SIGNED BY ITS DEVELOPER (kanban #450, the tests of #447): version 9 in every term, with its
 // new client - the same past orders, its history logic in one block updown-client-history.test.js runs - beside version 9's and the
 // older ones, so any of them runs a round of it. Parent: version 9.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WINDOW CHAIN FOLLOWS THE TIP (src/tip-view.js; testnet4 2026-09-30, series round fbd8294e agreed, posted and
 // never final): a fake bitcoind whose chain grows and reorgs, and the view main.js hands `round.chainView`.
 import test from 'node:test';

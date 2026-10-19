@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ITEM ON THE RESERVES' TERMS (§27A.9.1, kanban #397 slice 5): a game version requiring protocol 11 sells its items for nodes
 // 40 %, the protocol reserves exactly 20 % to the federation's 5-of-7 reserve key, and the developers the buyer's 40/30/20/10/0 % -
 // and a record that leaves the reserves' share out, pays it short or long, or to another key, does not stand.

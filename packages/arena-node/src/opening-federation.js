@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT OPENING A ROUND NAMES THE OPEN FEDERATION WITH THE LOWEST LOAD (§23A.3: "A seat opening a round names the OPEN
 // federation with the lowest load among those its own bond qualifies it to serve; a creator who names another has the client
 // show why"; kanban #324 step 2). From a seat's /federations list (each federation's newest signed record: status, load):

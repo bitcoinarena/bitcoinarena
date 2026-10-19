@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROOT IS NOT PUBLISHED WITH THE 5A.3B TEMPLATE UNCHECKED.
 //
 // 5A.3's fourth criterion is that the output is "a bond output built to the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE COMMITTEE AND ONE KEY PER TABLE (kanban #293, the owner 2026-10-13 pick (c)): a v2 round of a game seated per table (RPS v2) draws on
 // its table's first round - its series' round 0 - so every round of the table has the same seed, the same draw and so the same claim
 // key; every other round (Up/Down, a v1 round, a round of no series) draws on itself, as before.

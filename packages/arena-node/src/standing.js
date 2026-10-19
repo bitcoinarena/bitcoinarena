@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE ONE ENTRY'S MONEY STANDS, FOR THE PLAYER'S PENDING LINE (WINDOW-10-SPEC, the owner 2026-10-01, §24): "The winnings,
 // or the stake coming back, show as pending the moment the player's result is PROVISIONALLY_FINAL - not when the
 // objection window closes and not when the payout table is final - with the amount and what they wait on: the window's

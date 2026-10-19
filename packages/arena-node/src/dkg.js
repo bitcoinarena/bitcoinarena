@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THIS NODE'S HALF OF MAKING THE COMMITTEE'S KEY, AND IT KEEPS ONE SHARE.
 //
 // M3.3 item 14. Measured before any of it (`dkg-dealer.test.js`): the dealing

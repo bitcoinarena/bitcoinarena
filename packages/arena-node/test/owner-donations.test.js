@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEV CLIENT IN THE OWNER AREA (kanban #276 step 3): what a seat verified for the protocol developers' set and for each
 // hosted game's developer set - in msat, per round and per UTC day - through GET /owner/donations, read from the seat's own
 // donation index (the rows settlements put there).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE POOL, SPENT ON A REAL CHAIN.
 //
 // `pool-spend.test.js` proves that BIP-340 accepts a witness five signer nodes

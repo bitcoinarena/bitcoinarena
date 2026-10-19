@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND THAT TAKES A STAKE MUST NAME A PUBLICATION RELAY, OR IT TAKES NO STAKE.
 //
 // Since P2 (v4.6.2 §13A) no result is FINAL until the round's settlement signer nodes

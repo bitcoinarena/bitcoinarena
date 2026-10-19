@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #329, spec §27A.7.3-§27A.7.6: the ballot counted on a seat's own chain (ballot-tally.js), the config it makes live
 // (GET /config), the rounds a seat serves under it (POST /round), and a repeal on its short schedule - all on fake chains.
 import { test } from 'node:test';

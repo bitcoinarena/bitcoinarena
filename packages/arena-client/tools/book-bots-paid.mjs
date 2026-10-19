@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BOTS THAT BUILD ORDER DEPTH WITH REAL WALLETS (kanban #236, the owner 2026-10-08: "A few bots simulate real bot behavior and
 // build order depth"; the winnings paid out, measured to the msat). On the test host's paid regtest Up or Down market
 // (market-series-regtest.sh, SERIES_GAME=updown): each bot is a browser context on the page - its own player wallet, funded

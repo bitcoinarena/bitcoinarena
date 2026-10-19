@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Everything the core is allowed to touch, and why.
 //
 // The cross-version measurement is the reason this file exists. Three engines

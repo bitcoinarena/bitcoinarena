@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BYTES C# READS, DRIVEN HERE.
 //
 // `blwp.jslib` is the file `node --test` cannot load, and that is not a small

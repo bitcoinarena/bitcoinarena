@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE §23.5 FEE'S HOLD STORE IS GONE FROM THE NODE (RULED the owner 2026-09-25: "the same dead hold-invoice record as the
 // hold-store cut. It does not stay so an old round can decode. Delete it.").
 //

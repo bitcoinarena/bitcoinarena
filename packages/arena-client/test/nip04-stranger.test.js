@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NIP-04 ENVELOPE AND A KEY IT WAS NOT SEALED TO.
 //
 // PRIORITIES: "client wallet-nwc's 'a third key opened an envelope' flakes

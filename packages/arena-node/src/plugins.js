@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GAMES THIS NODE HOSTS, AND THE CORE A ROUND IS REPLAYED BY (kanban #202, §0A.2-0A.6; M3; the owner 2026-09-15 08:03:
 // "the truck game is one use of the federated consensus network, not the network"; 2026-10-06: the engine is Bitcoin
 // Arena, a game is a plugin).

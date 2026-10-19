@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A STORE ON DISK FROM BEFORE THE SIGNER NODE RENAME KEEPS EVERY ROW (the owner 2026-09-15 20:32).
 //
 // The Daily's two signer nodes run on SQLite files made while a signing machine was called a seat:

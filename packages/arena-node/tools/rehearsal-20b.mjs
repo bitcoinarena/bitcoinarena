@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL 20b, THE SEAT'S OWN FOUNDING WIRING ON REAL GUARDIANS (§23A.2, kanban #320): as rehearsal 20, but each of the
 // six seats runs src/founding-seat.js - the trigger read off its held records (a DRAINING record at the trigger height), the seed the
 // block AFTER the trigger, taking part only while its own guardian's admin status names no federation (wsAdminStatus), and every

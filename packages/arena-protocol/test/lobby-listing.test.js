@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE'S SIGNED LOBBY LISTING (M3.3-34): one canonical encoding, every field
 // in the signed id, and nothing that is not a listing encodes as one.
 import { test } from 'node:test';

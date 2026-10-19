@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION ROUND'S STAKE FROM THE PAGE: THE INVOICE FIRST (the owner 2026-09-11).
 //
 // The page asks a node for the round's federation invoice and builds its

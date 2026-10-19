@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BALLOT READ OFF THE CHAIN, AND ACTIVATION (spec §27A.7.3, §27A.7.5, kanban #329), the second slice.
 //
 //   VOTES      every OP_RETURN output of a block whose push is a 77-byte "ARN" 'V' vote (ballot.js decodeVote), with the height and

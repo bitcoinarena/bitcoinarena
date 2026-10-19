@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TOR FOR THE NODE'S LIGHTNING (kanban #471, the owner 2026-10-18: "find a way to connect to it via a tunnel" / "connect via tor to the
 // other nodes as well"): Lightning peers speak their own protocol over TCP, which no web tunnel carries, and most nodes take no
 // connection (no open port, a dynamic address). So the node runs Tor and its LND runs hybrid: a permanent onion address others dial,

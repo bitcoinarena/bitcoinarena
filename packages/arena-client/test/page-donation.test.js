@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DONATION THE PAGE SIZES MONEY BY (kanban #187 item 2, plan comment 298, Go 2026-10-05). index.html's donationBps() is
 // lifted out of the page by its text and run as it is, on a fake window and sessionStorage: Settings keeps
 // arena.donation.settings (default 500 bps since kanban #205 - §0A.8's 5%, half protocol devs and half game dev - 0-500 in
