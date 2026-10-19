@@ -99,6 +99,12 @@ test('no string the player can be shown says seat: the page', () => {
   const hits = [];
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
   for (const js of scripts) for (const s of stringLiterals(js)) if (SEAT.test(s)) hits.push(`script: ${JSON.stringify(s.slice(0, 90))}`);
+  // AND EACH GAME'S PAGE PART (kanban #521): the code and markup lifted out of the page into packages/<game>/page/*-page.js
+  const games = new URL('../../', import.meta.url);
+  for (const g of readdirSync(games)) {
+    let names = []; try { names = readdirSync(new URL(`${g}/page/`, games)).filter((n) => /-page\.js$/.test(n)); } catch { continue; }
+    for (const n of names) for (const s of stringLiterals(readFileSync(new URL(`${g}/page/${n}`, games), 'utf8'))) if (SEAT.test(s)) hits.push(`${g}/${n}: ${JSON.stringify(s.slice(0, 90))}`);
+  }
   const visible = html.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<[^>]+>/g, ' ');
   if (SEAT.test(visible)) hits.push(`markup: ${JSON.stringify(visible.match(new RegExp('.{0,40}' + SEAT.source + '.{0,40}', 'i'))[0])}`);
