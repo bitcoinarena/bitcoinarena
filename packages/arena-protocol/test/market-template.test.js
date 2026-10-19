@@ -141,9 +141,9 @@ test('a template\'s rules, each refused by name', () => {
     'resolves within 31 days': [{ ...TEMPLATE, resolveWithinMs: 31n * 24n * 3600000n }, m, /resolve within 1 ms to 30 days/],
     'latest before earliest': [{ ...TEMPLATE, resolveWithinMs: 59999n }, m, /latest resolution \(59999 ms after entry close\) is before its earliest \(60000 ms\)/],
     'no market terms': [TEMPLATE, { ...m, marketTerms: undefined }, /names its market terms/],
-    'no required version': [TEMPLATE, { ...m, requiredProtocolVersion: undefined }, /requires protocol version 2026\.0\.4 or later/],
-    'requires 2026.0.2': [TEMPLATE, { ...m, requiredProtocolVersion: 2 }, /requires protocol version 2026\.0\.4 or later/],
-    'requires 2026.0.3': [TEMPLATE, { ...m, requiredProtocolVersion: 3 }, /requires protocol version 2026\.0\.4 or later/],
+    'no required version': [TEMPLATE, { ...m, requiredProtocolVersion: undefined }, /requires protocol version 4 or later/],
+    'requires 2026.0.2': [TEMPLATE, { ...m, requiredProtocolVersion: 2 }, /requires protocol version 4 or later/],
+    'requires 2026.0.3': [TEMPLATE, { ...m, requiredProtocolVersion: 3 }, /requires protocol version 4 or later/],
     'on a 15 min grid': [TEMPLATE, { ...m, roundPeriodMs: 900000n }, /runs on no grid/],
   };
   const said = {};
@@ -157,8 +157,8 @@ test('a template\'s rules, each refused by name', () => {
   assert.throws(() => encodeManifestBody({ ...BODY, resultType: RESULT_TYPE.REPLAY, cores: [{ hash: b32(1), configs: [b32(2)] }], runTicksMax: 10,
     payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4, minScore: 1, template: TEMPLATE, requiredProtocolVersion: 4 }), /only an attested game is a market template/);
   // A TEMPLATE UNDER A VERSION THIS BUILD DOES NOT SPEAK IS NOT A GAME IT HOSTS (manifestStands), as a top split
-  const v10 = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 13 });   // 12 is 2026.0.12 since kanban #460
-  assert.match(manifestStands(v10, { verify: verifyEd }).why, /is a market template under protocol version \?\.\?\.13, which this build does not speak/);
+  const v10 = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 17 });   // 13..16 are spoken since #460/#471/#494; 17 is not
+  assert.match(manifestStands(v10, { verify: verifyEd }).why, /is a market template under protocol version 17, which this build does not speak/);
   assert.equal(manifestStands(TPL, { verify: verifyEd }).ok, true);
   console.log('  refusals:', JSON.stringify(said, null, 1));
 });
@@ -242,7 +242,7 @@ test('a template round is accepted; a template round with no question, or a non-
   const nb = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
   assert.match(roundFitsManifest({ ...ROUND, gameId: gameIdOf(nb) }, nb).why, /game "nextblock" is not a market template/);
   // A TEMPLATE REQUIRES 2026.0.4: a round at version 3 cannot carry a question, and without one it is refused by the version
-  assert.match(roundFitsManifest({ ...plain, protocolVersion: 3 }, TPL, gid).why, /requires protocol version 2026\.0\.4/);
+  assert.match(roundFitsManifest({ ...plain, protocolVersion: 3 }, TPL, gid).why, /requires protocol version 4/);
 });
 
 test('the template bounds its rounds: no more outcomes than its maxOutcomes, a resolution time inside its window', () => {

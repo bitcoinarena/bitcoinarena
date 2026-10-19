@@ -132,14 +132,14 @@ test('the shares are 1 to 10 basis-point shares, non-increasing, summing to 1000
 
 test('a top split requires protocol version 4 or later, one this build speaks; no other rule names shares', () => {
   for (const v of [undefined, null, 1, 3])
-    assert.throws(() => encodeManifestBody({ ...SPLIT, requiredProtocolVersion: v }), /requires protocol version 2026\.0\.4 or later/);
+    assert.throws(() => encodeManifestBody({ ...SPLIT, requiredProtocolVersion: v }), /requires protocol version 4 or later/);
   assert.ok(encodeManifestBody({ ...SPLIT, requiredProtocolVersion: 8 }));
   // one past the newest version this build speaks (was a fixed 8, stale since scalar templates made 8 spoken - kanban #362)
   const next = Math.max(...SUPPORTED_PROTOCOL_VERSIONS) + 1;
   const tooNew = signed({ ...SPLIT, requiredProtocolVersion: next });
   const st = manifestStands(tooNew, { verify: verifyEd25519 });
   assert.equal(st.ok, false);
-  assert.match(st.why, new RegExp(`top split under protocol version \\?\\.\\?\\.${next}, which this build does not speak`));
+  assert.match(st.why, new RegExp(`top split under protocol version ${next}, which this build does not speak`));
   // shares on the curve, and the split on a market or a head-to-head game, are refused
   assert.throws(() => encodeManifestBody({ ...CURVE, payoutShares: [10000] }), /only a game paid by a top split/);
   assert.throws(() => encodeManifestBody({ ...CURVE, payoutShares: [] }), /only a game paid by a top split/);
@@ -160,7 +160,7 @@ test('a round fits a top-split game only at protocol version 4 or later', () => 
     rankNumerator: 3, rankDenominator: 4, minScore: 5 });
   const v3 = roundFitsManifest(round(3), m, id);
   assert.equal(v3.ok, false);
-  assert.match(v3.why, /requires protocol version 2026\.0\.4; that round runs 2026\.0\.3/);
+  assert.match(v3.why, /requires protocol version 4; that round runs 3/);
   assert.equal(roundFitsManifest(round(4), m, id).ok, true);
 });
 

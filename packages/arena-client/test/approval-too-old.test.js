@@ -7,7 +7,7 @@ test('the approval facts name each node left out for its protocol version, with 
   const f = { pending: false, operators: ['aa'.repeat(32)], both: 5, of: 7, operatorsPlaying: [], censusKnown: true };
   const words = approvalWords(f, [{ node: 'ab'.repeat(32), speaks: [1] }, { node: 'cd'.repeat(32), speaks: [] }]);
   console.log('  WORDS:', words);
-  assert.match(words, /left out, protocol too old: abababab \(speaks 2026\.0\.1\), cdcdcdcd \(speaks none\)$/);
+  assert.match(words, /left out, protocol too old: abababab \(speaks 1\), cdcdcdcd \(speaks none\)$/);
   assert.doesNotMatch(approvalWords(f, []), /too old/);
   assert.match(approvalWords({ pending: true }, [{ node: 'ef'.repeat(32), speaks: [1] }]), /pending \(§5A\.5\) · left out, protocol too old: efefefef/);
 });

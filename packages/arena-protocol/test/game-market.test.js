@@ -190,8 +190,8 @@ test('a game source rides in its manifest after its own marker: read back whole,
 
 test('a market on a game\'s rules, each refused by name', () => {
   const refusals = {
-    'below version 6': [{ ...BODY, requiredProtocolVersion: 5 }, /requires protocol version 2026\.0\.6 or later/],
-    'no required version': [{ ...BODY, requiredProtocolVersion: undefined }, /requires protocol version 2026\.0\.6 or later/],
+    'below version 6': [{ ...BODY, requiredProtocolVersion: 5 }, /requires protocol version 6 or later/],
+    'no required version': [{ ...BODY, requiredProtocolVersion: undefined }, /requires protocol version 6 or later/],
     'an attestor': [{ ...BODY, attestors: [b32(0xa1)], attestThreshold: 1 }, /names no attestors and a threshold of 0/],
     'a threshold of 1': [{ ...BODY, attestThreshold: 1 }, /names no attestors and a threshold of 0/],
     'no market terms': [{ ...BODY, marketTerms: undefined }, /names its market terms/],
@@ -220,7 +220,7 @@ test('a market on a game\'s rules, each refused by name', () => {
   const tooNew = signed({ ...BODY, requiredProtocolVersion: 17 });
   const st = manifestStands(tooNew, { verify: verifyEd });
   assert.equal(st.ok, false);
-  assert.match(st.why, /market on a game under protocol version \?\.\?\.17, which this build does not speak/);
+  assert.match(st.why, /market on a game under protocol version 17, which this build does not speak/);
   console.log('  FACTS (refusals):', JSON.stringify(said));
 });
 
@@ -278,7 +278,7 @@ test('which rounds name a source: a market on a game\'s round must (v6 or later)
   // A ROUND OF THE MARKET BELOW 6 IS REFUSED BY ITS REQUIRED VERSION
   const v5 = roundFitsManifest({ ...ROUND, protocolVersion: 5, sourceRoundId: undefined }, MARKET, MARKET_ID);
   assert.equal(v5.ok, false);
-  assert.match(v5.why, /requires protocol version 2026\.0\.6; that round runs 2026\.0\.5/);
+  assert.match(v5.why, /requires protocol version 6; that round runs 5/);
   // A SOURCE ON ANOTHER GAME'S ROUND: an attested market with attestors, and a replayed game
   const plainMarket = signed({ ...BODY, gameSource: undefined, attestors: [b32(0xa1)], attestThreshold: 1 });
   const other = roundFitsManifest({ ...ROUND, gameId: gameIdOf(plainMarket) }, plainMarket);

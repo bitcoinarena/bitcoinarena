@@ -4,13 +4,14 @@
 const LATEST_URL = 'https://testnet.bitcoin-arena.io/release/latest.json';
 const TTL_MS = 6 * 3600_000;
 
-/** Is version `a` newer than `b`? (major.minor.patch, then a release over its own pre-releases, then rc.N by N) */
+/** Is version `a` newer than `b`? Releases are 2026.xx.yy and a fix 2026.xx.yy.zz (the owner 2026-10-19), compared part by part (a missing
+ *  fourth part is 0: 2026.1.1.1 is newer than 2026.1.1); then a release over its own pre-releases, then rc.N by N (the older x.y.z-rc.N). */
 export function newerVersion(a, b) {
-  const parse = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$/.exec(String(v || '').trim()); return m ? { n: [+m[1], +m[2], +m[3]], pre: m[4] || null } : null; };
+  const parse = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.]+))?$/.exec(String(v || '').trim()); return m ? { n: [+m[1], +m[2], +m[3], +(m[4] || 0)], pre: m[5] || null } : null; };
   const x = parse(a), y = parse(b);
   if (!x) return false;
   if (!y) return true;
-  for (let i = 0; i < 3; i++) if (x.n[i] !== y.n[i]) return x.n[i] > y.n[i];
+  for (let i = 0; i < 4; i++) if (x.n[i] !== y.n[i]) return x.n[i] > y.n[i];
   if (!x.pre || !y.pre) return !x.pre && !!y.pre;
   const px = x.pre.split('.'), py = y.pre.split('.');
   for (let i = 0; i < Math.max(px.length, py.length); i++) {
@@ -23,7 +24,7 @@ export function newerVersion(a, b) {
 }
 
 /**
- * The reader: read(ownVersion) answers { checkedMs, latest: { version, tag, release, commit } | null, newer, why }. `verify(bytes, sigB64)`
+ * The reader: read(ownVersion) answers { checkedMs, latest: { version, tag, release, commit, assets, download } | null, newer, why }. `verify(bytes, sigB64)`
  * checks the release key's signature (the installer's release-verify.js; a node without it offers nothing).
  */
 export function latestReleaseReader({ url = process.env.ARENA_RELEASE_LATEST_URL ?? LATEST_URL, fetcher = fetch, verify, now = Date.now, ttlMs = TTL_MS } = {}) {
@@ -36,7 +37,9 @@ export function latestReleaseReader({ url = process.env.ARENA_RELEASE_LATEST_URL
       const [body, sig] = await Promise.all([get(url), get(`${url}.sig`)]);
       if (!verify(body, sig.toString('utf8'))) return { latest: null, why: 'the published newest release is not signed by the Arena release key' };
       const j = JSON.parse(body.toString('utf8'));
-      return { latest: { version: String(j.version), tag: String(j.tag || ''), release: String(j.release || ''), commit: String(j.commit || '') }, why: null };
+      // the assets' SHA-256 and where a node downloads them (kanban #505, auto update): both under the release key's signature
+      return { latest: { version: String(j.version), tag: String(j.tag || ''), release: String(j.release || ''), commit: String(j.commit || ''),
+        assets: j.assets && typeof j.assets === 'object' ? j.assets : {}, download: j.download && typeof j.download === 'object' ? j.download : null }, why: null };
     } catch (e) { return { latest: null, why: `the newest release could not be read: ${e.message}` }; }
   };
   return {

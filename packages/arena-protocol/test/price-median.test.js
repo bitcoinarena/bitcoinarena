@@ -43,7 +43,7 @@ test('protocol 5 is 2026.0.5: spoken, named, and it is the round\'s version that
   assert.equal(speaksVersion(5), true);
   // version 5 is spoken (was a pinned [1 .. 7], stale since 8 and 9 were added - kanban #362, #365)
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(5));
-  assert.equal(protocolVersionName(5), '2026.0.5');
+  assert.equal(protocolVersionName(5), '5');
   assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map((v) => mediansPrices({ protocolVersion: v })), [false, false, false, false, true, true, true]);
   assert.equal(mediansPrices(null), false);
 });

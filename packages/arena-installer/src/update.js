@@ -163,7 +163,8 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
       seatFor: (release) => windowsLauncher({ node, release, home, port }), seatFile,
       stop: async (fs, release) => {
         for (const f of fs) await sh('schtasks', ['/end', '/tn', task(f)]);
-        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${q(release)}*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+        // every process of that release but the auto update that runs this update (kanban #505): it ends by itself when done
+        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${q(release)}*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
       start: async (fs) => {
@@ -202,7 +203,7 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
-  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o) }) {
+  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null }) {
   // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
   // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
   waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
@@ -280,13 +281,18 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       local = peerPortsLocal(home);
       for (const id of local) await restartService(id, { home, platform, env, sh });
     } catch (e) { local = [`not changed: ${e.message}`]; }
+    // THE AUTO UPDATE SERVICE for a node installed before it (kanban #505), once
+    let updater = null;
+    if (installUpdaterFn) {
+      try { updater = await installUpdaterFn({ home, platform, env, sh }); } catch (e) { updater = { ok: false, why: e.message }; }
+    }
     // the arenanode command runs the new release from now on
     let command = null;
     try {
       command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
       if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
     } catch (e) { command = { why: e.message }; }
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local,
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local, updater,
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
   // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows

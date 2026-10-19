@@ -27,7 +27,7 @@ import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS } from './bond.js';
-import { writeLaunchers } from './launchers.js';
+import { writeLaunchers, installUpdater } from './launchers.js';
 import { torBin, writeTorrc, TOR_PORTS } from './tor.js';
 import { LND_PORTS } from './lnd.js';
 import * as workersKitDefault from './workers.js';
@@ -600,6 +600,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const l = launch({ home: state.home, s, ownerUrl, addCustody, release,
         run: (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, () => ok())) });
       const { pathSet, ...command } = l.command || {};
+      // THE AUTO UPDATE SERVICE (kanban #505): installed with the node, on unless arena.conf says auto_update=0
+      if (l.command && !l.command.why) Promise.resolve(installUpdater({ home: state.home, installProgram: gwKit.installProgram })).then((u) => { if (u && !u.ok) log(`auto update: ${u.why}`); }, (e) => log(`auto update: ${e.message}`));
       if (pathSet) pathSet.catch(() => {});   // the wizard runs on: the PATH change finishes while it does
       state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, command: l.command ? command : null, atMs: Date.now() } });
       return l;

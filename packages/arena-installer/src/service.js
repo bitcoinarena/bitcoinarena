@@ -196,7 +196,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
  * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
  * when `boot`. `vars`: environment the program needs (secrets too - kept only in files of this user, 0600). Answers { ok, why }.
  */
-export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform }) {
+export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform, againOn = null }) {
   const varLines = Object.entries(vars || {}).map(([k, v]) => { if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || /[\r\n]/.test(String(v))) throw new Error(`bad variable ${k}`); return [k, String(v)]; });
   if (platform === 'darwin') {
     const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
@@ -227,8 +227,12 @@ export async function installProgram({ id, description, args, home, boot = true,
   }
   if (platform === 'win32') {
     const file = join(home, `arena-${id}.cmd`);
+    // `againOn`: an exit code on which the program is started again (no service manager restarts a launcher on Windows; the auto update
+    // ends with 75 to come back from the new release, kanban #505)
     writeFileSync(file, ['@echo off', `rem ${description} (kanban #471), written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
-      `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`].join('\r\n') + '\r\n', { mode: 0o600 });
+      ...(againOn ? [':again'] : []),
+      `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`,
+      ...(againOn ? [`if %errorlevel%==${againOn} goto again`] : [])].join('\r\n') + '\r\n', { mode: 0o600 });
     const name = named(`Arena ${id}`, ' ');
     if (boot) {
       const a = await windowsAutostart({ name, file, sh, env });

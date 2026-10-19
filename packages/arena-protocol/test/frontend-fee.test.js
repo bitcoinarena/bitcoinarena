@@ -20,7 +20,7 @@ const ENTRY = {
 test('version 9 names it; an entry carries the website\'s key last, signed; every entry without it keeps its bytes', () => {
   assert.equal(FRONTEND_FEE_VERSION, 9);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(9));
-  assert.equal(protocolVersionName(9), '2026.0.9');
+  assert.equal(protocolVersionName(9), '9');
   const plain = encodeEntryContract(ENTRY);
   const withSite = encodeEntryContract({ ...ENTRY, frontendPk: site(0xaa) });
   assert.equal(withSite.length, plain.length + 34);

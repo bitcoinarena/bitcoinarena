@@ -42,3 +42,11 @@ test('the newest release: offered when signed and newer, refused unsigned, kept 
   const down = await latestReleaseReader({ url: 'https://example.invalid/latest.json', fetcher: async () => ({ status: 404 }), verify }).read('0.1.0');
   assert.match(down.why, /could not be read: .* answered 404/);
 });
+
+test('release versions 2026.xx.yy and a fix 2026.xx.yy.zz (the owner 2026-10-19) compare part by part, and above the older 0.1.0-rc.N', async () => {
+  const { newerVersion } = await import('../src/release-latest.js');
+  for (const [a, b, want] of [['2026.1.0', '0.1.0-rc.25', true], ['2026.1.1', '2026.1.0', true], ['2026.1.1.1', '2026.1.1', true],
+    ['2026.1.1', '2026.1.1.1', false], ['2026.2.0', '2026.1.9.9', true], ['2026.1.0', '2026.1.0', false], ['2027.1.0', '2026.9.9.9', true]]) {
+    assert.equal(newerVersion(a, b), want, `${a} newer than ${b}: ${want}`);
+  }
+});
