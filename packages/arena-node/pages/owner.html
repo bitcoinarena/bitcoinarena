@@ -201,6 +201,7 @@ async function area() {
     <h2>Liquidity</h2><div class="card" id="liquidity"><p class="sub">reading whether this node is a liquidity provider…</p></div>
     <h2>Release</h2><div class="card" id="release"><p class="sub">reading this node's release…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
+    <h2>Emergency code</h2><div class="card" id="emergency"></div>
     <h2>Dev clients</h2><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
     <h2>Developer donation split</h2><div id="ballots"><div class="card"><p class="sub">reading the developers' ballots…</p></div></div>
     <h2>Donations waiting to be collected</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
@@ -238,6 +239,7 @@ async function area() {
   ballotsPanel();
   standingPanel();
   servicesPanel();
+  emergencyPanel();
   bondPanel();
   custodyPanel();
   liquidityPanel();
@@ -385,6 +387,26 @@ async function standingPanel() {
     ${warns.length ? warns.map((w) => `<p class="${w.urgent ? 'err' : 'sub'}"><b>${esc(w.kind.toUpperCase())}</b>: ${esc(w.says)}</p>${w.update ? `<p class="sub">Step out: <code>${esc(w.update)}</code></p>` : ''}`).join('')
       : '<p class="sub ok">No warning: this node is seated when drawn, and its bond is above the margin.</p>'}`;
 }
+// THE EMERGENCY CODE (spec §23A.5a, protocol 17): what it is for, the code itself when this browser holds the words (it is made from
+// them, never kept anywhere), and the page that takes the node out - on any other node, or the Arena site
+function emergencyPanel() {
+  const seed = readSeed();
+  const code = seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null;
+  $('emergency').innerHTML = `
+    <p>If this node will be offline longer than it may be away - about two days on mainnet, 12 blocks on testnet4 - take it out of the
+    network from anywhere with your emergency code, so it keeps its bond: open <b>My node is offline</b> on any other node
+    (<code>/Dashboard/emergency</code>) or on the Arena site (<a href="https://testnet.bitcoin-arena.io/offline/">testnet.bitcoin-arena.io/offline</a>) and type the code.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 10px">
+      <tr><td>no guardian role</td><td>out of every seating at once</td><td>bond yours</td></tr>
+      <tr><td>a guardian, in time</td><td>departed at once, its federation's succession starts</td><td>bond yours</td></tr>
+      <tr><td>a guardian, too late</td><td>abandonment, as before</td><td>slashed</td></tr></table>
+    ${code ? `<div class="row"><span>Your code</span><b id="emcode">hidden</b></div><button id="emshow">Show the code</button>`
+      : '<p class="sub">This browser signed in without the 24 words, so it cannot make the code. The installer showed it at the seed step; it is made from the same words.</p>'}
+    <p class="sub">The code can only take this node out - no money, no settings. Never type your 24 words on another node.</p>
+    <a href="${at('/Dashboard/emergency')}">Open "My node is offline" →</a>`;
+  if ($('emshow')) $('emshow').onclick = () => { $('emcode').textContent = code; $('emshow').hidden = true; };
+}
+
 // LEAVE WITHOUT BEING SLASHED: from the moment the owner signs Leave this seat takes no new round and
 // serves the ones it holds to their end; it is free once the last is past its objection window and settled. Custody: only if
 // the federation keeps its threshold without this guardian.

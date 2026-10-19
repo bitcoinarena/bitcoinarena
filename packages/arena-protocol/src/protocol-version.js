@@ -42,6 +42,9 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 15, year: 2026, x: 0 }),
   // liquidity providers: the node fee in four pools of a quarter, the fourth to the federation's providers (§23A.10)
   Object.freeze({ version: 16, year: 2026, x: 0 }),
+  // the owner's emergency key: the advert names it; a request it signs takes an offline node out - a non-guardian at once, a guardian
+  // before abandon_blocks as DEPARTED - with its bond untouched (§23A.5a)
+  Object.freeze({ version: 17, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

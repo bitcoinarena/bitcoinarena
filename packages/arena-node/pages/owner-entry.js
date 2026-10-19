@@ -21,3 +21,7 @@ export { checkNetworkPackage, checkNetworkUpdate } from '../src/network-check.js
 // LOGIN WITH NOSTR: an owner request as a Nostr event, and the Nostr signers (extension, remote, nsec, new account)
 export { signOwnerEvent } from '../src/owner.js';
 export { extensionSigner, bunkerSigner, nostrConnect, signerFromNsec, newAccount, npubOf, textQrSvg } from '../../arena-client/nostr/entry.js';
+// THE OWNER'S EMERGENCY CODE (spec §23A.5a, protocol 17): shown on the owner page from the words, and typed on /Dashboard/emergency of
+// any node to take an offline node out - the key is made from the code in the browser and signs the request there
+export { emergencyCodeBytes, emergencyCodeText, parseEmergencyCode, emergencySecret, signEmergencyDeparture, encodeEmergencyDeparture,
+  EMERGENCY_FRESH_BLOCKS } from '../../arena-protocol/src/emergency.js';

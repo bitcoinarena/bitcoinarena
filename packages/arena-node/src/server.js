@@ -113,7 +113,8 @@ import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
-import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex } from './absences.js';
+import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
+import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup } from './founding-seat.js';
 import { createEndpointsOf, federationOfDir } from './federation-endpoints.js';
@@ -1970,7 +1971,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   });
   // RESERVE SEATS (§5A.7): ARENA_SEATING=1 - each role draws 9 for 7 seats, the drawn sign PRESENT before
   // start - 120 s, the seated sign one SEATING certificate, and a round takes entries only with it (seating-agent.js)
+  // THE OWNER'S EMERGENCY LEAVE REQUESTS (§23A.5a, protocol 17): one is taken when it stands against the census this seat reads (the
+  // node's advertisement names the key that signed it, posted at or before the tip), kept, and passed on once to every seat this one
+  // knows; every 10 min this seat also asks those seats for theirs, so a seat that was down - or the owner's own node, back - learns of it
+  async function takeEmergency(d, { pass = true } = {}) {
+    const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false, why: 'this seat reads no census' };
+    if (!now.ok) return { ok: false, status: 503, why: now.why };
+    let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
+    const entry = now.entries.find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(d.nodePubkey));
+    // taken only fresh (EMERGENCY_FRESH_BLOCKS): a request dated back into time is refused - unless this seat holds it already
+    const had = absences.emergencyFor(d.nodePubkey);
+    const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: Number.isInteger(tip) ? tip : now.height, fresh: !(had && had.postedAt <= d.postedAt),
+      verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
+    if (!st.ok) return { ok: false, why: st.why };
+    const r = absences.offerEmergency(d);
+    if (!r.ok) return r;
+    if (r.kept) {
+      console.log(`[emergency] leave request of node ${toHex(d.nodePubkey).slice(0, 16)} posted at ${d.postedAt}: kept${pass ? ', passed on' : ''}`);
+      if (pass) { const hex = emergencyHex(d); for (const u of networkSeats()) fetch(`${u}/emergency-departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) }).catch(() => {}); }
+    }
+    return r;
+  }
+  const pullEmergencies = async () => {
+    for (const u of networkSeats()) {
+      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      for (const h of (got && Array.isArray(got.requests) ? got.requests : []).slice(0, 256)) { try { await takeEmergency(readEmergencyHex(h), { pass: false }); } catch { /* not one */ } }
+    }
+  };
+  const emergencyPull = setInterval(() => { pullEmergencies().catch(() => {}); }, 600000);
+  if (emergencyPull.unref) emergencyPull.unref();
+  const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); }, 30000);
+  if (emergencyFirstPull.unref) emergencyFirstPull.unref();
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
+    // out of every seating once its owner's emergency leave request is held here (§23A.5a)
+    leftNode: (hex) => !!absences.emergencyFor(hex),
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
     verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     log: (m) => console.log(m), windowOf: marketWindowFor,
@@ -3676,6 +3710,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       records: () => (fedRecords.list() || []).map((x) => { const held = fedRecords.recordOf(x.federation);
         return { federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null, ...(held && held.record ? { record: held.record } : {}) }; }),
       notices: () => absences.listDepartures().map((h) => { try { return readDepartureHex(h); } catch { return null; } }).filter(Boolean),
+      // the owner's emergency leave requests that stand against the census now (§23A.5a): a guardian's starts its federation's succession
+      emergencies: () => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
+        if (!now.ok) return [];
+        const sv = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
+        return absences.listEmergencies().map((h) => { try { return readEmergencyHex(h); } catch { return null; } }).filter(Boolean)
+          .filter((d) => emergencyDepartureStands(d, { advert: (now.entries.find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(d.nodePubkey)) || {}).advert,
+            tip: now.height, verify: sv }).ok); },
       next: nextSetup ? { setup: nextSetup, inSetup: async () => nextSetup.inSetup() } : null,
       // THE TRIGGER HEIGHT'S CENSUS AND BEACON FROM THIS SEAT'S OWN CHAIN (measured live 2026-10-15): the newest round's
       // view ends at that round's beacon, days before a notice - read at the height itself when the launcher hands the chain
@@ -7467,7 +7508,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `absent`: the absence attestations that prove a named peer ABANDONED, each encoding + signature in hex
         const absentHex = String(url.searchParams.get('absent') || '').split(',').filter(Boolean);
         const departedHex = String(url.searchParams.get('departed') || '').split(',').filter(Boolean);
-        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex) : await fedRecords.mySignature(fid, atHeight, rv);
+        const emergencyHexes = String(url.searchParams.get('emergency') || '').split(',').filter(Boolean);
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes) : await fedRecords.mySignature(fid, atHeight, rv);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }
@@ -7494,6 +7536,37 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/absences') {
         const fid = String(url.searchParams.get('federation') || '').toLowerCase();
         return json(res, 200, { node: toHex(round.pubkey), absences: absences.list(/^[0-9a-f]{64}$/.test(fid) ? fid : null), departures: absences.listDepartures(/^[0-9a-f]{64}$/.test(fid) ? fid : null) });
+      }
+      // THE OWNER'S EMERGENCY LEAVE REQUEST (§23A.5a, protocol 17): posted here from any node's page or the Arena site while the
+      // owner's own node is offline. It is kept when it stands against the census this seat reads (the node's advertisement names the
+      // emergency key that signed it, posted at or before the tip) and passed on once to every seat this one knows, so one post reaches
+      // the network. What it does - out of the seating, or DEPARTED for a guardian in time - is the record's and the seating's to apply.
+      if (req.method === 'POST' && url.pathname === '/emergency-departure') {
+        let d; try { d = readEmergencyHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a leave request, its encoding and signature in hex: ${e.message}`); }
+        const r = await takeEmergency(d);
+        if (!r.ok) return text(res, r.status || 422, r.why);
+        return json(res, r.kept ? 201 : 200, { ok: true, kept: r.kept, node: toHex(d.nodePubkey), postedAt: d.postedAt });
+      }
+      // the requests held, this seat's tip (a request is signed at it), and with ?key= the census node whose advertisement names that
+      // emergency key - the page needs nothing but the code
+      if (req.method === 'GET' && url.pathname === '/emergency-departures') {
+        let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
+        const key = String(url.searchParams.get('key') || '').toLowerCase();
+        let named = null;
+        if (/^[0-9a-f]{64}$/.test(key) && fedRecords && fedRecords.censusNow) {
+          const now = fedRecords.censusNow();
+          const e = now.ok ? now.entries.find((x) => x && x.advert && x.advert.emergencyPubkey && toHex(x.advert.emergencyPubkey) === key) : null;
+          if (e) named = { node: toHex(e.pubkey), endpoint: String(e.advert.endpoint || ''), operatorId: String(e.advert.operatorId || ''),
+            roles: [...(e.advert.roles || [])], guardianOf: ((e.advert.guardianOf) || []).map((g) => toHex(g.federationId)),
+            held: !!absences.emergencyFor(e.pubkey) };
+          if (!Number.isInteger(tip) && now.ok) tip = now.height;
+        }
+        return json(res, 200, { node: toHex(round.pubkey), tip, ...(key ? { named } : {}), requests: absences.listEmergencies() });
+      }
+      // THE PAGE (§23A.5a): "My node is offline" - on every node, no login; the code never leaves the browser
+      if (req.method === 'GET' && (url.pathname === '/Dashboard/emergency' || url.pathname === '/dashboard/emergency')) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(readFileSync(new URL('../pages/emergency.html', import.meta.url)));
       }
       if (req.method === 'POST' && url.pathname === '/departure') {
         let d; try { d = readDepartureHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a departure notice, its encoding and signature in hex: ${e.message}`); }
@@ -8282,6 +8355,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
         clearInterval(recordTimer);
+        clearInterval(emergencyPull); clearTimeout(emergencyFirstPull);
         clearInterval(networkGamesTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);

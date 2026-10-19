@@ -29,7 +29,9 @@ export const BATCH_ROUNDS = 64;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {} }) {
+  onSeated = () => {}, leftNode = () => false }) {
+  // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
+  // not counted, and this node signs none once it holds its own request
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS seat_presents (round_id BLOB NOT NULL, role TEXT NOT NULL, node TEXT NOT NULL, bytes BLOB NOT NULL,
@@ -126,6 +128,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const v = verifyPresent(bytes, { verify });
     if (!v.ok) return v;
     const { roundId, role, nodePubkey } = v.present;
+    if (leftNode(toHex(nodePubkey))) return { ok: false, why: 'that node\'s owner took it out of the seating (emergency departure, §23A.5a)' };
     const c = roster.committeeFor(roundId, role);
     if (!c.ok) return { ok: false, why: c.why };
     if (!c.drawn.some((e) => toHex(e.pubkey) === toHex(nodePubkey))) return { ok: false, why: 'that node is not drawn for that round and role' };
@@ -180,7 +183,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // 1. THIS NODE'S PRESENTs, once each, kept, and handed to every other drawn node: one POST per node
       const outbox = new Map();
       for (const w of work) {
-        if (w.closed || !w.amDrawn) continue;
+        if (w.closed || !w.amDrawn || leftNode(me)) continue;
         if (db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, me)) continue;
         const p = signPresent({ roundId: w.t.rid, role: w.role, nodePubkey: round.pubkey }, sign);
         takePresent(p);

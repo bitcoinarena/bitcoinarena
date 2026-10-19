@@ -9904,5 +9904,108 @@
   "changesState": true,
   "needsAuth": "owner",
   "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/emergency-departure",
+  "params": "body: the leave request's encoding and its 64-byte signature, in hex",
+  "auth": "the node's emergency key (BIP-340), which its census advertisement names",
+  "returns": "201 {ok, kept, node, postedAt} when taken, 200 when held already; 400/422/503",
+  "purpose": "The owner's emergency leave request (spec §23A.5a, protocol 17): takes an offline node out - no guardian role: out of every seating; a guardian in time: DEPARTED, its federation's succession starts. Taken only fresh (posted at most 6 blocks before the tip) and passed on to every seat.",
+  "audience": "owner (any node's page or the Arena site)",
+  "line": 7544,
+  "summary": "Owner's emergency leave request",
+  "query": [],
+  "body": {
+   "contentType": "text/plain",
+   "required": true,
+   "description": "Hex: type 0x35, version, node key (32), emergency key (32), posted_at (u32), then the BIP-340 signature (64) by the emergency key."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{ok, kept: true, node, postedAt}: taken and passed on."
+   },
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok, kept: false, ...}: an earlier request for that node is held."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a leave request in hex."
+   },
+   {
+    "status": "422",
+    "contentType": "text/plain",
+    "description": "It does not stand: no census node names that emergency key, a wrong signature, ahead of the tip, or not fresh."
+   },
+   {
+    "status": "503",
+    "contentType": "text/plain",
+    "description": "This seat reads no census yet."
+   }
+  ],
+  "changesState": true,
+  "headers": [],
+  "needsAuth": "signature",
+  "pathParams": [],
+  "skipOpenapi": null
+ },
+ {
+  "method": "GET",
+  "path": "/emergency-departures",
+  "params": "key (optional): an emergency public key, 64 hex",
+  "auth": "none",
+  "returns": "200 {node, tip, named?, requests}",
+  "purpose": "The leave requests this seat holds and its tip; with key, the census node whose bond advertisement names that emergency key (spec §23A.5a).",
+  "audience": "owner pages, seats (pulled every 10 min)",
+  "line": 7552,
+  "summary": "Held emergency leave requests",
+  "query": [
+   {
+    "name": "key",
+    "required": false,
+    "description": "An emergency public key (x-only, 64 hex)."
+   }
+  ],
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, tip, named: {node, endpoint, operatorId, roles, guardianOf, held} | null, requests: [hex]}."
+   }
+  ],
+  "changesState": false,
+  "headers": [],
+  "needsAuth": "none",
+  "pathParams": [],
+  "skipOpenapi": null
+ },
+ {
+  "method": "GET",
+  "path": "/Dashboard/emergency",
+  "params": "",
+  "auth": "none",
+  "returns": "200 text/html",
+  "purpose": "\"My node is offline\": the owner types the emergency code; the browser makes the key, finds the node and signs the leave request (spec §23A.5a).",
+  "audience": "owner",
+  "line": 7567,
+  "summary": "My node is offline (page)",
+  "query": [],
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/html",
+    "description": "The page."
+   }
+  ],
+  "changesState": false,
+  "headers": [],
+  "needsAuth": "none",
+  "pathParams": [],
+  "skipOpenapi": true
  }
 ]

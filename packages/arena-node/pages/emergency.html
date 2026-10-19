@@ -1,0 +1,85 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bitcoin Arena · My node is offline</title>
+<!-- MY NODE IS OFFLINE (spec §23A.5a, protocol 17): /Dashboard/emergency on every node, no login. The owner types the emergency code
+     written down at install; the browser makes the emergency key from it, finds the node whose bond advert names that key, and signs a
+     leave request at this node's tip. Only the request and its signature leave the browser; this node passes it on to every seat. -->
+<style>
+:root{--bg:#0f1218;--card:#171c25;--line:#2a3140;--text:#e6e9ef;--dim:#8b93a3;--gv:#f2a93b;--st:#4fa3ff;--ok:#3fbf7f;--bad:#e25c5c;color-scheme:dark}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f5f6f8;--card:#fff;--line:#dde1e7;--text:#1b2230;--dim:#5d6676;color-scheme:light}}
+*{box-sizing:border-box}body{margin:0 auto;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif;padding:16px;max-width:760px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--dim);margin-bottom:14px;overflow-wrap:anywhere}a{color:var(--st)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:10px 0}
+.card h3{margin:0 0 8px;font-size:16px}.card p{margin:0 0 10px}
+.row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 10px;padding:4px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.row b{overflow-wrap:anywhere;text-align:right}
+button{font:600 15px system-ui;border-radius:10px;padding:11px 16px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;margin:4px 6px 4px 0}
+button.primary{background:var(--gv);border-color:var(--gv);color:#1a1200}button:disabled{opacity:.5;cursor:default}
+input{width:100%;font:16px ui-monospace,monospace;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);letter-spacing:.04em}
+.warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
+.err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}label{display:block;margin:8px 0 4px;color:var(--dim)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
+</style></head><body>
+<h1>My node is offline</h1>
+<div class="sub">Take your own node out of the network while it is away, so it keeps its bond. You need the emergency code you wrote down
+when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</b> - this page does not want them.</div>
+<div class="card">
+  <h3>What it does</h3>
+  <table>
+    <tr><th>Your node</th><th>Taken out</th><th>Bond</th></tr>
+    <tr><td>no guardian role</td><td>at once, from every seating</td><td>yours</td></tr>
+    <tr><td>a guardian, in time</td><td>at once; its federation's succession starts now</td><td>yours</td></tr>
+    <tr><td>a guardian, too late (absent longer than the network allows: ~48 h on mainnet, 12 blocks on testnet4)</td><td>nothing changes: it is abandonment</td><td>slashed</td></tr>
+  </table>
+  <p class="sub" style="margin-top:8px">Coming back afterwards needs a new advertisement from the node. The code can do nothing else: no money, no settings.</p>
+</div>
+<div class="card" id="step1">
+  <label for="code">Emergency code</label>
+  <input id="code" placeholder="ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" autocapitalize="characters">
+  <button class="primary" id="find">Find my node</button>
+  <div class="err" id="err1"></div>
+</div>
+<div class="card" id="step2" hidden></div>
+<p class="sub"><a id="public" href="#">← This node's dashboard</a></p>
+<script type="module">
+const BASE = location.pathname.replace(/\/[Dd]ashboard\/emergency\/?$/, '');
+const at = (p) => BASE + p;
+const $ = (id) => document.getElementById(id);
+$('public').href = at('/Dashboard');
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const C = await import(at('/owner/client.js'));
+let secret = null, found = null;
+$('find').onclick = async () => {
+  $('err1').textContent = ''; $('step2').hidden = true;
+  let bytes; try { bytes = C.parseEmergencyCode($('code').value); } catch (e) { $('err1').textContent = e.message; return; }
+  secret = C.emergencySecret(bytes);
+  const key = C.toHex(C.pubkeyOf(secret));
+  let r; try { r = await (await fetch(at('/emergency-departures?key=' + key))).json(); } catch (e) { $('err1').textContent = 'this node did not answer: ' + e.message; return; }
+  if (!r.named) { $('err1').textContent = 'No node of the census names this emergency code in its bond advertisement. Check the code - or your node\'s bond was posted before protocol 17 and has no emergency path.'; return; }
+  found = { ...r.named, tip: r.tip, key };
+  const s2 = $('step2'); s2.hidden = false;
+  s2.innerHTML = `<h3>Your node</h3>
+    <div class="row"><span>Node key</span><b>${esc(found.node.slice(0, 16))}…</b></div>
+    <div class="row"><span>Address</span><b>${esc(found.endpoint || '-')}</b></div>
+    <div class="row"><span>Roles</span><b>${esc(found.roles.join(', ') || '-')}</b></div>
+    <div class="row"><span>Guardian of</span><b>${found.guardianOf.length ? found.guardianOf.map((f) => esc(f.slice(0, 8))).join(', ') : 'no federation'}</b></div>
+    <div class="row"><span>Signed at block</span><b>${esc(found.tip)}</b></div>
+    ${found.held ? '<p class="ok">This node already holds a leave request for it.</p>' : ''}
+    <div class="warn">Taking it out cannot be undone: the node serves again only with a new advertisement.</div>
+    <button class="primary" id="go">Take my node out</button><div class="err" id="err2"></div>`;
+  $('go').onclick = send;
+};
+async function send() {
+  $('go').disabled = true; $('err2').textContent = '';
+  try {
+    const d = C.signEmergencyDeparture({ nodePubkey: C.fromHex(found.node), emergencyPubkey: C.fromHex(found.key), postedAt: Number(found.tip) }, (m) => C.sign(m, secret));
+    const hex = C.toHex(C.encodeEmergencyDeparture(d)) + C.toHex(d.signature);
+    const r = await fetch(at('/emergency-departure'), { method: 'POST', body: hex });
+    const t = await r.text();
+    if (!r.ok) throw new Error(t.trim() || 'HTTP ' + r.status);
+    const j = JSON.parse(t);
+    $('step2').innerHTML = `<h3 class="ok">Your node is out ✓</h3><p>The leave request (block ${esc(j.postedAt)}) is held here and passed on to every seat.
+      ${found.guardianOf.length ? 'Its federation\'s succession starts now; its bond stays yours if it was in time.' : 'It is in no seating from now on; its bond stays yours.'}</p>`;
+    secret = null;
+  } catch (e) { $('err2').textContent = e.message; $('go').disabled = false; }
+}
+</script>
+</body></html>

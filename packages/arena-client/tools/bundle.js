@@ -48,6 +48,8 @@ walk(SRC + 'reserves-page.js');
 walk(SRC + 'funding-page.js');
 walk(SRC + 'donation-gift-page.js');
 walk(SRC + 'fee-proposal-page.js');
+// THE OWNER'S EMERGENCY CODE (spec §23A.5a, protocol 17): the Arena site's "My node is offline" makes the key from the code and signs the leave request
+walk(ROOT + 'arena-protocol/src/emergency.js');
 walk(SRC + 'leaderboard-page.js');
 // AND THE EXCHANGE VIEW OF A MARKET: the page draws a market client's order book, chart and depth with it
 walk(SRC + 'exchange-view.js');
@@ -182,6 +184,8 @@ out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
 out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,\n';
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
 out += '         stakeLine: stakeLine,\n';
+out += '         parseEmergencyCode: parseEmergencyCode, emergencySecret: emergencySecret, signEmergencyDeparture: signEmergencyDeparture,\n';
+out += '         encodeEmergencyDeparture: encodeEmergencyDeparture, EMERGENCY_FRESH_BLOCKS: EMERGENCY_FRESH_BLOCKS,\n';
 // THE COMMITTEE'S PRICE (§11): the page turns a signed price in cents into the tape's unit for its core
 out += '         centsToTapeUnits: centsToTapeUnits,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';

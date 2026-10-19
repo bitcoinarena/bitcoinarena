@@ -26,7 +26,7 @@ import {
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
-  TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
+  TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
   TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
 } from './constants.js';
 
@@ -87,6 +87,8 @@ export const FRAMES = new Map([
   // A guardian's absence attestation and a departure notice (§23A.4-5): they make a guardian ABANDONED or DEPARTED.
   [TYPE_ABSENCE_ATTESTATION, { name: 'AbsenceAttestation', authority: true }],
   [TYPE_DEPARTURE_NOTICE, { name: 'DepartureNotice', authority: true }],
+  // the owner's leave request for an offline node, signed by its emergency key (§23A.5a, protocol 17)
+  [TYPE_EMERGENCY_DEPARTURE, { name: 'EmergencyDeparture', authority: true }],
   // A halted federation's spent-note set (§23A.5): it decides which notes the liquidation pays.
   [TYPE_SPENT_SET, { name: 'SpentSet', authority: true }],
   // A price round's verdict (§13 RoundResult): who won the war, bulls or bears, by the attested tape. It moves no money.

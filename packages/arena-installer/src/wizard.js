@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
-import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS } from './seed.js';
+import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf } from './seed.js';
 import { nextStep, seatConf, ROLES, guardianSetupOf } from './state.js';
 import { installService, installProgram } from './service.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
@@ -28,7 +28,7 @@ import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS } from './bond.js';
+import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
 import { torBin, writeTorrc, TOR_PORTS } from './tor.js';
 import { LND_PORTS } from './lnd.js';
@@ -248,9 +248,18 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!c.ok) return { ok: false, why: `word${c.wrong.length > 1 ? 's' : ''} ${c.wrong.join(', ')} ${c.wrong.length > 1 ? 'are' : 'is'} not what was shown - check what you wrote down`, wrong: c.wrong };
       state.writeSecret('seed.hex', toHex(pendingSeed.seed) + '\n');
       const { pubkey } = ownerKeyOf(pendingSeed.seed);
+      // THE EMERGENCY CODE, shown now to be written down beside the words (§23A.5a) - derived, never stored
+      const em = emergencyOf(pendingSeed.seed);
       pendingSeed = null;
-      mark('seed', { seedOwnerPubkey: pubkey });
-      return { ok: true };
+      mark('seed', { seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey });
+      return { ok: true, emergencyCode: em.code };
+    },
+
+    // THE EMERGENCY CODE AGAIN (§23A.5a): from the seed on this machine, for the owner at the wizard
+    'GET /api/emergency': async () => {
+      if (!state.exists('seed.hex')) return { ok: false, why: 'no seed yet' };
+      const em = emergencyOf(fromHex(state.readSecret('seed.hex')));
+      return { ok: true, code: em.code, pubkey: em.pubkey, inAdvert: EMERGENCY_IN_ADVERT };
     },
 
     // THE OWNER (C.6): the seed's owner key (the same 24 words log in at /Dashboard/owner) or a Nostr key. Written beside the node's
@@ -550,7 +559,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       try {
         built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
           endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2,
-          guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null });
+          guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
       } catch (e) { return { ok: false, why: e.message }; }
       const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
       const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);

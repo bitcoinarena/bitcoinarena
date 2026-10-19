@@ -30,6 +30,9 @@ button:disabled { opacity: .5; cursor: default; }
 .words { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; margin: 12px 0; }
 .words span { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-family: ui-monospace, monospace; }
 .words span b { color: var(--muted); font-weight: 400; margin-right: 6px; }
+#emergency { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
+#emergency h3 { margin: 0 0 8px; font-size: 16px; }
+#emergency .code { font: 600 18px/1.4 ui-monospace, monospace; letter-spacing: .04em; margin: 6px 0 10px; overflow-wrap: anywhere; }
 .role { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; display: flex; gap: 10px; align-items: flex-start; }
 [hidden] { display: none !important; }
 .role input { width: auto; margin-top: 4px; } .role p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
@@ -232,6 +235,16 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
       <button id="seed-confirm">Confirm</button>
     </div>
     <div class="msg" id="seed-msg"></div>
+    <!-- THE EMERGENCY CODE (spec §23A.5a, protocol 17): shown once the words are confirmed, written down beside them -->
+    <div id="emergency" hidden>
+      <h3>Your emergency code: write it down too</h3>
+      <p class="code" id="emergency-code"></p>
+      <p>If this node will be offline longer than it may be away - about two days on mainnet, 12 blocks on testnet4 - type this code on
+      any other node's page (<code>/Dashboard/emergency</code>) or on the Arena site (<code>testnet.bitcoin-arena.io/offline/</code>) to take it out of the network. Its bond stays yours: a node with
+      no guardian role leaves at once; a guardian leaves at once if the request comes before it counts as abandoned, later it is slashed.</p>
+      <p>The code can do nothing else: no money, no settings. <b>Never type your 24 words anywhere but your own node.</b></p>
+      <button id="emergency-written">I have written the code down</button>
+    </div>
   </section>
 
   <section id="s-owner">
@@ -486,7 +499,9 @@ $('seed-show').onclick = async () => { const r = await post('/api/seed/new'); if
 $('seed-written').onclick = () => { $('words').innerHTML = ''; $('seed-written').hidden = true; $('confirm').hidden = false;
   const first = document.querySelector('#confirm-inputs input'); if (first) first.focus(); };
 $('seed-confirm').onclick = async () => { $('words').innerHTML = ''; const answers = {}; for (const i of document.querySelectorAll('#confirm-inputs input')) answers[i.dataset.p] = i.value;
-  const r = await post('/api/seed/confirm', { answers }); if (r.ok) return load(); say('seed-msg', r); if (r.wrong) $('seed-show').hidden = false; };
+  const r = await post('/api/seed/confirm', { answers }); if (r.ok && r.emergencyCode) { $('confirm').hidden = true; $('emergency-code').textContent = r.emergencyCode; $('emergency').hidden = false; return; }
+  if (r.ok) return load(); say('seed-msg', r); if (r.wrong) $('seed-show').hidden = false; };
+$('emergency-written').onclick = () => { $('emergency').hidden = true; load(); };
 $('nip07').onclick = async () => { if (!window.nostr) return say('owner-msg', { ok: false, why: 'no Nostr extension in this browser - paste your npub instead' }); $('npub').value = await window.nostr.getPublicKey(); $('om-nostr').checked = true; };
 $('owner-save').onclick = async () => { const mode = $('om-nostr').checked ? 'nostr' : 'seed'; const r = await post('/api/owner', { mode, npub: $('npub').value }); if (r.ok) return load(); say('owner-msg', r); };
 function showDirect(d) { const m = $('r-direct'); m.className = 'msg ' + (d.reached ? 'ok' : 'bad');

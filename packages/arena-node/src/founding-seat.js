@@ -60,6 +60,30 @@ export function noticeTriggers({ held = [], notices = [], departureNotice, verif
 }
 
 /**
+ * THE OWNER'S EMERGENCY DEPARTURE TRIGGERS TOO (§23A.5a, protocol 17: "the succession starts at once, as for a notice that would make
+ * it DRAINING"): `requests` [{ nodePubkey, postedAt }] - leave requests this seat holds that stand against the census (the server checks
+ * them, POST /emergency-departure) - each one whose node is a seated guardian of a held OPEN, DRAINING or CRITICAL federation and whose
+ * leaving makes it DRAINING or CRITICAL. The same rows as noticeTriggers, at the request's posted_at.
+ */
+export function emergencyTriggers({ held = [], requests = [] }) {
+  const rows = [];
+  for (const d of requests || []) {
+    const node = toHex(d.nodePubkey);
+    for (const h of held || []) {
+      if (!h || !h.record || !['OPEN', 'DRAINING', 'CRITICAL'].includes(h.status)) continue;
+      const all = seatedOf(h.record);
+      if (!all.some((g) => toHex(g.nodePubkey) === node)) continue;
+      const seated = all.filter((g) => toHex(g.nodePubkey) !== node);
+      let wouldBe; try { wouldBe = statusFor({ nominal: h.record.nominal, seated: Math.min(h.record.nominal, seated.length) }).status; } catch { continue; }
+      if (wouldBe !== 'DRAINING' && wouldBe !== 'CRITICAL') continue;
+      rows.push({ federation: lower(h.federation), height: d.postedAt, wouldBe, nominal: h.record.nominal, seatedFirst: seated.map((g) => toHex(g.nodePubkey)),
+        departing: [...new Set([node, ...goneNodes(h.record)])] });
+    }
+  }
+  return rows;
+}
+
+/**
  * The operators guarding a federation other than `except`: census adverts whose guardian_of[] names a federation held OPEN - or one
  * this seat holds no record of at all, which counts as guarded (2026-10-18"A": measured, T3's
  * seven guardians and B's successor's one advertised federations no seat held a record of, so they counted as free and would have
@@ -105,7 +129,7 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
  * notices this seat holds (decoded); `next` { inSetup(), setup } the node's guardian-next, if it runs one; `guardingOpen({ entries,
  * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records).
  */
-export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], next = null, nominal,
+export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
@@ -140,6 +164,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
     let notes = [];
     try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
+    try { notes = notes.concat(emergencyTriggers({ held, requests: (await emergencies()) || [] })); } catch { /* the notices alone */ }
     // A FEDERATION EXISTS when this seat holds a record OR the census names one (measured on the test host 2026-10-18: the seven
     // new seats and the three installer nodes hold no round, so no record - they drew a GENESIS trigger at 156970 on a network with two
     // federations, and the cohort of ten could never trigger there). guardian_of[] in the bond adverts is the chain's own word for it.

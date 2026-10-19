@@ -18,7 +18,7 @@ const signer = (n) => (m) => schnorr.sign(m, n.secret);
 const START = 60500n;
 const NOW = Number(START) - 150000;            // inside the PRESENT window, before seating_close (start - 120 s)
 
-function world({ withhold = null } = {}) {
+function world({ withhold = null, leftNode = () => false } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
   const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START };
@@ -44,7 +44,7 @@ function world({ withhold = null } = {}) {
     }
     return new Response('ok', { status: 200 });
   };
-  const agent = seatingAgent({ round, roster, sign: signer(me), verify, fetcher, nowMs: () => NOW });
+  const agent = seatingAgent({ round, roster, sign: signer(me), verify, fetcher, nowMs: () => NOW, leftNode });
   return { agent, rid, asked, verifies: () => verifies, drawn };
 }
 
@@ -78,4 +78,18 @@ test('a certificate held byte for byte is not verified again', () => {
   assert.ok(once >= 7, `the first copy is checked: ${once} signature checks`);
   assert.deepEqual(w.agent.keepCert(w.rid, 'game', cert), { ok: true, kept: false });
   assert.equal(w.verifies() - before, once, 'the same bytes again cost no signature check');
+});
+
+test('a node its owner took out with the emergency key (§23A.5a, protocol 17) is in no seating: its PRESENT is not counted, and it signs none itself', async () => {
+  const gone = toHex(nodes[5].pubkey);
+  const w = world({ leftNode: (hex) => hex === gone });
+  await w.agent.tick();
+  for (const role of ['game', 'settlement']) {
+    const held = w.agent.presentsOf(w.rid).filter((p) => p.role === role);
+    assert.deepEqual([held.length, held.some((p) => p.node === gone)], [8, false], `${role}: 8 PRESENTs, none from the node that left`);
+  }
+  const me = toHex(nodes[0].pubkey);
+  const back = world({ leftNode: (hex) => hex === me });
+  await back.agent.tick();
+  assert.equal(back.agent.presentsOf(back.rid).some((p) => p.node === me), false, 'the owner\'s node, back online, says PRESENT for nothing');
 });
