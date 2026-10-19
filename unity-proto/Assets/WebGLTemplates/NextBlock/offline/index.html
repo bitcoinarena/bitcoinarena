@@ -34,7 +34,7 @@
 <body>
 <main>
   <h1>My node is offline</h1>
-  <p class="lead">Take your own node out of the network while it is away, so it keeps its bond. You need the emergency code you wrote down
+  <p class="lead">Take your own node out of the network while it is offline, so it keeps its bond. You need the emergency code you wrote down
   when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</b> - this page does not want them.</p>
   <div class="card">
     <h2>What it does</h2>
@@ -42,13 +42,13 @@
       <tr><th>Your node</th><th>Taken out</th><th>Bond</th></tr>
       <tr><td>no guardian role</td><td>at once, from every seating</td><td>yours</td></tr>
       <tr><td>a guardian, in time</td><td>at once; its federation's succession starts now</td><td>yours</td></tr>
-      <tr><td>a guardian, too late (away longer than the network allows: ~48 h on mainnet, 12 blocks on testnet4)</td><td>nothing changes: it is abandonment</td><td>slashed</td></tr>
+      <tr><td>a guardian, too late (offline longer than the network allows: ~48 h on mainnet, 12 blocks on testnet4)</td><td>nothing changes: it is abandonment</td><td>slashed</td></tr>
     </table>
   </div>
   <div class="card">
     <label for="code">Emergency code</label>
     <input id="code" placeholder="ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" autocapitalize="characters">
-    <button id="find">Find my node</button>
+    <button id="find">Leave network while my node is offline</button>
     <div class="bad" id="err1"></div>
   </div>
   <div class="card" id="step2" hidden></div>
@@ -97,7 +97,7 @@
       <div class="row"><span>Signed at block</span><b>${esc(found.tip)}</b></div>
       ${found.held ? '<p class="ok">The network already holds a leave request for it.</p>' : ''}
       <div class="warn">Taking it out cannot be undone: the node serves again only with a new advertisement.</div>
-      <button id="go">Take my node out</button><div class="bad" id="err2"></div>`;
+      <button id="go">Yes, leave the network</button><div class="bad" id="err2"></div>`;
     $('go').onclick = send;
   };
   async function send() {
