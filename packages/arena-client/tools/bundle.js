@@ -37,11 +37,8 @@ function walk(file) {
   order.push(file);
 }
 walk(SRC + 'client.js');
-// AND THE PAGE'S OWN HALF. `ghost-field.js` is what a page does with a picture
-// once the client has decoded one; the client does not import it, because a
-// client that publishes a run should not depend on whether anybody is drawing
-// the others.
-walk(ROOT + 'nextblock/page/ghost-field.js');   // Tick Tock's own page part (kanban #521)
+// (THE GHOSTS - what a page does with a picture once the client has decoded one - are Tick Tock's, so not the engine's:
+// packages/nextblock/page/ghost-page.js, loaded by the page after this bundle, puts them on BLWPCLIENT. §0A.2, kanban #525)
 // THE PROTOCOL RESERVES: the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
 walk(SRC + 'reserves-page.js');
 // AND PROJECT PROPOSALS: bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
@@ -179,11 +176,8 @@ out += '         headersOverHttp: headersOverHttp, httpProvider: httpProvider,\n
 out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
-out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
-// The debug label over a ghost (2026-09-17 19:15): the page writes it, blwp.jslib hands it to Unity.
-out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,\n';
-out += '         playersLine: playersLine, newestPose: newestPose,\n';
-out += '         stakeLine: stakeLine,\n';
+// (watchGhosts, GHOST_BACKLOG, tickClock, ghostLabels, ghostLabelText, moveGlyphs, playersLine, newestPose, stakeLine: Tick Tock's ghosts,
+// put on BLWPCLIENT by its own page script, packages/nextblock/page/ghost-page.js - §0A.2, kanban #525)
 out += '         parseEmergencyCode: parseEmergencyCode, emergencySecret: emergencySecret, signEmergencyDeparture: signEmergencyDeparture,\n';
 out += '         encodeEmergencyDeparture: encodeEmergencyDeparture, EMERGENCY_FRESH_BLOCKS: EMERGENCY_FRESH_BLOCKS,\n';
 // THE COMMITTEE'S PRICE (§11): the page turns a signed price in cents into the tape's unit for its core
