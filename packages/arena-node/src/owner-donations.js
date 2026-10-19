@@ -34,7 +34,11 @@ export function donationTotals(rows) {
  * recipients }]) and `rowsFor(keyHex)` (the seat's index). Each set lists its recipients with their totals.
  */
 export function donationReport({ protocolSets = [], games = [], rowsFor }) {
-  const recipient = (r) => ({ label: r.label || '', key: hexKey(r.recipientPk), shareBps: Number(r.shareBps || 0), ...donationTotals(rowsFor(hexKey(r.recipientPk))) });
+  // A LIGHTNING-ADDRESS RECIPIENT (the sets before keys, testnet4's serial 1) has no key: its LNURL instead, and no rows (this seat
+  // indexes donations by key) - before, its key read "undefined" on the owner page (measured 2026-10-19 on macOS node A, rc.22)
+  const recipient = (r) => (r.recipientPk === undefined
+    ? { label: r.label || '', key: '', lnurl: String(r.lnurl || ''), shareBps: Number(r.shareBps || 0), ...donationTotals([]) }
+    : { label: r.label || '', key: hexKey(r.recipientPk), shareBps: Number(r.shareBps || 0), ...donationTotals(rowsFor(hexKey(r.recipientPk))) });
   const sets = [];
   for (const s of protocolSets) sets.push({ kind: 'protocol', title: 'Protocol developers', network: toHex(s.networkId).slice(0, 16), serial: Number(s.serial),
     setId: toHex(donationSetId(s.recipients)), recipients: s.recipients.map(recipient) });
