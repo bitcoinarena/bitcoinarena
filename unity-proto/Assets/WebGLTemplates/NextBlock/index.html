@@ -179,6 +179,8 @@
     body.blwp-clean #arena-fps { display: none; }
     /* OFF UNLESS ASKED: the meter shows only with Settings' "Show FPS" on - kept in this browser */
     body:not(.arena-fps-on) #arena-fps { display: none !important; }
+    #arena-set-graphics .fps-toggle { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; cursor: pointer; }
+    #arena-set-graphics .fps-toggle input { width: 18px; height: 18px; accent-color: #f7931a; }
     /* IN A GAME, UNDER THE HEADER (2026-10-17: "And backup overlapping"): the header row holds the mark, the way back,
        the backup warning, Leaderboard, Shop and Settings - the meter lay over the warning; it sits just under the row there */
     body.arena-game-chosen:not(.arena-own-client) #arena-fps { top: calc(env(safe-area-inset-top, 0px) + 46px); }
@@ -1170,9 +1172,10 @@
   <link rel="stylesheet" href="games/btc-updown/market-page.css">
   <!-- TICK TOCK'S STYLE (kanban #521): the next round's box, from packages/nextblock/page -->
   <link rel="stylesheet" href="games/nextblock/unity-page.css">
+  <!-- its loading screen's markup is put in while the page is parsed (#boot): fetched from the start, beside the styles -->
+  <link rel="preload" href="games/nextblock/loading-page.js" as="script">
 </head>
 <body>
-  <canvas id="canvas" tabindex="-1"></canvas>
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
        round is being driven, so the balance, the federation and the pending line cannot follow a player
        into the game. -->
@@ -1268,10 +1271,6 @@
     </section>
     <section class="settings-card" id="arena-set-graphics">
       <h3>Graphics</h3>
-      <select id="arena-gfx-select" aria-label="Graphics">
-        <option value="auto" selected>Auto (by device)</option><option value="high">High</option><option value="low">Low</option>
-      </select>
-      <div class="muted" id="arena-gfx-now"></div>
       <!-- SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings") -->
       <label class="fps-toggle"><input type="checkbox" id="arena-fps-toggle"> Show FPS</label>
     </section>
@@ -1280,14 +1279,6 @@
       <div class="muted">What this page did - its log lines, sockets and run state, no seed or keys - to paste to Claude.</div>
       <button id="arena-logs-copy" type="button">Copy client logs</button>
       <div class="muted" id="arena-logs-said"></div>
-    </section>
-    <!-- THE BENCHMARK, HERE AND NOT IN THE LOBBY (2026-10-16: "Remove the benchmark button and have that in the
-         settings instead"): the same test the lobby's BENCHMARK ran - SPECTATE, then the frame rate with each render cost off in turn -->
-    <section class="settings-card" id="arena-set-bench">
-      <h3>Benchmark</h3>
-      <label class="muted"><input type="checkbox" id="arena-bench-on"> On - off by default</label>
-      <div class="muted">Spectates the round and measures this device's frame rate with each graphics cost switched off in turn; the result shows under the FPS line. While it is on, a tap on the FPS line runs it too.</div>
-      <button id="arena-bench-go" type="button" disabled>Run the benchmark</button>
     </section>
     <section class="settings-card" id="arena-set-seed">
       <h3>Seed phrase</h3>
@@ -1797,8 +1788,7 @@
   <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a></div><div class="foot-row"><span class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</span><button type="button" class="donate-btn" title="Donate to the protocol developers" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate</button></div></div></div>
-  <div id="boot">
-    <div id="boot-panel"><div class="head"></div></div>
+  <div id="boot" data-build="{{{ PRODUCT_VERSION }}}">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
     <script>
       if (window.ARENA_SITE_TITLE) { document.getElementById('site-name').textContent = window.ARENA_SITE_TITLE[0];
@@ -1806,56 +1796,11 @@
         if (window.ARENA_SITE_TITLE[2]) { var im = document.createElement('img'); im.alt = ''; im.src = window.ARENA_SITE_TITLE[2]; ic.textContent = ''; ic.append(im); }
         else ic.textContent = window.ARENA_SITE_TITLE[1]; }
     </script>
-    <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
-    <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
-    <script>
-      // UNITY'S LOBBY PANEL, MEASURED THE SAME WAY: SplashScreen.Measure and Styles in CSS pixels - the panel, its gold
-      // head, the title fitted on one line with the mark beside it (x 0.92 until it fits, as Unity does), the build row under the head.
-      (function () {
-        const boot = document.getElementById('boot'), title = document.getElementById('title');
-        const ctx = document.createElement('canvas').getContext('2d');
-        const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-        function bootPanel() {
-          if (!boot || !title || document.documentElement.classList.contains('other-game')) return;
-          const w = window.innerWidth, h = window.innerHeight, min = Math.min(w, h);
-          const pw = Math.min(w * 0.86, 900), ph = Math.min(h * 0.88, 760), px = (w - pw) / 2, py = (h - ph) / 2;
-          const hh = clamp(ph * 0.13, 44, 96), pad = pw * 0.07, padV = Math.min(pad, ph * 0.07);
-          const sub = Math.round(clamp(min * 0.028, 14, 24));
-          let tf = Math.round(clamp(min * 0.070, 30, 68)), mark = 0, gap = 0;
-          for (let i = 0; i < 24; i++) {
-            ctx.font = `700 ${tf}px system-ui, sans-serif`;
-            const nx = ctx.measureText('TICK TOCK, NEXT BLOCK').width, ny = tf * 1.15;
-            mark = Math.min(hh * 0.78, ny * 1.15); gap = Math.max(6, mark * 0.25);
-            if ((nx + mark + gap + 24 <= pw && ny <= hh) || tf <= 12) break;
-            tf = Math.max(12, Math.round(tf * 0.92));
-          }
-          const by = py + hh + ph * 0.008, bh = Math.max(12, sub * 1.3);
-          // THE PICTURES SIZED TO THE ROOM LEFT IN THE FRAME (2026-10-17: "Ui version overlapping border"): on a tall
-          // phone the 2x2 pictures, the percent, the bar and the words were taller than the panel and ran over its edges; the rest of the
-          // column is ~290 px, the pictures take what is left (two rows ~0.9 of their width, one row 1/6.25)
-          const restH = 290, roomH = Math.max(80, (py + ph - padV) - (by + bh + ph * 0.02) - restH);
-          const portrait = h > w, howtoW = Math.max(120, Math.min(pw - pad * 2, portrait ? roomH / 0.9 : roomH * 6.25));
-          const set = { '--hw': howtoW, '--gap': roomH < 260 ? 8 : 14, '--px': px, '--py': py, '--pw': pw, '--ph': ph, '--hh': hh, '--tf': tf, '--tm': mark, '--tg': gap, '--ix': px + pad, '--iw': pw - pad * 2,
-            '--ir': w - (px + pw - pad), '--by': by, '--bh': bh, '--bf': Math.max(10, Math.round(sub * 0.8)), '--ct': by + bh + ph * 0.02,
-            '--cb': h - (py + ph) + padV };
-          for (const k in set) boot.style.setProperty(k, set[k].toFixed(1) + 'px');
-          boot.classList.add('paneled');
-        }
-        bootPanel(); window.addEventListener('resize', bootPanel); window.ARENA_BOOT_PANEL = bootPanel;
-      })();
-    </script>
-    <div id="howto">
-      <img src="howto-1.png" alt="How to play, 1 of 4">
-      <img src="howto-2.png" alt="How to play, 2 of 4">
-      <img src="howto-3.png" alt="How to play, 3 of 4">
-      <img src="howto-4.png" alt="How to play, 4 of 4">
-    </div>
-    <div id="pctwrap"><div id="pct">0%</div><div id="pct-steps" aria-hidden="true"><span style="animation-delay:0.0s">91 %</span><span style="animation-delay:0.3s">92 %</span><span style="animation-delay:0.6s">93 %</span><span style="animation-delay:0.9s">94 %</span><span style="animation-delay:1.2s">95 %</span><span style="animation-delay:1.5s">96 %</span><span style="animation-delay:1.8s">97 %</span><span style="animation-delay:2.1s">98 %</span><span style="animation-delay:2.4s">99 %</span></div></div>
     <div id="track"><div id="bar"></div><div id="creep"></div></div>
-    <div id="dl" aria-live="off"></div>
     <div id="stage">Connecting …</div>
-    <div id="note"><span id="total">…</span> to load. The first time is the
-      slowest — after that most of it is in the browser cache.</div>
+    <!-- TICK TOCK'S LOADING SCREEN (kanban #521): its canvas, panel, title, how-to, percent, download line and note, put where they
+         stood while the page is parsed - before the first paint - from packages/nextblock/page -->
+    <script src="games/nextblock/loading-page.js"></script>
     <!-- THE BACKUP WARNING IS IN THE LOADING SCREEN, NOT THE HEADER (2026-10-19: "backup warning should always be in the
          loading screen instead of the header"; "When doing a deposit the popup in there shows the warning again"): every game's loading
          screen says it while the wallet has no backup, with its own way out; the deposit popup says it again (paintMoney). PLAY is never
@@ -4748,19 +4693,7 @@
       document.getElementById('arena-settings-advanced').style.display = 'none';   // Settings closes with its Advanced screen
       settingsPanel().style.display = 'none';
     });
-    // THE BENCHMARK FROM SETTINGS: Settings closes, and Unity spectates and runs the page's frame-rate test (Benchmark,
-    // as the lobby's button did); a game without Unity runs the test over its own client
-    {
-      const on = document.getElementById('arena-bench-on'), go = document.getElementById('arena-bench-go');
-      on.checked = window.ARENA_BENCH_ON(); go.disabled = !on.checked;
-      on.addEventListener('change', () => { try { window.ARENA_BROWSER_STORE().setItem('arena.bench.on', on.checked ? '1' : '0'); } catch { /* this page only */ } go.disabled = !on.checked; });
-    }
-    document.getElementById('arena-bench-go').addEventListener('click', () => {
-      if (!window.ARENA_BENCH_ON()) return;   // off by default
-      settingsPanel().style.display = 'none';
-      if (window.unityInstance && window.ARENA_UNITY !== false) { try { window.unityInstance.SendMessage('Bootstrap', 'Benchmark'); return; } catch { /* the test alone */ } }
-      if (typeof window.arenaBench === 'function') window.arenaBench();
-    });
+    // the benchmark's Settings card and its switch are Tick Tock's: packages/nextblock/page/unity-page.js (kanban #521)
     // THE DONATION IS A DROPDOWN, 2% UNTIL THE PLAYER PICKS (2026-09-29 12:47): six choices, no custom field (§24B).
     document.getElementById('arena-donation-select').addEventListener('change', (e) => {
       window.ARENA_DONATION_BPS = Number(e.target.value) * 100;

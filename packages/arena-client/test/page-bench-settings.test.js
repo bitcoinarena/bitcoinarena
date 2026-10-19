@@ -10,12 +10,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-// the switch and the benchmark itself are Tick Tock's page part (kanban #521); the Settings button is the page's
+// the benchmark - its switch, its Settings card and handlers, the test itself - is Tick Tock's page part (kanban #521)
 const UNITY = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 const HANDLER = (() => {
   const head = "    document.getElementById('arena-bench-go').addEventListener('click', () => {\n";
-  const at = PAGE.indexOf(head); assert.ok(at > 0, 'the page has no Benchmark handler');
-  return PAGE.slice(at + head.length, PAGE.indexOf('\n    });\n', at));
+  const at = UNITY.indexOf(head); assert.ok(at > 0, 'unity-page.js has no Benchmark handler');
+  return UNITY.slice(at + head.length, UNITY.indexOf('\n    });\n', at));
 })();
 const click = (window) => {
   const panel = { style: { display: '' } };
@@ -25,9 +25,11 @@ const click = (window) => {
 
 test('Settings has a Benchmark card with its button, inside the settings sheet', () => {
   const sheet = PAGE.slice(PAGE.indexOf('<div id="arena-settings"'), PAGE.indexOf('SETTINGS OPENS ON THE FIRST CLICK'));
-  assert.match(sheet, /<section class="settings-card" id="arena-set-bench">\s*<h3>Benchmark<\/h3>/);
-  assert.match(sheet, /<input type="checkbox" id="arena-bench-on"> On - off by default/);
-  assert.match(sheet, /<button id="arena-bench-go" type="button" disabled>Run the benchmark<\/button>/, 'disabled as the page loads');
+  assert.match(sheet, /<section class="settings-card" id="arena-set-logs">/, 'the card goes in after the client logs');
+  const card = UNITY.slice(UNITY.indexOf("document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', "), UNITY.indexOf('// the benchmark\'s card'));
+  assert.match(card, /<section class="settings-card" id="arena-set-bench">\s*<h3>Benchmark<\/h3>/);
+  assert.match(card, /<input type="checkbox" id="arena-bench-on"> On - off by default/);
+  assert.match(card, /<button id="arena-bench-go" type="button" disabled>Run the benchmark<\/button>/, 'disabled as the page loads');
 });
 
 test('the switch: off with nothing kept, on only with "1" kept; a blocked store is off', () => {
