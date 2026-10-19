@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const HOME = new URL('../../../deploy/home-site/www/', import.meta.url);
+const HOME = new URL('../../../src/website/www/', import.meta.url);
 const SCRIPT = readFileSync(new URL('js/reserves.js', HOME), 'utf8');
 const HTML = readFileSync(new URL('index.html', HOME), 'utf8');
 const GAMES = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
@@ -51,7 +51,7 @@ test('the panel sits under the fees on bitcoin-arena.io, and the games screen ca
 });
 
 test('the website and the docs say the current split, the reserves and that anyone may propose a payout', () => {
-  const DOCS = readFileSync(new URL('../../../deploy/doc-site/www/index.html', import.meta.url), 'utf8');
+  const DOCS = readFileSync(new URL('../../../src/website/docs/www/index.html', import.meta.url), 'utf8');
   assert.match(HTML, /aria-label="A paid stake: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves"/);
   assert.match(HTML, /<b>Anyone<\/b> can propose a payout/);
   for (const id of ['money', 'reserves', 'proposals']) assert.ok(DOCS.includes(`id="${id}"`), `docs section #${id}`);
@@ -59,7 +59,7 @@ test('the website and the docs say the current split, the reserves and that anyo
   assert.match(DOCS, /It passes when 60% of the votes say YES and YES is at least 20% of everyone who could vote/);
   assert.match(DOCS, /<b>Five rules, so nobody can rent a majority.<\/b>/);
   assert.match(DOCS, /bond &times; age: 1&times; under a year, 2&times; from one year, 3&times; from two/);
-  assert.equal(readFileSync(new URL('../../../deploy/home-site/www/docs/index.html', import.meta.url), 'utf8'), DOCS, 'the homepage\'s /docs copy is the same page');
+  assert.equal(readFileSync(new URL('../../../src/website/www/docs/index.html', import.meta.url), 'utf8'), DOCS, 'the homepage\'s /docs copy is the same page');
 });
 
 test('the website names only the current configuration; the proposals forum is its own page beside the Arena, on the player key', () => {
