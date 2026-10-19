@@ -18,6 +18,18 @@ import { taggedHash } from '../../arena-protocol/src/hash.js';
 import { LND_PORTS } from './lnd.js';
 
 export const GATEWAY_PORT = port(8476);   // + ARENA_PORT_OFFSET (instance.js)
+/** The gateway's metrics port: its own port + 2 (8478), clear of the liquidity provider's 8477. */
+export const GATEWAY_METRICS_STEP = 2;
+
+/**
+ * An older gateway service (systemd unit, launchd plist or Windows launcher) given its own metrics port, as configureGateway writes it now:
+ * the text unchanged when it names one already or no gateway listen address.
+ */
+export function gatewayMetricsOwn(text) {
+  if (/--metrics-listen=/.test(text)) return text;
+  return String(text).replace(/(<string>|")?--listen=127\.0\.0\.1:(\d+)(<\/string>|")?/, (m, a = '', p, b = '') =>
+    `${m}${a === '<string>' ? '' : ' '}${a}--metrics-listen=127.0.0.1:${Number(p) + GATEWAY_METRICS_STEP}${b}`);
+}
 export const TESTNET4_ESPLORA = 'https://mempool.space/testnet4/api';
 const GATEWAY_SEED_TAG = 'arena/gateway/v1';
 
@@ -41,7 +53,9 @@ export function configureGateway({ home, gatewayd, seed, lnd, port = GATEWAY_POR
   if (!existsSync(passwordFile)) writeFileSync(passwordFile, randomBytes(24).toString('base64url'), { mode: 0o600 });
   const hash = bcrypt.hashSync(readFileSync(passwordFile, 'utf8').trim(), cost);
   // --api-addr is where the federation's clients reach it: the node's public address /gateway/ (the seat carries it here); apiUrl, local, is ours
-  const args = [gatewayd, `--data-dir=${join(dir, 'data')}`, `--listen=127.0.0.1:${port}`, `--api-addr=${publicUrl || apiUrl}`, `--bcrypt-password-hash=${hash}`,
+  // --metrics-listen: by itself gatewayd takes its UI port + 1 (8477), the liquidity provider's (state.js) - measured on the test host, node A
+  // (custody + liquidity, 2026-10-19): the provider died at every start with EADDRINUSE 127.0.0.1:8477, held by gatewayd
+  const args = [gatewayd, `--data-dir=${join(dir, 'data')}`, `--listen=127.0.0.1:${port}`, `--metrics-listen=127.0.0.1:${port + GATEWAY_METRICS_STEP}`, `--api-addr=${publicUrl || apiUrl}`, `--bcrypt-password-hash=${hash}`,
     '--network=testnet4', `--esplora-url=${esplora}`, '--skip-setup',   // the mnemonic is the seed's (FM_GATEWAY_MNEMONIC), not set up in its own UI
     'lnd', `--lnd-rpc-host=${lnd.rpcHost || `https://127.0.0.1:${LND_PORTS.rpc}`}`, `--lnd-tls-cert=${lnd.tlsCert}`, `--lnd-macaroon=${lnd.macaroon}`];
   return { dir, args, vars: { FM_GATEWAY_MNEMONIC: gatewayMnemonicOf(seed) }, apiUrl, publicUrl: publicUrl || apiUrl, passwordFile };

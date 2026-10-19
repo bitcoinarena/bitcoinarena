@@ -24,6 +24,7 @@ import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js'
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
 import { quickTunnelUrl } from './reach.js';
+import { gatewayMetricsOwn } from './gateway.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'arena.conf', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
@@ -248,7 +249,8 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     const text = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
         : oldTexts.get(f).split(from).join(newRelease);
-    writeFileSync(f, text);
+    // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
+    writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
   }
   // A QUICK TUNNEL COMES BACK UNDER A NEW NAME (measured on the test host, node A rc.16 -> rc.18: the tunnel restarted as
   // cult-turns-….trycloudflare.com while node.env still named conventional-cube-…, so the node's public address, its guardian endpoint
