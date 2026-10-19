@@ -89,7 +89,7 @@ async function joinWithout(w, who, { namesFeeLock }) {
 /**
  * FEDIMINTD'S MEASURED DEFAULT, APPLIED AFTER THE ENTRIES ARE IN (2026-09-21).
  *
- * `REAL_FEES` is 1000 msat base, measured on fedimintd 0.12.0, and §22A forbids exactly that: a BLWP
+ * `REAL_FEES` is 1000 msat base, measured on fedimintd 0.12.0, and §22A forbids exactly that: an Arena
  * federation runs with `disable_base_fees`. The node enforces it at the entry door, so a round can no longer
  * be OPENED against such a federation - that is what refused 43 entries across five suites. The arithmetic is
  * still worth testing, so the rule arrives here instead: after every entry, before the close.
@@ -357,7 +357,7 @@ test('a round with a loser and no qualifier pays no stake and still pays the sea
     // hold path's own case, not this one.
     //
     // This test asserted NONE and zero submissions, and that was true only while the fixture's entries
-    // brought no fee lock. On a federation BLWP would accept, the round MINTS them, so there is something to
+    // brought no fee lock. On a federation Arena would accept, the round MINTS them, so there is something to
     // settle even with nobody to pay out of the stakes. The expectation moves because the fixture is the
     // production shape now - not to match a leftover.
     assert.equal(got.state, 'ACCEPTED', got.why);

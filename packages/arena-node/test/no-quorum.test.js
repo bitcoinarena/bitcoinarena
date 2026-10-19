@@ -241,7 +241,7 @@ test('a result that is already FINAL is not voided by a later low count', () => 
 });
 
 /**
- * ENTRY_VOID IS BLWP'S FIFTH WORD, not a synonym for VOID.
+ * ENTRY_VOID IS ARENA'S FIFTH WORD, not a synonym for VOID.
  *
  * Section 14's ladder and section 18's pool rule name both, and 23.2 gives
  * them the same hold. They behave alike everywhere money is counted - the

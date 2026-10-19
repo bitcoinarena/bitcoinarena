@@ -95,7 +95,7 @@ async function joinWithout(w, who, { namesFeeLock }) {
 /**
  * FEDIMINTD'S MEASURED DEFAULT, APPLIED AFTER THE ENTRIES ARE IN (2026-09-21).
  *
- * `REAL_FEES` is 1000 msat base, measured on fedimintd 0.12.0, and §22A forbids exactly that: a BLWP
+ * `REAL_FEES` is 1000 msat base, measured on fedimintd 0.12.0, and §22A forbids exactly that: an Arena
  * federation runs with `disable_base_fees`. The node enforces it at the entry door, so a round can no longer
  * be OPENED against such a federation - that is what refused 43 entries across five suites. The arithmetic is
  * still worth testing, so the rule arrives here instead: after every entry, before the close.

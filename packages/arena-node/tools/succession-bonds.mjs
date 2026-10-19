@@ -4,7 +4,7 @@
 // may stop, and their bonds mature as any node's"). Driven by succession-regtest.sh once the old federation is empty: one bond
 // per old guardian on the run's own regtest, each recovery spend (path A, the node's own key) refused one block before
 // maturity, then accepted at maturity, broadcast, mined and seen spent by the census reader. Prints one JSON line.
-//   RPC=30101 RPCUSER=blwp RPCPASS=blwp GUARDIANS=4 node tools/succession-bonds.mjs
+//   RPC=30101 RPCUSER=arena RPCPASS=arena GUARDIANS=4 node tools/succession-bonds.mjs
 import { execFileSync } from 'node:child_process';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
