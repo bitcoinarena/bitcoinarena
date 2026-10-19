@@ -18,6 +18,7 @@ import { writeLaunchers } from '../src/launchers.js';
 import { seatUnit, waitHealthy } from '../src/service.js';
 import * as reachKit from '../src/reach.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
+import { setInConf } from '../../arena-node/src/arena-conf.js';
 
 const RELEASE = resolve(fileURLToPath(import.meta.url), '../../../..');
 const G = '00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043';
@@ -37,9 +38,11 @@ await new Promise((ok) => fake.listen(0, '127.0.0.1', ok));
 const seatPort = await freePort();
 let child = null;
 const install = async ({ release, home: h, port }) => {
+  // the seat starts from arena.conf alone (kanban #499): the one-block fake chain goes into it
   const env = { PATH: process.env.PATH, HOME: h };
-  for (const l of readFileSync(join(h, 'node.env'), 'utf8').split('\n')) { const m = /^([A-Z0-9_]+)=(.*)$/.exec(l); if (m) env[m[1]] = m[2]; }
-  env.ARENA_BITCOIND_URL = `http://127.0.0.1:${fake.address().port}/`; env.ARENA_BITCOIND_COOKIE = join(h, 'fake.cookie');
+  let conf = readFileSync(join(h, 'arena.conf'), 'utf8');
+  conf = setInConf(setInConf(conf, 'bitcoind_url', `http://127.0.0.1:${fake.address().port}/`), 'bitcoind_cookie', join(h, 'fake.cookie'));
+  writeFileSync(join(h, 'arena.conf'), conf);
   const unit = seatUnit({ node: process.execPath, release, home: h, port });
   const exec = /ExecStart=(.*)/.exec(unit)[1].split(' ');
   child = spawn(exec[0], exec.slice(1), { cwd: /WorkingDirectory=(.*)/.exec(unit)[1], env, stdio: 'ignore' });
