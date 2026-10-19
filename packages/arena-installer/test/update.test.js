@@ -263,6 +263,9 @@ test('a node on a quick tunnel: the tunnel starts first, its new name goes into 
   const seat = join(agents, `${LAUNCHD_LABEL}.plist`), tunnel = join(agents, `${LAUNCHD_LABEL}.tunnel.plist`);
   writeFileSync(seat, legacyPlist({ node: process.execPath, release: v1, home, port }));
   writeFileSync(tunnel, `<plist><dict><key>Label</key><string>${LAUNCHD_LABEL}.tunnel</string><key>ProgramArguments</key><array><string>${join(v1, 'runtime/cloudflared')}</string></array></dict></plist>\n`);
+  // the gateway as an older install wrote it: the tunnel's host in --api-addr, no metrics port of its own
+  const gateway = join(agents, `${LAUNCHD_LABEL}.gateway.plist`);
+  writeFileSync(gateway, `<plist><dict><key>Label</key><string>${LAUNCHD_LABEL}.gateway</string><key>ProgramArguments</key><array><string>${join(v1, 'runtime/custody/gatewayd')}</string><string>--listen=127.0.0.1:8476</string><string>--api-addr=${old}/gateway/</string></array></dict></plist>\n`);
   await sys.sh('launchctl', ['bootstrap', 'gui/501', seat]);
   const first = await waitHealthy({ port, waitMs: 60000, everyMs: 300 });
   assert.equal(first.ok, true, first.why);
@@ -274,7 +277,11 @@ test('a node on a quick tunnel: the tunnel starts first, its new name goes into 
   assert.equal(up.ok, true, up.why);
   assert.equal(up.reach, fresh);
   const boots = sys.calls.slice(at).filter((c) => c[0] === 'launchctl' && c[1] === 'bootstrap').map((c) => c[3].split('/').pop());
-  assert.deepEqual(boots, [`${LAUNCHD_LABEL}.tunnel.plist`, `${LAUNCHD_LABEL}.plist`], 'the tunnel first, the seat after the settings changed');
+  assert.deepEqual(boots.slice(0, 1), [`${LAUNCHD_LABEL}.tunnel.plist`], 'the tunnel first');
+  assert.deepEqual(boots.slice(1).sort(), [`${LAUNCHD_LABEL}.gateway.plist`, `${LAUNCHD_LABEL}.plist`], 'the seat and the gateway after the settings changed');
+  const gw = readFileSync(gateway, 'utf8');
+  assert.ok(gw.includes(`--api-addr=${fresh}/gateway/`) && !gw.includes('conventional-cube'), `the gateway announces the tunnel's new name (Windows VM 0.1.0 -> 0.1.1 kept the old one): ${gw}`);
+  assert.ok(gw.includes(`<string>--metrics-listen=127.0.0.1:8478</string>`) && gw.includes(join(v2, 'runtime/custody/gatewayd')), gw);
   assert.deepEqual(order, [['read the name', true]], 'the name logged after the tunnel started');
   const confNow = readFileSync(join(home, 'arena.conf'), 'utf8');
   assert.ok(!confNow.includes('conventional-cube') && confNow.includes(`public_url=${fresh}`) && confNow.includes('guardian_endpoint=wss://cult-turns-subscriptions-monitors.trycloudflare.com/guardian'), confNow);
