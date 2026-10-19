@@ -309,7 +309,7 @@ test('a share the wallet was asked for before the tab died is not asked again - 
 // against a DOM stubbed down to what it touches, with dist/arena-client.js as
 // BLWPCLIENT - the way wallet-nwc.test.js drives it.
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const SHIPPED = createRequire(import.meta.url)('../dist/arena-client.js');
 const NOTE_IS = { paid: 'paid', unpaid: 'unpaid', asked: 'unknown' };
 const A = TEST_DONATION_ENDPOINTS[0];
@@ -331,7 +331,7 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
     replaceChildren(...kids) { this.children = kids; if (!kids.length) this.textContent = ''; },
     appendChild(kid) { this.children.push(kid); return kid; },
   });
-  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget'],
+  pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget'],
     src, ' return paintWallet();')(
     { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, ARENA_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
     SHIPPED, { connected: false }, spent, owed, false, '', null);
@@ -356,7 +356,7 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
   const client = { joinedEntry: { stakeCommitment }, where: { entryId: 'ee'.repeat(32) } };
   const win = { BLWP_ROUND: round, ARENA_STAKE: { signerNodeKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
   const BL = { ...SHIPPED, settlementBy: (o) => SHIPPED.settlementBy({ ...o, fetcher }) };
-  await pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet'], src, ' return askTheSettlement();')(
+  await pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet'], src, ' return askTheSettlement();')(
     win, BL, () => client, spent, () => {});
   return win.BLWP_SETTLEMENT;
 }
@@ -380,7 +380,7 @@ function showNotedOnThePage({ search, storage }) {
   const src = body.slice(0, body.indexOf('\n    }') + 6);
   const made = {};
   const el = (id) => (made[id] = made[id] || { textContent: '', classes: new Set(), classList: { add(c) { made[id].classes.add(c); } } });
-  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'location'], src, ' return showNotedDonation();')(
+  pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'location'], src, ' return showNotedDonation();')(
     { getElementById: el }, { sessionStorage: storage, BLWP_CURVE: pageCurve }, SHIPPED, { search });
   return made['arena-donation-noted'];
 }

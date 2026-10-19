@@ -11,7 +11,7 @@ import vm from 'node:vm';
 const HOME = new URL('../../../src/website/www/', import.meta.url);
 const SCRIPT = readFileSync(new URL('js/reserves.js', HOME), 'utf8');
 const HTML = readFileSync(new URL('index.html', HOME), 'utf8');
-const GAMES = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+const GAMES = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 
 function homepage(answers) {
   const els = { total: { textContent: '' }, line: { textContent: '' } };
@@ -74,8 +74,8 @@ test('the website names only the current configuration; the proposals forum is i
   assert.ok(HTML.includes('<a class="keep" href="https://docs.bitcoin-arena.io/">Docs</a>'));
   assert.match(HTML, /@media \(max-width: 860px\) \{ nav \.links a:not\(\.keep\) \{ display: none; \}/);
   assert.ok(!/nav \.links \{ display: none; \}/.test(HTML), 'the phone menu hides every link again');
-  const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
-  const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
+  const FORUM = readFileSync(new URL('../../../src/arena-ui/proposals/index.html', import.meta.url), 'utf8');
+  const JS = readFileSync(new URL('../../../src/arena-ui/proposals/forum.js', import.meta.url), 'utf8');
   for (const t of ['bonds at least 3 months old that stay locked at least 3 months after the vote', '60% of the votes say YES, and YES is at least 20% of everyone who could vote',
     'at most 10% of the reserves per proposal, 25% per 3 months', 'Project improvement proposals', 'ALWAYS THE IN-GAME KEY AND NAME', '<script src="/proposals/forum.js" defer></script>']) assert.ok(FORUM.includes(t), t);
   assert.match(JS, /BLWPCLIENT\.forumIdentity\(best\.hex/, 'signs with the in-game identity key of the kept wallet phrase (PIP)');
@@ -96,8 +96,8 @@ test('the website names only the current configuration; the proposals forum is i
 // A PIP'S FIELDS (2026-10-17: "Separate title field. Content on what the proposal does, in markdown including tables.
 // Separate text field how does it improve bitcoin arena"): kept in the one signed purpose, read back apart; the Markdown is safe
 test('title, content and "how it improves Bitcoin Arena" round-trip through the purpose; Markdown tables render, HTML does not', () => {
-  const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
-  const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
+  const JS = readFileSync(new URL('../../../src/arena-ui/proposals/forum.js', import.meta.url), 'utf8');
+  const FORUM = readFileSync(new URL('../../../src/arena-ui/proposals/index.html', import.meta.url), 'utf8');
   const src = JS.slice(JS.indexOf("  var IMPROVES = "), JS.indexOf('  window.ARENA_FORUM_MD = markdown;'));
   const { parts, purposeOf, markdown } = new Function(src + '\nreturn { parts, purposeOf, markdown };')();
   const purpose = purposeOf('A second relay', '## Plan\n\n| item | sat |\n|---|---:|\n| server | 800 |\n| domain | 200 |\n\n- **fast** and `cheap`', 'Faster joins for every game.');

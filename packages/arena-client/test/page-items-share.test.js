@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 import { itemPriceFor, ITEM_DEV_SHARES } from '../../arena-protocol/src/items.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const html = readFileSync(PAGE, 'utf8');
 
 // the owner ~13:40Z: "Advanced settings muss ein eigener Menüpunkt sein ganz unten und dann geht ein neuer Screen auf"

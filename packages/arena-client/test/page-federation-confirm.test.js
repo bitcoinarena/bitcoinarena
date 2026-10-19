@@ -12,7 +12,7 @@ import * as fed from '../src/federations.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, from.slice(0, 40)); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const GATE = slice('    window.ARENA_FEDERATION_GATE = async', '\n    };\n');

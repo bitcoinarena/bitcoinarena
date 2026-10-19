@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 
-const T = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/', import.meta.url);
+const T = new URL('../../../src/arena-ui/', import.meta.url);
 const html = readFileSync(new URL('index.html', T), 'utf8');
 const OLD = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const DE2F = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';

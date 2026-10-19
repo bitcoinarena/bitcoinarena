@@ -13,7 +13,7 @@ COPY = 'Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.'
 GUARD = 'Protected by LICENSE section 2: no copy or fork may change the network id or the protocol developers\' donation set here.'
 INCLUDE = re.compile(r'^(packages/|unity-proto/Assets/(Scripts|Editor|Tests)/|tools/)')
 EXCLUDE = re.compile(r'(^|/)node_modules/|/dist/|^packages/[^/]+/plugin/|^packages/nextblock/(src|frozen|config)/'
-                     r'|^packages/arena-client/(lock-client|nostr)/|WebGLTemplates/')
+                     r'|^packages/arena-client/(lock-client|nostr)/|WebGLTemplates/|^src/arena-ui/')
 KINDS = {'.js': '//', '.mjs': '//', '.cs': '//', '.sh': '#', '.py': '#'}
 PROTECTED = {'packages/arena-protocol/src/genesis-ids.js', 'packages/arena-protocol/src/donation-keys.js',
              'packages/arena-protocol/src/testnet4-donation-set.js', 'packages/arena-protocol/src/testnet4-donation-set-keys.js',

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 import { readFileSync } from 'node:fs';
 const TEXT = readFileSync(PAGE, 'utf8');
 const SRC = `    const VIEW_ONLY_PARAMS = ['rps-demo', 'game'];`;

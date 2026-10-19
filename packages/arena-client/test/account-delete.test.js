@@ -12,7 +12,7 @@ import { pageFunction } from './page-script.js';
 import { forgetPhrase, phraseWalletEntries, walletSecretFor, markSeedRecover, seedRecovers } from '../src/page-lock.js';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const store = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k),
   key: (i) => [...m.keys()][i] ?? null, get length() { return m.size; }, map: m }; };

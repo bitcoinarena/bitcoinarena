@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const at = (p) => fileURLToPath(new URL(p, import.meta.url));
 const TOOL = at('../tools/client-hash.mjs');
 const LIST = JSON.parse(readFileSync(at('../../arena-client/known-good-clients.json'), 'utf8'));
-const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/NextBlock');
+const TEMPLATE = at('../../../src/arena-ui');
 // The lock client (W1b) makes the player's stake lock, so it is pinned too.
 const SCRIPTS = ['arena-client.js', 'arena-curve.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
 // AND EACH GAME'S OWN (one list per game): nextblock's core bundle, and its mark

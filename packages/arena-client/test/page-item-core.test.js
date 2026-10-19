@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { createHash, webcrypto } from 'node:crypto';
 import vm from 'node:vm';
 
-const T = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/', import.meta.url);
+const T = new URL('../../../src/arena-ui/', import.meta.url);
 const html = readFileSync(new URL('index.html', T), 'utf8');
 const F0CC = 'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8';
 const file = readFileSync(new URL('blwp-core-f0cc7b7b.js', T));

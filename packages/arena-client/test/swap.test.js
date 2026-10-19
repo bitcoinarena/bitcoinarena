@@ -75,7 +75,7 @@ test('the join\'s swap: enough already - nothing asked; the shortfall quoted wit
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 test('the page\'s swap dialog shows the amount, the fee and the total; Cancel answers no, Swap and enter yes', async () => {
-  const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
+  const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
   const HTML = readFileSync(PAGE, 'utf8');
   const a = HTML.indexOf('    window.ARENA_SWAP_CONFIRM = async');
   const slice = HTML.slice(a, HTML.indexOf('\n    };\n', a) + 7);
