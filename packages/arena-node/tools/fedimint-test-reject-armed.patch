@@ -1,4 +1,4 @@
-# kanban #364 (TEST ONLY): the armed one-shot rejection - a guardian whose BLWP_TEST_ARM_DIR holds the file blwp-test-reject-next
+# kanban #364 (TEST ONLY): the armed one-shot rejection - a guardian whose ARENA_TEST_ARM_DIR (or the old BLWP_TEST_ARM_DIR) holds the file blwp-test-reject-next
 # answers the next submitted transaction with an error although it was sent to consensus (the 10-06 stranding, on demand).
 # Built as fedimintd-364 for the throwaway testnet4 federation T only (B's binary restored byte for byte). Never on A or B.
 --- a/fedimint-server/src/consensus/api.rs
@@ -12,7 +12,7 @@
 +        // the arm file `blwp-test-reject-next` answers the NEXT submitted transaction with an error although it was just sent to
 +        // consensus - the "rejected by the threshold, accepted by consensus" race of 10-06 that strands issued e-cash, made on demand.
 +        // One-shot: the file is removed first. Without the file nothing changes. Never armed on A or B.
-+        if let Ok(dir) = std::env::var("BLWP_TEST_ARM_DIR") {
++        if let Ok(dir) = std::env::var("ARENA_TEST_ARM_DIR").or_else(|_| std::env::var("BLWP_TEST_ARM_DIR")) {
 +            let arm = std::path::Path::new(&dir).join("blwp-test-reject-next");
 +            if std::fs::remove_file(&arm).is_ok() {
 +                warn!(target: LOG_NET_API, %txid, "BLWP TEST: the armed rejection - answered as unbalanced, the transaction is in consensus");
