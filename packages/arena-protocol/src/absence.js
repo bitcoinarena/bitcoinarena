@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GUARDIAN WHO IS GONE, AND ONE WHO LEAVES (spec §23A.4-§23A.5, kanban #322), the first slice: the signed objects and their
+// A GUARDIAN WHO IS GONE, AND ONE WHO LEAVES (spec §23A.4-§23A.5), the first slice: the signed objects and their
 // checks. Producing an attestation needs a guardian's per-peer consensus view (the fork's API) and is the next slice.
 //
 //   ABSENCE ATTESTATION  each guardian signs, once a day while it lasts, (federation_id, peer, last_seen_height, height) for
@@ -8,7 +8,7 @@
 //   ABANDONMENT PROOF    2f + 1 of them, by distinct guardians of the record, agreeing on a peer for at least abandon_blocks:
 //                        portable, verifiable from the record's keys - the fraud proof §5A.3B's arbitration set slashes on
 //   DEPARTURE NOTICE     the peer's own signed (federation_id, peer, leave_after_height), leave_after >= now + departure_notice:
-//                        recorded DEPARTED, and his bond untouched (RULED, the owner 2026-09-21: "Leaving is legitimate")
+//                        recorded DEPARTED, and his bond untouched (RULED 2026-09-21: "Leaving is legitimate")
 //
 // NO CURVE: `sign(digest)` and `verify(signature, digest, nodePubkey)` are injected (BIP-340 over node keys). A peer is named
 // by its 33-byte Fedimint peer key, a signer by its node key - both as the federation record lists its guardians.

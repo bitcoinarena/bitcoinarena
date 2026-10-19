@@ -178,7 +178,7 @@ test('a late run refuses a mark on inputs it never published', () => {
  * `genesis.js` writes that number into the config hash a round's network
  * commits to. So the assertion is not loosened, it is turned the right way up.
  */
-// KANBAN #130 (the owner 2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
+// KANBAN (2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
 // entry's run ends on the round's last tick - from its join tick to BLOCK_TICKS - 1 - not BLOCK_TICKS after its join.
 test('a transcript that runs past its own end is refused, and a full one is not', () => {
   const entry = entryAt(60);

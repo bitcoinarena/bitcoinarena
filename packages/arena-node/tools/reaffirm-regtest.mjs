@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A BLWP BOND CARRIED ONTO BITCOIN ARENA ON A REAL REGTEST (kanban #209 step 1, spec 0A.9 / §27A.8.3): the bond is posted
+// A BLWP BOND CARRIED ONTO BITCOIN ARENA ON A REAL REGTEST (spec 0A.9 / §27A.8.3): the bond is posted
 // by the BLWP network's own code (the phase0 tree, PHASE0_TREE), exactly as testnet4's seven were; this tree's census
 // reads the chain bitcoind made; this tree's builder re-affirms it (prepareReaffirmation / postReaffirmation) and updates
 // its advertisement with hosted_games. What is read at each step, and that the bond is never spent.
@@ -72,7 +72,7 @@ cli('sendrawtransaction', upd.hex); arena.mine(1);
 say({ step: 'census after the update', txid: upd.txid, ...census(from) });
 say({ step: 'the bond', unspent: outpoint() !== null, bondBtc: outpoint() });
 
-// 4. AND MOVED INTO TEMPLATE 2 AT ITS OWN HEIGHT (kanban #295), as testnet4's seven will be: path A of the carried bond
+// 4. AND MOVED INTO TEMPLATE 2 AT ITS OWN HEIGHT, as testnet4's seven will be: path A of the carried bond
 // (its maturity genesis' 100, long past) into a template-2 bond of the same value whose leaf carries the next block + slack
 // + the offset, with the advertisement it stands for now - checked by testmempoolaccept before it is broadcast. Then the
 // census counts the new bond as this network's own (no re-affirmation needed), the old one is gone, and path A of the new

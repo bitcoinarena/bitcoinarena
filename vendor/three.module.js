@@ -15873,7 +15873,7 @@ function WebGLCapabilities( gl, extensions, parameters, utils ) {
 
 		const halfFloatSupportedByExt = ( textureType === HalfFloatType ) && ( extensions.has( 'EXT_color_buffer_half_float' ) || extensions.has( 'EXT_color_buffer_float' ) );
 
-		if ( textureType !== UnsignedByteType && utils.convert( textureType ) !== gl.getParameter( gl.IMPLEMENTATION_COLOR_READ_TYPE ) && // Edge and Chrome macOS < 52 (#9513)
+		if ( textureType !== UnsignedByteType && utils.convert( textureType ) !== gl.getParameter( gl.IMPLEMENTATION_COLOR_READ_TYPE ) && // Edge and Chrome Mac < 52
 			textureType !== FloatType && ! halfFloatSupportedByExt ) {
 
 			return false;
@@ -30542,7 +30542,7 @@ class WebGLRenderer {
 
 					// we might want to call this function with some ClippingGroup
 					// object instead of the material, once it becomes feasible
-					// (#8465, #8379)
+					//
 					clipping.setState( material, camera, useCache );
 
 				}
@@ -31156,7 +31156,7 @@ class WebGLRenderer {
 
 					}
 
-					// the following if statement ensures valid read requests (no out-of-bounds pixels, see #8604)
+					// the following if statement ensures valid read requests (no out-of-bounds pixels, see)
 
 					if ( ( x >= 0 && x <= ( renderTarget.width - width ) ) && ( y >= 0 && y <= ( renderTarget.height - height ) ) ) {
 
@@ -31210,7 +31210,7 @@ class WebGLRenderer {
 
 				}
 
-				// the following if statement ensures valid read requests (no out-of-bounds pixels, see #8604)
+				// the following if statement ensures valid read requests (no out-of-bounds pixels, see)
 				if ( ( x >= 0 && x <= ( renderTarget.width - width ) ) && ( y >= 0 && y <= ( renderTarget.height - height ) ) ) {
 
 					// set the active frame buffer to the one we want to read
@@ -38089,7 +38089,7 @@ class PolyhedronGeometry extends BufferGeometry {
 
 		function correctSeam() {
 
-			// handle case when face straddles the seam, see #3269
+			// handle case when face straddles the seam, see 
 
 			for ( let i = 0; i < uvBuffer.length; i += 6 ) {
 
@@ -44141,7 +44141,7 @@ class LoadingManager {
 		let urlModifier = undefined;
 		const handlers = [];
 
-		// Refer to #5689 for the reason why we don't set .onStart
+		// Refer to for the reason why we don't set .onStart
 		// in the constructor
 
 		this.onStart = undefined;
@@ -46234,7 +46234,7 @@ class MaterialLoader extends Loader {
 
 			if ( Array.isArray( normalScale ) === false ) {
 
-				// Blender exporter used to export a scalar. See #7459
+				// Blender exporter used to export a scalar. See 
 
 				normalScale = [ normalScale, normalScale ];
 

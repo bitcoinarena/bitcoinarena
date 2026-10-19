@@ -5,7 +5,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// ROLL OUT STAYS FIRST PERSON (the owner 2026-09-29 12:45, PLAYTEST-ROLL-1245: "when he does roll out, the view suddenly
+/// ROLL OUT STAYS FIRST PERSON (2026-09-29 12:45, PLAYTEST-ROLL-1245: "when he does roll out, the view suddenly
 /// becomes top-down instead of first person. It must stay first person"). PLAY starts a 4.2 s fly-in from 52 m over the
 /// field, and ROLL OUT ends it: the camera is at once behind the truck - `distance` back, `height` up, looking down the
 /// road ahead, not down on the ground - on a phone held upright and on a desktop, and it stays behind the truck as it

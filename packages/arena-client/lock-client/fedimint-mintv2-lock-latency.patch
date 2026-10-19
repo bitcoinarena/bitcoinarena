@@ -83,7 +83,7 @@
      }
  }
 +
-+/// A THRESHOLD OF VALID BLIND SIGNATURE SHARES, CHECKED ONCE PER NOTE (BLWP kanban #178, the owner 2026-10-05 option 1).
++/// A THRESHOLD OF VALID BLIND SIGNATURE SHARES, CHECKED ONCE PER NOTE (BLWP kanban #178, 2026-10-05 option 1).
 +///
 +/// The stock strategy (FilterMapThreshold + verify_blind_shares) checks every share of every guardian with its own
 +/// pairing as it arrives: threshold x notes share checks. This one gathers a threshold of answers (each of the right
@@ -316,7 +316,7 @@
  
      async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
 -        let (tweak_sender, tweak_receiver) = async_channel::bounded(50);
-+        // BLWP kanban #178 (the owner 2026-10-05, plan 348 step 2): a queue of 200 tweaks, ground while the lobby waits, so a
++        // BLWP kanban #178 (2026-10-05, plan 348 step 2): a queue of 200 tweaks, ground while the lobby waits, so a
 +        // lock's change notes (4-11 measured) never wait for grinding. Same filter, same recovery format.
 +        let (tweak_sender, tweak_receiver) = async_channel::bounded(200);
  

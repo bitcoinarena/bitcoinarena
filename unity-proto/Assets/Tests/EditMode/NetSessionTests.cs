@@ -128,7 +128,7 @@ public class NetSessionTests
     }
 
     /// <summary>
-    /// NO RUN-STOPPED SENTENCE ON ANY ENDING (the owner 2026-09-29 21:03, NO-STOPPED-LINE-2103): "RUN STOPPED - the core said
+    /// NO RUN-STOPPED SENTENCE ON ANY ENDING (2026-09-29 21:03, NO-STOPPED-LINE-2103): "RUN STOPPED - the core said
     /// DELIVERED at tick 1845" broke mid-word on his phone and says nothing the ending's headline does not. The HUD has no
     /// sentence to print and no draw to print it with - on delivery, WRECKED, WASTED, the timer, a miss, an empty truck, VOID.
     /// </summary>

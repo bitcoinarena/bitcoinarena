@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LOBBY'S "Withdrawal available" LINE SAYS ONLY WHAT IS IN NO BALANCE CHIP (kanban #106, the owner 2026-10-04 13:39:
+// THE LOBBY'S "Withdrawal available" LINE SAYS ONLY WHAT IS IN NO BALANCE CHIP (2026-10-04 13:39:
 // "Withdrawal available: 98 sat - press Withdraw in the wallet panel" while those 98 sat were already inside the confirmed
 // 506 sat). index.html's withdrawAvailable - what the page hands Unity's DailyLobby.WithdrawNotice - runs under the page's
 // name (page-script.js). Measured: the owed amount of the last look (collected into the player wallet by WINNINGS-AUTO, shown

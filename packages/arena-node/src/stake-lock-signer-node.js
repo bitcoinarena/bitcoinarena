@@ -36,7 +36,7 @@ import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/re
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
  * - the same arithmetic the page runs before it locks. Where it mints, a signer node takes no
  * entry without a fee lock and counts no stake whose fee lock it has not verified
- * (the owner 2026-09-14, pick (a): refuse at the door - measured before, one entry with no
+ * (2026-09-14, pick (a): refuse at the door - measured before, one entry with no
  * fee lock made the round's one settlement refuse everybody: "an entry's fee lock was
  * never verified, so the fee cannot be claimed").
  */
@@ -49,7 +49,7 @@ export async function roundMintsFees({ contract, port, feeBps = undefined }) {
 /**
  * A FEDERATION THAT CHARGES A BASE FEE TAKES MONEY THE OPERATOR DID NOT EARN.
  *
- * FEDERATION.md item 4, and the owner 2026-09-15 07:44: "Fedimint base fee is 0 - run the federation with
+ * FEDERATION.md item 4, and 2026-09-15 07:44: "Fedimint base fee is 0 - run the federation with
  * `disable_base_fees`." §22A says it in the spec's own words: "The 2% stays. Fedimint's own base fees are 0:
  * the federation runs with `disable_base_fees`. Lightning `min_htlc` / routing is not a federation fee."
  *
@@ -82,11 +82,11 @@ const zero = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 export { lockFieldsFromJson, lockFieldsToJson };
 
 /**
- * A DONATION OUTPUT AS THE PLAYER'S LOCK TRANSACTION MAKES IT (the owner 2026-10-03, FEDERATION.md): a payout contract -
+ * A DONATION OUTPUT AS THE PLAYER'S LOCK TRANSACTION MAKES IT (2026-10-03, FEDERATION.md): a payout contract -
  * the zero hash image, expired from the start, claim and refund key both the recipient's - so only that key can spend
  * it, with `Refund`, at any time. The same shape the settlement pays a winner with (stake-lock main.rs settle).
  */
-// THE SENDER ON THE CONTRACT (kanban #156, the owner 2026-10-05): `image` is the entry's 32-byte x-only player key, which a
+// THE SENDER ON THE CONTRACT (2026-10-05): `image` is the entry's 32-byte x-only player key, which a
 // page from 0.0.2751 writes; zeros as before when none. Nobody holds a preimage of either, so the claim path stays dead and
 // the recipient's Refund is the only spend (measured on a regtest federation: kept, redeemed at once).
 export const donationContractFields = ({ recipientPk, amountMsat, image = new Uint8Array(32) }) => ({
@@ -94,7 +94,7 @@ export const donationContractFields = ({ recipientPk, amountMsat, image = new Ui
 });
 
 /**
- * THE ENTRY'S DONATION OUTPUTS, CHECKED WITH THE FEDERATION (the owner 2026-10-03): for a round whose set pays keys, every
+ * THE ENTRY'S DONATION OUTPUTS, CHECKED WITH THE FEDERATION (2026-10-03): for a round whose set pays keys, every
  * output `donationOutputsExpected` pairs - the federation holds, at that outpoint, the payout contract to that key for
  * exactly that share - and none already pays for another entry. Answers the rows to keep, or why the entry's donation
  * is not what its set says. An LNURL round answers none (and refuses outputs it does not name).
@@ -131,10 +131,10 @@ export async function verifyDonationOutputs({ round, port, entry, entryIdBytes, 
 
 /**
  * WHAT AN ENTRY GIVES BESIDE ITS STAKE, CHECKED WITH THE FEDERATION: its donation outputs - and ON PROTOCOL 11 (§27A.9.2, kanban
- * #397) the developers' 4 % as any donation plus the reserves' 2 %, one output to the entry's federation's reserve key, checked
+ *) the developers' 4 % as any donation plus the reserves' 2 %, one output to the entry's federation's reserve key, checked
  * the same way (a payout contract to that key for exactly that amount) and kept beside them as a row for that key.
  */
-// `split`: the round's split in force at its census height (kanban #462); unset, today's
+// `split`: the round's split in force at its census height; unset, today's
 export async function verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients, reserveKey = null, federationId, split = undefined }) {
   if (!(paysReserves(contract) && entry.reserveOutpoint !== undefined))
     return verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients, federationId });
@@ -169,7 +169,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
 
-  // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (the owner 2026-10-02: "stake/fee verification of 5 of 7
+  // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
@@ -182,7 +182,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
 
-  // AND ITS DONATION, IN THE SAME TRANSACTION (the owner 2026-10-03): a stake whose donation outputs are wrong or missing is
+  // AND ITS DONATION, IN THE SAME TRANSACTION (2026-10-03): a stake whose donation outputs are wrong or missing is
   // not counted - nothing is kept for it, and the lock may be handed over again.
   const donated = await verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients: donationRecipients, reserveKey, federationId: fed.federationId, split });
   if (!donated.ok) return donated;
@@ -199,7 +199,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 }
 
 /**
- * A SIGNER NODE VERIFIES THE PLAYER'S FEE LOCK (Pick A, the owner 2026-09-14; §23.1 step 5
+ * A SIGNER NODE VERIFIES THE PLAYER'S FEE LOCK (Pick A, 2026-09-14; §23.1 step 5
  * "and the fee lock's"; F5): the entry's 2% node fee, locked to H(F) with F in
  * the entry, the round's claim key and the player's refund key - checked field
  * by field against the entry as the stake lock is. It is claimed for the round's

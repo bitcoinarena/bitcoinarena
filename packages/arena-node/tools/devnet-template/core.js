@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// COIN COUNT, THE DEVNET'S GAME TEMPLATE: THE RULES (kanban #362, PLATFORM-RESEARCH item 15). Copy this directory with
+// COIN COUNT, THE DEVNET'S GAME TEMPLATE: THE RULES (PLATFORM-RESEARCH item 15). Copy this directory with
 // `devnet.mjs new-game <dir> <name>` and change these rules into your own; every node replays your players' runs with them.
 //
 // THE CORE RUNS IN A SANDBOX (arena-node/src/core-sandbox.js): no network, no file system, no clock, no Math.random, no

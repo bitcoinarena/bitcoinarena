@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// §13C'S EVIDENCE IS TIED TO THE BLOCK IT SITS IN, AND A LATE CLOSER GETS NO FREE STAND (RULED the owner 2026-09-24).
+// §13C'S EVIDENCE IS TIED TO THE BLOCK IT SITS IN, AND A LATE CLOSER GETS NO FREE STAND (RULED 2026-09-24).
 //
 // THE RULING:
 //   - Every evidence record - a first mark kept as a checkpoint, a pair, an equivocation, a late start, the Void's first

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ATTACH MODE, PROVED ON REGTEST BEFORE ANY LIVE MOVE (the owner 2026-09-29: "Prove that on regtest with seven separate
+// THE ATTACH MODE, PROVED ON REGTEST BEFORE ANY LIVE MOVE (2026-09-29: "Prove that on regtest with seven separate
 // node processes. No shared store. No port clash."). A private regtest (RT, RPCPORT), never testnet4, never a bond there.
 //
 //   1. seven stores; each node's key read ONCE from its store to post its regtest bond (setup - the harness is the
@@ -51,7 +51,7 @@ for (const [i, path] of stores.entries()) {
   posted.push(rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${ports[i]}` }));
   db.close();
 }
-// EXTRA_BONDS=1 (the owner 2026-09-30, one key one seat): the testnet4 census shape - extra bond rows under some node keys
+// EXTRA_BONDS=1 (2026-09-30, one key one seat): the testnet4 census shape - extra bond rows under some node keys
 // (nodes 2, 4 and 7, two more each), every one a real bond of that node's key on this chain.
 const extra = [];
 if (env.EXTRA_BONDS === '1')
@@ -69,7 +69,7 @@ const kids = ports.map((port, i) => spawn(process.execPath, ['src/main.js', Stri
   cwd: new URL('..', import.meta.url).pathname,
   env: { ...env, ARENA_BITCOIND_URL: `http://127.0.0.1:${RPCPORT}`, ARENA_BITCOIND_COOKIE: `${RT}/regtest/.cookie`, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1',
     ARENA_DONATION_NETWORK: 'regtest', ARENA_ATTACH_PROOF_DIR: join(dir, 'proof'), ARENA_FUNDED_ROUNDS_FILE: join(dir, 'funded.txt'),
-    // the games its nodes host (kanban #203: main.js names none): nextblock
+    // the games its nodes host (main.js names none): nextblock
     ARENA_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname },
   stdio: ['ignore', 'pipe', 'pipe'] }));
 const text = stores.map(() => '');

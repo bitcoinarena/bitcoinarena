@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SIGNER NODE CHECKS AN ENTRY'S DONATION OUTPUTS WITH THE FEDERATION AND INDEXES THEM BY KEY (the owner 2026-10-03,
+// A SIGNER NODE CHECKS AN ENTRY'S DONATION OUTPUTS WITH THE FEDERATION AND INDEXES THEM BY KEY (2026-10-03,
 // FEDERATION.md "Donations in the federation"): each output is the payout contract to its recipient key for exactly its
 // share, held by the federation at the outpoint the entry names, and one output pays for one entry; GET /donations?key=
 // lists what a key was given.
@@ -105,7 +105,7 @@ test('GET /donations lists what a key was given, oldest first, from since; a key
   } finally { await s.close(); }
 });
 
-// THE SENDER ON THE FEDIMINT DONATION (kanban #156, the owner 2026-10-05; measured on a regtest federation: the guardians store
+// THE SENDER ON THE FEDIMINT DONATION (2026-10-05; measured on a regtest federation: the guardians store
 // the contract with the key, and the dev redeems it at once): a donation output's payment image is the entry's own player key,
 // or the zero image of pages already out. Any other image is refused - a donation that names somebody else is not this
 // entry's - and the row says whether the sender's key is on the contract.

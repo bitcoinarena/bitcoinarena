@@ -3,5 +3,5 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Hello World market (kanban #276): the smallest market a seat can host and another seat can find on the network and install - its signed manifest, its signed description and website, its registration."
+  "description": "Hello World market: the smallest market a seat can host and another seat can find on the network and install - its signed manifest, its signed description and website, its registration."
 }

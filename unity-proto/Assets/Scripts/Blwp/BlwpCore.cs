@@ -221,13 +221,13 @@ namespace Blwp
         /// a core.
         /// </summary>
         /// <summary>
-        /// Whether the session on hand was opened for the run on screen (the owner 2026-09-26 14:08): a session kept from the
+        /// Whether the session on hand was opened for the run on screen (2026-09-26 14:08): a session kept from the
         /// run before names the run before, and its replay is not this card's.
         /// </summary>
         public static bool ReplayForThisRun => BlwpReplayForThisRun() == 1;
 
         /// <summary>
-        /// ROLL OUT: the bridge notes the session this run is played on and forgets the run before (the owner 2026-09-27
+        /// ROLL OUT: the bridge notes the session this run is played on and forgets the run before (2026-09-27
         /// 13:19: copy game replay copies the run that just ended, never the one before). Only that session's end is kept
         /// as the run to copy.
         /// </summary>
@@ -268,7 +268,7 @@ namespace Blwp
         public static int RunScore() => Available ? BlwpRunScore() : 0;
 
         /// <summary>
-        /// COPY GAME REPLAY (the owner 2026-09-25 18:39): the page copies one https link to this run's replay - a random
+        /// COPY GAME REPLAY (2026-09-25 18:39): the page copies one https link to this run's replay - a random
         /// committee node of the round, from its advertisement endpoints, /replay?round=&lt;hex&gt;&amp;entry=&lt;hex&gt;. 1 when the
         /// page was handed the run, 0 when there is no networked run (or no page) to copy a replay of.
         /// </summary>
@@ -283,7 +283,7 @@ namespace Blwp
         /// <summary>A run resumed after a reload has caught up to the tick the seats hold (the page's BLWP_RESUME).</summary>
         public static bool ResumedRun() => BlwpResumedRun() != 0;
 
-        /// <summary>Ms until the joined round starts (its contract's start against this device's clock), or -1 (#64).</summary>
+        /// <summary>Ms until the joined round starts (its contract's start against this device's clock), or -1.</summary>
         public static int RoundStartsInMs() => Compiled ? BlwpRoundStartsInMs() : -1;
 
         /// <summary>Keeps this round's bed with the page (ASCII), so a run resumed after a reload gets its parcels back.</summary>
@@ -346,7 +346,7 @@ namespace Blwp
         public static bool HasRelief { get; private set; }
 
         /// <summary>
-        /// WHICH RELIEF THE CORE HOLDS, as a count of the times it was made (the owner 2026-09-16 12:38).
+        /// WHICH RELIEF THE CORE HOLDS, as a count of the times it was made (2026-09-16 12:38).
         ///
         /// Every `Init` and every `Restart` makes the relief the seed names, and a new round's seed moves
         /// the hills. Anything drawn from the ground watches this and rebuilds when it moves, or the
@@ -360,14 +360,14 @@ namespace Blwp
         public static int ReliefEpoch => _reliefEpoch + BlwpReliefEpoch();
 
         /// <summary>
-        /// THE TICKS THE RUN IN PLAY ENDS AT - its round's own run length (the 82/90 fork, the owner 2026-10-01: "The round
+        /// THE TICKS THE RUN IN PLAY ENDS AT - its round's own run length (the 82/90 fork, 2026-10-01: "The round
         /// length must be part of the contract, not a fixed constant"), read from the core that runs it; the core's
         /// default (`Layout.BLOCK_TICKS`) where no run says otherwise (the editor, a run with no round).
         /// </summary>
         public static int RunTicks { get { int t = BlwpRunTicks(); return t > 0 ? t : Layout.BLOCK_TICKS; } }
 
         /// <summary>
-        /// THE BED OF THE TRUCK THIS RUN DRIVES, in Q16.16 metres (kanban #369): the larger truck's 255590 (3.9 m, the core's
+        /// THE BED OF THE TRUCK THIS RUN DRIVES, in Q16.16 metres: the larger truck's 255590 (3.9 m, the core's
         /// 1.3 x 196608) when the run plays with that item, else 0 - the standard truck. Read off the core that started the run
         /// with the entry's unlocks, so the view is the truck the signer nodes replay; <see cref="TruckBedOverride"/> stands in
         /// for it where there is no core (the editor's tests).
@@ -422,7 +422,7 @@ namespace Blwp
         /// the core prices every crash from that tick's own impact and never reads this word.
         ///
         /// Outside a signed run reading clears it, so one crash is felt once. IN A SIGNED RUN IT IS
-        /// NOT CLEARED (the owner 2026-09-16): the core is then the signer nodes' replay and the page
+        /// NOT CLEARED (2026-09-16): the core is then the signer nodes' replay and the page
         /// writes nothing into it - measured before, the clear moved the state hash off the replay 35
         /// times in one run (0.0.1358) while outcome, score and tick agreed. There the word only
         /// rises, so a rise above what was already felt is the crash; one softer than the run's
@@ -487,7 +487,7 @@ namespace Blwp
 
         /// <summary>
         /// A LIVE PRICE SAMPLE into the core before the next tick, and into the run's transcript beside that tick (jslib
-        /// BlwpSubmitSample). the owner 2026-09-17 16:01: the chart was frozen - nothing had ever submitted one.
+        /// BlwpSubmitSample). 2026-09-17 16:01: the chart was frozen - nothing had ever submitted one.
         /// </summary>
         public static bool SubmitSample(double usd)
         {
@@ -497,7 +497,7 @@ namespace Blwp
 
         /// <summary>
         /// THE LIVE TAPE: the last 64 prices, 5 s apart, oldest first, in the tape's unit, handed to the core before any
-        /// sample (the owner 2026-09-17 16:44: "reload always shows the same world candles - seeded tape is fallback only").
+        /// sample (2026-09-17 16:44: "reload always shows the same world candles - seeded tape is fallback only").
         /// </summary>
         public static bool SubmitTape(int[] words)
         {
@@ -511,7 +511,7 @@ namespace Blwp
         public static int SamplesTaken => _state[Layout.O_TACTICS + Layout.TAC_MARKET + Layout.MK_SAMPLES];
 
         /// <summary>
-        /// THE LOAD, AND WHAT IT FILLS (the owner 2026-10-04 08:54: the cargo factor C is the bed fill): the fee, the BTC and
+        /// THE LOAD, AND WHAT IT FILLS (2026-10-04 08:54: the cargo factor C is the bed fill): the fee, the BTC and
         /// the vsizes on the bed, comma-separated. The page sums the core's own roomFor over them (cargo.js), so the room
         /// that crosses - and the C a replay sets - is the core's rule, never this side's float.
         /// </summary>

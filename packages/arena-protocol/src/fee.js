@@ -33,9 +33,8 @@ import { roundId } from './contracts.js';
 import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } from './payout.js';
 
 /**
- * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED the owner 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
- * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (kanban #205,
- * the owner 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
+ * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
+ * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (* 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
  */
 export const NODE_FEE_BPS = 500;
 export const POOL_BPS = 250;
@@ -43,7 +42,7 @@ export const POOL_BPS = 250;
 /** The pools 22A pays, and the roles that sit in each. */
 export const GAME_VERIFY = 'gameVerify';
 export const SETTLEMENT = 'settlement';
-// THE GUARDIAN POOL (§22A v4.6.4, RULED the owner 2026-09-21 and 2026-10-01 15:44: "2/3 % to the game/verify pool, 2/3 % to
+// THE GUARDIAN POOL (§22A v4.6.4, RULED 2026-09-21 and 2026-10-01 15:44: "2/3 % to the game/verify pool, 2/3 % to
 // the settlement pool ... and 2/3 % to the guardian pool, the seated guardians of the federation the round names"): the
 // third pool, divided evenly among those guardians. A round whose guardians are not named keeps the two-pool table.
 export const GUARDIAN = 'guardian';
@@ -111,7 +110,7 @@ export function grossVolumeMsat(entries) {
  * `roundId` comes off the CONTRACT rather than being passed, so the order the
  * remainders go out in belongs to the round and not to whoever asks.
  */
-// `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
+// `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default), the rate every entry's fee
 // was checked against at the door; the network's 5 % if none is named
 // `weights`: { liquidity: Map(node hex -> sat) } - the providers' available balance from the federation's signed liquidity seating
 // (2026.0.16, §23A.10); without it the liquidity pool is split evenly
@@ -164,7 +163,7 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
     // Floor the base share, then hand the leftover out one millisatoshi at a
     // time in the round's own order - 22A's rule, and the one `payout.js`
     // already uses for the pool so there is one implementation of it.
-    // THE LIQUIDITY POOL BY AVAILABLE BALANCE (2026.0.16, §23A.10; the owner 2026-10-18: "Fee must be dependant on available balance too if
+    // THE LIQUIDITY POOL BY AVAILABLE BALANCE (2026.0.16, §23A.10; 2026-10-18: "Fee must be dependant on available balance too if
     // there is more than one"): each provider's weight floored to 10,000 sat, its share floored; with no weights (or all 0) evenly
     const w = pool === LIQUIDITY && weights && weights[LIQUIDITY]
       ? earning.map((k) => { const x = BigInt(weights[LIQUIDITY].get(hex(k)) || 0n); return (x / LIQUIDITY_WEIGHT_STEP) * LIQUIDITY_WEIGHT_STEP; }) : null;
@@ -193,7 +192,7 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
 }
 
 /**
- * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, kanban #362 roadmap item 7; RULED the owner
+ * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, roadmap item 7; RULED the owner
  * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
  * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
  * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
@@ -218,7 +217,7 @@ export function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT
 }
 
 /**
- * THE SAME 20% ON AN ORDER BOOK (kanban #362, comment 2295): a book's fees are what each claimed row paid (bookSettlement's
+ * THE SAME 20% ON AN ORDER BOOK (comment 2295): a book's fees are what each claimed row paid (bookSettlement's
  * `buyFeeMsat + sellFeeMsat`), of which the nodes' part is `nodeBps / (nodeBps + donationBps)`. For each row whose entry names
  * a website (`entries`: entry id hex -> { frontendPk }), 20% of that row's nodes' part, floored, goes to the website; the msat a
  * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
@@ -310,7 +309,7 @@ export function feeTableId(table) {
  *
  * The same integer floor the table uses, so one rate is applied one way.
  */
-// A MARKET'S OWN NODE FEE (kanban #235, the owner 2026-10-09: "per market in manifest"): `bps`, its manifest's
+// A MARKET'S OWN NODE FEE (2026-10-09: "per market in manifest"): `bps`, its manifest's
 // marketTerms.nodeFeeBps (0 to NODE_FEE_BPS) - the rate is still never the operator's or the round's to choose, only the
 // signed manifest's, within the network's. Without one, the network's.
 // A MARKET'S ENTRY FEE CARRIES ITS DONATION TOO (entryFeeBpsOf), so the bound is the markets' 10 % together, not the
@@ -324,7 +323,7 @@ export const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
 };
 
 /**
- * A MARKET'S DEFAULT FEE (the owner 2026-10-09: "market default fees are 1%, 0.5 + 0.5, per default"): an attested market that
+ * A MARKET'S DEFAULT FEE (2026-10-09: "market default fees are 1%, 0.5 + 0.5, per default"): an attested market that
  * names no fee of its own charges 0.5 % to the nodes and 0.5 % donation; a game, the network's 5 % (+ its donation choice).
  */
 export const MARKET_DEFAULT_NODE_FEE_BPS = 50;
@@ -340,14 +339,14 @@ export const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && 
   ? manifest.marketTerms.donationBps : isMarket(manifest) ? MARKET_DEFAULT_DONATION_BPS : null);
 
 /**
- * A MARKET'S FEES ARE DUE AT RESOLUTION, ITS DONATION TOO (kanban #235/#278, the owner 2026-10-09: "the fees are due at the
+ * A MARKET'S FEES ARE DUE AT RESOLUTION, ITS DONATION TOO (2026-10-09: "the fees are due at the
  * close, when you win or lose ... until then orders can be cancelled for free"): a market entry pays nothing at entry - its
  * fee lock holds the node fee AND the donation (1 % by default), claimed only when the market resolves, from winners and
  * losers alike, and returned whole on a cancel, a VOID or a market nobody picked right. So a market entry's `feeMsat` is
  * that whole rate of its stake and its `donationMsat` is 0 (no donation outputs beside the stake); the settlement splits
  * the claimed fee locks into the node table (feeBpsOf) and the donation set (the rest). A game: its node fee alone.
  */
-/** A market's protocol reserve (kanban #454): the part of its donation rate its terms name for the reserves, else 0. */
+/** A market's protocol reserve: the part of its donation rate its terms name for the reserves, else 0. */
 export const reserveBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.reserveBps)
   ? manifest.marketTerms.reserveBps : 0);
 

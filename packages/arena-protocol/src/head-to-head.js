@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// HEAD-TO-HEAD ROUNDS (kanban #233, the owner 2026-10-09: "Head-to-head in engine"). A replayed round runs each entry alone, so
+// HEAD-TO-HEAD ROUNDS (2026-10-09: "Head-to-head in engine"). A replayed round runs each entry alone, so
 // no entry's result can depend on another player's move; a head-to-head round is decided over all of them at once.
 //
 //   1. COMMIT. At entry each player names commit = H(round_id || entry_key || move || salt) - the move hidden until it is
@@ -14,7 +14,7 @@
 //        LOSS -> FAILED                                                   net stake into the pool
 //        no stood reveal -> FORFEIT                                       net stake into the pool
 //      A lone revealer wins; with no reveal at all every entry forfeits.
-//      FEWER ENTRIES THAN THE GAME'S PLAYERS (the owner 2026-10-09: "refuse 1 game rounds since there is only 1 player - there
+//      FEWER ENTRIES THAN THE GAME'S PLAYERS (2026-10-09: "refuse 1 game rounds since there is only 1 player - there
 //      must be 2 before the game starts"): nobody was played against, so the round is not played - every entry VOID, its
 //      stake back, no result for anyone. Every node decides the same from the same reveals,
 //      so their results agree the way two replays of one transcript agree.

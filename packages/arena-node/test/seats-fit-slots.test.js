@@ -62,7 +62,7 @@ test('fewer seats than slots is NOT refused - an unfilled slot is not this rule'
 test('the bound is the larger pool, because both draw on the same sitting seats', () => {
   // A round whose pools differ is not refused for that; the seats simply have to fit the wider one.
   assert.equal(sittingSeatsFitTheSlots(round(7, 2, 7)).ok, true, 'seven seats fit a seven-slot pool');
-  assert.equal(sittingSeatsFitTheSlots(round(2, 2, 3)).ok, true, 'three seats fit two slots: the draw of 3 (§5A.7, kanban #301)');
+  assert.equal(sittingSeatsFitTheSlots(round(2, 2, 3)).ok, true, 'three seats fit two slots: the draw of 3 (§5A.7)');
   assert.equal(sittingSeatsFitTheSlots(round(2, 2, 4)).ok, false, 'four seats do not fit two slots');
 });
 

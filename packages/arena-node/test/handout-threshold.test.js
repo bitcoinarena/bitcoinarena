@@ -13,7 +13,7 @@
 // refuses any other by name. An honest dealer cannot even make the bad ones
 // (`dealHandout` refuses), so the bad ones here are crafted, the way a
 // cheating player would send them.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LIVE PRICE REACHES THE NODE ON THE TICK IT WAS HANDED TO THE CORE (the owner 2026-09-17 16:01: the chart was frozen -
+// THE LIVE PRICE REACHES THE NODE ON THE TICK IT WAS HANDED TO THE CORE (2026-09-17 16:01: the chart was frozen -
 // nothing ever submitted a price sample). `submitSample` holds the price against the tick the run has reached and
 // publishes it with the batch that covers that tick, as a load is; a real node, so what is measured is what it stored.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -114,7 +114,7 @@ test('an ended run submits no more samples', async () => {
   } finally { await node.close(); }
 });
 
-test('the committee\'s price (kanban #311): an attested sample goes out at its tick with its signatures, the node checks and stores it; another tick is refused', async () => {
+test('the committee\'s price: an attested sample goes out at its tick with its signatures, the node checks and stores it; another tick is refused', async () => {
   const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
   const { node, client, rid, eid } = await rig();
   try {
@@ -143,14 +143,14 @@ test('an attestation the committee did not give is refused by the node, and the 
   } finally { await node.close(); }
 });
 
-test('a seat running the committee\'s feed (kanban #311 slice 3) says so at /price-samples and refuses a bare price; a seat without says feed false', async () => {
+test('a seat running the committee\'s feed says so at /price-samples and refuses a bare price; a seat without says feed false', async () => {
   for (const on of [true, false]) {
     const { node, client, rid } = await rig(on ? { priceFeed: { readPrice: async () => 8297193 } } : {});
     try {
       const r = await fetch(`http://127.0.0.1:${node.port}/price-samples?round=${Buffer.from(rid).toString('hex')}`);
       assert.equal((await r.json()).feed, on);
       if (on) {
-        // the protocol-5 door (kanban #312) is there, and a round below protocol 5 takes no reading at it
+        // the protocol-5 door is there, and a round below protocol 5 takes no reading at it
         const p = await fetch(`http://127.0.0.1:${node.port}/price-reading`, { method: 'POST', body: JSON.stringify({ round: Buffer.from(rid).toString('hex'), kind: 'sample', k: 1, priceCents: 8297193, key: '00'.repeat(32), signature: '00'.repeat(64) }) });
         assert.equal(p.status, 409); assert.match(await p.text(), /proposed samples: a signed reading is a protocol 5 price/);
       }

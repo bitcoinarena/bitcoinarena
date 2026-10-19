@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHEN A RESULT THIS NODE HOLDS MAY MOVE MONEY (M3.3-32; §13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+// WHEN A RESULT THIS NODE HOLDS MAY MOVE MONEY (M3.3-32; §13A, WINDOW-10-SPEC, RULED 2026-10-01).
 //
 // A run the committee's threshold signed is PROVISIONALLY_FINAL. The objection window is exactly 600 s of wall time from
 // the round's end as its contract fixes it (protocol window.js), the same instant on every node; a seat signs FINAL
@@ -56,7 +56,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   let win = null;
   try { win = windowsOf(contract); } catch { win = null; }
   // THE IN-TIME QUORUM (§13A "Results must be in before the window closes ... one that has not by window_close falls to
-  // §13C's no-quorum rule"; §13C; kanban #26, RULED the owner 2026-10-04). The deadline is final_after - the round's end +
+  // §13C's no-quorum rule"; §13CRULED 2026-10-04). The deadline is final_after - the round's end +
   // 600 s + 5 s, wall-clock ms - on this seat's clock, by when this seat HELD each result (a PlayerResult carries no
   // signed time, so its held time is its time, as for objections). Past it, only the results held before it count: a
   // threshold completed later, and a split with every seat up (no run at the threshold at all), are both no quorum in the
@@ -137,7 +137,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     roundId: roundIdBytes, entryId: entryIdBytes, runId: run, records: round.finalSigs(roundIdBytes, entryIdBytes, run),
     committee, slots: contract.settlementSlots, finalAfterMs, verify,
   });
-  // `beforeMs`: only the postings this seat held before it count (§13A, kanban #26: published within the window)
+  // `beforeMs`: only the postings this seat held before it count (§13A,: published within the window)
   const postedFor = (transcriptHash, beforeMs = null) => transcriptIsPublished({
     roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash,
     postings: round.postings(roundIdBytes, entryIdBytes).filter((p) => beforeMs === null || BigInt(p.seenMs) < BigInt(beforeMs)),
@@ -162,7 +162,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     objection = objectionHolds({
       objection: { roundId: roundIdBytes, signedResultId, atMs: 0n },
       receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId,
-      // AND THE OBJECTOR'S OWN EVIDENCE (§13A, kanban #24): a bundle is stored only once this seat's door replayed its
+      // AND THE OBJECTOR'S OWN EVIDENCE (§13A): a bundle is stored only once this seat's door replayed its
       // transcript under the round's core and found it contradicts the signed run - that replay counts beside this seat's.
       replayDiffers: (mine !== null && hex(mine) !== seen.runId) || dissentsOn(entryIdBytes)
         || (typeof round.objectionBundle === 'function' && round.objectionBundle(roundIdBytes, entryIdBytes) !== null),
@@ -175,14 +175,14 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       ...(lateObjection ? { lateObjectionAtMs: filedAt } : {}) };
     const fin = finalSigs(signedResultId, win.finalAfterMs);
     const said = { signed: fin.signed, needed: fin.needed };
-    // A DECISION WRITTEN AT THIS SEAT STANDS from final_after on (kanban #26: a late posting's VOID, a late threshold's, a
+    // A DECISION WRITTEN AT THIS SEAT STANDS from final_after on (a late posting's VOID, a late threshold's, a
     // split's - decided once), so FINAL signatures arriving afterwards never turn it back
     const decided = nowMs >= win.finalAfterMs && typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
     if (decided) return { ...common, state: decided.outcome, noQuorum: true, finalSigs: said, why: decided.why };
     if (fin.ok)
       return { ...common, state: FINAL, published: true, finalSigs: said,
         why: `signed FINAL by ${fin.signed} of ${committee.length} seats after the objection window closed at ${utc(win.closeMs)} with no valid objection in time` };
-    // NOT FINAL BY THE RE-RUN WINDOW'S END, AT A SEAT THAT HELD NO VALID OBJECTION (WINDOW-LIVE-1155, the owner 2026-10-02: "The
+    // NOT FINAL BY THE RE-RUN WINDOW'S END, AT A SEAT THAT HELD NO VALID OBJECTION (WINDOW-LIVE-1155, 2026-10-02: "The
     // measured rounds that stayed PROVISIONALLY_FINAL are not done"). Measured: four seats upheld an objection and voided
     // the run at end + 1205 s; the other three, short of the five FINAL signatures, stayed PROVISIONALLY_FINAL for good.
     // §13C decides here too, once, at the same instant: VOID - or FORFEIT on a proven equivocation - and it is written, so
@@ -215,7 +215,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
         why: `the objection window closes at ${utc(win.closeMs)} (the round's end + 600 s); FINAL is signed from ${utc(win.finalAfterMs)}` };
     // PUBLISHED WITHIN THE WINDOW (§13A "Publication is a condition of finality ... posted by them to the round's
     // publication_relays[] within the window"; "a settlement seat that cannot retrieve the transcript within the result
-    // window treats the entry as VOID"; kanban #26). Past final_after only the postings this seat held before it count: a
+    // window treats the entry as VOID"). Past final_after only the postings this seat held before it count: a
     // threshold of postings completed later is not publication in the window, and the entry is VOID - decided once and
     // written, so the late posting landing never turns it FINAL. A posting after an in-time threshold is only late.
     const inTimePosted = postedFor(agreeing[0].transcriptHash, win.finalAfterMs);
@@ -363,7 +363,7 @@ export function chainIndex(round, roundIdBytes, contract) {
 }
 
 /**
- * §13C'S RESULT WINDOW ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): "A result reaches
+ * §13C'S RESULT WINDOW ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01): "A result reaches
  * PROVISIONALLY_FINAL inside the window ... one that has not by window_close falls to §13C's no-quorum rule." The same
  * window as the objection window - the round's end to + 600 s - and this seat decides once its own clock reads the
  * close + 5 s, as it would sign FINAL. `window`: the evidence this seat holds by then (evidenceWindow), or null.

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE WIZARD'S STATE, ON DISK (kanban #471 step B.4: "the wizard can be left and resumed; every step's state is kept on disk").
+// THE WIZARD'S STATE, ON DISK ("the wizard can be left and resumed; every step's state is kept on disk").
 //
 // One directory holds everything the node is: the wizard state (state.json), the node's settings (arena.conf, what its services start
-// from - kanban #499), the seed (seed.hex) and the seat's database (node.db and the files main.js keeps beside it). Every file is the user's only
+// from -), the seed (seed.hex) and the seat's database (node.db and the files main.js keeps beside it). Every file is the user's only
 // (0600, the directory 0700). An update keeps this directory as it is; the release is elsewhere.
 import { port, INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
@@ -19,13 +19,13 @@ export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 
 export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');
 
 // THE ROLES (spec §27A roles; ruling 2: custody on Linux and macOS, and in slice 5): what each needs, said before it is chosen.
-// The roles step shows each as ONE line - `does` - and its needs as `chips`; `needs` is the full text behind "more" (kanban #497,
-// the owner 2026-10-18: "a wall of text that nobody reads. Make it more compact").
+// The roles step shows each as ONE line - `does` - and its needs as `chips`; `needs` is the full text behind "more" (
+// 2026-10-18: "a wall of text that nobody reads. Make it more compact").
 export const ROLES = Object.freeze({
   verify: { title: 'Game / verify', does: 'replays and signs rounds', chips: ['🔒 bond', '🌐 https address', '💽 2 GB', '⚙️ 1 CPU core'], needs: 'Replays each round it is seated on and signs who won. 5 of the round\'s 7 seated nodes must agree. Needs a bond, a public https address, about 2 GB of disk and one CPU core.', slice: 1 },
   settlement: { title: 'Settlement', does: 'pays the winners out', chips: ['🔒 bond', '🌐 https address', '⏱️ online until paid'], needs: 'Pays the round out: once the result is signed, it co-signs the payment of the winners from the locked stakes (or the refunds, if a round fails). 5 of the round\'s 7 seated nodes must sign. Needs the same as game / verify, and to stay online until its rounds are paid.', slice: 1 },
   custody: { title: 'Custody', does: 'holds the players\' bitcoin', chips: ['₿ own Bitcoin Core', '⚡ LND', '🚪 port 9735', '💽 +1 GB'], needs: 'Holds the players\' bitcoin together with 9 other nodes: your node becomes one of a federation\'s 10 guardians and may run one of its 2 Lightning gateways (the next steps explain both). Needs your own Bitcoin Core (not Electrum), a Lightning node (LND: set up in the Lightning step, or your own), about 1 GB more disk and port 9735 open.', slice: 1 },
-  // THE FOURTH SERVICE (kanban #494, spec §23A.10)
+  // THE FOURTH SERVICE (spec §23A.10)
   liquidity: { title: 'Liquidity provider', does: 'gives new nodes incoming Lightning', chips: ['₿ own Bitcoin Core', '⚡ LND', '💰 500,000 sat'], needs: 'Opens incoming Lightning channels to new nodes so they can receive deposits. Any number of nodes can be providers; each new node gets a channel from one or two of them, picked by a fair draw. Needs a Lightning node (LND, set up in the Lightning step) and your own Bitcoin Core, and a deposit of 500,000 sat on testnet4 (5 x the 100,000 sat channel) in LND\'s wallet.', slice: 1 },
 });
 
@@ -74,7 +74,7 @@ export const nextStep = (s) => STEPS.find((k) => !(s.done || {})[k]) || 'done';
  */
 export function seatEnv(s, { home, release }) {
   const lines = [
-    '# The Arena node\'s settings, written by the installer (kanban #471). An update keeps this file.',
+    '# The Arena node\'s settings, written by the installer. An update keeps this file.',
     // a direct node listens on every interface; behind a tunnel only cloudflared on this machine reaches it
     `ARENA_BIND=${s.reach && s.reach.mode === 'direct' ? '0.0.0.0' : '127.0.0.1'}`,
     'ARENA_DONATION_NETWORK=testnet4',
@@ -90,7 +90,7 @@ export function seatEnv(s, { home, release }) {
     lines.push(`ARENA_BITCOIND_URL=http://127.0.0.1:${s.bridgePort}/`, `ARENA_BITCOIND_COOKIE=${join(home, 'bridge.cookie')}`);
   }
   if (s.reach && s.reach.url) lines.push(`ARENA_WSS_${s.port}=${s.reach.url}`);   // the node's public address, as it names itself
-  // CUSTODY (kanban #471 slice 5, ruling 3): the node's guardian in setup mode (ARENA_FOUNDING=1, node-start.js) from the release's own
+  // CUSTODY (ruling 3): the node's guardian in setup mode (ARENA_FOUNDING=1, node-start.js) from the release's own
   // fedimintd, reached at the node's public address /guardian - so it can be drawn when new nodes found a federation
   const custody = guardianSetupOf(s, { release });
   if ((s.roles || []).includes('custody')) lines.push(`ARENA_GATEWAY_PORT=${port(8476)}`, `ARENA_GATEWAY_CLAIM_FILE=${join(home, 'gateway-claim.json')}`);
@@ -101,7 +101,7 @@ export function seatEnv(s, { home, release }) {
 }
 
 /**
- * THE NODE'S SETTINGS FILE (kanban #499, the owner 2026-10-19: "Every setting must be in a config file arena.conf not in some PARAMETER
+ * THE NODE'S SETTINGS FILE (2026-10-19: "Every setting must be in a config file arena.conf not in some PARAMETER
  * env vars. the installer writes that config file"): the seat's settings above, with its port and store, this node's instance and port
  * offset, as arena.conf (arena-node/src/arena-conf.js). The service starts `src/run.js <home>/arena.conf` and nothing else.
  */

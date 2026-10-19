@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A STAKE OR A SETTLEMENT THAT IS NEVER SEEN - join.js stakeSeenBy, settlementBy and roundCoreHex on their own (kanban #147,
+// A STAKE OR A SETTLEMENT THAT IS NEVER SEEN - join.js stakeSeenBy, settlementBy and roundCoreHex on their own (
 // surface 3 of "The player's money lines", plan comment 202, accepted 2026-10-05). The page asks every node it holds who it
 // is (/identity) and, from the round's settlement signer nodes only, whether it saw this entry's stake (/stake) and where
 // its settlement stands (/settlement). Every node here is a fake fetcher; no seat is reached. No defect was read from the
@@ -101,7 +101,7 @@ test('roundCoreHex: the 32-byte core a round names, as hex; anything else is emp
   assert.equal(roundCoreHex(undefined), '');
 });
 
-// WHO ANSWERS AT A URL IS ASKED ONCE A FEW MINUTES (the owner 2026-10-16: "Lower the amount of concurrent connections and network
+// WHO ANSWERS AT A URL IS ASKED ONCE A FEW MINUTES (2026-10-16: "Lower the amount of concurrent connections and network
 // load"; measured on live UI 154: GET /identity 434 times in 60 s of one run)
 test('a node\'s identity is asked once per IDENTITY_KEEP_MS, a failed one again at once', async () => {
   forgetIdentities();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A BOND OF THE ANCESTOR, RE-AFFIRMED FOR THIS NETWORK (multiplayer_p2p.md §27A.8.3, spec 0A.9; kanban #209).
+// A BOND OF THE ANCESTOR, RE-AFFIRMED FOR THIS NETWORK (multiplayer_p2p.md §27A.8.3, spec 0A.9).
 //
 // "A bond created under an ancestor is valid in the census of network n+1 when its operator publishes a
 // re-affirmation: OP_RETURN "ARN" FORK network_id(n+1)[0:8] schnorr_sig(bond key). One small transaction, the same shape as

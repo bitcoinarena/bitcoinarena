@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PENDING LINE'S FIGURE (WINDOW-10-SPEC, the owner 2026-10-01, §24): GET /standing?entry= - this entry's state, its row
+// THE PENDING LINE'S FIGURE (WINDOW-10-SPEC, 2026-10-01, §24): GET /standing?entry= - this entry's state, its row
 // of the payout table over the results signed so far, and the window (the round's end, and 600 s after). Measured on two
 // signer nodes and the fake lock port: a winner and a loser.
 import { test } from 'node:test';
@@ -46,7 +46,7 @@ test('the standing: before any result, no pending figure; once the results are s
   } finally { await w.close(); }
 });
 
-// SETTLED WITHOUT FINAL (the owner 2026-10-01): a result still PROVISIONALLY_FINAL past end + 605 s, in a round whose
+// SETTLED WITHOUT FINAL (2026-10-01): a result still PROVISIONALLY_FINAL past end + 605 s, in a round whose
 // settlement this seat holds ACCEPTED and which pays the entry's share, owes nothing: no pending amount, the state left
 // PROVISIONALLY_FINAL. Made here as testnet4's rounds of the day before are: settled, and no FINAL signature held - the
 // seat's FINAL signatures removed after the settlement was accepted. Then that same round with its settlement not yet

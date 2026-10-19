@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE WRITES AND LISTS EVERY ROUND OF THE NEXT 72 HOURS (the owner 2026-09-28 11:31, NODE72-1131 / HORIZON72-1131).
+// THE NODE WRITES AND LISTS EVERY ROUND OF THE NEXT 72 HOURS (2026-09-28 11:31, NODE72-1131 / HORIZON72-1131).
 //
 // Three consecutive series - a series lasts 24 h - on one node with a fixed clock: every 90 s round from now to
 // now + 72 h is in the node's store, the one about 72 h out among them, and /rounds?ahead=72h lists it; a lobby's plain
@@ -122,7 +122,7 @@ test('a series with less than the 72 h lead is refused whole, by name', async ()
   await assert.rejects(async () => serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [short] }), /series refused/);
 });
 
-// TN24-1405 AND THE 36 h CENSUS (the owner 2026-09-28): testnet4's committee_time is 24 h before the start and its lead 24 h,
+// TN24-1405 AND THE 36 h CENSUS (2026-09-28): testnet4's committee_time is 24 h before the start and its lead 24 h,
 // its census 36 h before the start - 12 h before committee_time, the publication window; mainnet stays one 72 h; the
 // writer lays 72 h of rounds ahead on both.
 test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, and the writer 72 h on both', async () => {
@@ -158,7 +158,7 @@ test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, a
   } finally { await s.close(); }
 });
 
-// ALWAYS A PAID ROW (the owner 2026-10-01 15:25, HARD: "The nodes always serve both at once ... a free row and a paid
+// ALWAYS A PAID ROW (2026-10-01 15:25, HARD: "The nodes always serve both at once ... a free row and a paid
 // testnet4 row together"): the node assigns signer nodes to the rounds starting within 2 h AND to the soonest round,
 // however far ahead - measured on testnet4 the same day, series 8172fffd's first round 8 h out was assigned by no node and
 // the page showed no paid row. The writer names that round: nothing within 2 h, and `soonest` is the first round.
@@ -178,7 +178,7 @@ test('a series whose first round is 8 h out has none within the 2 h lead, and th
   assert.equal(w.soonest(Number(start) + 1), w.startingWithin(Number(start) + 1, 2 * H)[0], 'once rounds run, the soonest is the next one');
 });
 
-// THE 82/90 FORK (the owner 2026-10-01): a series on the core that takes its rounds' run length fits 82 s into its 90 s slot -
+// THE 82/90 FORK (2026-10-01): a series on the core that takes its rounds' run length fits 82 s into its 90 s slot -
 // 4920 ticks (81 979 ms) is taken - 4921 (81 996 ms) is the longest that fits - and 4922 (82 013 ms) and 10800 (180 s) are refused by name.
 test('a series runs at most 82 s of its 90 s slot: 4920 and 4921 ticks are taken, 4922 and 10800 are refused by name', async () => {
   const { seriesRunFits } = await import('../../arena-protocol/src/series.js');
@@ -190,7 +190,7 @@ test('a series runs at most 82 s of its 90 s slot: 4920 and 4921 ticks are taken
   await assert.rejects(async () => serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [t(10800)] }), /series refused: a run of 10800 ticks/);
 });
 
-// A SERIES ADDED WHILE THE NODE RUNS IS TAKEN WITHOUT A RESTART (the owner 2026-10-02: "find out the reason for the restarts
+// A SERIES ADDED WHILE THE NODE RUNS IS TAKEN WITHOUT A RESTART (2026-10-02: "find out the reason for the restarts
 // and find a way to recover from them" - the 82/90 waiter restarted the seven seats one at a time after each day's series,
 // and a seat restarted between a join and its round's start lost the player's run, FORFEIT). A node started holding one
 // series is handed a second by seriesReload; on its next writer pass it writes and lists the second too, and a reload
@@ -219,7 +219,7 @@ test('a series added to the file while the node runs is written on the next pass
 });
 const toHexId = (b) => Buffer.from(b).toString('hex');
 
-// A SERIES TAKEN OUT OF THE FILE WHILE THE NODE RUNS IS DROPPED (kanban #22, the owner 2026-10-06: series d37c1ef1 and
+// A SERIES TAKEN OUT OF THE FILE WHILE THE NODE RUNS IS DROPPED (2026-10-06: series d37c1ef1 and
 // 0813e1a3 named the old donation set, every join into them was refused after the stake was locked, and the reload only
 // added - measured: the file read again, both series still held, all 1920 rounds still listed). Two series with one start,
 // as d37c1ef1 beside a69552a0; the file then names one: the other is no longer held or written, its stored rounds are
@@ -270,7 +270,7 @@ test('a series taken out of the file while the node runs is dropped: not held, i
   } finally { await s.close(); }
 });
 
-// A GAME'S round_period IS READ (kanban #202, hole 3 of comment 747): every series of this network runs on the 90 s grid,
+// A GAME'S round_period IS READ (hole 3 of comment 747): every series of this network runs on the 90 s grid,
 // so a game whose manifest names another period gets no series here - refused by the series writer and by the door's
 // game check (pluginForRound) for a round of a series - while one naming 90 s, or 0 (no period), runs.
 test('a series of a game whose manifest names a 60 s period is refused by the writer and the door; 90 s and 0 run', async () => {
@@ -307,7 +307,7 @@ test('a series of a game whose manifest names a 60 s period is refused by the wr
   for (const k2 of ['p90', 'p0']) assert.deepEqual([facts[k2].writer, facts[k2].door, facts[k2].lone], ['ok', 'ok', 'ok'], k2);
 });
 
-// A RESTART DOES NOT OPEN THE 72 h AGAIN (kanban #468 item 4, measured on seat 2's start 2026-10-18 07:51Z: ~4,500 rounds re-opened,
+// A RESTART DOES NOT OPEN THE 72 h AGAIN (measured on seat 2's start 2026-10-18 07:51Z: ~4,500 rounds re-opened,
 // each checked in its core's sandbox, the loop held 6.4 s): a writer over a store that holds its rounds remembers them as written,
 // opens none, and knows the same rounds as the writer before it
 test('a series writer after a restart opens none of the rounds its store holds, and knows them all', () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OPERATOR'S REFUSE-ROUNDS FILE (kanban #191, the owner 2026-10-06, path A): round ids, one per line, that this seat must
+// THE OPERATOR'S REFUSE-ROUNDS FILE (2026-10-06, path A): round ids, one per line, that this seat must
 // refuse - read again whenever the file changes, at every door, no restart; empty in normal running. Written for the live
 // measurement of the REFUSED return (a lock made, then its round refused before the entry, as at 05:31Z). Here, on a locked
 // fixture round: the file empty - the round is offered and a never-entered lock is not kept as refused; its id written - the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GAMES THIS NODE HOSTS, AND THE CORE A ROUND IS REPLAYED BY (kanban #202, §0A.2-0A.6; M3; the owner 2026-09-15 08:03:
+// THE GAMES THIS NODE HOSTS, AND THE CORE A ROUND IS REPLAYED BY (§0A.2-0A.6; M3; 2026-09-15 08:03:
 // "the truck game is one use of the federated consensus network, not the network"; 2026-10-06: the engine is Bitcoin
 // Arena, a game is a plugin).
 //
@@ -27,7 +27,7 @@ import { sandboxFor } from './core-sandbox.js';
 export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {}) {
   if (registrations instanceof Map) return registrations;
   const byId = new Map(registrations.map((p) => { try { return [toHex(p.gameId), p.manifest]; } catch { return [null, null]; } }));
-  // AN INSTALLED UPDATE CARRIES ITS ANCESTORS' MANIFESTS (kanban #276 step 5): its parent stands even when no longer hosted
+  // AN INSTALLED UPDATE CARRIES ITS ANCESTORS' MANIFESTS: its parent stands even when no longer hosted
   for (const p of registrations) for (const a of (p && p.ancestors) || []) { try { const k = toHex(gameIdOf(a)); if (!byId.has(k)) byId.set(k, a); } catch { /* not a manifest */ } }
   const out = new Map();
   for (const p of registrations) {
@@ -36,7 +36,7 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
     if (!stands.ok) throw new Error(`that game is not one this node can host: ${stands.why}`);
     const id = toHex(stands.gameId);
     if (p.gameId !== undefined && toHex(p.gameId) !== id) throw new Error(`game "${p.manifest.gameName}" is registered as ${toHex(p.gameId).slice(0, 16)}, and its manifest is ${id.slice(0, 16)}`);
-    // THE GAME DEV'S DONATION SET (§0A.8, kanban #205): the recipients its manifest names by id - a registration whose set
+    // THE GAME DEV'S DONATION SET (§0A.8): the recipients its manifest names by id - a registration whose set
     // does not hash to the manifest's game_donation_set is refused, so no node pays a game dev a set its developer did not sign
     let gameSetId;
     try { gameSetId = toHex(donationSetId(p.donationSet)); }
@@ -49,28 +49,28 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
       for (const config of core.configs.keys())
         if (!listed.configs.some((h) => toHex(h) === config))
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
-      // AND IT LOADS IN ITS SANDBOX (kanban #328, §0A.6): read and hashed by this node, linked to its own files only, run
+      // AND IT LOADS IN ITS SANDBOX (§0A.6): read and hashed by this node, linked to its own files only, run
       // with no network, file system or clock - the only way this node ever runs it. One that does not is not hosted.
       try { sandboxFor(core); }
       catch (e) { throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} does not load in its sandbox: ${e.message}`); }
     }
-    // `replayPage`: the game's own replay page, when it has one (kanban #202) - the engine serves it, never draws a game
+    // `replayPage`: the game's own replay page, when it has one - the engine serves it, never draws a game
     // `sharedWorld`: the configs the game says make one world per round (a config's `worldShared`), which the engine's
-    // seed asks of the round's game (kanban #203) instead of a list of its own
+    // seed asks of the round's game instead of a list of its own
     const sharedWorld = [...new Set([...p.cores.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)))];
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
-      // the name a player knows the game by and its square icon (an SVG file), when it gives them (kanban #228)
+      // the name a player knows the game by and its square icon (an SVG file), when it gives them
       title: typeof p.title === 'string' && p.title ? p.title : (p.name || p.manifest.gameName), icon: p.icon || null,
-      // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it; kanban #203)
+      // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it)
       roundWarnings: typeof p.roundWarnings === 'function' ? p.roundWarnings : null,
       // the game dev's donation set, checked above against the manifest
       donationSet: p.donationSet,
-      // the client files the game ships (kanban #276 step 5: the plugin store packages them, checked against the manifest)
+      // the client files the game ships (the plugin store packages them, checked against the manifest)
       clientUrls: Array.isArray(p.clientUrls) ? [...p.clientUrls] : [],
       // its earlier versions' signed manifests (an installed update's chain), oldest first
       ancestors: Array.isArray(p.ancestors) ? [...p.ancestors] : [],
-      // its description and website, signed by its developer beside the manifest (kanban #276): kept only when they stand
+      // its description and website, signed by its developer beside the manifest: kept only when they stand
       info: (() => { if (!p.info) return null; const i = gameInfoStands(p.info, { gameId: stands.gameId, manifest: p.manifest, verify });
         return i.ok ? Object.freeze({ ...gameInfoJson(p.info) }) : null; })() }));
   }
@@ -78,7 +78,7 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
 }
 
 /**
- * DOES THIS NODE'S ADVERTISEMENT NAME THE GAMES IT HOSTS (§0A.4, kanban #204, the owner 2026-10-07)? An advertised game this
+ * DOES THIS NODE'S ADVERTISEMENT NAME THE GAMES IT HOSTS (§0A.42026-10-07)? An advertised game this
  * node does not host would draw it into game/verify committees it cannot serve: refused, by name - the node does not
  * start. A hosted game the advertisement does not name only means the node is not drawn for it until an advertisement
  * update names it: said, not refused.
@@ -107,7 +107,7 @@ export function installedCoresOf(plugins) {
  * truck's BLOCK_TICKS) - the length of a run whose round names none, and, since the 82/90 fork, the longest one may.
  */
 export function runTicksOf(core, config) {
-  // ASKED OF THE CORE IN ITS SANDBOX (kanban #328, §0A.6), never of a core imported into this thread
+  // ASKED OF THE CORE IN ITS SANDBOX (§0A.6), never of a core imported into this thread
   let s;
   try { s = core && sandboxFor(core); } catch { return null; }
   if (!s) return null;
@@ -115,7 +115,7 @@ export function runTicksOf(core, config) {
 }
 
 /**
- * MAY A ROUND NAME THIS RUN LENGTH ON THIS CORE (the 82/90 fork, the owner 2026-10-01: "The round length must be part of
+ * MAY A ROUND NAME THIS RUN LENGTH ON THIS CORE (the 82/90 fork, 2026-10-01: "The round length must be part of
  * the contract - not a fixed constant")? A core held to one length (the truck before the fork) takes that one; a core
  * that takes the round's length takes any it says fits (1 .. RUN_TICKS for the truck).
  */
@@ -139,7 +139,7 @@ export function runLengthFits(core, config, blockTicks) {
 
 
 /**
- * WHAT A GAME'S ITEMS UNLOCK (kanban #365, #369): its manifest's catalogue as { item id: unlock hash (hex) }, handed to a replay with
+ * WHAT A GAME'S ITEMS UNLOCK: its manifest's catalogue as { item id: unlock hash (hex) }, handed to a replay with
  * the round's core so an entry's items reach the core's start as the unlocks they pay for. A game that sells none answers {}.
  */
 export function itemUnlocksOf(plugin) {
@@ -161,7 +161,7 @@ export function pluginForRound(contract, plugins) {
   if (!plugin)
     return { ok: false, why: `this node does not host game ${toHex(contract.gameId).slice(0, 16)}: it plays only the games it hosts `
       + '(§0A.4) - not selectable for that round, it serves nothing there, and is not slashed' };
-  // AN ATTESTED GAME (§0A.7a, kanban #206): no core, no config, no run - the round's result is its attestors' signed
+  // AN ATTESTED GAME (§0A.7a): no core, no config, no run - the round's result is its attestors' signed
   // outcome. Answered with no core at all, so nothing downstream can replay it: a replay asked for such a round finds none.
   if (isAttested(plugin.manifest)) {
     const fits = roundFitsManifest(contract, plugin.manifest, plugin.gameId);
@@ -173,14 +173,14 @@ export function pluginForRound(contract, plugins) {
   // AND THE GAME'S OWN TERMS (§0A.3, §0A.5): a run no longer than its manifest allows, its rank curve, its min_score floor.
   const fits = roundFitsManifest(contract, plugin.manifest, plugin.gameId);
   if (!fits.ok) return { ok: false, why: fits.why };
-  // A HEAD-TO-HEAD GAME (kanban #233): its core is its decide adapter - nothing is replayed, the round's end is its reveal
+  // A HEAD-TO-HEAD GAME: its core is its decide adapter - nothing is replayed, the round's end is its reveal
   // deadline, and its results are decided over all the round's reveals at once (verify.js)
   if (isHeadToHead(plugin.manifest)) return { ok: true, plugin, ...runs, headToHead: true, runTicks: null };
   return { ok: true, plugin, ...runs };
 }
 
 /**
- * HOW A ROUND PAYS, AS THIS NODE READS IT (kanban #362): the payout rule of the game the round names, from the manifest this
+ * HOW A ROUND PAYS, AS THIS NODE READS IT: the payout rule of the game the round names, from the manifest this
  * node hosts it under (manifest.js payoutRuleForRound) - { ok, payoutShares } with null for §18A's curve, or a refusal for a
  * round that may pay by a top split whose game this node does not host. The one place the node's settlement, its standing
  * line and its signed table take the rule from, so each computes the same table as the protocol does.

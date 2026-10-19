@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE SHARE, SEALED TO ONE SIGNER NODE - seal.js on its own (kanban #145; plan comment 173, accepted 2026-10-05).
+// ONE SHARE, SEALED TO ONE SIGNER NODE - seal.js on its own (plan comment 173, accepted 2026-10-05).
 // Until now seal.js ran only inside arena-node's integration tests (65.7% of its lines from protocol's own suite). Here: a
 // fixed vector re-derived independently (ECDH x, the BIP-340 style tagged hash, AES-256-GCM from node:crypto), the round
 // trip, and every refusal by name. The curve is the one the daemons inject (arena-node/src/curve.js): protocol holds none.

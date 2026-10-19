@@ -4,7 +4,7 @@ using NUnit.Framework;
 using Blwp;
 
 /// <summary>
-/// THE LOBBY SHOWS UP, AND A LOBBY WITH NO ROUNDS IS NOT MISTAKEN FOR ONE (the owner 2026-09-20).
+/// THE LOBBY SHOWS UP, AND A LOBBY WITH NO ROUNDS IS NOT MISTAKEN FOR ONE (2026-09-20).
 ///
 /// WHY THIS EXISTS, and it is worth writing down because it cost a wrong bug report: on the morning the combined
 /// cover deploy shipped, a headless Chrome parked on the Daily since before the deploy was screenshotted without

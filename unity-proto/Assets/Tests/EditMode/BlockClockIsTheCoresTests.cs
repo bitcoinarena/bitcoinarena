@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// THE CLOCK ON SCREEN IS THE CORE'S CLOCK (the owner 2026-09-20 16:21: "when the round timer hits 0, the game must
+/// THE CLOCK ON SCREEN IS THE CORE'S CLOCK (2026-09-20 16:21: "when the round timer hits 0, the game must
 /// end and return to the lobby by itself. It used to. It no longer does").
 ///
 /// THIS IS WHAT HE SEES. `BlockClock.RunTicks` was a hand-written 9000 while the core's `BLOCK_TICKS` had moved

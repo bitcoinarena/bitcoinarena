@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE TESTNET FEDERATION FOUNDED, 5 OF 7, ON SEVEN NODES THAT ARE EACH ONE GUARDIAN (spec §23A.2; the owner 2026-09-27
+// THE TESTNET FEDERATION FOUNDED, 5 OF 7, ON SEVEN NODES THAT ARE EACH ONE GUARDIAN (spec §23A.2; 2026-09-27
 // 10:04: "Testnet is 7 nodes and 7 guardians, one each ... Stock threshold is 5 of 7" - the seven Funnel paths
 // /guardian-1..7 on 127.0.0.1:31221..31281; labelled testnet4).
 //
@@ -14,7 +14,7 @@
 // A guardian directory already there - an earlier founding - is moved aside, never deleted:
 // <store>.guardian -> <store>.guardian.<label>-<time>.
 //
-// THE CHAIN IS THE ONE NAMED (kanban #148 step 6): bitcoind must report ARENA_TN4_NETWORK (default testnet4) - a founding
+// THE CHAIN IS THE ONE NAMED: bitcoind must report ARENA_TN4_NETWORK (default testnet4) - a founding
 // pointed at another chain is refused before any guardian starts. The regtest harness (tn4-tools-regtest.sh) names regtest.
 //
 //   PATH=<dir with the patched fedimintd and fedimint-cli>:$PATH ARENA_BITCOIND_URL=... ARENA_BITCOIND_COOKIE=...
@@ -31,7 +31,7 @@ const nodes = (process.argv.slice(2).length ? process.argv.slice(2)
   : [1, 2, 3, 4, 5, 6, 7].map((n) => `${31211 + n * 10}:${env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`}/node-${n}.db`))
   .map((s) => ({ port: Number(s.split(':')[0]), store: s.slice(s.indexOf(':') + 1) }));
 // THE TESTNET FEDERATION IS SEVEN; ARENA_FOUND_N names another size - the throwaway federation T of the live slash and liquidation
-// (kanban #326, the owner 2026-10-15 option 1) is four, 3 of 4, as rehearsal 17 ran on regtest
+// (2026-10-15 option 1) is four, 3 of 4, as rehearsal 17 ran on regtest
 const FOUND_N = Number(env.ARENA_FOUND_N || 7);
 if (!Number.isInteger(FOUND_N) || FOUND_N < 4) throw new Error('ARENA_FOUND_N: a federation of at least four guardians');
 if (nodes.length !== FOUND_N) throw new Error(`this federation is ${FOUND_N} guardians; got ${nodes.length}`);
@@ -79,7 +79,7 @@ try {
   const codes = [];
   for (const [i, x] of guardians.entries())
     codes.push((await cli(['admin', 'setup', x.api, 'set-local-params', `node-${i + 1}`,
-      // ITS NAME AND SIZE (kanban #324: a second testnet4 federation of six on the test host): ARENA_FEDERATION_NAME, default
+      // ITS NAME AND SIZE (a second testnet4 federation of six on the test host): ARENA_FEDERATION_NAME, default
       // blwp-testnet4; the size is the nodes given
       ...(i === 0 ? ['--federation-name', process.env.ARENA_FEDERATION_NAME || 'blwp-testnet4', '--federation-size', String(guardians.length)] : [])], x.password)).replace(/["\s]/g, ''));
   say('every guardian set its local params');

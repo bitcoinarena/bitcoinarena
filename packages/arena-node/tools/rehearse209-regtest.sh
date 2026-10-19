@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE MIGRATION, REHEARSED (kanban #209 step 2): federation-hold-probe's setup with the patched fork's binaries (4 guardians,
+# THE MIGRATION, REHEARSED: federation-hold-probe's setup with the patched fork's binaries (4 guardians,
 # 3 of 4, disable_base_fees, two gateways; regtest), then rehearse209.mjs (the BLWP player and its sweep, the BLWP bonds
 # carried, two processes on one client directory), then fee-split-regtest.mjs on the same federation (a paid Arena round
 # on the new layout and network id, settled 5 / 2.5 / 2.5, the donor collecting). Nothing here reaches testnet4.

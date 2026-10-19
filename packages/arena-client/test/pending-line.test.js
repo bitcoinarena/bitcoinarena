@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PENDING LINE (WINDOW-10-SPEC, RULED the owner 2026-10-01, §24): the page's own lookThePending, run on fake signer
+// THE PENDING LINE (WINDOW-10-SPEC, RULED 2026-10-01, §24): the page's own lookThePending, run on fake signer
 // node answers - pending the moment a result is signed, the window's close in UTC, "provisional" while results still
 // arrive, gone when the result becomes invalid, gone when the money is collected.
 import test from 'node:test';
@@ -42,7 +42,7 @@ test('past the close the line says the window closed and the payout is on its wa
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 192);
   assert.equal(p.els['blwp-bal-pending-when'].textContent, `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`);
-  // AND NOT "PAYING OUT" FOREVER (kanban #6, MF 18, 3f1e2674): long past the close it is "not paid yet"
+  // AND NOT "PAYING OUT" FOREVER (MF 18, 3f1e2674): long past the close it is "not paid yet"
   const old = signed('192000', { windowCloseMs: String(Date.UTC(2026, 9, 3, 6, 43, 21)) });
   const q = page({ answers: { a: old, b: old } });
   await q.go();
@@ -72,7 +72,7 @@ test('collected into the wallet: the round\'s note goes and nothing is pending',
   assert.equal(p.kept.size, 0, 'the collected round is still asked about');
 });
 
-// SETTLED WITHOUT FINAL (the owner 2026-10-01): the signer nodes answer a round settled and accepted, with no FINAL signature,
+// SETTLED WITHOUT FINAL (2026-10-01): the signer nodes answer a round settled and accepted, with no FINAL signature,
 // with state PROVISIONALLY_FINAL, no pending amount, and the accepted settlement as the reason - the page shows no line,
 // as for an invalid payment; and the same note on a live round with its amount shows it again.
 test('a round the nodes report settled - PROVISIONALLY_FINAL, no pending amount - gives no line; the live amount does', async () => {
@@ -118,7 +118,7 @@ test('two entries of one round in one browser: each tab asks only about its own 
   assert.deepEqual([...asked].sort(), ['e1', 'e2'], 'a tab with no notes of its own does not ask about every note');
 });
 
-// WINDOW-LIVE-1155 (the owner 2026-10-02: "If the payment becomes invalid, the pending line disappears"): measured on testnet4,
+// WINDOW-LIVE-1155 (2026-10-02: "If the payment becomes invalid, the pending line disappears"): measured on testnet4,
 // four seats voided the run (each offering the 96 sat stake back as a refund) while three still said PROVISIONALLY_FINAL
 // 192 sat - and the line showed 96, then would have shown 192. A refund is not winnings, and a figure fewer than half the
 // answering seats say is not shown.
@@ -133,7 +133,7 @@ test('four seats VOID with a refund, three still PROVISIONALLY_FINAL with winnin
   assert.equal(p.els['blwp-bal-pending-when'].textContent, '');
 });
 
-// ONE LOOK AT A TIME, AND A SETTLED ROUND LESS OFTEN (the owner 2026-10-16: "Lower the amount of concurrent connections and network
+// ONE LOOK AT A TIME, AND A SETTLED ROUND LESS OFTEN (2026-10-16: "Lower the amount of concurrent connections and network
 // load"; measured on live UI 154: GET /standing 266 times in 60 s of one run)
 test('a settled answer is asked again only after 30 s, a provisional one at every look, and looks never overlap', async () => {
   const kept = new Map([['arena.pending.r1.e1', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e1', nodes: ['http://a', 'http://b'] })]]);

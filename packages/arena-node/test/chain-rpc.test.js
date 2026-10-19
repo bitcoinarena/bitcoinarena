@@ -203,7 +203,7 @@ test('views read at the same time share one read of each block and hold one obje
   assert.equal((await blocksOver(flaky, 0, 0, { cache })).blocks.length, 1);
 });
 
-// KANBAN #468 ITEM 4 (measured on seat 3's start 2026-10-18: the chain RPC was 9 % of the main thread's first minute, the cookie file
+// KANBAN ITEM 4 (measured on seat 3's start 2026-10-18: the chain RPC was 9 % of the main thread's first minute, the cookie file
 // read on every call 2.7 %): a census view asks bitcoind only for the hashes near its top once the deep ones are kept, and the
 // cookie is read once - again only after bitcoind refuses it.
 test('a second census view asks only its top DEEP_BLOCKS heights; the cookie is read once and again after a 401', async () => {

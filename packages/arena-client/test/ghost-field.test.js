@@ -11,7 +11,7 @@
 // This file is the half a page can be tested on. The jslib is the one file
 // `node --test` cannot load, so the rule that decides whether a player ever
 // sees a competitor lives here instead of there.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -167,7 +167,7 @@ test('a page that cannot keep up sheds the oldest pictures, not the newest', asy
     assert.equal(field.seen, 6);
     assert.equal(field.size, 3, 'the page kept more than it said it would');
     assert.equal(field.shed, 3);
-    // AND A DRAIN HANDS OVER THE NEWEST PICTURE OF THE TRUCK ONLY (the owner 2026-09-17 17:12: the ghost must be realtime): the
+    // AND A DRAIN HANDS OVER THE NEWEST PICTURE OF THE TRUCK ONLY (2026-09-17 17:12: the ghost must be realtime): the
     // two older ones still queued behind it are where the truck was, and are dropped rather than drawn in turn.
     assert.deepEqual(field.drain().map((g) => g.tick), [6],
       'the page kept the oldest pictures and dropped the newest');
@@ -241,7 +241,7 @@ test('the page ships the client it is written against, and one consumer of onGho
     'the page sets onGhost itself, so the rule for what is kept lives in the one file no test can load');
 
   // AND EVERYTHING THE PAGE CALLS IS IN THE BUNDLE'S EXPORTS. `tools/bundle.js` writes that list by hand, so a new
-  // function can be in the file and not on the table: measured while wiring the ghost label (the owner 2026-09-17 19:15),
+  // function can be in the file and not on the table: measured while wiring the ghost label (2026-09-17 19:15),
   // `BLWPCLIENT.tickClock` was undefined in the page although `tickClock` was bundled. The page would have carried a
   // label that never appeared, and nothing but a browser would have said so.
   const exported = new Set(Object.keys(await import(root + 'packages/arena-client/dist/arena-client.js')
@@ -583,7 +583,7 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned en
 });
 
 test('a truck of a round that is over goes, and one of a live round stays through any silence', () => {
-  // the owner 2026-09-18 12:02: "after 2nd round Truck 1 cannot see Truck 2. Age 6736ms on young-hawk-9551". Measured on
+  // 2026-09-18 12:02: "after 2nd round Truck 1 cannot see Truck 2. Age 6736ms on young-hawk-9551". Measured on
   // the Daily with a watcher that kept its field across two round boundaries: it carried one truck of the round it had
   // left into each new round, and of the new round it received nothing at all - first picture NEVER, superseded 0,
   // pictures of a left round 0. Until 0.0.1591 the three-second silence took that truck away; nothing else ever did,
@@ -613,10 +613,10 @@ test('a truck of a round that is over goes, and one of a live round stays throug
 });
 
 test('realtime: a page that fell behind draws each truck at its newest picture, and a quiet truck stays where it stood', () => {
-  // the owner 2026-09-17 17:05 / 17:12: the ghost stood where the other player had been a minute before, and after the next
+  // 2026-09-17 17:05 / 17:12: the ghost stood where the other player had been a minute before, and after the next
   // round old trucks stayed. A drain hands over the newest picture per truck.
   //
-  // AND A SILENCE NO LONGER TAKES A TRUCK AWAY (the owner 2026-09-18 10:42, the missing-then-wrong-place shot). Measured
+  // AND A SILENCE NO LONGER TAKES A TRUCK AWAY (2026-09-18 10:42, the missing-then-wrong-place shot). Measured
   // on the Daily that hour: 5231 pictures, gaps to 5131 ms, nine over three seconds - each one retired a truck and the
   // next picture drew it again metres away, while the pose itself was never behind by more than 3 ticks at the
   // ninetieth. A stall is the signer nodes, not a player leaving.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #156 MEASURE 1, ON A LOCAL REGTEST FEDERATION (no testnet funds, no bond): the sender's 32-byte player key in a
+// KANBAN MEASURE 1, ON A LOCAL REGTEST FEDERATION (no testnet funds, no bond): the sender's 32-byte player key in a
 // donation contract's payment image. (a) the federation accepts the lock transaction with that output; (b) the recipient
 // redeems it at once through the refund path, with the key-bearing contract - and the same output refused under the old
 // zero image ("the guardians hold another contract at that outpoint"), so the key is part of what the guardians stored;

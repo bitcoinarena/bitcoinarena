@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DONATION TO THE DEVELOPERS FROM THE PAGE (kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to choose
+// A DONATION TO THE DEVELOPERS FROM THE PAGE (2026-10-17: "donate to developer, a popup opens with an amount to choose
 // from 100, 500, 1000, 5000 satoshis or custom"; "B e cash"): the player's wallet pays the amount split over a donation set's keys in
 // one federation transaction (paySubmit, the item shop's payment), the donor signs the record (protocol donation-gift.js) and the
 // first seat that keeps it hands it on to every other. Nothing is paid before the split stands; every step that fails says which.
@@ -27,7 +27,7 @@ export const giftRecipientsLine = (set) => (Array.isArray(set) ? set : []).map((
  */
 export async function giftDonation({ game = null, player = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
   const no = (step, why) => ({ ok: false, step, why });
-  // A ZAP (kanban #463): the player's identity key is the target and the whole set
+  // A ZAP: the player's identity key is the target and the whole set
   if (player) { if (!(player instanceof Uint8Array) || player.length !== 32) return no('player', 'a zap names its player by a 32-byte identity key'); recipients = playerGiftRecipients(player); }
   const amt = giftAmountOf(sat); if (!amt.ok) return no('amount', amt.why);
   const totalMsat = BigInt(amt.sat) * 1000n;
@@ -59,7 +59,7 @@ export async function giftDonation({ game = null, player = null, recipients, sat
 }
 
 /**
- * A ZAP FROM THE SEASON BOARD (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user not an
+ * A ZAP FROM THE SEASON BOARD (2026-10-17: "zaps in the leaderboard go to the federation's account of the user not an
  * external lightning payment, remove the configuration setting"): `sat` from this wallet in `federationId` to the player whose identity
  * key the board names (32 bytes, `player`), as one payout contract to that key's refund key, recorded on the seats like a gift.
  */

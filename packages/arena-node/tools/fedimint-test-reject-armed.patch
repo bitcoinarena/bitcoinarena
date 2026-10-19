@@ -8,7 +8,7 @@
              });
          debug!(target: LOG_NET_API, %txid, "Transaction sent to consensus");
 +
-+        // BLWP kanban #364 (TEST ONLY - the throwaway testnet4 federation T, the owner 2026-10-15): a guardian whose data directory holds
++        // BLWP kanban #364 (TEST ONLY - the throwaway testnet4 federation T, 2026-10-15): a guardian whose data directory holds
 +        // the arm file `blwp-test-reject-next` answers the NEXT submitted transaction with an error although it was just sent to
 +        // consensus - the "rejected by the threshold, accepted by consensus" race of 10-06 that strands issued e-cash, made on demand.
 +        // One-shot: the file is removed first. Without the file nothing changes. Never armed on A or B.

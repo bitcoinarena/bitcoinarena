@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S STANDING PANEL (kanban #302, #310): the page's own standingPanel, run on the doors' answers - the missed
+// THE OWNER PAGE'S STANDING PANEL: the page's own standingPanel, run on the doors' answers - the missed
 // seatings' warning with the serving = false update, and the bond's standing with each warning in the seat's words.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,7 +38,7 @@ test('seated when drawn and a bond above the margin: no warning', async () => {
   assert.match(html, /No warning/); assert.doesNotMatch(html, /class="err"/);
 });
 
-test('the bond_min in force and a pending rise, with its escalation in the warnings (kanban #300)', async () => {
+test('the bond_min in force and a pending rise, with its escalation in the warnings', async () => {
   const st = { ...nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) }), bondMin: { inForce: '50000', noticeBlocks: 144, pending: { value: '80000', crossedAt: 300, effectiveAt: 444 } } };
   st.warnings = [{ kind: 'bond_min rise (T-3d)', urgent: true, says: 'bond_min rises to 80000 sat at block 444' }];
   const html = await render({ missedInARow: 0, warning: null }, st);

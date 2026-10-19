@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CONFIG BALLOT'S FIRST SLICE (spec §27A.7.2-4, kanban #329): the proposal on its face, the 77-byte vote, the tally.
+// THE CONFIG BALLOT'S FIRST SLICE (spec §27A.7.2-4): the proposal on its face, the 77-byte vote, the tally.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
@@ -33,7 +33,7 @@ test('a proposal: the full config, signed by its proposer, activation not before
   assert.notEqual(Buffer.from(proposalId(p)).toString('hex'), Buffer.from(proposalId(signed(draft({ configHash: b32(0x21) })))).toString('hex'));
 });
 
-test('the config_hash a proposal names is the hash of the config it carries (27A.7.1, kanban #329): a mismatch is refused, a match stands', () => {
+test('the config_hash a proposal names is the hash of the config it carries (27A.7.1): a mismatch is refused, a match stands', () => {
   // the hash the network names configs by: the genesis 2170f250 is it over its own bytes
   assert.equal(TAG_GAME_CONFIG, 'BLWP/v1/GameConfig');
   assert.equal(toHex(configHashOf(BALLOT_GENESIS.config)), toHex(BALLOT_GENESIS.configHash));
@@ -61,7 +61,7 @@ test('the config_hash a proposal names is the hash of the config it carries (27A
   assert.match(proposalStands(p, { ...facts, depositSats: 501 }).why, /over the cap of 500/);
 });
 
-test('a vote is 77 bytes: "ARN" \'V\' (the owner 2026-10-13), the proposal id\'s first 8 bytes, the choice, the bond key\'s signature', () => {
+test('a vote is 77 bytes: "ARN" \'V\' (2026-10-13), the proposal id\'s first 8 bytes, the choice, the bond key\'s signature', () => {
   const p = signed(draft()); const id = proposalId(p);
   const v = encodeVote({ proposalId: id, choice: CHOICE.YES, signature: schnorr.sign(voteMessage(id, CHOICE.YES), key(5).secret) });
   assert.equal(v.length, VOTE_BYTES);

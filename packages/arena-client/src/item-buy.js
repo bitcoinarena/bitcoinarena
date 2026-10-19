@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN IN-GAME ITEM, BOUGHT FROM THE PAGE (kanban #365 step 5; #369's larger truck the first): the player's wallet pays the item's split
+// AN IN-GAME ITEM, BOUGHT FROM THE PAGE ('s larger truck the first): the player's wallet pays the item's split
 // in one federation transaction, the player signs the record, and the seats keep it as the player's for good.
 //
 //   1. WHO SERVED: every seat's signed FINALs of the 24 h before now (GET /served?finals=1), merged by round and each FINAL checked
@@ -23,8 +23,8 @@ import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
 
 /**
- * THE TERMS A GAME VERSION SELLS ITS ITEMS ON (kanban #397 slice 5): a version requiring protocol 11 the reserves' - nodes 40 %, the
- * protocol reserves 20 %, the developers 40/30/20/10/0 % added on top; an older one #377's - nodes 50 %, the developers 50 .. 0 %.
+ * THE TERMS A GAME VERSION SELLS ITS ITEMS ON: a version requiring protocol 11 the reserves' - nodes 40 %, the
+ * protocol reserves 20 %, the developers 40/30/20/10/0 % added on top; an older one 's - nodes 50 %, the developers 50 .. 0 %.
  */
 export function itemTermsOf(manifest) {
   return Number(manifest && manifest.requiredProtocolVersion) >= RESERVES_VERSION
@@ -64,7 +64,7 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
 /**
  * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
  * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
- * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (kanban #377: one of ITEM_DEV_SHARES, default
+ * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (one of ITEM_DEV_SHARES, default
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
 export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5 }) {
@@ -74,7 +74,7 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   const terms = itemTermsOf(manifest);
   if (devsPct === null || devsPct === undefined) devsPct = terms.defaultShare;
   if (!terms.shares.includes(Number(devsPct))) return no('share', `a developers' share is one of ${terms.shares.join(', ')} %`);
-  // THE RESERVES' KEY FIRST (kanban #397 slice 5): on the reserves' terms nothing is paid before five of the game's nodes name the
+  // THE RESERVES' KEY FIRST: on the reserves' terms nothing is paid before five of the game's nodes name the
   // same reserve key for the federation the wallet pays from
   let reserveKey = null;
   if (terms.reserves) {
@@ -131,7 +131,7 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
 }
 
 /**
- * THE PLAYER'S ITEMS KEY (kanban #369): the same in every round, from the seed (protocol player-key.js itemsSecretFor) - it buys an
+ * THE PLAYER'S ITEMS KEY: the same in every round, from the seed (protocol player-key.js itemsSecretFor) - it buys an
  * item and signs, per entry, that the entry plays with it. `curve` the page's (pointX, signSchnorr). Answers { secret, pubkey, sign }.
  */
 export function itemsKeyFor(seed, curve) {
@@ -160,7 +160,7 @@ export function shopOf(games, gameName) {
 }
 
 /**
- * THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #369): of the purchases this player owns (ownedItems) of the round's game, the
+ * THE ITEMS AN ENTRY PLAYS WITH (protocol 10): of the purchases this player owns (ownedItems) of the round's game, the
  * ones `use` names and the game sells, each with its owner's proof for THIS entry - the items key's signature over
  * entryItemDigest(round, the entry's per-round key, purchase). Sorted by item id, one purchase per item. [] on a round before
  * version 10, or with nothing to play with: the entry then names no items at all.

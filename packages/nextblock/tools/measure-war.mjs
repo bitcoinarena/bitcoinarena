@@ -282,7 +282,7 @@ for (const seed of SEEDS) {
     const mvOf = (i) => { const q = pre.get(i); return q ? Math.hypot(s[base(i)] - q[0], s[base(i) + 1] - q[1]) / ONE : 0; };
 
     // ================= ARMOUR =================
-    // ON THE LINE = within 40 m of its post AND not a column. A column (RULED, the owner 2026-09-16 21:20) is a tank that has
+    // ON THE LINE = within 40 m of its post AND not a column. A column (RULED 2026-09-16 21:20) is a tank that has
     // not yet stood on its post (within 1.5 m, hull-down pick included) since it spawned or respawned.
     for (const i of liveT) {
       if (!aliveBefore.get(i) || mvOf(i) > 5) stood.delete(i);
@@ -366,7 +366,7 @@ for (const seed of SEEDS) {
         a9slope[xm] = (a9slope[xm] || 0) + slope; a9slopeN[xm] = (a9slopeN[xm] || 0) + 1; } }
       if (A9WHY) { for (const i of ls) a9x[sd < 0 ? 0 : 1].push(s[base(i)] / ONE);
         for (let w = 0; w < 6; w++) a9slot[sd < 0 ? 0 : 1].push(T.slotX(s[L.O_TACTICS + T.TAC_SLOT + (sd < 0 ? w : w + 6)]) / ONE); }
-      // RULED (the owner 2026-09-16): the share of seam-metre samples covered by >= 2, not a tick-union.
+      // RULED (2026-09-16): the share of seam-metre samples covered by >= 2, not a tick-union.
       // RULED 2026-09-19: the two-gun bar is read AT FULL STRENGTH, which is the qualifier §4.1's own kill-zone
       // sentence carries and this row had dropped ("a side at full strength"). The row admitted any side with >= 6
       // alive and then asked the kill zone to be double-covered anyway. Measured, the shortfall is monotonic in
@@ -635,7 +635,7 @@ for (const seed of SEEDS) {
       if (moving.every(Boolean) || moving.every((m) => !m)) add('B1b together');
     }
     // B2: per squad, a 5 s window. A man's squad is his FIRE TEAM's: the squad drawn for its first man (§9.2, RULED
-    // the owner 2026-09-16), which is the anchor he stands on - not the squad drawn at his own spawn.
+    // 2026-09-16), which is the anchor he stands on - not the squad drawn at his own spawn.
     const squadOf = (i) => { const ft = T.rifleTeamOf(i); return s[base(T.firstManOf(ft.side, ft.team)) + L.U_TARGET]; };
     for (const i of liveM) { const k = `${sideOf(i)}:${squadOf(i)}`; const w = w5.get(k) || { halted: false, moving: false, allOnPost: true, outTicks: 0, ticks: 0 };
       const u = hk.unit.get(i); if (u) { if (u.halted) w.halted = true; if (mvOf(i) > 0.02 && mvOf(i) < 5) w.moving = true; if (!(u.dx === 0 && u.dz === 0)) w.allOnPost = false; } w5.set(k, w); }

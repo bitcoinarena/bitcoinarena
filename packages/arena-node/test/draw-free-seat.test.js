@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// 2026.0.2 SEATS (kanban #348): the round that names no draw, on a census of fourteen.
+// 2026.0.2 SEATS: the round that names no draw, on a census of fourteen.
 // THE COMMITTEE IS WHOM THE CHAIN ASSIGNED.
 //
 // A round's `nodes` list is what its author wrote down. Until this it was also
@@ -115,7 +115,7 @@ function rootFor(bonds, nodes) {
 }
 
 
-// 2026.0.2 (kanban #348, RULED the owner 2026-10-13, path 1): FOURTEEN BONDED NODES, as testnet4 holds them with two federations.
+// 2026.0.2 (RULED 2026-10-13, path 1): FOURTEEN BONDED NODES, as testnet4 holds them with two federations.
 // A v1 contract can name no draw from them; a v2 contract names none, and the seat writes its seated 7 in.
 const fourteen = Array.from({ length: 14 }, (_, i) => schnorr.getPublicKey(new Uint8Array(32).fill(i + 1)));
 const bonds14 = fourteen.map((k, i) => bondOfKey(k, i + 1));

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #348: each game showed twice on the v2 page - its 2026.0.1 manifest and its 2026.0.2 update
+//: each game showed twice on the v2 page - its 2026.0.1 manifest and its 2026.0.2 update
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { oneTilePerGame } from '../src/games.js';

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352): one deterministic node per hour posts hour + 24; a missed slot falls to the next
+// THE DUTY TO POST THE ROUNDS 24 H AHEAD: one deterministic node per hour posts hour + 24; a missed slot falls to the next
 // slot's node; a marker in the chain or mempool says a slot is posted; nobody else posts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

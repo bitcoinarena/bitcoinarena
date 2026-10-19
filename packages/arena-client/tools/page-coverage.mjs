@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// HOW MUCH OF EACH PAGE'S OWN SCRIPT THE TESTS RAN (kanban #150). Coverage counts src/ only; the scripts that run in a
+// HOW MUCH OF EACH PAGE'S OWN SCRIPT THE TESTS RAN. Coverage counts src/ only; the scripts that run in a
 // player's browser - the WebGL page's index.html, the seats' rounds.html and replay.html - live inline in HTML. Tests run
 // slices of them under the page's own name (test/page-script.js), which writes beside V8's raw coverage which characters
 // of the page each lift held. This reads both and prints, per page, the lines inside its <script> blocks that hold code

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LOBBY'S BUILD STAMP IS REWRITTEN IN UNITY'S BROTLI .data.unityweb AT EACH DEPLOY (kanban #148, plan comment 222).
+// THE LOBBY'S BUILD STAMP IS REWRITTEN IN UNITY'S BROTLI .data.unityweb AT EACH DEPLOY (plan comment 222).
 // tools/stamp-data.mjs runs as deploys run it, on a file built here the way Unity's brotli writes one: the stream's window
 // bits, a metadata block carrying "UnityWeb Compressed Content (brotli)" where the loader looks, then the compressed data
 // byte-aligned behind it. The data holds Unity's build TextAsset (8-byte "0.0.NNNN"). The stamped file must still carry the
@@ -107,7 +107,7 @@ test('a bad version, a file without the marker, or data without the build asset 
   assert.ok(readFileSync(noAsset).equals(noAssetBytes));
 });
 
-// THE STAMP INSIDE AN LZ4 BLOCK (kanban #200: the 0.0.2822 build keeps `build` in a compressed block of data.unity3d, and
+// THE STAMP INSIDE AN LZ4 BLOCK (the 0.0.2822 build keeps `build` in a compressed block of data.unity3d, and
 // the tool refused it). The fixture is Unity's layout: UnityWebData1.0 with three files, the middle one a UnityFS bundle
 // (format 8, block table LZ4HC behind a 16-byte aligned header, blocks LZ4HC) - one block holding the stamp, one holding a
 // back-reference so the decoder's matches run.

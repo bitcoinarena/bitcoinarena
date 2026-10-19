@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NETWORK STORE'S CHECKS, IN THE PAGE AND ON THE SEAT ALIKE (kanban #276, the owner 2026-10-10: "Everything with loading
+// THE NETWORK STORE'S CHECKS, IN THE PAGE AND ON THE SEAT ALIKE (2026-10-10: "Everything with loading
 // plugins must happen in the browser including updating games and networks like an AppStore"; letter 2026-10-10: a seat's
 // network settings are its federation invite, the donation sets in force, its series and the chain it reads - each offered
 // and updated from the owner page, signed by whoever has authority over it). Isomorphic, as plugin-check.js is: the owner

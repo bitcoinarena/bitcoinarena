@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// THE PAGE DOES NOT CLEAR THE CORE'S IMPACT WORD IN A SIGNED RUN (the owner 2026-09-16). Measured
+/// THE PAGE DOES NOT CLEAR THE CORE'S IMPACT WORD IN A SIGNED RUN (2026-09-16). Measured
 /// before on the Daily (0.0.1358, round bc691348): `TakeImpact` zeroed word 17 (T_IMPACT) 35 times
 /// inside one signed run; outcome, score and tick equal to the signer nodes, the state hash not. No
 /// rule reads the word - the core prices each crash from that tick's own impact - so the clear was a

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LOOPBACK DONATION RECIPIENT GOES OVER ITS LISTED ROUTE (the owner 2026-10-03, option A): the paid rounds of 10-02..10-04
+// A LOOPBACK DONATION RECIPIENT GOES OVER ITS LISTED ROUTE (2026-10-03, option A): the paid rounds of 10-02..10-04
 // name testnet4's test donation set at http://127.0.0.1:18777 - a player's browser reached nothing there and every share was
 // UNPAID. The page's donation fetcher, run on a fake tab: a loopback recipient with a route in daily.json's testnet.alt goes
 // there over https; one with no route, and every other host, go as named.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DONATION TO THE DEVELOPERS OUTSIDE ANY ROUND (kanban #431, the owner 2026-10-17: "B e cash"): the protocol record, the split over the
+// A DONATION TO THE DEVELOPERS OUTSIDE ANY ROUND (2026-10-17: "B e cash"): the protocol record, the split over the
 // set (100 / 500 / 1000 / 5000 sat or custom), the seat's checks against the set and the federation, and the outputs indexed for the
 // developers' own clients (the rows GET /donations?key= serves).
 import { test } from 'node:test';
@@ -65,7 +65,7 @@ test('refused: a forged signature, outputs that are not the split, outputs the f
   assert.match(giftStands(g, { recipients: SET, verify, nowMs: NOW - 11 * 60 * 1000 }).why, /dated ahead/);
 });
 
-test('a zap (kanban #463): its one output to the player\'s identity refund key, kept and indexed as "zap" under that key', async () => {
+test('a zap: its one output to the player\'s identity refund key, kept and indexed as "zap" under that key', async () => {
   const { playerGiftRecipients, GIFT_TO_PLAYER } = await import('../../arena-protocol/src/donation-gift.js');
   const { refundKeyOf } = await import('../../arena-protocol/src/stake-lock.js');
   const player = schnorr.getPublicKey(b32(0x42));

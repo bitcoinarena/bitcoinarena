@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARRIVAL CARD'S FIXTURE IS WHAT THE CORE PRODUCES NOW (the owner 2026-09-25: the card prints the core's E, T and C, and
+// THE ARRIVAL CARD'S FIXTURE IS WHAT THE CORE PRODUCES NOW (2026-09-25: the card prints the core's E, T and C, and
 // their product is the score). test/fixtures/arrival-card-runs.json is what the EditMode check
 // TheCardsProductIsTheCoresScore feeds through the real C# formatter; if the core moved and the file did not, that check
 // would be proving the card against a world nobody plays. Regenerate with tools/arrival-card-runs.mjs.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESERVE SEATS AT A SEAT (multiplayer_p2p.md §5A.7, kanban #301). For each round this node is drawn for, per role:
+// RESERVE SEATS AT A SEAT (multiplayer_p2p.md §5A.7). For each round this node is drawn for, per role:
 //
 //   before seating_close (start - 120 s)  it signs PRESENT once it can serve the round, keeps it, and hands it to every
 //                                         other drawn node (POST /present); it also asks them for theirs (GET /present)
@@ -60,7 +60,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify };
   };
   const keepCert = (rid, role, bytes) => {
-    // ONE HELD ALREADY, byte for byte, is not checked again (kanban #350, the owner 2026-10-12 "figure out why CPU usage so high and
+    // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
     // optimise it": every batch answer repeats a round's certificate, and each was verified - all its signatures - before the
     // seat looked whether it held exactly these bytes)
     const held = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
@@ -83,7 +83,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
     if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
-    // the seats a v2 round counts are these (2026.0.2, kanban #348): the server writes them into the stored contract
+    // the seats a v2 round counts are these (2026.0.2): the server writes them into the stored contract
     try { onSeated(rid, role, v.seating.seated); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
     return { ok: true, kept: true };
   };
@@ -96,10 +96,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (typeof c.startTimeMs !== 'bigint') continue;
-      // long started: nothing left to seat, never held (kanban #468 item 4: at a start that was every round in the store, 53,658
+      // long started: nothing left to seat, never held (at a start that was every round in the store, 53,658
       // contracts on seat 1, of which 5,950 had not started 10 min ago)
       if (c.startTimeMs + 600000n < BigInt(nowMs())) continue;
-      // A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf): its later rounds exchange no
+      // A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (pick (c), known-game.js tableAnchorOf): its later rounds exchange no
       // PRESENT and sign no seating - the roster seats them with the first round's certificate
       const anchor = tableAnchorOf(c);
       if (anchor && !anchor.first) continue;
@@ -116,7 +116,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
 
   // ---- the doors ----
   function takePresent(bytes) {
-    // ONE HELD ALREADY, byte for byte, is not checked again (kanban #345: every batch answer repeats a round's PRESENTs,
+    // ONE HELD ALREADY, byte for byte, is not checked again (every batch answer repeats a round's PRESENTs,
     // and verifying each at each tick was thousands of signature checks per tick at grid density)
     try {
       const d = decodePresent(bytes);
@@ -148,7 +148,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     .map((r) => ({ role: r.role, a: toHex(new Uint8Array(r.a)), b: toHex(new Uint8Array(r.b)) }));
 
   // ---- the work, every tick ----
-  // ONE EXCHANGE PER NODE PER TICK (kanban #345, measured on testnet4 2026-10-11: an RPS grid of 2 tables per 8 s slot kept
+  // ONE EXCHANGE PER NODE PER TICK (measured on testnet4 2026-10-11: an RPS grid of 2 tables per 8 s slot kept
   // ~15 rounds in the PRESENT window at once, and each round asked each of the 8 other drawn nodes on its own - for 2 roles,
   // every 2 s - so a tick ran past its rounds' closes: seat 3 signed 349 game seatings and built 35 certificates). Now one
   // POST /presents carries every PRESENT a tick hands a node, and one GET /seating-batch reads, for every round of the tick
@@ -194,7 +194,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // 2. THIS NODE'S SEATING SIGNATURE for each closed round it is seated in, before the reads
       for (const w of work) if (w.closed) signMine(w);
       // 3. ONE READ PER NODE, for every round of this tick it is drawn for
-      // ONLY WHAT THIS NODE STILL LACKS (kanban #350, measured 2026-10-12 21:3x local on seat 3: GET /seating-batch 88 times in 30 s,
+      // ONLY WHAT THIS NODE STILL LACKS (measured 2026-10-12 21:3x local on seat 3: GET /seating-batch 88 times in 30 s,
       // 14.3 MB of JSON out - every round of the window asked of every node each tick, its PRESENTs sent back though held - the
       // seat's largest cost with the garbage it made): a round before its close whose PRESENTs from every drawn node are held
       // has nothing more to learn until then; after the close it is asked until its certificate stands (the work above)
@@ -292,7 +292,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
   }
 
-  /** THE BATCH DOORS' SIDE (kanban #345). POST /presents: the PRESENTs of one body, each taken as POST /present takes it. */
+  /** THE BATCH DOORS' SIDE. POST /presents: the PRESENTs of one body, each taken as POST /present takes it. */
   function takePresents(bytes) {
     if (!bytes.length || bytes.length % PRESENT_BYTES !== 0) return { ok: false, why: `a batch of PRESENTs is a whole number of ${PRESENT_BYTES}-byte PRESENTs` };
     let taken = 0; const refused = [];
@@ -310,7 +310,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     return { rounds };
   }
 
-  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (kanban #293 pick (c)): every lookup by round maps it there
+  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (pick (c)): every lookup by round maps it there
   const anchors = new Map();
   const seatOf = (rid) => {
     const h = toHex(rid);
@@ -334,10 +334,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       }
       return out;
     },
-    // WHETHER THIS NODE'S OWN PRESENT IS HELD FOR A ROUND'S SEATING (kanban #302): a reserve that was present has not missed it
+    // WHETHER THIS NODE'S OWN PRESENT IS HELD FOR A ROUND'S SEATING: a reserve that was present has not missed it
     presentHere: (rid, role = 'settlement') => !!db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(seatOf(rid), role, me),
     takePresent, presentsOf, mySignature, certOf: (rid, role) => certOf(seatOf(rid), role), keepCert, equivocationOf, takePresents, batchOf,
-    /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too (#468). */
+    /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too. */
     forget: (ridHex) => { for (const role of SEATING_ROLES) certs.delete(`${ridHex}:${role}`); },
   };
 }

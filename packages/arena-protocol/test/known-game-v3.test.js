@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NEXTBLOCK VERSION 3 IS A GAME THIS CLIENT KNOWS (kanban #369, the live break of 2026-10-16 05:19Z): once the seats listed v3's
+// NEXTBLOCK VERSION 3 IS A GAME THIS CLIENT KNOWS (the live break of 2026-10-16 05:19Z): once the seats listed v3's
 // rounds the page chose v3, did not find it among the known-good games, and took Tick Tock for a game with its own HTML client -
 // "Tick Tock, Next Block cannot be loaded: games/nextblock/index.html hashes to ..., which nextblock's manifest does not name";
 // and an entry for a v3 round named a world secret, which the seats refused ("this round shares one world among its players").

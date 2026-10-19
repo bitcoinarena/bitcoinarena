@@ -71,41 +71,41 @@ export const FRAMES = new Map([
   [TYPE_RERUN_RESULT, { name: 'RerunResult', authority: true }],
   [TYPE_FINAL_SIGNATURE, { name: 'FinalSignature', authority: true }],
   [TYPE_DONATION_SET_KEYS, { name: 'DonationSetKeys', authority: true }],
-  // A game's manifest (§0A.3, kanban #202): signed by its developer, it decides which cores and configs a round may run.
+  // A game's manifest (§0A.3): signed by its developer, it decides which cores and configs a round may run.
   [TYPE_GAME_MANIFEST, { name: 'GameManifest', authority: true }],
-  // An attested round's outcome (§0A.7a, kanban #206): k of its game's attestors decide which picks win - and so the table.
+  // An attested round's outcome (§0A.7a): k of its game's attestors decide which picks win - and so the table.
   [TYPE_OUTCOME_ATTESTATION, { name: 'OutcomeAttestation', authority: true }],
-  // The committee's word on a price a run plays (§11, kanban #311), a sample and a tape: they decide a market's outcome.
+  // The committee's word on a price a run plays (§11), a sample and a tape: they decide a market's outcome.
   [TYPE_PRICE_SAMPLE, { name: 'PriceSample', authority: true }],
   [TYPE_PRICE_TAPE, { name: 'PriceTape', authority: true }],
-  // A federation's record (§23A.4, kanban #321): it decides deposits and which federation a new round may name.
+  // A federation's record (§23A.4): it decides deposits and which federation a new round may name.
   [TYPE_FEDERATION_RECORD, { name: 'FederationRecord', authority: true }],
   [TYPE_PRESENT, { name: 'Present', authority: true }],
   [TYPE_SEATING, { name: 'Seating', authority: true }],
-  // A config proposal (§27A.7.2, kanban #329): tallied, it decides the configuration rounds run under.
+  // A config proposal (§27A.7.2): tallied, it decides the configuration rounds run under.
   [TYPE_CONFIG_PROPOSAL, { name: 'ConfigProposal', authority: true }],
-  // A guardian's absence attestation and a departure notice (§23A.4-5, kanban #322): they make a guardian ABANDONED or DEPARTED.
+  // A guardian's absence attestation and a departure notice (§23A.4-5): they make a guardian ABANDONED or DEPARTED.
   [TYPE_ABSENCE_ATTESTATION, { name: 'AbsenceAttestation', authority: true }],
   [TYPE_DEPARTURE_NOTICE, { name: 'DepartureNotice', authority: true }],
-  // A halted federation's spent-note set (§23A.5, kanban #323): it decides which notes the liquidation pays.
+  // A halted federation's spent-note set (§23A.5): it decides which notes the liquidation pays.
   [TYPE_SPENT_SET, { name: 'SpentSet', authority: true }],
-  // A price round's verdict (§13 RoundResult, kanban #312): who won the war, bulls or bears, by the attested tape. It moves no money.
+  // A price round's verdict (§13 RoundResult): who won the war, bulls or bears, by the attested tape. It moves no money.
   [TYPE_ROUND_RESULT, { name: 'RoundResult', authority: true }],
-  // A price round's player result with the front its run ended on (§13 front_*, kanban #312): the result, plus the price's lead.
+  // A price round's player result with the front its run ended on (§13 front_*): the result, plus the price's lead.
   [TYPE_RESULT_FRONT, { name: 'PlayerResultFront', authority: true }],
-  // A SEAT'S SIGNED OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven", kanban #323)
+  // A SEAT'S SIGNED OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven")
   [TYPE_HALT_OBSERVATION, { name: 'HaltObservation', authority: true }],
-  // A SCALAR MARKET'S ATTESTED VALUE (kanban #362 feature 8): k of n attestors' word on the number it asked for - it moves money
+  // A SCALAR MARKET'S ATTESTED VALUE (feature 8): k of n attestors' word on the number it asked for - it moves money
   [TYPE_VALUE_ATTESTATION, { name: 'ValueAttestation', authority: true }],
-  // THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a new split proposed, and a recipient's yes or no - once more than half
+  // THE DEVELOPERS' OWN BALLOT (§27A.4.1): a new split proposed, and a recipient's yes or no - once more than half
   // of the set accepted, it decides who the donations pay
   [TYPE_DONATION_PROPOSAL, { name: 'DonationProposal', authority: true }],
-  // A FEE PROPOSAL AND ITS APPROVALS (§27A.9.1 fee sets, kanban #462): accepted, they decide the fee split rounds pay - declared with the
+  // A FEE PROPOSAL AND ITS APPROVALS (§27A.9.1 fee sets): accepted, they decide the fee split rounds pay - declared with the
   // fee proposals (9b79a975) and never entered here, so bearsAuthority refused both as unknown (frames.test: "TYPE_FEE_APPROVAL (0x33) has no entry")
   [TYPE_FEE_PROPOSAL, { name: 'FeeProposal', authority: true }],
   [TYPE_FEE_APPROVAL, { name: 'FeeApproval', authority: true }],
-  // THE PROTOCOL RESERVES' PROJECT FUNDING (§27A.9.3, kanban #397), A PLAYER'S NAME (§0A, kanban #460's leaderboard) AND THE LEADERBOARD'S
-  // PAYOUT (kanban #460): declared and never entered here (frames.test on main 2026-10-19). A proposal and a signal decide what the reserves
+  // THE PROTOCOL RESERVES' PROJECT FUNDING (§27A.9.3), A PLAYER'S NAME (§0A, 's leaderboard) AND THE LEADERBOARD'S
+  // PAYOUT: declared and never entered here (frames.test on main 2026-10-19). A proposal and a signal decide what the reserves
   // pay and when a proposal goes to the vote; a payout moves money. A comment and a name are signed words a page shows: authority too, as
   // every frame but the ghost ("exactly one frame is a picture" - frames.test), so neither is ever assumed harmless.
   [TYPE_FUNDING_PROPOSAL, { name: 'FundingProposal', authority: true }],

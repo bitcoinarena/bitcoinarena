@@ -322,7 +322,7 @@ test('a node that refused to replay produces no state at all', async () => {
   assert.equal(refused.stateHash, undefined, 'a refusal carried a state hash');
 });
 
-// M3 R1 (the owner 2026-09-15 08:03/08:07): the signer nodes replay the core a round names, handed to replay -
+// M3 R1 (2026-09-15 08:03/08:07): the signer nodes replay the core a round names, handed to replay -
 // replay.js imports none. With no core named, it refuses by name, on this thread and in a worker.
 test('a replay with no core named to run it under is refused by name, on this thread and in a worker', async () => {
   const { transcript, entry } = stored(600);

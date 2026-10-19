@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * A TESTNET4 TAIL SERIES WITH LATE JOIN (the owner 2026-10-03: "Create a new round series, 90 seconds ... back to back 90
+ * A TESTNET4 TAIL SERIES WITH LATE JOIN (2026-10-03: "Create a new round series, 90 seconds ... back to back 90
  * seconds. Joining an existing round is possible with 45 seconds in." and "the round series should be at least 72 hours").
  * The live paid round's contract - network, cores, federation, stake, donation set, signer nodes, census - carried forward
  * into a tail: rounds every 90 s from TAIL_START to its day's end, committee_time 12 h before the start (a tail's lead),

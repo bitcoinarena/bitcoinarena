@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE KNOWN-GOOD LIST HOLDS THE GAME THIS TREE BUILDS, WITH THE CORE AND CONFIG IT BUILDS (§5, §0A.6; kanban #202).
+// THE KNOWN-GOOD LIST HOLDS THE GAME THIS TREE BUILDS, WITH THE CORE AND CONFIG IT BUILDS (§5, §0A.6).
 //
 // The list is generated from each game's signed manifest (`node packages/arena-protocol/tools/known-games.js`), and this
 // recomputes the core hash from the sources: a change to the core turns this red until a new nextblock manifest lists
@@ -33,7 +33,7 @@ test('an unknown game, a core its game does not list, or no game or core at all 
   assert.match(gameIsKnownGood(NEXTBLOCK_GAME_ID, new Uint8Array(31)).why, /names no 32-byte core hash/);
 });
 
-// AND THE CONFIG (the owner 2026-10-04, fix 1 of the spec audit; §27A.6): a listed core plays the configs its game lists for it.
+// AND THE CONFIG (2026-10-04, fix 1 of the spec audit; §27A.6): a listed core plays the configs its game lists for it.
 test('a round on a listed core is refused under a config its game does not list for that core, and accepted under its own', () => {
   const DE2F = fromHex('de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8');
   const OLD = fromHex('2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e');

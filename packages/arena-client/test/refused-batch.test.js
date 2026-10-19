@@ -15,7 +15,7 @@
 // That is the 16:08 two-Chrome close-out of letter 36, from the other side:
 // P1 in the field on fire, P2's ghost still at P1's bay, tick stuck at 4241,
 // chip reading play and two players the whole time.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';

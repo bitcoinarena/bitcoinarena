@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PROPOSAL THAT CHANGES FEES, ANY OF THEM IN ANY COMBINATION (kanban #462, the owner 2026-10-17: "Proposal type change fees. Any of the
+// A PROPOSAL THAT CHANGES FEES, ANY OF THEM IN ANY COMBINATION (2026-10-17: "Proposal type change fees. Any of the
 // fees, all combinations can be changed with a proposal. Same things apply as usual"; ruled the same day: "Introduce hard limits where
 // any parameter could be maliciously used to brick or exploit the game. Approval remains high at current levels. Exclude donation
 // split. Exclude slashing. Exclude proposals. Donation amounts and percentages may never be nulled by a proposal, the devs will always
@@ -185,5 +185,5 @@ export function roundSplitBps(fees) {
   const protocolDevs = Math.floor(fees.roundDonationBps / 2);
   return { nodes: fees.roundNodeBps, protocolDevs, gameDevs: fees.roundDonationBps - protocolDevs, reserves: fees.roundReserveBps };
 }
-/** A market's rates from a fee set, as bookLockSettlement takes them: the reserve inside the donation's part (#454). */
+/** A market's rates from a fee set, as bookLockSettlement takes them: the reserve inside the donation's part. */
 export const marketBps = (fees) => ({ nodeBps: fees.marketNodeBps, donationBps: fees.marketDonationBps + fees.marketReserveBps, reserveBps: fees.marketReserveBps });

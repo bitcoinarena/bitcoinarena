@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET ON A GAME AT A SEAT (kanban #362 feature 6; protocol 2026.0.6): the node hook (src/game-market.js) checks a market
+// A MARKET ON A GAME AT A SEAT (feature 6; protocol 2026.0.6): the node hook (src/game-market.js) checks a market
 // round's outcome from its source round's RoundResult signed with the seats' node keys (BIP-340), against the source round the
 // seat holds and the settlement committee its roster draws - never the contract's `nodes`. 5 of 7 stands, 4 of 7 or a
 // stranger's do not, FLAT refunds, a seat without the source refuses by name, and a market whose entries closed after its

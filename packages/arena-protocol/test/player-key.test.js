@@ -42,7 +42,7 @@ test('only the seed\'s own key for the round passes, and says its fingerprint', 
   assert.match(playerKeyIsDerived({ seed, roundId: rid, playerPubkey: key }).why, /needs a curve/);
 });
 
-test('an order\'s key (kanban #336): order 0 is the round\'s key byte for byte; every order its own, fixed by the seed', () => {
+test('an order\'s key: order 0 is the round\'s key byte for byte; every order its own, fixed by the seed', () => {
   const seed = b32(7), rid = b32(9);
   assert.equal(toHex(playerSecretFor(seed, rid, 0)), toHex(playerSecretFor(seed, rid)), 'order 0 is the key games and single picks always had');
   const keys = [1, 2, 3, 0xffffffff].map((n) => toHex(playerSecretFor(seed, rid, n)));

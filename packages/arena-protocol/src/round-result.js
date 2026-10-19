@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHO WON A PRICE ROUND (spec §13 RoundResult, kanban #312): "Who won the round is decided once, by the price, at the round's
+// WHO WON A PRICE ROUND (spec §13 RoundResult): "Who won the round is decided once, by the price, at the round's
 // end ... RoundResult { round_id, open_cents, close_cents (first and last attested sample of the round), front (BULLS if
 // close > open, BEARS if lower, FLAT if equal), node_pubkey, signature (5-of-7 of the settlement committee) }". It is what
 // every client shows as THE BULLS WIN / THE BEARS WIN, the same for every player; it moves no money and enters no score.
@@ -58,7 +58,7 @@ export function roundResultFrom({ roundId, samples, endTick }) {
 }
 
 /**
- * PROTOCOL 5 (kanban #312): THE RESULT FROM THE TWO ENDS' SIGNED READINGS - `open` and `close` are { tick, readings } (sample 0
+ * PROTOCOL 5: THE RESULT FROM THE TWO ENDS' SIGNED READINGS - `open` and `close` are { tick, readings } (sample 0
  * and the closing sample), each end's price the median priceSampleStands5 computes from the committee's own readings; then the
  * result as roundResultFrom makes it. Nobody's stated open or close is taken. Answers { ok, result, ... } or why not.
  */
@@ -81,11 +81,11 @@ export function roundResultStands({ result, sigs, committee, threshold, verify }
 }
 
 /**
- * THE FRONT A RUN ENDED ON (§13 PlayerResult front_*, kanban #312): "the lead at the tick the run ended (BULLS LEADING), signed with
+ * THE FRONT A RUN ENDED ON (§13 PlayerResult front_*): "the lead at the tick the run ended (BULLS LEADING), signed with
  * the run so that the tape the run was played against is part of the result". From the run's own batches: the attested samples it
  * played (`attests` [tick, kind 0, cents, sigs], checked by the seat as they arrived) - open the first, close the last. A run that
  * played no attested price is SIM: FLAT, no prices. Answers { front, frontOpenCents, frontCloseCents, frontMode } (1 LIVE, 2 SIM).
- * A protocol-5 run's samples are kind 2, their cents the median of the readings the seat checked (kanban #312).
+ * A protocol-5 run's samples are kind 2, their cents the median of the readings the seat checked.
  */
 export function frontOfRun(batches) {
   const samples = [];

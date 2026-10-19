@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PROTOCOL 5 AT THE SEATS (kanban #312, RULED the owner 2026-10-14 ~21:50Z): seven seats of a protocol-5 round, each reading its own
+// PROTOCOL 5 AT THE SEATS (RULED 2026-10-14 ~21:50Z): seven seats of a protocol-5 round, each reading its own
 // price. No leader proposes one: every seat signs its own reading and posts it to the others (POST /price-reading), every seat
 // holds the sample once five readings are in, and its price is their median. The same seven seats on a round below 5 keep the
 // proposed-and-countersigned path (test/price-feed.test.js, unchanged).

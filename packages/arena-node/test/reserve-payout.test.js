@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE 5-OF-7 LNURL PAYOUT OF A PASSED FUNDING PROPOSAL (§27A.9.3, kanban #397 slice 8): seven guardian seats in one process, one fake
+// THE 5-OF-7 LNURL PAYOUT OF A PASSED FUNDING PROPOSAL (§27A.9.3): seven guardian seats in one process, one fake
 // federation (contracts, the settle and send the stake-lock tool answers), one fake gateway and one fake LNURL endpoint. the owner's tests:
 // a pass pays once; a fail pays nothing; a second attempt does not double-pay; 4 signature shares fail and 5 succeed; a gateway failure
 // refunds and records, and nothing is paid twice.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE MARKET ORDER BOOK: SIGNED LIMIT ORDERS, CLEARED IN BATCHES AT ONE UNIFORM PRICE (kanban #278; #234 design (c), the owner
+// THE MARKET ORDER BOOK: SIGNED LIMIT ORDERS, CLEARED IN BATCHES AT ONE UNIFORM PRICE (design (c), the owner
 // 2026-10-09: "batch auction"). A two-outcome market (YES = outcome 0, NO = outcome 1) with no house: every share is half of
 // a COMPLETE SET - 1 sat of collateral pays 1 sat to whichever side wins - so a YES buyer at price p and a NO buyer at
 // 1 - p together fund a set, and nobody else does.
@@ -13,7 +13,7 @@
 //   CLEAR. One price for the batch: the price of YES that matches the most payout (YES demand against NO demand), then the
 //          smaller imbalance, then the lower price. The short side fills whole; on the long side the better limits fill
 //          first and the marginal limit is shared pro rata, its leftover msat one each in order-id order.
-//   FEES ARE DUE WHEN AN ORDER FILLS (the owner 2026-10-09: "when an order is filled, the fee is of course due too"; 1 sat on a
+//   FEES ARE DUE WHEN AN ORDER FILLS (2026-10-09: "when an order is filled, the fee is of course due too"; 1 sat on a
 //          price to beat of 73999: 0.01 sat fee, 0.99 sat x odds): an order's fee is its market's rate (1 % by default) of
 //          the part that filled - held in its fee lock and paid out at settlement; what has not filled can be cancelled at
 //          no cost and comes back whole, its fee too. A VOID market gives everything back.
@@ -29,7 +29,7 @@ export const NO = 1;
 // order buys at least 5 shares at its limit - one share pays 1 sat here, as one pays $1 there
 export const TICK = 1000n;
 export const MIN_SHARES = 5n;
-// AN ORDER BRINGS ITS OWN AMOUNT (kanban #237, the owner 2026-10-10: market and limit orders, "Für market Orders"): in a paid
+// AN ORDER BRINGS ITS OWN AMOUNT (2026-10-10: market and limit orders, "Für market Orders"): in a paid
 // market round an order's stake is the player's - from 1 sat up to this cap - and the round's stake_msat is only what a
 // plain pick stakes. Its shares follow (MIN_SHARES at its limit, as Polymarket's minimum).
 export const MIN_ORDER_MSAT = 1000n;
@@ -62,9 +62,9 @@ function orderShapeWhy({ roundId, playerKey, outcome, price, stakeMsat, nonce, e
 }
 
 /**
- * A CANCEL (the owner 2026-10-09: "until then the orders can be cancelled at no cost"): the bytes a player signs, with the
+ * A CANCEL (2026-10-09: "until then the orders can be cancelled at no cost"): the bytes a player signs, with the
  * entry's own session key, to take a market entry back before its round's entry close - round and entry, nothing else.
- * Only what has not filled comes back free: a filled order's fee is due (the owner 2026-10-09: "when an order is filled, the
+ * Only what has not filled comes back free: a filled order's fee is due (2026-10-09: "when an order is filled, the
  * fee is of course due too").
  */
 export function cancelId({ roundId, entryId }) {
@@ -104,7 +104,7 @@ const demandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);
  * crossed), matchedMsat (the payout matched each side), fills: [{ id, outcome, payoutMsat, costMsat, feeMsat, refundMsat }] }
  * - one row per order, in id order; an unmatched order fills 0 and its whole stake is its refund.
  *
- * AN ORDER BACKED BY LOCKS (kanban #278, comment 1127) carries `fullNet` and `fullFee` - its stake lock and its fee lock -
+ * AN ORDER BACKED BY LOCKS (comment 1127) carries `fullNet` and `fullFee` - its stake lock and its fee lock -
  * and `net`, what is left of its budget: its fee is then `fullFee x cost / fullNet`, the share of its fee lock its fill
  * used, the same over one batch or many. A SELL (`sell: true`, `outcome` the outcome sold, `price` the least it takes a
  * share, `sharesMsat` the payout units sold): selling s of an outcome at >= p is buying s of the other at <= 1 - p, paid
@@ -217,7 +217,7 @@ export function resolveBook({ fills, outcome }) {
 }
 
 /**
- * STANDING ORDERS (the owner 2026-10-09: "Gut weiter" - batches every half second (measured: the seats agree a set in at most 275 ms), orders that stand): a player places a limit order at
+ * STANDING ORDERS (2026-10-09: "Gut weiter" - batches every half second (measured: the seats agree a set in at most 275 ms), orders that stand): a player places a limit order at
  * any time and it is matched in the next batch; what has not filled STANDS in the book for the batches after, until it
  * fills, its player cancels it (at no cost) or its expiry passes. One batch of the book: `resting` - the orders standing,
  * each with what is left of its stake; `incoming` - the orders placed since the last batch; `cancels` - ids its players
@@ -225,7 +225,7 @@ export function resolveBook({ fills, outcome }) {
  * batch's, filled only), resting (left standing, each with its remaining stake), returned: [{ id, stakeMsat, why }] (what
  * comes back now: cancelled or expired, untouched by this batch) }.
  */
-// EVERY HALF SECOND (the owner 2026-10-09: "Order batches alle 1s, wenn möglich alle 0.5s"; kanban #278 step 4, measured): seven
+// EVERY HALF SECOND (2026-10-09: "Order batches alle 1s, wenn möglich alle 0.5s"measured): seven
 // seats agreed every batch's set in at most 275 ms (p50 225 ms) with every seat-to-seat request delayed by a round trip
 // measured to a live seat through its tunnel (p50 56 ms, max 106 ms) - inside 0.5 s, so the book runs at 0.5 s, not 1 s.
 export const BATCH_MS = 500n;
@@ -252,7 +252,7 @@ export function bookBatch({ resting = [], incoming = [], cancels = [], nowMs, fe
 }
 
 /**
- * AN ORDER ON THE WIRE (kanban #278 step 4): JSON with hex bytes and decimal amounts, as a page posts it to every seat
+ * AN ORDER ON THE WIRE: JSON with hex bytes and decimal amounts, as a page posts it to every seat
  * (POST /order) and a seat hands it to another. `orderFromJson` answers the order or throws; the signature is checked by
  * `orderStands`, never here.
  */
@@ -269,7 +269,7 @@ export function orderFromJson(j) {
 }
 
 /**
- * ONE BATCH'S ID, the bytes every seat signs when it holds that batch (kanban #278 step 4): the round, the batch's number
+ * ONE BATCH'S ID, the bytes every seat signs when it holds that batch: the round, the batch's number
  * (batch k takes what reached any seat before (k + 1) x the interval) and its order ids in order. Two seats that signed the
  * same id hold the same set, so they clear it the same way (`bookBatch` is a pure function of it).
  */
@@ -285,7 +285,7 @@ export function bookBatchId({ roundId, k, orderIds }) {
 }
 
 /**
- * A SELL (kanban #278, comment 1127): the bytes a player signs, with its market entry's session key, to sell `sharesMsat`
+ * A SELL (comment 1127): the bytes a player signs, with its market entry's session key, to sell `sharesMsat`
  * of `outcome` that entry holds, for at least `price` a share - matched in a batch, its proceeds paid at settlement (a).
  */
 export function sellId({ roundId, entryId, outcome, price, sharesMsat, nonce }) {

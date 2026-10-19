@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// §13C'S EVIDENCE ON THE RE-RUN WINDOW, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+// §13C'S EVIDENCE ON THE RE-RUN WINDOW, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01).
 //
 // Until that ruling every §13A window was blocks at both ends (RULED 2026-09-24), and this file locked it: two holders with
 // the same blocks named the same outcome, a node without the end block decided nothing, a filing was placed by the block it
@@ -48,7 +48,7 @@ test('a pair that reaches a holder after it decided the re-run window counts for
     w.sign('dissents', (r) => ({ score: r.score + 1 }));
     const eid = w.runs.dissents.eid;
     w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
-    // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A, kanban #24: an objection's bundle is replayed at each door)
+    // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A,: an objection's bundle is replayed at each door)
     b = await serve(openStore(join(dir, 'b.sqlite')), { plugins: HOSTED, port: 0, ...opts, advertsFor: () => w.adverts,
       randomnessFor: w.holder.verifier.randomnessFor, chainFor: w.holder.verifier.chainFor });
     b.round.chainView = CLOCK.chainView();
@@ -96,7 +96,7 @@ test('a pair that reaches both holders before they decide the re-run window coun
     w.sign('dissents', (r) => ({ score: r.score + 1 }));
     const eid = w.runs.dissents.eid;
     w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
-    // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A, kanban #24: an objection's bundle is replayed at each door)
+    // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A,: an objection's bundle is replayed at each door)
     b = await serve(openStore(join(dir, 'b.sqlite')), { plugins: HOSTED, port: 0, ...opts, advertsFor: () => w.adverts,
       randomnessFor: w.holder.verifier.randomnessFor, chainFor: w.holder.verifier.chainFor });
     b.round.chainView = CLOCK.chainView();

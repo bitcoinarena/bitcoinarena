@@ -3,7 +3,7 @@
 using UnityEngine;
 
 /// <summary>
-/// CLEAN SCREEN FOR THE TRAILER (the owner 2026-09-27: "remove all HUDs with a secret key, player controls included -
+/// CLEAN SCREEN FOR THE TRAILER (2026-09-27: "remove all HUDs with a secret key, player controls included -
 /// they still work - so the trailer does not have an overloaded UI"). Shift+H toggles it. While it is on, every
 /// gameplay OnGUI returns before drawing - DriveHud, ChartHud, the pads, the loadout, the spectate EXIT and the
 /// other players' labels - and the page hides its own HTML overlays (wallet, backup warning, node line).

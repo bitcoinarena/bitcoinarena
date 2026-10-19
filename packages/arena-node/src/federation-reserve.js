@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION'S ON-CHAIN RESERVE (spec §23A.3, kanban #324: "Custody held is public. A federation's reserve is its on-chain
+// A FEDERATION'S ON-CHAIN RESERVE (spec §23A.3,: "Custody held is public. A federation's reserve is its on-chain
 // wallet"; load = reserve / exposure_cap). Read from its guardians' stock wallet module: each guardian's public
 // `wallet_summary` over its JSON-RPC WebSocket (the API the stock client uses), and kept only when at least `threshold`
 // guardians answer the same sum - one guardian cannot move the number. The reserve is the federation's own coins: the
@@ -9,12 +9,12 @@ const sumOf = (list) => (list || []).reduce((t, u) => t + BigInt(u.amount || 0),
 export const reserveOfSummary = (s) => sumOf(s.spendable_utxos) + sumOf(s.unconfirmed_change_utxos) + sumOf(s.unsigned_change_utxos);
 
 // AND A walletv2 FEDERATION (the fork's regtest federations; measured on the test host's two-federation regtest 2026-10-12,
-// kanban #324: "0 of 7 guardians named one reserve"): its wallet module keeps the federation's coins in one output and
+//: "0 of 7 guardians named one reserve"): its wallet module keeps the federation's coins in one output and
 // answers `federation_wallet` - { value, outpoint, tweak }, or null before the first peg-in. Its value is the reserve.
 const V2 = 100;   // a federation_wallet request's JSON-RPC id is V2 + the module id, beside wallet_summary's module id
 
 /** One guardian's reserve: the wallet module found by trying the module ids (the first to answer either method). */
-// THE SAME ROUTES THE FEDERATION CLIENT TAKES (kanban #348, measured 2026-10-13 ~20:10Z: federation B's seats run on the test host, and
+// THE SAME ROUTES THE FEDERATION CLIENT TAKES (measured 2026-10-13 ~20:10Z: federation B's seats run on the test host, and
 // their guardians' advertised endpoints go out to the the test host's Funnel and back over a ship's Starlink link - every reserve read
 // timed out, "0 of 7 guardians named one reserve", and federation B had no record): FM_WS_API_CONNECT_OVERRIDES, the Fedimint
 // client's own "<advertised>=<reach>" list, rewrites an endpoint before it is opened; with none set nothing changes

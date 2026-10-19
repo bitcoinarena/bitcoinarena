@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ITEM ON THE RESERVES' TERMS BOUGHT FROM THE PAGE (kanban #397 slice 5): a game version requiring protocol 11 - the page takes the
+// AN ITEM ON THE RESERVES' TERMS BOUGHT FROM THE PAGE: a game version requiring protocol 11 - the page takes the
 // federation's reserve key only when five of the game's nodes name it, pays 20 % of the list price to it in the same transaction, and
 // signs a layout-12 record naming the key and the version; with no key from five nodes it pays nothing at all.
 import { test } from 'node:test';

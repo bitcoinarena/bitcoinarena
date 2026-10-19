@@ -23,7 +23,7 @@ export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CL
 const run = (bin, args, timeoutMs) => new Promise((done, fail) => {
   execFile(bin, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
     const line = String(stdout || '').trim().split('\n').filter((l) => l.startsWith('{')).pop();
-    // A TOOL KILLED AT ITS TIMEOUT SAYS SO (kanban #336: its stderr was empty and the line was only "Command failed: <the
+    // A TOOL KILLED AT ITS TIMEOUT SAYS SO (its stderr was empty and the line was only "Command failed: <the
     // whole command>", which hid why a round never settled)
     if (err && !line && err.killed) {
       const last = String(stderr || '').trim().split('\n').filter(Boolean).pop();
@@ -36,7 +36,7 @@ const run = (bin, args, timeoutMs) => new Promise((done, fail) => {
 
 const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
-// ONE LONG-LIVED TOOL FOR THE READ-ONLY QUESTIONS (kanban #293, measured 2026-10-10 on the test host's paid RPS stack: a process
+// ONE LONG-LIVED TOOL FOR THE READ-ONLY QUESTIONS (measured 2026-10-10 on the test host's paid RPS stack: a process
 // per question opened the client's database and reached the guardians each time - with 8 s paid rounds, dozens of them at
 // 60-80 % CPU each, the machine at load 50 and a paid tap past 1.5 s at p95). `blwp-stake-lock --mode serve` keeps its client
 // open and answers one JSON line per question. A binary without that mode (an older build), a tool that exits, or a question
@@ -97,11 +97,11 @@ export function contractArgs(f) {
     '--refund-pk', toHex(f.refundPk), '--expiration', String(f.expiration)];
 }
 
-// THE FEDERATION'S GATEWAYS AND FEE RULE, KEPT A MINUTE FOR EVERY CALLER (the owner 2026-10-02, the the test host's load): the
+// THE FEDERATION'S GATEWAYS AND FEE RULE, KEPT A MINUTE FOR EVERY CALLER (2026-10-02, the the test host's load): the
 // winnings resend loop asked both on every pass over its held rounds - one stock-client run each, about one every 6 s per
 // signer node - and each run opened the federation client's database: ~1.7 MB/s written by every idle testnet4 seat,
 // 12 MB/s together, while no table changed. One read in flight; a failed read is not kept. (The doors did this already.)
-// AND AN ANSWER ALREADY HELD IS GIVEN AT ONCE PAST ITS MINUTE, READ AGAIN BEHIND IT (the owner 2026-10-02, the join's 2-3 s):
+// AND AN ANSWER ALREADY HELD IS GIVEN AT ONCE PAST ITS MINUTE, READ AGAIN BEHIND IT (2026-10-02, the join's 2-3 s):
 // the federation's fee rule, guardians and gateways are its config, and the paid entry door waited on a fresh read of the
 // fee rule whenever the minute had run out - POST /entry 0.29-0.90 s at seat 1, 0 ms of it on the loop. Only the first
 // read ever waits; a failed re-read keeps the answer held.
@@ -118,18 +118,18 @@ export const keptFor = (ms, fn, now = () => Date.now()) => {
   };
 };
 
-// READ-ONLY ASKS TAKE THEIR OWN CLIENT DIRECTORY (JOIN-TIME-1359, the owner 2026-10-02: "The join takes too long"): the seven
+// READ-ONLY ASKS TAKE THEIR OWN CLIENT DIRECTORY (JOIN-TIME-1359, 2026-10-02: "The join takes too long"): the seven
 // testnet4 seats shared one federation client directory, and its database admits one process at a time - so every seat's
 // lock status, fee rule and gateway read queued behind every other's, and a paid entry held by all 7 was SEEN by them one
 // after another, ~1.3 s apart, 13-19 s after it was held (measured on testnet4, rounds 1a21b8d0 and 1537ed99). `readDataDir`
 // (a copy of the joined directory, one per seat) answers status, guardians, gateways and fees, which submit nothing; send and
 // settle, which do, stay on `dataDir`.
-// `settleTimeoutMs` (kanban #336, measured 2026-10-10 on the regtest Up/Down market: a book round's settle - every filled
+// `settleTimeoutMs` (measured 2026-10-10 on the regtest Up/Down market: a book round's settle - every filled
 // order's stake and fee lock claimed, every payout out, ~50 locks - was killed at the 60 s every other question gets, again
 // and again, and the round never settled): the one write that moves a whole round gets five times as long (5 minutes)
 export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs = 60000, settleTimeoutMs = timeoutMs * 5, keepMs = 60000, now = () => Date.now(), serve = true, spawnFn = spawn }) {
   // THE READ-ONLY QUESTIONS THROUGH ONE SERVER on the read directory; a failed server question is asked the old way.
-  // NEVER ON THE SHARED WRITE DIRECTORY (kanban #336, measured 2026-10-11 on the regtest Up/Down market: the paid runner's
+  // NEVER ON THE SHARED WRITE DIRECTORY (measured 2026-10-11 on the regtest Up/Down market: the paid runner's
   // port named no read directory, so its server held the one client database every seat settles through - each settle
   // waited on its flock until it was killed, and no book round ever settled). A port with no directory of its own to read
   // asks every question the old way, one run each.
@@ -152,10 +152,10 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       return String(j.contract_id);
     },
     /**
-     * THE FEDERATION'S GUARDIANS, off its own config (§23.6; the owner 2026-09-15 07:33): its id, each
+     * THE FEDERATION'S GUARDIANS, off its own config (§23.6; 2026-09-15 07:33): its id, each
      * guardian's 33-byte broadcast key, and its consensus threshold - what federationIsBonded counts.
      */
-    // KEPT A MINUTE TOO (JOIN-TIME, the owner 2026-10-02: "Join click to the round actually loaded: 2 to 3 seconds"): every
+    // KEPT A MINUTE TOO (JOIN-TIME, 2026-10-02: "Join click to the round actually loaded: 2 to 3 seconds"): every
     // POST /round - each player's PLAY - ran the stock client for the guardian set, ~0.5 s a round open; it changes in days.
     guardians() { return guardiansKept(); },
     async guardiansRead() {
@@ -195,7 +195,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
         sent: j.sent === true, preimage: j.preimage ? fromHex(String(j.preimage)) : null, why: j.why || null };
     },
     /**
-     * THE RESERVES' MOVE INTO THIS FEDERATION (kanban #397, decision A): an invoice of `gateway` whose incoming contract only
+     * THE RESERVES' MOVE INTO THIS FEDERATION (decision A): an invoice of `gateway` whose incoming contract only
      * `claimPk` - the destination's 5-of-7 reserve key - can claim, its preimage the hash of `seed` (the move's own).
      */
     async receiveToKey({ claimPk, amountMsat, seed, gateway, expirySecs = 86400 }) {
@@ -256,7 +256,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
  * @returns {{ ok: true, given: false } | { ok: true, given: true, stakeLocks } | { ok: false, why }}
  */
 /**
- * EVERY FEDERATION, ONE PORT EACH (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation. That is one
+ * EVERY FEDERATION, ONE PORT EACH (RULED 2026-10-13: "Every node serves every federation. That is one
  * network of 14 nodes serving both federations"). With two federations in one census a drawn node serves rounds of a
  * federation it did not found, so it holds a client of each: its own (`home`, as before) and one per other federation,
  * joined on first need under `baseDir/<federation id>` with the invite that federation's signed record carries
@@ -309,7 +309,7 @@ export function stakeLocksFromEnv(env) {
     return { ok: false, why: `${STAKE_LOCK_SETTINGS.join(' and ')} go together: set both, or neither` };
   const home = stakeLockPort({ bin: env.ARENA_STAKE_LOCK_BIN, dataDir: env.ARENA_FEDERATION_CLIENT_DIR,
     readDataDir: env.ARENA_FEDERATION_CLIENT_READ_DIR || env.ARENA_FEDERATION_CLIENT_DIR });
-  // the other federations' clients (kanban #348): ARENA_FEDERATION_CLIENTS_DIR, or beside the home client; joined with
+  // the other federations' clients: ARENA_FEDERATION_CLIENTS_DIR, or beside the home client; joined with
   // ARENA_STAKE_LOCK_JOIN_BIN when given (a build whose join honours the overrides), else the lock tool itself.
   // `inviteOf` is set by the server once its federation records exist (stakeLocks.inviteOf = ...)
   const router = federationPorts({ home, bin: env.ARENA_STAKE_LOCK_BIN,

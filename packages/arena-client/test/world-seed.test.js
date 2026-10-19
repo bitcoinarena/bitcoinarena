@@ -25,7 +25,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../arena-node/tools/round-2of2.mjs';
-// #23: these are about PER-PLAYER worlds (the bridge must not fall back to the harness seed), so their rounds name the
+//: these are about PER-PLAYER worlds (the bridge must not fall back to the harness seed), so their rounds name the
 // per-player config v3; the shared world (v4) is world-shared.test.js and world-shared-door.test.js.
 import { TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor, fetchRandomness, worldSeedFor } from '../src/join.js';

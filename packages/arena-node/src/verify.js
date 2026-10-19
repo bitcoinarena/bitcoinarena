@@ -34,7 +34,7 @@ import { ed25519 as sessionCurve } from '@noble/curves/ed25519.js';
 import { resultFinality as finalityOf, chainIndex, resultWindow } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
-let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A, kanban #24)
+let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A)
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
 import { TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 import {
@@ -56,7 +56,7 @@ import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/he
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
-/** Why an attested round's entry is not closed, gathered or signed as a run (§0A.7a, kanban #206). */
+/** Why an attested round's entry is not closed, gathered or signed as a run (§0A.7a). */
 const ATTESTED_NO_RUN = 'that round\'s game is attested: its result is its attestors\' outcome (GET /outcome), not a run - nothing of it is replayed';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -81,7 +81,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
  * committee could have been ground is not a round to sign a result for.
  */
 /**
- * THE HEADERS OF A VIEW, BUILT ONCE PER VIEW (the owner 2026-09-17 19:15, the ghost lag). A view of an old round reaches
+ * THE HEADERS OF A VIEW, BUILT ONCE PER VIEW (2026-09-17 19:15, the ghost lag). A view of an old round reaches
  * from twenty below its census to the tip - twenty thousand blocks on the Daily - and this used to lay out its
  * headers again on every ask. Measured live: the finality watch's retry of ONE old round held the loop a median
  * 305 ms, 255 times in eight minutes, and that is the thread another player's truck is drawn from. The view object
@@ -174,9 +174,9 @@ export class Verifier {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
     peersFor = null, advertsFor = null, plugins = [], conflictsFor = null,
   } = {}) {
-    // `conflictsFor` is no longer consulted (§5A.13, ruled 2026-10-14, kanban #360): no player declares an operator
+    // `conflictsFor` is no longer consulted (§5A.13, ruled 2026-10-14): no player declares an operator
     this.conflictsFor = conflictsFor;
-    // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1): a round's runs are replayed by the core its game installed, or not at all.
+    // THE GAMES THIS NODE HOSTS (M3 R1): a round's runs are replayed by the core its game installed, or not at all.
     this.plugins = hostedPlugins(plugins);
     /**
      * THE SIGNER NODES' OWN ADVERTISEMENTS, by round: a Map of node key (hex) to the
@@ -215,7 +215,7 @@ export class Verifier {
     this.done = [];
     /** What it QUEUED, and how - so a node can be asked what it thought it had. */
     this.queued = [];
-    // THE OBJECTION DOOR'S BOUNDS (#24 audit): one check in flight per entry, and each replayed run kept by its bytes
+    // THE OBJECTION DOOR'S BOUNDS (audit): one check in flight per entry, and each replayed run kept by its bytes
     this.objectionTurns = new Map();
     this.objectionReplays = new Map();
     this.objectionReplayCount = 0;
@@ -239,10 +239,10 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return [];
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    // AN ATTESTED ROUND HAS NO RUN TO REPLAY (§0A.7a, kanban #206): its result is its attestors' outcome (POST /outcome),
+    // AN ATTESTED ROUND HAS NO RUN TO REPLAY (§0A.7a): its result is its attestors' outcome (POST /outcome),
     // so its close queues nothing - no beacon, no receipts, no worker
     if (this.#attested(contract)) { this.queued = []; return []; }
-    // A HEAD-TO-HEAD ROUND HAS NO RUN EITHER (kanban #233): its close is its reveal deadline, and every entry's result is
+    // A HEAD-TO-HEAD ROUND HAS NO RUN EITHER: its close is its reveal deadline, and every entry's result is
     // decided over all the round's reveals at once - by the game's decide adapter - then signed as a replayed result is
     const h2h = this.#headToHead(contract);
     if (h2h) { this.queued = []; const work = this.#headToHeadClose(roundIdBytes, contract, h2h); this.done = work; return work; }
@@ -260,7 +260,7 @@ export class Verifier {
       }
       this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
 
-      // THE WORKER READS THE RUN WHEN THERE IS A FILE TO READ IT FROM (the owner 2026-09-17 19:15): this loop feeds
+      // THE WORKER READS THE RUN WHEN THERE IS A FILE TO READ IT FROM (2026-09-17 19:15): this loop feeds
       // pictured trucks, and a stored run's rows are not its work. A store with no file - a test's ':memory:' - is
       // read here as before.
       const run = this.#runFor(roundIdBytes, entryId);
@@ -318,7 +318,7 @@ export class Verifier {
         report.answered++;
       } catch (e) { report.down.push(`${peer}: ${e.message}`); continue; }
       // THE RECEIPTS A PEER SENT, TAKEN INTO THE STORE - the continuation after that peer answered, and the last
-      // unnamed one on this chain (the owner 2026-09-17 19:15, the ghost lag): stalls of 299-377 ms named only 6-9 ms of
+      // unnamed one on this chain (2026-09-17 19:15, the ghost lag): stalls of 299-377 ms named only 6-9 ms of
       // frame work and left 190-250 ms of this thread's processor unaccounted. Each receipt is checked and written
       // here, per peer, per entry, at the close and at every retry.
       timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
@@ -433,7 +433,7 @@ export class Verifier {
     }
     if (!answer.ok) return { entryId, stored: false, why: answer.why };
     if (!canonical) return { entryId, stored: false, why: noCanonical };
-    // §13B AT ANY TICK (kanban #25, RULED the owner 2026-10-04): "a player who publishes two different checkpoints for the
+    // §13B AT ANY TICK (RULED 2026-10-04): "a player who publishes two different checkpoints for the
     // same tick, or two chains that diverge at any tick, forfeits the entry". Before signing the run, this seat looks for
     // the proof - its own store, and every peer's /equivocation pulled and checked (provesEquivocation, unchanged; a fork
     // sent to different seats reaches each) - and holding it signs FORFEIT, score 0, over the canonical transcript, not
@@ -480,7 +480,7 @@ export class Verifier {
   }
 
   /**
-   * A FORK SENT TO DIFFERENT SEATS (§13B; kanban #25: "A fork sent to different seats still reaches both"). A player who
+   * A FORK SENT TO DIFFERENT SEATS (§13B;: "A fork sent to different seats still reaches both"). A player who
    * sends mark X only here and a different mark Y at the same tick (or from the same parent) only to a peer leaves no
    * seat holding both - so no seat's /equivocation has the pair to pull. Each peer's receipted marks (GET /checkpoints)
    * are set against this seat's own: a mark at the same tick, or naming the same parent, with another id, checked by
@@ -659,7 +659,7 @@ export class Verifier {
   }
 
   /**
-   * A HEAD-TO-HEAD ROUND'S CLOSE (kanban #233): the other seats' reveals first (so every seat decides from the same moves),
+   * A HEAD-TO-HEAD ROUND'S CLOSE: the other seats' reveals first (so every seat decides from the same moves),
    * then the game's decide over all of them (head-to-head.js headToHeadResults: WIN / DRAW / LOSS onto the payout rule,
    * FORFEIT for no reveal), then one signed result per entry through #sign - its transcript hash the digest of the entry's
    * reveal (32 zero bytes for none), its core the round's decide adapter. One promise per entry, as a replayed close.
@@ -670,7 +670,7 @@ export class Verifier {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
       const list = entries.map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
-      // DECIDED IN THE CORE'S SANDBOX (kanban #328, §0A.6): the moves in as JSON, the verdicts out as JSON
+      // DECIDED IN THE CORE'S SANDBOX (§0A.6): the moves in as JSON, the verdicts out as JSON
       let box = null;
       try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
       if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
@@ -688,7 +688,7 @@ export class Verifier {
   }
 
   /**
-   * WHAT A HEAD-TO-HEAD RESULT IS SIGNED OVER AND PUBLISHED AS (kanban #233): the entry's reveal record - entry id || move ||
+   * WHAT A HEAD-TO-HEAD RESULT IS SIGNED OVER AND PUBLISHED AS: the entry's reveal record - entry id || move ||
    * salt, or entry id || 0xff for no reveal - in place of a run's transcript. Every seat builds it alike from the same
    * reveals, so its hash names it the way a transcript hash names a run, and publish() posts these bytes to the relays.
    */
@@ -697,7 +697,7 @@ export class Verifier {
   }
 
   /**
-   * EVERY PEER'S REVEALS FOR A HEAD-TO-HEAD ROUND (kanban #233), each taken only if it hashes to the commitment its entry
+   * EVERY PEER'S REVEALS FOR A HEAD-TO-HEAD ROUND, each taken only if it hashes to the commitment its entry
    * named and is a move the game offers. Not held to the reveal window: a peer's door already was, and a reveal that came
    * late can change no one's choice - the moves were committed before entry close. A peer that is down is skipped.
    */
@@ -719,7 +719,7 @@ export class Verifier {
         try { c = headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move: r.move, salt }); } catch { continue; }
         if (hex(c) !== hex(entry.commit)) continue;
         this.round.putReveal({ roundId: roundIdBytes, entryId: new Uint8Array(Buffer.from(r.entry, 'hex')), move: r.move, salt });
-        // ITS IDENTITY TOO (kanban #280), kept only if its key signed it over this round and entry
+        // ITS IDENTITY TOO, kept only if its key signed it over this round and entry
         if (r.identity && /^[0-9a-f]{64}$/.test(String(r.identity.key)) && /^[0-9a-f]{128}$/.test(String(r.identity.sig)) && this.round.putIdentity) {
           const entryId = new Uint8Array(Buffer.from(r.entry, 'hex')), key = new Uint8Array(Buffer.from(r.identity.key, 'hex')), sig = new Uint8Array(Buffer.from(r.identity.sig, 'hex'));
           let good = false;
@@ -740,14 +740,14 @@ export class Verifier {
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.plugins);
-    // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
+    // AND THE ROUND'S WORLD RULE: its config hash, census root and id, so the replay derives the world the page did
     return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin),
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes),
         sharedWorld: [...found.plugin.sharedWorld] } } : null;
   }
 
   /**
-   * THE RESULT WINDOW IS THE OBJECTION WINDOW (the owner 2026-09-15 07:49): "same duration, on the
+   * THE RESULT WINDOW IS THE OBJECTION WINDOW (2026-09-15 07:49): "same duration, on the
    * contract. A signer node that cannot retrieve the transcript in that window treats the entry as VOID."
    * A signer node still waiting on a signer node it cannot reach - so it cannot know the receipted transcript -
    * once its close plus the round's objection_window_ms has passed, decides by §13C's no-quorum
@@ -779,7 +779,7 @@ export class Verifier {
 
   /**
    * §13C FOR A RUN THIS SIGNER NODE SIGNED, PAST ITS RESULT WINDOW, THAT NO QUORUM CAN REACH ANY MORE (the
-   * follow-up to the owner 2026-09-15 07:49). Measured: a signer node back after its peer had decided VOID
+   * follow-up to 2026-09-15 07:49). Measured: a signer node back after its peer had decided VOID
    * signed 1 of 2 and its watch asked with no end. Not on the peer's word about the entry - only on
    * the count of signer nodes that say they decided it by §13C and so will sign nothing (`gather`'s
    * noQuorumPeers): when the signer nodes left cannot reach the threshold and this signer node's own result window
@@ -827,7 +827,7 @@ export class Verifier {
   async #noQuorum(roundIdBytes, entryId, contract, down) {
     const had = this.round.noQuorum(entryId);
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
-    // THE RESULT WINDOW, AND THE EVIDENCE IN IT (RULED the owner 2026-09-24): once its end block is here, every piece of evidence
+    // THE RESULT WINDOW, AND THE EVIDENCE IN IT (RULED 2026-09-24): once its end block is here, every piece of evidence
     // - a late start, a pair, a refusal - counts only if it sits strictly before that block, at every holder. Before it,
     // nothing is decided, and what evidence there is only says the decision is pending.
     const rw = resultWindow(this.round, roundIdBytes, contract);
@@ -920,7 +920,7 @@ export class Verifier {
   }
 
   /**
-   * EVERY PEER'S EVIDENCE RECORDS FOR AN ENTRY'S MARKS AND THE BLOCKS THEY NAME (§13C, RULED the owner 2026-09-24): kept here as
+   * EVERY PEER'S EVIDENCE RECORDS FOR AN ENTRY'S MARKS AND THE BLOCKS THEY NAME (§13C, RULED 2026-09-24): kept here as
    * the peer named them (`/evidence-blocks`), so a mark is placed at the earliest block among the records this node holds.
    * A peer that cannot answer shows nothing - an earlier record it alone holds is the ruled residual.
    */
@@ -1030,7 +1030,7 @@ export class Verifier {
           pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
       } catch { /* a signer node that cannot answer proves nothing */ }
     }
-    // EACH PAIR ONCE, AND A KEPT PAIR NOT CHECKED AGAIN (kanban #155, measured live 2026-10-06 on 0.0.2815, entry 0b68a08f): a
+    // EACH PAIR ONCE, AND A KEPT PAIR NOT CHECKED AGAIN (measured live 2026-10-06 on 0.0.2815, entry 0b68a08f): a
     // page stuck on an old head sent 63 refused marks; every peer served the same 63 pairs, each was verified again on every
     // call, and provenFork - itself over every pair - ran once per pair. A seat's one thread sat at 100% for minutes and
     // five seats never signed the entry. Now: duplicates dropped, a pair this node already keeps (verified when it was
@@ -1046,10 +1046,10 @@ export class Verifier {
         if (kept || (await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) {
           // A PULLED PAIR OF FIRST MARKS IS KEPT HERE TOO, so this signer node's own
           // record (its forfeit door, its close) says two first marks from now on.
-          // AND A FORK AT ANY LATER TICK, kept as a pair (§13B; kanban #25): this node's close and its /equivocation
+          // AND A FORK AT ANY LATER TICK, kept as a pair (§13B): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
           if (!kept && !this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
-          // WHAT A PAIR PROVES (RULED the owner 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
+          // WHAT A PAIR PROVES (RULED 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
           // from one later parent only when both marks were receipted by a seat (the store's own ruled check, provenFork) -
           // a page stuck on an old head sends refused marks naming that head, and those forfeit nothing
           const ca = decodeCheckpoint(splitSignedMark(a).body), cb = decodeCheckpoint(splitSignedMark(b).body);
@@ -1084,7 +1084,7 @@ export class Verifier {
   }
 
   #sign({ roundIdBytes, entryId, entry, contract, answer, transcript, stopped = false }) {
-    // A ROUND PLAYED AGAINST THE PRICE FEED (§11) signs the front its run ended on (§13 front_*, kanban #312)
+    // A ROUND PLAYED AGAINST THE PRICE FEED (§11) signs the front its run ended on (§13 front_*)
     let priceRound = false;
     try { priceRound = !!(this.round.pricesRequired && this.round.pricesRequired(encodeRoundContract(contract))); } catch { priceRound = false; }
     const built = resultFrom({
@@ -1092,9 +1092,9 @@ export class Verifier {
       nodePubkey: this.round.pubkey, stopped, priceRound,
     });
     if (!built.ok) return { entryId, stored: false, why: built.why };
-    // NO PLAYER-NODE CONFLICT GATE (§5A.13, RULED 2026-10-14, kanban #360): a player declares no operator, so no signer node
+    // NO PLAYER-NODE CONFLICT GATE (§5A.13, RULED 2026-10-14): a player declares no operator, so no signer node
     // withholds its result for one
-    // THE TEST FAULT, FIRST RESULT (test-dissent.js dissentsFirstOn, off by default; kanban #26): one score higher
+    // THE TEST FAULT, FIRST RESULT (test-dissent.js dissentsFirstOn, off by default): one score higher
     if (dissentsFirstOn(entryId)) {
       built.result = { ...built.result, score: (built.result.score + 1) >>> 0 };
       built.encoded = encodePlayerResult(built.result);
@@ -1144,7 +1144,7 @@ export class Verifier {
   /**
    * WHAT A WORKER IS GIVEN OF A RUN: its name when this store is a file, its rows when it is not (a test's memory).
    * The daemon's own thread reads no stored run it does not have to - it is the thread that pushes another player's
-   * truck (the owner 2026-09-17 19:15, the ghost lag).
+   * truck (2026-09-17 19:15, the ghost lag).
    */
   #runFor(roundIdBytes, entryIdBytes) {
     const store = this.round.db.blwpPath || null;
@@ -1163,7 +1163,7 @@ export class Verifier {
    * on its cadence: the cheap pull first, and only once every peer answered,
    * the same replay and signature the close makes. Until then it is waiting -
    * inside the result window; past it, a signer node still unable to retrieve the
-   * transcript decides by §13C (the owner 2026-09-15 07:49, #unretrievedPastWindow).
+   * transcript decides by §13C (2026-09-15 07:49, #unretrievedPastWindow).
    */
   retryClose(roundIdBytes, entryIdBytes) {
     return timed(`close retry ${hex(entryIdBytes).slice(0, 8)}`, () => this.#retryClose(roundIdBytes, entryIdBytes), { over: 50 });
@@ -1196,7 +1196,7 @@ export class Verifier {
       return (await this.#unretrievedPastWindow(roundIdBytes, entryIdBytes, contract, why))
         || { entryId: entryIdBytes, stored: false, waiting: true, why };
     }
-    // A RUN WHOSE TRANSCRIPT CANNOT BE FRAMED (kanban #342): a batch longer than a transcript's u16 frame, taken before the
+    // A RUN WHOSE TRANSCRIPT CANNOT BE FRAMED: a batch longer than a transcript's u16 frame, taken before the
     // intake refused one - every replay of it fails the same way, so it is not replayed again (measured: all seven seats
     // retried a full replay back to back, then every 60 s without end); past the result window §13C decides it
     const largest = typeof this.round.largestBatch === 'function' ? this.round.largestBatch(roundIdBytes, entryIdBytes) : 0;
@@ -1262,9 +1262,9 @@ export class Verifier {
 
       // THE RECORDS A PEER SENT, CHECKED: every one split, decoded, re-encoded to its own id and checked against the
       // signature under the key it names. This is the continuation after that peer answered, and it is timed because a
-      // stall named only "a promise" is a stall nobody can act on (the owner 2026-09-17 19:15).
+      // stall named only "a promise" is a stall nobody can act on (2026-09-17 19:15).
       timed(`close gather records ${hex(entryIdBytes).slice(0, 8)}`, () => {
-        // record by record, each its type's size (kanban #312)
+        // record by record, each its type's size
         for (const record of cutSignedResults(body)) {
           fetched++;
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
@@ -1327,7 +1327,7 @@ export class Verifier {
     const relays = contract.publicationRelays || [];
     if (joined && !said && !relays.length)
       report.refused.push('the round contract names no publication relay, so this signer node can post its transcript nowhere');
-    // THE TEST FAULT, LATE POSTING (test-dissent.js postsLateOn, off by default; kanban #26): for its one named entry this
+    // THE TEST FAULT, LATE POSTING (test-dissent.js postsLateOn, off by default): for its one named entry this
     // seat posts nothing until its own clock reads the round's final_after + 10 s
     let holdLate = false;
     if (joined && !said && postsLateOn(entryIdBytes)) {
@@ -1394,7 +1394,7 @@ export class Verifier {
   }
 
   /**
-   * AN OBJECTION BUNDLE AT THIS SEAT'S DOOR (§13A, kanban #24, RULED the owner 2026-10-04): checked here, on its own
+   * AN OBJECTION BUNDLE AT THIS SEAT'S DOOR (§13ARULED 2026-10-04): checked here, on its own
    * evidence, before anything is stored - the objector's signature, what it names, the transcript's hash and chain, that
    * it is this entry's, a committee member's receipt on every checkpoint, and a replay under the round's own core through
    * the same pool as a close (first in its queue: it is objected). `signedResultId` is the run it is filed against.
@@ -1409,7 +1409,7 @@ export class Verifier {
     if (!beacon.ok) return { holds: false, step: 'replay', why: `no beacon to replay under: ${beacon.why}` };
     const core = this.#coreOf(roundIdBytes);
     if (!core) return { holds: false, step: 'replay', why: 'this signer node holds no core for that round' };
-    // THE DOOR IS OPEN TO ANYONE, SO ITS REPLAYS ARE BOUNDED (#24 audit: every bundle that passed the cheap checks cost a
+    // THE DOOR IS OPEN TO ANYONE, SO ITS REPLAYS ARE BOUNDED (audit: every bundle that passed the cheap checks cost a
     // full replay, ~1.4 s measured live, first in the pool - a flood of copies would have starved the closes):
     //   - ONE CHECK IN FLIGHT PER ENTRY: the next bundle for that entry waits its turn (its arrival is already stamped at
     //     the door, so waiting never makes an objection late);
@@ -1498,7 +1498,7 @@ export class Verifier {
         let scored = canonical && answer.outcome === null
           ? await this.#atLastMark(roundIdBytes, entryIdBytes, found.entry, answer, canonical, { roundRandomness: beacon.hash })
           : answer;
-        // §13B AT ANY TICK HOLDS IN A RE-RUN TOO (kanban #25 audit): an entry this seat holds a proven fork of is re-run as
+        // §13B AT ANY TICK HOLDS IN A RE-RUN TOO (audit): an entry this seat holds a proven fork of is re-run as
         // FORFEIT, score 0 - never the replayed run, or an objection against its FORFEIT would hand the equivocator its run back
         if (canonical) {
           if (!this.round.provenFork(roundIdBytes, entryIdBytes)) await this.#equivocationProven(roundIdBytes, entryIdBytes);
@@ -1562,7 +1562,7 @@ export class Verifier {
   }
 
   /**
-   * THE FIRST RESULT'S SIGNERS, WHEN THE ENTRY ENDS VOID - OR FORFEIT BY §13C (§13A; RULED the owner 2026-09-24, ruling C
+   * THE FIRST RESULT'S SIGNERS, WHEN THE ENTRY ENDS VOID - OR FORFEIT BY §13C (§13A; RULED 2026-09-24, ruling C
    * steps 2 and 3: "the slashing of the first result's signers stands, because the objection that proved them wrong
    * already exists"). The same proof, evidence (the signer's own signed player result), check (`slashHolds`) and table
    * (slash_proofs) as `fileSlashProofs`, and the same dedupe. What differs is the verdict: there is no authoritative
@@ -1658,7 +1658,7 @@ export class Verifier {
   }
 
   /**
-   * SLASH PROOFS AGAINST THE AGREED RE-RUN'S SIGNERS (§13A, §5A.3B; RULED the owner 2026-09-24, slice C2c). Only once a
+   * SLASH PROOFS AGAINST THE AGREED RE-RUN'S SIGNERS (§13A, §5A.3B; RULED 2026-09-24, slice C2c). Only once a
    * second valid objection has made the entry VOID - "the signers of that result are slashed as well" - and never
    * before: a re-run still PROVISIONALLY_FINAL, FINAL or not yet agreed has contradicted nobody. One REPLAY_CONTRADICTS
    * proof per agreeing re-run signer, the accused's own signed re-run beside it, checked by `slashHoldsOnRerun` with
@@ -1744,7 +1744,7 @@ export class Verifier {
       const own = this.round.canonicalTranscript(roundIdBytes, entryIdBytes);
       if (hex(own.hash) === hex(transcriptHash)) return own.bytes;
     } catch { /* not held here; a peer may */ }
-    // A HEAD-TO-HEAD ENTRY (kanban #233): its result names its reveal record, built here from the reveals this seat holds
+    // A HEAD-TO-HEAD ENTRY: its result names its reveal record, built here from the reveals this seat holds
     {
       const row = this.round.get(roundIdBytes);
       if (row && this.#headToHead(decodeRoundContract(new Uint8Array(row.contract)))) {

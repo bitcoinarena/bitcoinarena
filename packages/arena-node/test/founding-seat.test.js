@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEAT'S PART IN A FOUNDING (spec §23A.2, kanban #320): a record entering DRAINING at 200 triggers a succession; every seat reads the
+// A SEAT'S PART IN A FOUNDING (spec §23A.2): a record entering DRAINING at 200 triggers a succession; every seat reads the
 // same beacon (block 201) and census and draws the same four; only nodes whose guardian waits in setup take part; a seat whose post
 // was lost picks the codes up from a peer's GET /founding; the CLI setup is called with the guardian's own socket and password.
 import { test } from 'node:test';
@@ -64,7 +64,7 @@ test('the CLI setup names the guardian\'s own socket and password, and the leade
   assert.deepEqual(calls[2].slice(5), ['start-dkg']);
 });
 
-test('whether the guardian waits in setup is asked of the setup API (kanban #320, rehearsal 20b: a setup-mode guardian has no admin status)', async () => {
+test('whether the guardian waits in setup is asked of the setup API (rehearsal 20b: a setup-mode guardian has no admin status)', async () => {
   const said = (answer) => cliSetup({ run: async (a) => { if (a.includes('status')) { if (answer instanceof Error) throw answer; return `"${answer}"\n`; } return '""'; }, apiPort: 32221, password: 'pw', guardianName: 'n' });
   assert.equal(await said('AwaitingLocalParams').inSetup(), true);
   assert.equal(await said('SharingConnectionCodes').inSetup(), true);
@@ -72,7 +72,7 @@ test('whether the guardian waits in setup is asked of the setup API (kanban #320
   assert.equal(await said(new Error('Method not found')).inSetup(), false, 'no answer: not taken for setup');
 });
 
-// THE GENESIS AND LOAD TRIGGERS, FROM THE HISTORY THE SEAT KEEPS AT EACH TICK (kanban #320)
+// THE GENESIS AND LOAD TRIGGERS, FROM THE HISTORY THE SEAT KEEPS AT EACH TICK
 function triggerSeat({ recs, w }) {
   const setup = { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null };
   return createFoundingSeat({ records: () => recs(), entriesAt: async () => entries,
@@ -105,7 +105,7 @@ test('load: every OPEN federation at or above 80 % of its cap for abandon_blocks
   assert.equal(r.ok, true, r.why); assert.deepEqual([r.trigger.kind, r.trigger.height], ['load', 416]);
 });
 
-// THE SUCCESSION BY NOTICE (§23A.6, kanban #326): federation F of four (n0..n3, 3 of 4) is OPEN; n3 posts a departure notice at 500 -
+// THE SUCCESSION BY NOTICE (§23A.6): federation F of four (n0..n3, 3 of 4) is OPEN; n3 posts a departure notice at 500 -
 // three seated is CRITICAL at four - so the seats draw F's successor on the beacon 501: n0..n2 seated first in the record's order, each
 // through its guardian-next (its own guardian runs F), and one seat drawn of the others: not n3's operator (leaving), not the decoy's
 // (it guards G, OPEN). A notice that does not stand, or that leaves the federation OPEN, triggers nothing.
@@ -146,7 +146,7 @@ test('guardingOpenOf: operators whose adverts name a federation held OPEN, other
   const held = [{ federation: toHex(F), status: 'OPEN' }, { federation: toHex(G), status: 'OPEN' }];
   assert.deepEqual([...guardingOpenOf({ entries: sEntries, held, except: toHex(F) })], ['decoy']);
   assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'DRAINING' }, { federation: toHex(G), status: 'DRAINING' }], except: null })], [], 'a draining federation does not count');
-  // kanban #495 (the owner "A"): a federation no seat holds a record of counts as guarded - its guardians are not free for a cohort
+  // (the owner "A"): a federation no seat holds a record of counts as guarded - its guardians are not free for a cohort
   assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'DRAINING' }], except: null })], ['decoy'], 'no record of G: its guardian counts as guarding it');
   assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [], except: toHex(G) })].sort(), [...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'OPEN' }], except: toHex(G) })].sort(), 'unknown counts as OPEN');
 });
@@ -238,7 +238,7 @@ test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a 
   for (let i = 4; i < 14; i++) assert.ok(drawn.has(toHex(all[i].pub)), `new node ${i} is drawn`);
 });
 
-test('a seat that holds no record (no round) sees the federation the census names: the cohort triggers there, not a genesis (kanban #495: the seven new second-host seats drew genesis at 156970)', async () => {
+test('a seat that holds no record (no round) sees the federation the census names: the cohort triggers there, not a genesis (the seven new second-host seats drew genesis at 156970)', async () => {
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`r${i}`));
   const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/rtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,

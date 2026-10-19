@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEV'S READ RECEIPT FOR ITS DONATIONS (kanban #156, the owner 2026-10-05 08:15-08:17): once the dev client has written its own
+// A DEV'S READ RECEIPT FOR ITS DONATIONS (2026-10-05 08:15-08:17): once the dev client has written its own
 // permanent record of a donation - sender key, round id, amount, time, rates - it tells each seat, signed with its recipient
 // key, which outpoints it has read, and the seat deletes those rows entirely. This is the message both sides sign and check.
 // The signature (ECDSA, secp256k1, SHA-256, DER) is node's own on both sides: the donor and the seat each run on node.

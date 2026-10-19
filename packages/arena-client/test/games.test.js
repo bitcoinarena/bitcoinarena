@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GAMES FIRST, THEN THE GAME'S CLIENT (kanban #208): the games the named nodes host, each kept only when the manifest a
+// THE GAMES FIRST, THEN THE GAME'S CLIENT: the games the named nodes host, each kept only when the manifest a
 // node served hashes to the id it named; and a game's client file run only when its SHA-256 is one of that manifest's
 // clients[].
 import { test } from 'node:test';
@@ -63,7 +63,7 @@ test('the lobby rows of one game', () => {
   assert.deepEqual(rowsOfGame(null, 'aa'), []);
 });
 
-// THE CHOOSER'S TILES (kanban #338): who plays each game - the highest count any seat gives, never their sum, since the seats
+// THE CHOOSER'S TILES: who plays each game - the highest count any seat gives, never their sum, since the seats
 // of a committee hold the same entries - and its description only when its developer signed it.
 test('a tile\'s players are the most any seat counts, and its description shows only signed by its developer', async () => {
   const { ROCK_PAPER_SCISSORS } = await import('../../rock-paper-scissors/plugin/rock-paper-scissors.js');
@@ -87,7 +87,7 @@ test('a tile\'s players are the most any seat counts, and its description shows 
   assert.equal(await checkedGameInfo({ ...g, info: null }, verify), null);
 });
 
-test('a seat reached at two addresses hosts a game once (the owner 2026-10-14 07:42Z: "28 nodes" for 14, a phone off the tailnet)', async () => {
+test('a seat reached at two addresses hosts a game once (2026-10-14 07:42Z: "28 nodes" for 14, a phone off the tailnet)', async () => {
   const k = (n) => n.repeat(64);
   const seats = { 'https://tn4.bitcoin-arena.io/guardian-1': k('a'), 'https://seat.example.com/guardian-1': k('a'),
     'https://tn4.bitcoin-arena.io/fed2-1': k('b'), 'https://seat.example.com/fed2-1': k('b'), 'http://old': null };
@@ -100,7 +100,7 @@ test('a seat reached at two addresses hosts a game once (the owner 2026-10-14 07
     'two seats with keys, once each; a seat that names no key counts by its address');
 });
 
-test('a tile showing version 2 runs version 3\'s newer client file - the same developer\'s - and never another developer\'s (kanban #388)', async () => {
+test('a tile showing version 2 runs version 3\'s newer client file - the same developer\'s - and never another developer\'s', async () => {
   const { MANIFEST_V2 } = await import('../../btc-updown/plugin/btc-updown-v2.js');
   const { MANIFEST_V3 } = await import('../../btc-updown/plugin/btc-updown-v3.js');
   const { UPDOWN_CLIENT_V3_FILE } = await import('../../arena-node/test/plugins/updown/index.js');

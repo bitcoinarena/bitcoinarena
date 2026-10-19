@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEAT'S ABSENCE ATTESTATIONS (spec §23A.4, kanban #322): POST /absence takes them, the newest per peer and attester.
+// A SEAT'S ABSENCE ATTESTATIONS (spec §23A.4): POST /absence takes them, the newest per peer and attester.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -37,7 +37,7 @@ test('a departure notice travels as hex and reads back the same; a seat keeps th
   assert.match(h.offerDeparture({ ...n(130), signature: new Uint8Array(64) }).why, /not signed/);
 });
 
-test('notices and attestations a seat holds are there again after a restart; one altered in the file is not (kanban #326)', async () => {
+test('notices and attestations a seat holds are there again after a restart; one altered in the file is not', async () => {
   const { signDeparture } = await import('../../arena-protocol/src/absence.js');
   const notice = signDeparture({ federationId: FED, peerKey: peer, leaveAfterHeight: 156960, postedAt: 156644, nodePubkey: g.pubkey }, (m) => schnorr.sign(m, g.secret));
   let file = null;

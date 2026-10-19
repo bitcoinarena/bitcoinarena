@@ -1,6 +1,6 @@
 # Bitcoin Arena V1 custody: FEDERATION — the stake lock
 
-DECIDED, the owner 2026-09-11 14:19. Written by the independent review session.
+DECIDED, 2026-09-11 14:19. Written by the independent review session.
 It replaces this file's 13:24 version. In PRIORITIES it supersedes the
 committee-signed lnd (13:41, measured NO), the invoice-first join through a
 patched fedimintd, and the submarine swap with invoice, hold and cancel on
@@ -18,7 +18,7 @@ withdraws. Steps 2, 3 and 6 below, the residuals, rehearsal items 8-11 and
 the rulings of that date carry it. Nothing about the lock changes.
 
 Amended the same day (the owner: the federation's **life**, spec §23A):
-at least ten guardians on mainnet (7 of 10), testnet 5 of 7 (the owner 2026-09-27), drawn by
+at least ten guardians on mainnet (7 of 10), testnet 5 of 7 (2026-09-27), drawn by
 sortition from bonded guardian-capable census nodes, replaced by succession
 two losses before a halt with every player's notes migrating on their own,
 abandonment slashed through the bond, and the player's BIP39 seed. Rehearsal
@@ -158,7 +158,7 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 
 ---
 
-## Liquidity providers: incoming Lightning for every new node (the owner 2026-10-18; spec §23A.10)
+## Liquidity providers: incoming Lightning for every new node (2026-10-18; spec §23A.10)
 
 - **The problem:** a new Lightning node (every custody node's gateway) has no incoming liquidity, so no deposit can reach it.
 - **The fourth service:** a liquidity provider opens one channel **to** each new node so it can receive.
@@ -172,14 +172,14 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 - **Paid** from a guardian-signed list per epoch, like the gateway seats; with no provider, the pool goes to custody. With more than
   one provider the pool is split by **available balance** (the owner: "dependant on available balance"): each provider's channels to the
   federation's nodes plus its proven free coins, floored to 10,000 sat. A provider whose free coins plus the channels it gave are
-  below the deposit minimum earns nothing of it until topped up (the owner 2026-10-18: giving liquidity never removes the share).
+  below the deposit minimum earns nothing of it until topped up (2026-10-18: giving liquidity never removes the share).
 - **Proven free coins:** the claim lists the provider's coins, each signed by its address key for that provider's node. A guardian
   counts a coin only when the signature is good and its own Bitcoin Core shows it unspent, at the chain's amount, never the claimed
   one. A guardian therefore needs its own Core (Electrum mode serves no `gettxout`).
 - **Live on testnet4:** nodes 1 and 2 are the providers, their LND C and LND D on the test host. Node 1 proves 672,182 sat in 4 coins,
   node 2 600,000 sat in 1 coin (measured 2026-10-18 16:41Z against the the test host's testnet4 Core).
 
-## Who hosts the Lightning: two gateway seats, and what they earn (the owner 2026-10-18; spec §23A.9)
+## Who hosts the Lightning: two gateway seats, and what they earn (2026-10-18; spec §23A.9)
 
 > "We need 2 guardians per federation and there is currently no process who will host the guardian. Modify the spec for it and come
 > up with additional incentives from the custody node fee that people want to host a guardian. If more than 2 nodes in the federation
@@ -253,7 +253,7 @@ Full rules: multiplayer_p2p.md §23A.9. Code: arena-protocol `gateway-seats.js`,
 3. **At least two gateways** run by different operators. The client picks at
    random and falls back.
 4. **Federation fees:** MUST `disable_base_fees` (`lnv2-server/src/lib.rs:298`)
-   (the owner 2026-09-15). Base fees stay 0. The game's 22A node fee is 5% (Bitcoin Arena; 2% under BLWP) to
+   (2026-09-15). Base fees stay 0. The game's 22A node fee is 5% (Bitcoin Arena; 2% under BLWP) to
    sitting seats and is not a Fedimint fee.
 5. **Spec** §6, §9, §22, §23, §24A updated with this file; §24
    and §24A.1 for the player wallet.
@@ -283,7 +283,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 10. a fresh browser with the seed alone recovers the wallet's notes through
     the federation's stock backup, and finds unredeemed round contracts
     through `GET /settled?since=`; nothing is asked of a node that the node
-    does not already publish. **AS BUILT (the owner 2026-10-04, kanban #27):**
+    does not already publish. **AS BUILT (2026-10-04):**
     Fedimint's own recovery, not the stock backup. The browser runs it
     through the wasm lock client (`LockClient.recover`, the fork's
     recovery clock patched for wasm32). Measured on testnet4, page 0.0.2737:
@@ -295,7 +295,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 12. **can stock 0.12 reshare?** measure whether a running federation can
     seat a new guardian or move a gone guardian's share; the answer decides
     whether §23A.6's succession is the first path or the fallback. **RUN
-    2026-10-14 01:55Z (kanban #326, `tools/rehearsal-12-regtest.sh`,
+    2026-10-14 01:55Z (`tools/rehearsal-12-regtest.sh`,
     private regtest on the test host): it cannot - succession is the path.**
     The 0.12 source has no reshare (no endpoint, no CLI; the peer set is
     the setup API's, before the key ceremony). A running federation's
@@ -312,7 +312,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     on their own through a gateway that serves both, with no press; the lock
     settles in the old federation and its payout moves; the old record goes
     CLOSED; nothing lost anywhere, and the amounts written down. **RUN
-    2026-10-14 01:44-01:50Z (kanban #326, `tools/rehearsal-13-regtest.sh`
+    2026-10-14 01:44-01:50Z (`tools/rehearsal-13-regtest.sh`
     + `tools/rehearsal-13.mjs`, private regtest on the test host, EXIT 0 in
     319 s):** p1-p3 paid in 249,999,872 msat each; p3 locks 100,000,000
     under the committee's claim key (blwp-stake-lock, ids match, expiry
@@ -334,8 +334,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     slashing transaction by the arbitration keys, 75% evenly to the active
     census nodes minus that federation's guardians, 25% to the donation
     set; and a departure with notice that is *not* slashed and leaves the
-    bond and the census seat as they were. **RUN 2026-10-13 ~22:40Z (kanban
-    #326, `tools/rehearsal-14.mjs`, private regtest on the test host):** census
+    bond and the census seat as they were. **RUN 2026-10-13 ~22:40Z (`tools/rehearsal-14.mjs`, private regtest on the test host):** census
     of 8 bonded nodes, A = n1-n4 and B = n5-n8, 3 of 4. A4 absent 10 blocks
     (abandon_blocks): 2 attestations, or one spanning 9 blocks, prove
     nothing; 3 stand. The slashing transaction (5 of 7 arbitration keys; 4
@@ -352,18 +351,18 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 15. **the seed alone, another device:** twelve words typed into a fresh
     browser find the federation among three, recover the notes and the
     unredeemed contracts, and show the same display name. **AS BUILT
-    (kanban #27):** 24 words, one federation listed. The notes (item 10) and
+:** 24 words, one federation listed. The notes (item 10) and
     the unredeemed rounds (the 24 h `/settled` scan) are recovered.
     "Among three" waits for a second federation in the census.
 16. **testnet 5 of 7:** two guardians down, everything still completes; a
     third down halts, back up resumes, nothing lost; one guardian gone
     starts a succession to seven that every wallet follows on its own; a
     phone opens every one of the seven `wss://` endpoints
-    MEASURED on testnet4 federation B (kanban #326, 2026-10-14): two down (g6, g7 SIGSTOP) - consensus kept advancing
+    MEASURED on testnet4 federation B (2026-10-14): two down (g6, g7 SIGSTOP) - consensus kept advancing
     (1013-1017, 16:15-16:27Z) and a PAID round completed on five: deposit 305,000 msat through gw-b, stake and fee
     locks, play, PROVISIONALLY_FINAL at 7/7 signer nodes, settlement ACCEPTED in B (txid 3bb90d97, 21:13Z) while
     the two were still paused; a third down halted the sessions at 1017 for 10 min and all seven resumed together
-    (1018-1020); after the paid run both rejoined at once (1106-1108 on all seven). A PHONE OPENS EVERY ENDPOINT (kanban #326, 2026-10-15 16:53Z, `phonews.mjs`): headless Chrome
+    (1018-1020); after the paid run both rejoined at once (1106-1108 on all seven). A PHONE OPENS EVERY ENDPOINT (2026-10-15 16:53Z, `phonews.mjs`): headless Chrome
     as an Android phone (Pixel 7 UA, 412x915, touch, 4G: 150 ms round trip, 9/1.5 Mbit/s) on the live page's origin
     testnet.bitcoin-arena.io opened all 14 guardian sockets, A g1-g7 (`wss://tn4.bitcoin-arena.io/guardian-N/guardian`) and
     B g1-g7 (`.../fed2-N/guardian`), and each answered `session_count`: A 5391 from all seven (opened in 181-834 ms,
@@ -377,8 +376,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     presents its notes on its own start and is paid at face from the
     escrow; a note already spent is refused; the remainder goes 75% / 25%;
     then the same with **no** spent set published, paid pro rata, the rate
-    shown. **RUN 2026-10-14 ~01:27-01:35Z (kanban #326 / #323,
-    `tools/rehearsal-17-regtest.sh` + `tools/rehearsal-17.mjs`, private
+    shown. **RUN 2026-10-14 ~01:27-01:35Z (`tools/rehearsal-17-regtest.sh` + `tools/rehearsal-17.mjs`, private
     regtest on the test host, fedimintd with `fedimint-spent-nonces.patch`):**
     our federations run **mintv2** (the probe, testnet4 A and B): the patch
     adds `blwp_spent_nonces` (admin) to it and a client `module mintv2
@@ -412,7 +410,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 
 ---
 
-## Rulings (the owner 2026-09-11)
+## Rulings (2026-09-11)
 
 - `stake_expiry_blocks` = **144** (one day). It must cover only round +
   objection window + the committee's settlement transaction: a forfeit is
@@ -423,7 +421,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   the federation"; multiplayer_p2p.md §22A). Before, the player's wallet
   paid the §27A.4 recipients' LNURLs directly, outside the federation.
 
-## Rulings (the owner 2026-10-03)
+## Rulings (2026-10-03)
 
 - **A stake nobody claims comes back at settlement, not at expiry.** `stake_expiry_blocks` stays **144** - the
   backstop if the signer nodes never settle (a shorter expiry would let a loser take the stake back before the
@@ -439,22 +437,22 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   from his own join - the run, the first-mark deadline and the door all count from the entry, not the round's start -
   so his run ends up to 45 s after the others'. The signer nodes take a NEW entry of such a round until its entry close
   + 15 s (the time a join begun before the close takes to lock and post); the same entry posted again is still taken.
-  Rounds closing entry at their start keep the old door. SUPERSEDED 2026-10-04 14:30 (the owner, #130): every run ends
+  Rounds closing entry at their start keep the old door. SUPERSEDED 2026-10-04 14:30 (the owner): every run ends
   with the round at start + 82 s (a late entry names the round's ticks gone as its join tick and plays the rest), and
   the signer nodes take a new entry only before start + 37 s - 45 s or less of the run left is too late; the bytes'
-  start + 45 s stand, no new series. Brought into multiplayer_p2p.md §5A.5 (Timing, late join) and §13A (#31). Published: T1 fa570b05 (2026-10-03 22:00-23:58:30Z) and T2 4d8f738a
+  start + 45 s stand, no new series. Brought into multiplayer_p2p.md §5A.5 (Timing, late join) and §13A. Published: T1 fa570b05 (2026-10-03 22:00-23:58:30Z) and T2 4d8f738a
   (2026-10-04 00:01:30-23:58:30Z), tails of the live paid round's contract; full series for 10-05 and 10-06 follow
   once their census blocks exist (>= 72 h of rounds).
 - **Every amount that comes back is a row in the wallet's history:** a stake back with no payout is a "Refund" row
   (money in), next to deposits, stakes, winnings, donations and withdrawals.
 
-## Rulings (the owner 2026-10-04) - the rules a round plays, and how they changed
+## Rulings (2026-10-04) - the rules a round plays, and how they changed
 
 Brought into multiplayer_p2p.md the same day (the owner: "We don't want a conflict, solve it in the spec"): §18A.3 (C and
 T), §27A.7.8 (rule changes by ruling until the ballot is built), with §27A.1 and §27A.8 pointing to it. What is left here
 is the record: the dates, the hashes and the one transition pair.
 
-- **One world per round (#23 world grinding; evening).** Config `2170f250` (genesis.js `encodeGameConfigV4`: v3's
+- **One world per round (world grinding; evening).** Config `2170f250` (genesis.js `encodeGameConfigV4`: v3's
   fields and a world rule, 1 = shared per round) on core `7e2123d1`: every player of a round drives
   `round_seed = H(committee_seed || "world")` (§5A.5, §12) - the player chooses nothing about the world, an entry's world
   secret is 32 zero bytes and the seats refuse any other. `f51759b6` (per-player) stays installed for the 10-06 series.
@@ -468,7 +466,7 @@ is the record: the dates, the hashes and the one transition pair.
   the config it was created under").** Each core plays its own config: 2069b4c2 the founding config bbae68dc, de2f263d
   the config dbb49344 (genesis.js `encodeGameConfigV2`: versioned, hashed from the core's own constants, naming par, the
   T bounds and the cargo rule). Seats hold core+config pairs per game and refuse any other (arena-node/src/plugins.js,
-  since kanban #202 the game's manifest lists them); the client lists the same pairs per game (arena-protocol/src/known-games.js
+  since the game's manifest lists them); the client lists the same pairs per game (arena-protocol/src/known-games.js
   `KNOWN_GOOD_GAMES`) and refuses a known core under a config its game does not list.
 - **The network id commits to the founding config only.** It is the config the network was founded on (read from the
   frozen 2069b4c2 core) and does not move when the rules do - no refound. Later configs live beside it under the same
@@ -487,9 +485,9 @@ is the record: the dates, the hashes and the one transition pair.
   hold the date. Paid rounds take the new core only from the next published series (10-06, published 12:30Z), and
   that series names 7e2123d1 with f51759b6; every round published before stays on 2069b4c2 with the founding config.
 
-## Donations in the federation (the owner 2026-10-03, ruled; options decided here)
+## Donations in the federation (2026-10-03, ruled; options decided here)
 
-the owner 2026-10-03: "We'll use the federation(s) as donation layer. Every dev has its own client with a private key that
+2026-10-03: "We'll use the federation(s) as donation layer. Every dev has its own client with a private key that
 corresponds to the 66.67% or 33.33% stake in the donation set." Measured the same day, the Lightning way failed twice:
 the rounds named LNURLs no browser could reach (every share UNPAID), and a 666 msat share found no route over a channel
 whose min_htlc was 1 sat - most mainnet channels refuse below 1 sat, and the fixed fee per hop (0-1 sat) is as large as
@@ -531,14 +529,14 @@ leaves the wallet in the same transaction as the stake: a stake that is locked i
   Public (the entries are), and checkable: the client confirms each outpoint with the federation itself.
 - The dev's client holds one private key. It learns the federations from the rounds the seats serve (each round names
   its federation and invite), asks the seats for its outpoints, redeems each in its federation into its own e-cash
-  there, and withdraws it to **the dev's own LND, configured in that client** (the owner 2026-10-03): the client has its
+  there, and withdraws it to **the dev's own LND, configured in that client** (2026-10-03): the client has its
   LND make an invoice for what it collected and pays it from the federation through a gateway (stock LNv2 send; the
   gateway is paid only against the preimage, otherwise the notes come back). One Lightning fee for many donations, and
   the money ends on the dev's own node, not in a wallet someone else runs.
 - One key across federations links a dev's donations together; for named devs that is the point. A per-federation
   tweak of the key is possible later without changing the set.
 
-**A donation outside any round** *(kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to choose from
+**A donation outside any round** *(2026-10-17: "donate to developer, a popup opens with an amount to choose from
 100, 500, 1000, 5000 satoshis or custom"; "B e cash")*:
 - The player gives from the popup in three places: Tick Tock's countdown box, the footer strip of every other game, and the main
   testnet UI's footer (the protocol developers).
@@ -556,9 +554,9 @@ leaves the wallet in the same transaction as the stake: a stake that is locked i
 **What changes, all of it a hard fork of the formats:** the donation set's recipient record (key instead of LNURL),
 the Entry Contract (donation outpoints), the signer nodes' entry check and index, the page's lock transaction, a
 recipient client. Rounds already published keep the LNURL set they name (and the 10-03/10-04 forwarder). Brought into
-multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2026-10-04).
+multiplayer_p2p.md §22A "The donation set", §24A and its payment table (2026-10-04).
 
-## Rulings (the owner 2026-09-21)
+## Rulings (2026-09-21)
 
 - **The player wallet** (§24A.1): the round wallet is one wallet
   per player seed and federation. The player deposits into it, stakes from
@@ -572,14 +570,14 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
   (§24).
 - **The federation's life** (§23A): the first mainnet federation has at
   least ten guardians; testnet is 5 of 7, seven nodes, one guardian per
-  node (the owner 2026-09-27); the player
+  node (2026-09-27); the player
   gets a BIP39 seed of 12 or 24 words to write down. Founding by sortition,
   the draining bands, several federations picked by load, abandonment and
   the bond, succession with automatic migration, and the channels are
   RULED HERE in §23A for the owner to overrule.
 - **Guardians earn from the node fee** (§22A; 5% in Bitcoin Arena): three equal pools, game/verify,
   settlement, and the seated guardians of the round's federation, paid in
-  the settlement transaction. The total is 5% in Bitcoin Arena (the owner 2026-10-06).
+  the settlement transaction. The total is 5% in Bitcoin Arena (2026-10-06).
 - **A slashed guardian bond** goes 75% evenly to the active census nodes and
   25% to the developers (§22A's donation set), never to the guardians who
   attested the absence (§23A.5).
@@ -591,7 +589,7 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
   `guardian_capable` off.
 - **FEDERATION is the only custody** (§23.6): THRESHOLD_LN does not exist,
   on any network, for any round, past rounds included; a record naming it
-  is an invalid contract and is not decoded (the owner 2026-09-22 22:59). This
+  is an invalid contract and is not decoded (2026-09-22 22:59). This
   file is no longer "V1 of two"; it is the construction.
 - **Players cannot lose** (§23A.3, §23A.5): the exposure cap is `(f + 1)`
   times the smallest seated guardian bond, so the smallest set that can
@@ -622,7 +620,7 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
   4-guardian rehearsal; mainnet by founding once ten guardian-capable
   operators are bonded. `federationIsBonded` stays on.
 
-## Rulings (the owner 2026-09-27 10:04)
+## Rulings (2026-09-27 10:04)
 
 - **Testnet is seven nodes and seven guardians, 5 of 7** (stock threshold
   `n - floor((n - 1) / 3)`), one guardian per node. It replaces the 3-of-4
@@ -634,7 +632,7 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
 - **Zero config**: a node starts its own guardian; the operator sees one
   thing.
 
-## Rulings (the owner 2026-09-26 22:54)
+## Rulings (2026-09-26 22:54)
 
 - **Testnet federation is 3 of 4**, not the 2-of-2 that ran. Mainnet stays
   at least ten, 7 of 10. Committee sizes are not this ruling. *Replaced by

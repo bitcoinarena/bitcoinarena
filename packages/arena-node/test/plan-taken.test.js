@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEATS AGREE BEFORE A WINNER IS PAID, AS A THRESHOLD OF SIGNATURES (the owner 2026-09-29 17:33, PRIORITIES item 2:
+// THE SEATS AGREE BEFORE A WINNER IS PAID, AS A THRESHOLD OF SIGNATURES (2026-09-29 17:33, PRIORITIES item 2:
 // "Seats agree before a winner payout as a threshold, not over HTTP").
 //
 //   COUNT  a seat's yes is its node key's BIP-340 signature over the plan's id: an unsigned 201, a stranger's key, a
@@ -83,7 +83,7 @@ test('the plan id is the plan: row order and key order do not move it, any field
   assert.notEqual(toHex(planTakenId({ roundId: b32(0x78), rows: ROWS })), id);
 });
 
-// SINCE WINNINGS-AUTO (RULED the owner 2026-10-01) no winner has a send plan; the seats' signed agreement on a send plan
+// SINCE WINNINGS-AUTO (RULED 2026-10-01) no winner has a send plan; the seats' signed agreement on a send plan
 // still guards a walk-away round's donation sends, so the plan measured here is that one.
 test('two signer nodes: a peer that answers the donation send plan 201 with no signature has not agreed - nothing settled, nothing paid; its signed answer settles and pays, and the certificate verifies on its own', async () => {
   const port = lockPort();

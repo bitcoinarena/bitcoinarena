@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL ITEM 9 (b): "two rounds played from the wallet with no deposit" - STAKED, not played (RULED
-// the owner 2026-09-25: no play, no win, no gate driver). Run by rehearsal-9b-regtest.sh after the federation is up (stock
+// 2026-09-25: no play, no win, no gate driver). Run by rehearsal-9b-regtest.sh after the federation is up (stock
 // fedimintd 0.12.0, 4 guardians 3 of 4, two gateways, seven bonded signer nodes).
 //
 // ONE Lightning deposit into the player wallet (§24A.1), sized as twice the one-round top-up item 8's wallet was credited

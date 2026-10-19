@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ROUND PLAY CHOSE STAYS THE ROW OF ITS KIND (the owner 2026-10-02: "once a round has been selected with play the
+// THE ROUND PLAY CHOSE STAYS THE ROW OF ITS KIND (2026-10-02: "once a round has been selected with play the
 // highlighting may no longer change when the other round is newer").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

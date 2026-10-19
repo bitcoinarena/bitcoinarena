@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (the owner 2026-09-30 21:10, PRIORITIES): the page's boot lines, run on
+// A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (2026-09-30 21:10, PRIORITIES): the page's boot lines, run on
 // a fake tab - the address the deposit offer noted goes back to the lobby behind it; any other address stays.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +40,7 @@ test('any other address stays: a round link with no deposit up, and a different 
   assert.equal(load('?round=cd34&play=1', { at: '?round=ab12&play=1', back: '' }).search, '?round=cd34&play=1');
 });
 
-// TYPING IN THE PAGE'S OWN FIELDS (the owner 2026-09-30 22:04): the guard is registered on the window, in the capture phase,
+// TYPING IN THE PAGE'S OWN FIELDS (2026-09-30 22:04): the guard is registered on the window, in the capture phase,
 // before Unity's keyboard capture; a key in an input stops there (Unity's later listener never runs), one on the canvas
 // goes on.
 test('a key typed into a field never reaches a later window listener (Unity), a key on the canvas does', () => {
@@ -63,7 +63,7 @@ test('a key typed into a field never reaches a later window listener (Unity), a 
   assert.equal(unity, 1, 'a key on the game no longer reached Unity');
 });
 
-// A RELOAD AFTER THE ROUND STARTED BEGINS NO FUNDING (the owner 2026-10-03, "That run must not be lost"): the page's join
+// A RELOAD AFTER THE ROUND STARTED BEGINS NO FUNDING (2026-10-03, "That run must not be lost"): the page's join
 // starts a deposit only for a lock it must make anew, asks keptLockUse with the round's close, and a resumed run
 // ('running') is named to the bridge - never a second deposit.
 test('a reload after the start: no funding unless the kept lock answers new, the close is asked, a running resume is named to the bridge', async () => {

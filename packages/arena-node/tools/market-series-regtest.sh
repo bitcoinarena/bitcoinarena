@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# A PAID MARKET AS A PUBLISHED SERIES, ON A PRIVATE REGTEST, FOR THE PAGE (kanban #206, the owner 2026-10-07 23:23, decision A):
+# A PAID MARKET AS A PUBLISHED SERIES, ON A PRIVATE REGTEST, FOR THE PAGE (2026-10-07 23:23, decision A):
 # the lobby offers a paid row only for a round of a series, so the regtest market is stood up as the live paid rounds are -
 # seven seats with their guardians (the federation), their bonds, one series published with OP_RETURN "ARN SERIES" below its
 # beacon - and held up for a browser. Regtest runs the mainnet series clock: a series starts on genesis_series_start +
@@ -30,7 +30,7 @@ export BTC_DIR=$H/btc BITCOIN_CLI=$B/bitcoin-cli ARENA_BITCOIND_URL=http://127.0
 export CLIENT_DIR=$H/client LOCK_BIN=$FORK_BIN/blwp-stake-lock LNCLI=$L/lncli
 export NODE_PORTS=${NODE_PORTS:-23221,23231,23241,23251,23261,23271,23281}   # another machine's stack on 23221..: name others
 declare -A LRPC=([alice]=29011 [bob]=29012 [carol]=29013) LLIS=([alice]=29021 [bob]=29022 [carol]=29023) LREST=([alice]=29031 [bob]=29032 [carol]=29033)
-ZB=${ZB:-29041}; ZT=${ZT:-29042}; GWA=${GWA:-29300}; GWB=${GWB:-29310}; LNADDR=${LNADDR:-29320}; RECIP=${RECIP:-29330}   # override beside another stack (kanban #236)
+ZB=${ZB:-29041}; ZT=${ZT:-29042}; GWA=${GWA:-29300}; GWB=${GWB:-29310}; LNADDR=${LNADDR:-29320}; RECIP=${RECIP:-29330}   # override beside another stack
 GPORTS=""; for p in ${NODE_PORTS//,/ }; do GPORTS="$GPORTS,$p,$((p+1000)),$((p+2000)),$((p+3000)),$((p+4000))"; done
 export RUN_PORTS="30211,30212,$ZB,$ZT,${LRPC[alice]},${LRPC[bob]},${LRPC[carol]},${LLIS[alice]},${LLIS[bob]},${LLIS[carol]},${LREST[alice]},${LREST[bob]},${LREST[carol]},$GWA,$((GWA+1)),$((GWA+2)),$GWB,$((GWB+1)),$((GWB+2)),$LNADDR,$RECIP$GPORTS"
 export RUN_DIRS="$H/btc,$H/alice,$H/bob,$H/carol,$H/gw-a,$H/gw-b,$CLIENT_DIR,$H/paid,$(for i in 1 2 3 4 5 6 7; do printf '%s,' "$H/node-$i.db"; done)"
@@ -46,7 +46,7 @@ js() { "$NODE" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const
 until_() { local what=$1 secs=$2; shift 2; local t=$(date +%s); until "$@"; do [ $(( $(date +%s) - t )) -gt $secs ] && die "$what: not within $secs s"; sleep 2; done; }
 # THIS RUN'S GUARDIANS: fedimintd children whose environment names this run's dir (a node killed hard leaves its own)
 # a guardian of THIS run: its FM_DATA_DIR under $H (Linux: /proc's environment; macOS shows no other process's environment:
-# a file it holds open under $H) - as the test host runs of kanban #178 found
+# a file it holds open under $H) - as the test host runs of found
 ours() { if [ -r /proc/$1/environ ]; then tr '\0' '\n' < /proc/$1/environ | grep -q "^FM_DATA_DIR=$H/"; else lsof -p $1 -Fn 2>/dev/null | grep -qE "^n(/private)?$H/"; fi; }
 kill_guardians() { for pid in $(pgrep -x fedimintd); do ours $pid && kill -KILL $pid; done; }
 # THIS RUN'S GATEWAYS: their command line is only "gatewayd lnd", so they are found by a file they hold under $H
@@ -64,7 +64,7 @@ cleanup() {
   bcn stop >/dev/null 2>&1; sleep 8
   for pid in $(cut -d' ' -f1 $PIDS); do kill -KILL -- -$pid 2>/dev/null; done
   pkill -f "src/main.js [0-9]+ $H/node-" 2>/dev/null; pkill -f "$H/" 2>/dev/null; sleep 3; kill_guardians; kill_gateways
-  # AND EVERY NODE PROCESS STILL WRITING UNDER $H (kanban #293, measured twice on the test host: the paid runner outlived the
+  # AND EVERY NODE PROCESS STILL WRITING UNDER $H (measured twice on the test host: the paid runner outlived the
   # stack and held its port 29430, so the next run's safety check refused it). macOS's setsid shim forks when setsid()
   # fails, so $PIDS kept the shim's pid while the runner ran as the next one, in a session of its own.
   for pid in $(pgrep -x node); do holds $pid && kill -TERM $pid 2>/dev/null; done
@@ -122,7 +122,7 @@ SEAT_ENV=""
 start_nodes() {
   i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1))
     # EACH SEAT READS LOCKS THROUGH ITS OWN COPY OF THE JOINED CLIENT (as the testnet4 seats do, client-lock-tn4-read-N; kanban
-    # #237): through one shared directory the seven seats' status reads queued one at a time, a second player's stake lock
+    #): through one shared directory the seven seats' status reads queued one at a time, a second player's stake lock
     # stayed unseen at four seats past the 12-block lock-height rule (4 min at a block every 20 s), and the order never traded
     READ=""; if [ -n "$SEAT_ENV" ]; then rm -rf $H/client-read-$i; cp -R $CLIENT_DIR $H/client-read-$i; READ="ARENA_FEDERATION_CLIENT_READ_DIR=$H/client-read-$i"; fi
     ( cd "$HERE/.." && HOME=$FORK_HOME ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR ARENA_CLOSE_AT_END=1 \

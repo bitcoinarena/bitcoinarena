@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BUY ADD-ONS INSIDE UNITY (kanban #374, the owner 2026-10-16): the page hands Unity its add-ons (ARENA_ADDONS_VIEW), buys through the
+// BUY ADD-ONS INSIDE UNITY (2026-10-16): the page hands Unity its add-ons (ARENA_ADDONS_VIEW), buys through the
 // shop's own purchase (ARENA_ADDONS_BUY -> buyShopItem), and says from which round a purchase plays: an entry already made keeps what
 // it named. The countdown box beside "exit game" offers "Buy add-ons", which opens Unity's panel. The jslib carries all of it.
 import { test } from 'node:test';
@@ -32,7 +32,7 @@ test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a p
 });
 
 test('the countdown box offers Buy add-ons beside exit game, shown when the game sells something, opening Unity\'s panel', () => {
-  // the donate button (kanban #431) sits between add-ons and exit game
+  // the donate button sits between add-ons and exit game
   // never one letter a line (2026-10-18, 390 px: three buttons left the words 0 px): the box wraps, the words keep 10em, a phone gives them a row
   assert.match(PAGE, /#blwp-next \{ flex-wrap: wrap; justify-content: center; \} #blwp-next-say \{ min-width: min\(10em, 100%\); \}/);
   assert.match(PAGE, /@media \(max-width: 520px\) \{ #blwp-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #blwp-next-say \{ flex-basis: 100%; text-align: center; \} \}/);

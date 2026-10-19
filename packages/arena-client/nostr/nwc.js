@@ -1,4 +1,4 @@
-// NOSTR WALLET CONNECT FOR DEPOSITS (kanban #277, the owner 2026-10-09: "Wallet connect if they already have one"; 2026-10-10:
+// NOSTR WALLET CONNECT FOR DEPOSITS (2026-10-09: "Wallet connect if they already have one"; 2026-10-10:
 // "Also nwc for deposits is part of the scope"). The player's own wallet (Alby Hub, Coinos, Primal, Mutiny...) pays the
 // deposit invoice the page made: one tap, no copying, no QR. NIP-47: the wallet's connection link
 // nostr+walletconnect://<wallet pubkey>?relay=<wss>&secret=<hex> gives a key this page signs requests with; a request is a

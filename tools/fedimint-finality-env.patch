@@ -1,4 +1,4 @@
-# Test-federation patch for the BLWP Fedimint fork (kanban #364, the owner 2026-10-15): FM_BLWP_FINALITY_DELAY sets the wallet
+# Test-federation patch for the BLWP Fedimint fork (kanban #364, 2026-10-15): FM_BLWP_FINALITY_DELAY sets the wallet
 # finality delay a federation is FOUNDED with (written into its consensus config; a running federation never changes).
 # Used for the throwaway testnet4 federation T2 (12). Apply on the fork tree: git apply tools/fedimint-finality-env.patch
 diff --git a/modules/fedimint-wallet-server/src/lib.rs b/modules/fedimint-wallet-server/src/lib.rs
@@ -9,7 +9,7 @@ index 6cfde025149..4c06a5baa79 100644
  
  /// Default finality delay based on network
  fn default_finality_delay(network: Network) -> u32 {
-+    // BLWP (kanban #364, the owner 2026-10-15): FM_BLWP_FINALITY_DELAY names another delay at FOUNDING - it is written into the
++    // BLWP (kanban #364, 2026-10-15): FM_BLWP_FINALITY_DELAY names another delay at FOUNDING - it is written into the
 +    // consensus config there, so a running federation never changes - for the throwaway test federation T2 (12)
 +    if let Some(d) = std::env::var("FM_BLWP_FINALITY_DELAY").ok().and_then(|v| v.trim().parse::<u32>().ok()) {
 +        return d;

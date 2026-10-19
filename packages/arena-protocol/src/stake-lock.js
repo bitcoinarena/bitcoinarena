@@ -14,7 +14,7 @@
 // verifies. Seeing the lock is not enough: the player built it, and a short
 // expiry alone would let a loser refund before settlement."
 //
-// THE LOCK'S OWN HEIGHT (RULED the owner 2026-09-24, option (a)). The stock federation
+// THE LOCK'S OWN HEIGHT (RULED 2026-09-24, option (a)). The stock federation
 // stores an outgoing contract with no creation height and answers only
 // (contract_id, blocks_left), so lock_height is the federation-held expiration less
 // stake_expiry_blocks - the expiration the signer node already checked against
@@ -72,7 +72,7 @@ const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
  */
 export const refundKeyOf = (playerPubkey) => Uint8Array.from([0x02, ...playerPubkey]);
 
-// `expiryBlocks`: the round's own stake_expiry_blocks (lock-expiry.js, kanban #236: a market round's locks last its whole
+// `expiryBlocks`: the round's own stake_expiry_blocks (lock-expiry.js,: a market round's locks last its whole
 // life; every other round the ruled 144) - the span its locks are made for, so a lock's height is its expiration less it
 export function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
   if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };

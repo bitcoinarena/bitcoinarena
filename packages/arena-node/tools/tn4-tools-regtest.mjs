@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE READINGS OF THE TESTNET4 STACK TOOLS ON A PRIVATE REGTEST (kanban #148 step 6, plan comment 235, Go 2026-10-05).
+// THE READINGS OF THE TESTNET4 STACK TOOLS ON A PRIVATE REGTEST (plan comment 235, Go 2026-10-05).
 // tools/tn4-tools-regtest.sh stands the stack up and runs each tool as it is run live; this answers what each one left
 // behind, one JSON line per reading, and refuses the whole run first if anything points at the live testnet4 stack.
 //
@@ -42,7 +42,7 @@ const LIVE_DIRS = ['/mnt/bitcoin/tn4', '/mnt/bitcoin/lnd-testnet4', '/home/arena
   '/home/arena/blwp-testnet4/client-lock-tn4', '/home/arena/blwp-testnet4/gw-', '/home/arena/blwp-testnet4/donor',
   '/mnt/bitcoin/blwp-2of2', '/mnt/bitcoin/lnd-'];
 // A PATH NOT MADE YET is its nearest existing parent's real path and the rest (macOS keeps /tmp under /private/tmp: a dir
-// still to be made must resolve the way its made parent does - measured on the test host, kanban #206)
+// still to be made must resolve the way its made parent does - measured on the test host)
 const real = (p) => {
   try { return realpathSync(p); } catch { /* not made yet */ }
   const abs = resolve(p);
@@ -56,7 +56,7 @@ const portFree = (port) => new Promise((ok) => {
 });
 
 if (mode === 'safe') {
-  // macOS keeps /tmp under /private/tmp (measured on the test host, kanban #206): either is the fresh dir's place
+  // macOS keeps /tmp under /private/tmp (measured on the test host): either is the fresh dir's place
   if (!H || !(real(H).startsWith('/tmp/') || real(H).startsWith('/private/tmp/'))) fail(`H (${H}) is not a fresh dir under /tmp`);
   const ports = String(env.RUN_PORTS || '').split(',').filter(Boolean).map(Number);
   const dirs = String(env.RUN_DIRS || '').split(',').filter(Boolean);

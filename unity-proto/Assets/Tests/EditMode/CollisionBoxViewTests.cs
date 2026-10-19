@@ -7,7 +7,7 @@ using UnityEngine;
 using Blwp;
 
 /// <summary>
-/// THE COLOURED BOXES ARE THE CORE'S (the owner 2026-09-25 20:56/20:57: visible collisions on the miner and the post office).
+/// THE COLOURED BOXES ARE THE CORE'S (2026-09-25 20:56/20:57: visible collisions on the miner and the post office).
 /// The view reads st.solids through the bridge and draws the boxes the truck's body can reach; these pin the parts of
 /// that which live on the C# side against the core's own source.
 /// </summary>

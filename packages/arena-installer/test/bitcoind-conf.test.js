@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// The node's own Bitcoin Core's settings (kanban #471): RPC and the peer port on this machine only - listening on every network made
+// The node's own Bitcoin Core's settings: RPC and the peer port on this machine only - listening on every network made
 // Windows Firewall ask the user to open bitcoind to public networks (measured in the Windows VM, 2026-10-19).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

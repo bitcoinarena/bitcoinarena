@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE STAKE LOCK HANDED TO EVERY SIGNER NODE AFTER A JOIN - client.js #handLocksUntilTaken (kanban #147, surface 4 part 2,
+// THE STAKE LOCK HANDED TO EVERY SIGNER NODE AFTER A JOIN - client.js #handLocksUntilTaken (surface 4 part 2,
 // plan comment 210, Go 2026-10-05), driven through the public join() only. Seven fake signer nodes on one local HTTP server
 // (bases /n0 .. /n6): /entry takes the entry, /lock and /fee-lock answer 201 or a refusal as each test scripts them.
 // LOCK_HAND_MS (120 s) is a module constant and cannot be shortened without a production change, so that bound stays

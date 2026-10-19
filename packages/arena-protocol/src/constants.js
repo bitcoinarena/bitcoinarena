@@ -19,7 +19,7 @@ import {
 export const PROTOCOL_VERSION = 1;
 
 /**
- * THE VERSIONS THIS BUILD READS (kanban #349, the owner 2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
+ * THE VERSIONS THIS BUILD READS (2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
  * Versionen required können. Alte nodes die da nicht updaten fliegen raus."). It writes PROTOCOL_VERSION and reads every
  * version listed here, so a cut-over can run old and new rounds side by side: a build of version N+1 lists N and N+1
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
@@ -27,7 +27,7 @@ export const PROTOCOL_VERSION = 1;
  */
 export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 /**
- * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
+ * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
  * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the
  * testnet4 census held 14 nodes, and no round could name its draw - the draw is seeded by the round id, which hashed the
@@ -39,20 +39,20 @@ export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3
  */
 export const DRAW_FREE_VERSION = 2;
 export const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= DRAW_FREE_VERSION;
-// EVERY GAME THROUGH EVERY FEDERATION (2026.0.3, kanban #348; the owner 2026-10-13 ~11:45Z: "Es muss möglich sein für alle Spiele über
+// EVERY GAME THROUGH EVERY FEDERATION (2026.0.32026-10-13 ~11:45Z: "Es muss möglich sein für alle Spiele über
 // alle Federation zu zahlen"): from version 3 a paying round need not name one federation - a zero federation_id takes a stake
 // lock in any federation its seats hold OPEN, each entry naming its own (contracts.js FEDERATION_MARKER) - and it settles one
 // balanced federation transaction per federation by one payout table.
 export const MULTI_FEDERATION_VERSION = 3;
 export const takesAnyFederation = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= MULTI_FEDERATION_VERSION
   && c.federationId instanceof Uint8Array && c.federationId.length === 32 && c.federationId.every((b) => b === 0);
-// TOP-N PRIZE SPLITS (2026.0.4, kanban #362 feature 3): from version 4 a replayed game's manifest may pay its rounds by fixed
+// TOP-N PRIZE SPLITS (2026.0.4, feature 3): from version 4 a replayed game's manifest may pay its rounds by fixed
 // shares of the pot over its top places (manifest.js PAYOUT_RULE.TOP_SPLIT, payout.js computePayoutTable) instead of §18A's rank
 // curve. Nothing of a round's bytes changes with it - the rule is the manifest's - and a TOP_SPLIT manifest REQUIRES this
-// version (#349), so its rounds name 4 or later and the census seats only nodes whose advert lists such a version: a node
+// version, so its rounds name 4 or later and the census seats only nodes whose advert lists such a version: a node
 // that cannot pay the split is never drawn for it.
 export const TOP_SPLIT_VERSION = 4;
-// THE MEDIAN OF SIGNED READINGS (2026.0.5, kanban #312, RULED the owner 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
+// THE MEDIAN OF SIGNED READINGS (2026.0.5RULED 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
 // signs the price it read, and the sample is the median of five signed readings. Nobody proposes a price, so nobody chooses
 // BULLS, BEARS, or FLAT. That signature change is protocol 5."). A price round of version 5 or later plays prices no seat
 // proposed: each committee seat signs ITS OWN reading of each moment (price-sample.js priceReadingId), and a sample is the
@@ -61,58 +61,58 @@ export const TOP_SPLIT_VERSION = 4;
 // picks the scheme, never the seat's.
 export const PRICE_MEDIAN_VERSION = 5;
 export const mediansPrices = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= PRICE_MEDIAN_VERSION;
-// MARKETS ON GAMES (2026.0.6, kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6: "an attested market whose outcome is a
+// MARKETS ON GAMES (2026.0.6, feature 6, docs/PLATFORM-RESEARCH.md item 6: "an attested market whose outcome is a
 // game round's signed result ... no external oracle: the committee's 5-of-7 RoundResult resolves it"). From version 6 an ATTESTED
 // manifest may name a source game instead of attestors (manifest.js `gameSource`, marker 0x05), and each round of it names the one
 // round of that game it is a market on (contracts.js `sourceRoundId`, marker 0xc4). Its outcome is that source round's own
 // signed result, verified against the source round's committee and threshold (game-market.js) - no attestor signs anything.
 // Both fields are new bytes only a version-6 manifest and round may carry, so nothing below 6 moves; and a game market REQUIRES
-// this version (#349), so the census seats its rounds only on nodes whose advert lists 6.
+// this version, so the census seats its rounds only on nodes whose advert lists 6.
 export const GAME_MARKET_VERSION = 6;
-// SCALAR MARKETS (2026.0.7, kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8: "a numeric outcome (a price, a count) paid
+// SCALAR MARKETS (2026.0.7, feature 8, docs/PLATFORM-RESEARCH.md item 8: "a numeric outcome (a price, a count) paid
 // linearly between bounds. Richer questions than buckets; one market instead of many"). From version 7 an ATTESTED manifest may
 // name a scalar (manifest.js `scalar`, marker 0x06): integer bounds low < high in a named unit and the two sides LONG and SHORT.
 // Its attestors sign the observed VALUE, not an outcome index - a message of its own type and tag (scalar.js
 // ValueAttestation), so neither kind of attestation can ever stand for the other - and the pool is split linearly between the
 // sides by where the clamped value lies (scalar.js scalarPayoutTable). No round byte changes: a round of a scalar market is an
-// attested round whose picks are 0 (LONG) and 1 (SHORT); the manifest REQUIRES this version (#349), so its rounds name 7 and the
+// attested round whose picks are 0 (LONG) and 1 (SHORT); the manifest REQUIRES this version, so its rounds name 7 and the
 // census seats them only on nodes whose advert lists 7. Nothing below 7 reads or writes any of it.
 export const SCALAR_VERSION = 7;
-// SCALAR TEMPLATES (2026.0.8, kanban #362, docs/PLATFORM-RESEARCH.md items 5 + 8: "Left: scalar templates"). From version 8 a scalar
+// SCALAR TEMPLATES (2026.0.8docs/PLATFORM-RESEARCH.md items 5 + 8: "Left: scalar templates"). From version 8 a scalar
 // market may be a template (manifest.js `template` beside `scalar`): anyone opens a numeric question by publishing one round of it,
 // and the round names - inside its own question's tail (contracts.js `event.scalar`) - the bounds it is paid between, low < high,
 // within the manifest's bounds, in the manifest's unit. The bounds are in the round's hashed bytes, so they are its id. Only a
-// version-8 round may carry them and only a version-8 manifest may be a scalar template (#349): nothing below 8 moves.
+// version-8 round may carry them and only a version-8 manifest may be a scalar template: nothing below 8 moves.
 export const SCALAR_TEMPLATE_VERSION = 8;
-// THE WEBSITE THAT BROUGHT THE ENTRY (2026.0.9, kanban #362 roadmap item 7, RULED the owner 2026-10-15: path (a) - "Take it out of the
+// THE WEBSITE THAT BROUGHT THE ENTRY (2026.0.9, roadmap item 7, RULED 2026-10-15: path (a) - "Take it out of the
 // nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased by this fee"). An entry may name the
 // payout key of the page that brought it (contracts.js `frontendPk`, marker 0xac); at settlement that key is paid 20% of the nodes'
 // fee on the stakes it brought, off the top of the nodes' part (fee.js frontendShares, lock-settlement.js). Only on a round of
 // version 9 or later, so its seats are only nodes that pay it; every entry without it keeps its bytes.
 export const FRONTEND_FEE_VERSION = 9;
-// IN-GAME ITEMS (kanban #365, the owner 2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25%
+// IN-GAME ITEMS (2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25%
 // an die protocol devs gehen, 25% an den a game dev und 50% an die nodes die in den letzten 24h an einer Runde beteiligt waren"): a
 // manifest's item catalogue (items.js, marker 0x07), a purchase (purchase.js) and an entry's items (contracts.js, marker 0xad) require
 // version 10; spoken since the purchase, its money path (paySubmit) and the seats' check of an entry's items were built.
 export const ITEMS_VERSION = 10;
 /**
- * THE PROTOCOL RESERVES' VERSION (§27A.9, kanban #397): a paid round's 10 % split mandatory as nodes 4 %, developers 4 % (2 + 2),
+ * THE PROTOCOL RESERVES' VERSION (§27A.9): a paid round's 10 % split mandatory as nodes 4 %, developers 4 % (2 + 2),
  * reserves 2 %; items 40 % nodes, 20 % reserves, the developers' share 40/30/20/10/0 %. Spoken since slice 3: an entry locks the
  * reserves' part to its federation's reserve key (reserves.js reservesEntryExpected), and the seats check it.
  */
 export const RESERVES_VERSION = 11;
-/** 2026.0.12 (kanban #460): the leaderboard payout - a proposal that pays the top N of a season from the protocol reserves. */
+/** 2026.0.12: the leaderboard payout - a proposal that pays the top N of a season from the protocol reserves. */
 export const LEADERBOARD_VERSION = 12;
-// 2026.0.13 - THE GUARDIAN POOL IS THE FEDERATION'S SEATED GUARDIANS (§22A v4.6.4, kanban #33 gap 1; measured on Tick Tock round 32cfad1c,
+// 2026.0.13 - THE GUARDIAN POOL IS THE FEDERATION'S SEATED GUARDIANS (§22A v4.6.4, gap 1; measured on Tick Tock round 32cfad1c,
 // 10-16: test host 7, seated in federation A - no absence, no departure - was out of that day's census and got no guardian share, while
 // the six in the census were paid). From this version a round's guardian third goes to the guardians its federation's record seats (not
 // gone, §23A.1), whether or not each is in the round's census; below it, the census nodes naming the federation, as before.
 export const SEATED_GUARDIAN_VERSION = 13;
-/** 2026.0.14 (kanban #471 ruling 3, §23A.2 event 4): the cohort - ten guardian-capable operators guarding no OPEN federation found one. */
+/** 2026.0.14 (ruling 3, §23A.2 event 4): the cohort - ten guardian-capable operators guarding no OPEN federation found one. */
 export const COHORT_VERSION = 14;
-/** 2026.0.15 (kanban #471, §23A.9): a third of the guardian pool goes to the federation's two gateway seats (the record names them). */
+/** 2026.0.15 (§23A.9): a third of the guardian pool goes to the federation's two gateway seats (the record names them). */
 export const GATEWAY_SEAT_VERSION = 15;
-/** 2026.0.16 (kanban #494, §23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
+/** 2026.0.16 (§23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
  * federation's liquidity providers, who open incoming channels to new nodes). */
 export const LIQUIDITY_VERSION = 16;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
@@ -300,7 +300,7 @@ export const TYPE_DKG_CONTRIBUTION = 0x13;
  */
 export const TYPE_SIGNED_DONATION_SET = 0x14;
 /**
- * A DONATION SET OF KEYS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): each recipient is a 33-byte
+ * A DONATION SET OF KEYS (2026-10-03, FEDERATION.md "Donations in the federation"): each recipient is a 33-byte
  * secp256k1 key the player's lock transaction pays a payout contract to, in the round's federation - no LNURL. Its own
  * byte, so a set of keys and a set of LNURLs are never the same bytes, and every set already published keeps its id.
  */
@@ -322,61 +322,61 @@ export const TYPE_TRANSCRIPT_POSTING = 0x18;
 // its replay of the canonical transcript produces, tied to the contradicted run.
 // The spec names no wire object for it; this is that object.
 export const TYPE_RERUN_RESULT = 0x19;
-// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, the owner 2026-10-01): one settlement seat's word that a run is FINAL,
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, 2026-10-01): one settlement seat's word that a run is FINAL,
 // signed once its own clock read the window's close + the tolerance and it held no valid objection in time. Five of
 // seven (the round's threshold) make the run FINAL.
 export const TYPE_FINAL_SIGNATURE = 0x1a;
-// A GAME'S MANIFEST (§0A.3, kanban #202): a game is a plugin the engine reads through this, never through its code.
+// A GAME'S MANIFEST (§0A.3): a game is a plugin the engine reads through this, never through its code.
 /** EVERY SERIES RUNS ON ONE 90 s GRID (series.js; §5A.5): a round of a series starts every ROUND_PERIOD_MS. */
 export const ROUND_PERIOD_MS = 90000n;
 export const TYPE_GAME_MANIFEST = 0x1c;
-// AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
+// AN ATTESTED OUTCOME (§0A.7a): the attestors' word on a non-replay round's result - which outcome, when seen.
 export const TYPE_OUTCOME_ATTESTATION = 0x1d;
-// AN ATTESTED PRICE SAMPLE (§11, kanban #311): the committee's word on the price a run plays against at one tick - and the
+// AN ATTESTED PRICE SAMPLE (§11): the committee's word on the price a run plays against at one tick - and the
 // 64 prices before the start, as one tape - so the player never chooses the price.
 export const TYPE_PRICE_SAMPLE = 0x1e;
 export const TYPE_PRICE_TAPE = 0x1f;
-// A FEDERATION'S RECORD (§23A.4, kanban #321): signed by its guardians, it decides whether a client may deposit into it,
+// A FEDERATION'S RECORD (§23A.4): signed by its guardians, it decides whether a client may deposit into it,
 // and whether a seat names it in a new round - OPEN, DRAINING, CRITICAL, CLOSED, HALTED.
 export const TYPE_FEDERATION_RECORD = 0x20;
-// RESERVE SEATS (§5A.7, kanban #301): a drawn node's word that it is present for a round and role, and the seating its
+// RESERVE SEATS (§5A.7): a drawn node's word that it is present for a round and role, and the seating its
 // seated nodes all sign - which nodes serve the round. Two seatings for one round and role are equivocation.
 export const TYPE_PRESENT = 0x21;
 export const TYPE_SEATING = 0x22;
-// A CONFIG PROPOSAL (§27A.7.2, kanban #329): the full named configuration a ballot decides
+// A CONFIG PROPOSAL (§27A.7.2): the full named configuration a ballot decides
 export const TYPE_CONFIG_PROPOSAL = 0x23;
-// A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5, kanban #322); 0x23 is the ballot's (#329)
+// A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5); 0x23 is the ballot's
 export const TYPE_ABSENCE_ATTESTATION = 0x24;
 export const TYPE_DEPARTURE_NOTICE = 0x25;
-// A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1, kanban #323); 0x23 is the
-// ballot's (#329), 0x24 and 0x25 absence and departure (#322)
+// A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
+// ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
-// WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): open and close of the attested tape and the front, signed by the
+// WHO WON A PRICE ROUND (§13 RoundResult): open and close of the attested tape and the front, signed by the
 // settlement committee
 export const TYPE_ROUND_RESULT = 0x27;
-// A PLAYER RESULT OF A PRICE ROUND, WITH ITS FRONT (§13 front_*, kanban #312): the result's own type, so a stream of results cuts by
+// A PLAYER RESULT OF A PRICE ROUND, WITH ITS FRONT (§13 front_*): the result's own type, so a stream of results cuts by
 // each record's first byte - 168 bytes without the front, 178 with it
 export const TYPE_RESULT_FRONT = 0x28;
-// A SEAT'S OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven", kanban #323): no guardian past session S
+// A SEAT'S OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven"): no guardian past session S
 export const TYPE_HALT_OBSERVATION = 0x29;
-// AN ATTESTED VALUE (kanban #362 feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
+// AN ATTESTED VALUE (feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 export const TYPE_VALUE_ATTESTATION = 0x2a;
-// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a proposed donation set and a recipient's approval of it
+// THE DEVELOPERS' OWN BALLOT (§27A.4.1): a proposed donation set and a recipient's approval of it
 export const TYPE_DONATION_PROPOSAL = 0x2b;
 export const TYPE_DONATION_APPROVAL = 0x2c;
-// A SET OF KEYS WHOSE ENTRIES MAY VEST (§27A.4.1, kanban #382): a set without vesting keeps TYPE_DONATION_SET_KEYS and its id
+// A SET OF KEYS WHOSE ENTRIES MAY VEST (§27A.4.1): a set without vesting keeps TYPE_DONATION_SET_KEYS and its id
 export const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
-/** PROJECT FUNDING PROPOSALS (§27A.9.3, kanban #397 slice 6): a proposal signed by a bonded node, a comment signed by anyone, a node's signal. */
+/** PROJECT FUNDING PROPOSALS (§27A.9.3): a proposal signed by a bonded node, a comment signed by anyone, a node's signal. */
 export const TYPE_FUNDING_PROPOSAL = 0x2e;
 export const TYPE_FUNDING_COMMENT = 0x2f;
 export const TYPE_FUNDING_SIGNAL = 0x30;
-// A PLAYER'S NAME, NETWORK-WIDE (kanban #397 PIP, the owner 2026-10-17: "Have custom names in the protocol"): player-name.js
+// A PLAYER'S NAME, NETWORK-WIDE (PIP, 2026-10-17: "Have custom names in the protocol"): player-name.js
 export const TYPE_PLAYER_NAME = 0x31;
-// A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER TO IT (kanban #462, the owner 2026-10-17): fee-proposal.js
+// A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER TO IT (2026-10-17): fee-proposal.js
 export const TYPE_FEE_PROPOSAL = 0x32;
 export const TYPE_FEE_APPROVAL = 0x33;
-// A LEADERBOARD PAYOUT REQUEST (kanban #460): leaderboard-payout.js
+// A LEADERBOARD PAYOUT REQUEST: leaderboard-payout.js
 export const TYPE_LEADERBOARD_PAYOUT = 0x34;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
@@ -390,17 +390,17 @@ export const TAG = {
   roundContract: 'ARENA/v1/RoundContract',
   // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
   seriesRound: 'ARENA/v1/SeriesRound',
-  // WHAT A ROUND'S CREATOR SIGNS (§6 creator_signature, kanban #313): the round's id, under this tag
+  // WHAT A ROUND'S CREATOR SIGNS (§6 creator_signature): the round's id, under this tag
   roundCreator: 'ARENA/v1/RoundCreator',
-  // a series that names its creator: one signature over the series id for all its rounds (kanban #313)
+  // a series that names its creator: one signature over the series id for all its rounds
   seriesCreator: 'ARENA/v1/SeriesCreator',
-  // A RULE A CONTRACT NAMES (§6 *_rule_hash, kanban #314): the rule's text under this tag
+  // A RULE A CONTRACT NAMES (§6 *_rule_hash): the rule's text under this tag
   contractRule: 'ARENA/v1/ContractRule',
-  // A GUARDIAN FOUNDING'S TICKET (§23A.2, kanban #320): the spec's own tag
+  // A GUARDIAN FOUNDING'S TICKET (§23A.2): the spec's own tag
   guardianTicket: 'BLWP/v1/GUARDIAN',
-  // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352): a node's rank for a slot
+  // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD: a node's rank for a slot
   duty: 'BLWP/v1/DUTY',
-  // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5, kanban #323)
+  // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5)
   haltObservation: 'ARENA/v1/HaltObservation',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
@@ -430,7 +430,7 @@ export const TAG = {
   // other.
   dkgContribution: 'ARENA/v1/DkgContribution',
   dkgEpoch: 'ARENA/v1/DkgEpoch',
-  // A FEDERATION'S RESERVE KEY (§27A.9.2, kanban #397): its own epoch, never a round committee's, even over the same seven nodes
+  // A FEDERATION'S RESERVE KEY (§27A.9.2): its own epoch, never a round committee's, even over the same seven nodes
   reserveEpoch: 'ARENA/v1/ReserveEpoch',
   feeClaim: 'ARENA/v1/FeeClaim',
   serviceRecord: 'ARENA/v1/ServiceRecord',
@@ -447,7 +447,7 @@ export const TAG = {
   // signature that carries somewhere it was never given.
   signedDonationSet: 'ARENA/v1/SignedDonationSet',
   authorityRotation: 'ARENA/v1/AuthorityRotation',
-  // §27A.4.1 (kanban #382): what a developer proposes and what each recipient signs
+  // §27A.4.1: what a developer proposes and what each recipient signs
   donationProposal: 'ARENA/v1/DonationProposal',
   donationApproval: 'ARENA/v1/DonationApproval',
   fundingProposal: 'ARENA/v1/FundingProposal',
@@ -495,13 +495,13 @@ export const TAG = {
   // WHO A TAB IS IN THE LOBBY (M3.3-34): its identity key, from the same seed
   // as every round's player key but under its own tag, so it is never one.
   lobbyIdentity: 'ARENA/v1/LobbyIdentity',
-  // kanban #369: the key a player buys in-game items with, and its proof on an entry that plays with one (contracts.js)
+  //: the key a player buys in-game items with, and its proof on an entry that plays with one (contracts.js)
   itemsKey: 'ARENA/v1/ItemsKey',
   entryItem: 'ARENA/v1/EntryItem',
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',
-  // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9; kanban #209): what the bond's
+  // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9): what the bond's
   // node key signs to say "this bond serves network_id too". Its own tag, so a re-affirmation is never a vote or an update.
   reaffirmation: 'ARENA/v1/Reaffirmation',
   // A JOINED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
@@ -522,49 +522,49 @@ export const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
-  // a federation record's id, the bytes its guardians sign (kanban #321, federation-record.js)
+  // a federation record's id, the bytes its guardians sign (federation-record.js)
   federationRecord: 'ARENA/v1/FederationRecord',
-  // kanban #276: a game's description and website, signed by its developer key beside its manifest (game-info.js)
+  //: a game's description and website, signed by its developer key beside its manifest (game-info.js)
   gameInfo: 'ARENA/v1/GameInfo',
-  // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.
+  // A head-to-head player's hidden move: H(round_id || entry key || move || salt), revealed after entry close.
   headToHeadCommit: 'ARENA/v1/HeadToHeadCommit',
-  // a market order's id, the bytes its player signs (kanban #278, order-book.js)
+  // a market order's id, the bytes its player signs (order-book.js)
   marketOrder: 'ARENA/v1/MarketOrder',
-  // a player's cancel of a market entry before its entry close (kanban #278)
+  // a player's cancel of a market entry before its entry close
   marketCancel: 'ARENA/v1/MarketCancel',
-  // one batch of a market's order book, the set its seats agreed and signed (kanban #278 step 4, order-book.js)
+  // one batch of a market's order book, the set its seats agreed and signed (order-book.js)
   marketBatch: 'ARENA/v1/MarketBatch',
-  // a player's sell of shares its market entry holds (kanban #278, comment 1127)
+  // a player's sell of shares its market entry holds (comment 1127)
   marketSell: 'ARENA/v1/MarketSell',
-  // a seat's word that it did not sign a batch and never will (kanban #278: a batch is void once 5 can no longer be reached)
+  // a seat's word that it did not sign a batch and never will (a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
-  // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities (kanban #280)
+  // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',
-  // §5A.7 reserve seats (kanban #301)
+  // §5A.7 reserve seats
   seatPresent: 'ARENA/v1/SeatPresent',
   seating: 'ARENA/v1/Seating',
-  // §23A.5 a guardian's signed copy of a halted federation's spent-note set (kanban #323)
+  // §23A.5 a guardian's signed copy of a halted federation's spent-note set
   spentSet: 'ARENA/v1/SpentSet',
-  // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close (kanban #312)
+  // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close
   roundResult: 'ARENA/v1/RoundResult',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
-  // What a scalar market's attestors sign (kanban #362 feature 8): the value attestation's body - another tag than the outcome's,
+  // What a scalar market's attestors sign (feature 8): the value attestation's body - another tag than the outcome's,
   // so a signature over one is never a signature over the other, whatever their bytes
   valueAttestation: 'ARENA/v1/ValueAttestation',
   priceSample: 'ARENA/v1/PriceSample',
   priceTape: 'ARENA/v1/PriceTape',
-  // protocol 5 (kanban #312): ONE seat's own reading of one moment, and of the 64 moments before the start - each signed by that
+  // protocol 5: ONE seat's own reading of one moment, and of the 64 moments before the start - each signed by that
   // seat alone; nobody signs anyone else's price
   priceReading: 'ARENA/v1/PriceReading',
   priceTapeReading: 'ARENA/v1/PriceTapeReading',
-  // THE BALLOT (§27A.7.2-3, kanban #329): a proposal's body the proposer signs, its id, and what a bond key signs to vote
+  // THE BALLOT (§27A.7.2-3): a proposal's body the proposer signs, its id, and what a bond key signs to vote
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
   vote: 'ARENA/v1/Vote',
-  // ABSENCE AND DEPARTURE (§23A.4-5, kanban #322): what a guardian signs, and an abandonment proof's id
+  // ABSENCE AND DEPARTURE (§23A.4-5): what a guardian signs, and an abandonment proof's id
   absenceAttestation: 'ARENA/v1/AbsenceAttestation',
   departureNotice: 'ARENA/v1/DepartureNotice',
   abandonmentProof: 'ARENA/v1/AbandonmentProof',
@@ -579,7 +579,7 @@ export const TAG = {
  * minus the round's own seats (the witnesses) and 25% to the donation set of
  * §22A - the developers."
  *
- * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED, the owner 2026-09-21). "Nothing is
+ * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED 2026-09-21). "Nothing is
  * ever burned, here or anywhere in this protocol: a slash that destroys value
  * pays nobody for the harm and makes the slashing itself worthless to prove, so
  * every remainder in this document has a recipient." The other half of a round's
@@ -636,7 +636,7 @@ export const roleByte = (role) => {
  * appears in the compact filters and any light client can find every bond that
  * has ever existed without asking anyone. It costs one dust output, once.
  *
- * the owner 2026-09-08: set for regtest and testnet. Mainnet stays unchosen.
+ * 2026-09-08: set for regtest and testnet. Mainnet stays unchosen.
  * Each program is taggedHash(ARENA/v1/BOND_MARKER, network-name) - 32 bytes,
  * not a wallet key. Compact filters match the P2TR script. Changing a value
  * makes every bond posted against the old one unfindable.
@@ -677,7 +677,7 @@ export function bondMarker(network) {
  * built-in `network_id`, NEVER A VALUE FROM THE CONTRACT." So it is a build
  * constant, not a field a round can talk this software into.
  *
- * the owner 2026-09-08: regtest and testnet4 are set. Mainnet is not. This build's
+ * 2026-09-08: regtest and testnet4 are set. Mainnet is not. This build's
  * default anchor is testnet4 (the live LND chain). Recovery keys are test keys
  * on disk, not cold-storage mainnet keys.
  */
@@ -743,7 +743,7 @@ export function genesisConfigHash() {
 export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 
 /**
- * THE OBJECTION WINDOW, FIXED (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): exactly 600 seconds of wall time from
+ * THE OBJECTION WINDOW, FIXED (§13A, WINDOW-10-SPEC, RULED 2026-10-01 09:40): exactly 600 seconds of wall time from
  * the round's end as its contract fixes it. Not a contract choice, not blocks, not a range: a Round Contract whose
  * objection_window_W is anything else is invalid. It replaces the six-hour cap (MAX_OBJECTION_WINDOW_MS, withdrawn).
  */
@@ -799,7 +799,7 @@ export const splitNodesDevelopers = (amount) => {
 };
 
 /**
- * THE CUSTODY FIELD HAS ONE VALUE (RULED, the owner 2026-09-22 22:59, §23.6):
+ * THE CUSTODY FIELD HAS ONE VALUE (RULED 2026-09-22 22:59, §23.6):
  * "[the threshold-signed Lightning custody] does not exist, past rounds included, no decode-only value ... the custody field has
  * ONE value, FEDERATION, and no other value is defined, reserved, or kept for decoding. A round that
  * names anything else is invalid, PAST ROUNDS INCLUDED: a record from before this ruling that carries
@@ -835,14 +835,14 @@ export const STAKE_EXPIRY_BLOCKS = 144;
 
 /**
  * HOW FAR BELOW THE VERIFYING HEIGHT A LOCK'S OWN HEIGHT MAY BE, in the federation's blocks: 12
- * (§23.1 step 5, `stake_lock_freshness_blocks`, RULED the owner 2026-09-24). A lock verified within 12
+ * (§23.1 step 5, `stake_lock_freshness_blocks`, RULED 2026-09-24). A lock verified within 12
  * blocks of its creation still has at least 132 blocks - 22 hours on mainnet - to cover the round, the
  * objection window and the settlement transaction.
  */
 export const STAKE_LOCK_FRESHNESS_BLOCKS = 12;
 
 /**
- * THE SCORE'S UNIT: an integer count of 1e-5 points (the owner 2026-09-25: "Their product is the score, so the core's score
+ * THE SCORE'S UNIT: an integer count of 1e-5 points (2026-09-25: "Their product is the score, so the core's score
  * is that product"). The core's score is 1000 · E · T · C with each factor on a 1e-5 grid (core/src/rules/score.js,
  * SCORE_SCALE there is this number and core/test/score-scale.test.js pins the two together); a PlayerResult's u32 score
  * carries it as-is. A round contract's min_score is compared with it directly - multiplayer_p2p.md §18A.5, "score >=

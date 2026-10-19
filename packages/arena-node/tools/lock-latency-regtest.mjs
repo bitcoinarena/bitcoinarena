@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * HOW LONG A STAKE LOCK TAKES TO BE ACCEPTED BY THE FEDERATION (kanban #178, plan comment 327, Go 2026-10-05: "under 200 ms").
+ * HOW LONG A STAKE LOCK TAKES TO BE ACCEPTED BY THE FEDERATION (plan comment 327, Go 2026-10-05: "under 200 ms").
  *
  * The page's own wasm lock client (WASM_PKG), joined to the federation by its invite, funded through one of its gateways
  * (PAYER pays the deposit invoice), then COUNT stake locks, each:
@@ -26,7 +26,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
-// ECASH_FILE (kanban #192): funded by e-cash notes of the federation (a fedimint-cli client's, from an on-chain peg-in) - no payer
+// ECASH_FILE: funded by e-cash notes of the federation (a fedimint-cli client's, from an on-chain peg-in) - no payer
 for (const k of ['INVITE_FILE', 'WASM_PKG', ...(env.ECASH_FILE ? [] : ['LNCLI', 'PAYER_DIR', 'PAYER_RPC'])]) if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const GAP_MS = Number(env.GAP_MS || 0), COUNT = Number(env.COUNT || 20), AMOUNT = BigInt(env.AMOUNT_MSAT || 10000), LIMIT_MS = Number(env.LIMIT_MS || 200), WAIT_MS = 10000;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
@@ -48,7 +48,7 @@ const lc = await wasm.LockClient.join(invite, wasm.LockClient.federationIdOf(inv
 say({ step: 'joined' });
 
 if (env.ECASH_FILE) {
-  // FUNDED BY NOTES (kanban #192): the federation's own e-cash, handed over
+  // FUNDED BY NOTES: the federation's own e-cash, handed over
   const got = JSON.parse(await within(lc.receiveEcash(readFileSync(env.ECASH_FILE, 'utf8').trim()), 120000, 'the notes'));
   say({ step: 'funded', by: 'ecash', got, balanceMsat: await lc.balanceMsat() });
 } else {
@@ -60,7 +60,7 @@ const final = await within(lc.awaitReceive(rcv.operation), 120000, 'the deposit'
 say({ step: 'funded', msat: deposit, paid: (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0], final, balanceMsat: await lc.balanceMsat() });
 }
 
-// THE LOBBY'S WAIT (kanban #178 step 2): the tweak queue full before the first lock (TWEAKS_BEFORE, default 200; 0 skips)
+// THE LOBBY'S WAIT: the tweak queue full before the first lock (TWEAKS_BEFORE, default 200; 0 skips)
 const TWEAKS_BEFORE = Number(env.TWEAKS_BEFORE ?? 200);
 if (TWEAKS_BEFORE > 0 && typeof lc.tweaksReady === 'function') {
   const f0 = performance.now();
@@ -72,14 +72,14 @@ const statusCalls = [];      // POLL_STATUS: how long each lockStatus (two thres
 for (let i = 0; i < COUNT; i++) {
   // GAP_MS: idle time before each lock (a player locks once per join; the previous lock's change notes are finished by then)
   if (GAP_MS) await new Promise((r) => setTimeout(r, GAP_MS));
-  // the client's one thread: how long it was blocked during this lock (kanban #178 split)
+  // the client's one thread: how long it was blocked during this lock (split)
   const loop = monitorEventLoopDelay({ resolution: 10 }); loop.enable();
   const t0 = performance.now();
   let submitted = null, t1 = null, t2 = null, why = null, statusMs = null, timing = null, acceptedWall = null, rawSeen = null, tickGaps = null, hookSeen = null;
   try {
     submitted = JSON.parse(await within(lc.lockSubmit(key(), String(AMOUNT), '', '0', key(), key(), 150, '[]'), WAIT_MS, 'the hand-over'));
     t1 = performance.now();
-    // POLL_STATUS=1 (the split, kanban #178): beside lockAccepted, read the stake output's status every 25 ms - when the
+    // POLL_STATUS=1 (the split): beside lockAccepted, read the stake output's status every 25 ms - when the
     // guardians' stored answer is first readable by this client, set against when lockAccepted reports the acceptance
     let polled = null;
     const poll = env.POLL_STATUS === '1' ? (async () => {
@@ -89,7 +89,7 @@ for (let i = 0; i < COUNT; i++) {
         await new Promise((r) => setTimeout(r, 25));
       }
     })() : null;
-    // #178 step 1: the raw wasm promise's own settle time, and the longest gap of a 1 ms ticker while it is open
+    // step 1: the raw wasm promise's own settle time, and the longest gap of a 1 ms ticker while it is open
     let hook = null;
     // the hook at the answer: a microtask and a timer, each stamped - a late timer means the thread itself was busy
     globalThis.__blwp178 = (ms) => { const h = { returned: ms, hookAt: Date.now(), microAt: null, timerAt: null }; hook = h; queueMicrotask(() => { h.microAt = Date.now(); }); setTimeout(() => { h.timerAt = Date.now(); }, 0); };
@@ -98,9 +98,9 @@ for (let i = 0; i < COUNT; i++) {
     const ticker = setInterval(() => { const n = Date.now(); ticks.push([n, n - lastTick]); lastTick = n; }, 1);
     rawP.then(() => { rawSeen = Date.now(); }, () => {});
     const accRaw = await within(rawP, WAIT_MS, 'the federation\'s acceptance').finally(() => clearInterval(ticker));
-    // STOP: the client knows - taken at once, before any probe below waits (a probe's wait once inflated this, kanban #178)
+    // STOP: the client knows - taken at once, before any probe below waits (a probe's wait once inflated this)
     t2 = performance.now();
-    acceptedWall = Date.now();   // #178 step 1: the same clock as the wasm's own marks
+    acceptedWall = Date.now();   // step 1: the same clock as the wasm's own marks
     tickGaps = ticks.filter(([, g]) => g >= 20).map(([n, g]) => [n, g]);
     if (hook && hook.timerAt === null) await new Promise((r) => setTimeout(r, 5));
     hookSeen = hook;
@@ -111,7 +111,7 @@ for (let i = 0; i < COUNT; i++) {
   // the wall clock beside each instant, to set against the guardians' own logs (their "Transaction accepted" lines)
   const wall = (t) => (t === null ? null : Math.round(performance.timeOrigin + t));
   loop.disable();
-  // the host's load beside the clocks (the owner 2026-10-05: the live seats, donors and tn4 guardians share this host)
+  // the host's load beside the clocks (2026-10-05: the live seats, donors and tn4 guardians share this host)
   const pressure = (() => { try { return Number((readFileSync('/proc/pressure/cpu', 'utf8').match(/some avg10=([\d.]+)/) || [])[1]); } catch { return null; } })();
   const host = { load1: Math.round(loadavg()[0] * 10) / 10, cpuPressure10: pressure };
   const blockedMs = { max: Math.round(loop.max / 1e6), p50: Math.round(loop.percentile(50) / 1e6), mean: Math.round(loop.mean / 1e6) };
@@ -129,7 +129,7 @@ say({ step: 'summary', count: COUNT, limitMs: LIMIT_MS, accepted: accepted.lengt
   acceptMs: accepted.length ? { p50: pct(accepted, 0.5), p95: pct(accepted, 0.95), max: Math.max(...accepted), min: Math.min(...accepted) } : null,
   submitMs: { p50: pct(locks.filter((l) => l.submitMs !== null).map((l) => l.submitMs), 0.5) },
   ...(statusCalls.length ? { statusCallMs: { n: statusCalls.length, p50: pct(statusCalls.map(Math.abs), 0.5), p95: pct(statusCalls.map(Math.abs), 0.95), max: Math.max(...statusCalls.map(Math.abs)), threw: statusCalls.filter((x) => x < 0).length } } : {}), pass });
-// THE LEFTOVER NOTES BACK (kanban #192): a run's lock client keeps its wallet in memory only - what the locks did not use is
+// THE LEFTOVER NOTES BACK: a run's lock client keeps its wallet in memory only - what the locks did not use is
 // handed back to ECASH_FILE.back for the federation's own client to receive, not lost with the process
 if (env.ECASH_FILE) {
   try { const back = JSON.parse(await within(lc.sendAllEcash(), 60000, 'the leftover notes'));

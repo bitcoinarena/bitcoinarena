@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COLLECT'S LINES FOR THE LOBBY (kanban #153, the owner 2026-10-07): the page owns the words, Unity draws them. collectLines
+// THE COLLECT'S LINES FOR THE LOBBY (2026-10-07): the page owns the words, Unity draws them. collectLines
 // builds at most three - another kept seed's record, a failed collect, an uncollectable record - only those that apply, in the
 // words the plan accepted (comment 691); nothing when nothing applies. And the page's lobby view hands them to Unity.
 import test from 'node:test';

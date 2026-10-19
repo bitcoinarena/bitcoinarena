@@ -458,7 +458,7 @@ public class WorldSolidsTests
             if (low) inLaneLow = true; else lintel = true;
         }
 
-        // RE-STATED FOR RULING 4 (the owner 2026-09-22): "the map edge is a clamp, not a wall."
+        // RE-STATED FOR RULING 4 (2026-09-22): "the map edge is a clamp, not a wall."
         //
         // This used to assert a LOW box in the truck's own lane - "hinter dem Truck steht keine Wand" -
         // and it passed on the map's WEST EDGE WALL, 85 m further west, not on the post office at all.

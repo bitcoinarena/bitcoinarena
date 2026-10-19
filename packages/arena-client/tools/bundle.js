@@ -42,14 +42,14 @@ walk(SRC + 'client.js');
 // client that publishes a run should not depend on whether anybody is drawing
 // the others.
 walk(SRC + 'ghost-field.js');
-// THE PROTOCOL RESERVES (kanban #397): the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
+// THE PROTOCOL RESERVES: the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
 walk(SRC + 'reserves-page.js');
-// AND PROJECT PROPOSALS (kanban #397): bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
+// AND PROJECT PROPOSALS: bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
 walk(SRC + 'funding-page.js');
 walk(SRC + 'donation-gift-page.js');
 walk(SRC + 'fee-proposal-page.js');
 walk(SRC + 'leaderboard-page.js');
-// AND THE EXCHANGE VIEW OF A MARKET (kanban #448): the page draws a market client's order book, chart and depth with it
+// AND THE EXCHANGE VIEW OF A MARKET: the page draws a market client's order book, chart and depth with it
 walk(SRC + 'exchange-view.js');
 // AND THE BACKUP GATE AND THE PHRASE IT CHECKS (§24B). Nothing in the client imports them - the gate is
 // what the PAGE asks before a deposit or a paid join, and the phrase is what it shows in Settings - so
@@ -60,22 +60,22 @@ walk(SRC + 'bip39.js');
 // client exists at all: nothing imports it, because a client that publishes a
 // run must not depend on how the page was told which round to publish to.
 walk(SRC + 'join.js');
-// AND THE COMMITTEE THE CLIENT BUILDS ITSELF (kanban #296, spec 5A.6): what a paid join deals the stake to
+// AND THE COMMITTEE THE CLIENT BUILDS ITSELF (spec 5A.6): what a paid join deals the stake to
 walk(SRC + 'committee.js');
-// AND WHAT IT BELIEVES ABOUT A FEDERATION (kanban #321): the guardians' signed record, checked against that census
+// AND WHAT IT BELIEVES ABOUT A FEDERATION: the guardians' signed record, checked against that census
 walk(SRC + 'federations.js');
-// AND THE WARNINGS BEFORE ENTRY (§18A.7 / §22A, kanban #316): what a paid join shows and the player confirms
+// AND THE WARNINGS BEFORE ENTRY (§18A.7 / §22A): what a paid join shows and the player confirms
 walk(SRC + 'entry-warnings.js');
-// AND A HALTED FEDERATION'S CLAIMS (kanban #323): the page presents its notes and collects what the arbitration set paid
+// AND A HALTED FEDERATION'S CLAIMS: the page presents its notes and collects what the arbitration set paid
 walk(SRC + 'liquidation-claim.js');
-// AND WHO WON A PRICE ROUND (kanban #312): the round's verdict, signed by the settlement committee
+// AND WHO WON A PRICE ROUND: the round's verdict, signed by the settlement committee
 walk(SRC + 'round-verdict.js');
-// AND THE RUN MADE SAFE BEFORE THE VICTORY SCREEN (kanban #315, §13A): two committee nodes hold the whole transcript
+// AND THE RUN MADE SAFE BEFORE THE VICTORY SCREEN (§13A): two committee nodes hold the whole transcript
 walk(SRC + 'transcript-upload.js');
 // AND THE LOBBY (M3.3-34): what a page with no round in its link lists - the
 // named nodes' rounds, each checked against its own contract.
 walk(SRC + 'lobby.js');
-// AND THE NEXT ROUND (the owner 2026-09-28, option 1 of A): after a run, the round the page enters by default, and the
+// AND THE NEXT ROUND (2026-09-28, option 1 of A): after a run, the round the page enters by default, and the
 // countdown and the exit it shows.
 walk(SRC + 'next-round.js');
 // AND WHO THE TAB IS IN IT: a generated key, a name from that key, and the
@@ -89,24 +89,24 @@ walk(SRC + 'donation-pay.js');
 // AND WHERE A WINNER'S WINNINGS ARE SENT (ruled 2026-09-23): the one question at the run's end, and the signed
 // address posted to every signer node that has not taken it. Nothing in the client imports it; the page calls it.
 walk(SRC + 'winnings.js');
-// AND THE GAME'S ITEMS (kanban #365, #369): the shop, the purchase paid from the player's wallet, what the player owns, and the items
+// AND THE GAME'S ITEMS: the shop, the purchase paid from the player's wallet, what the player owns, and the items
 // an entry plays with - the page calls them, nothing in the client imports them
 walk(SRC + 'item-buy.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
 walk(SRC + 'market.js');
-// AND A HEAD-TO-HEAD ROUND'S HIDDEN MOVE AND ITS REVEAL (kanban #233)
+// AND A HEAD-TO-HEAD ROUND'S HIDDEN MOVE AND ITS REVEAL
 walk(SRC + 'head-to-head.js');
-// AND THE GAMES (kanban #208): the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
+// AND THE GAMES: the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
 walk(SRC + 'games.js');
 walk(SRC + 'node-discovery.js');
-// AND A GAME'S SEASON BOARD (kanban #362, PLATFORM-RESEARCH item 1): the rows the page draws from a seat's GET /season, and
+// AND A GAME'S SEASON BOARD (PLATFORM-RESEARCH item 1): the rows the page draws from a seat's GET /season, and
 // the ask that falls through the game's seats. Nothing in the client imports it; the page's season view calls it.
 walk(SRC + 'season-view.js');
-// AND A PLAYER'S BADGES ON THAT BOARD (kanban #362, PLATFORM-RESEARCH items 13 + 1): the badge seats' awards merged by
+// AND A PLAYER'S BADGES ON THAT BOARD (PLATFORM-RESEARCH items 13 + 1): the badge seats' awards merged by
 // (d, scope), their icons and words, and the book that asks each player once per board. The page's season view calls it.
 walk(SRC + 'badges-view.js');
-// AND ZAPS AND TIPS (kanban #362, PLATFORM-RESEARCH item 14): a player zapped from the season board, a game's developer tipped
+// AND ZAPS AND TIPS (PLATFORM-RESEARCH item 14): a player zapped from the season board, a game's developer tipped
 // from its tile - the player's own NWC wallet paying a Lightning address, each invoice checked first (NIP-57).
 walk(SRC + 'zap.js');
 
@@ -131,7 +131,7 @@ for (const file of order) {
 }
 
 // AN IMPORT ALIAS IS STRIPPED WITH ITS IMPORT: `import { a as b }` leaves `b` undefined in the page unless some file of the bundle
-// declares a top-level `b` (measured live, kanban #362: `seriesId as seriesIdOf` - every node test green, the page threw
+// declares a top-level `b` (measured live,: `seriesId as seriesIdOf` - every node test green, the page threw
 // "seriesIdOf is not defined"). Such an alias is refused here, by name.
 for (const file of order) {
   for (const m of readFileSync(file, 'utf8').matchAll(/^import\s*\{([^}]*)\}\s*from/gm)) {
@@ -178,11 +178,11 @@ out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
 out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
-// The debug label over a ghost (the owner 2026-09-17 19:15): the page writes it, blwp.jslib hands it to Unity.
+// The debug label over a ghost (2026-09-17 19:15): the page writes it, blwp.jslib hands it to Unity.
 out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,\n';
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
 out += '         stakeLine: stakeLine,\n';
-// THE COMMITTEE'S PRICE (§11, kanban #311): the page turns a signed price in cents into the tape's unit for its core
+// THE COMMITTEE'S PRICE (§11): the page turns a signed price in cents into the tape's unit for its core
 out += '         centsToTapeUnits: centsToTapeUnits,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,\n';
@@ -237,7 +237,7 @@ out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfei
 // AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
 // contract to this seed's key spent into the tab's wallet, and its line.
 out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,\n';
-// A SLASH'S PAYOUT (kanban #307): listed by the arbitration service, collected into the player wallet
+// A SLASH'S PAYOUT: listed by the arbitration service, collected into the player wallet
 out += '         redeemSlashPayout: redeemSlashPayout, collectSlashPayout: collectSlashPayout, slashPayoutMine: slashPayoutMine, slashPayoutKept: slashPayoutKept,\n';
 // AND THE PLAYER'S OWN STAKE BACK BY THE SIGNER NODES' FORFEIT, after the window, and its line.
 out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
@@ -296,26 +296,26 @@ out += '         replayLinkFor: replayLinkFor, httpsOfEndpoint: httpsOfEndpoint,
 // and the address check the bridge's signing call makes before it signs anything.
 out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings, winningsAddressOf: winningsAddressOf,\n';
 out += '         winningsQualify: winningsQualify,\n';
-// A MARKET (kanban #206 slice 2, §0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
+// A MARKET (§0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
 out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
 out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
-// A SCALAR MARKET'S VALUE AND A MARKET ON A GAME'S SOURCE RESULT, CHECKED BY THE PAGE (kanban #362, protocols 7 and 6)
+// A SCALAR MARKET'S VALUE AND A MARKET ON A GAME'S SOURCE RESULT, CHECKED BY THE PAGE (protocols 7 and 6)
 out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,\n';
-// A HEAD-TO-HEAD ROUND (kanban #233): the hidden move, its commitment, its reveal, and the reveals the seats hold
+// A HEAD-TO-HEAD ROUND: the hidden move, its commitment, its reveal, and the reveals the seats hold
 out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
-// THE SEASON BOARD (kanban #362): its lines from a /season answer, and the ask of the game's seats in turn
+// THE SEASON BOARD: its lines from a /season answer, and the ask of the game's seats in turn
 out += '         seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
 out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,\n';
-// A PLAYER'S BADGES ON THE BOARD (kanban #362): the merge of the badge seats' awards, their words, and the board's book
+// A PLAYER'S BADGES ON THE BOARD: the merge of the badge seats' awards, their words, and the board's book
 out += '         badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,\n';
 out += '         yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,\n';
-// ZAPS AND TIPS (kanban #362 item 14): a zap or a tip from the player's own wallet, the player's address and the zaps they received
+// ZAPS AND TIPS: a zap or a tip from the player's own wallet, the player's address and the zaps they received
 out += '         sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,\n';
 out += '         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,\n';
-// THE GAME'S ITEMS (kanban #365, #369): the shop, the purchase, what the player owns, the items an entry plays with and their unlocks
+// THE GAME'S ITEMS: the shop, the purchase, what the player owns, the items an entry plays with and their unlocks
 out += '         shopOf: shopOf, buyItem: buyItem, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,\n';
 out += '         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,\n';
-// WHAT AN ENTRY'S STAKE IS MADE OF (kanban #8): the deposit request says it
+// WHAT AN ENTRY'S STAKE IS MADE OF: the deposit request says it
 out += '         entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';

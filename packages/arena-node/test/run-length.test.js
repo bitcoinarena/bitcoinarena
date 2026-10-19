@@ -77,14 +77,14 @@ function drive(round, rid, eid, from, count) {
   return { stored, refused };
 }
 
-// THE 82/90 HARD FORK (the owner 2026-10-01: "The round length must be part of the contract - not a fixed constant"): on the
+// THE 82/90 HARD FORK (2026-10-01: "The round length must be part of the contract - not a fixed constant"): on the
 // truck after the fork a round names its run length - any from 1 to BLOCK_TICKS opens, and the core ends its runs there;
 // longer is refused by name. On the truck BEFORE the fork (its hash d15c39bb..., installed as the same core held to one
 // length) only its own BLOCK_TICKS opens. Before the fork this test refused every length but BLOCK_TICKS on the one truck.
 test('a round names its run length on the truck after the fork - 1 to 10800 opens, longer is refused; the truck before the fork takes only its 10800', () => {
   const round = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
   for (const ticks of [BLOCK_TICKS, 4920, 1, BLOCK_TICKS - 1]) assert.ok(round.open(contractWith(ticks)), `a round naming ${ticks} was refused`);
-  // SINCE NEXTBLOCK IS A GAME (kanban #202) its manifest's run_ticks_max refuses these before the core is asked
+  // SINCE NEXTBLOCK IS A GAME its manifest's run_ticks_max refuses these before the core is asked
   for (const ticks of [BLOCK_TICKS + 1, 0])
     assert.throws(() => round.open(contractWith(ticks)), new RegExp(`that round's run is ${ticks} ticks; game "nextblock" runs at most ${BLOCK_TICKS}`));
   // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
@@ -113,7 +113,7 @@ test('a whole run is stored, and the tick after it is refused', () => {
   assert.match(over.refused, /inputs past the end are inputs for a run that is over/);
 });
 
-// KANBAN #130 (the owner 2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
+// KANBAN (2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
 // entry's run ends at the round's last tick, the same as every run - before, it had a whole run from its own join.
 test('a late joiner\'s run ends with the round\'s: from its join tick to the round\'s last tick', () => {
   const round = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
@@ -171,7 +171,7 @@ test('an 82 s round replays to its own 4920 ticks: a whole run replays and ends 
   assert.equal(whole.outcome, 'FAILED', 'a braked truck at its 82 s run end did not end FAILED (MISSED)');
 });
 
-// M3 R1 R3 (the owner 2026-09-15 08:07: several cores and rule sets at once): a round's run length is its own
+// M3 R1 R3 (2026-09-15 08:07: several cores and rule sets at once): a round's run length is its own
 // core's under its config, not the truck's BLOCK_TICKS - measured on the round store itself.
 test('a round\'s run length is its own core\'s under its config: the counter opens at its 120 and refuses 9000, and a store without its game opens neither', async () => {
   const { COUNTER, CONFIGS, COUNTER_GAME, COUNTER_GAME_ID } = await import('./cores/counter.js');
@@ -181,7 +181,7 @@ test('a round\'s run length is its own core\'s under its config: the counter ope
   const counterRound = (blockTicks) => ({ ...contractWith(blockTicks), gameId: COUNTER_GAME_ID, simCoreHash: fromHex(COUNTER.hash), configHash: LOW.hash });
   const withCounter = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: [NEXTBLOCK, COUNTER_GAME] });
   assert.ok(withCounter.open(counterRound(LOW.config.ticks)));
-  // SINCE THE COUNTER IS A GAME (kanban #202) its manifest says a run is at most 120 ticks, and that refuses the round
+  // SINCE THE COUNTER IS A GAME its manifest says a run is at most 120 ticks, and that refuses the round
   // before the core is asked
   assert.throws(() => withCounter.open(counterRound(BLOCK_TICKS)),
     new RegExp(`that round's run is ${BLOCK_TICKS} ticks; game "counter" runs at most ${LOW.config.ticks}`));

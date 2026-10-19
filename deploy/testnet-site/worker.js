@@ -1,4 +1,4 @@
-// kanban #268: testnet.bitcoin-arena.io serves the always-current core build - the Pages project btc-logistics-core's
+//: testnet.bitcoin-arena.io serves the always-current core build - the Pages project btc-logistics-core's
 // `arena` branch (deploy-arena-only: the production branch stays the old page). A Pages custom domain can only serve the
 // production branch, so this Worker passes every request through to the arena alias unchanged, headers included (the
 // .unityweb files keep Content-Encoding: br, so the browser still decompresses and compiles while it downloads). Deploys

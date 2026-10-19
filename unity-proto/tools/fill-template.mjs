@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECK = process.argv.includes('--check');
-// `--game <name>` (kanban #279): a deploy for one game's site - the page opens on that game, and shows no nextblock screen
+// `--game <name>`: a deploy for one game's site - the page opens on that game, and shows no nextblock screen
 const gameAt = process.argv.indexOf('--game');
 const GAME = gameAt > 1 ? process.argv[gameAt + 1] : null;
 if (gameAt > 1 && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(GAME))) { console.error('--game names a game by its manifest name, e.g. rock-paper-scissors'); process.exit(2); }
@@ -80,7 +80,7 @@ const values = {
   COMPANY_NAME: setting('companyName'),
   PRODUCT_NAME: setting('productName'),
   // THE BUILD'S OWN NUMBER (BuildWebGL leaves it in the build as build.txt), so the loading screen says what the lobby
-  // says; the committed ProjectSettings only for a build that has none (the owner 2026-09-29: 17xx under a 22xx lobby).
+  // says; the committed ProjectSettings only for a build that has none (2026-09-29: 17xx under a 22xx lobby).
   PRODUCT_VERSION: existsSync(join(BUILD, 'build.txt')) ? readFileSync(join(BUILD, 'build.txt'), 'utf8').trim() : setting('bundleVersion'),
 };
 
@@ -106,7 +106,7 @@ if (GAME) {
   html = html.replace(tag, `<meta name="arena-site-game" content="${GAME}">`);
   console.log(`  site game -> ${GAME}`);
 }
-// EACH BUILD FILE'S PACKED AND UNPACKED SIZE (kanban #441): the .unityweb files are brotli and the browser unpacks them as they arrive,
+// EACH BUILD FILE'S PACKED AND UNPACKED SIZE: the .unityweb files are brotli and the browser unpacks them as they arrive,
 // so the page counts unpacked bytes; with both sizes it says the real download - got x packed / unpacked - in MB and MB/s
 {
   const { brotliDecompressSync } = await import('node:zlib');

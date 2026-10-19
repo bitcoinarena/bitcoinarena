@@ -17,7 +17,7 @@
 //
 // In time: nothing is decided here; the mark goes on as any mark. No first mark
 // yet: nothing from this function - the walk-away is decided AT THE DOOR once the entry's start window has passed
-// (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27: FORFEIT, score 0, "not left undecided until the close"; the node's
+// (ALL-BUT-MIN-1727, 2026-09-29 17:27: FORFEIT, score 0, "not left undecided until the close"; the node's
 // door sweep, by the close's own peer-checked `stoppedOutcome`), never ENTRY_VOID and never a refund.
 //
 // THE LOCK: a FORFEIT stake is claimed in the round's settlement transaction
@@ -45,7 +45,7 @@ const firstMarkIsChainStart = (previousHash) =>
  * @returns {{ outcome: 'FORFEIT' | null, lastTick: number, why: string }}
  */
 export function firstMarkOutcome({ joinTick, originTick, originName = 'join', deadlineTicks, firstMark } = {}) {
-  // THE WINDOW COUNTS FROM WHEN THE PLAYER CAN ACTUALLY DRIVE (the owner 2026-09-21).
+  // THE WINDOW COUNTS FROM WHEN THE PLAYER CAN ACTUALLY DRIVE (2026-09-21).
   //
   // It counted from the entry's `joinTick`, which a paying browser sets to 0 - so the 900 ticks were spent
   // while the player was still waiting to pay. MEASURED on the live Daily: the first mark landed 4320 ticks

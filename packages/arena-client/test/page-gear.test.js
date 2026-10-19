@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GEAR FROM THE FIRST PAINT (kanban #200: Settings waited 2.6-5.1 s for Unity's lobby). The page's own code runs
+// THE GEAR FROM THE FIRST PAINT (Settings waited 2.6-5.1 s for Unity's lobby). The page's own code runs
 // under the page's name (page-script.js) on a small fake page. Measured: the strip with the gear is up over the loading
 // screen, Unity's title and the lobby, and gone over a round's own screens and while driving; the backup warning and the
 // balance strip stay over the lobby alone; a click on the gear opens Settings at once, before the page's main script,
@@ -25,7 +25,7 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
   for (const id of ['blwp-money', 'blwp-settings', 'blwp-lobby-balance', 'blwp-backup-notice', 'blwp-backup-warn', 'blwp-settings-backup',
     'blwp-lobby-confirmed', 'blwp-bal-confirmed', 'blwp-lobby-pending', 'blwp-bal-pending', 'blwp-balance-line', 'blwp-money-why']) el(id);
   const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 430, height: 932 }) };
-  // the backup warning sits in the loading screen (kanban #518): it is gone with #boot
+  // the backup warning sits in the loading screen: it is gone with #boot
   const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'blwp-backup-warn' && !boot ? null : els[id] || null) };
   const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
@@ -35,7 +35,7 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
 }
 
 test('the strip with the gear is up from the loading screen on: before Unity, over its title, over the lobby', () => {
-  // kanban #518 (the owner 2026-10-19: "backup warning should always be in the loading screen instead of the header")
+  // (2026-10-19: "backup warning should always be in the loading screen instead of the header")
   assert.deepEqual(strip({ unity: false, boot: true, lobby: undefined }), { money: '', warn: 'flex', balance: 'none' }, 'the loading screen: the header and the backup warning');
   assert.deepEqual(strip({ lobby: { showing: true, lobby: false } }), { money: '', warn: 'gone', balance: 'none' }, 'Unity\'s title, no lobby: the header alone');
   assert.deepEqual(strip({}), { money: '', warn: 'gone', balance: 'flex' }, 'the lobby: the header and the balance, no warning in the header');
@@ -83,8 +83,8 @@ test('the gear has one click handler: the main script no longer adds its own', (
   assert.equal(HTML.split("getElementById('blwp-settings-go').addEventListener").length - 1, 1);
 });
 
-test('a wallet the player brought in - restored words or a Nostr account - shows no backup warning (kanban #387)', () => {
-  // read on the loading screen, where the warning is since kanban #518
+test('a wallet the player brought in - restored words or a Nostr account - shows no backup warning', () => {
+  // read on the loading screen, where the warning is since 
   assert.equal(strip({ boot: true }).warn, 'flex', 'a seed minted here and never checked: the warning');
   assert.equal(strip({ boot: true, broughtIn: true }).warn, 'none', 'restored or opened from Nostr: no warning');
 });

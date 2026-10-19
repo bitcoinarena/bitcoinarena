@@ -286,7 +286,7 @@ public class TruckHealth : MonoBehaviour
 
         if (_burningFor < respawnSeconds) return;
 
-        // INSIDE A LIVE ROUND THE WRECK IS THE END, AND IT STAYS ONE (the owner 2026-09-27 13:25: "After WASTED the truck
+        // INSIDE A LIVE ROUND THE WRECK IS THE END, AND IT STAYS ONE (2026-09-27 13:25: "After WASTED the truck
         // comes back ... the cargo panel is up, and WASD steers it"). Nothing is reset here: no health, no truck, no
         // `Respawned` - that opened the cargo panel and ended WASTED over a run the core had called WRECKED. The wreck
         // burns on under WASTED until the lobby; PLAY brings the truck back for the next round (`Revive`).
@@ -298,7 +298,7 @@ public class TruckHealth : MonoBehaviour
     }
 
     /// <summary>
-    /// THE NEXT ROUND'S TRUCK (the owner 2026-09-27 13:25): a wreck held under WASTED is put right when PLAY starts the next
+    /// THE NEXT ROUND'S TRUCK (2026-09-27 13:25): a wreck held under WASTED is put right when PLAY starts the next
     /// round - behind the lobby, not in front of the player - and WASTED goes with it. No cargo panel is opened here;
     /// PLAY opens it.
     /// </summary>
@@ -327,7 +327,7 @@ public class TruckHealth : MonoBehaviour
         // back, which is the editor's correct behaviour rather than a
         // degraded one.
         if (_rb != null) _rb.isKinematic = Blwp.BlwpCore.Available;
-        // INSIDE A LIVE ROUND THE WRECK IS THE END OF THE RUN (the owner 2026-09-15): the page finishes it off the core's
+        // INSIDE A LIVE ROUND THE WRECK IS THE END OF THE RUN (2026-09-15): the page finishes it off the core's
         // WRECKED and the lobby comes back; a respawn would teleport the core's truck, a write in no transcript. The
         // next round's core starts it afresh.
         if (truck != null) truck.enabled = true;

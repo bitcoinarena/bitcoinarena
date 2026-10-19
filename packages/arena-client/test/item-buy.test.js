@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN IN-GAME ITEM BOUGHT FROM THE PAGE (kanban #365): served list, split, payment, signed record, handed to a seat - with seats and a wallet
+// AN IN-GAME ITEM BOUGHT FROM THE PAGE: served list, split, payment, signed record, handed to a seat - with seats and a wallet
 // standing in, the record a seat receives is one purchaseStands takes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,7 +52,7 @@ test('bought: the split paid in one transaction, the signed record handed to a s
   assert.deepEqual((await ownedItems({ seats: ['https://s1'], player: player.pubkey, fetch })).map((i) => i.itemId), ['large-truck']);
 });
 
-// THE BUYER'S DEVELOPERS' SHARE (kanban #377, the owner 2026-10-16: "if the ingame donations are zero the price is 250 Sats instead of 500
+// THE BUYER'S DEVELOPERS' SHARE (2026-10-16: "if the ingame donations are zero the price is 250 Sats instead of 500
 // sats. Node fees are never optional."): at 0 % the three nodes alone are paid, 250 sat, and the record a seat gets stands
 test('bought at 0 %: the nodes\' half alone, 250 sat, the record version 11 standing at the seat; a share not offered is refused', async () => {
   const { fetch, posted } = seatsWith();
@@ -82,7 +82,7 @@ test('refused by step: an item not sold, a payment that fails, a record no seat 
   assert.ok(r.retry && r.purchaseId, 'the record to hand again');
 });
 
-// THE ITEMS IN A RUN (kanban #369): one items key in every round, its proof per entry, the shop of a game, the unlocks a run starts with
+// THE ITEMS IN A RUN: one items key in every round, its proof per entry, the shop of a game, the unlocks a run starts with
 const CURVE = { pointX: (sk) => schnorr.getPublicKey(sk), signSchnorr: (m, sk) => schnorr.sign(m, sk) };
 
 test('the items key is the same in every round and not a round key; it proves an owned item for exactly one entry', () => {

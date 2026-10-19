@@ -205,7 +205,7 @@ public class CandleTerrainTests
         for (int i = 0; i < 120; i++) { ground += 2.75f * dt; drawn = ArmyRenderer.EaseRest(drawn, ground, dt); worst = Mathf.Max(worst, Mathf.Abs(drawn - ground)); }
         Assert.Less(worst, 1e-4f, $"the hull lagged a slope by {worst:0.0000} m");
     }
-    // THE GATE OF COMMENT 979 (kanban #266): a rebuild is due when a candle word changes, never for the shift alone - the
+    // THE GATE OF COMMENT 979: a rebuild is due when a candle word changes, never for the shift alone - the
     // shift is what the slide carries between rebuilds
     [Test]
     public void ARebuildIsDueForACandleWordButNotForTheShift()
@@ -222,7 +222,7 @@ public class CandleTerrainTests
         Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a new forming candle does not call for a rebuild");
     }
 
-    // THE TAIL IS THE SAME RIBBON (kanban #266, comment 980): the last two candles are their own mesh, rebuilt alone when only
+    // THE TAIL IS THE SAME RIBBON (comment 980): the last two candles are their own mesh, rebuilt alone when only
     // the forming candle moved - candles [0, n-2) followed by [n-2, n) are vertex for vertex the full build, on every fixture view
     [Test]
     public void TheRestAndTheTailAreTheWholeRibbon()

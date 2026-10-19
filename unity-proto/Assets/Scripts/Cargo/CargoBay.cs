@@ -183,7 +183,7 @@ public class CargoBay : MonoBehaviour
     }
 
     /// <summary>
-    /// HOW MUCH BTC ONE TRUCK CARRIES TO THE MINERS: 20 BTC (the owner 2026-09-29, CARGO-BTC-2148, after the measurement:
+    /// HOW MUCH BTC ONE TRUCK CARRIES TO THE MINERS: 20 BTC (2026-09-29, CARGO-BTC-2148, after the measurement:
     /// "Instead of 15.92 btc make the limit 20 btc"). The measurement it replaced: 150 mainnet blocks, 969043-969192
     /// (mempool.space, 2026-09-29), a median 6,792 BTC of outputs over a median 4,452 transactions - 1.592 BTC a
     /// transaction; a full bed of ten parcels of an average block, 15.92 BTC. The parcels are the live mempool's own
@@ -258,7 +258,7 @@ public class CargoBay : MonoBehaviour
     }
 
     /// <summary>
-    /// THE BED CHANGED LENGTH (kanban #369, LargeTruckView: the larger truck's 3.9 m, or back to 3.0): every crate packed again
+    /// THE BED CHANGED LENGTH (LargeTruckView: the larger truck's 3.9 m, or back to 3.0): every crate packed again
     /// from the front over the new bed - what no longer fits on a shorter one stays off.
     /// </summary>
     public void ReflowForNewBed() => Repack();

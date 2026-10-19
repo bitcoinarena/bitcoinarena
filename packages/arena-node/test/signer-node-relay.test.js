@@ -12,7 +12,7 @@
 // after the close every stake was still HELD and every result provisional,
 // with 0 Lightning acts. Now the round is refused where it is opened, and a
 // stake is refused where it would be joined - before any hold is issued.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { test } from 'node:test';

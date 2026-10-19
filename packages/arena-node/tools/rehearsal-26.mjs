@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// FEDERATION.md REHEARSAL 26, A SUCCESSION FOUNDED BY NOTICE ON REAL GUARDIANS (§23A.2 + §23A.6 step 1, kanban #326). The node code
+// FEDERATION.md REHEARSAL 26, A SUCCESSION FOUNDED BY NOTICE ON REAL GUARDIANS (§23A.2 + §23A.6 step 1). The node code
 // starts every fedimintd here: tools/rehearsal-26-regtest.sh starts a private regtest bitcoind (cookie auth, as a node reads it); this
 // starts five arena nodes (src/node-start.js, real servers, NEXTBLOCK hosted) and drives the seats' founding (src/founding-seat.js,
 // one per node, in this process as rehearsal 20b does):

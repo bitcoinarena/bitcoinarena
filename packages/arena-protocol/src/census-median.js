@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// SELF-BINDING SCALARS: A MEDIAN, NOT A BALLOT (§27A.2, kanban #305). "Every node declares its preferred value for each qualifying scalar
+// SELF-BINDING SCALARS: A MEDIAN, NOT A BALLOT (§27A.2). "Every node declares its preferred value for each qualifying scalar
 // in its NodeAdvertisement. The value in force for a round is the bond-weighted median over the census at census_height ... There is no
 // proposal, no voting period, no quorum, no tally" - a pure function of chain state. Qualifying: bond_min and proposal_deposit_sats
 // ("declaring it must bind the declarer"); node_fee_bps is not one (§27A.7).

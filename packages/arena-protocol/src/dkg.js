@@ -146,7 +146,7 @@ export function epochId(signerNodes) {
 }
 
 /**
- * THE EPOCH OF A FEDERATION'S RESERVE KEY (§27A.9.2, kanban #397): the protocol reserves of `federationId` are locked to a
+ * THE EPOCH OF A FEDERATION'S RESERVE KEY (§27A.9.2): the protocol reserves of `federationId` are locked to a
  * k-of-n key of its guardian seats, made by the same DKG as a round's claim key - under an epoch of its own, tagged apart and
  * bound to the federation, so a round committee of the same seven nodes never makes (or is handed) the reserve key.
  */

@@ -43,7 +43,7 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
     }
   });
 
-  // THE COOKIE KEPT, AND READ AGAIN WHEN BITCOIND REFUSES IT (kanban #468 item 4, measured on seat 3's start 2026-10-18: reading
+  // THE COOKIE KEPT, AND READ AGAIN WHEN BITCOIND REFUSES IT (measured on seat 3's start 2026-10-18: reading
   // the file on every call was 2.7 % of the main thread's first minute). bitcoind writes a new cookie at its restart, so a 401 -
   // or no cookie kept yet - reads the file again and asks once more; a cookie that is gone is said as before.
   let kept = null;
@@ -81,7 +81,7 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
  * a first assignment does. The census checks the header links and merkle roots
  * itself; this only divides the bytes.
  */
-// A HEIGHT'S HASH IS ASKED ONLY NEAR THE TOP OF A VIEW (kanban #468 item 4, measured on seat 3's start 2026-10-18: every census view
+// A HEIGHT'S HASH IS ASKED ONLY NEAR THE TOP OF A VIEW (measured on seat 3's start 2026-10-18: every census view
 // asked bitcoind for all ~2,016 of its heights again, cached blocks or not - the chain RPC was 9 % of the main thread's first
 // minute). Below DEEP_BLOCKS under the view's top the hash read once is kept (cache.hashAt); a reorganisation that deep is not
 // followed by a kept hash - and the census checks the header links of every view itself, so a stale one is refused, not believed.
@@ -98,10 +98,10 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
     }
     const had = cache ? cache.get(hash) : undefined;
     if (had) { blocks.push(had); continue; }
-    // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (the owner 2026-09-18 02:40: name the leftover). The
+    // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (2026-09-18 02:40: name the leftover). The
     // read itself waits on bitcoind; what runs here is the answer's continuation - a megabyte of hex parsed and split -
     // and it lands on the thread that draws the other players' trucks.
-    // ONE READ OF A BLOCK IN FLIGHT, HOWEVER MANY VIEWS ASK FOR IT AT ONCE (the owner 2026-10-15: "Do everything you can to
+    // ONE READ OF A BLOCK IN FLIGHT, HOWEVER MANY VIEWS ASK FOR IT AT ONCE (2026-10-15: "Do everything you can to
     // lower the load"; measured on a testnet4 seat's heap: 96,494 parsed blocks, 1,004,407 transactions, 940 MB, for views
     // that span about 2,600 distinct blocks). The 8 s grids make a view per round, and their views are read together: every
     // one of them missed the cache for the same block while the first read was still out, parsed its own copy and kept it -
@@ -123,7 +123,7 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
 }
 
 /**
- * ONE COPY OF A BLOCK, HOWEVER MANY VIEWS HOLD IT (the owner 2026-10-02: "Continue with 1" - the free pair's two nodes held
+ * ONE COPY OF A BLOCK, HOWEVER MANY VIEWS HOLD IT (2026-10-02: "Continue with 1" - the free pair's two nodes held
  * 3.8 GB each). Every free round names its own committee_time, so every round got its own ~2,000-block view, read from
  * bitcoind and kept: 2,511 rounds, 2,511 view keys over 19 census heights - the same blocks, parsed again, once per round,
  * and never let go. Keyed by the block's hash, so a reorganised chain is new blocks, never a stale answer; the oldest
@@ -157,7 +157,7 @@ export function blockCache({ max = 50000 } = {}) {
  * construction and `chainWork` checks they link.
  */
 /**
- * HEADERS FORWARD FROM A HEIGHT (kanban #157): `count` headers from `from`, or up to the tip if that is nearer. The
+ * HEADERS FORWARD FROM A HEIGHT: `count` headers from `from`, or up to the tip if that is nearer. The
  * beacon of a round whose committee_time lies further back than a tip window reaches is read from the round's own
  * census height on, which comes before it (§5A.5: census cut = start - 36 h, committee_time = start - 24 h).
  */

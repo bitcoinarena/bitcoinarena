@@ -34,7 +34,7 @@ cp "$ROOT/deploy/_headers" "$BUILD/_headers"
 node "$ROOT/unity-proto/tools/fill-template.mjs" "$BUILD"
 node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 
-# THE LOBBY'S SIGNER NODES GO BESIDE THE PAGE ON EVERY DEPLOY (the owner 2026-09-15 12:54: the Daily lobby
+# THE LOBBY'S SIGNER NODES GO BESIDE THE PAGE ON EVERY DEPLOY (2026-09-15 12:54: the Daily lobby
 # must list rounds). The page's bare root shows the lobby only from daily.json (index.html reads
 # it when the address has no query), and no deploy put it here - measured: every deploy from
 # 0.0.1265 to 0.0.1304 answered /daily.json with the page itself, so the bare root was the

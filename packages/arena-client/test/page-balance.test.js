@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LOBBY'S BALANCE AND PENDING LINE, AS THE PAGE PAINTS THEM (kanban #150: index.html's paintMoney was never run by a
+// THE LOBBY'S BALANCE AND PENDING LINE, AS THE PAGE PAINTS THEM (index.html's paintMoney was never run by a
 // test). The page's own function runs under the page's name (page-script.js) on a small fake page. Measured: the
 // confirmed and pending sats in the lobby and in Settings - a dash, not a number, until the wallet reports - the balance
 // strip laid over Unity's own balance row, scaled from Unity's layout to the canvas, and the strip gone while driving.

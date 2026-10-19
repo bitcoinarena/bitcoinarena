@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND THAT NAMES ITS CREATOR OPENS ONLY WITH THE CREATOR'S SIGNATURE (§6, kanban #313; 2026.0.3). POST /round?creator=<hex>: no
+// A ROUND THAT NAMES ITS CREATOR OPENS ONLY WITH THE CREATOR'S SIGNATURE (§62026.0.3). POST /round?creator=<hex>: no
 // signature or another key's is refused (403) before anything of the round exists; the creator's opens it, is kept beside it and
 // served at GET /round-creator; a round the seat already holds with its signature is not asked again. Harness: federation-named's.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';

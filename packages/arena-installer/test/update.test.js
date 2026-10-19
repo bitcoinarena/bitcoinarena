@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN EXISTING NODE UPDATED IN PLACE (kanban #471 part E, F.1): a node installed from one release is updated to another - settings,
+// AN EXISTING NODE UPDATED IN PLACE (F.1): a node installed from one release is updated to another - settings,
 // database, key and owner kept, the same node answering after - and to a broken one, which is rolled back by itself to the old
 // release and its backup. systemd is played by a fake `systemctl` that starts the seat from the unit file's own command line.
 import { test } from 'node:test';
@@ -15,7 +15,7 @@ import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, 
 import { unitDir, UNIT, waitHealthy } from '../src/service.js';
 
 const REPO = resolve(fileURLToPath(import.meta.url), '../../../..');
-// THE SERVICES AN INSTALLER BEFORE KANBAN #499 WROTE: the settings in node.env, the seat started as main.js <port> <database> - what an
+// THE SERVICES AN INSTALLER BEFORE KANBAN WROTE: the settings in node.env, the seat started as main.js <port> <database> - what an
 // update finds on every node installed before arena.conf, and moves to it
 const legacySeatUnit = ({ node, release, home, port }) => `[Unit]\nDescription=Arena node (testnet4) on port ${port}\n\n[Service]\nWorkingDirectory=${join(release, 'packages/arena-node')}\n`
   + `EnvironmentFile=${join(home, 'node.env')}\nExecStart=${node} src/main.js ${port} ${join(home, 'node.db')}\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n`;
@@ -84,7 +84,7 @@ test('an update keeps the node, its settings and data; a broken release is rolle
   assert.equal(first.ok, true, first.why);
   assert.equal(releaseOfUnit(readFileSync(join(unitDir(env), UNIT), 'utf8')), v1);
 
-  // to 0.1.1: the same node, the same settings - moved into arena.conf (kanban #499) - its database and owner kept, a backup taken
+  // to 0.1.1: the same node, the same settings - moved into arena.conf - its database and owner kept, a backup taken
   const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0 });
   assert.equal(up.ok, true, up.why);
   assert.deepEqual([up.from, up.to, up.identity], [v1, v2, first.identity], 'the same node answers from the new release');

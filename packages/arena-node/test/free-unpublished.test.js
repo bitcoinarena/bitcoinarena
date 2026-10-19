@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FREE ROUND IS NOT POSTED ON THE CHAIN IN ADVANCE (the owner 2026-10-01 15:25, HARD). §5A.5's publication rule keeps a
+// A FREE ROUND IS NOT POSTED ON THE CHAIN IN ADVANCE (2026-10-01 15:25, HARD). §5A.5's publication rule keeps a
 // round's author from grinding committees over money; a free round moves none. On a bonded chain whose blocks carry no
 // publication at all, a free round opens on the node and its committee is drawn - and a paying round on the same chain is
 // still refused for want of its publication.

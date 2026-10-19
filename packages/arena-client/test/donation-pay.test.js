@@ -10,7 +10,7 @@
 //
 // Measured before: a 2% donor's 2000 msat was taken by nobody - no LNURL,
 // bech32 or BOLT11 code existed, and pay_invoice had one call site, the stake.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../arena-node/test/lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -55,7 +55,7 @@ const sha256 = (s) => new Uint8Array(createHash('sha256').update(s).digest());
 const SET = TEST_DONATION_SET_REGTEST;
 const SET_ID = donationSetId(SET.recipients);
 const NOW = 1788700000000;
-// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
 // that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
 // a non-zero outpoint, paying to the dealt stake's point where one is dealt.
@@ -173,7 +173,7 @@ test('a 2% donor pays 1334 msat and 666 msat to the two recipients the set names
   console.log(`  2% donor: ${said.paid.map((p) => `${p.amountMsat} msat to ${p.url}`).join(', ')}; wallet asked ${asked.length}`);
 });
 
-test('the player wallet pays the donation (the owner 2026-10-01): payWith gets exactly the recipients\' invoices, no wallet connection needed', async () => {
+test('the player wallet pays the donation (2026-10-01): payWith gets exactly the recipients\' invoices, no wallet connection needed', async () => {
   const entry = entryOf(2000n);
   const endpoints = await recipients();
   const paidBy = [];
@@ -490,7 +490,7 @@ test('the page takes the set from every signer node of the round, checked under 
 
 test('a signer node missing, a signer node serving another set, a forged set, or a set the rotated-away authority signed is refused', async () => {
   const round = contractFor([b32(1), b32(2)]);
-  // AND EACH SIGNER NODE SERVES THE ROUND'S GAME'S DONATION SET (kanban #205): nextblock's, unless a test hands another
+  // AND EACH SIGNER NODE SERVES THE ROUND'S GAME'S DONATION SET: nextblock's, unless a test hands another
   const serving = (bySignerNode, rotations = [], gameSet = NEXTBLOCK.donationSet) => async (url) => {
     const u = new URL(url);
     const signerNode = u.port;
@@ -566,7 +566,7 @@ test('the page asks for the donation only once the signer nodes hold the stake',
   assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the signer nodes hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });
 
-test('a node that does not answer holds no join, and a set fetched and checked is not fetched again for the next round (kanban #353)', async () => {
+test('a node that does not answer holds no join, and a set fetched and checked is not fetched again for the next round', async () => {
   const round = contractFor([b32(1), b32(2), b32(3)]);
   const honest = signedBytes(SET);
   let setAsks = 0;

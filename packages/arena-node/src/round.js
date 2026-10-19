@@ -55,11 +55,11 @@ import { decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/re
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
  */
 export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
-// A LATE ENTRY'S JOIN TICK MAY TRAIL THE ROUND'S CLOCK BY THIS MUCH (kanban #130): the device's clock and the post.
+// A LATE ENTRY'S JOIN TICK MAY TRAIL THE ROUND'S CLOCK BY THIS MUCH: the device's clock and the post.
 export const LATE_ENTRY_TICK_SLACK_MS = 10000n;
 
 /**
- * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED, the owner 2026-09-22 22:59, §23.6): "a record
+ * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED 2026-09-22 22:59, §23.6): "a record
  * from before this ruling that carries the old value is not a round of this network and is neither
  * decoded, replayed, settled, listed nor counted; a node that holds such a record treats it as it treats
  * bytes that do not parse." So every read of the `rounds` table goes through this, and a row whose
@@ -104,14 +104,14 @@ const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attemp
   owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
   txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why, donation: !!r.donation });
 
-/** A transcript (transcript.js) frames each batch with a u16 length: no batch longer than this can be in one (kanban #342). */
+/** A transcript (transcript.js) frames each batch with a u16 length: no batch longer than this can be in one. */
 export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 
 export class Round {
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
-    // THE GAMES THIS NODE HOSTS (kanban #202, §0A.4; M3 R1): a round is opened only on one of them, on a core installed for
+    // THE GAMES THIS NODE HOSTS (§0A.4; M3 R1): a round is opened only on one of them, on a core installed for
     // it, and its run length is that core's.
     this.plugins = hostedPlugins(plugins);
     // Read once, and made on the first ask if the file has none. A node that
@@ -141,7 +141,7 @@ export class Round {
   }
 
   /**
-   * A V2 ROUND'S SEATS, WRITTEN IN BY THIS SEAT (2026.0.2, kanban #348, RULED the owner 2026-10-13: "Seats and the page work out
+   * A V2 ROUND'S SEATS, WRITTEN IN BY THIS SEAT (2026.0.2RULED 2026-10-13: "Seats and the page work out
    * who serves from the census and the beacon ... Thresholds count the 7 seated nodes"). The contract names no draw; this
    * seat's own answer - the draw's first seats at the beacon, the certified seated set once the seating stands - goes into
    * its stored contract's `nodes` and into the signer nodes, so every count that reads them counts those seats. The round's
@@ -264,7 +264,7 @@ export class Round {
       throw new Error(
         `${toHex(r.nodePubkey)} is not on this round's committee`);
 
-    // THE SAME RECEIPT AGAIN IS NOT VERIFIED AGAIN (the owner 2026-10-02, the join's 2-3 s: "Cut whatever is between the click and
+    // THE SAME RECEIPT AGAIN IS NOT VERIFIED AGAIN (2026-10-02, the join's 2-3 s: "Cut whatever is between the click and
     // the loaded round"): a close retried for a run held short of final re-took every peer's receipts each time, and each
     // signature verified on the loop - 0.8-1.1 s held at a time on testnet4 seats (close take receipts), every PLAY behind it
     // waiting. Byte for byte the one this node verified and stored, it is answered as stored; any other bytes for the same
@@ -373,7 +373,7 @@ export class Round {
       const runLength = runLengthFits(runs.core, runs.config, contract.blockTicks);
       if (!runLength.ok) throw new Error(runLength.why);
     }
-    // A HEAD-TO-HEAD ROUND (kanban #233) HAS NO RUN: its end is its reveal deadline, which may lie no further from its entry
+    // A HEAD-TO-HEAD ROUND HAS NO RUN: its end is its reveal deadline, which may lie no further from its entry
     // close than its game's reveal window
     if (runs.headToHead) {
       const span = BigInt(roundEndMs(contract)) - contract.entryCloseMs;
@@ -414,13 +414,13 @@ export class Round {
     // then and offers no entry button; this is the same rule at the door,
     // where it cannot be skipped by a client that does not draw a lobby.
     const asks = decodeRoundContract(new Uint8Array(round.contract));
-    // AN ENTRY NAMING THE WEBSITE THAT BROUGHT IT ONLY ON A ROUND OF 2026.0.9 OR LATER (kanban #362 item 7): its seats are then only
+    // AN ENTRY NAMING THE WEBSITE THAT BROUGHT IT ONLY ON A ROUND OF 2026.0.9 OR LATER: its seats are then only
     // nodes that pay the website its 20% of the nodes' fee; on an older round the key would be a promise nobody keeps
     if (contract.frontendPk && !(asks.protocolVersion >= FRONTEND_FEE_VERSION))
       throw new Error(`that entry names the website that brought it, and a round pays a website from protocol version ${FRONTEND_FEE_VERSION} on; this round runs ${asks.protocolVersion}`);
-    // THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #365): only on a round of version 10 or later, each an item the round's game
+    // THE ITEMS AN ENTRY PLAYS WITH (protocol 10): only on a round of version 10 or later, each an item the round's game
     // sells, bought by this entry's player - a purchase this seat keeps (POST /item-purchase) of this game's developer and name, whose
-    // buyer signed for this entry (kanban #369: the owner's key is the same in every round, the entry's is fresh per round, so the
+    // buyer signed for this entry (the owner's key is the same in every round, the entry's is fresh per round, so the
     // proof is the buyer's BIP340 signature over contracts.js entryItemDigest(round, entry key, purchase))
     if (contract.items) {
       if (!(asks.protocolVersion >= ITEMS_VERSION))
@@ -446,7 +446,7 @@ export class Round {
     if (now < opensAt)
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
-    // AND NOT WHEN 45 s OR LESS OF THE ROUND'S RUN REMAIN (kanban #130, the owner 2026-10-04 14:30: "Join closes when 45 s
+    // AND NOT WHEN 45 s OR LESS OF THE ROUND'S RUN REMAIN (2026-10-04 14:30: "Join closes when 45 s
     // remain. A player who would have 45 s or less left must not enter and waits for the next round"). Every run of the
     // round ends at its start + 82 s (lastTickOfRun), so an entry new to this node is refused from start + 37 s on
     // (LATE_JOIN_LAST_ENTRY_MS): at that instant 45 s remain. This replaces the 15 s grace after entry_close (start + 45 s,
@@ -454,14 +454,14 @@ export class Round {
     // stricter. The same entry posted again - a retry, a reload's resend, a peer's copy - is still taken.
     // Only a series round whose entry closes after its start (a late-join series): a round closing entry at its start keeps the
     // old door, where a join held to the start may land its entry a few seconds after it.
-    // A late-join series closes entry exactly LATE_JOIN_MS after its start (series.js); a grid series (kanban #293) names its
+    // A late-join series closes entry exactly LATE_JOIN_MS after its start (series.js); a grid series names its
     // own window and keeps the old door, as its rounds had it when each was published alone.
     const lateJoin = asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs - asks.startTimeMs === LATE_JOIN_MS;
     if (lateJoin && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract)))) {
       const lastEntry = asks.startTimeMs + LATE_JOIN_LAST_ENTRY_MS;
       if (now >= lastEntry)
         throw new Error(`that round's entry closed at ${lastEntry} (start + ${LATE_JOIN_LAST_ENTRY_MS} ms: 45 s or less of its run left) and it is ${now}`);
-      // AND A LATE ENTRY JOINS WHERE THE ROUND IS (#130: "A later join does not extend the round. The late joiner has
+      // AND A LATE ENTRY JOINS WHERE THE ROUND IS ("A later join does not extend the round. The late joiner has
       // less time"): its join tick is no earlier than the round's ticks already gone, less LATE_ENTRY_TICK_SLACK_MS for
       // the device's clock and the post; its run is then blockTicks - joinTick and ends with the round's.
       if (now > asks.startTimeMs) {
@@ -472,17 +472,17 @@ export class Round {
       }
     }
 
-    // AND NO WORLD OF THE PLAYER'S OWN ON A SHARED-WORLD ROUND (#23, the owner 2026-10-04: "the player chooses nothing about
+    // AND NO WORLD OF THE PLAYER'S OWN ON A SHARED-WORLD ROUND (2026-10-04: "the player chooses nothing about
     // the world"): under a config that makes one world per round (config v4) the entry's world secret must be 32 zero
     // bytes - the field is kept so every stored entry keeps its id, and a secret there could only be a player picking.
-    // which configs share one world is the round's game's to say (kanban #203)
+    // which configs share one world is the round's game's to say
     { const game = pluginForRound(asks, this.plugins);
       const fits = worldSecretFits(asks, contract.worldSecret, game.ok ? [...game.plugin.sharedWorld] : []); if (!fits.ok) throw new Error(fits.why);
-      // THE PICK (§0A.7a, kanban #206): an entry into an attested round backs one of its game's outcomes, by index; an entry
+      // THE PICK (§0A.7a): an entry into an attested round backs one of its game's outcomes, by index; an entry
       // into a replayed round backs none - its result is its run
       const picked = contract.pick !== undefined && contract.pick !== null;
       if (game.ok && game.attested) {
-        // A ROUND OF A TEMPLATE (kanban #362 feature 5) is picked among ITS OWN outcomes (contracts.js `event`), not the template's
+        // A ROUND OF A TEMPLATE (feature 5) is picked among ITS OWN outcomes (contracts.js `event`), not the template's
         const outcomes = marketOfRound(game.plugin.manifest, asks).outcomes;
         if (!picked) throw new Error(`an entry into a round of attested game "${game.plugin.manifest.gameName}" backs one of its outcomes: it carries no pick`);
         if (contract.pick >= outcomes.length)
@@ -490,18 +490,18 @@ export class Round {
         // AND ONLY UNTIL THE ROUND'S ENTRY CLOSE (§0A.7a slice 2): the outcome may be taken from then on, so no pick after it
         if (typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: an attested round takes no pick after its entry close`);
-        // AND NOT BEFORE ITS WINDOW OPENS (the owner 2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00.
+        // AND NOT BEFORE ITS WINDOW OPENS (2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00.
         // Man darf davor und danach nicht am Markt teilnehmen und mit Wetten. Das ist die allgemeine Regel für prediction
         // markets"): a market on its game's period (attested.js marketWindowOf) takes a pick only from entry_close - period
         { const w = marketWindowOf(asks, game.plugin.manifest);
           if (w.ok && w.window && BigInt(this.now()) < w.window.startMs)
             throw new Error(`that market opens at ${new Date(Number(w.window.startMs)).toISOString()} and runs to ${new Date(Number(w.window.endMs)).toISOString()}: it takes no pick before its window`); }
         // AND NOT ONCE THE OUTCOME IS KNOWN HERE: a pick made after its attestation came is not a pick, it is a copy
-        // (and a market on a game's held source result, kanban #362 feature 6 - its entries close before its source starts, so
+        // (and a market on a game's held source result, feature 6 - its entries close before its source starts, so
         // this is the second guard)
         if (this.outcomeAttestations(contract.roundId).length || this.gameOutcomes(contract.roundId).length)
           throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');
-        // A MARKET ORDER (kanban #278, comment 1127): a pick bought at a limit price on a two-outcome market - a whole cent,
+        // A MARKET ORDER (comment 1127): a pick bought at a limit price on a two-outcome market - a whole cent,
         // at least 5 shares at its limit out of its stake less its fee, an expiry not past. A round is a book or a pool: it
         // takes orders or plain picks, never both, so its settlement is one or the other.
         const order = contract.limitPrice !== undefined && contract.limitPrice !== null;
@@ -509,7 +509,7 @@ export class Round {
         if (others.some((x) => (x.entry.limitPrice !== undefined && x.entry.limitPrice !== null) !== order))
           throw new Error(order ? 'that round takes plain picks (pari-mutuel): it takes no order' : 'that round is an order book: it takes orders, not a plain pick');
         if (order) {
-          // A SCALAR MARKET TRADES ITS TWO SIDES TOO (kanban #362, §0A.7e): a share is worth its side's part of a sat at the value
+          // A SCALAR MARKET TRADES ITS TWO SIDES TOO (§0A.7e): a share is worth its side's part of a sat at the value
           // (book-ledger.js bookSettlement `scalar`); a round is still a book or a pool, never both
           if (outcomes.length !== 2) throw new Error(`the order book trades a two-outcome market, and game "${game.plugin.manifest.gameName}" has ${outcomes.length}`);
           const price = BigInt(contract.limitPrice);
@@ -522,7 +522,7 @@ export class Round {
             throw new Error('that order\'s expiry has passed');
         }
       } else if (picked) throw new Error('that entry carries a pick, and its round is a replayed game\'s: its result is its run, not an outcome');
-      // THE HIDDEN MOVE (kanban #233): an entry into a head-to-head round names its commitment, before entry close, and the
+      // THE HIDDEN MOVE: an entry into a head-to-head round names its commitment, before entry close, and the
       // round seats no more than its game's players; an entry into any other round names none
       const hidden = contract.commit !== undefined && contract.commit !== null;
       if (game.ok && game.headToHead) {
@@ -562,7 +562,7 @@ export class Round {
     // `node_fee_bps`, and `genesis.js` writes that into the genesis parameters
     // - so a round naming a config has already committed to the rate, and a
     // second copy here would be a second place for it to drift.
-    // AN ORDER IN A PAID MARKET ROUND STAKES ITS OWN AMOUNT (kanban #237, order-book.js MIN_ORDER_MSAT .. MAX_ORDER_MSAT); every
+    // AN ORDER IN A PAID MARKET ROUND STAKES ITS OWN AMOUNT (order-book.js MIN_ORDER_MSAT .. MAX_ORDER_MSAT); every
     // other entry stakes exactly the round's
     const ownAmount = contract.limitPrice !== undefined && contract.limitPrice !== null && asks.stakeMsat > 0n
       && (() => { const g = pluginForRound(asks, this.plugins); return g.ok && !!g.attested; })();
@@ -573,12 +573,12 @@ export class Round {
       throw new Error(
         `that round asks a stake of ${asks.stakeMsat} msat and that entry names `
         + `${contract.stakeMsat}`);
-    // THE ROUND'S GAME'S RATE (kanban #235): a market's own fee from its manifest - 0.5 % by default - and a game's the
+    // THE ROUND'S GAME'S RATE: a market's own fee from its manifest - 0.5 % by default - and a game's the
     // network's; and a market's donation no more than its manifest's rate (0.5 % by default)
     const feeGame = pluginForRound(asks, this.plugins);
-    // A MARKET'S DONATION IS IN ITS FEE LOCK, DUE AT RESOLUTION (the owner 2026-10-09): its entry's fee is node fee + donation
+    // A MARKET'S DONATION IS IN ITS FEE LOCK, DUE AT RESOLUTION (2026-10-09): its entry's fee is node fee + donation
     // (entryFeeBpsOf, 1 % by default) and its donation field 0
-    // ON PROTOCOL 11 A GAME'S ENTRY PAYS THE RESERVES (§27A.9, kanban #397): the nodes' fee is the mandatory 4 %, and its donation
+    // ON PROTOCOL 11 A GAME'S ENTRY PAYS THE RESERVES (§27A.9): the nodes' fee is the mandatory 4 %, and its donation
     // field carries the developers' 4 % and the reserves' 2 % exactly, with its reserve lock named
     const reserves = entryPaysReserves(asks, feeGame.ok ? feeGame.plugin.manifest : null);
     const feeBps = reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
@@ -664,7 +664,7 @@ export class Round {
    * primary key is the whole mechanism.
    */
   batch(bytes) {
-    // NO BATCH A TRANSCRIPT CANNOT FRAME (kanban #342, measured live 2026-10-11 on round 6843f9fb: a 97,309-byte batch
+    // NO BATCH A TRANSCRIPT CANNOT FRAME (measured live 2026-10-11 on round 6843f9fb: a 97,309-byte batch
     // was taken by all seven seats and every close then failed "u16 out of range" - the run could never be replayed)
     if (bytes.length > TRANSCRIPT_BATCH_MAX_BYTES)
       throw new Error(`a batch is at most ${TRANSCRIPT_BATCH_MAX_BYTES} bytes - a transcript frames each with a u16 length - and that one is ${bytes.length}: send its ticks as several batches`);
@@ -706,7 +706,7 @@ export class Round {
     if (!seen && !same(b.previousHash, head))
       throw new Error('the batch does not follow the chain head');
 
-    // AND THE PRICES IT PLAYED, WHERE IT CARRIES THE COMMITTEE'S WORD ON THEM (§11, kanban #311): an attestation that
+    // AND THE PRICES IT PLAYED, WHERE IT CARRIES THE COMMITTEE'S WORD ON THEM (§11): an attestation that
     // does not stand, or a sample that is not the attested price at its tick, refuses the batch - the player never
     // chooses the price. A batch with none is taken as before - unless this seat runs the committee's feed for the round
     // (`pricesRequired`, slice 3): then a bare sample or tape is the player choosing the price and is refused; a run with no
@@ -714,7 +714,7 @@ export class Round {
     const requirePrices = !!(this.pricesRequired && this.pricesRequired(round.contract));
     if ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length)))) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
-      // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings (kanban #312)
+      // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.nodes.length); } catch { return c.nodes.length; } })(),
         verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices, median: mediansPrices(c) });
       if (!prices.ok) throw new Error(prices.why);
@@ -766,7 +766,7 @@ export class Round {
         throw new Error(`expected tick ${next}, got ${at[0]}`);
     }
 
-    // ONE COMMIT FOR THE WHOLE BATCH, not one per row (the owner 2026-09-17 19:15, the ghost lag). Every `run` outside a
+    // ONE COMMIT FOR THE WHOLE BATCH, not one per row (2026-09-17 19:15, the ghost lag). Every `run` outside a
     // transaction is its own commit, so a batch of six ticks with a sample and a tape cost seven disk syncs on the
     // thread that also pushes other players' trucks: measured live on the Daily, `batch stored` held the loop 24-46 ms
     // and the frames around it made stalls of 263-280 ms. The rows are the same rows and the checks above are
@@ -955,7 +955,7 @@ export class Round {
         + '(round_id, entry_id, tick, stored_bytes, offered_bytes, seen_ms) '
         + 'VALUES (?, ?, ?, ?, ?, ?)')
         .run(c.roundId, c.entryId, c.tick, stored.bytes, bytes, this.now());
-      // AND PUBLISHED (§25.2, kanban #327: "equivocation proofs, objections - direct, AND any public broadcast channel"):
+      // AND PUBLISHED (§25.2,: "equivocation proofs, objections - direct, AND any public broadcast channel"):
       // the first time this node holds the pair, whoever set `onEquivocation` (the server: the round's publication_relays[])
       // is handed both signed marks. A pair held already is not handed again, so relays that relay do not loop.
       if (kept.changes && typeof this.onEquivocation === 'function') {
@@ -1313,7 +1313,7 @@ export class Round {
       const tickOf = (m) => decodeCheckpoint(splitSigned(m).body).tick;
       out.push({ how: 'two first marks', tick: Math.min(tickOf(a), tickOf(b)), stored: a, offered: b, seenMs: r.seen_ms });
     }
-    // AND A FORK PAIR PULLED FROM A PEER (fork_pairs, §13B at any tick; kanban #25)
+    // AND A FORK PAIR PULLED FROM A PEER (fork_pairs, §13B at any tick)
     for (const r of this.db.prepare('SELECT mark_a, mark_b, seen_ms, receipted FROM fork_pairs WHERE round_id = ? AND entry_id = ?')
       .all(roundIdBytes, entryIdBytes)) {
       const a = new Uint8Array(r.mark_a);
@@ -1327,10 +1327,10 @@ export class Round {
 
   /**
    * KEEP A PEER'S PROOF OF A FORK AT ANY TICK (§13B "two different checkpoints for the same tick, or two chains that
-   * diverge at any tick"; kanban #25): both signed by the entry's session key, one entry, different marks, and the same
+   * diverge at any tick"): both signed by the entry's session key, one entry, different marks, and the same
    * tick or the same parent - the pair provesEquivocation checks. Anything else is not kept. Answers whether it is held.
    */
-  /** Is this pair already kept, as a fork pair or a first-mark pair (each verified when it was stored)? (kanban #155) */
+  /** Is this pair already kept, as a fork pair or a first-mark pair (each verified when it was stored)? */
   pairKept(entryIdBytes, a, b) {
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
     if (this.db.prepare('SELECT 1 FROM fork_pairs WHERE entry_id = ? AND mark_a = ? AND mark_b = ?').get(entryIdBytes, x, y)) return true;
@@ -1355,7 +1355,7 @@ export class Round {
   }
 
   /**
-   * DOES THIS SIGNER NODE HOLD THE PROOF OF A FORK AT ANY TICK? (§13B; kanban #25) Two different marks of this entry, both
+   * DOES THIS SIGNER NODE HOLD THE PROOF OF A FORK AT ANY TICK? (§13B) Two different marks of this entry, both
    * signed by its session key, at the same tick or from the same parent - checked here from this node's own store (its
    * stored and refused marks, and the pairs it pulled). The first-mark pair is one such fork and is answered too.
    * Returns `{ tick, how }` - the tick where the chains part - or null. `window` as provenTwoFirstMarks'.
@@ -1366,7 +1366,7 @@ export class Round {
         const a = f.stored, b = f.offered;
         if (same(a, b)) continue;
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
-        // DECIDED ON THE MARKS' FIELDS FIRST, THE SIGNATURES ONLY FOR A PAIR THAT WOULD COUNT (kanban #155, measured live
+        // DECIDED ON THE MARKS' FIELDS FIRST, THE SIGNATURES ONLY FOR A PAIR THAT WOULD COUNT (measured live
         // 2026-10-06 on 0.0.2815, entry 0b68a08f): a page stuck on an old head sent 63 refused marks, every one a "second
         // child" of that head and none receipted; verifying both signatures of every pair, on every call, held a seat's one
         // thread at 100% for minutes and five seats never signed the entry. A pair that cannot prove a fork costs a decode.
@@ -1376,7 +1376,7 @@ export class Round {
         const ca = this.playerSigned(a), cb = this.playerSigned(b);
         if (!same(ca.entryId, entryIdBytes) || !same(cb.entryId, entryIdBytes)) continue;
         // TWO MARKS AT ONE TICK forfeit as ever. TWO CHAINS FROM ONE PARENT forfeit only when BOTH marks were receipted by a
-        // seat (RULED the owner 2026-10-05 (b)): a mark the seat refused for not following its head - a page stuck on an old
+        // seat (RULED 2026-10-05 (b)): a mark the seat refused for not following its head - a page stuck on an old
         // head, measured on testnet4 (ea63aa94: 13 marks after @1620 all naming @1560; c35157df: all naming @60) - was never
         // carried, splits no seats, and costs the player nothing. Two first marks are their own path (provenTwoFirstMarks).
         if (ca.tick === cb.tick) return { tick: ca.tick, how: f.how };
@@ -1386,7 +1386,7 @@ export class Round {
     return null;
   }
 
-  /** §13B'S PROOF, AT ANY TICK (kanban #25): two first marks, or a fork at any later tick. */
+  /** §13B'S PROOF, AT ANY TICK: two first marks, or a fork at any later tick. */
   provenEquivocation(roundIdBytes, entryIdBytes, window = null) {
     return this.provenTwoFirstMarks(roundIdBytes, entryIdBytes, window) || this.provenFork(roundIdBytes, entryIdBytes, window) !== null;
   }
@@ -1427,7 +1427,7 @@ export class Round {
         if (same(a, b)) continue;
         // IN A WINDOW (`window`: { chain, end }; RULED 2026-09-24): the pair counts only if both its marks do.
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
-        // two first marks only: the parents read before any signature is checked (kanban #155, as provenFork)
+        // two first marks only: the parents read before any signature is checked (as provenFork)
         const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
         if (!same(da.previousHash, NO_PREVIOUS) || !same(db.previousHash, NO_PREVIOUS)) continue;
         const ca = this.playerSigned(a);
@@ -1605,7 +1605,7 @@ export class Round {
   }
 
   /**
-   * THE OPEN ROUNDS' IDS ONLY, in the order they opened - no contract read (the owner 2026-10-02, the the test host's load: GET /rounds,
+   * THE OPEN ROUNDS' IDS ONLY, in the order they opened - no contract read (2026-10-02, the the test host's load: GET /rounds,
    * which every lobby asks of every node every few seconds, read all ~2,950 held contracts out of the store and decoded each
    * just to list ids it had already decoded and kept - ~24 % of an idle seat's loop while one round ran). A caller that
    * needs a contract it has not kept asks get(id).
@@ -1624,7 +1624,7 @@ export class Round {
   /**
    * How many PLAYERS joined at this node in a round, and how many of them it has taken ticks from.
    *
-   * PLAYERS, NOT ENTRIES (the owner 2026-09-16 15:36: "after each successful run lobby says 1 joined then 2
+   * PLAYERS, NOT ENTRIES (2026-09-16 15:36: "after each successful run lobby says 1 joined then 2
    * then 3 as if he never left"). Every PLAY is a new entry, so one player's three runs counted three;
    * measured on the Daily, one round held 7 entries from 1 player key. An entry's player is the key in
    * its contract.
@@ -1642,7 +1642,7 @@ export class Round {
     return { joined: joined.size, playing: playing.size };
   }
 
-  // A CANCELLED MARKET ENTRY IS NOT IN ITS ROUND (kanban #278): no table, no settlement, no count
+  // A CANCELLED MARKET ENTRY IS NOT IN ITS ROUND: no table, no settlement, no count
   entriesOf(roundIdBytes) {
     return this.db.prepare(
       'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY entry_id')
@@ -2020,7 +2020,7 @@ export class Round {
   }
 
   /**
-   * EVERY FINAL SIGNATURE THAT CAME BETWEEN TWO TIMES, by round (kanban #365, who served a round in the last 24 h): rows that
+   * EVERY FINAL SIGNATURE THAT CAME BETWEEN TWO TIMES, by round (who served a round in the last 24 h): rows that
    * arrived in [fromMs, toMs + 5 s) - a FINAL counts only when signed within 5 s of its arrival, so its own time is then within the
    * window or just past it; the protocol's servedNodes reads the signed time itself.
    */
@@ -2057,7 +2057,7 @@ export class Round {
       .run(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes, this.now()).changes;
   }
 
-  /** EVERY slash proof this node filed, newest first (kanban #307: the arbitration set's intake, GET /slashes). */
+  /** EVERY slash proof this node filed, newest first (the arbitration set's intake, GET /slashes). */
   allSlashProofs({ limit = 500 } = {}) {
     return this.db.prepare('SELECT round_id, entry_id, node_pubkey, proof_id, seen_ms FROM slash_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit)
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id), nodePubkey: new Uint8Array(r.node_pubkey),
@@ -2095,7 +2095,7 @@ export class Round {
       .map((r) => ({ id: new Uint8Array(r.handout_id), bytes: new Uint8Array(r.bytes) }));
   }
 
-  /** §23.2 REFUSED (kanban #191): a lock for a round this signer node refuses, never entered, kept under its handout's id. */
+  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under its handout's id. */
   putRefusedLock({ handoutId, roundId, outpoint, fields, contractId }) {
     this.db.prepare('INSERT OR REPLACE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(handoutId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
@@ -2177,7 +2177,7 @@ export class Round {
   }
 
   /**
-   * WHERE A PLAYER'S WINNING GOES, NAMED ONCE AND KEPT (the owner 2026-09-21 13:54).
+   * WHERE A PLAYER'S WINNING GOES, NAMED ONCE AND KEPT (2026-09-21 13:54).
    *
    * "There is no Collect and no pasted invoice after the round." A Lightning address signed by the entry's
    * session key is a standing instruction, not a claim: it is written the moment the player names it -
@@ -2368,7 +2368,7 @@ export class Round {
   }
 
   /**
-   * §13C'S EVIDENCE NAMES ITS BLOCK (RULED the owner 2026-09-24). THIS NODE'S TIP for a round, or null when it reads no chain
+   * §13C'S EVIDENCE NAMES ITS BLOCK (RULED 2026-09-24). THIS NODE'S TIP for a round, or null when it reads no chain
    * for it: the block an evidence record made now sits in.
    */
   tipOf(roundIdBytes) {
@@ -2689,7 +2689,7 @@ export class Round {
     return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
   }
 
-  /** A series' proven publication fee (§5A.5, kanban #304): kept once; { txid, feeSats } or null. */
+  /** A series' proven publication fee (§5A.5): kept once; { txid, feeSats } or null. */
   putSeriesPublication(seriesIdBytes, { txid, feeSats }) {
     this.db.prepare('INSERT OR IGNORE INTO series_publications (series_id, txid, fee_sats) VALUES (?, ?, ?)').run(Buffer.from(seriesIdBytes), String(txid), String(feeSats));
   }
@@ -2699,7 +2699,7 @@ export class Round {
     return r ? { txid: r.txid, feeSats: BigInt(r.fee_sats) } : null;
   }
 
-  /** A round's creator signature (§6, kanban #313): kept once, the first that stood; 64 bytes or null. */
+  /** A round's creator signature (§6): kept once, the first that stood; 64 bytes or null. */
   putCreatorSignature(roundIdBytes, signature) {
     this.db.prepare('INSERT OR IGNORE INTO round_creators (round_id, signature) VALUES (?, ?)').run(Buffer.from(roundIdBytes), Buffer.from(signature));
   }
@@ -2831,7 +2831,7 @@ export class Round {
 
   /**
    * THE ROUNDS WHOSE LOCKS WERE SETTLED SINCE `sinceMs`, oldest first, with their locks' refund keys
-   * (spec §24, the owner 2026-09-14: a withdrawal claimed on another device). Public, as the
+   * (spec §24, 2026-09-14: a withdrawal claimed on another device). Public, as the
    * contract and the settlement are; nothing here names a player - the device derives its own
    * key per round from its seed and asks for it.
    */
@@ -2844,7 +2844,7 @@ export class Round {
         refunds: refunds.all(x.round_id).map((l) => String(JSON.parse(l.fields).refundPk).toLowerCase()) }));
   }
 
-  /** Donation outputs this signer node verified for one entry (the owner 2026-10-03): kept, and indexed by recipient key. */
+  /** Donation outputs this signer node verified for one entry (2026-10-03): kept, and indexed by recipient key. */
   putDonationOutputs(rows) {
     const put = this.db.prepare('INSERT OR REPLACE INTO donation_outputs (outpoint, entry_id, round_id, federation_id, recipient_pk, amount_msat, contract_id, verified_ms, sender_on_contract, image, item) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const r of rows)
@@ -2853,7 +2853,7 @@ export class Round {
         typeof r.image === 'string' ? r.image : null, typeof r.item === 'string' ? r.item.slice(0, 120) : null);
   }
 
-  /** How many donation-key outputs of this round's settlement are indexed (kanban #152). */
+  /** How many donation-key outputs of this round's settlement are indexed. */
   settlementDonationOutputs(roundIdBytes) {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
   }
@@ -2865,7 +2865,7 @@ export class Round {
   }
 
   /**
-   * A MARKET ON A GAME'S STANDING OUTCOME (kanban #362 feature 6), kept once per (market round, source result): the evidence
+   * A MARKET ON A GAME'S STANDING OUTCOME (feature 6), kept once per (market round, source result): the evidence
    * an attestation's bytes are for an attested round - the source's RoundResult bytes, the committee signatures that made it
    * stand, the source contract. `outcome` 255 is a VOID (a refund, or a source that can never fit). Answers whether it is new.
    */
@@ -2882,7 +2882,7 @@ export class Round {
         why: r.why, result: new Uint8Array(r.result), sigs: JSON.parse(r.sigs), source: new Uint8Array(r.source), observedMs: Number(r.observed_ms), receivedMs: Number(r.received_ms) }));
   }
 
-  /** A market entry's cancel (kanban #278), kept once: its player's signature over cancelId. */
+  /** A market entry's cancel, kept once: its player's signature over cancelId. */
   putCancel({ roundId, entryId, signature, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO market_cancels (entry_id, round_id, signature, received_ms) VALUES (?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(signature), receivedMs).changes === 1;
@@ -2898,7 +2898,7 @@ export class Round {
       .all(Buffer.from(roundIdBytes)).map((r) => ({ entryId: new Uint8Array(r.entry_id), signature: new Uint8Array(r.signature), receivedMs: Number(r.received_ms) }));
   }
 
-  /** A head-to-head entry's identity (kanban #280), kept once: the key and its signature over matchProofId. */
+  /** A head-to-head entry's identity, kept once: the key and its signature over matchProofId. */
   putIdentity({ roundId, entryId, identity, sig }) {
     return this.db.prepare('INSERT OR IGNORE INTO h2h_identities (entry_id, round_id, identity, sig) VALUES (?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(identity), Buffer.from(sig)).changes === 1;
@@ -2915,7 +2915,7 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 
-  /** A head-to-head entry's stood reveal (kanban #233), kept once: a second for the same entry changes nothing. */
+  /** A head-to-head entry's stood reveal, kept once: a second for the same entry changes nothing. */
   putReveal({ roundId, entryId, move, salt, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO head_to_head_reveals (round_id, entry_id, move, salt, received_ms) VALUES (?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), Buffer.from(entryId), move, Buffer.from(salt), receivedMs).changes === 1;
@@ -2933,7 +2933,7 @@ export class Round {
       .all(Buffer.from(roundIdBytes));
   }
 
-  /** The #152 backfill's counted tries at a round it could not rebuild (#231): { tries, lastMs }, or null. */
+  /** The backfill's counted tries at a round it could not rebuild: { tries, lastMs }, or null. */
   backfillTry(roundIdBytes) {
     const r = this.db.prepare('SELECT tries, last_ms FROM donation_backfill_tries WHERE round_id = ?').get(Buffer.from(roundIdBytes));
     return r ? { tries: Number(r.tries), lastMs: Number(r.last_ms) } : null;
@@ -2944,7 +2944,7 @@ export class Round {
       .run(Buffer.from(roundIdBytes), Number(tries), Number(atMs));
   }
 
-  /** The #152 backfill's marker: a recovered settlement already passed over, so it is never asked again. */
+  /** The backfill's marker: a recovered settlement already passed over, so it is never asked again. */
   donationBackfilled(roundIdBytes) {
     return !!this.db.prepare('SELECT 1 FROM donation_backfill WHERE round_id = ?').get(Buffer.from(roundIdBytes));
   }
@@ -2963,7 +2963,7 @@ export class Round {
 
   /** WHAT A RECIPIENT KEY WAS DONATED, oldest first, from `sinceMs`: every output this signer node verified for it. */
   donationsFor(recipientHex, sinceMs = 0) {
-    // AND WHO SENT IT (kanban #156, the owner 2026-10-05): the entry's player key, read from the stored entry; whether that key
+    // AND WHO SENT IT (2026-10-05): the entry's player key, read from the stored entry; whether that key
     // is also on the Fedimint contract (its payment image) or the contract carries the zero image of an older page.
     const playerOf = (entryId) => { const e = this.entry(entryId); try { return e ? Buffer.from(decodeEntryContract(e).playerPubkey).toString('hex') : null; } catch { return null; } };
     return this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image, item FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
@@ -2974,7 +2974,7 @@ export class Round {
   }
 
   /**
-   * THE DEV HAS READ THEM (kanban #156, the owner 2026-10-05 08:15-08:17): the rows of these outpoints, for this recipient key
+   * THE DEV HAS READ THEM (2026-10-05 08:15-08:17): the rows of these outpoints, for this recipient key
    * only, deleted entirely - round id, entry, sender, amount. The durable record is the dev client's. Answers how many went.
    */
   deleteDonationsRead(recipientHex, outpoints) {
@@ -2984,7 +2984,7 @@ export class Round {
     return n;
   }
 
-  /** The entry a verified fee lock at this outpoint already pays for, or null (kanban #191: never returned as refused). */
+  /** The entry a verified fee lock at this outpoint already pays for, or null (never returned as refused). */
   feeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM fee_locks WHERE outpoint = ?')
       .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
@@ -3055,7 +3055,7 @@ export class Round {
   }
 
   /**
-   * THE BUNDLE THE OBJECTION AGAINST THIS RUN CARRIED (§13A, kanban #24): checked at the door before it was stored, so a
+   * THE BUNDLE THE OBJECTION AGAINST THIS RUN CARRIED (§13A): checked at the door before it was stored, so a
    * row that has one holds a replay that contradicts the signed result. Null for none, or for a row from before.
    */
   objectionBundle(roundIdBytes, entryIdBytes) {

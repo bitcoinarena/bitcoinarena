@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT OPENING A ROUND NAMES THE OPEN FEDERATION WITH THE LOWEST LOAD (§23A.3: "A seat opening a round names the OPEN
 // federation with the lowest load among those its own bond qualifies it to serve; a creator who names another has the client
-// show why"; kanban #324 step 2). From a seat's /federations list (each federation's newest signed record: status, load):
+// show why"). From a seat's /federations list (each federation's newest signed record: status, load):
 // the OPEN ones this opener can serve - it holds their invite (`serves`, federation ids hex) - the lowest load first, the
 // newest record on a tie; a record naming no load counts as the highest. None of them: the opener's own (`own`).
 //   -> { federationId (hex), load, why }

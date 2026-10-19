@@ -223,7 +223,7 @@ const key = `${toHex(fromHex(utxoA.txid).reverse())}:${utxoA.vout}`;
 console.log('broadcast               ', sent.slice(0, 16), 'at height', height);
 console.log('spent, seen by the census', facts.spentAt.has(key));
 
-// ---- TEMPLATE 2: A BOND AT ITS OWN HEIGHT (kanban #295, 5A.3B "an absolute locktime, reference 30 days after the bond
+// ---- TEMPLATE 2: A BOND AT ITS OWN HEIGHT (5A.3B "an absolute locktime, reference 30 days after the bond
 // confirms"; regtest's offset is 100 blocks). H is written before the bond is funded - the next block plus the offset,
 // no slack, since regtest mines it at once - and the census' rule is checked against the block it really confirmed in.
 // Then path A is asked of bitcoind at every step: a spend whose locktime is H - 1 fails the CLTV whatever the tip; a

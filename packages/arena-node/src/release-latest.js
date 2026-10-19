@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NEW RELEASE IS AVAILABLE (kanban #471): the newest release as the Arena site names it (release/latest.json, written by
+// A NEW RELEASE IS AVAILABLE: the newest release as the Arena site names it (release/latest.json, written by
 // tools/release/latest.mjs and signed with the release key), read when the owner page asks (/owner/version) and kept for six hours.
 // Offered only when the signature verifies with the release key and its version is newer than this node's; anything else says why.
 const LATEST_URL = 'https://testnet.bitcoin-arena.io/release/latest.json';
 const TTL_MS = 6 * 3600_000;
 
-/** Is version `a` newer than `b`? Releases are 2026.xx.yy and a fix 2026.xx.yy.zz (the owner 2026-10-19), compared part by part (a missing
+/** Is version `a` newer than `b`? Releases are 2026.xx.yy and a fix 2026.xx.yy.zz (2026-10-19), compared part by part (a missing
  *  fourth part is 0: 2026.1.1.1 is newer than 2026.1.1); then a release over its own pre-releases, then rc.N by N (the older x.y.z-rc.N). */
 export function newerVersion(a, b) {
   const parse = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.]+))?$/.exec(String(v || '').trim()); return m ? { n: [+m[1], +m[2], +m[3], +(m[4] || 0)], pre: m[5] || null } : null; };
@@ -39,7 +39,7 @@ export function latestReleaseReader({ url = process.env.ARENA_RELEASE_LATEST_URL
       const [body, sig] = await Promise.all([get(url), get(`${url}.sig`)]);
       if (!verify(body, sig.toString('utf8'))) return { latest: null, why: 'the published newest release is not signed by the Arena release key' };
       const j = JSON.parse(body.toString('utf8'));
-      // the assets' SHA-256 and where a node downloads them (kanban #505, auto update): both under the release key's signature
+      // the assets' SHA-256 and where a node downloads them (auto update): both under the release key's signature
       return { latest: { version: String(j.version), tag: String(j.tag || ''), release: String(j.release || ''), commit: String(j.commit || ''),
         assets: j.assets && typeof j.assets === 'object' ? j.assets : {}, download: j.download && typeof j.download === 'object' ? j.download : null }, why: null };
     } catch (e) { return { latest: null, why: `the newest release could not be read: ${e.message}` }; }

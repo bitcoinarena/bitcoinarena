@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FINISH STRAIGHT IS FREE (the owner 2026-09-25 21:19: "The finish-straight passage must be completely free. A truck at
+// THE FINISH STRAIGHT IS FREE (2026-09-25 21:19: "The finish-straight passage must be completely free. A truck at
 // speed crosses it with no hit and no slowdown from a collider").
 //
 // MEASURED before the fifteen passage boxes came out of rules/map.js (40 seeds a lane, full throttle from x 96, the same
@@ -63,7 +63,7 @@ test('2. every lane from z -30 to 30 delivers at full throttle and never loses s
   assert.deepEqual(failed, []);
 });
 
-// NOTHING LEFT OR RIGHT OF IT EITHER (the owner 2026-09-26 07:18: "The collisions left and right of the finish straight are
+// NOTHING LEFT OR RIGHT OF IT EITHER (2026-09-26 07:18: "The collisions left and right of the finish straight are
 // wrong. They come out ... A truck on the centre line is not stopped and not slowed by a side box"). The 26-box corridor
 // lining stood at |z| 32.8 .. 40 between x 145 and 171 where nothing is drawn; out to the 40 m mouth, from the door to
 // the gate, no box the truck can reach is left.

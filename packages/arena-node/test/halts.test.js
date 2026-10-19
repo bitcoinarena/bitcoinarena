@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A HALT OBSERVED AND PROVEN BY THE SEATS (spec §23A.5 "How a halt is proven", RULED 2026-10-14; kanban #323), the seat's part:
+// A HALT OBSERVED AND PROVEN BY THE SEATS (spec §23A.5 "How a halt is proven", RULED 2026-10-14), the seat's part:
 // rehearsal 17's federation of four - g2 and g3 gone at session 41 - observed by five of nine census seats, and the liquidation
 // listed from the proof alone (no HALTED record exists).
 import { test } from 'node:test';

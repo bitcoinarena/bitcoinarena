@@ -78,7 +78,7 @@ public class PackageYard : MonoBehaviour
         public float reach;          // half its diagonal, plus the bob
         public Vector3 axis;         // what it turns about
         public float spin, bob, phase, size;
-        public Rect label;           // its caption's place in its cell, in GUI pixels (kanban #375)
+        public Rect label;           // its caption's place in its cell, in GUI pixels
     }
 
     readonly List<Yarded> _yard = new List<Yarded>();
@@ -160,11 +160,11 @@ public class PackageYard : MonoBehaviour
         _stacked = true;
     }
 
-    /// <summary>The smallest cell a crate and its two caption lines read in, in css pixels (kanban #375).</summary>
+    /// <summary>The smallest cell a crate and its two caption lines read in, in css pixels.</summary>
     public const float MinCellCssW = 88f, MinCellCssH = 62f;
 
     /// <summary>
-    /// THE GRID THE PANEL HOLDS (kanban #375, the owner 2026-10-16 on his phone: "The labels for the cargo items must be gleichmäßig
+    /// THE GRID THE PANEL HOLDS (2026-10-16 on his phone: "The labels for the cargo items must be gleichmäßig
     /// and fit the dialog" - seven columns at 390 px gave each label 50 css px, and "FILLS 13%" with its BTC line overlapped its
     /// neighbours and ran out of the panel): as many columns as cells of MinCellCssW fit across, 3 to perRow, and as many rows as
     /// fit down, 2 to 4 - in css pixels, so a phone and a desktop read the same size.
@@ -185,7 +185,7 @@ public class PackageYard : MonoBehaviour
     public int Cols => Mathf.Min(Grid(Screen.width, Screen.height).cols, Mathf.Max(1, _yard.Count));
 
     /// <summary>
-    /// THE ORDER ON THE RAMP (kanban #375, the owner 2026-10-16: "be more diverse but largest first"): the biggest parcel first -
+    /// THE ORDER ON THE RAMP (2026-10-16: "be more diverse but largest first"): the biggest parcel first -
     /// the bed share it buys - and among the same size the best paying.
     /// </summary>
     public static int RampOrder(MempoolFeed.Tx a, MempoolFeed.Tx b)
@@ -195,7 +195,7 @@ public class PackageYard : MonoBehaviour
     }
 
     /// <summary>
-    /// A DIVERSE CHOICE (kanban #375: "it must not be all of the same so no 9% 9% 9%"): the offers grouped by the room they take,
+    /// A DIVERSE CHOICE ("it must not be all of the same so no 9% 9% 9%"): the offers grouped by the room they take,
     /// each group best paying first, and taken one from each group in turn, the largest group first - so the ramp spreads over
     /// every size the mempool has before it repeats one. The whole list comes back in that turn order; the ramp takes the head.
     /// </summary>
@@ -226,7 +226,7 @@ public class PackageYard : MonoBehaviour
         _open = true;
         _showing = Signature(offers);
 
-        // A SPREAD OF SIZES, LARGEST FIRST (kanban #375; before: the best paying 21, almost all the small transactions that pay
+        // A SPREAD OF SIZES, LARGEST FIRST (before: the best paying 21, almost all the small transactions that pay
         // the most per byte - "FILLS 9%" across the ramp). The fee still decides within a size.
         var sorted = Diverse(offers);
         int take = ShowNow;
@@ -403,7 +403,7 @@ public class PackageYard : MonoBehaviour
         var panel = PanelRect(sw, sh);
         var area = WorkArea(sw, sh);
 
-        // THE GRID FOR THIS SCREEN (kanban #375): its columns, and every row the same height whether full or not
+        // THE GRID FOR THIS SCREEN: its columns, and every row the same height whether full or not
         int cols = Mathf.Min(Grid(sw, sh).cols, _yard.Count);
         int rows = Mathf.Max(Mathf.CeilToInt(_yard.Count / (float)cols), Mathf.Min(Grid(sw, sh).rows, Mathf.CeilToInt(ShowNow / (float)cols)));
 
@@ -491,7 +491,7 @@ public class PackageYard : MonoBehaviour
         public Vector2 screen;      // centre of the crate, in screen pixels
         public float radius;        // roughly half its drawn size, in pixels
         public bool loaded;
-        public Rect label;          // where its words go: the bottom of its own cell, the cell's width (kanban #375)
+        public Rect label;          // where its words go: the bottom of its own cell, the cell's width
     }
 
     /// <summary>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * A LIGHTNING ADDRESS THAT TAKES ZAPS (NIP-57; kanban #362 item 14).
+ * A LIGHTNING ADDRESS THAT TAKES ZAPS (NIP-57).
  *
  * LUD-16's `name@host` is `https://host/.well-known/lnurlp/name`. This answers there (and at `/lnurlp/name`) with a LUD-06
  * pay request that says `allowsNostr` and names this server's own Nostr key, and at its callback mints an invoice of exactly

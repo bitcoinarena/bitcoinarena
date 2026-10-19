@@ -258,7 +258,7 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
 }
 
 /**
- * THE CHAIN FROM A FEW SOURCES, NOT FROM EVERY SEAT (kanban #376, the owner 2026-10-16 ~10:58Z: "Lower the amount of concurrent
+ * THE CHAIN FROM A FEW SOURCES, NOT FROM EVERY SEAT (2026-10-16 ~10:58Z: "Lower the amount of concurrent
  * connections and network load"; measured 11:29Z on preview UI 153, Unity's PLAY tapped: "no chain: only 0 of 14 providers gave a
  * chain ... provider 0: no answer in 10000 ms" two seconds before the round's start). Every PLAY read /headers from all 14 seats at
  * once - 218800 bytes each, about 3 MB; curl from the test host took 1.6-5.3 s for the fourteen together, and a busy tab took more

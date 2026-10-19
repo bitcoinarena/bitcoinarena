@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEBUG LABEL OVER ANOTHER PLAYER'S TRUCK, AND THE DRAIN THAT KEEPS ITS PICTURES COMING (the owner 2026-09-17 19:15:
+// THE DEBUG LABEL OVER ANOTHER PLAYER'S TRUCK, AND THE DRAIN THAT KEEPS ITS PICTURES COMING (2026-09-17 19:15:
 // "updates only every 300-600 ms"; a label with the name, the age in ms and arrows for how it moved).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,9 +52,9 @@ test('a label names the truck, says how old its newest picture is and how it mov
   client.onGhost({ ...theirs, z: ONE, heading: 300, tick: 600 });
   now += 40;
   const clock = { sentMs: (e, t) => (e === toHex(b32(4)) && t === 600 ? now - 140 - 60 : null) };
-  const [label] = ghostLabels(field, { nowMs: now, nameOf: (p) => (p === toHex(b32(5)) ? 'the owner' : null), clock });
-  assert.deepEqual(label, { entry: toHex(b32(4)), name: 'the owner', ageMs: 200, estimated: false, glyphs: UP + RIGHT });
-  assert.equal(ghostLabelText([label]), `${toHex(b32(4))}\tDaniel\t200ms ${UP}${RIGHT}`);
+  const [label] = ghostLabels(field, { nowMs: now, nameOf: (p) => (p === toHex(b32(5)) ? 'Alice' : null), clock });
+  assert.deepEqual(label, { entry: toHex(b32(4)), name: 'Alice', ageMs: 200, estimated: false, glyphs: UP + RIGHT });
+  assert.equal(ghostLabelText([label]), `${toHex(b32(4))}\tAlice\t200ms ${UP}${RIGHT}`);
   // NO STAMP OF THE DRIVER'S CLOCK: the age is the time since the picture arrived, and says so.
   const [guess] = ghostLabels(field, { nowMs: now });
   assert.equal(guess.estimated, true);

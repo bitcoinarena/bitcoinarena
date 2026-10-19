@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PROTOCOL DEVELOPER APPROVES OR DENIES A FEE PROPOSAL FROM THE OWNER PAGE (kanban #462 slice 3, the owner 2026-10-17: "The dev ui client
+// A PROTOCOL DEVELOPER APPROVES OR DENIES A FEE PROPOSAL FROM THE OWNER PAGE (2026-10-17: "The dev ui client
 // shows this and the protocol dev may deny or give his approval"), on a running node: the owner's signed request names one of its dev
 // clients and a fee proposal; the node signs the answer with that client's own key (BIP340 over the answer's id - its x-only key, the
 // key the network donation set names as 02/03 || x), keeps it only for a fee proposal it holds (404 otherwise, as the seat rule of

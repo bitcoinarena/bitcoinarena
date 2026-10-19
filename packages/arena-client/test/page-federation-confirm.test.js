@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION NOT ON THE KNOWN-GOOD LIST, ON THE PAGE'S OWN CODE (spec §23.6, kanban #318): a deposit or paid join into it
-// opens the modal first - its id, its signed status (#321), every guardian from the census this client checked (#296) -
+// A FEDERATION NOT ON THE KNOWN-GOOD LIST, ON THE PAGE'S OWN CODE (spec §23.6): a deposit or paid join into it
+// opens the modal first - its id, its signed status, every guardian from the census this client checked -
 // and is refused until "I trust this federation"; the answer is kept per browser and per federation, Forget asks again; a
 // listed federation is never asked about; an invite naming another federation is refused.
 import { test } from 'node:test';
@@ -45,7 +45,7 @@ function node(tag) {
 function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const els = {};
   const document = { getElementById: (id) => (els[id] = els[id] || node(id)), createElement: node };
-  // the browser's store through the page's one door, window.BLWP_BROWSER_STORE (kanban #465): the same fake as `localStorage`
+  // the browser's store through the page's one door, window.BLWP_BROWSER_STORE: the same fake as `localStorage`
   const window = { ARENA_FED_STATUS: status, BLWP_CURVE: {}, BLWP_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, BLWP_BROWSER_STORE: () => storage };
   const asked = [];
   const BLWPCLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,

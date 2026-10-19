@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GAME REPLAY FROM ANY NODE THAT HOLDS THE RUN (the owner 2026-09-25 18:39): GET /replay serves a page, not the Unity
+// A GAME REPLAY FROM ANY NODE THAT HOLDS THE RUN (2026-09-25 18:39): GET /replay serves a page, not the Unity
 // build; the page fetches the transcript, the entry and the round from that node - or the round's other committee
 // endpoints - and steps the core the round names. Measured here on a bonded two-node round with one played entry:
 // what each door hands the page, and that the core the page is handed, stepped over the transcript the page is handed,

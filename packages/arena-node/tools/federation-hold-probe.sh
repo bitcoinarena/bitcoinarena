@@ -3,7 +3,7 @@
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # DOES A STAKE PAID INTO A FEDIMINT FEDERATION STAY HELD, OR SETTLE AT ONCE?
 #
-# The pool is a FEDERATION (the owner 2026-09-11 09:26): Fedimint-class, with a
+# The pool is a FEDERATION (2026-09-11 09:26): Fedimint-class, with a
 # Lightning gateway, never single custody. Before any custom module, one
 # number: through Fedimint's STANDARD Lightning path (LNv2, 0.12.0 defaults),
 # is a player's stake still in flight when a round's objection window closes,
@@ -154,7 +154,7 @@ for g in 0 1 2 3; do
       FM_ENABLE_IROH=false FM_PASSWORD_API=probe FM_PASSWORD_UI=probe \
       FM_LNV2_INCOMING_HOLD_SECS=$HOLD_SECS \
       FM_DISABLE_BASE_FEES=${DISABLE_BASE_FEES:-1}
-    # THE FEDERATION'S BASE FEE IS 0 (the owner 2026-09-15 07:44: "run the federation with
+    # THE FEDERATION'S BASE FEE IS 0 (2026-09-15 07:44: "run the federation with
     # disable_base_fees"). fedimint 0.12 takes it at DKG from each guardian's env - set-local-params
     # has no flag - and then LNv2's fee_consensus is FeeConsensus::zero(); without it, 1000 msat on
     # every input and every output (measured). DISABLE_BASE_FEES=0 runs the stock default, to compare.

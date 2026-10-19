@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LATE SETTLEMENT THROUGH A RESTART (§13A; slice C3b-1, and WINNINGS-AUTO, RULED the owner 2026-10-01). Since
+// A LATE SETTLEMENT THROUGH A RESTART (§13A; slice C3b-1, and WINNINGS-AUTO, RULED 2026-10-01). Since
 // WINNINGS-AUTO a late share is a payout contract to the first winner's own lock key, never a send, so the late send's
 // restart and its re-send after expiry (slice C3b-2b) are gone with it; what stands is the late transaction itself
 // surviving a kill: settled once, rebuilt the same, never submitted twice.
@@ -64,7 +64,7 @@ async function settledOnDisk() {
     }
   };
   wire();
-  // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26), as lock-round-fixture's; closeRound skips past final_after in live order
+  // THE ROUND ENDS NOW, NOT IN 1970, as lock-round-fixture's; closeRound skips past final_after in live order
   w.c = presentDay({ ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE }, testNow() + 3000);
   w.c = { ...w.c, censusRoot: bondedChainFor(w.c.nodes, w.c, slot,

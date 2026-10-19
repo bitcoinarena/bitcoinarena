@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY COLLECT OF A MARKET ROUND CARRIES ITS MARKET'S TERMS (kanban #336, measured 2026-10-11 by the bots on the regtest
+// EVERY COLLECT OF A MARKET ROUND CARRIES ITS MARKET'S TERMS (measured 2026-10-11 by the bots on the regtest
 // Up/Down market: a filled order's payout and an unfilled order's return were never collected - "owed: no stake is locked
 // to this round: that round names stake_expiry_blocks 34770 where §23.1 rules 144"). The page's own roundAsk (page-script.js).
 import { test } from 'node:test';

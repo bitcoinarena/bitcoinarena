@@ -55,7 +55,7 @@ async function countingRelay({ lies = false } = {}) {
 const mayRelease = (w, name) => w.holder.stakeSecrets.mayRelease(w.rid, w.runs[name].eid);
 
 // AFTER THE WINDOW AN UNPUBLISHED RUN IS VOID (§13A "a settlement seat that cannot retrieve the transcript within the
-// result window treats the entry as VOID"; kanban #26, RULED the owner 2026-10-04). Before, a round dated in 1970 read "0 of
+// result window treats the entry as VOID"RULED 2026-10-04). Before, a round dated in 1970 read "0 of
 // 5 have posted" past its window for good - and postings arriving then could still make it FINAL.
 test('seven signer nodes, five sign and nobody posts the transcript anywhere: after the window the run is VOID, and says why', async () => {
   const relay = await countingRelay();
@@ -75,7 +75,7 @@ test('seven signer nodes, five sign and nobody posts the transcript anywhere: af
 
 // THE WINDOW RUNS FROM THE ROUND'S END, AND THE POSTING IS A CONDITION OF SIGNING FINAL (§13A, WINDOW-10-SPEC, RULED the owner
 // 2026-10-01). Inside the window four postings are not publication and no seat signs FINAL; the fifth, held in time, and
-// past the window a seat may - and five signatures make it FINAL (kanban #26: postings count only if held in time).
+// past the window a seat may - and five signatures make it FINAL (postings count only if held in time).
 test('seven signer nodes: four postings are not enough; with the fifth a seat signs FINAL - the window itself runs from the round\'s end', async () => {
   const w = await sevenSignerNodes(1000, undefined, { endMs: testNow() + 4000 });
   try {

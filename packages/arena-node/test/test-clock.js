@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FIXTURES' SHARED CLOCK THAT SKIPS (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): the objection window is exactly
+// THE FIXTURES' SHARED CLOCK THAT SKIPS (§13A, WINDOW-10-SPEC, RULED 2026-10-01): the objection window is exactly
 // 600 s of wall time from the round's end, and no test waits ten real minutes. Every fixture daemon reads this clock as
 // its round store's (`roundClock`): the wall clock plus an offset that only grows. `skipTo(ms)` moves every daemon in the
 // process to that instant at once - one network, one time - and nothing in between happens: the windows close as they

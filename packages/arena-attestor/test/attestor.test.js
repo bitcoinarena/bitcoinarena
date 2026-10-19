@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ATTESTOR'S CORE (kanban #236): one window's word from its readings, nothing signed without a price at the start, and
+// THE ATTESTOR'S CORE: one window's word from its readings, nothing signed without a price at the start, and
 // the words combining into an attestation a seat takes - the market's threshold of its attestors over one body.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,7 +65,7 @@ test('two attestors that saw the same outcome sign the same bytes: their words c
   assert.equal(combine([words.A, stranger], { attestors: ATTESTORS, threshold: 2 }), null);
 });
 
-// THE VALUE MODE (kanban #362 feature 8): a scalar market's attestors sign the value they observed - the 60 s average at the
+// THE VALUE MODE (feature 8): a scalar market's attestors sign the value they observed - the 60 s average at the
 // window's end, whole cents - and their words combine into a value attestation a seat takes (scalar.js valueAttestationStands).
 const SCALAR = { ...UPDOWN.registration.manifest, scalar: { low: 8000000n, high: 9000000n, unit: 'USD cents' } };
 

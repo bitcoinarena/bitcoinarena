@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WINNINGS-AUTO (RULED the owner 2026-10-01) replaces THE POOL (RULED 2026-09-23: (ii), with (iii); never (i)). A qualifier who names no Lightning
+// WINNINGS-AUTO (RULED 2026-10-01) replaces THE POOL (RULED 2026-09-23: (ii), with (iii); never (i)). A qualifier who names no Lightning
 // address is not paid: its share is split over the qualifiers who named one, by the payout table's own weights
 // renormalised over them; with nobody addressed no stake lock is claimed. Split out of winnings-sent.test.js so each
 // file runs inside the 180 s cap.
@@ -35,7 +35,7 @@ async function untilPaid(w, eid, ms = 30000) {
 // players are real keys whose runs the core delivers with distinct scores - found under each round's own beacon
 // (window-fixture qualifiersUnder), since a paying round seeds its players from it, highest score first.
 
-test('WINNINGS-AUTO A on the signer nodes (RULED the owner 2026-10-01): five qualifiers, the top one naming nothing and the others an address - every paying rank is paid by its payout contract to its own key, no invoice asked, no gateway paid; the pot is the payouts and their fees', async () => {
+test('WINNINGS-AUTO A on the signer nodes (RULED 2026-10-01): five qualifiers, the top one naming nothing and the others an address - every paying rank is paid by its payout contract to its own key, no invoice asked, no gateway paid; the pot is the payouts and their fees', async () => {
   const port = lockPort();
   const addr = lnurl(port);
   const w = await lockRound({ port, serveOpts: { lnurlFetch: addr.fetchLike } });

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A BOND OF THE ANCESTOR NETWORK, CARRIED INTO THIS ONE BY ITS OPERATOR (§27A.8.3, spec 0A.9; kanban #209, the owner
+// A BOND OF THE ANCESTOR NETWORK, CARRIED INTO THIS ONE BY ITS OPERATOR (§27A.8.3, spec 0A.9the owner
 // 2026-10-08). testnet4's seven bonds were posted by the BLWP network: they pay the BLWP bond marker's dust and commit to
-// an advertisement under the BLWP advert tag, in the layout of before hosted_games. After #207 every tag is ARENA/v1, so
+// an advertisement under the BLWP advert tag, in the layout of before hosted_games. After every tag is ARENA/v1, so
 // the census found none of them. Now it finds them by the ancestor's marker and reads them by the ancestor's layout and
 // id (ancestor.js), and counts one only once its operator published a re-affirmation (reaffirm.js): "ARN" 'F'
 // network_id[0:8] and the bond's node key's signature over this network and this bond. An advertisement update then
@@ -51,7 +51,7 @@ const OLD_BOND_TX = bondTransaction(OLD_ADVERT, {
   markerProgram: ancestorMarker('regtest'), outputKey: bondFor(keyFor(OLD)), previousTxid: b32(0xa1), value: 100000,
 });
 const OLD_TXID = parseTransaction(OLD_BOND_TX).txid;
-// AND ONE OF THIS NETWORK, as #204 posts them
+// AND ONE OF THIS NETWORK, as posts them
 const NEW_ADVERT = advertFor(NEW);
 const NEW_BOND_TX = bondTransaction(NEW_ADVERT, {
   signature: schnorr.sign(advertId(NEW_ADVERT), secretOf(NEW)), outputKey: bondFor(keyFor(NEW)), previousTxid: b32(0xa2), value: 100000,

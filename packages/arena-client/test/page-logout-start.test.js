@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LOGOUT OPENS THE START SCREEN, NOT A NEW ACCOUNT (kanban #339, the owner 2026-10-11: "Logout goes straight into a newly
+// LOGOUT OPENS THE START SCREEN, NOT A NEW ACCOUNT (2026-10-11: "Logout goes straight into a newly
 // created account. It must go to an overview with the options to create a new account or log in. On Nostr logout, clear
 // the local login."). Measured in Chrome on the page: after a delete and its reload the tab held a freshly minted phrase -
 // the wallet bar's and the collect's seed reads minted one before the start screen looked, and with Settings open a timer
@@ -66,7 +66,7 @@ test('logout: the tab has no account until its reload, and the Nostr login and i
   pageFunction(PAGE, ['window', 'sessionStorage'], DECIDE, 'return 0;')(window, S);
   window.ARENA_WALLET_SCREEN = { shown: false, done: true };
   assert.equal(window.ARENA_START_PENDING(), false, 'a player with an account');
-  window.BLWP_BROWSER_STORE = () => local;   // the page's one door to the browser's store (kanban #465)
+  window.BLWP_BROWSER_STORE = () => local;   // the page's one door to the browser's store
   const del = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'BLWPCLIENT', 'console'], DELETE, 'return window.ARENA_DELETE_ACCOUNT;')(
     window, () => L, S, local, { forgetPhrase: () => 3 }, { log: () => {} });
   assert.deepEqual(del(), { ok: true, forgot: 3 });

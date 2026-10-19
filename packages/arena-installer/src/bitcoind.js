@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BITCOIN CORE, INSTALLED BY THE WIZARD WHEN ASKED (kanban #471 ruling 8; the owner 2026-10-18: "471 can also install bitcoind if
+// BITCOIN CORE, INSTALLED BY THE WIZARD WHEN ASKED (ruling 8; 2026-10-18: "471 can also install bitcoind if
 // requested and not installed yet. It evaluates how much disk space is needed and [warns] if [it is] not enough for both main net and
 // Testnet4. It runs bitcoind as a service and the monitor in the website monitors the progress and gives an eta how long it will take.
 // Tells user to bookmark this page as it can take days on main net. Once complete the setup continues. Includes setting it up and a
@@ -97,10 +97,10 @@ export function configureCore({ home, network = 'testnet4', prune = false, dbcac
   const p = PORTS[network];
   const sect = network === 'mainnet' ? 'main' : network;
   const conf = [
-    `# The Arena node's own Bitcoin Core (kanban #471 ruling 8), written by the installer.`,
+    `# The Arena node's own Bitcoin Core (ruling 8), written by the installer.`,
     ...(network === 'testnet4' ? ['testnet4=1'] : []),
     'server=1', `dbcache=${dbcacheMb}`, ...(prune ? ['prune=2000'] : []),
-    // ITS PEER PORT ON THIS MACHINE ONLY (kanban #471, the Windows VM 2026-10-19: listening on every network, bitcoind made Windows Firewall
+    // ITS PEER PORT ON THIS MACHINE ONLY (the Windows VM 2026-10-19: listening on every network, bitcoind made Windows Firewall
     // ask the user to open it to public networks): the node needs no inbound Bitcoin peers - its outbound ones are as before
     `[${sect}]`, 'rpcbind=127.0.0.1', 'rpcallowip=127.0.0.1', `rpcport=${p.rpc}`, `port=${p.p2p}`, `bind=127.0.0.1:${p.p2p}`, '',
   ].join('\n');

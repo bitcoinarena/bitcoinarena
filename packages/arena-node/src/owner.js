@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S OWNER (kanban #276, the owner 2026-10-09: "Under Node /Dashboard, a separate owner area. The owner must
+// THE NODE'S OWNER (2026-10-09: "Under Node /Dashboard, a separate owner area. The owner must
 // authenticate. First time: 24 Bitcoin words for restore, stored in local storage").
 //
 // The owner is a key, not an account. The browser makes 32 random bytes, shows them as 24 BIP-39 words to write down,
@@ -37,7 +37,7 @@ export function signOwnerRequest({ node, action, args = {}, atMs = Date.now(), s
   return { pubkey: toHex(pubkeyOf(secret)), action, args, atMs, sig: toHex(sig) };
 }
 
-// LOGIN WITH NOSTR (kanban #277, the owner 2026-10-10: "277 contains a login with Nostr feature for node claiming instead of
+// LOGIN WITH NOSTR (2026-10-10: "277 contains a login with Nostr feature for node claiming instead of
 // generating your own seed"): the owner key IS a Nostr key (both BIP-340), so an nsec signs requests as above; a browser
 // extension (NIP-07) or a remote signer (NIP-46) signs only events, so its request is one: kind 27235 (NIP-98, HTTP auth),
 // tagged with this node (u = arena-owner:<node key>), the action (method) and the SHA-256 of the arguments (payload), at the
@@ -121,7 +121,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       log(`[owner] claimed by ${c.pubkey}${req.nostr ? ' (a Nostr signer)' : ''}`);
       return { ok: true, owner: owner.pubkey };
     },
-    /** LEAVE (kanban #276 step 2): from now this seat takes no new round; it serves the ones it holds. Kept with the owner. */
+    /** LEAVE: from now this seat takes no new round; it serves the ones it holds. Kept with the owner. */
     leave(req) {
       const a = this.authorize(req, 'leave');
       if (!a.ok) return a;
@@ -139,7 +139,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       return { ok: true, leavingAtMs: null };
     },
     leavingAtMs: () => (owner && owner.leaving ? owner.leaving.atMs : null),
-    /** THE STORE'S SETTINGS (kanban #276 step 5, the owner 2026-10-10: "updates can be automatic, that is a setting"): signed. */
+    /** THE STORE'S SETTINGS (2026-10-10: "updates can be automatic, that is a setting"): signed. */
     settings(req) {
       const a = this.authorize(req, 'settings');
       if (!a.ok) return a;

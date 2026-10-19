@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LARGER TRUCK (kanban #369, the first in-game item): a run handed its unlock drives a 3.9 m bed and 15 % more drive acceleration,
+// THE LARGER TRUCK (the first in-game item): a run handed its unlock drives a 3.9 m bed and 15 % more drive acceleration,
 // topping out on flat ground where the accepted larger truck did (25.30 m/s); a run handed none, or an unlock this core does not know,
 // is exactly the run it was - every state hash the same.
 import { test } from 'node:test';

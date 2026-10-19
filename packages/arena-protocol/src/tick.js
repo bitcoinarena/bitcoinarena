@@ -10,7 +10,7 @@
 // both parked: "the round contract measures its length in TICKS and an HTLC in
 // TIME, and the protocol defines no tick rate to convert between them."
 //
-// THE RATE IS THE NETWORK'S, STATED HERE (kanban #203, the owner 2026-10-07: "Engine states the tick rate; a nextblock
+// THE RATE IS THE NETWORK'S, STATED HERE (2026-10-07: "Engine states the tick rate; a nextblock
 // test checks the core matches"). It was imported from the core - the one game - and the engine imports no game now. A
 // game runs at this rate or it cannot be a game of this network: nextblock/test/engine-shared.test.js holds the core's
 // TICK_DT and ticks per second to these three numbers, so the two still cannot drift - the check moved from an import

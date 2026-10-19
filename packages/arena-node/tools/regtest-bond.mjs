@@ -40,7 +40,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   if (!JSON.parse(cli('listwallets')).includes(wallet)) {
     try { cli('loadwallet', wallet); } catch { cli('createwallet', wallet); }
   }
-  // ONE UTXO SCAN AT A TIME, WAITED FOR (kanban #348, measured 2026-10-13: two runners started on one bitcoind at once - the
+  // ONE UTXO SCAN AT A TIME, WAITED FOR (measured 2026-10-13: two runners started on one bitcoind at once - the
   // Up/Down keeper beside the Tick Tock keeper, on the test host and on the test host - and the second died on "Scan already in
   // progress", error -8): a scan another process runs is waited out, 2 s at a time, up to 4 min, then asked again
   const scanUtxos = (descriptors) => {
@@ -55,7 +55,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   };
   const height = () => Number(cli('getblockcount'));
   const mine = (n = 1) => cli('generatetoaddress', String(n), cli('getnewaddress'));
-  // A CHAIN THE OPERATOR MINES IS A CHAIN THE OPERATOR GRINDS (RULED, the owner 2026-09-21 17:01).
+  // A CHAIN THE OPERATOR MINES IS A CHAIN THE OPERATOR GRINDS (RULED 2026-09-21 17:01).
   //
   // The bonds have to be six deep at the census height, and on regtest that is `mine(6)` - instant, and
   // fine, because a free round's beacon is nobody's money. On a real chain it is not fine: the round's
@@ -107,7 +107,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return ids;
   };
 
-  // THE BODY TRAVELS IN SEVERAL ITEMS, ONE `OP_DROP` EACH (RULED, the owner 2026-09-21).
+  // THE BODY TRAVELS IN SEVERAL ITEMS, ONE `OP_DROP` EACH (RULED 2026-09-21).
   //
   // Measured on this node at d14fbec7: the spend is `witness_v1_taproot` and the stack was
   // [64 sig, 266 body, 35 script, 33 control], and it was refused `bad-witness-nonstandard` - Bitcoin Core
@@ -137,7 +137,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     const address = JSON.parse(cli('decodescript', toHex(spk))).address;
     // ON TESTNET4 AT A NAMED FEE: its bitcoind often has no estimate ("Fee estimation failed"), and 2 sat/vB is
     // what that chain's blocks take.
-    // AND FROM COINS STILL IN THE MEMPOOL (the owner 2026-09-27 17:24, the 23:00 gate): bitcoind's `send` with
+    // AND FROM COINS STILL IN THE MEMPOOL (2026-09-27 17:24, the 23:00 gate): bitcoind's `send` with
     // include_unsafe spends a deposit an outside sender made that has not confirmed yet, so the deposit, the funding
     // and the bond can be mined in one block instead of each waiting on the one before.
     const txid = minable ? cli('sendtoaddress', address, btc)
@@ -159,7 +159,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * network's marker, the commitment, and the signed body in the witness.
    */
   /**
-   * `guardianOf` IS WHAT MAKES A FEDERATION ROUND OPENABLE (§23.6 P3, the owner 2026-09-15 07:33).
+   * `guardianOf` IS WHAT MAKES A FEDERATION ROUND OPENABLE (§23.6 P3, 2026-09-15 07:33).
    *
    * A round that takes a stake into a federation is assigned signer nodes only on a BONDED one:
    * `federationIsBonded` wants the federation's threshold of its guardian keys advertised under
@@ -170,7 +170,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * name them, which is the only thing a local federation round was missing.
    */
   /**
-   * THE NODE'S BOND ALREADY ON CHAIN (spec §5A.3; the owner 2026-09-28 07:39: "a bond that once confirmed stays valid. The
+   * THE NODE'S BOND ALREADY ON CHAIN (spec §5A.3; 2026-09-28 07:39: "a bond that once confirmed stays valid. The
    * operator does not post again"). Every bond a node posts pays the same output key - it is built from the node key,
    * the network's arbitration keys and its maturity, nothing else - so the chain's own UTXO set answers which of the
    * node's bonds are still unspent. Of those, the newest confirmed one whose committed advertisement says what the
@@ -191,7 +191,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
 
   /**
    * EVERY CONFIRMED UNSPENT BOND OF THIS NODE KEY, newest first, each with the advertisement it stands for now: the
-   * newest signed update of it (§5A.2; the owner 2026-09-28: "accept an updated advert and select the existing bond"),
+   * newest signed update of it (§5A.2; 2026-09-28: "accept an updated advert and select the existing bond"),
    * else the one it committed to at creation (`bondAdvert` is always the latter).
    */
   function bondsOf(nodeSecret) {
@@ -199,11 +199,11 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     // and signs nothing, so a launcher that holds no node's store can find every node's bond.
     const nodeKey = nodeSecret && nodeSecret.pubkey ? nodeSecret.pubkey : schnorr.getPublicKey(nodeSecret);
     // THE MARKERS ARE READ AGAIN EACH TIME: kept from an earlier call they missed an update posted since, and a re-bond
-    // built off that record carried the advertisement from before it (measured, kanban #295: hosted_games lost)
+    // built off that record carried the advertisement from before it (measured,: hosted_games lost)
     markers = null;
     const built = keyAt(nodeKey, g.bondMaturity);
     const scan = scanUtxos([`raw(5120${toHex(built.outputKey)})`]);
-    // TEMPLATE 2 PAYS A KEY OF ITS OWN HEIGHT (kanban #295), so no one key finds them: each bond transaction pays this
+    // TEMPLATE 2 PAYS A KEY OF ITS OWN HEIGHT, so no one key finds them: each bond transaction pays this
     // network's marker dust, which nobody spends, and a marker whose transaction commits to a template-2 body of this
     // node key names the bond output to ask the UTXO set about.
     const unspent = [...(scan.unspents || []), ...v2BondsOf(nodeKey)]
@@ -218,7 +218,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
         try {
           const signed = splitSignedAdvert(item);
           const commits = (id) => commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]));
-          // a bond of this network, or one the BLWP network posted (ancestor.js; kanban #209): read by its own layout and id
+          // a bond of this network, or one the BLWP network posted (ancestor.js): read by its own layout and id
           let a = null;
           try { a = decodeAdvert(signed.body); if (!commits(advertId(a))) a = null; } catch { a = null; }
           if (!a && commits(ancestorAdvertId(signed.body))) { a = decodeAncestorAdvert(signed.body); ancestor = true; }
@@ -340,7 +340,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   }
 
   /**
-   * A RE-AFFIRMATION OF ONE BOND FOR `networkId` (§27A.8.3, spec 0A.9; kanban #209): this network's marker dust (findable
+   * A RE-AFFIRMATION OF ONE BOND FOR `networkId` (§27A.8.3, spec 0A.9): this network's marker dust (findable
    * as an update is) and OP_RETURN "ARN" 'F' network_id[0:8] with the bond's node key's signature over this network and
    * this bond (reaffirm.js). Spends a carrier funded like an update's - never the bond, which keeps its maturity - and
    * answers the raw transaction; the caller broadcasts it. `bond` is { txid (hex as bitcoind shows it), vout }.
@@ -372,7 +372,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   }
 
   /**
-   * A TEMPLATE-1 BOND MOVED INTO TEMPLATE 2 (kanban #295, the owner 2026-10-11: "spend path A into a v2 bond and publish
+   * A TEMPLATE-1 BOND MOVED INTO TEMPLATE 2 (2026-10-11: "spend path A into a v2 bond and publish
    * the new advert, only after a testmempoolaccept dry run"). One transaction: input 0 is the old bond by its recovery
    * leaf - its node's own key at its own maturity, which template 1 put at genesis' fixed height and is long past - and
    * input 1 a carrier whose witness holds the new signed body; output 0 is the new bond at the same value, at a maturity
@@ -426,19 +426,19 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { hex, advertId: toHex(id), maturity: prepared.maturity, bondSats, txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
-  // `hostedGames`: the games the node's advertisement hosts (§0A.4, kanban #204) - sorted 32-byte ids; nextblock's unless given.
-  // Measured (kanban #206): with none named every bond this posted was refused by the advertisement's own encoder.
+  // `hostedGames`: the games the node's advertisement hosts (§0A.4) - sorted 32-byte ids; nextblock's unless given.
+  // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
     template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1] } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
-    // A NEW BOND IS TEMPLATE 2 (kanban #295): its maturity is the next block, a few of slack and this network's offset
+    // A NEW BOND IS TEMPLATE 2: its maturity is the next block, a few of slack and this network's offset
     // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
     const maturity = template === BOND_TEMPLATE_V2 ? maturityHeightFor(height(), network) : g.bondMaturity;
     const built = keyAt(nodeKey, maturity);
 
     const advert = {
-      // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (kanban #326: a node of
+      // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (a node of
       // its own operator, drawable beside the 14 '2of2' nodes; it speaks what its build speaks)
       nodePubkey: nodeKey, operatorId, protocolVersions, roles, hostedGames,
       endpoint, region: 'eu-west', capacityClass: 1,

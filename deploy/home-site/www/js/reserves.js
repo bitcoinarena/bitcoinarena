@@ -1,4 +1,4 @@
-// THE PROTOCOL RESERVES ON THE HOMEPAGE (§27A.9, kanban #397, the owner 2026-10-17: "Find a prominent place on the website under
+// THE PROTOCOL RESERVES ON THE HOMEPAGE (§27A.92026-10-17: "Find a prominent place on the website under
 // the USPs to show the reserves ... Under the fees"): the testnet's nodes (the Arena page's daily.json) are asked GET /reserves,
 // and the total is shown only when at least NEEDED of them answer the same one - as the Arena page took it - so no single node
 // can set the number. Until then the panel says it is reading the nodes; if they never agree it says so.

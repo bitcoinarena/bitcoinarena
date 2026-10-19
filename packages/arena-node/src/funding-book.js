@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FUNDING PROPOSALS A SEAT KEEPS (§27A.9.3 stage 1, kanban #397 slice 6): every proposal, comment and signal it was handed - by its
+// THE FUNDING PROPOSALS A SEAT KEEPS (§27A.9.3 stage 1): every proposal, comment and signal it was handed - by its
 // owner's own node, by a writer, or forwarded by another seat - checked, kept in its store and listed with the signal's state. Signals
-// are signed messages the seats keep and pass on (the owner 2026-10-16), never on chain; they weigh one per node and move no money.
+// are signed messages the seats keep and pass on (2026-10-16), never on chain; they weigh one per node and move no money.
 //
-//   add(kind, hex)   a new object (body || 64-byte BIP340 signature): kept when it stands - a proposal by ANY key (the owner 2026-10-17:
+//   add(kind, hex)   a new object (body || 64-byte BIP340 signature): kept when it stands - a proposal by ANY key (2026-10-17:
 //                    "Anyone can do a proposal to pay out"; its signal and vote stay with the bonded nodes) not dated ahead of this
 //                    seat's chain, a comment or signal on a proposal held here; `fresh` when it was new (the server
 //                    forwards it once)
@@ -35,7 +35,7 @@ export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256'
  * `schedule` FUNDING_SCHEDULES.spec unless a live proof runs the short one; `seasonedNodes(networkHex, publishedHeight, atHeight)` -> [hex]
  * the nodes whose bond confirmed `season` blocks before publication (the signal rule), or null when this seat cannot tell yet.
  */
-// FEE PROPOSALS (kanban #462, fee-proposal.js): kind 'fee', kept and passed on as a funding proposal is, given the same signal and the
+// FEE PROPOSALS (fee-proposal.js): kind 'fee', kept and passed on as a funding proposal is, given the same signal and the
 // same bond-weighted vote; kind 'fee-approval', a protocol developer's yes or no to one. `devKeysOf(networkHex)` -> the protocol
 // developers' keys (32-byte x-only hex) of that network, or null when this seat cannot tell yet. Once its vote is decided a fee
 // proposal is decided whole (feeProposalOutcome) against the fees in force before its activation; feesAt(height) answers the set
@@ -45,16 +45,16 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   db.exec(FUNDING_SQL);
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
-  // ... and leaderboard payout requests (kanban #460): voted on as they are, but with no signal - their vote starts at publication
+  // ... and leaderboard payout requests: voted on as they are, but with no signal - their vote starts at publication
   const votedRows = () => [...rows('proposal'), ...rows('fee'), ...rows('leaderboard')];
   const periodOf = (kind, o, signal) => (kind === 'leaderboard' ? leaderboardVotePeriod({ proposal: o, schedule }) : votePeriodOf({ proposal: o, signal, schedule }));
-  // A LEADERBOARD PAYOUT'S ONLY PASS TEST (the owner 2026-10-18): YES >= 25 % of the voting weight (leaderboard-payout.js)
+  // A LEADERBOARD PAYOUT'S ONLY PASS TEST (2026-10-18): YES >= 25 % of the voting weight (leaderboard-payout.js)
   const ruleOf = (kind, count) => (kind === 'leaderboard' && count ? leaderboardPasses(count) : count);
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
   const signalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
     .map((r) => read('signal', r.hex)).filter((x) => x.ok).map((x) => ({ node: toHex(x.obj.node), atHeight: x.obj.atHeight }));
-  // THE VOTE (§27A.9.3 stage 2, kanban #397 slice 7): opened only by a signal this seat decided passed; the census taken ONCE at the
+  // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
   // when the last voting block is `decideDepth` deep, and reopened only when that counted block is reorged away
   const voteCensus = (pid) => { const r = db.prepare('SELECT height, census FROM funding_vote_census WHERE proposal = ?').get(pid);
@@ -189,7 +189,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const approvalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee-approval' AND proposal = ? ORDER BY at_ms, id").all(pid)
     .map((x) => read('fee-approval', x.hex)).filter((x) => x.ok).map((x) => ({ approval: x.obj, signature: x.signature }));
   /**
-   * DECIDE THE FEE PROPOSALS WHOSE VOTE IS DECIDED (kanban #462): each once, whole - its set against the fees in force just before its
+   * DECIDE THE FEE PROPOSALS WHOSE VOTE IS DECIDED: each once, whole - its set against the fees in force just before its
    * activation, its signal, its vote, and the protocol developers' majority for a donation it changes. A refusal is written too: it
    * applies nothing. Answers the decisions made now.
    */
@@ -229,7 +229,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? JSON.parse(decided.outcome) : null, hex: row.hex };
     }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
   }
-  /** THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED HERE (kanban #460): [{ id, proposal (decoded), decidableAt }] - reserve-payout.js pays them. */
+  /** THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED HERE: [{ id, proposal (decoded), decidableAt }] - reserve-payout.js pays them. */
   function leaderboardsPassed() {
     return rows('leaderboard').map((row) => ({ row, p: read('leaderboard', row.hex), v: voteOutcome(row.id) })).filter((x) => x.p.ok && x.v && x.v.passed)
       .map((x) => ({ id: x.row.id, proposal: x.p.obj, decidableAt: leaderboardVotePeriod({ proposal: x.p.obj, schedule }).decidableAt }));
@@ -262,7 +262,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const id = toHex(r.id);
       if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
       const height = await Promise.resolve(tip()).catch(() => null);
-      // A PLAYER'S NAME (kanban #397 PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
+      // A PLAYER'S NAME (PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
       // more than the skew ahead of this seat's clock is refused, so nobody pins a name by dating it in the future
       if (kind === 'name') {
         if (r.obj.atMs > BigInt(now() + PLAYER_NAME_SKEW_MS)) return { ok: false, status: 422, why: 'that name is dated ahead of this seat\'s clock' };
@@ -278,7 +278,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         return { ok: true, fresh: true, id, player: toHex(r.obj.player) };
       }
       let proposal;
-      // A FEE PROPOSAL (kanban #462): anyone may propose; refused at submission when the whole set it makes from the fees in force at
+      // A FEE PROPOSAL: anyone may propose; refused at submission when the whole set it makes from the fees in force at
       // its activation breaks a limit or a sum, or applies before its vote can be decided
       if (kind === 'fee') {
         const st = feeProposalStands(r.obj, { current: feesAt(r.obj.activationHeight - 1), schedule });
@@ -287,7 +287,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, id, String(hex).toLowerCase(), now());
         return { ok: true, fresh: true, id, proposal: id };
       }
-      // A LEADERBOARD PAYOUT REQUEST (kanban #460): anyone may ask; kept as a proposal, voted from its publication
+      // A LEADERBOARD PAYOUT REQUEST: anyone may ask; kept as a proposal, voted from its publication
       if (kind === 'leaderboard') {
         if (Number.isInteger(height) && r.obj.publishedHeight > height + 1) return { ok: false, status: 422, why: `published at ${r.obj.publishedHeight}, and this seat's chain is at ${height}` };
         const vp = leaderboardVotePeriod({ proposal: r.obj, schedule });
@@ -303,7 +303,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         return { ok: true, fresh: true, id, proposal };
       }
       if (kind === 'proposal') {
-        // ANYONE MAY PROPOSE (kanban #397, the owner 2026-10-17: "Anyone can do a proposal to pay out, doesn't have to be the dev"): the
+        // ANYONE MAY PROPOSE (2026-10-17: "Anyone can do a proposal to pay out, doesn't have to be the dev"): the
         // author is any key that signs it; only the nodes' signal and the bonded capital's vote decide whether it is paid
         proposal = id;
         if (Number.isInteger(height) && r.obj.publishedHeight > height + 1) return { ok: false, status: 422, why: `published at ${r.obj.publishedHeight}, and this seat's chain is at ${height}` };
@@ -345,7 +345,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (!Number.isInteger(height)) return [];
       const done = [];
       for (const row of votedRows()) {
-        if (row.kind === 'leaderboard') continue;            // no signal period (kanban #460)
+        if (row.kind === 'leaderboard') continue;            // no signal period
         if (outcomeOf(row.id)) continue;
         const p = read(row.kind, row.hex); if (!p.ok) continue;
         const end = p.obj.publishedHeight + schedule.signal;

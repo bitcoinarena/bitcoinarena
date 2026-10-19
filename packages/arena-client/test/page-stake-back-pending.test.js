@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A STAKE OWED BACK SHOWS AS PENDING UNTIL IT IS COLLECTED (kanban #106, comment 583). The pending chip counted winnings only
+// A STAKE OWED BACK SHOWS AS PENDING UNTIL IT IS COLLECTED (comment 583). The pending chip counted winnings only
 // (/standing payouts); a stake coming back - the signer nodes' forfeit or the refund by the player's key - was on no chip
 // until WINNINGS-AUTO collected it, and since 2e11b2ba no longer on the "Withdrawal available" line either. index.html's own
 // lookThePayout and lookThePending run under the page's name (page-script.js) with fakes. Measured: a 98,000 msat stake owed
 // back on a round not done, whose collect fails, shows as 98 sat pending; collected, it leaves pending (it is confirmed
-// then); a done round adds nothing (the owner's 2026-10-04 case); winnings owed are not counted a second time.
+// then); a done round adds nothing (2026-10-04 case); winnings owed are not counted a second time.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -35,7 +35,7 @@ function page({ record, theLook, collect }) {
     collectIntoPlayerWallet: collect, pendingWindowLine, savedLockExpiration,
   };
   const lookRound = async () => ({ look: theLook, held: true, LockClient: 'LC' });
-  // since #153 the collect walks every kept phrase's records (keptRecords) and runs each under its phrase (withRecordPhrase);
+  // since the collect walks every kept phrase's records (keptRecords) and runs each under its phrase (withRecordPhrase);
   // this test's one record is the tab's own
   record.own = true;
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'BLWPCLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A TEST FAULT, OFF BY DEFAULT (ORDER-2116, RULED the owner 2026-10-02: invalidation case 1 - "for one named entry, 4 of the 7
+// A TEST FAULT, OFF BY DEFAULT (ORDER-2116, RULED 2026-10-02: invalidation case 1 - "for one named entry, 4 of the 7
 // seats sign a different run. Their valid objection suspends it, the re-run voids it, and the pending line goes").
 //
 // ARENA_TEST_DISSENT_ENTRY names one entry (64 hex) at start; ARENA_TEST_DISSENT_FILE names a file whose first line names it,
@@ -28,7 +28,7 @@ const named = () => {
 export const testDissentEntry = fromEnv;
 export const dissentsOn = (entryIdBytes) => { const n = named(); return n !== null && !!entryIdBytes && hex(entryIdBytes) === n; };
 
-// AND ITS FIRST RESULT TOO, when asked (kanban #26, RULED the owner 2026-10-04: "extend ARENA_TEST_DISSENT_FILE to sign one
+// AND ITS FIRST RESULT TOO, when asked (RULED 2026-10-04: "extend ARENA_TEST_DISSENT_FILE to sign one
 // score higher for one named entry" - the live split). The file's first line `<entry hex> first`, or
 // ARENA_TEST_DISSENT_FIRST=1 beside the env entry: this seat then signs that entry's FIRST result one score higher too, so
 // with its peers honest the committee splits with every seat up. Without the word nothing changes: the re-run fault above.
@@ -44,7 +44,7 @@ const firstNamed = () => {
 };
 export const dissentsFirstOn = (entryIdBytes) => dissentsOn(entryIdBytes) && firstNamed();
 
-// THE LATE POSTING (kanban #26, RULED the owner 2026-10-04: "Off by default, same shape as ARENA_TEST_DISSENT_FILE: one named
+// THE LATE POSTING (RULED 2026-10-04: "Off by default, same shape as ARENA_TEST_DISSENT_FILE: one named
 // entry, one seat posts after the deadline"). ARENA_TEST_LATE_POSTING_ENTRY names one entry (64 hex) at start;
 // ARENA_TEST_LATE_POSTING_FILE names a file whose first line names it, read again at most every 2 s. On a seat started with
 // either, and for that entry only, this seat makes no posting of its transcript until its own clock reads the round's

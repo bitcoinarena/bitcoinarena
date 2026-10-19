@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Project improvement proposals (PIPs) · Bitcoin Arena</title>
 <link rel="icon" href="/favicon.ico">
-<!-- PROJECT PROPOSALS, A FORUM (kanban #397, the owner 2026-10-17: "Proposals are on a separate page and look like a forum"): one thread per
+<!-- PROJECT PROPOSALS, A FORUM (2026-10-17: "Proposals are on a separate page and look like a forum"): one thread per
      proposal - its post, its stage and its replies - read from the network's nodes, and new threads and replies signed with the
      reader's own key. The page's script is /js/forum.js. -->
 <style>
@@ -23,7 +23,7 @@
     font-style: normal; color: #1a0f00; font-weight: 800; }
   nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 15px; color: var(--dim); }
   nav .links a { text-decoration: none; } nav .links a:hover, nav .links a.on { color: var(--text); }
-  /* ONE LINE ON A PHONE (kanban #434, the owner 2026-10-17: "On mobile the title is wrapping"): the brand never wraps; on a narrow
+  /* ONE LINE ON A PHONE (2026-10-17: "On mobile the title is wrapping"): the brand never wraps; on a narrow
      screen the menu tightens, and below 410 px the brand keeps its mark only - the four links stay */
   @media (max-width: 560px) { nav .wrap { gap: 12px; } nav .links { gap: 13px; font-size: 14px; } .brand { font-size: 16px; } .brand i { width: 26px; height: 26px; } }
   @media (max-width: 410px) { .brand .t { display: none; } }
@@ -62,7 +62,7 @@
   .ava { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font: 700 15px system-ui; color: #0b0f14; }
   .post .who { font-size: 14px; color: var(--dim); } .post .who b { color: var(--text); }
   .post .body { white-space: pre-wrap; margin: 6px 0; }
-  /* a PIP's Markdown (kanban #432) */
+  /* a PIP's Markdown */
   .md { white-space: normal; } .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font: 700 17px/1.3 system-ui; } .md h3.improves { color: var(--btc); }
   .md p { margin: 6px 0; } .md ul, .md ol { margin: 6px 0; padding-left: 22px; } .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--soft); }
   .md code { font: 13px ui-monospace, monospace; background: var(--bg); padding: 1px 4px; border-radius: 4px; } .md pre { overflow-x: auto; background: var(--bg); padding: 8px 10px; border-radius: 8px; }
@@ -88,7 +88,7 @@
 </div></nav>
 
 <main class="wrap" id="forum">
-  <!-- THE RESERVES' BALANCE, FIRST THING ON THE PAGE (the owner 2026-10-17: "Proposals page shows the current balance on top"): what the
+  <!-- THE RESERVES' BALANCE, FIRST THING ON THE PAGE (2026-10-17: "Proposals page shows the current balance on top"): what the
        protocol reserves hold now, as the network's nodes agree on it, and the most one PIP may ask (10 %) -->
   <div class="balance" id="balance"><span class="lbl">Protocol reserves</span><b class="sats">…</b><span class="sub">reading the nodes</span></div>
   <h1>Project improvement proposals</h1>
@@ -104,7 +104,7 @@
       <li><b>Time to say no:</b> nothing is paid for 2 weeks after the vote, and NO votes in that time stop it. Above 1% of the reserves, it is paid in 4 monthly parts, each stoppable.</li>
     </ol>
   </details>
-  <!-- ALWAYS THE IN-GAME KEY AND NAME (the owner 2026-10-17: "Proposals always use the ingame key and name, no other options"): the key
+  <!-- ALWAYS THE IN-GAME KEY AND NAME (2026-10-17: "Proposals always use the ingame key and name, no other options"): the key
        of the wallet this browser plays with, and the name set in the game's Settings -->
   <div class="key">
     <span class="id">Loading…</span>

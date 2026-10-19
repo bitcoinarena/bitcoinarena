@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESERVE SEATS ON A PRIVATE REGTEST, NINE SEATS (multiplayer_p2p.md §5A.7, kanban #301). Never testnet4, nothing paid:
+// RESERVE SEATS ON A PRIVATE REGTEST, NINE SEATS (multiplayer_p2p.md §5A.7). Never testnet4, nothing paid:
 // free rounds of nextblock on a census of exactly nine bonded seats, so each role draws all nine (9 for 7 seats) and every
 // round's contract names the nine (decision A: the contract names the draw; the seating is the certificate).
 //
@@ -211,7 +211,7 @@ const readCerts = async (rid, c, drawn, live) => {
 };
 const all = [...Array(9).keys()];
 
-// ======== G: AT GRID DENSITY (kanban #345) - GRID=1 runs only this: GRID_ROUNDS rounds, two per GRID_SLOT_MS slot as the
+// ======== G: AT GRID DENSITY - GRID=1 runs only this: GRID_ROUNDS rounds, two per GRID_SLOT_MS slot as the
 // RPS grid posts them (one census, one committee time), posted at once; at each round's start every seat is asked for both
 // roles' certificates. Measured on testnet4 2026-10-11: 349 game seatings signed and 35 certificates built at seat 3.
 if (env.GRID) {

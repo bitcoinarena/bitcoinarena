@@ -166,7 +166,7 @@ public class Bootstrap : MonoBehaviour
         if (!Blwp.BlwpCore.Available) return false;
         _nextSim = Time.time + LiquidationSilence;
 
-        // NOT IN A SIGNED RUN (the owner 2026-09-15): the core this writes is the one the score card
+        // NOT IN A SIGNED RUN (2026-09-15): the core this writes is the one the score card
         // reads and the signer nodes replay from the transcript, and a simulated liquidation is in no
         // transcript. Measured before on the Daily: one SIM press at tick 192 made the card read
         // DELIVERED 222 at tick 2129 on a run both signer nodes signed FAILED 268. Outside a signed
@@ -227,7 +227,7 @@ public class Bootstrap : MonoBehaviour
         // changes the size, the crater and the fallout, not which mesh hangs in
         // the sky.
         //
-        // AND NOT INTO A SIGNED RUN (the owner 2026-09-15): a live forced order is in no transcript, so
+        // AND NOT INTO A SIGNED RUN (2026-09-15): a live forced order is in no transcript, so
         // written into the core the score card reads it would be a world the signer nodes never
         // replay. Measured before on the Daily (0.0.1356): four live liquidations ($684 - $294,853)
         // fell inside one signed run, each sent by this handler, which has no filter but usd > 0.
@@ -259,7 +259,7 @@ public class Bootstrap : MonoBehaviour
         territory.target = _terrain.GetComponent<MeshRenderer>();
         territoryGo.SetActive(true);
         BuildArmies();
-        // THE EDGE IS A CLAMP, NOT A WALL (ruling 4, the owner 2026-09-22): "the core owes no wall solids,
+        // THE EDGE IS A CLAMP, NOT A WALL (ruling 4, 2026-09-22): "the core owes no wall solids,
         // and the client stops drawing walls the core does not build." BuildBoundary is not called.
         // The core clamps every unit and the truck to +-HALF_X / +-HALF_Z after its pushes, so there is
         // nothing here for a collider to do, and a barrier drawn where the core has no solid is exactly
@@ -309,7 +309,7 @@ public class Bootstrap : MonoBehaviour
         // node named it does nothing at all, which is every build that has
         // shipped so far.
         gameObject.AddComponent<Blwp.NetSession>();
-        // THE COLLISION, VISIBLE (the owner 2026-09-25 20:56): the core's own boxes, coloured over the miner and the post office.
+        // THE COLLISION, VISIBLE (2026-09-25 20:56): the core's own boxes, coloured over the miner and the post office.
         new GameObject("CollisionBoxes").AddComponent<Blwp.CollisionBoxView>();
 
         var driver = truck.gameObject.AddComponent<Blwp.CoreDrivenTruck>();
@@ -338,7 +338,7 @@ public class Bootstrap : MonoBehaviour
         // middle - while the truck itself is fitted across its four contact
         // points, and the two differ by 0.58 m at one measured pose on this map.
         ghosts.Rest = (x, z, headingDegrees) => driver.RideAt(x, z, headingDegrees);
-        // AND THE SAME TILT THE LOCAL TRUCK IS DRAWN WITH (the owner 2026-09-18 10:42): the four contact points at that
+        // AND THE SAME TILT THE LOCAL TRUCK IS DRAWN WITH (2026-09-18 10:42): the four contact points at that
         // pose, through the very function that lies the local truck on the ground. No physics is added by this - the
         // local truck has none here either.
         ghosts.Lie = (x, z, headingDegrees) =>
@@ -413,7 +413,7 @@ public class Bootstrap : MonoBehaviour
         var bay = truck.gameObject.AddComponent<CargoBay>();
         bay.crateMaterial = crateMaterial;
         bay.boxPrefab = boxPrefab;
-        // THE LARGER TRUCK (kanban #369): the bay and the body drawn at the bed the core drives
+        // THE LARGER TRUCK: the bay and the body drawn at the bed the core drives
         truck.gameObject.AddComponent<LargeTruckView>();
 
         // The yard: the waiting transactions as crates you can actually tap.
@@ -428,7 +428,7 @@ public class Bootstrap : MonoBehaviour
         yardGo.SetActive(true);
 
         var loadout = gameObject.AddComponent<LoadoutPanel>();
-        // BUY ADD-ONS (kanban #374): the panel the cargo screen and the next round's countdown open, and the purchase banner
+        // BUY ADD-ONS: the panel the cargo screen and the next round's countdown open, and the purchase banner
         gameObject.AddComponent<AddonsPanel>();
         loadout.feed = feed;
         loadout.bay = bay;
@@ -544,14 +544,14 @@ public class Bootstrap : MonoBehaviour
             spec.gate = _gate;
             spec.post = _post;
 
-            // SPECTATE AFTER A WRECKED OR DELIVERED RUN (the owner 2026-10-03): the same camera, rising to top-down
+            // SPECTATE AFTER A WRECKED OR DELIVERED RUN (2026-10-03): the same camera, rising to top-down
             var after = chaseCam.gameObject.AddComponent<RunEndSpectate>();
             after.chase = chaseCam;
             after.truck = truck.transform;
             after.loadout = hud.loadout;
             after.spectator = spec;
-            after.wasted = _wasted;          // #131: the rise waits for the live round's WASTED band to hold and fade
-            after.health = _truckHealth;     // #131: and the next run's bay opens on a whole truck
+            after.wasted = _wasted;          //: the rise waits for the live round's WASTED band to hold and fade
+            after.health = _truckHealth;     //: and the next run's bay opens on a whole truck
         }
 
         var splash = gameObject.AddComponent<SplashScreen>();
@@ -717,7 +717,7 @@ public class Bootstrap : MonoBehaviour
     }
 
     /// <summary>
-    /// WITHDRAWN (ruling 4, the owner 2026-09-22). Not called: the map edge is a CLAMP, and the core owes
+    /// WITHDRAWN (ruling 4, 2026-09-22). Not called: the map edge is a CLAMP, and the core owes
     /// no wall solids. Kept unreferenced so the reasoning below is not lost - it is why the walls were
     /// tall and sunk, and a future edge rule has to answer it.
     ///

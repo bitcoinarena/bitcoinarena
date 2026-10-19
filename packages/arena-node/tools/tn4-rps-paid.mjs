@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * TWO PAID PLAYERS AT ONE ROCK PAPER SCISSORS TABLE ON TESTNET4, WITHOUT A BROWSER (kanban #344, the owner 2026-10-11: "first
+ * TWO PAID PLAYERS AT ONE ROCK PAPER SCISSORS TABLE ON TESTNET4, WITHOUT A BROWSER (2026-10-11: "first
  * player joins, second player joins the same round"). Each player is its own wallet (the page's wasm lock client): a
  * deposit from the payer lnd through the named gateway, the stake and fee locks to the round's attested claim key, the
  * shares handed out, and an entry carrying its hidden move (head-to-head.js). Player 2 sits at player 1's table. After the
@@ -11,7 +11,7 @@
  *   PORTS=... INVITE_FILE=... WASM_PKG=... LNCLI=... PAYER_DIR=... PAYER_RPC=... [ROUND=<id>] node tools/tn4-rps-paid.mjs
  *
  * (tn4-live-run.mjs's header, for the paid part:)
- * ONE LIVE TESTNET4 ROUND, PLAYED WITHOUT A BROWSER (kanban #328: "one live round replayed and settled sandboxed on a seat").
+ * ONE LIVE TESTNET4 ROUND, PLAYED WITHOUT A BROWSER ("one live round replayed and settled sandboxed on a seat").
  * The lock is testnet4-lock.mjs's - the page's own wasm lock client, the deposit paid from a testnet4 lnd - and then the run:
  * the round's randomness asked of its seats (the page's worldSeedFor), a closed-loop drive of the core the round names
  * (window-fixture's drivenTape, under the round's run length), its inputs published as the page publishes them - a batch
@@ -72,17 +72,17 @@ const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } 
 import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
 import { RPS_GAME_ID } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { GAME_ID_V2 as RPS_GAME_ID_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v2.js';
-// NODES (kanban #353): the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
+// NODES: the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
 const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')) : env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
-const GAME = toHex(env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID);   // RPS_V2=1 (kanban #353): the v2 tables a v2 grid seats from 14
+const GAME = toHex(env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID);   // RPS_V2=1: the v2 tables a v2 grid seats from 14
 
 async function paidEntry(c, rid, roundHex, move, who) {
   const STAKE = BigInt(c.stakeMsat);
   const log0 = log;
   const log1 = (o) => log0({ player: who, ...o });
   { const log = log1;
-    // A TABLE'S KEY IS MADE WHEN A PLAYER FIRST ASKS (kanban #293 pick (c)): asked again every 3 s for up to 90 s, as the page does
+    // A TABLE'S KEY IS MADE WHEN A PLAYER FIRST ASKS (pick (c)): asked again every 3 s for up to 90 s, as the page does
     let att = null;
     for (let t0 = Date.now(); ; await new Promise((r) => setTimeout(r, 3000))) {
       att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
@@ -143,7 +143,7 @@ async function paidEntry(c, rid, roundHex, move, who) {
     const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: split.feeMsat, donationMsat: split.donationMsat, joinTick: 0,
       // A SHARED-WORLD ROUND'S ENTRY NAMES NO WORLD SECRET, as the page's join writes it (join.js; found by the regtest run of
-      // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
+      //: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
       worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
       ...locks.entryFields, claimKeyAttestationRef: att.ref };
     // THE HIDDEN MOVE (head-to-head.js): the entry commits to it; the move and salt are revealed after the entry close
@@ -180,7 +180,7 @@ try {
     const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
     if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);
     roundHex = rows[0].id;
-    // FEDERATION=<hex prefix> (kanban #353): only a table of the federation this payer's wallet pays into - both grids list together
+    // FEDERATION=<hex prefix>: only a table of the federation this payer's wallet pays into - both grids list together
     if (env.FEDERATION) {
       roundHex = null;
       for (const r of rows.slice(0, 40)) {

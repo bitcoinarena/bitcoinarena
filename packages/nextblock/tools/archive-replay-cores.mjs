@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY CORE A STORED ROUND NAMES, KEPT FOR ITS REPLAY (the owner 2026-09-26 13:28: "the copied replay link must keep working.
+// EVERY CORE A STORED ROUND NAMES, KEPT FOR ITS REPLAY (2026-09-26 13:28: "the copied replay link must keep working.
 // Always ... Keep every core a stored round names, and serve it. Do not drop it when HEAD moves").
 //
 // A signer node installs one core, the one its tree builds. A replay of a round that named an earlier core was refused

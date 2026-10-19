@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PLAYER'S NAME, AS THE WHOLE NETWORK SHOWS IT (kanban #397 PIP, the owner 2026-10-17: "Users can sign in with their ingame key and
+// A PLAYER'S NAME, AS THE WHOLE NETWORK SHOWS IT (PIP, 2026-10-17: "Users can sign in with their ingame key and
 // their custom name or their generated name" - "Have custom names in the protocol").
 //
 // The lobby's name record (lobby-name.js) is one round's: signed by the round key, kept by that round's signer nodes. This one is

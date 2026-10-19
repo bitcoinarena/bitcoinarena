@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND OF AN EVENT-MARKET TEMPLATE AT A SEAT (kanban #362 feature 5): the seat opens a round of a template only when it
+// A ROUND OF AN EVENT-MARKET TEMPLATE AT A SEAT (feature 5): the seat opens a round of a template only when it
 // asks its own question, and a round of any other game only when it asks none (POST /round, 409 by name); it lists the
 // round with its question (GET /rounds), names it beside the contract's bytes (GET /round) and in its outcome (GET /outcome),
 // and takes an attestation only as an index into THE ROUND'S outcomes and only from the round's own resolution time

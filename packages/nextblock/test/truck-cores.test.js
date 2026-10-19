@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE REGISTRATION RUNS NO CORE (kanban #328, spec §0A.6): truck-cores.js writes out what it would otherwise have to run a
+// THE REGISTRATION RUNS NO CORE (spec §0A.6): truck-cores.js writes out what it would otherwise have to run a
 // core to know - the config hashes (config/game-config.js computes them from the cores' rule files), the truck's name and
 // its longest run - so a node importing nextblock's registration evaluates no core module in its own thread. Here, where
 // running the cores natively is fine, each written value is computed again and compared.
@@ -34,7 +34,7 @@ test('each core carries the files the sandbox loads, and a native adapter only w
   }
   assert.equal(TRUCK_BEFORE_FORK.sourceHash, TRUCK_2069.hash);
   assert.equal(NEXTBLOCK_CORES.size, 5);
-  assert.equal(NEXTBLOCK_CORES_V3.size, 6, 'version 3: the five and the truck that knows the larger truck (kanban #369)');
+  assert.equal(NEXTBLOCK_CORES_V3.size, 6, 'version 3: the five and the truck that knows the larger truck');
   assert.equal(NEXTBLOCK_CORES_V3.get(TRUCK_F0CC.hash), TRUCK_F0CC);
   assert.ok(TRUCK_F0CC.root && TRUCK_F0CC.url.startsWith(TRUCK_F0CC.root));
 });

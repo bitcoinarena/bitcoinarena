@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE THREE WAYS THE HALT CASE GETS GOT WRONG, EACH HELD DOWN BY A TEST.
 //
-// the owner 2026-09-21, the law of bc05268f: a slashed bond waits in escrow and never goes straight to
+// 2026-09-21, the law of bc05268f: a slashed bond waits in escrow and never goes straight to
 // anybody; on a halt every unspent note is paid at face value BEFORE a node or a developer sees a sat,
 // and only what no player claimed is split 75/25; the exposure cap is four of the smallest bond and not
 // the sum of ten; and a halt's abandonment proof cannot ask for attestations a halted federation no

@@ -4,7 +4,7 @@ using UnityEngine;
 using NUnit.Framework;
 
 /// <summary>
-/// A SPECTATOR IS NOT SHOWN THE MARKET SOCKET'S TELEMETRY (the owner 2026-09-18 20:00, photographed: "connecting
+/// A SPECTATOR IS NOT SHOWN THE MARKET SOCKET'S TELEMETRY (2026-09-18 20:00, photographed: "connecting
 /// (error)" in giant green letters across the sky over the mempool).
 ///
 /// `PriceSubline` says "connecting ... (status)" while no price has arrived. Driving, it sits under the price with
@@ -28,7 +28,7 @@ public class SpectateMarketLineTests
     {
         // What the photograph showed is no longer drawn anywhere: with no price the subline is empty.
         Assert.AreEqual("", DriveHud.PriceSubline(0.0, 0.0, "error"));
-        // What a player is told instead names the feed and what it costs them (the owner 2026-09-18 20:04).
+        // What a player is told instead names the feed and what it costs them (2026-09-18 20:04).
         Assert.AreEqual("Bitcoin price feed is down. Chart may be stale.",
             DriveHud.ConnectionTrouble(false, true, false));
         // And with a price it is the day's move, which is what a player reads the market line for.

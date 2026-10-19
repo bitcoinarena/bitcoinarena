@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PHRASE IS KEPT IN THE BROWSER (the owner 2026-10-01: "safe even if the user closes the browser and loads it again"):
+// THE PHRASE IS KEPT IN THE BROWSER (2026-10-01: "safe even if the user closes the browser and loads it again"):
 // the page's own blwpSeedKeeper, run on fake storages and a fake clock - a browser opened again gets its phrase back,
 // a second open tab is still a second player, a reload keeps its own, an imported phrase is kept too.
 import test from 'node:test';
@@ -65,7 +65,7 @@ test('a reload keeps the tab\'s own phrase; an imported phrase is kept, and so i
   assert.ok([mine, a.seed].includes(c.seed), 'an opened-again browser got neither kept phrase');
 });
 
-// ONE TAB PER PHRASE (the owner 2026-10-01): a duplicated tab - its session storage copied, phrase and tab id - finds the
+// ONE TAB PER PHRASE (2026-10-01): a duplicated tab - its session storage copied, phrase and tab id - finds the
 // phrase's lock held by the first tab, drops the phrase and starts again as its own player.
 test('a duplicated tab does not run the same wallet: it finds the phrase locked, drops it and reloads as another player', async () => {
   const held = new Set();
@@ -96,7 +96,7 @@ test('a duplicated tab does not run the same wallet: it finds the phrase locked,
   assert.equal(b.reloaded(), false);
 });
 
-// A NEW TAB THAT FINDS A KEPT PHRASE'S LOCK TAKEN BY ANOTHER TAB'S COLLECT DOES NOT MINT (kanban #153 (b), the owner 2026-10-07):
+// A NEW TAB THAT FINDS A KEPT PHRASE'S LOCK TAKEN BY ANOTHER TAB'S COLLECT DOES NOT MINT ((b), 2026-10-07):
 // measured on 0.0.2842 (comment 695), tab B took the free kept phrase adddd868 while tab A was collecting its record under
 // arena.phrase.adddd868..., found the lock taken, dropped the phrase, reloaded and minted a new one (13ea16be). It now waits
 // for the collect to let go and keeps the phrase; a phrase a LIVE tab holds is still dropped (two tabs, two players).

@@ -61,7 +61,7 @@ test('the bundle exports what a page needs to open a round', () => {
   assert.equal(typeof bundled.Client, 'function');
 });
 
-// EVERY NAME THE PAGE CALLS ON THE BUNDLE IS IN IT (kanban #376, measured on preview UI 149: the page's balance sum called
+// EVERY NAME THE PAGE CALLS ON THE BUNDLE IS IN IT (measured on preview UI 149: the page's balance sum called
 // BLWPCLIENT.issuingMsat, which the export list did not name - undefined in the page while every node test passed)
 test('every BLWPCLIENT.<name> the page uses is exported by the bundle', async () => {
   const { readFileSync } = await import('node:fs');

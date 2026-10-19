@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PROTOCOL 5 (kanban #312, RULED the owner 2026-10-14 ~21:50Z): "each seat signs the price it read, and the sample is the median of
+// PROTOCOL 5 (RULED 2026-10-14 ~21:50Z): "each seat signs the price it read, and the sample is the median of
 // five signed readings. Nobody proposes a price, so nobody chooses BULLS, BEARS, or FLAT." The signed readings: when a sample and
 // a tape stand, what a batch of a protocol-5 round must carry, and the RoundResult made of medians.
 import { test } from 'node:test';

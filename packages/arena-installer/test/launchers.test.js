@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// STARTING THE NODE AFTER THE INSTALLER (the owner 2026-10-18: "manual scripts, on windows a start menu item, on mac a /Application link"):
+// STARTING THE NODE AFTER THE INSTALLER (2026-10-18: "manual scripts, on windows a start menu item, on mac a /Application link"):
 // per system the scripts name exactly this node's services, the menu entry / app / Start menu shortcuts are written.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

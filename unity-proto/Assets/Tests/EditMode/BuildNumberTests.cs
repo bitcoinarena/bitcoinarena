@@ -11,7 +11,7 @@ using NUnit.Framework;
 /// The stamp was `43e3375  ·  2026-09-07 05:28 UTC` - a hash nobody can put in
 /// order, on the splash only, so the LOADING screen said nothing at all.
 ///
-/// the owner 2026-09-07 07:39: build number on the loading screen AND the splash,
+/// 2026-09-07 07:39: build number on the loading screen AND the splash,
 /// format 0.0.xxx. So the shape is pinned here: 0.0 and a counter that goes up
 /// by one per commit. Restoring the old stamp fails this.
 ///

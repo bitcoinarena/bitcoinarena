@@ -209,7 +209,7 @@ export const slashProofId = (p) => taggedHash(TAG.slashProof, encodeSlashProof(p
 /** 1 type + 2 version + six 32-byte fields + a 4-byte vout. */
 export const SLASH_PROOF_BYTES = 199;
 export const SLASH_EVIDENCE_BYTES = SLASH_PROOF_BYTES + SIGNED_RESULT_BYTES;
-/** The size of the published proof starting at `at`: the proof and the signed result its type byte sizes (#312: a price round's is 10 longer). */
+/** The size of the published proof starting at `at`: the proof and the signed result its type byte sizes (a price round's is 10 longer). */
 export const slashEvidenceBytesOf = (bytes, at = 0) => SLASH_PROOF_BYTES + signedResultBytesOf(bytes, at + SLASH_PROOF_BYTES);
 /** And a re-run proof's: the proof and the signed re-run result. */
 export const rerunSlashEvidenceBytesOf = (bytes, at = 0) => SLASH_PROOF_BYTES + signedRerunBytesOf(bytes, at + SLASH_PROOF_BYTES);
@@ -248,7 +248,7 @@ export function splitSlashEvidence(bytes) {
 }
 
 /**
- * A PROOF AGAINST A RE-RUN SIGNER, AS IT IS PUBLISHED (§13A, RULED the owner 2026-09-24, slice C2c): the same proof body,
+ * A PROOF AGAINST A RE-RUN SIGNER, AS IT IS PUBLISHED (§13A, RULED 2026-09-24, slice C2c): the same proof body,
  * and beside it the accused's own signed RE-RUN result `{ contradictedRunId, result }` - what a re-run signer signed,
  * over `rerunResultId` - never a signed player result, so it does not go through `joinSlashEvidence`. Its own fixed
  * size, so neither shape can be read as the other.
@@ -382,7 +382,7 @@ export function slashHolds({
 
 /**
  * DOES THIS PROOF SLASH A RE-RUN SIGNER'S BOND? (§13A: once a second valid objection has made the entry VOID, "the
- * signers of that result are slashed as well"; RULED the owner 2026-09-24, slice C2c.) The offence is the same,
+ * signers of that result are slashed as well"; RULED 2026-09-24, slice C2c.) The offence is the same,
  * REPLAY_CONTRADICTS, and so are the comparisons, on the record a re-run signer signed: the accused is on the committee;
  * the evidence is their own signature - `verify` is injected, no curve lives in this package - over `rerunResultId`,
  * about this round, this player and the canonical transcript, and it is the agreed re-run's run (`agreedRunId`), not
@@ -464,7 +464,7 @@ export function slashHoldsOnRerun({
  * at all is not evidence that the signer was dishonest about them. That is
  * refused as unusable rather than counted as an offence.
  *
- * AND F IS THE GAME'S OWN RULE (kanban #362): §18A's curve, or the top split the round's game's manifest names. The rule is
+ * AND F IS THE GAME'S OWN RULE: §18A's curve, or the top split the round's game's manifest names. The rule is
  * read off `manifest`, which must be the game the contract names (game_id = H(manifest), and the contract is in the round
  * id the proof names) - so an accuser can no more pick the rule than the score floor. A round from TOP_SPLIT_VERSION on,
  * handed no manifest, is refused rather than recomputed at the curve: a split game's honest table is not F of the curve.
@@ -961,7 +961,7 @@ export function operatorKeyOf(advert) {
  * nothing has taken nothing from anybody, and this returns no slash for it.
  */
 export function slashHoldsOnConflict({ proof, entry, signedByNode, advert, committee }) {
-  // WITHDRAWN (§5A.13, RULED the owner 2026-10-14 ~20:01Z, kanban #360): a player declares no operator, and signing in a round one's
+  // WITHDRAWN (§5A.13, RULED 2026-10-14 ~20:01Z): a player declares no operator, and signing in a round one's
   // operator played is no offence; self-dealing is priced by 5 of 7 bonded slots (§5A.6) and overturnable by replay (§13A)
   void proof; void entry; void signedByNode; void advert; void committee;
   return { slashed: false, why: 'withdrawn: a player declares no operator, so signing in a round the operator played is no offence (§5A.13, ruled 2026-10-14)' };
@@ -1362,7 +1362,7 @@ export function slashDistribution({
 
   const shares = new Map();
   // WHAT NOBODY ON THE ROUND CAN BE PAID goes to the federation pool, and is not
-  // destroyed (RULED, the owner 2026-09-21; §5A.3 "every remainder in this document
+  // destroyed (RULED 2026-09-21; §5A.3 "every remainder in this document
   // has a recipient"). Two structural holes used to burn here - a half with
   // nobody at all to pay, and the share of a member excluded for being slashed -
   // and both are income nobody receives, which is exactly what the rule forbids.
@@ -1444,7 +1444,7 @@ export function slashDistribution({
       + `slashing height is empty once the round's ${seats.length} seat(s) are taken out, and §5A.3 `
       + `names nobody else - not the seats, not a burn, not the donation set`);
   hand(eligible, toNodes, nodeShares);
-  // AND THE OTHER HALF IS ALWAYS HANDED OUT (RULED, the owner 2026-09-21). It used to depend on the
+  // AND THE OTHER HALF IS ALWAYS HANDED OUT (RULED 2026-09-21). It used to depend on the
   // contract: BURN destroyed it, COMMITTEE paid it. Both are withdrawn - "nothing is ever burned, here
   // or anywhere in this protocol: a slash that destroys value pays nobody for the harm and makes the
   // slashing itself worthless to prove". `slashRemainder` has one value now and this line no longer

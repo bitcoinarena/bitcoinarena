@@ -11,7 +11,7 @@
 // `OP_RETURN` output committing to its id.
 //
 // The dust output to BOND_MARKER is here (regtest by default; testnet has its
-// own program). the owner 2026-09-08. Mainnet still has no marker.
+// own program). 2026-09-08. Mainnet still has no marker.
 import { reaffirmationPayload } from '../src/reaffirm.js';
 import { encodeAdvert, advertId, joinSignedAdvert } from '../src/advert.js';
 import { meetsTarget } from '../src/chain.js';
@@ -53,7 +53,7 @@ export function bondTransaction(advert, {
   // makes the dust output mandatory, so this builds something the census must
   // NOT find - there is no other way to write that case.
   marker = true,
-  // THE MARKER PROGRAM ITSELF, for a fixture of the ancestor network's bond (ancestor.js ancestorMarker; kanban #209)
+  // THE MARKER PROGRAM ITSELF, for a fixture of the ancestor network's bond (ancestor.js ancestorMarker)
   markerProgram = null,
 } = {}) {
   // A P2TR output: OP_1 <32 bytes>. "A P2TR output is a 32-byte key and looks
@@ -150,7 +150,7 @@ export function advertUpdateTransaction(advert, {
 }
 
 /**
- * AN ADVERTISEMENT IN THE ANCESTOR'S LAYOUT (ancestor.js; kanban #209), for fixtures of a BLWP-era bond: today's encoding
+ * AN ADVERTISEMENT IN THE ANCESTOR'S LAYOUT (ancestor.js), for fixtures of a BLWP-era bond: today's encoding
  * with hosted_games empty, its u16 count taken out again before the 8-byte timestamp.
  */
 export function encodeAncestorAdvert(advert) {
@@ -162,7 +162,7 @@ export function encodeAncestorAdvert(advert) {
 }
 
 /**
- * A RE-AFFIRMATION (§27A.8.3, reaffirm.js; kanban #209), for fixtures: this network's marker dust (so it is findable as an
+ * A RE-AFFIRMATION (§27A.8.3, reaffirm.js), for fixtures: this network's marker dust (so it is findable as an
  * update is) and OP_RETURN "ARN" 'F' network_id[0:8] signature. Spends one named outpoint, no bond; a legacy transaction.
  */
 export function reaffirmationTransaction({ networkId, signature, previousTxid = new Uint8Array(32).fill(0xad), network = 'regtest' } = {}) {

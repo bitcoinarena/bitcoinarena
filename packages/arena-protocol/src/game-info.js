@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GAME'S DESCRIPTION AND WEBSITE, SIGNED BY ITS DEVELOPER (kanban #276, the owner 2026-10-11: "Das Manifest soll auch eine
+// A GAME'S DESCRIPTION AND WEBSITE, SIGNED BY ITS DEVELOPER (2026-10-11: "Das Manifest soll auch eine
 // Description und Webseite haben die signiert wird, die hier angezeigt wird"; and ~06:55Z: "Mach es so dass beide hashes
 // akzeptiert werden - mit URL und ohne URL, mit Description und ohne").
 //
@@ -9,7 +9,7 @@
 // the developer key the manifest names signs H(game_id || description || website), and a manifest with it and the same
 // manifest without it are one game with one id. An info whose signature does not stand is shown as unsigned, never trusted.
 //
-// AND WHERE TIPS GO (kanban #362 item 14, tips to developers): a Lightning address (name@host, LUD-16) the developer signs
+// AND WHERE TIPS GO (tips to developers): a Lightning address (name@host, LUD-16) the developer signs
 // beside the two strings. It is appended to the digest only when there is one, so every info signed before it - with no
 // address - keeps its digest byte for byte and still stands. A tip is the player's own wallet paying that address (zap.js).
 import { Writer } from './encode.js';

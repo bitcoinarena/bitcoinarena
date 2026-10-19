@@ -10,7 +10,7 @@
 // A real node with a slow handler, not a stub: the node is genuine and its
 // `batch` and `checkpoint` are wrapped to take their time, which is what a
 // loaded daemon or a bad link looks like from here.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -776,7 +776,7 @@ test('a run at its last tick takes no more: the signer node holds exactly the ru
 });
 
 /**
- * KANBAN #130, MEASURED LIVE ON 0.0.2727 (round f9857c83): a late entry at tick 1750 VOIDed on its first batch - "2 ticks
+ * KANBAN, MEASURED LIVE ON 0.0.2727 (round f9857c83): a late entry at tick 1750 VOIDed on its first batch - "2 ticks
  * offered but 1750 published and 2 held" - because setRound began nextTick at the join tick and the offered count at 0.
  * A late run records from its join tick, publishes without a VOID, and is over on the round's last tick.
  */

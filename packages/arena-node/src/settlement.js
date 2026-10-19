@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SIGNER NODES' ONE SETTLEMENT OF A LOCK ROUND (W4; FEDERATION.md money flow step
-// 5). the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed into
+// 5). 2026-09-14 07:22: "a loser loses the stake. The lock is claimed into
 // the pool. Winners are paid from that."
 //
 // "Each signer node then rebuilds one settlement transaction from the public payout
@@ -51,7 +51,7 @@ import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
 
-// WHO THE FEE LOCKS PAID: the signer nodes, and a market's donation keys (kanban #235) - named apart
+// WHO THE FEE LOCKS PAID: the signer nodes, and a market's donation keys - named apart
 const feeLine = (payouts) => {
   const part = (kind) => { const p = payouts.filter((x) => (x.kind === 'donation key') === kind); return [p.length, p.reduce((t, x) => t + x.msat, 0n)]; };
   const [n, nodes] = part(false); const [d, gifts] = part(true);
@@ -62,9 +62,9 @@ const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hidin
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { txid: fromHex(txid), outIdx: BigInt(idx) }; };
 
-/** How often the #152 backfill tries a recovered round it could not rebuild before it marks it checked (#231). */
+/** How often the backfill tries a recovered round it could not rebuild before it marks it checked. */
 export const BACKFILL_TRIES = 4;
-/** ...counted at most once per this many ms, whatever the seat restarts (#231): 6 h, the backfill's own clock. */
+/** ...counted at most once per this many ms, whatever the seat restarts: 6 h, the backfill's own clock. */
 export const BACKFILL_TRY_GAP_MS = 6 * 3600 * 1000;
 export const SUBMITTING = 'SUBMITTING';
 /** The txid a round that takes any federation keeps its moves under: it has one transaction per federation (2026.0.3). */
@@ -78,7 +78,7 @@ export const locksStake = (contract) => contract.federationId instanceof Uint8Ar
 
 const NO_FEES = { ppm: 0n, baseMsat: 0n };
 /**
- * A ROUND THAT TAKES ANY FEDERATION, SETTLED (2026.0.3, kanban #348): its plan decided once - lockSettlement with no fee, since
+ * A ROUND THAT TAKES ANY FEDERATION, SETTLED (2026.0.3): its plan decided once - lockSettlement with no fee, since
  * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
  * lockSettlement's; `federationOf(outpoint)` -> the federation hex a claimed lock is in; `feesOf(fidHex)` -> its fee rule.
  */
@@ -96,7 +96,7 @@ export function federationPlans(args, { federationOf, feesOf }) {
 const planFingerprint = (plan, claimPk, signerNode) => JSON.stringify({ c: plan.claims, p: plan.payouts, n: plan.nonce, k: claimPk, s: signerNode },
   (k, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? toHex(v) : v));
 
-/** What a settlement plan moved, as /lock-settlement and /settled answer it (W6, #133). */
+/** What a settlement plan moved, as /lock-settlement and /settled answer it (W6). */
 function planSummary(txid, p) {
   return {
     txid,
@@ -126,20 +126,20 @@ export class LockSettlement {
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
     reserveKeyFor = null, feesFor = null, finalityOf = resultFinality } = {}) {
     this.round = round;
-    // THE FEES IN FORCE AT A ROUND (kanban #462, funding-book.js feesAt): `feesFor(contract)` -> the fee set at its census height. A
+    // THE FEES IN FORCE AT A ROUND (funding-book.js feesAt): `feesFor(contract)` -> the fee set at its census height. A
     // version-11 round's node fee and every round's website share are settled from it; unset, today's
     this.feesFor = feesFor;
-    // A FEDERATION'S RESERVE KEY (server.js `reserveKeyFor(fedHex)`, async): where a market's protocol reserve is paid (kanban #454)
+    // A FEDERATION'S RESERVE KEY (server.js `reserveKeyFor(fedHex)`, async): where a market's protocol reserve is paid
     this.reserveKeyFor = reserveKeyFor;
-    // `conflictsFor` is no longer consulted (§5A.13, ruled 2026-10-14, kanban #360): no player declares an operator
+    // `conflictsFor` is no longer consulted (§5A.13, ruled 2026-10-14): no player declares an operator
     this.conflictsFor = conflictsFor;
     this.now = now;
     // THE ROUND'S SIGNED DONATION SET (server.js `donationSetFor`): where a walk-away's claimed lock sends its 25%.
     this.donationSetFor = donationSetFor;
     // A ROUND'S DONATION TARGET (server.js `donationTargetFor`: the network's set and its game's): where a market's donation,
-    // held in its fee locks until the market resolves, is paid (kanban #235)
+    // held in its fee locks until the market resolves, is paid
     this.donationTargetFor = donationTargetFor;
-    // THE MARKET ORDER BOOK (kanban #278, comment 1127): a round whose entries are orders settles from its certified batches
+    // THE MARKET ORDER BOOK (comment 1127): a round whose entries are orders settles from its certified batches
     this.orderBook = orderBook;
     // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
     // `finality.rerunMs` is), since two signer nodes that agree on a run cannot hold a valid objection against it.
@@ -159,7 +159,7 @@ export class LockSettlement {
     this.peersFor = peersFor;
     this.fetcher = fetcher;
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
-    this.summaries = new Map();      // round id hex -> what its settlement moved, rebuilt after a restart (#133)
+    this.summaries = new Map();      // round id hex -> what its settlement moved, rebuilt after a restart
     this.byPlan = new Map();         // round id hex -> { fp, built }: the last build and the plan it was built for
     this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
@@ -178,10 +178,10 @@ export class LockSettlement {
       // fee lock, so an entry that brought none never reaches this set.
       if (this.round.stakeSeen && !this.round.stakeSeen(entryId)) continue;
       const base = { entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
-        feePreimage: entry.feePreimage, ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) };   // the website that brought it (#362 item 7)
+        feePreimage: entry.feePreimage, ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) };   // the website that brought it (item 7)
       if (this.round.entryVoid && this.round.entryVoid(entryId)) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }
       const nq = this.round.noQuorum ? this.round.noQuorum(entryId) : null;
-      // §13C's FORFEIT is proven equivocation (§13B): claimed like a walk-away's when nobody qualifies (kanban #25 (b))
+      // §13C's FORFEIT is proven equivocation (§13B): claimed like a walk-away's when nobody qualifies ((b))
       const proven = () => typeof this.round.provenEquivocation === 'function' && this.round.provenEquivocation(roundIdBytes, entryId);
       if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
       if (nq && nq.outcome === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
@@ -190,7 +190,7 @@ export class LockSettlement {
       // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
       // itself, as VOID is above - no stored no-quorum record needed. A stored one was already taken, once, above.
       if (standing.state === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
-      // AN ENTRY STILL IN ITS RE-RUN WINDOW IS LEFT OUT, AND THE ROUND SETTLES WITHOUT IT (§13A, RULED the owner 2026-09-24,
+      // AN ENTRY STILL IN ITS RE-RUN WINDOW IS LEFT OUT, AND THE ROUND SETTLES WITHOUT IT (§13A, RULED 2026-09-24,
       // slice C3a): SUSPENDED, or PROVISIONALLY_FINAL on a re-run. It is not in the payout table, and its lock is neither
       // claimed nor forfeited here; what becomes of it after is `lockAfterSettlement`'s to say.
       if (standing.state === SUSPENDED || (standing.state === PROVISIONALLY_FINAL && standing.rerun)) {
@@ -203,10 +203,10 @@ export class LockSettlement {
       const mine = this.round.results(roundIdBytes, entryId).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
       if (!mine) return refuse(`this signer node signed no result for ${toHex(entryId).slice(0, 16)}, so it settles nothing`);
       const r = decodePlayerResult(splitSignedResult(mine.bytes).body);
-      // A WALK-AWAY, AS ONLY THIS STORE KNOWS IT (RULED the owner 2026-09-30): FORFEIT at the §15 door - no first mark held
+      // A WALK-AWAY, AS ONLY THIS STORE KNOWS IT (RULED 2026-09-30): FORFEIT at the §15 door - no first mark held
       // here, or a first mark past the line already recorded FORFEIT. Its lock is never a refund (lock-action.js). The
       // other FORFEITs above - no quorum, proven equivocation - are left unmarked and keep the no-qualifier expiry.
-      // AND A PROVEN EQUIVOCATOR (§13B at any tick; kanban #25, RULED the owner 2026-10-04 (b): "Claim the proven
+      // AND A PROVEN EQUIVOCATOR (§13B at any tickRULED 2026-10-04 (b): "Claim the proven
       // equivocator's lock like a walk-away's, 75% to the sitting seats and 25% to the donation set. Do not leave it
       // unclaimed for return at the 144-block expiry"): marked as the walk-away is, so with a qualifier its lock is
       // claimed into the pool like any loser's, and with nobody qualified it is claimed into the remainder split.
@@ -254,13 +254,13 @@ export class LockSettlement {
   }
 
   /**
-   * A LATE LOSER'S SECOND SETTLEMENT, AS THIS SIGNER NODE REBUILDS IT (§13A; RULED the owner 2026-09-24, slice C3b-1): only
+   * A LATE LOSER'S SECOND SETTLEMENT, AS THIS SIGNER NODE REBUILDS IT (§13A; RULED 2026-09-24, slice C3b-1): only
    * after the round's own settlement is ACCEPTED, for an entry it did not claim that has since ended FINAL and FAILED, or
    * FORFEIT - never while it is still in its re-run window. The plan is `lateLockSettlement` over the shares that
    * settlement kept; the P opened as for any loser; one transaction per (round, entry), its own nonce.
    */
   /**
-   * THE PORT OF THIS ROUND'S FEDERATION (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation"): a
+   * THE PORT OF THIS ROUND'S FEDERATION (RULED 2026-10-13: "Every node serves every federation"): a
    * router's own port for the round's federation, else the one port this node has, as before.
    */
   async portFor(roundIdBytes) {
@@ -383,7 +383,7 @@ export class LockSettlement {
       signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
-    // WINNINGS-AUTO (RULED the owner 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
+    // WINNINGS-AUTO (RULED 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
     // (C3b-1), never by a send - so the base plan is the plan, and a winner's lock row is required.
     const basePlan = lateLockSettlement({ ...args, winnerLocks });
     if (!basePlan.ok) return refuse(`no late lock is claimed: ${basePlan.why}`);
@@ -412,7 +412,7 @@ export class LockSettlement {
   }
 
   /**
-   * AN ATTESTED ROUND SETTLES ONLY ON A FINAL OUTCOME (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): held while it has
+   * AN ATTESTED ROUND SETTLES ONLY ON A FINAL OUTCOME (§0A.7a2026-10-07): held while it has
    * no attestation (OPEN), while its first standing attestation is inside the objection window, and when two contradict
    * (DISPUTED) - nothing of it moves then, and with no outcome ever every lock expires back to its player. A settlement
    * already ACCEPTED is not held again: a contradiction after it is kept as proof and undoes nothing. null for any other
@@ -425,9 +425,9 @@ export class LockSettlement {
     if (kept && kept.state === ACCEPTED) return null;
     // a round that takes any federation keeps one row per federation: one ACCEPTED is a settlement that went in
     if (this.round.fedLockSettlementsOf && (this.round.fedLockSettlementsOf(roundIdBytes) || []).some((r) => r.state === ACCEPTED)) return null;
-    // REFUND AT THE DEADLINE (kanban #235): a market round with no standing outcome by its deadline, or whose attestors
+    // REFUND AT THE DEADLINE: a market round with no standing outcome by its deadline, or whose attestors
     // contradicted themselves, is VOID - nothing is claimed, every stake comes back by the return door (forfeit.js)
-    // AND A MARKET ON A GAME WHOSE SOURCE RESULT REFUNDS IT, OR WHOSE SOURCE CAN NEVER FIT IT (kanban #362 feature 6): VOID at once,
+    // AND A MARKET ON A GAME WHOSE SOURCE RESULT REFUNDS IT, OR WHOSE SOURCE CAN NEVER FIT IT (feature 6): VOID at once,
     // not at its deadline (game-market.js marketVoidOf)
     const voided = marketVoidOf(this.round, roundIdBytes, { contract: a.contract, manifest: a.plugin.manifest, held: a.held, nowMs: this.round.now ? this.round.now() : Date.now() });
     if (voided.voided) return { ok: false, state: 'VOID', why: `a market round that is not settled on any outcome: ${voided.why}`, outcome: 'VOID' };
@@ -447,7 +447,7 @@ export class LockSettlement {
     const found = pluginForRound(contract, this.round.plugins);
     if (!found.ok || !found.attested) return null;
     // EVERY STANDING OUTCOME: the attestations, and a market on a game's held source result in an attestation's shape (kanban
-    // #362 feature 6, game-market.js heldOutcomes) - final, held, disputed and paid by the same rules
+    // feature 6, game-market.js heldOutcomes) - final, held, disputed and paid by the same rules
     const held = heldOutcomes(this.round, roundIdBytes);
     return { contract, plugin: found.plugin, held,
       finality: outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() }) };
@@ -458,7 +458,7 @@ export class LockSettlement {
    * pari-mutuel table over them and the outcome, and `attestedLockSettlement` - the losers' stake locks and every fee lock
    * claimed, the winners paid their shares of the losing pool, the seats their §22A fee.
    */
-  // THE CANCELS THE OTHER SEATS HOLD (kanban #278), pulled before a market is settled so every seat builds its table from
+  // THE CANCELS THE OTHER SEATS HOLD, pulled before a market is settled so every seat builds its table from
   // the same entries: each kept only if its player's session key signed it - a seat cannot forge one for anybody
   async #carryCancels(roundIdBytes) {
     for (const peer of this.peersFor(roundIdBytes)) {
@@ -484,13 +484,13 @@ export class LockSettlement {
   }
 
   /**
-   * AN ORDER BOOK'S PLAN (kanban #278, comment 1127; the owner 2026-10-09 "(a)"): every certified batch this seat or another
+   * AN ORDER BOOK'S PLAN (comment 1127; 2026-10-09 "(a)"): every certified batch this seat or another
    * holds (carried first), none pending, through the ledger (book-ledger.js) to the settlement table on the final outcome,
    * and `bookLockSettlement`: each filled order's stake lock and fee lock claimed whole and paid out of in this one
    * transaction - winnings, sellers' proceeds, every unfilled rest, the fees due to the nodes and the donation. An order
    * with no fill is not claimed: its locks come back whole by the return door.
    */
-  /** The fees in force at this round as the lock settlements take them (kanban #462): a version-11 round's node fee, the website share. */
+  /** The fees in force at this round as the lock settlements take them: a version-11 round's node fee, the website share. */
   roundFees(contract) {
     const set = typeof this.feesFor === 'function' && contract ? this.feesFor(contract) : null;
     if (!set) return {};
@@ -505,7 +505,7 @@ export class LockSettlement {
     const L = this.orderBook.ledger(roundIdBytes);
     if (!L.ok) return refuse(`no lock is claimed: ${L.why}`);
     let table;
-    // a scalar market's book (kanban #362, §0A.7e) settles on the signed value between THIS round's bounds (marketOfRound)
+    // a scalar market's book (§0A.7e) settles on the signed value between THIS round's bounds (marketOfRound)
     const scalar = isScalar(a.plugin.manifest) ? { value: a.finality.value, bounds: marketOfRound(a.plugin.manifest, contract).scalar } : null;
     try { table = bookSettlement({ positions: L.positions, outcome: a.finality.outcome, scalar }); } catch (e) { return refuse(`no lock is claimed: ${e.message}`); }
     const entries = [];
@@ -517,7 +517,7 @@ export class LockSettlement {
       const raw = this.round.entry(entryId);
       if (!raw) return refuse(`no lock is claimed: this seat holds no entry ${r.entry.slice(0, 16)}`);
       const e = decodeEntryContract(raw);
-      // the website that brought this order (kanban #362 comment 2295): bookLockSettlement pays it 20% of the nodes' part of its fee
+      // the website that brought this order (comment 2295): bookLockSettlement pays it 20% of the nodes' part of its fee
       entries.push({ entryId: r.entry, pubkey: e.playerPubkey, ...(e.frontendPk ? { frontendPk: e.frontendPk } : {}) });
       const lock = this.round.stakeLock(entryId);
       if (lock) {
@@ -542,7 +542,7 @@ export class LockSettlement {
       if (!t.ok) return refuse(`no lock is claimed: the book's fees carry a donation, and ${t.why}`);
       donation = { recipients: t.target };
     }
-    // THE PROTOCOL RESERVE (kanban #454): a market whose terms name one pays it to its federation's reserve key - each federation's
+    // THE PROTOCOL RESERVE: a market whose terms name one pays it to its federation's reserve key - each federation's
     // part to its own when the round takes any federation
     const reserveBps = L.market.reserveBps || 0;
     const anyFed = takesAnyFederation(contract);
@@ -567,7 +567,7 @@ export class LockSettlement {
   }
 
   /**
-   * WHERE A ROUND THAT TAKES ANY FEDERATION HOLDS EACH CLAIMED LOCK (2026.0.3, kanban #348): each lock's federation is its
+   * WHERE A ROUND THAT TAKES ANY FEDERATION HOLDS EACH CLAIMED LOCK (2026.0.3): each lock's federation is its
    * entry's (entryFederation), each federation's fee rule its own port's, read once per round. `entries` [{ entryId (bytes),
    * pubkey }]; answers { ok, federationOf(outpoint), feesOf(fidHex) } for splitByFederation, or a refusal.
    */
@@ -609,7 +609,7 @@ export class LockSettlement {
     const plan = planWith(NO_FEES);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
-    // each federation's reserve key, read before the split (kanban #454): the split itself is not async
+    // each federation's reserve key, read before the split: the split itself is not async
     const reserveKeys = new Map();
     if (paysReserve && plan.payouts.some((p) => p.reserve)) {
       for (const fid of fed.federationIds) reserveKeys.set(fid, this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null);
@@ -628,7 +628,7 @@ export class LockSettlement {
         donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId,
         ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) }));
     if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed');
-    // THE TABLE BY THE GAME'S RULE: pari-mutuel on the outcome, or a scalar market's split by its signed value (kanban #362 feature 8)
+    // THE TABLE BY THE GAME'S RULE: pari-mutuel on the outcome, or a scalar market's split by its signed value (feature 8)
     let table;
     try { table = attestedTable(a.plugin.manifest, entries, a.finality, a.contract); } catch (e) { return refuse(e.message); }
     const locks = new Map();
@@ -652,7 +652,7 @@ export class LockSettlement {
     const key = toHex(roundIdBytes);
     let fees = this.fees.get(key);
     if (!fees && !takesAnyFederation(contract)) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
-    // THE MARKET'S OWN NODE FEE (kanban #235), 0.5 % by default - and its donation, which its entries' fee locks hold with
+    // THE MARKET'S OWN NODE FEE, 0.5 % by default - and its donation, which its entries' fee locks hold with
     // it (entryFeeBpsOf): due now, at resolution, to the round's donation target
     const ofGame = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
     const manifest = ofGame && ofGame.ok ? ofGame.plugin.manifest : null;
@@ -861,7 +861,7 @@ export class LockSettlement {
    * plans are proposed and checked against.
    */
   /**
-   * THE WINNERS' SHARES OF ROUNDS SETTLED BEFORE A BOOK KEPT THEM (kanban #457): an order book's settlement kept no shares until
+   * THE WINNERS' SHARES OF ROUNDS SETTLED BEFORE A BOOK KEPT THEM: an order book's settlement kept no shares until
    * bookLockSettlement returned them, so every market round settled before kept [] and a season read its winners as losers. Each
    * round this node signed whose kept shares are empty is planned again from its store (planOf - no preimage opened, no client
    * run), and the shares that plan names are kept when the plan pays as many as the signed one did. Answers how many were filled.
@@ -895,7 +895,7 @@ export class LockSettlement {
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
-    // NO PLAYER-NODE CONFLICT GATE (§5A.13, RULED the owner 2026-10-14 ~20:01Z, kanban #360): a player declares no operator, and no
+    // NO PLAYER-NODE CONFLICT GATE (§5A.13, RULED 2026-10-14 ~20:01Z): a player declares no operator, and no
     // signer node is kept out of a settlement, nor a round voided, by a declaration; self-dealing is priced by the 5-of-7 bonded
     // slots (§5A.6) and overturnable by replay (§13A)
     const anyFed = takesAnyFederation(contract);
@@ -908,7 +908,7 @@ export class LockSettlement {
 
     const on = this.entriesOnRecord(roundIdBytes, contract);
     if (!on.ok) return on;
-    // THE GAME'S PAYOUT RULE (kanban #362): §18A's curve or its manifest's top split - the table every seat settles by
+    // THE GAME'S PAYOUT RULE: §18A's curve or its manifest's top split - the table every seat settles by
     const rule = payoutRuleOfRound(contract, this.round.plugins);
     if (!rule.ok) return refuse(`no lock is claimed: ${rule.why}`);
     const payoutShares = rule.payoutShares;
@@ -980,7 +980,7 @@ export class LockSettlement {
   }
 
   /**
-   * WHAT A SETTLEMENT MOVED, AFTER A RESTART TOO (kanban #133, playtest 2026-10-04: a DELIVERED player's 96 sat read
+   * WHAT A SETTLEMENT MOVED, AFTER A RESTART TOO (playtest 2026-10-04: a DELIVERED player's 96 sat read
    * "paying out" for 2 h). `summary` read only the settlement this process built, so every round settled before a
    * restart answered "moved": null - and a page that cannot read the settlement never asks for its stake back. Measured
    * on testnet4: round 3568d136 ACCEPTED with moved null after the seats' 12:30Z and 13:19Z restarts. A round this signer
@@ -1099,7 +1099,7 @@ export class LockSettlement {
   }
 
   /**
-   * DID THE SETTLEMENT THIS SIGNER NODE SIGNED GO THROUGH? (W6, the owner 2026-09-15). Asked of the
+   * DID THE SETTLEMENT THIS SIGNER NODE SIGNED GO THROUGH? (W6, 2026-09-15). Asked of the
    * federation from what the signer node kept with its intent - never from a rebuild, which a restart
    * may not manage or may make differently. IN: a payout contract of that txid is stored (only
    * that transaction makes one) and none of its claimed locks is still held. OUT: every claimed
@@ -1150,7 +1150,7 @@ export class LockSettlement {
    * transaction submitted, and the guardians' answer kept.
    */
   async settle(roundIdBytes) {
-    // ONE SETTLE OF A ROUND AT A TIME (kanban #336, measured 2026-10-10 on the regtest Up/Down market: the attested sweep asks
+    // ONE SETTLE OF A ROUND AT A TIME (measured 2026-10-10 on the regtest Up/Down market: the attested sweep asks
     // every 5 s, a settle of a book round with 26 locks ran longer than that, and the asks piled up - 80 blwp-stake-lock
     // processes at once over the one client database, each killed at its timeout, and the round never settled). A second
     // ask while one runs waits for that one's answer instead of starting another.
@@ -1181,7 +1181,7 @@ export class LockSettlement {
       if (saw.verdict === 'in') {
         const why = `found in the federation after this signer node was inside it: ${saw.why}`;
         this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why });
-        // ITS DONATION-KEY OUTPUTS, RESTART OR NOT (kanban #152): from the plan kept in memory, else rebuilt from the store
+        // ITS DONATION-KEY OUTPUTS, RESTART OR NOT: from the plan kept in memory, else rebuilt from the store
         // and indexed only when it is the plan that was signed
         await this.indexRecovered(roundIdBytes, kept.txid);
         return { ok: true, state: ACCEPTED, why, txid: kept.txid, signature: kept.signature, recovered: true };
@@ -1286,7 +1286,7 @@ export class LockSettlement {
   }
 
   /**
-   * A ROUND THAT TAKES ANY FEDERATION, SETTLED ONE FEDERATION AT A TIME (2026.0.3, kanban #348): for each federation of the split
+   * A ROUND THAT TAKES ANY FEDERATION, SETTLED ONE FEDERATION AT A TIME (2026.0.3): for each federation of the split
    * whose row is not ACCEPTED, the steps of the round's one settlement - this node's turn, the peers' commitments and shares over
    * THAT federation's bytes (`&federation=`), the combined signature checked under the claim key, the intent on disk, the submit
    * through that federation's port, the guardians' answer kept - each under its own nonce and its own row.
@@ -1354,7 +1354,7 @@ export class LockSettlement {
   }
 
   /**
-   * A WALK-AWAY'S DONATION, PAID TO KEYS, IN THE DONATIONS INDEX (the owner 2026-10-03): each `donation key` payout of an
+   * A WALK-AWAY'S DONATION, PAID TO KEYS, IN THE DONATIONS INDEX (2026-10-03): each `donation key` payout of an
    * accepted settlement is a payout contract at (txid, its place among the payouts) - the out_idx a winner redeems by -
    * listed under its key like a lock transaction's donation output, so the dev's client finds it (GET /donations).
    */
@@ -1370,7 +1370,7 @@ export class LockSettlement {
   }
 
   /**
-   * A RECOVERED SETTLEMENT'S DONATION-KEY OUTPUTS (kanban #152, the owner 2026-10-07): a seat restarted between submitting a
+   * A RECOVERED SETTLEMENT'S DONATION-KEY OUTPUTS (2026-10-07): a seat restarted between submitting a
    * walk-away's settlement and finding it in the federation had no plan in memory, so its donation-key payouts were never
    * indexed and the donors never saw them. The plan kept in this process is used when it is the settlement's; else it is
    * rebuilt from the store as summaryOf does (no preimage opened) and indexed ONLY when it is the signed one: the same
@@ -1413,12 +1413,12 @@ export class LockSettlement {
   }
 
   /**
-   * THE BACKFILL OF #152 (the owner 2026-10-07): every settlement this seat recovered from the federation ("found in the
+   * THE BACKFILL OF (2026-10-07): every settlement this seat recovered from the federation ("found in the
    * federation after this signer node was inside it") with no donation output indexed for it, once each - the same matched
    * rebuild, only payouts the guardians still hold, a marker per round with a definitive outcome so none is asked twice -
    * a round not rebuildable yet stays unmarked and is tried on later passes, a try counted at most once per 6 h, and marked
-   * checked after BACKFILL_TRIES counted tries (#231). Paced: one round per
-   * `paceMs`, so a seat with hundreds of them is not held at a core (#229).
+   * checked after BACKFILL_TRIES counted tries. Paced: one round per
+   * `paceMs`, so a seat with hundreds of them is not held at a core.
    */
   async backfillDonationKeys({ paceMs = 3000 } = {}) {
     const out = { checked: 0, indexed: 0, outputs: 0, mismatched: 0, redeemed: 0, noKeys: 0, failed: 0, gaveUp: 0 };
@@ -1434,12 +1434,12 @@ export class LockSettlement {
       else if (r.why === 'its plan pays no donation key') out.noKeys++;
       else if (!r.indexed && !r.redeemed) out.failed++;
       out.redeemed += r.redeemed || 0;
-      // ONLY A DEFINITIVE OUTCOME IS MARKED (kanban #231): a round whose plan could not be rebuilt now - a run still
+      // ONLY A DEFINITIVE OUTCOME IS MARKED: a round whose plan could not be rebuilt now - a run still
       // PROVISIONALLY_FINAL on this seat - is left unmarked, and a later pass tries it again
       const notRebuilt = !r.indexed && !r.redeemed && !r.mismatched && r.why !== 'its plan pays no donation key';
-      // ...BUT NOT FOREVER (the owner 2026-10-07): after BACKFILL_TRIES passes that could not rebuild it - a day or more on the
+      // ...BUT NOT FOREVER (2026-10-07): after BACKFILL_TRIES passes that could not rebuild it - a day or more on the
       // 6 h clock - the round is marked checked with the reason, and not asked again
-      // A TRY COUNTS ONLY WHEN THE ROUND'S LAST COUNTED TRY IS BACKFILL_TRY_GAP_MS OLD (the owner 2026-10-07, #231 comment 723):
+      // A TRY COUNTS ONLY WHEN THE ROUND'S LAST COUNTED TRY IS BACKFILL_TRY_GAP_MS OLD (2026-10-07, comment 723):
       // a seat start inside that time runs the pass but consumes nothing, so BACKFILL_TRIES tries span about a day
       let tries = 0;
       if (notRebuilt && this.round.backfillTry) {
@@ -1454,7 +1454,7 @@ export class LockSettlement {
       }
       if (paceMs) await new Promise((ok) => setTimeout(ok, paceMs));
     }
-    console.log(`[settle] donation-key backfill (#152): ${out.checked} recovered settlement(s) checked - ${out.indexed} indexed `
+    console.log(`[settle] donation-key backfill: ${out.checked} recovered settlement(s) checked - ${out.indexed} indexed `
       + `(${out.outputs} output(s)), ${out.redeemed} payout(s) already redeemed, ${out.noKeys} paying no donation key, ${out.mismatched} not the signed plan, ${out.failed} not rebuilt (${out.gaveUp} marked after ${BACKFILL_TRIES} tries)`);
     return out;
   }
@@ -1574,7 +1574,7 @@ export class LockSettlement {
     return this.planCertificates.get(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes)) || null;
   }
 
-  // A SECOND, THEN TWICE AS LONG EACH TIME, UP TO A MINUTE (kanban #229, the owner 2026-10-07 08:35): offered every second, a
+  // A SECOND, THEN TWICE AS LONG EACH TIME, UP TO A MINUTE (2026-10-07 08:35): offered every second, a
   // plan no peer could take - "this signer node knows no peer to hand the send plan to yet" - was a whole settle pass a
   // second per round, 120 times, and every code-seat29 seat sat near one core. The bound of 120 offers stays.
   retryPlan(roundIdBytes, { everyMs = 1000, most = 120, longestMs = 60000 } = {}) {

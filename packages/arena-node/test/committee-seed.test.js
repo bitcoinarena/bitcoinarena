@@ -85,7 +85,7 @@ test('a chosen seed can no longer choose the committee', () => {
     censusRootGameVerify: c.censusRoot, censusRootSettlement: c.censusRoot, roundId: roundId(c), roundRandomness: beacon,
   }) }).map((e) => toHex(e.pubkey)).sort();
   // THE GROUND BYTES DECIDE NOTHING: under every beacon the round with them is assigned exactly as the round without them.
-  // (Asserted before kanban #202 as "this one beacon does not give the pair" - a 1 in 28 chance with eight nodes and two
+  // (Asserted before as "this one beacon does not give the pair" - a 1 in 28 chance with eight nodes and two
   // slots, which game_id moving the round id turned up. The property is that the bytes are not read, and that the
   // beacon, not the author, draws the pair.)
   const beacons = Array.from({ length: 16 }, (_, i) => b32(0xb0 + i));

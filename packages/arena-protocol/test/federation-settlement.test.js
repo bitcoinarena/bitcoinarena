@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// 2026.0.3 - ONE SETTLEMENT TRANSACTION PER FEDERATION, ALL FROM ONE PAYOUT TABLE (kanban #348). A round's plan is decided once
+// 2026.0.3 - ONE SETTLEMENT TRANSACTION PER FEDERATION, ALL FROM ONE PAYOUT TABLE. A round's plan is decided once
 // (lockSettlement); splitByFederation turns it into one balanced transaction per federation: each spends its own locks, every
 // payout gets the same fraction of every federation's pot, each federation prices its own fees and has its own nonce.
 import { test } from 'node:test';

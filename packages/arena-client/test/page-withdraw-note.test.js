@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FAILED WITHDRAW KEEPS ITS WARNING (kanban #200, comment 574): lookRound (b8e0b064) looks at a round through the player
+// A FAILED WITHDRAW KEEPS ITS WARNING (comment 574): lookRound (b8e0b064) looks at a round through the player
 // wallet while arena.tabempty.<round> says the round's own wallet was read empty - and a zero read that way is not proof it
 // is empty. Withdraw collects INTO the round's wallet and then pays; when the pay fails the ecash stays there. index.html's
 // BLWP_WITHDRAW and lookRound run under the page's name (page-script.js) with fake wallets; the warning is page-lock.js's

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CLIENT PRESENTS ITS NOTES TO A LIQUIDATION (spec §23A.5 step 2, kanban #323): "The client does the rest on its own: on
+// THE CLIENT PRESENTS ITS NOTES TO A LIQUIDATION (spec §23A.5 step 2): "The client does the rest on its own: on
 // every start it presents each unspent note it holds for that federation, as it would present them to the federation itself."
 //
 // For each federation a seat lists at GET /liquidations whose claim window is open and that names where claims go, and that this
@@ -67,7 +67,7 @@ export const pendingRequestsKey = (fid) => `blwp-liquidation-pending-${String(fi
 
 // THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
 // round id of its own, H(tag || federation id)), so a seed restored on another device collects what the first presented.
-// A payout is a pre-expired lock to refundKeyOf(that key), collected by Refund under it - as a slash payout is (kanban #307).
+// A payout is a pre-expired lock to refundKeyOf(that key), collected by Refund under it - as a slash payout is.
 import { playerSecretFor } from '../../arena-protocol/src/player-key.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';

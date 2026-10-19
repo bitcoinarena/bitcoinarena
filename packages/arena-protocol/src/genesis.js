@@ -20,7 +20,7 @@ import {
 // founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
 // 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
 // core's own rules are named by its core hash, which every round carries beside this config.
-// THE GAME'S CONFIGS ARE THE GAME'S (kanban #203): nextblock's config encoders v1-v4 and their hashes moved to
+// THE GAME'S CONFIGS ARE THE GAME'S: nextblock's config encoders v1-v4 and their hashes moved to
 // packages/nextblock/config/game-config.js. The genesis parameters name the founding config only by its hash, the fixed
 // GENESIS_CONFIG_HASH (genesis-ids.js); nextblock/test/engine-shared.test.js holds the founding config to it.
 export const TAG_GENESIS = 'ARENA/v1/GenesisParameters';
@@ -90,7 +90,7 @@ export function encodeGenesisParameters(p) {
   // and no series names its own start.
   if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
   w.u64(p.genesisSeriesStartMs);
-  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (kanban #297 / #298, RULED the owner 2026-10-14 ~13:20Z: "Fix it but no new series
+  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (RULED 2026-10-14 ~13:20Z: "Fix it but no new series
   // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
   // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
   // stay as they were and no series moves to a new network.
@@ -110,7 +110,7 @@ export function encodeGenesisParameters(p) {
 }
 
 /**
- * MAINNET'S GENESIS (§27A.6, the "Three networks" table; kanban #297 / #298), built from the parts only a launch can name: the
+ * MAINNET'S GENESIS (§27A.6, the "Three networks" table), built from the parts only a launch can name: the
  * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
  * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
  * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
@@ -140,7 +140,7 @@ export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityP
 }
 
 /**
- * EVERY CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.6, kanban #297; kanban #32 slice 3, the owner 2026-10-16: "the client refuses to join
+ * EVERY CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.62026-10-16: "the client refuses to join
  * and names the mismatched parameter"): where the genesis says its committees bind, a Round Contract names exactly its slots per role,
  * the threshold of those slots (threshold.js) is the genesis's, and its census confirmations are the genesis's. Each mismatch is named
  * by its parameter. A genesis that does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its
@@ -255,7 +255,7 @@ export function genesisFor(network) {
  * round. 27A.4's table is exhaustive: the authority signs sets and nothing
  * else, the recovery key names a new authority and nothing else.
  *
- * the owner 2026-09-08: these are test keys on disk for regtest and testnet4.
+ * 2026-09-08: these are test keys on disk for regtest and testnet4.
  * A mainnet recovery key belongs in a safe, and this build has no mainnet.
  */
 export function donationKeysFor(network) {

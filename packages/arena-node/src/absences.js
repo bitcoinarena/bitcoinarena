@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ABSENCE ATTESTATIONS A SEAT HOLDS (spec §23A.4, kanban #322): each guardian signs, once a day while it lasts, that it has not
+// ABSENCE ATTESTATIONS A SEAT HOLDS (spec §23A.4): each guardian signs, once a day while it lasts, that it has not
 // seen a peer in consensus since a height (absence.js). A seat takes them (POST /absence), keeps per federation, peer and
 // attester the newest one, and answers whether they make an abandonment proof against a record - 2f + 1 distinct guardians,
 // for at least abandon_blocks. The record's gone[] takes that peer ABANDONED with the proof's since-height and id.
@@ -17,7 +17,7 @@ export function readAbsenceHex(hex) {
   return { ...decodeAbsence(b.slice(0, b.length - 64)), signature: b.slice(b.length - 64) };
 }
 
-// A DEPARTURE NOTICE travels the same way (§23A.5, RULED the owner 2026-09-21: "Leaving is legitimate"): the leaving guardian's
+// A DEPARTURE NOTICE travels the same way (§23A.5, RULED 2026-09-21: "Leaving is legitimate"): the leaving guardian's
 // own signed (federation_id, peer, leave_after_height); from leave_after on the record has it DEPARTED, its bond untouched
 export const departureHex = (d) => toHex(encodeDeparture(d)) + toHex(d.signature);
 export function readDepartureHex(hex) {
@@ -42,7 +42,7 @@ export function dueDeparture(notices, { record, peerKey, departureNotice, height
 export function createAbsences({ verify, max = 4096, store = null }) {
   const notices = new Map();                 // `${fid}:${peer}` -> departure notice (one per guardian: the latest posted)
   const held = new Map();                    // `${fid}:${peer}:${attester}` -> attestation (the newest height)
-  // KEPT ACROSS A RESTART (kanban #326, measured live 2026-10-15: the founding seats restarted after B7's notice held 0 departures,
+  // KEPT ACROSS A RESTART (measured live 2026-10-15: the founding seats restarted after B7's notice held 0 departures,
   // and the founding it triggers never started): `store` { read() -> { departures: [hex], absences: [hex] }, write(that) } - every
   // kept notice and attestation is written, and read back at start through the same checks (each signature verified again)
   let loading = false;

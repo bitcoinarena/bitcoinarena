@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE INSTALLER'S WEB WIZARD (kanban #471 part B; the owner 2026-10-18: "The installer should be web based, so the user does the wizard on
+// THE INSTALLER'S WEB WIZARD (2026-10-18: "The installer should be web based, so the user does the wizard on
 // his browser. Either the connection is on localhost ... or the server is remote and the installer needs to use tunnelling").
 //
 // NOTHING WITHOUT THE TOKEN (B.3). The installer prints one URL with a one-time setup token. Opening it trades the token for a session
@@ -59,7 +59,7 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
  * `test` (chain test), `install` (service), `fetcher`, `nowMs`. Answers { token, handle(req, res), allowHost(host), close() }.
  */
 /**
- * CUSTODY, ADDED LATER (the owner 2026-10-18: "if custody is setup later in the UI we need the same screens"): `arena-install --add-custody`
+ * CUSTODY, ADDED LATER (2026-10-18: "if custody is setup later in the UI we need the same screens"): `arena-install --add-custody`
  * (or Start menu / Arena Node > Add custody) reopens the wizard at the roles step with custody chosen, so the node owner sees the same
  * screens as a new custody node - what custody is, Lightning and the gateway, the federation, the bond's rules (I UNDERSTAND) - and the
  * bond step then updates the posted bond's advertisement to name custody instead of posting a second bond. The install step runs again
@@ -221,7 +221,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         return { ok: false, why: `${r === 'custody' ? 'custody' : 'a liquidity provider'} needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave ${r} out` };
       const ln = roles.includes('custody') || roles.includes('liquidity');   // the roles that run LND
       mark('roles', { roles });
-      // no custody: no Lightning, federation or bond-rules step (the owner 2026-10-18: "No slashing for leaving if you have no custody, so that will only come then")
+      // no custody: no Lightning, federation or bond-rules step (2026-10-18: "No slashing for leaving if you have no custody, so that will only come then")
       if (!roles.includes('custody')) { mark('federation', { federation: null }); mark('promise', { promise: null }); }
       if (!ln) {
         mark('lightning', { lightning: null });
@@ -292,7 +292,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         return { ok: true, reach: mark('reach', { reach: { mode, port, url: `http://${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:${port}` } }).reach };
       }
       if (mode === 'quick') return { ok: true, reach: mark('reach', { reach: { mode, port, url: null } }).reach };
-      // workers.dev (the owner 2026-10-18: "Implement workers dev tunnel"): the operator's own token, account and subdomain; the Worker itself
+      // workers.dev (2026-10-18: "Implement workers dev tunnel"): the operator's own token, account and subdomain; the Worker itself
       // is uploaded at the install, once the quick tunnel behind it has a name
       if (mode === 'workers') {
         const token = String(b.cfToken || '').trim();
@@ -380,7 +380,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!s.chain || s.chain.kind !== 'core') return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
       const got = await lndKit.installLnd({ home: state.home, fetcher });
       if (!got.ok) return { ok: false, why: got.why };
-      // CAN OTHERS DIAL THIS LND? (the owner 2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
+      // CAN OTHERS DIAL THIS LND? (2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
       // two seats connect back to the peer port before LND takes it (reach.checkDirect). Reached: LND announces that address, no Tor.
       // Not reached - the usual case, no open port: Tor (tor.js), and LND gets a permanent onion address others dial instead.
       const lnReach = await reach.checkDirect({ port: LND_PORTS.p2p, fetcher }).catch((e) => ({ ok: false, reached: false, why: e.message }));
@@ -479,18 +479,18 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
       return { ok: true, federationId: j.federationId, federations: t.ok ? t.federations : null };
     },
-    // THE FEDERATION (the owner 2026-10-18: "it should be its own point and the default is find a new federation with 9 other nodes or
+    // THE FEDERATION (2026-10-18: "it should be its own point and the default is find a new federation with 9 other nodes or
     // invitation"): found one with nine other new nodes - the cohort, automatic (spec §23A.2 event 4) - or join one by its invite code
     'POST /api/federation': async (b) => {
       const s = state.read();
       if (!(s.roles || []).includes('custody')) { mark('federation', { federation: null }); return { ok: true }; }
-      // NO INVITATION (the owner 2026-10-18: "it cannot invite if it's already full ... Yes remove it"): stock Fedimint adds no guardian to a
+      // NO INVITATION (2026-10-18: "it cannot invite if it's already full ... Yes remove it"): stock Fedimint adds no guardian to a
       // running federation, so a node is seated only by a draw - a new federation of ten, or the missing seats of a draining one's
       // successor (§23A.6). An invite code only lets a gateway serve a federation: arena-install --join-federation does that.
       mark('federation', { federation: { mode: 'drawn', atMs: Date.now() } });
       return { ok: true, mode: 'drawn' };
     },
-    // THE BOND'S RULES, UNDERSTOOD (the owner 2026-10-18: "Explain in detail, intuitive why we need a bond and leaving without clicking LEAVE will
+    // THE BOND'S RULES, UNDERSTOOD (2026-10-18: "Explain in detail, intuitive why we need a bond and leaving without clicking LEAVE will
     // slash the bond ... people have to type I UNDERSTAND. That is its own screen")
     'POST /api/promise': async (b) => {
       if (String(b.text || '').trim().toUpperCase() !== 'I UNDERSTAND') return { ok: false, why: 'type I UNDERSTAND to go on' };
@@ -503,7 +503,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       mark('lightning'); return { ok: true };
     },
 
-    // A CUSTODY NODE NEEDS MORE (the owner 2026-10-18: "This needs additional funds for the peg in"): beside the bond, a reserve for its
+    // A CUSTODY NODE NEEDS MORE (2026-10-18: "This needs additional funds for the peg in"): beside the bond, a reserve for its
     // advertisement update once its federation is founded (guardian_of), and the peg-in it sets aside for its gateway's e-cash - both stay
     // in its wallet (the bond's change) until the custody agent spends them
     'POST /api/bond/check': async (b) => {
@@ -604,7 +604,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const l = launch({ home: state.home, s, ownerUrl, addCustody, release,
         run: (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, () => ok())) });
       const { pathSet, ...command } = l.command || {};
-      // THE AUTO UPDATE SERVICE (kanban #505): installed with the node, on unless arena.conf says auto_update=0
+      // THE AUTO UPDATE SERVICE: installed with the node, on unless arena.conf says auto_update=0
       if (l.command && !l.command.why) Promise.resolve(installUpdater({ home: state.home, installProgram: gwKit.installProgram })).then((u) => { if (u && !u.ok) log(`auto update: ${u.why}`); }, (e) => log(`auto update: ${e.message}`));
       if (pathSet) pathSet.catch(() => {});   // the wizard runs on: the PATH change finishes while it does
       state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, command: l.command ? command : null, atMs: Date.now() } });

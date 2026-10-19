@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// ONE LINE, WHOLE, OR NOT AT ALL (the owner 2026-09-29 21:18, CLIP-2118). On his phone the centre gap is a strip:
+/// ONE LINE, WHOLE, OR NOT AT ALL (2026-09-29 21:18, CLIP-2118). On his phone the centre gap is a strip:
 /// "-0.15% 24h" wrapped and its "24h" was cut in half by the row under the percent, and "UNDER FIRE" was clipped from both
 /// sides to a lone red R. Every label in the gap now goes through `DriveHud.FitLine`: no wrapping, the font shrinks to the
 /// width, and a label that still does not fit is not drawn at all.

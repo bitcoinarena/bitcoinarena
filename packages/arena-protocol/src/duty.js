@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352, the owner 2026-10-13 ~18:35Z): "Wir müssen jeden Tag verlässlich follow up rounds
+// THE DUTY TO POST THE ROUNDS 24 H AHEAD (2026-10-13 ~18:35Z): "Wir müssen jeden Tag verlässlich follow up rounds
 // für alle Spiele und Networks posten, jeden Tag für die nächsten 24h. Das macht immer eine bestimmte deterministische node die gerade
 // Dienst hat ... diese node postet die Runden die in 24h starten. Wichtig ist dass keine gap entsteht. Wenn die Node ihren Slot verpasst,
 // macht die nächste Node, verantwortlich für die nächste Runde das ... Bis es gepostet ist. Nur eine node postet die runde."
@@ -96,7 +96,7 @@ export function slotsToPost({ nowMs, onDuty, posted, lookback = DUTY_LOOKBACK_SL
   return out;
 }
 
-// ONE POSTING PER GAME PER DAY (the owner 2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the fees must be as low
+// ONE POSTING PER GAME PER DAY (2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the fees must be as low
 // as possible"). The slot is a UTC day: day d's duty is the rounds of day d + 1 - one transaction per game carrying every federation's
 // series of it, at the lowest fee the network relays. Who posts: the census at the day's anchor in duty order, as above; the first is due
 // from the day's start, and each next one an hour after the one before it while the day's marker is not seen - so a missed post falls

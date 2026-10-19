@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// POST /series (kanban #293, the owner 2026-10-12: "Replace the 450 round posts with one post per table"): a seat takes a grid
+// POST /series (2026-10-12: "Replace the 450 round posts with one post per table"): a seat takes a grid
 // series line - funded by its series id, held to the grid rule - writes its rounds as any series', keeps the line beside its
 // store and holds it again after a restart. Not a day series, not a grid short of its 45 min lead.
 import { test } from 'node:test';
@@ -75,13 +75,13 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     const listed = new Set(rows.map((r) => r.id));
     assert.ok(listed.has(toHex(roundId(seriesRound(t, 0)))), 'round 0 listed');
     assert.ok(listed.has(toHex(roundId(seriesRound(t, 224)))), 'round 224 listed');
-    // AND WHAT A PLAYER IS WARNED OF (kanban #316): nothing for these rules; nextblock's own "exposure ignored" for a grid whose
+    // AND WHAT A PLAYER IS WARNED OF: nothing for these rules; nextblock's own "exposure ignored" for a grid whose
     // exposure reference is 0 - the game's plugin's word, beside the signed row
     assert.deepEqual(rows.find((r) => r.id === toHex(roundId(seriesRound(t, 0)))).warnings, []);
     blind = gridOf(nodes, { exposureReference: 0, committeeTimeMs: START - GRID_SERIES_LEAD_MIN_MS - 7n });
     named.add(toHex(seriesId(blind)));
     assert.equal((await post(seriesLineOf(blind, encodeRoundContract))).status, 200);
-    // A 24 h GRID (the owner 2026-10-12): 10,800 slots taken, its rounds written 3 h ahead, not all 10,800
+    // A 24 h GRID (2026-10-12): 10,800 slots taken, its rounds written 3 h ahead, not all 10,800
     daylong = gridOf(nodes, { seriesCount: 10800, committeeTimeMs: START - GRID_SERIES_LEAD_MIN_MS - 9n });
     named.add(toHex(seriesId(daylong)));
     { const r = await post(seriesLineOf(daylong, encodeRoundContract)); assert.equal(r.status, 200, await r.clone().text()); }
@@ -111,7 +111,7 @@ test('a grid series line is taken once per table, funded by its id, written, kep
   try {
     const held = (await (await fetch(`http://127.0.0.1:${again.port}/series`)).json()).series.map((x) => x.series);
     assert.deepEqual(held, [toHex(seriesId(t)), toHex(seriesId(blind)), toHex(seriesId(daylong))]);
-    // ITS TEMPLATE, AS ITS LINE (kanban #362): what a page checks a series round with - the line hashes back to the id asked
+    // ITS TEMPLATE, AS ITS LINE: what a page checks a series round with - the line hashes back to the id asked
     const tpl = await fetch(`http://127.0.0.1:${again.port}/series-template?id=${toHex(seriesId(t))}`);
     assert.equal(tpl.status, 200);
     const got = await tpl.text();

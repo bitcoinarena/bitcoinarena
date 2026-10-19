@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# INSTALLS THE DAILY'S SIGNER NODES AS PERSISTENT USER SERVICES (the owner 2026-09-15: keep the Daily through
+# INSTALLS THE DAILY'S SIGNER NODES AS PERSISTENT USER SERVICES (2026-09-15: keep the Daily through
 # restarts). Nothing here starts a service; `systemctl --user enable --now` does, once the temporary
 # units they replace are stopped.
 #

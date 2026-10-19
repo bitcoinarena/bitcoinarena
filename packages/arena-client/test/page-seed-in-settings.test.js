@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEED CHECK IS IN SETTINGS, NOT IN THE FIRST RUN (kanban #340, the owner 2026-10-11: "The wallet should be deterministic, so
+// THE SEED CHECK IS IN SETTINGS, NOT IN THE FIRST RUN (2026-10-11: "The wallet should be deterministic, so
 // showing the seed and forcing a check interrupts the flow. Put the seed display and the mandatory check in settings, as a
 // backup."). On the page's own code: Create on the start screen makes the wallet and opens no dialog; a Nostr login shows no
 // words after its reload; Settings keeps the 24 words and their check, and the lobby's backup line leads there.
@@ -41,7 +41,7 @@ test('Settings keeps the 24 words and their check; the lobby\'s backup line lead
   assert.ok(HTML.includes("document.getElementById('blwp-backup-cta').addEventListener('click'"), 'the lobby line opens Settings on the words');
 });
 
-// kanban #449 (the owner 2026-10-17: "when it says back up now and the modal opens there is space for a message explaining why user needs
+// (2026-10-17: "when it says back up now and the modal opens there is space for a message explaining why user needs
 // to do it. Needs to fit mobile as well"): the reason, above the words, small on a phone
 test('the seed modal says why the words must be written down, above them', async () => {
   const { readFileSync } = await import('node:fs');

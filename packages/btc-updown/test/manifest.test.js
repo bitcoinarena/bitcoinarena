@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE TESTNET4 UP/DOWN MARKET (kanban #293 step 1): its signed manifest is the regtest market's in every term and its client,
+// THE TESTNET4 UP/DOWN MARKET: its signed manifest is the regtest market's in every term and its client,
 // with its own developer and attestor keys, and the testnet4 donation key set; pinned for testnet4 only.
 import test from 'node:test';
 import assert from 'node:assert/strict';

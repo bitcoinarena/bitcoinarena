@@ -25,14 +25,14 @@
 // that it runs in a worker and the transcript comes off the wire rather than
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
-// AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07) IT IS HANDED THE CORE: the round names one, the
+// AND SINCE M3 R1 (2026-09-15 08:03/08:07) IT IS HANDED THE CORE: the round names one, the
 // signer node's plugins.js resolves it, and this file drives that core's adapter - it imports none. The
 // loop is the same; what a tick's events are, what a run came to and what a picture is are the
 // core's to say.
 import { lastTickOfRun, runTicksForEntry } from '../../arena-protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../arena-protocol/src/batch.js';
 import { seedWordForEntry, worldSeedWord } from '../../arena-protocol/src/seed.js';
-// AND SINCE KANBAN #328 (spec §0A.6) THE CORE RUNS ONLY IN ITS SANDBOX: no network, no file system, no clock. The loop
+// AND SINCE KANBAN (spec §0A.6) THE CORE RUNS ONLY IN ITS SANDBOX: no network, no file system, no clock. The loop
 // below is core-driver.js, inside it; this file checks what it hands in and reads back what the core said.
 import { sandboxFor } from './core-sandbox.js';
 
@@ -54,7 +54,7 @@ const hex = (b) => {
  * one. Writing that hash here would settle a protocol question by implementing
  * it, which is the BOND_MARKER and checkpoint class of decision.
  *
- * the owner 2026-09-08: the secret is on the Entry Contract. A node derives the
+ * 2026-09-08: the secret is on the Entry Contract. A node derives the
  * seed; a fixture may still hand in seedWord. Missing secret or randomness is
  * a refusal, not a guess.
  */
@@ -63,7 +63,7 @@ export const NO_SEED_RULE = 'that entry carries no world secret to replay from';
 export const NO_CORE_RULE = 'no core is named to replay that run under';
 
 /**
- * THE WORLD THIS RUN IS REPLAYED IN (#23, the owner 2026-10-04): the one function the page uses too. A core resolved for a
+ * THE WORLD THIS RUN IS REPLAYED IN (2026-10-04): the one function the page uses too. A core resolved for a
  * round carries `world` - its config hash, census root and id - and the round's config chooses the rule: one world for
  * the whole round (config v4) or the player's own (every older config, byte for byte as before). A core with no `world`
  * is a caller that names no round: the per-player seed, as it always was.
@@ -109,7 +109,7 @@ function sandboxOf(core) {
 }
 
 /**
- * THE UNLOCKS AN ENTRY PLAYS WITH (kanban #365, #369): each item its entry names (protocol 10), as the round's game's catalogue unlocks
+ * THE UNLOCKS AN ENTRY PLAYS WITH: each item its entry names (protocol 10), as the round's game's catalogue unlocks
  * it (core.items, plugins.js itemUnlocksOf) - in the entry's order. An entry naming no item answers []; one naming an item the game
  * does not sell answers why not, and is not replayed. The core's start is handed them only when there are some.
  */
@@ -186,10 +186,10 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   // `core/tools/replay.js` does: liquidations, loads, samples and tapes land
   // BEFORE the tick they name (the core's eventsOf), a mark names the state a
   // tick REACHED, a picture the truck after its tick was stepped. That loop is
-  // core-driver.js now, run inside the core's sandbox (kanban #328): it is
+  // core-driver.js now, run inside the core's sandbox: it is
   // handed the words, the events, the marks and the ticks wanted as one JSON
   // string, and answers one. A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban
-  // #130): blockTicks - joinTick ticks, the same as every run for joinTick 0.
+  //): blockTicks - joinTick ticks, the same as every run for joinTick 0.
   const unl = unlocksOf(entry, core);
   if (!unl.ok) return { ok: false, why: unl.why };
   let ran;
@@ -256,7 +256,7 @@ export function replayInWorker(transcript, entry, options = {}) {
   // itself, so no function is ever handed across a thread.
   //
   // AND A STORED RUN CROSSES AS ITS NAME. `source` is a store's path and the two ids: the worker opens that file
-  // read-only and reads the run's inputs itself. Measured on the Daily (the owner 2026-09-17 19:15, the ghost lag): a
+  // read-only and reads the run's inputs itself. Measured on the Daily (2026-09-17 19:15, the ghost lag): a
   // close held the daemon's loop 554-1511 ms before it waited, none of its steps over 100 ms alone - it is the
   // per-entry work of up to seven entries, and a transcript read is 21-31 ms of each. The loop that feeds pictured
   // trucks does not read them any more. A caller holding a transcript already still hands it over as before.
@@ -267,7 +267,7 @@ export function replayInWorker(transcript, entry, options = {}) {
       workerData: { blwpReplay: true, transcript, entry, source: source || null, options: rest,
         core: { hash: core.hash, url: core.url, root: core.root ? String(core.root) : undefined, sourceHash: core.sourceHash,
           name: core.name, config: core.config, runTicks: core.runTicks, world: core.world || null,
-          // AND THE GAME'S ITEM CATALOGUE (kanban #369, measured live 2026-10-16 05:50Z: every committee seat held the truck entry
+          // AND THE GAME'S ITEM CATALOGUE (measured live 2026-10-16 05:50Z: every committee seat held the truck entry
           // 3de8e94c "plays with item "large-truck", which the round's game does not sell" - the worker's core lost `items` here)
           ...(core.items ? { items: { ...core.items } } : {}) } },
     });
@@ -284,7 +284,7 @@ export function replayInWorker(transcript, entry, options = {}) {
 // as a Worker by `replayInWorker`; in the daemon's own thread it does nothing.
 if (!isMainThread && workerData && workerData.blwpReplay) {
   const { transcript, entry, source, options, core } = workerData;
-  // THE CORE IS NOT IMPORTED HERE (kanban #328): replay() loads it into its sandbox from its checked files
+  // THE CORE IS NOT IMPORTED HERE: replay() loads it into its sandbox from its checked files
   Promise.resolve().then(async () => {
     let inputs = transcript;
     if (source) {
@@ -362,7 +362,7 @@ export class RunInProgress {
     this.joinTick = entry.joinTick;
     try {
       this.runTicks = runTicksIn(core, this.s);
-      // THE RUN IS KEPT IN THE CORE'S SANDBOX (kanban #328); this object holds its number, and lets it go when it is collected
+      // THE RUN IS KEPT IN THE CORE'S SANDBOX; this object holds its number, and lets it go when it is collected
       const unl = unlocksOf(entry, core);
       if (!unl.ok) return Object.assign(this, { ok: false, why: unl.why });
       this.id = this.s.call('open', { seedWord, config: core.config, runTicks: runTicksForEntry(entry.joinTick, this.runTicks),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// IN-GAME ITEMS (kanban #365, the owner 2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25% an
+// IN-GAME ITEMS (2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25% an
 // die protocol devs gehen, 25% an den a game dev und 50% an die nodes die in den letzten 24h an einer Runde beteiligt waren"; rulings the
 // same day: the nodes' half EQUAL per node; an item bound to the buyer's player key and the game across its versions, not transferable;
 // payable through every federation; the nodes named by the merged signed FINALs of every seat - served-nodes.js).
@@ -58,7 +58,7 @@ export function readItems(r) {
 export const itemOf = (m, id) => (m && Array.isArray(m.items) ? m.items.find((it) => it.id === id) || null : null);
 
 /**
- * THE DEVELOPERS' SHARE IS THE BUYER'S CHOICE (kanban #377, the owner 2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game
+ * THE DEVELOPERS' SHARE IS THE BUYER'S CHOICE (2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game
  * devs (25/25) but are fully optional ... 50% 40% 30% 20% 10% 0% ... if the ingame donations are zero the price is 250 Sats instead of
  * 500 sats. Node fees are never optional."). A share is a percent of the item's list price, one of ITEM_DEV_SHARES; the nodes' half
  * is always paid. 50 is the list price itself, the split as it was.

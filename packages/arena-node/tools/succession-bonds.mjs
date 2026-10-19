@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OLD FEDERATION'S GUARDIANS' BONDS, SPENT AT MATURITY (kanban #276 custody succession, §23A.6 step 4: "after CLOSED they
+// THE OLD FEDERATION'S GUARDIANS' BONDS, SPENT AT MATURITY (custody succession, §23A.6 step 4: "after CLOSED they
 // may stop, and their bonds mature as any node's"). Driven by succession-regtest.sh once the old federation is empty: one bond
 // per old guardian on the run's own regtest, each recovery spend (path A, the node's own key) refused one block before
 // maturity, then accepted at maturity, broadcast, mined and seen spent by the census reader. Prints one JSON line.
@@ -38,7 +38,7 @@ for (let i = 0; i < Number(process.env.GUARDIANS || 4); i++) {
   // each old guardian's seat key (test keys of this run, by index)
   const secret = taggedHash('ARENA/test/succession-guardian', new TextEncoder().encode(String(i)));
   const nodeKey = schnorr.getPublicKey(secret);
-  // EACH BOND AT ITS OWN HEIGHT (kanban #295, template 2): the next block plus regtest's offset, mined to below
+  // EACH BOND AT ITS OWN HEIGHT (template 2): the next block plus regtest's offset, mined to below
   const maturity = maturityHeightFor(Number(cli('getblockcount')), 'regtest', { slackBlocks: 0 });
   const built = bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: maturity,
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });

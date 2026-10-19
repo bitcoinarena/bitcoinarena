@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SESSION PROVES A SEAT ON THE ROUND'S COMMITTEE (kanban #376, measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint:
+// THE SESSION PROVES A SEAT ON THE ROUND'S COMMITTEE (measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint:
 // the advertisement is for 2fca1090..., which is not on this round's committee"). daily.json names one bond - seat 1's - and a
 // committee is 7 of 14 seats, so about half the rounds could not be joined. committeeBond keeps the named bond when its node is on
 // the committee, else takes the first of the round's seats whose own /bond names a committee member.
@@ -40,7 +40,7 @@ test('no seat answers for the committee: the named bond, as before (its refusal 
   assert.equal(await committeeBond({ bond: 'https://s1.example/bond', nodes, committee: [SEAT2], fetcher: down }), 'https://s1.example/bond');
 });
 
-// THE BOND ALREADY READ IS NOT READ AGAIN, AND ONE SEAT IS NOT THE ONLY ONE (kanban #376, measured 2026-10-16 11:20:47Z on preview
+// THE BOND ALREADY READ IS NOT READ AGAIN, AND ONE SEAT IS NOT THE ONLY ONE (measured 2026-10-16 11:20:47Z on preview
 // UI 151 after Unity's PLAY: the entry made, then "no bond: no provider proved that bond into the chain (provider 0: no answer in
 // 10000 ms)" - one provider, reading again the /bond the committee search had just read)
 test('every committee seat is found, each with the /bond it answered, in the candidates\' order', async () => {

@@ -49,7 +49,7 @@ export const LOBBY_SKEW_MS = 60000;
  * provider ("no answer in 10000 ms"), so the lobby and the run give up on a node at the same point.
  */
 export const SIGNER_ANSWER_MS = 10000;
-/** How long the lobby waits for the other seats once half of them answered (kanban #395). */
+/** How long the lobby waits for the other seats once half of them answered. */
 export const LOBBY_LAST_MS = 2500;
 
 /**
@@ -66,7 +66,7 @@ export function answerWithin(fetcher, ms = SIGNER_ANSWER_MS) {
         reject(Object.assign(new Error(`did not answer in ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`}`), { silent: true }));
       }, ms);
     });
-    // THE WHOLE ANSWER WITHIN THE LIMIT, NOT ONLY ITS HEADERS (kanban #395, measured on testnet4 2026-10-16 ~18:45Z: federation
+    // THE WHOLE ANSWER WITHIN THE LIMIT, NOT ONLY ITS HEADERS (measured on testnet4 2026-10-16 ~18:45Z: federation
     // B's seats sent /rounds headers at once and the body over 19-45 s; the limit stopped at the headers, the lobby's first read
     // waited for every body, and Unity's lobby listed no round for over a minute). The body is read inside the race, and the
     // caller gets it already in hand.
@@ -117,13 +117,13 @@ export function dailyLobbySearch(daily) {
   if (!daily || typeof daily !== 'object' || Array.isArray(daily)) return null;
   if ('round' in daily) return null;
   const nodes = Array.isArray(daily.node) ? daily.node.map(String) : [];
-  // TWO NODES TO START FROM, NOT THE NETWORK (kanban #351, the owner 2026-10-13: "The client may not have a hard coded node list it must
+  // TWO NODES TO START FROM, NOT THE NETWORK (2026-10-13: "The client may not have a hard coded node list it must
   // be found on the fly"): daily.json names where a page starts - two, because a chain is read from two independent sources
   // (joinQuery) - and the page finds the rest in the census it checks
   if (nodes.length < 2 || typeof daily.bond !== 'string' || !/^[0-9a-f]{128}$/.test(String(daily.advert))) return null;
   const q = new URLSearchParams({ node: nodes.join(','), bond: daily.bond, advert: daily.advert });
   if (typeof daily.federation === 'string' && daily.federation) q.set('federation', daily.federation);
-  // THE FUNDED GATEWAYS (the owner 2026-09-30 14:30): the gateways holding e-cash in the federation, the only ones a deposit
+  // THE FUNDED GATEWAYS (2026-09-30 14:30): the gateways holding e-cash in the federation, the only ones a deposit
   // may go through (page-lock.js depositGateway). A string or a list; carried as one comma-separated `gateway`.
   const gws = (Array.isArray(daily.gateway) ? daily.gateway : typeof daily.gateway === 'string' ? daily.gateway.split(',') : [])
     .map((g) => String(g).trim()).filter((g) => /^https?:\/\//.test(g));
@@ -148,13 +148,13 @@ function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
  *   soonest entry close first; a round past its entry close is not a row.
  */
 const CONTRACTS = new Map();                     // round id hex -> its contract (the id is its hash)
-// A ROUND WHOSE CONTRACT COULD NOT BE FETCHED OR READ IS NOT ASKED FOR AGAIN FOR UNREADABLE_MS (kanban #266, measured
+// A ROUND WHOSE CONTRACT COULD NOT BE FETCHED OR READ IS NOT ASKED FOR AGAIN FOR UNREADABLE_MS (measured
 // 2026-10-08: once the seats listed the Arena series' rounds - a layout this client does not read - the page asked every seat
 // for each listed round's contract on every poll, 714 /round requests in 25 s, none of them ever kept). Round id -> when it failed.
 const UNREADABLE = new Map();
 export const UNREADABLE_MS = 30000;
 
-/** How long after its entry closes a round the seats still list is named among the lobby's `closed` (kanban #452). */
+/** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 export const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
@@ -162,13 +162,13 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
   const unanswered = [];                                    // signer nodes that did not answer within answerMs
-  const failed = [];                                        // signer nodes whose read failed outright (kanban #6): none answered = none reached
+  const failed = [];                                        // signer nodes whose read failed outright: none answered = none reached
   const said = new Map();                                   // id -> [{ node, key, ... }]
   const ask = answerWithin(fetcher, answerMs);
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
   const unique = [...new Set(nodes)];
-  // ONCE HALF HAVE ANSWERED, THE REST GET LOBBY_LAST_MS MORE (kanban #395, measured on testnet4 2026-10-16: seven seats answered in
+  // ONCE HALF HAVE ANSWERED, THE REST GET LOBBY_LAST_MS MORE (measured on testnet4 2026-10-16: seven seats answered in
   // 0.3-1.7 s and federation B's seven in 19-45 s, and the first lobby waited the full limit for them): the lobby is drawn from
   // the seats that answered; a late one is in the next read, a second later
   let settle = null; let answeredCount = 0;
@@ -197,9 +197,9 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           names: Array.isArray(x.names) ? x.names : [],
-          // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7, kanban #316): the seat's word, only known codes kept (entry-warnings.js)
+          // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7): the seat's word, only known codes kept (entry-warnings.js)
           warnings: Array.isArray(x.warnings) ? x.warnings.filter((k) => typeof k === 'string') : [],
-          // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
+          // RESERVE SEATS (§5A.7): the seat's word on who is seated - the join checks the certificate itself
           committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
@@ -207,7 +207,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   const rows = [], closed = [];
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
   const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
-  // KEPT BY ID, FETCHED 16 AT A TIME (the owner 2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
+  // KEPT BY ID, FETCHED 16 AT A TIME (2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
   // fetched one after another on every paint). A round's id is its contract's hash, so a kept contract cannot go stale.
   const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS));
   for (let i = 0; i < wanted.length; i += 16)
@@ -218,10 +218,10 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     if (!contract) continue;
     const now = BigInt(Math.floor(nowMs));
     // A ROUND WHOSE ENTRY HAS CLOSED takes no row - but one the seats still list, closed within the last 2 h, is named apart
-    // (kanban #452): a player's orders in it are read back from its seats after a reload, and its result follows
+    //: a player's orders in it are read back from its seats after a reload, and its result follows
     if (now >= contract.entryCloseMs) { if (now - contract.entryCloseMs < CLOSED_KEPT_MS) closed.push({ id, contract, entryCloseMs: Number(contract.entryCloseMs) }); continue; }
     const pays = roundPays(contract);
-    // NO 2-OF-2 PAYING FEDERATION IS OFFERED (PRIORITIES item 5; the owner 2026-09-27 10:04). One node is one guardian, so
+    // NO 2-OF-2 PAYING FEDERATION IS OFFERED (PRIORITIES item 5; 2026-09-27 10:04). One node is one guardian, so
     // a paying round's committee is its federation's guardians - seven, 5 of 7 - and two signer nodes cannot be that.
     // Such a round gets no row, however its nodes list it; it is named with the refusals. The free 2-of-2 stays.
     if (pays && contract.nodes.length === 2) {
@@ -252,7 +252,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       wallet: pays ? 'federation-lock' : 'none',
       stakeMsat: contract.stakeMsat,
       committeeTimeMs: Number(contract.committeeTimeMs), startTimeMs: Number(contract.startTimeMs),
-      // A LATE-JOIN ROUND IS OFFERED ONLY WHILE A JOIN STILL REACHES A SEAT BEFORE 45 s OF ITS RUN REMAIN (kanban #130): its
+      // A LATE-JOIN ROUND IS OFFERED ONLY WHILE A JOIN STILL REACHES A SEAT BEFORE 45 s OF ITS RUN REMAIN: its
       // close here is start + 37 s less the join's time, not the bytes' start + 45 s - the row, its "closes in" and the pick.
       entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
@@ -262,18 +262,18 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: checkedNames(counts.flatMap((c) => c.names), id, verify),
-      // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): a paying round's only
+      // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A): a paying round's only
       warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
       contract,
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
       game: contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '',
-      // AND ITS NAME AND VERSION RANK (kanban #376, the owner 2026-10-16: "games show up as duplicates it's always the same round twice" -
+      // AND ITS NAME AND VERSION RANK (2026-10-16: "games show up as duplicates it's always the same round twice" -
       // nextblock v1's duty day and v3's grid start a round at the same instants, and the lobby kept one row per game ID)
       gameName: contract.gameId instanceof Uint8Array && KNOWN_GOOD_GAMES[toHex(contract.gameId)] ? KNOWN_GOOD_GAMES[toHex(contract.gameId)].name : '',
       gameRank: contract.gameId instanceof Uint8Array && KNOWN_GOOD_GAMES[toHex(contract.gameId)] ? Number(KNOWN_GOOD_GAMES[toHex(contract.gameId)].requiredProtocolVersion || 1) : 0,
       market: contract.gameId instanceof Uint8Array ? marketOf(contract.gameId) : null,
-      // A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): from the contract checked above, never a node's word
+      // A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (feature 5): from the contract checked above, never a node's word
       event: contract.event || null,
       marketLike: contract.simCoreHash instanceof Uint8Array && contract.simCoreHash.every((b) => b === 0),
     });
@@ -283,7 +283,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
 }
 
 /**
- * ONE FREE ROUND AND ONE PAYING ROUND, NEVER TWO OF EITHER (the owner 2026-09-15 16:08: "ALWAYS
+ * ONE FREE ROUND AND ONE PAYING ROUND, NEVER TWO OF EITHER (2026-09-15 16:08: "ALWAYS
  * exactly ONE no-money FREE round and ONE paying 2-of-2"). The signer nodes hold more than one of a kind
  * for a while - a rollover opens the next round a minute before the last one's entry closes, and
  * a launcher restart opens a fresh pair beside the pair it left. Measured before: the Daily listed
@@ -292,20 +292,20 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
  */
 // A SERIES ROUND CLOSES ITS ENTRY AT ITS START, and a paying join - the deposit, then the stake lock - takes minutes: the
 // row shown is the soonest series round that still leaves this much.
-// 3 MIN, NOT 20 (INSTANT-1527, the owner 2026-09-30 15:23: "A payable round is always in the lobby. The player can join one
+// 3 MIN, NOT 20 (INSTANT-1527, 2026-09-30 15:23: "A payable round is always in the lobby. The player can join one
 // now. Do not hide paying rows until their start is 20 minutes away"). The 20 min covered a join whose deposit invoice
 // took 5-7 min - measured, the lock client's depositFor alone was 256.8 s. The invoice is asked at once now and the wallet
 // is open from the lobby; measured on game 2, payment to a committed entry was ~50 s. A series starts a round every 90 s,
 // so the row shown starts within 3 to 4.5 min.
-// 90 S, THE JOIN ITSELF (the owner 2026-09-30: the next possible paid round is always visible - no 3 minute lead): the row is the next paying round a join can still enter before its entry closes at its start. Measured live on
+// 90 S, THE JOIN ITSELF (2026-09-30: the next possible paid round is always visible - no 3 minute lead): the row is the next paying round a join can still enter before its entry closes at its start. Measured live on
 // the testnet4 page 13:54Z: PLAY to the deposit invoice 23.5 s; game 2, payment to a committed entry ~50 s.
 export const SERIES_JOIN_LEAD_MS = 90000;
-// 15 S WHEN NOTHING HAS TO BE DEPOSITED FIRST (the owner 2026-10-03: "I always have to wait for the next round that starts in
+// 15 S WHEN NOTHING HAS TO BE DEPOSITED FIRST (2026-10-03: "I always have to wait for the next round that starts in
 // XX minutes"): a free row, or a paid row whose stake the player wallet already holds, is the soonest round with 15 s of
 // entry left - measured on 0.0.2483, a funded paid PLAY 12.96 s before the start showed the round loaded in 1.20 s and its
 // entry was taken at 7 of 7 before the start (V4, 3a16ec30). A wallet that must take a deposit first keeps the 90 s.
 export const FUNDED_JOIN_LEAD_MS = 15000;
-// NO LEAD (kanban #122, the owner 2026-10-04: "es darf niemals mehr als 90 Sekunden bei 'closes in' stehen. Ich darf immer
+// NO LEAD (2026-10-04: "es darf niemals mehr als 90 Sekunden bei 'closes in' stehen. Ich darf immer
 // 45 sekunden in einer Runde bereits joinen"): the paid row is the soonest series round whose entry is still open, funded
 // or not. A series opens a round every 90 s and its entry closes 45 s after its start, so the row's "closes in" is never
 // over 90 s. Measured on 0.0.2527: an empty wallet's 90 s lead showed "closes in 1:41" for a round starting in 0:56.
@@ -313,7 +313,7 @@ export const FUNDED_JOIN_LEAD_MS = 15000;
 export const JOIN_LEAD_MS = 0;
 export const LOBBY_PER_SERIES = 8;
 /**
- * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25, HARD: "A player opening the page sees a
+ * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (2026-10-01 15:25, HARD: "A player opening the page sees a
  * free row and a paid testnet4 row together. Do not drop free to show testnet4. Do not drop testnet4 to show free.").
  * Measured on the live page under load: each paint read the free nodes and the testnet4 nodes, and a side whose nodes did
  * not answer in time came back with no rows - the page showed the paid row alone, then both, then the free row alone. A
@@ -330,7 +330,7 @@ export function lobbyKeepWhenUnanswered(previousRows, got, nowMs = Date.now()) {
 }
 
 /**
- * THE ROUND PLAY CHOSE STAYS THE ROW OF ITS KIND (the owner 2026-10-02: "once a round has been selected with play the
+ * THE ROUND PLAY CHOSE STAYS THE ROW OF ITS KIND (2026-10-02: "once a round has been selected with play the
  * highlighting may no longer change when the other round is newer, currently while it's waiting it is switching the
  * highlight to the other round"): lobbyOnePerKind picks the soonest round that still leaves the join lead, so while a join
  * waits for its round the pick moved on to the next one. With `joinedId` named and still listed, its row replaces the
@@ -346,29 +346,29 @@ export function lobbyKeepJoined(picked, rows, joinedId) {
 }
 
 export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, leadMsFor = () => JOIN_LEAD_MS } = {}) {
-  // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
+  // ONLY 90-SECOND PAID ROUNDS (2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
   // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
   // window - is never listed; until a series' rounds can be joined there is no paid row. Free rows are untouched.
   // Measured 05:26Z: series 8172fffd's round 0, a day out, showed as "PAID · 100 sats · closes 1113:28 · 0 of 5 signer nodes
   // - waiting" - a paid row before any can be joined. So a paid row is listed only once it can be joined.
   if (paidSeriesOnly) rows = rows.filter((r) => r.free || (!!(r.contract && r.contract.seriesId instanceof Uint8Array) && !!r.joinable));
-  // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
+  // THE SERIES FIRST (2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
   // as before - joinable, then open, then the latest entry close.
   const series = (r) => !!(r.contract && r.contract.seriesId instanceof Uint8Array);
   const leads = (r) => r.entryCloseMs - nowMs > leadMsFor(r);
   // A SERIES' START, its round's start less i x 90 s: of two series the later-starting one is the one posted after
-  // (the owner 2026-09-30: "That series takes priority over the old posted rounds").
+  // (2026-09-30: "That series takes priority over the old posted rounds").
   const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
-  // THE NEWEST SERIES DECIDES THE STAKE, THE SOONEST ROUND OF THAT STAKE WINS (the owner 2026-09-30: "the newest series
+  // THE NEWEST SERIES DECIDES THE STAKE, THE SOONEST ROUND OF THAT STAKE WINS (2026-09-30: "the newest series
   // decides only the stake. Among joinable rows with that stake, the soonest round wins"; 16:31: until the new series is
   // active the old rounds stand). Per kind, the stake of the newest series with a JOINABLE row - open and assigned - is the
   // stake shown: 100 sat over 3cfbe516's 10000 once 8172fffd can be joined, and before that the old series' own. Between
   // two series of that one stake - 8172fffd and the next day's - nothing but the soonest round decides: measured by the rule
   // before this, k=2's first round, joinable 2 h before its start, would have hidden 8172fffd's last two hours of rounds.
   const winningStake = new Map();
-  // ONE ROW PER GAME AND KIND (kanban #206 slice 2): a market's paying row never takes nextblock's - BY THE GAME'S NAME, so its
-  // versions share the row (kanban #376: v1's and v3's rounds of one instant were two rows, "always the same round twice")
+  // ONE ROW PER GAME AND KIND: a market's paying row never takes nextblock's - BY THE GAME'S NAME, so its
+  // versions share the row (v1's and v3's rounds of one instant were two rows, "always the same round twice")
   const kindOf = (r) => `${r.gameName || r.game || ''}:${r.free ? 'free' : 'paying'}`;
   for (const r of rows) {
     if (!series(r) || !r.joinable) continue;
@@ -393,7 +393,7 @@ export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = fal
 }
 
 /**
- * THE ROWS AS THEY ARE READ (kanban #121, the owner 2026-10-05: "That row is the round it can still enter. It is not the round
+ * THE ROWS AS THEY ARE READ (2026-10-05: "That row is the round it can still enter. It is not the round
  * after next."): one per kind, paid rows of a series only, no lead whatever the wallet holds, picked at `nowMs` - the clock of
  * the read, not of the last paint. Measured on 0.0.2740 with a funded seat: the last paint's pick left the closed round as
  * the row for ~1 s after each entry close. A join on a listed round keeps that round while the join is still going (`going`:
@@ -416,7 +416,7 @@ const lobbyClock = (ms) => {
 };
 
 /** One row as the page shows it; the page draws this string and adds nothing. */
-// AND ITS FEDERATION'S LOAD (§23A.3, kanban #324: "the seats show load beside every round"; "The lobby shows every round with
+// AND ITS FEDERATION'S LOAD (§23A.3,: "the seats show load beside every round"; "The lobby shows every round with
 // its federation and load"): `loads` is the page's verified statuses by federation id hex (federationStatuses), the load of
 // a paying row's federation said beside its stake when known
 const fedWords = (row, loads) => {
@@ -436,7 +436,7 @@ const fedWords = (row, loads) => {
 /**
  * WHAT THE PLAYER SEES BEFORE APPROVAL (spec §22A "Transparency": "the selected node identities (or "pending" per §5A.5), any
  * committee overlap, whether any selected operator is playing"; §5A.13 "The client MUST show, before commitment, whether any
- * selected node's operator is playing"; kanban #317). From a paying row's seating (who the certificate seats), the census
+ * selected node's operator is playing"). From a paying row's seating (who the certificate seats), the census
  * this page checked (each node's advert names its operator_id) and the round's players (their checked name records):
  *   { pending, settlement: [{ node, operator }], operators, both, operatorsPlaying }
  */
@@ -466,7 +466,7 @@ export function ceilingWords(c, contract) {
 
 /** The lobby line's words for approvalFacts. */
 export function approvalWords(f, tooOld = []) {
-  // NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3): "node X: protocol too old"
+  // NODES LEFT OUT FOR THEIR PROTOCOL VERSION (scope 3): "node X: protocol too old"
   const old = Array.isArray(tooOld) && tooOld.length
     ? ` · left out, protocol too old: ${tooOld.map((x) => `${String(x.node).slice(0, 8)} (speaks ${(x.speaks || []).map(protocolVersionName).join(', ') || 'none'})`).join(', ')}` : '';
   if (!f || f.pending) return ' · selected nodes: pending (§5A.5)' + old;
@@ -479,7 +479,7 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
-    // a round of a template (kanban #362 feature 5) is shown by its own question and labels
+    // a round of a template (feature 5) is shown by its own question and labels
     const ev = row.event;
     const what = ev ? `${ev.question}${m ? ` (${m.name})` : ''} · ${ev.outcomes.length} outcomes: ${ev.outcomes.join(' / ')}${m ? '' : ' · a market this page does not know (second confirmation)'}`
       : m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
@@ -492,7 +492,7 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
-  // "N signer nodes agree (M needed)", never "7 of 5" (kanban #43, the owner 2026-10-04 11:25Z)
+  // "N signer nodes agree (M needed)", never "7 of 5" (2026-10-04 11:25Z)
   const agree = `${row.signerNodesAgree} signer ${row.signerNodesAgree === 1 ? 'node agrees' : 'nodes agree'} (${row.needed} needed)`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.signerNodesAgree} more` : '');
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
@@ -501,10 +501,10 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   const seat = !row.seating ? '' : row.seating.state === 'named'
     ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
     : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
-  // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13, kanban #317): operators, overlap, an operator playing
+  // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13): operators, overlap, an operator playing
   const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census),
     typeof tooOld === 'function' ? (row.contract && row.contract.censusRoot ? tooOld(row.contract) : []) : tooOld || []);
-  // THE STAKE CEILING THE CENSUS SUPPORTS (§5A.10, kanban #306): computed here from the census this page checked; a test network
+  // THE STAKE CEILING THE CENSUS SUPPORTS (§5A.10): computed here from the census this page checked; a test network
   // shows it and refuses nothing (ruling A of the load rule), mainnet refuses a stake over it
   const entries = row.free ? null : (typeof census === 'function' ? census(row.contract) : census);
   const ceiling = !entries || !entries.length || !row.contract ? '' : ceilingWords(stakeWithinCeiling({ entries, stakeSats: row.stakeMsat / 1000n }), row.contract);

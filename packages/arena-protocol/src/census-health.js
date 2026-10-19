@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE STAKE CEILING FROM CENSUS HEALTH (§5A.10, kanban #306). "A real-money round must not start unless the eligible population is
+// THE STAKE CEILING FROM CENSUS HEALTH (§5A.10). "A real-money round must not start unless the eligible population is
 // meaningfully larger than the committee. The maximum stake bracket is derived from census health":
 //
 //   eligible nodes (per role) | total bonded capital (per role) | max bracket
@@ -18,7 +18,7 @@
 import { networkOf } from './constants.js';
 
 export const MAX_PLAYERS_PER_ROUND = 64n;
-/** A test network (regtest, testnet4) shows the ceiling and refuses nothing - as ruling A of the load rule (kanban #324). */
+/** A test network (regtest, testnet4) shows the ceiling and refuses nothing - as ruling A of the load rule. */
 export const isTestNetwork = (networkId) => ['regtest', 'testnet4'].includes(networkOf(networkId));
 const ROWS = [
   { nodes: 50, times: 200n, bracketSats: null },          // contract-defined: the round's own stake, if the capital holds for it

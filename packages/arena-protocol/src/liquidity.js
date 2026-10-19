@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LIQUIDITY PROVIDERS (spec §23A.10, kanban #494; the owner 2026-10-18: "On main net everybody needs incoming liquidity. Spec a fourth
+// LIQUIDITY PROVIDERS (spec §23A.102026-10-18: "On main net everybody needs incoming liquidity. Spec a fourth
 // service for nodes: lnd liquidity provider ... We try to have at least one connection to each node, maximum 2. So this service needs to
 // communicate with other nodes who opens liquidity to a new node").
 //
@@ -92,8 +92,8 @@ export function assignLiquidity({ needs, claims, network = 'testnet4', skipped =
 
 /**
  * A provider's weight for the liquidity pool: its channels to the federation's nodes + its free balance, floored to 10,000 sat - and 0
- * while its liquidity is below the deposit minimum (the owner 2026-10-18: "Once a liquidity provider has not enough funds left he never
- * receives part of the 1%"): it earns again once topped up. THE MINIMUM COUNTS FREE COINS + THE CHANNELS IT GAVE (the owner 2026-10-18,
+ * while its liquidity is below the deposit minimum (2026-10-18: "Once a liquidity provider has not enough funds left he never
+ * receives part of the 1%"): it earns again once topped up. THE MINIMUM COUNTS FREE COINS + THE CHANNELS IT GAVE (2026-10-18,
  * "ok accepted"): a provider at exactly 5 x L that gives a channel keeps its share - giving liquidity never removes the earning.
  */
 export const liquidityHeld = (claim, freeSats = BigInt(claim.freeSats)) => freeSats + claim.channels.reduce((a, x) => a + BigInt(x.capacitySats), 0n);

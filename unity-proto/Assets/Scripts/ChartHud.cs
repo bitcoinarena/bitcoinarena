@@ -6,7 +6,7 @@ using UnityEngine;
 using L = Blwp.Layout;
 
 /// <summary>
-/// THE HUD'S CHART (WAR_TACTICS.md §0.3, the owner 2026-09-16 21:50): one TradingView chart with the truck on it.
+/// THE HUD'S CHART (WAR_TACTICS.md §0.3, 2026-09-16 21:50): one TradingView chart with the truck on it.
 ///
 /// A television. Every candle, the seam, the lead, the trend, YOU, the gate, the objectives and the assault are words
 /// the core lays out in `src/chart.js` and hands over through `BlwpCore.ChartView`; this file turns those words into
@@ -15,7 +15,7 @@ using L = Blwp.Layout;
 ///
 /// ONE chart, ONE range at a time. `Tab` switches the same chart between GROUND (the 32 candles on the terrain, the
 /// minimap) and ROUND (every candle since the open, the lead). No overview bar under it, no second chart, no strip
-/// (the owner 2026-09-16 22:35).
+/// (2026-09-16 22:35).
 /// </summary>
 public class ChartHud : MonoBehaviour
 {
@@ -31,7 +31,7 @@ public class ChartHud : MonoBehaviour
     public Frame Last { get; private set; }
 
     /// <summary>
-    /// THE ASSAULT ANNOUNCER (the owner 2026-09-20 16:22 / 16:26: "assaults are not perceptible").
+    /// THE ASSAULT ANNOUNCER (2026-09-20 16:22 / 16:26: "assaults are not perceptible").
     ///
     /// It lives here because this is the one place that already reads `CH_ASSAULT` every frame; a second reader
     /// would mean a second `ChartView` call for two words. `DriveHud` draws what it collects - the banner over
@@ -87,7 +87,7 @@ public class ChartHud : MonoBehaviour
         public Vector2 You; public bool YouOn; public float YouHeading;
         public float GateX; public bool GateOn;
         /// <summary>
-        /// The gate past the last candle (§4.15 G1, the owner 2026-09-17: at x 114 it stands 0.97 of a candle past the field):
+        /// The gate past the last candle (§4.15 G1, 2026-09-17: at x 114 it stands 0.97 of a candle past the field):
         /// the core says off the chart and gives its true t; the HUD pins "GATE ›" at the plot's right edge, as YOU is pinned
         /// at the left before the field.
         /// </summary>
@@ -167,14 +167,14 @@ public class ChartHud : MonoBehaviour
         return new Vector2(width, Mathf.Max(170f, Mathf.Min(h * 0.30f, width * 0.62f)));
     }
 
-    /// <summary>the owner 2026-09-17 08:31 playtest: "make the chart 20% larger - it is unreadable".</summary>
+    /// <summary>2026-09-17 08:31 playtest: "make the chart 20% larger - it is unreadable".</summary>
     public const float Scale = 1.2f;
 
-    /// <summary>the owner 2026-09-17 16:01 (hud-desktop-1601.jpg): "position is perfect - make it 30% SMALLER on desktop".</summary>
+    /// <summary>2026-09-17 16:01 (hud-desktop-1601.jpg): "position is perfect - make it 30% SMALLER on desktop".</summary>
     public const float DesktopScale = 0.7f;
 
     /// <summary>
-    /// UNDER SIM ON/OFF, CLEAR OF THE STEERING ARROWS (the owner 2026-09-17 08:31 playtest: "move the HUD chart under SIM
+    /// UNDER SIM ON/OFF, CLEAR OF THE STEERING ARROWS (2026-09-17 08:31 playtest: "move the HUD chart under SIM
     /// ON/OFF so it does not cover the right steering arrow"). The top edge sits just under the SIM switch
     /// (<paramref name="sim"/>, the rect the HUD draws it in); the left edge is the SIM switch's, or just right of the
     /// right steering arrow where the chart would otherwise reach down onto it; the right edge stops before the throttle
@@ -199,7 +199,7 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>
-    /// TOP RIGHT ON THE DESKTOP, ABOVE THE BUTTONS (the owner 2026-09-17: "the HUD chart goes top right on the desktop" - T1 -
+    /// TOP RIGHT ON THE DESKTOP, ABOVE THE BUTTONS (2026-09-17: "the HUD chart goes top right on the desktop" - T1 -
     /// then "have the HUD above the sound button and the other button on desktop"). Right-aligned at the screen margin, its
     /// top at the margin, the full 1.2x size. The wanted row, the sound and debug buttons, the debug readout and the score
     /// column step down under it in their own order (DriveHud), and the headline gap ends left of it. Touch screens keep
@@ -232,7 +232,7 @@ public class ChartHud : MonoBehaviour
 
         f.Header = $"{Symbol} · {RangeName(f.Range)}";
         f.Price = Dollars(v[L.CH_LAST], unit);
-        // WHO IS LEADING, not just by how much (the owner 2026-09-19 12:55, from the cab: the header read
+        // WHO IS LEADING, not just by how much (2026-09-19 12:55, from the cab: the header read
         // "$81,330 +0.00% SIDEWAYS" and he could not tell who was ahead). §4.14: "BULLS +0.42%" / "BEARS -0.17%"
         // against the round's open; level to the cent is LEVEL, and only the round's end says WIN.
         int bp = v[L.CH_LEAD_BP];
@@ -288,7 +288,7 @@ public class ChartHud : MonoBehaviour
             foreach (var g in ghosts)
                 if (g.On != 0) f.Ghosts.Add(new Label { Text = g.Name, At = new Vector2(X(g.T), Mathf.Clamp(Y(g.P), plot.y, plot.yMax)), Colour = Ghosted });
 
-        // THE CORE'S OBJECTIVES (§4.11, kanban #29): HIGH, LOW and OPEN at their candles' points, as chartView writes them. One
+        // THE CORE'S OBJECTIVES (§4.11): HIGH, LOW and OPEN at their candles' points, as chartView writes them. One
         // the core reports off this range - an absent OPEN included - is not drawn. ONE CANDLE THAT IS BOTH HIGH AND LOW IS ONE
         // MARKER, "HIGH/LOW": the core names the same candle twice, and the chart draws it once.
         var objT = new List<int>();
@@ -310,7 +310,7 @@ public class ChartHud : MonoBehaviour
         {
             int b = L.CH_ASSAULT + s * L.CH_ASSAULT_WORDS, phase = v[b];
             if (phase == L.ASSAULT_IDLE) continue;
-            // NO OBJECTIVE NAME IN THE BANNER: RIDGE / HOLLOW / GAP are off the HUD (the owner 2026-09-17 09:17,
+            // NO OBJECTIVE NAME IN THE BANNER: RIDGE / HOLLOW / GAP are off the HUD (2026-09-17 09:17,
             // "only LOW and HIGH"), and the banner the owner asks for on 2026-09-19 12:55 is who is attacking, not
             // where. The lane is already drawn as the tinted column under the candles.
             string side = s == 0 ? "BULLS" : "BEARS";
@@ -334,7 +334,7 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>
-    /// THE PRICE AXIS HOLDS ITS WIDEST DOLLAR TEXT (the owner 2026-09-17 09:13 playtest, "the $ amount does not fit"). The
+    /// THE PRICE AXIS HOLDS ITS WIDEST DOLLAR TEXT (2026-09-17 09:13 playtest, "the $ amount does not fit"). The
     /// labels start 4 px right of the plot and need 4 px before the panel's edge. The screenshot: axis 20% of the panel
     /// (156 of 795 px), "$78,515.00" 183 px wide, 31 px of it past the panel.
     /// </summary>
@@ -345,7 +345,7 @@ public class ChartHud : MonoBehaviour
         new[] { Dollars(v[L.CH_LO], Mathf.Max(1, v[L.CH_UNIT])), Dollars(v[L.CH_HI], Mathf.Max(1, v[L.CH_UNIT])), Dollars(v[L.CH_LAST], Mathf.Max(1, v[L.CH_UNIT])) };
 
     /// <summary>
-    /// LOW OFF THE TIME AXIS (the owner 2026-09-17 09:13 playtest: "LOW collides with the time axis"). The lowest candle sits in
+    /// LOW OFF THE TIME AXIS (2026-09-17 09:13 playtest: "LOW collides with the time axis"). The lowest candle sits in
     /// the plot's bottom air, so LOW drawn 5 px under its wick landed on the time labels' row (the screenshot: "LOW $77,551.25"
     /// over "-2:30" and "-1:10"). In order: under the wick where that still ends inside the plot, then right of the wick,
     /// then left of it, at the low's level held inside the plot; each must clear <paramref name="avoid"/>. Nowhere: not placed,
@@ -417,13 +417,13 @@ public class ChartHud : MonoBehaviour
 
     /// <summary>
     /// WAR_TACTICS.md §4.11 names the three objectives HIGH, LOW and OPEN - the chart's own high, low and open crossing,
-    /// which is what the core picks them from since 68e2b3d6 (kanban #29; before it they were the relief's lanes).
+    /// which is what the core picks them from since 68e2b3d6 (before it they were the relief's lanes).
     /// </summary>
     public static string ObjectiveName(int kind) =>
         kind == L.OBJ_HIGH ? "HIGH" : kind == L.OBJ_LOW ? "LOW" : kind == L.OBJ_OPEN ? "OPEN" : "?";
 
     /// <summary>
-    /// Whole dollars on the chart - axis, HIGH, LOW, the last price (the owner 2026-09-17 12:40: "decimals still overlap. Remove
+    /// Whole dollars on the chart - axis, HIGH, LOW, the last price (2026-09-17 12:40: "decimals still overlap. Remove
     /// decimal places from the chart generally. Integers only").
     /// </summary>
     public static string Dollars(int price, float unit) =>
@@ -443,7 +443,7 @@ public class ChartHud : MonoBehaviour
         if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
         if (_spectator == null) _spectator = FindFirstObjectByType<SpectatorCamera>();
         if (_splash != null && _splash.Showing) return;
-        // ON IN SPECTATE (the owner 2026-09-17 16:38: "put the HUD back onto spectate"): the same chart as the drive, in the same
+        // ON IN SPECTATE (2026-09-17 16:38: "put the HUD back onto spectate"): the same chart as the drive, in the same
         // panel, over the free camera - the page's core keeps stepping while it flies, so the chart moves there too.
         if (_spectator != null && _spectator.Active) SpectateFrames++;
         if (Blwp.BlwpCore.ChartView(Range, _view) == 0) return;
@@ -467,7 +467,7 @@ public class ChartHud : MonoBehaviour
         // war is now recorded while it happens.
         if (loadout != null && loadout.IsOpen) return;
 
-        // THE CHART IS BUILT AND DRAWN ON THE REPAINT PASS ONLY (kanban #266). IMGUI calls OnGUI for its layout pass as
+        // THE CHART IS BUILT AND DRAWN ON THE REPAINT PASS ONLY. IMGUI calls OnGUI for its layout pass as
         // well, where a draw paints nothing and the chart reads no input, and this built and painted the whole chart there
         // too: in a named profile of spectate (phone at 4x) ChartHud.OnGUI was 400 ms of every 5 s.
         if (Event.current.type != EventType.Repaint) return;
@@ -726,7 +726,7 @@ public class ChartHud : MonoBehaviour
 
     void Box(Rect r, Color c) { GUI.color = c; GUI.DrawTexture(r, _flat); }
 
-    // A DOTTED LINE IN ONE DRAW (kanban #266): `dash` px on in every `period` from x0, the last dash whole even past x1 - the
+    // A DOTTED LINE IN ONE DRAW: `dash` px on in every `period` from x0, the last dash whole even past x1 - the
     // pixels the old loop of one 1 px box per dash drew, which was one IMGUI draw call per dash (about 150 a frame).
     readonly Dictionary<int, Texture2D> _dashes = new Dictionary<int, Texture2D>();
     void Dashes(float x0, float x1, float y, int dash, int period, Color c)
@@ -799,7 +799,7 @@ public class ChartHud : MonoBehaviour
 
         // assault columns under the candles
         for (int i = 0; i < f.AssaultColumns.Count; i++) { var c = f.AssaultColours[i]; c.a = 0.16f; Box(f.AssaultColumns[i], c); }
-        // AND THE BANNERS ABOVE THEM (the owner 2026-09-19 12:55: "no BULLS/BEARS assaults" - the list was built every
+        // AND THE BANNERS ABOVE THEM (2026-09-19 12:55: "no BULLS/BEARS assaults" - the list was built every
         // frame and never drawn, so an assault was a faint tint and nothing else). They carry no objective name.
         f.BannerBox = new Rect();
         for (int i = 0; i < f.Banners.Count; i++)
@@ -827,7 +827,7 @@ public class ChartHud : MonoBehaviour
         if (f.GateOn) f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh);
         else if (f.GatePinned) { float gw = _text.CalcSize(new GUIContent(GateWord(f))).x; f.GateBox = new Rect(f.GateX - gw - 2f, p.y, gw, lh); }
 
-        // HIGH and LOW are not written on the chart (the owner 2026-09-17 12:55: "HIGH/LOW central on screen not on the chart"):
+        // HIGH and LOW are not written on the chart (2026-09-17 12:55: "HIGH/LOW central on screen not on the chart"):
         // their candles keep a 4 px tick, and since 2026-09-19 13:10 the words are drawn nowhere at all.
         f.LowPlaced = false; f.LowBox = new Rect(); f.HighBox = new Rect();
         if (f.High.Text != null)
@@ -921,7 +921,7 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>
-    /// THE HIGH / LOW PLAQUE IS GONE (the owner 2026-09-19 13:10, remove-world-high-low-1310.png: "REMOVE the floating
+    /// THE HIGH / LOW PLAQUE IS GONE (2026-09-19 13:10, remove-world-high-low-1310.png: "REMOVE the floating
     /// world overlay HIGH $81,374 . LOW $81,288"). It was put central on 2026-09-17 12:55 to get the words off the
     /// candles; central on a screen with a battlefield on it reads as a plaque floating over the world. The chart
     /// keeps the 4 px ticks on the high and low candles - that is where a high and a low belong - and the words are
@@ -943,7 +943,7 @@ public class ChartHud : MonoBehaviour
 }
 
 /// <summary>
-/// THE WALL CLOCK WITHOUT THE TIME-ZONE DATABASE (kanban #266): DateTime.Now made IL2CPP read and parse the time-zone file on
+/// THE WALL CLOCK WITHOUT THE TIME-ZONE DATABASE: DateTime.Now made IL2CPP read and parse the time-zone file on
 /// its first call - 108 ms inside Unity's start at 4x CPU in a named profile (TimeZoneInfo.GetLocalTimeZoneFromTzFile). In the
 /// browser the local time is UTC plus the browser's own offset; elsewhere (the editor, tests) DateTime.Now as before.
 /// </summary>
@@ -958,7 +958,7 @@ static class LocalWall
 }
 
 /// <summary>
-/// THE LOCAL ZONE WITHOUT THE ZONE DATA (kanban #266, measured 2026-10-08 in a named profile of production 0.0.2857 at 10x CPU as
+/// THE LOCAL ZONE WITHOUT THE ZONE DATA (measured 2026-10-08 in a named profile of production 0.0.2857 at 10x CPU as
 /// an Android phone: Unity's own GUI static constructor reads DateTime.Now at the first OnGUI, and IL2CPP then builds the local
 /// time zone from the zone data - TimeZoneInfo.CreateLocalUnity / GetTimeZoneData, Emscripten mktime and localtime over a year
 /// of hours - 294 ms inside the 90 -> 100 % block). In the browser the game's own wall clock reads the browser's offset

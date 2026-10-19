@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ENTRY NAMES ITS RESERVE LOCK (protocol 11, §27A.9.2, kanban #397 slice 3): after its own marker, last of all; an entry without one
+// AN ENTRY NAMES ITS RESERVE LOCK (protocol 11, §27A.9.2): after its own marker, last of all; an entry without one
 // keeps exactly its bytes and its id; with items before it both round-trip.
 import test from 'node:test';
 import assert from 'node:assert/strict';

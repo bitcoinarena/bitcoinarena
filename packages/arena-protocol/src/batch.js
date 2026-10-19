@@ -26,7 +26,7 @@
 // btcHundredths]`, sparse like the liquidations, because a load is declared
 // at roll-out and rarely again; the core decides what it costs.
 //
-// AND THE PRICE SAMPLES (the owner 2026-09-17 16:01: the chart was frozen - nothing ever submitted one). The live
+// AND THE PRICE SAMPLES (2026-09-17 16:01: the chart was frozen - nothing ever submitted one). The live
 // BTCUSD price every 300 ticks moves the tape, the candles, the seam and the market the army reads, so a transcript
 // without them replays a different war. `[tick, price]` (the tape's unit, 256 a dollar), sparse like the
 // liquidations. Written only when there are any: a batch without samples is byte for byte the batch it was before,
@@ -51,13 +51,13 @@ import { PROTOCOL_VERSION, speaksVersion, TYPE_INPUT_BATCH, TAG } from './consta
 export const TAPE_PRICES = 64;
 
 /**
- * AND THE COMMITTEE'S SIGNATURES ON THEM (§11, kanban #311): `[tick, kind, cents, sigs]` - kind 0 the sample at that
+ * AND THE COMMITTEE'S SIGNATURES ON THEM (§11): `[tick, kind, cents, sigs]` - kind 0 the sample at that
  * tick (cents: its price), kind 1 the tape (cents: its 64 prices) - each sig `[key32, sig64]` of the round's committee
  * over priceSampleId / priceTapeId. A fourth optional tail after the rooms, written only when there is one: every batch
  * before it keeps its bytes and its id. One attested sample a tick (a batch held through a stall can cover several 5 s
  * samples) up to MAX_ATTESTED_SAMPLES, one tape, each with at most MAX_ATTEST_SIGS.
  *
- * PROTOCOL 5 (kanban #312: each seat signs its own reading, the price is their median - price-sample.js): kind 2 a sample
+ * PROTOCOL 5 (each seat signs its own reading, the price is their median - price-sample.js): kind 2 a sample
  * `[tick, 2, cents, [[key32, cents, sig64], ...]]` and kind 3 the tape `[tick, 3, prices, [[key32, prices, sig64], ...]]` -
  * the median and the seats' signed readings it is the median of, at most MAX_ATTEST_SIGS of them. Kinds 0 and 1 keep their
  * bytes; one sample a tick and one tape a batch count both kinds.
@@ -96,13 +96,13 @@ export function encodeInputBatch(b) {
 
   // `[tick, price]`, sorted; absent when empty (see the head of this file).
   const samples = [...(b.samples || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-  // THE LIVE TAPE (the owner 2026-09-17 16:44): `[tick, p0 .. p63]`, the 64 live prices a page handed its core before any
+  // THE LIVE TAPE (2026-09-17 16:44): `[tick, p0 .. p63]`, the 64 live prices a page handed its core before any
   // sample, in their own order (oldest first - not sorted inside). Absent when empty; when present the sample vector is
   // written before it even if empty, so the two optional tails read back unambiguously.
   const tapes = [...(b.tapes || [])].sort((x, y) => x[0] - y[0]);
   // one a batch at most: a run hands over one tape, and the transport ceiling stays a short message
   if (tapes.length > 1) throw new Error('a batch carries at most one tape');
-  // THE ROOM A LOAD FILLS (the owner 2026-10-04 08:54: the cargo factor C is the bed fill): `[tick, room]` for each load
+  // THE ROOM A LOAD FILLS (2026-10-04 08:54: the cargo factor C is the bed fill): `[tick, room]` for each load
   // that carries a fourth word, the room its bed takes (cargo.js roomFor summed), so a replay sets the same C. A third
   // optional tail after the samples and the tape, written only when a load carries a room - so every batch before it,
   // and every load that carries none, is byte for byte what it was and keeps its id. The two tails before it are written
@@ -214,7 +214,7 @@ export const MAX_INPUT_BATCH_BYTES =
   // the rooms (a load's bed fill, 2026-10-04), one a load at most
   + 2 + MAX_BATCH_TICKS * 8
   // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each - at their
-  // largest the protocol-5 kinds 2 and 3 (kanban #312), whose readings also carry each seat's own price(s): 100 bytes a sample
+  // largest the protocol-5 kinds 2 and 3, whose readings also carry each seat's own price(s): 100 bytes a sample
   // reading (key, cents, signature), 352 a tape reading (key, 64 prices, signature)
   + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64));
 

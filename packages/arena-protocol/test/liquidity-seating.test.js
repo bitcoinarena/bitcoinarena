@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LIQUIDITY SEATING (§23A.10, kanban #494): guardians list the federation's providers with weights floored to L and sign it; a list
+// THE LIQUIDITY SEATING (§23A.10): guardians list the federation's providers with weights floored to L and sign it; a list
 // stands at the threshold; a provider below the deposit or without a channel to the federation is not on it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

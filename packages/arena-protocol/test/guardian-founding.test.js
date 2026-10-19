@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// GUARDIAN FOUNDING BY SORTITION (§23A.2, kanban #320): over the guardian-capable census, one ticket per operator, operators guarding an
+// GUARDIAN FOUNDING BY SORTITION (§23A.2): over the guardian-capable census, one ticket per operator, operators guarding an
 // OPEN federation left out, bond_min_guardian held; nominal drawn and three alternates in order; a no-show replaced by the next.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +40,7 @@ test('a no-show is replaced by the next alternate in order; more no-shows than a
   assert.equal(four.ok, false); assert.match(four.why, /drawn again at the next trigger/);
 });
 
-test('what starts a founding: genesis at the first height with nominal operators, a draining federation, or 80 % load for abandon_blocks - the earliest (kanban #320)', async () => {
+test('what starts a founding: genesis at the first height with nominal operators, a draining federation, or 80 % load for abandon_blocks - the earliest', async () => {
   const { foundingTrigger } = await import('../src/guardian-founding.js');
   const capable = [{ height: 100, operators: 6 }, { height: 110, operators: 9 }, { height: 120, operators: 10 }, { height: 130, operators: 12 }];
   const g = foundingTrigger({ capable, nominal: 10 });
@@ -58,7 +58,7 @@ test('what starts a founding: genesis at the first height with nominal operators
   assert.deepEqual([both.kind, both.height], ['succession', 312], 'the earliest event wins');
 });
 
-// SEATED FIRST (§23A.6 step 1, kanban #326): the old federation's seated, non-departing guardians first, in order; only the missing seats
+// SEATED FIRST (§23A.6 step 1): the old federation's seated, non-departing guardians first, in order; only the missing seats
 // drawn, from the pool minus their operators and minus operators guarding another OPEN federation; then three alternates.
 test('a succession seats the old guardians first, in their order, and draws only the missing seats', () => {
   const old = [node(1, 'opA'), node(2, 'opB'), node(3, 'opC')];
@@ -116,7 +116,7 @@ test('a departure notice that would make a federation DRAINING triggers a succes
   assert.deepEqual([earlier.height, earlier.federation, earlier.notice], [940, 'cc'.repeat(32), undefined], 'the earliest event wins');
 });
 
-test('the cohort (protocol 2026.0.14, #471 ruling 3): COHORT_NOMINAL free operators found their own federation while others exist', async () => {
+test('the cohort (protocol 2026.0.14, ruling 3): COHORT_NOMINAL free operators found their own federation while others exist', async () => {
   const { foundingTrigger, COHORT_NOMINAL } = await import('../src/guardian-founding.js');
   assert.equal(COHORT_NOMINAL, 10);
   const capable = [{ height: 100, operators: 14, free: 8 }, { height: 101, operators: 16, free: 10 }, { height: 102, operators: 17, free: 11 },

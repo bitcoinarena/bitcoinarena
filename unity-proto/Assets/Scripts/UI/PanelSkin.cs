@@ -48,7 +48,7 @@ public static class PanelSkin
     /// <summary>A vertical gradient, as slices. IMGUI has no such thing.</summary>
     public static void Gradient(Rect r, Color top, Color bottom, int slices = 24)
     {
-        // ONE DRAW, THE SAME PIXELS (kanban #266, comment 988, the owner 2026-10-08): the slices were one GUI.DrawTexture each -
+        // ONE DRAW, THE SAME PIXELS (comment 988, 2026-10-08): the slices were one GUI.DrawTexture each -
         // 24 a panel. They are baked into a texture one pixel wide and one texel per screen row, each row what the
         // overlapping slices composited to on it (the 1 px seams included), and drawn once at whole rows. A rotated
         // GUI.matrix keeps the slices.
@@ -61,7 +61,7 @@ public static class PanelSkin
         GUI.DrawTexture(new Rect(r.x, (row0 - ty) / sy, r.width, rows / sy), tex);
     }
 
-    /// <summary>The gradient as it was drawn before #266: one Fill a slice, each 1 unit taller than its band.</summary>
+    /// <summary>The gradient as it was drawn before: one Fill a slice, each 1 unit taller than its band.</summary>
     public static void Slices(Rect r, Color top, Color bottom, int slices = 24)
     {
         float h = r.height / slices;

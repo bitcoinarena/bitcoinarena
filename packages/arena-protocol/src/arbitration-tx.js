@@ -115,7 +115,7 @@ export function arbitrationSpend({ bond, proofId, slashHeight, hint = new Uint8A
 }
 
 /**
- * THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B "escrow into the federation", kanban #307): the arbitration set spends an
+ * THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B "escrow into the federation"): the arbitration set spends an
  * escrow output a slash paid (`escrowOutput`'s one k-of-m leaf) to the federation's peg-in address - the whole output less
  * the fee, one output - and the e-cash claimed from it is what the players' locks are made from. Signed as path B is:
  * `arbitrationSighash(built, escrow.leaf)`, `arbitrationWitness` with the escrow's control block.

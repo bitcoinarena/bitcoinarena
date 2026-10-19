@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RESULT WINDOW'S DEADLINE (§13A "Results must be in before the window closes ... one that has not by window_close falls
-// to §13C's no-quorum rule"; "Publication is a condition of finality ... within the window"; §13C; kanban #26, RULED the owner
+// to §13C's no-quorum rule"; "Publication is a condition of finality ... within the window"; §13CRULED the owner
 // 2026-10-04). The deadline is final_after - the round's end + 600 s + 5 s, wall-clock ms - on the seat's own clock, by when
 // it held each record. Seven seats (the holder and six keys the test holds), the fixtures' clock skipped:
 //   (a) the 5th matching result held after the deadline: VOID, the reason naming that late arrival; all 5 in time: FINAL;

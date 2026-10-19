@@ -122,7 +122,7 @@ public class TruckController : MonoBehaviour
 
     public void Respawn()
     {
-        // PHYSX DOES NOT OWN THE POSE OF A CORE-DRIVEN TRUCK (the owner 2026-09-16).
+        // PHYSX DOES NOT OWN THE POSE OF A CORE-DRIVEN TRUCK (2026-09-16).
         //
         // While the core is answering, `CoreDrivenTruck` holds this Rigidbody kinematic and rewrites
         // the transform from core words every frame. These four writes therefore moved nothing at all
@@ -148,7 +148,7 @@ public class TruckController : MonoBehaviour
         // and the bay was eighty metres away.
         if (externallyDriven)
         {
-            // HOW FAR THE CORE'S TRUCK ACTUALLY MOVED (the owner 2026-09-16 08:17).
+            // HOW FAR THE CORE'S TRUCK ACTUALLY MOVED (2026-09-16 08:17).
             //
             // The four Rigidbody writes above cannot move a core-driven truck: `CoreDrivenTruck` holds
             // the body kinematic while the core answers and rewrites the transform from core words

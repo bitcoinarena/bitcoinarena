@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * ONE LIVE TESTNET4 ROUND, PLAYED WITHOUT A BROWSER (kanban #328: "one live round replayed and settled sandboxed on a seat").
+ * ONE LIVE TESTNET4 ROUND, PLAYED WITHOUT A BROWSER ("one live round replayed and settled sandboxed on a seat").
  * The lock is testnet4-lock.mjs's - the page's own wasm lock client, the deposit paid from a testnet4 lnd - and then the run:
  * the round's randomness asked of its seats (the page's worldSeedFor), a closed-loop drive of the core the round names
  * (window-fixture's drivenTape, under the round's run length), its inputs published as the page publishes them - a batch
@@ -15,7 +15,7 @@
  *   PORTS=<seven seat ports> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> LNCLI=<lncli>
  *   PAYER_DIR=<payer lnd dir> PAYER_RPC=<host:port> [ROUND=<id hex>] node tools/tn4-live-run.mjs
  *
- * WITH THE PLAYER'S ITEMS (kanban #369): ITEMS_SEED_FILE=<64 hex player seed> - the entry names every item that seed's items key owns
+ * WITH THE PLAYER'S ITEMS: ITEMS_SEED_FILE=<64 hex player seed> - the entry names every item that seed's items key owns
  * in the round's game (GET /items), each with its owner proof, as the page's join does, and the run is driven with their unlocks.
  * GAME_ID=<hex prefix> picks the next round of that game version (nextblock v3: b8b88e23).
  */
@@ -61,7 +61,7 @@ for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCL
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
-// A SEAT'S /play AT ITS OWN ADDRESS (kanban #348: the fixture's say() opens ws://127.0.0.1:<port>/play, so with NODES naming the
+// A SEAT'S /play AT ITS OWN ADDRESS (the fixture's say() opens ws://127.0.0.1:<port>/play, so with NODES naming the
 // test host's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
 const sayAt = (node, message) => new Promise((resolve, reject) => {
   const ws = new WebSocket(`${String(node).replace(/^http/, 'ws').replace(/\/+$/, '')}/play`);
@@ -77,7 +77,7 @@ const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserve
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
 const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return schnorr.getPublicKey(k); };
 
-// NODES (kanban #353): the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
+// NODES: the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
 const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')) : env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
 let code = 0;
@@ -96,7 +96,7 @@ try {
   const copies = await Promise.all(nodes.map(async (n) => { const x = await fetch(`${n}/round?id=${env.ROUND}`); return x.ok ? toHex(new Uint8Array(await x.arrayBuffer())) : `HTTP ${x.status}`; }));
   if (new Set(copies).size !== 1 || copies[0].startsWith('HTTP')) throw new Error(`preflight: the seats do not all hold round ${env.ROUND.slice(0, 16)}: ${copies.map((h) => h.slice(0, 12)).join(' ')}`);
   log({ step: "preflight", round: env.ROUND.slice(0, 16), seats: copies.length });
-  // SEATED BEFORE ANYTHING IS PAID (§5A.7, kanban #301): a seat running ARENA_SEATING takes no entry without the round's
+  // SEATED BEFORE ANYTHING IS PAID (§5A.7): a seat running ARENA_SEATING takes no entry without the round's
   // seating certificate, which exists from seating_close (start - 120 s) - so wait for it, and check it as the page does
   {
     const c0 = decodeRoundContract(new Uint8Array(Buffer.from(copies[0], 'hex')));
@@ -176,10 +176,10 @@ try {
   const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: split.feeMsat, donationMsat: split.donationMsat, joinTick: 0,
     // A SHARED-WORLD ROUND'S ENTRY NAMES NO WORLD SECRET, as the page's join writes it (join.js; found by the regtest run of
-    // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
+    //: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
     worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     ...locks.entryFields, claimKeyAttestationRef: att.ref,
-    // THE OPERATOR THIS PLAYER DECLARES (§5A.13, kanban #309): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
+    // THE OPERATOR THIS PLAYER DECLARES (§5A.13): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
     // is conflicted in this round: it neither signs nor earns
     ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}) };
   // THE PLAYER'S ITEMS, as the page's join names them (ARENA_ITEMS_FOR_ENTRY): owned by the seed's items key, in a round of version 10+
@@ -234,7 +234,7 @@ try {
     const enWhy = (await en.text()).trim().slice(0, 140);
     if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
     const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
-    // ITS FIRST MARK AT ONCE (kanban #348, measured 2026-10-14: published 30 s after the seats stored the entry, past their start
+    // ITS FIRST MARK AT ONCE (measured 2026-10-14: published 30 s after the seats stored the entry, past their start
     // deadline - 900 ticks + 5 s from the stake seen - two seats signed FORFEIT at the door and the entry went VOID), as the page
     // sends it a second into the run; the rest after every seat holds the entry
     const early = [];

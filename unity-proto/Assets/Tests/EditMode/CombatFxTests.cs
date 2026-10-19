@@ -64,7 +64,7 @@ public class CombatFxTests
     }
 
     /// <summary>
-    /// "Nuke blast: black cube through the road" (the owner 2026-09-16 12:38). The debris of a blast is dark
+    /// "Nuke blast: black cube through the road" (2026-09-16 12:38). The debris of a blast is dark
     /// cubes. They must fly out, come down and stay where they came down, on top of the road. On the
     /// old rule a chunk started centred on the road, landed on its first frame, and every chunk that
     /// had flown was pulled back to the blast point the frame after it landed, spinning, with a tilted
@@ -159,7 +159,7 @@ public class CombatFxTests
         Object.DestroyImmediate(fx.gameObject);
     }
 
-    // THE DEAD ARE NOT SKINNED (kanban #266): a body from a skinned prefab draws one baked mesh, shared by every body, and
+    // THE DEAD ARE NOT SKINNED: a body from a skinned prefab draws one baked mesh, shared by every body, and
     // keeps its materials - no SkinnedMeshRenderer is left for Unity to skin each frame
     [Test]
     public void ABodyIsAStillMeshNotASkinnedOne()

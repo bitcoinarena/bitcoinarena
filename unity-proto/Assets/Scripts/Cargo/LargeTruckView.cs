@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// THE LARGER TRUCK, DRAWN (kanban #369, the first in-game item; the owner 2026-10-15: "a larger truck for 500 satoshis. It can load
+/// THE LARGER TRUCK, DRAWN (the first in-game item; 2026-10-15: "a larger truck for 500 satoshis. It can load
 /// 30% more packages and is slightly faster").
 ///
 /// The core decides the truck: a run whose entry plays with the item is started with its unlock and drives a bed of 255590
@@ -21,7 +21,7 @@ using UnityEngine;
 /// Back to the standard truck, every mesh is its original again. A body swapped in later (the model streaming in) is measured
 /// and stretched afresh.
 ///
-/// THE MORPH (kanban #374, the owner 2026-10-16: "While the round is active there is an effect that the truck morphes from old to new"):
+/// THE MORPH (2026-10-16: "While the round is active there is an effect that the truck morphes from old to new"):
 /// when the core's bed changes in a live round - the run that plays with the larger truck starting - the bay takes the new bed at
 /// once (the core decides what fits), and the body grows from the old length to the new one over <see cref="MorphS"/> with a little
 /// overshoot, an orange light pulsing over the bed as it does. In the lobby, and in the editor's tests, it is drawn at once as before.
@@ -32,7 +32,7 @@ public class LargeTruckView : MonoBehaviour
     /// <summary>The standard bed (CargoBay.bedLength, the core's BED_LENGTH 196608 / 65536).</summary>
     public const float StandardBed = 3.0f;
 
-    /// <summary>How long the body takes to grow from the old truck to the new one, in seconds (kanban #374).</summary>
+    /// <summary>How long the body takes to grow from the old truck to the new one, in seconds.</summary>
     public const float MorphS = 1.6f;
     /// <summary>A test's switch: morph in the editor too, where no core runs.</summary>
     public static bool MorphInEditor;
@@ -88,7 +88,7 @@ public class LargeTruckView : MonoBehaviour
         if (Mathf.Abs(want - _target) > 0.0005f)
         {
             if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
-            // THE MORPH WAITS FOR THE RUN (kanban #374, measured 2026-10-18 on live UI 221: a joined round's core starts with the
+            // THE MORPH WAITS FOR THE RUN (measured 2026-10-18 on live UI 221: a joined round's core starts with the
             // entry's unlocks while the lobby's splash still shows, so the 3.9 m bed was drawn at once - "[LargeTruckView] bed 3.900 m
             // drawn" - and no player ever saw the morph): a real core's new bed while the splash shows is held, the old truck kept,
             // and it morphs once the splash has hidden and PLAY's 4.2 s fly-in has brought the camera to the truck - in view. Without
@@ -122,7 +122,7 @@ public class LargeTruckView : MonoBehaviour
         Debug.Log($"[LargeTruckView] bed {bed:0.000} m drawn ({(bed > StandardBed + 0.0005f ? "the larger truck" : "the standard truck")})");
     }
 
-    /// <summary>The morph to the core's new bed: the bay at once, the body from the length drawn now (kanban #374).</summary>
+    /// <summary>The morph to the core's new bed: the bay at once, the body from the length drawn now.</summary>
     void StartMorph(float bed)
     {
         ApplyBay(bed);

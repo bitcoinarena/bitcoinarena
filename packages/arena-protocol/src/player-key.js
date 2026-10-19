@@ -15,7 +15,7 @@
 //   secret      = the first taggedHash("ARENA/v1/PlayerKey", seed || round_id || c),
 //                 c = 0, 1, ..., that is a scalar of the group (0 < s < n)
 //   order n > 0 = the same over seed || round_id || n (4 bytes, big-endian) || c: one key per ORDER a tab places
-//                 in a market round (kanban #336) - each order is its own entry, lock, payout and return, as the
+//                 in a market round - each order is its own entry, lock, payout and return, as the
 //                 seats hold it; order 0 is the round's key above, byte for byte
 //   player key  = x-only(secret . G)                      (BIP-340)
 //   refund key  = 0x02 || player key                      (stake-lock.js)
@@ -37,7 +37,7 @@ export const PLAYER_SEED_BYTES = 32;
 
 const isPlayerBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
-/** This round's player secret from the player's seed - and an order's, for order n > 0 (kanban #336). */
+/** This round's player secret from the player's seed - and an order's, for order n > 0. */
 export function playerSecretFor(seed, roundId, order = 0) {
   if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
   if (!isPlayerBytes32(roundId)) throw new Error('a round id is 32 bytes');
@@ -98,7 +98,7 @@ export function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) 
 }
 
 /**
- * THE KEY A PLAYER OWNS IN-GAME ITEMS WITH (kanban #365 ruling 2, #369): from the same seed, under its own tag, and the SAME in every
+ * THE KEY A PLAYER OWNS IN-GAME ITEMS WITH (ruling 2): from the same seed, under its own tag, and the SAME in every
  * round - an item is bought once and kept, while a round's player key is fresh per round (so locks stay unlinkable). It signs the
  * purchase (purchase.js) and, on an entry that plays with the item, the proof that this entry's per-round key is its owner's
  * (contracts.js entryItemDigest). It never holds a stake and nothing is refunded to it.

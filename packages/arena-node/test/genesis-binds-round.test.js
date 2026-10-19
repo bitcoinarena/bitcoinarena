@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND CONTRACT BOUND TO ITS GENESIS AT THE SEAT (§5A.7 / §27A.6; kanban #32 slice 3, the owner 2026-10-16: "On a test genesis that binds,
+// A ROUND CONTRACT BOUND TO ITS GENESIS AT THE SEAT (§5A.7 / §27A.62026-10-16: "On a test genesis that binds,
 // a deviating contract is refused by the seat and by the client, by parameter name"). The binding genesis is mainnet's shape built from
 // stand-in launch inputs inside this test - no mainnet genesis exists in this build; testnet4's does not bind.
 import { test } from 'node:test';

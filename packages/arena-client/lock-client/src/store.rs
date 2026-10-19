@@ -172,7 +172,7 @@ impl IDatabaseTransactionOps for TabTransaction<'_> {}
 #[apply(async_trait_maybe_send!)]
 impl IRawDatabaseTransaction for TabTransaction<'_> {
     async fn commit_tx(self) -> DatabaseResult<()> {
-        // #178 step 1: each commit's time, counted (timing only)
+        // step 1: each commit's time, counted (timing only)
         let t0 = crate::perf_now();
         let r = self.commit_inner();
         let _ = crate::STORE_COMMITS.lock().map(|mut g| {

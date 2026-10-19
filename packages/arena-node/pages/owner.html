@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitcoin Arena · Node Owner</title>
-<!-- THE OWNER AREA OF A NODE (kanban #276): /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
+<!-- THE OWNER AREA OF A NODE: /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
      every request it sends is signed with it (src/owner.js). Nothing here is a password, and nothing leaves the browser
      but public keys and signatures. -->
 <style>
@@ -23,7 +23,7 @@ textarea{min-height:110px}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
 label{display:block;margin:8px 0 4px;color:var(--dim)}
   table.found { width: 100%; border-collapse: collapse; } table.found th, table.found td { padding: 4px 6px; text-align: left; vertical-align: top; } .info { margin: 2px 0 6px; } .info a { color: inherit; }
-  /* the dev key's earnings by period (kanban #382): scrolls sideways on a phone, numbers right-aligned */
+  /* the dev key's earnings by period: scrolls sideways on a phone, numbers right-aligned */
   .tablewrap { overflow-x: auto; } table.earn { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
   table.earn th, table.earn td { padding: 4px 6px; text-align: right; white-space: nowrap; border-bottom: 1px solid rgba(255,255,255,0.06); } table.earn tbody th { text-align: left; font-weight: 500; }
 </style></head><body>
@@ -43,7 +43,7 @@ const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt
 const view = (html) => { $('view').innerHTML = html; };
 const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
 const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
-// LOGIN WITH NOSTR (kanban #277, the owner 2026-10-10: "a login with Nostr feature for node claiming instead of generating your
+// LOGIN WITH NOSTR (2026-10-10: "a login with Nostr feature for node claiming instead of generating your
 // own seed"): the owner key is the Nostr key itself. An nsec signs owner requests as the words' key does; an extension
 // (NIP-07) or a remote signer (NIP-46: bunker://, or a code a phone signer scans) signs each request as a Nostr event.
 // Kept per node address in this browser: { how: 'nsec', secret } | { how: 'extension', pubkey } | { how: 'bunker', bunker, client }
@@ -245,7 +245,7 @@ async function area() {
   leavePanel();
   storePanel();
   networkPanel();
-  // SIGN A GAME OR MARKET (kanban #276 step 4): signed here as the developer's command-line client signs it
+  // SIGN A GAME OR MARKET: signed here as the developer's command-line client signs it
   // the developer key comes from the words or the nsec; a signer never gives its secret out, so it signs no game here
   const devSeed = (await identity()).devSeed;
   if (!devSeed) { $('sign').disabled = true; $('devkey').textContent = 'none with a Nostr signer - sign games with your 24 words or your nsec'; return; }
@@ -262,21 +262,21 @@ async function area() {
     } catch (e) { $('serr').textContent = e.message; }
   };
 }
-// THIS NODE'S STANDING (kanban #302 §5A.3, #310 §5A.10B): the seatings it was drawn for and missed - from three in a row the
+// THIS NODE'S STANDING (§5A.3, §5A.10B): the seatings it was drawn for and missed - from three in a row the
 // warning and the serving = false update offered - and its bond against the bracket now common: own weight, brackets served,
 // headroom, and each warning in the seat's own words (FALLING SHARE is no fault; LOSING BRACKETS / NEAR THE FLOOR are urgent)
-// THE BOND AND ITS LOCK (kanban #471 part D; the owner 2026-10-18: "withdrawing the bond after the lock (communicating the lock time
+// THE BOND AND ITS LOCK (2026-10-18: "withdrawing the bond after the lock (communicating the lock time
 // clearly)"): the bond the census names, locked until its maturity block - the blocks to it and an estimated date - and from that
 // block on, withdrawn to an address the owner names, signed by the owner
-// THE RELEASE THIS NODE RUNS (kanban #471 part D): its version and commit, the protocol versions it speaks, and how it is updated
-// A NEW RELEASE IS AVAILABLE (kanban #471): the newest release the Arena site names, signed with the release key (the seat checks it)
+// THE RELEASE THIS NODE RUNS: its version and commit, the protocol versions it speaks, and how it is updated
+// A NEW RELEASE IS AVAILABLE: the newest release the Arena site names, signed with the release key (the seat checks it)
 function latestLine(v) {
   const l = v.latest || {};
   if (l.newer && l.latest) return `<p class="ok"><b>A new release is available: ${esc(l.latest.version)}</b>${l.latest.release ? ` - <a href="${esc(l.latest.release)}" target="_blank" rel="noopener">its release page</a> (invite only)` : ''}. Download the asset for this machine with SHA256SUMS and SHA256SUMS.sig beside it.</p>`;
   if (l.latest) return `<div class="row"><span>Newest release</span><b>${esc(l.latest.version)} - this node is up to date</b></div>`;
   return l.why ? `<p class="sub">Newest release: ${esc(l.why)}.</p>` : '';
 }
-// CUSTODY, ADDED LATER (kanban #471, the owner 2026-10-18: "if custody is setup later in the UI we need the same screens"): on its own
+// CUSTODY, ADDED LATER (2026-10-18: "if custody is setup later in the UI we need the same screens"): on its own
 // machine the installer's custody screens open again - what custody is, Lightning and the gateway, the federation, the bond's rules -
 // from the Start menu / Applications / desktop menu ("Add custody") or `arena-install --add-custody`; the bond is updated, not doubled
 async function custodyPanel() {
@@ -288,7 +288,7 @@ async function custodyPanel() {
     <p>To add it, on the machine the node runs on open <b>Add custody</b> (Start menu &gt; Arena Node, or the Arena Node scripts) or run <code>arena-install --add-custody</code>. The installer shows the custody screens - what custody is, Lightning and the gateway, the federation, the bond's rules - and updates your bond; no second bond.</p>
     <p class="sub">Custody needs your own Bitcoin Core (not Electrum) and Lightning (LND, set up there).</p>`;
 }
-// THE LIQUIDITY CARD (kanban #494, §23A.10; the owner 2026-10-18: "Also shows up in the dashboard and owner area to top it up"): the
+// THE LIQUIDITY CARD (§23A.10; 2026-10-18: "Also shows up in the dashboard and owner area to top it up"): the
 // provider's free coins against the deposit minimum (below it, no share of the liquidity pool), the channels it gave, the top-up address
 const LIQUIDITY_DEPOSIT = { testnet4: 500000, mainnet: 2500000 };
 async function liquidityPanel() {
@@ -297,7 +297,7 @@ async function liquidityPanel() {
   const el = $('liquidity');
   if (!c) { el.innerHTML = `<p><b>This node is no liquidity provider.</b> A provider opens incoming Lightning channels to new nodes and earns a share of the 1 % liquidity pool of their federations. To become one, run <code>arena-install</code> again and choose <b>Liquidity provider</b> (it needs LND and a deposit of 500,000 sat on testnet4).</p>`; return; }
   const min = LIQUIDITY_DEPOSIT.testnet4, free = Number(c.freeSats), given = (c.channels || []);
-  // the minimum counts free coins + the channels it gave (the owner 2026-10-18): giving liquidity never removes the share
+  // the minimum counts free coins + the channels it gave (2026-10-18): giving liquidity never removes the share
   const held = free + given.reduce((a, x) => a + Number(x.capacitySats), 0), low = held < min;
   el.innerHTML = `<div class="row"><span>Free for new channels</span><b>${free.toLocaleString('en')} sat</b></div>
     <div class="row"><span>Deposit minimum (free + channels given)</span><b>${min.toLocaleString('en')} sat</b></div>
@@ -313,7 +313,7 @@ async function liquidityPanel() {
     await liquidityPanel(); $('liq-msg').textContent = `New address: ${r.address}`;
   };
 }
-// THE NODE'S SERVICES (kanban #499): each one's state and what it answers, as `arenanode status` shows them on the node's machine
+// THE NODE'S SERVICES: each one's state and what it answers, as `arenanode status` shows them on the node's machine
 async function servicesPanel() {
   const el = $('services');
   let r; try { r = await post('/owner/services', await signed('services')); } catch (x) { r = { ok: false, why: x.message }; }
@@ -385,7 +385,7 @@ async function standingPanel() {
     ${warns.length ? warns.map((w) => `<p class="${w.urgent ? 'err' : 'sub'}"><b>${esc(w.kind.toUpperCase())}</b>: ${esc(w.says)}</p>${w.update ? `<p class="sub">Step out: <code>${esc(w.update)}</code></p>` : ''}`).join('')
       : '<p class="sub ok">No warning: this node is seated when drawn, and its bond is above the margin.</p>'}`;
 }
-// LEAVE WITHOUT BEING SLASHED (kanban #276 step 2): from the moment the owner signs Leave this seat takes no new round and
+// LEAVE WITHOUT BEING SLASHED: from the moment the owner signs Leave this seat takes no new round and
 // serves the ones it holds to their end; it is free once the last is past its objection window and settled. Custody: only if
 // the federation keeps its threshold without this guardian.
 const when = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
@@ -411,7 +411,7 @@ async function leavePanel() {
   if ($('go')) $('go').onclick = () => { if (confirm('Leave: this seat takes no new round from now and serves the ones it holds. Continue?')) act('leave'); };
   if ($('stay')) $('stay').onclick = () => act('stay');
 }
-// THE PLUGIN STORE, LIKE AN APP STORE (kanban #276 step 5, the owner 2026-10-10: in the browser, no restart, updates as a
+// THE PLUGIN STORE, LIKE AN APP STORE (2026-10-10: in the browser, no restart, updates as a
 // setting, malicious-code checks): look at another seat, Check a game - this page fetches its package and runs every check
 // itself, shown line by line - then Install or Update; Remove; automatic updates. The seat runs the same checks again, plus
 // a trial run in a sandbox, before anything runs; installing and updating take effect at once.
@@ -434,7 +434,7 @@ async function storePanel() {
     };
   };
   await reload();
-  // THE NETWORK'S GAMES, FOUND BY THE SEAT (kanban #276, the owner 2026-10-11: automatic, not by address): name, type, version,
+  // THE NETWORK'S GAMES, FOUND BY THE SEAT (2026-10-11: automatic, not by address): name, type, version,
   // the developer's signed description and website, how many seats host it, and Install (or Update, for a newer version of a
   // game hosted here). Install checks the package in this browser first, as Check does, then the seat checks it again.
   const found = async (fresh) => {
@@ -516,13 +516,13 @@ async function storePanel() {
       return false;
   }
 }
-// A GAME'S DESCRIPTION AND WEBSITE, as its developer signed them (kanban #276); nothing when they do not stand
+// A GAME'S DESCRIPTION AND WEBSITE, as its developer signed them; nothing when they do not stand
 function infoLine(info) {
   if (!info || (!info.description && !info.website)) return '';
   const site = info.website && /^https:\/\//.test(info.website) ? ` <a href="${esc(info.website)}" target="_blank" rel="noopener">${esc(info.website.replace(/^https:\/\//, ''))}</a>` : '';
   return `<div class="sub info">${esc(info.description || '')}${site} <span title="signed by its developer key">✓ signed</span></div>`;
 }
-// THE NETWORK STORE (kanban #276, letter 2026-10-10: federation invite, donation sets, series and chain, on the game store's
+// THE NETWORK STORE (letter 2026-10-10: federation invite, donation sets, series and chain, on the game store's
 // check-then-install path): this seat's four settings and who signs each; another seat's network package listed with the four,
 // Check in this browser line by line, then Install or Update; Remove (refused by the seat while a round that depends on it is open)
 const WHO = {
@@ -595,7 +595,7 @@ async function networkPanel() {
     };
   };
 }
-// THE DEV CLIENT (kanban #276 step 3): what this seat verified for the protocol developers and for each game it hosts, in
+// THE DEV CLIENT: what this seat verified for the protocol developers and for each game it hosts, in
 // sat to the msat, per round and per UTC day (GET /owner/donations, from the seat's own donation index)
 const sat = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n; return (f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w) + ' sat'; };
 async function donations() {
@@ -610,9 +610,9 @@ async function donations() {
       ${x.byRound.length ? `<details><summary class="sub">${x.byRound.length} round${x.byRound.length === 1 ? '' : 's'}</summary>${x.byRound.slice(0, 50).map((d) => `<div class="row sub"><span>round ${esc(d.roundId.slice(0, 16))}…</span><b>${sat(d.msat)}</b></div>`).join('')}</details>` : ''}`).join('')}
   </div>`).join('');
 }
-// THE DEV CLIENTS (kanban #358): a donation recipient's key and its wallets, run by this node. Set one up with a new key or a dev key
+// THE DEV CLIENTS: a donation recipient's key and its wallets, run by this node. Set one up with a new key or a dev key
 // you already have; it collects what the protocol and the games donate to that key, and you withdraw it over Lightning from here.
-// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382, the owner 2026-10-16: "a proposal ui so one of the devs can propose something
+// THE DEVELOPERS' OWN BALLOT (§27A.4.12026-10-16: "a proposal ui so one of the devs can propose something
 // and another dev sees it in his ui and can click accept or deny. As soon as the threshold is hit it becomes active"): the
 // protocol developers' set in force, every proposal with its votes and state, Accept / Deny for this node's dev clients that
 // are recipients, and a form to propose a new split (it starts from the set in force; a new row adds a developer by key)
@@ -648,7 +648,7 @@ async function ballotsPanel() {
       <button id="padd">Add a developer</button>
       <label>Propose as</label><select id="pby">${proposers.map((m) => `<option value="${esc(m.slug)}">${esc(m.label)}</option>`).join('')}</select>
       <button class="primary" id="pgo">Propose</button><div class="err" id="perr2"></div></div>` : '';
-  // FEE PROPOSALS THAT CHANGE A DONATION (kanban #462, the owner 2026-10-17: "any change to donation percentages requires majority approval
+  // FEE PROPOSALS THAT CHANGE A DONATION (2026-10-17: "any change to donation percentages requires majority approval
   // by protocol devs. The dev ui client shows this and the protocol dev may deny or give his approval"): each one this seat holds, its
   // changes, the developers' answers so far, and - for every dev client here that has not answered - Approve and Deny, signed on this
   // node with that client's key (POST /owner/dev/fee-answer)
@@ -697,7 +697,7 @@ async function devClients() {
   const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
   const split = (S) => !S ? '' : row('For the protocol developers', sat(S.protocolMsat)) + (S.games || []).map((g) => row('For ' + esc(g.title || g.game), `${sat(g.msat)} · ${g.donations} donation${g.donations === 1 ? '' : 's'}`)).join('')
     + (S.unknownMsat && S.unknownMsat !== '0' ? row('Rounds this node no longer holds', sat(S.unknownMsat)) : '');
-  // WHAT THIS KEY EARNED, BY PERIOD, AND ITS SHARES (kanban #382): one row per part - the protocol developers' and each game's -
+  // WHAT THIS KEY EARNED, BY PERIOD, AND ITS SHARES: one row per part - the protocol developers' and each game's -
   // across today, this week (from Monday), this month, this year and all time (UTC), from the client's own record
   const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
   const earnings = (S) => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S SEED, WRITTEN DOWN AND ASKED BACK (kanban #471 step C.5-C.6; the owner 2026-10-18: "prompts the user to setup his node keys or
+// THE NODE'S SEED, WRITTEN DOWN AND ASKED BACK (-C.6; 2026-10-18: "prompts the user to setup his node keys or
 // Nostr so he can authenticate in the future and prompts the user to write down his seed").
 //
 // 32 random bytes, shown as the 24 BIP-39 words the owner page already uses (arena-client/src/bip39.js), so the same words log in at
@@ -43,7 +43,7 @@ export function ownerKeyOf(seed) {
 /** A typed phrase back to its seed (restore): { ok, seed } or { ok: false, why } - a wrong word or checksum is refused by name. */
 export const seedOfWords = (words) => seedFromPhrase(words);
 
-// A NOSTR OWNER (owner.js, kanban #277): the owner key is the Nostr key, both BIP-340. An npub or 64 hex characters.
+// A NOSTR OWNER (owner.js): the owner key is the Nostr key, both BIP-340. An npub or 64 hex characters.
 const BECH32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 /** An npub (bech32, NIP-19) or a 64-hex x-only key -> 64 hex; null when it is neither. */
 export function nostrPubkeyHex(text) {

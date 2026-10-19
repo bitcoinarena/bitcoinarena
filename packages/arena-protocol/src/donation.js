@@ -90,15 +90,15 @@ export const RECIPIENT_KEY_BYTES = 33;
 /** A recipient's label is for the screen, short: at most this many characters. */
 export const RECIPIENT_LABEL_MAX = 48;
 export const isRecipientKey = (b) => b instanceof Uint8Array && b.length === RECIPIENT_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
-/** Does this set pay keys in the federation (FEDERATION.md, the owner 2026-10-03) rather than LNURLs? */
+/** Does this set pay keys in the federation (FEDERATION.md, 2026-10-03) rather than LNURLs? */
 const paysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
   && recipients.some((r) => r && r.recipientPk !== undefined);
 
 /**
- * A ROUND'S TWO DONATION SETS (§0A.8, kanban #205): `{ network, game }` - the network's protocol-dev set (the one the
+ * A ROUND'S TWO DONATION SETS (§0A.8): `{ network, game }` - the network's protocol-dev set (the one the
  * contract names, signed by the network's authority) and the round's game's set (the one its manifest names, signed by
  * the game's developer through the manifest). Every donation path that took one set takes this; one set alone is the
- * walk-away's 25% (lock-settlement.js), which stays the network's (the owner 2026-10-07).
+ * walk-away's 25% (lock-settlement.js), which stays the network's (2026-10-07).
  */
 export const isTwoSets = (r) => !!r && !Array.isArray(r) && Array.isArray(r.network) && Array.isArray(r.game);
 
@@ -153,7 +153,7 @@ export function donationSetStands(recipients) {
 }
 
 /**
- * A SET OF KEYS, JUDGED (the owner 2026-10-03): every recipient a key - never a set of keys and LNURLs mixed, which would pay
+ * A SET OF KEYS, JUDGED (2026-10-03): every recipient a key - never a set of keys and LNURLs mixed, which would pay
  * half a donation in the federation and half over Lightning - each key once, each label short, the shares summing to
  * exactly 10000 as for an LNURL set.
  */
@@ -257,7 +257,7 @@ export function splitDonation({ donationMsat, recipients }) {
 }
 
 /**
- * A DONATION SPLIT OVER A ROUND'S TWO SETS (§0A.8, RULED the owner 2026-10-06; kanban #205): HALF TO THE PROTOCOL DEVS - the
+ * A DONATION SPLIT OVER A ROUND'S TWO SETS (§0A.8, RULED 2026-10-06): HALF TO THE PROTOCOL DEVS - the
  * network's set - and HALF TO THE GAME DEV - the game's set; the protocol half floored, the game half the rest, so the two
  * halves are the donation to the millisatoshi. Each half is split over its own set exactly as one set is (`splitDonation`:
  * floors by share_bps, the remainder to the first as published). Then ONE SHARE PER RECIPIENT: a recipient in both sets
@@ -290,7 +290,7 @@ export function splitTwoSets({ donationMsat, networkSet, gameSet }) {
 }
 
 /**
- * THE DONATION OUTPUTS AN ENTRY MUST NAME, AND WHICH IS WHICH (the owner 2026-10-03): for a set of keys, one federation
+ * THE DONATION OUTPUTS AN ENTRY MUST NAME, AND WHICH IS WHICH (2026-10-03): for a set of keys, one federation
  * output per share above 0 msat, in the set's order, each a payout contract to that share's key for exactly its amount.
  * Answers the pairs a signer node checks against the federation ([{ outpoint, recipientPk, amountMsat }]), or why the
  * entry's list is not the set's: a missing or extra outpoint, or donation outpoints where nothing is donated or the set
@@ -382,7 +382,7 @@ export function encodeDonationSet(recipients) {
   const stands = donationSetStands(recipients);
   if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
   if (donationSetPaysKeys(recipients) && recipients.some((r) => r.vesting)) {
-    // A SET OF KEYS THAT VESTS (§27A.4.1, kanban #382): each entry's key, share now, label, and - when it vests - its target, its
+    // A SET OF KEYS THAT VESTS (§27A.4.1): each entry's key, share now, label, and - when it vests - its target, its
     // first block and its length in days; a set without vesting keeps the plain encoding below, and so its id
     const w = new Writer();
     w.u8(TYPE_DONATION_SET_KEYS_VESTING);
@@ -509,10 +509,10 @@ export function donationSetMatchesRound(contract, recipients) {
     };
 }
 
-/** A day of vesting, in blocks (§27A.4.1: "vesting is daily", the owner 2026-10-16). */
+/** A day of vesting, in blocks (§27A.4.1: "vesting is daily", 2026-10-16). */
 export const VESTING_DAY_BLOCKS = 144;
 /**
- * THE SHARES A VESTING SET PAYS AT A HEIGHT (§27A.4.1, kanban #382): each vesting entry has moved from its share towards its target
+ * THE SHARES A VESTING SET PAYS AT A HEIGHT (§27A.4.1): each vesting entry has moved from its share towards its target
  * by one day's step per VESTING_DAY_BLOCKS since its start (floored to whole basis points, at most its target); every other entry
  * holds its share scaled into what the vesting entries leave, floored, the rest of a basis point to the first of them as
  * published. A set without vesting is answered as it is. The answer is a plain set: keys, labels, shares summing to 10000.

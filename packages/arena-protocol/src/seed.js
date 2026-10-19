@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// Player sub-seed, the owner 2026-09-08: secret lives on the Entry Contract so
+// Player sub-seed, 2026-09-08: secret lives on the Entry Contract so
 // a node can replay. IMPLEMENTATION.md: H(round_randomness || pubkey || secret || join_tick).
 import { Writer } from './encode.js';
 import { taggedHash } from './hash.js';
@@ -42,7 +42,7 @@ export function seedWordForEntry(entry, roundRandomness) {
 }
 
 /**
- * ONE WORLD PER ROUND, WHERE THE ROUND'S CONFIG SAYS SO (the owner 2026-10-04, #23 world grinding; §5A.5
+ * ONE WORLD PER ROUND, WHERE THE ROUND'S CONFIG SAYS SO (2026-10-04, world grinding; §5A.5
  * round_seed(i) = H(committee_seed(i) || "world")). Under a per-player config the player's own secret, key and join tick
  * made his world, and with the series beacon known a day ahead he could try them offline and enter with the easiest. Under
  * a shared-world config the player picks nothing: every player of the round drives the world of the round itself.
@@ -51,7 +51,7 @@ export const TAG_ROUND_WORLD = 'ARENA/v1/RoundWorld';
 const WORLD = new TextEncoder().encode('world');
 
 /**
- * Whether a round's config makes one world for the whole round. ASKED OF THE ROUND'S GAME (kanban #203: the engine
+ * Whether a round's config makes one world for the whole round. ASKED OF THE ROUND'S GAME (the engine
  * imports no game): `sharedWorld` is the config hashes (hex) the round's game says share one world - on a node its
  * registration's (plugins.js), on the client its known-games entry (known-game.js sharedWorldOf).
  */

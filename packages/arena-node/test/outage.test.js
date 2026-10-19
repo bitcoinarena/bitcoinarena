@@ -171,7 +171,7 @@ function recordAt(d, w, run) {
     finality: resultFinality(d.round, w.rid, run.eid).state };
 }
 async function closeAndSettle(w, run) {
-  // in live order past final_after (lock-round-fixture closeRound; kanban #26)
+  // in live order past final_after (lock-round-fixture closeRound)
   await closeRoundLive({ a: w.a, b: w.b, rid: w.rid, c: w.c });
   for (let t = Date.now(); Date.now() - t < 15000; await wait(250)) {
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);

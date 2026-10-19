@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LIGHTNING FOR CUSTODY (kanban #471 slice 5, lnd.js): the pinned release per system, lnd.conf for testnet4 on the node's Core, the
+// LIGHTNING FOR CUSTODY (lnd.js): the pinned release per system, lnd.conf for testnet4 on the node's Core, the
 // wallet from the node's own seed (BIP32 test vector 1), the wallet created once, getinfo read and a wrong network refused.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

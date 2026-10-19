@@ -99,7 +99,7 @@ export async function bondedGuardians({ guardians, round, chain, offers, verify,
       refused.push(`bond ${i}: the advertisement for ${toHex(seen.nodePubkey).slice(0, 16)} is not signed by the node it names`);
       continue;
     }
-    // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; the owner 2026-09-28): an update offered beside the bond is proved
+    // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; 2026-09-28): an update offered beside the bond is proved
     // into this page's own headers, must name this bond, carry the bond's own node key and be signed by it, and sit at
     // or above the bond - then its guardian keys are the ones counted. An update that fails any of that is refused by
     // name and the bond's own advertisement stands. (A node can omit a newer update; it cannot forge one.)

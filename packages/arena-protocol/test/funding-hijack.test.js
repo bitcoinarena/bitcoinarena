@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE VOTE HIJACK AND THE FIVE RULES (§27A.9.5, kanban #397, the owner 2026-10-17: "people can just spin up nodes with lots of btc
+// THE VOTE HIJACK AND THE FIVE RULES (§27A.9.52026-10-17: "people can just spin up nodes with lots of btc
 // temporarily" - "Make it 3 months", "older nodes ... can get a factor that increases their weight", "It needs to be more simple"): a
 // bond under 3 months old, or unlocking within 3 months of the vote, has no vote (rule 1); older bonds weigh 2x and 3x (rule 2); YES
 // needs 60 % of the votes and 20 % of everyone who could vote (rule 3); a payment over the caps waits or never goes (rule 4); payments

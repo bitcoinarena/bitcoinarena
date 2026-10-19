@@ -10,7 +10,7 @@
 export function receiptsNeeded(slots) {
   if (slots === 2) return 2;
   if (slots === 7) return 5;
-  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats, kanban #301): 9 drawn for 7 seats, 3 for 2 - the threshold is the
+  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats): 9 drawn for 7 seats, 3 for 2 - the threshold is the
   // seats', never more of the drawn than the seats need
   if (slots === 9) return 5;
   if (slots === 3) return 2;

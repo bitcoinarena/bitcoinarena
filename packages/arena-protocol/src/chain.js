@@ -57,7 +57,7 @@ export const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
 /**
- * TESTNET4'S ANCHOR (kanban #209, the owner 2026-10-10: "A"): block 154000 (000000000071bdcfebf7356cac050858e1044bbbbeb10705bba51052da193495), below every bond the testnet4 seats
+ * TESTNET4'S ANCHOR (2026-10-10: "A"): block 154000 (000000000071bdcfebf7356cac050858e1044bbbbeb10705bba51052da193495), below every bond the testnet4 seats
  * carried from the ancestor (154172). Its genesis would mean 12.5 MB of headers per session on a phone; a block a player
  * trusts because it is compiled into the client is what genesis is on mainnet. Chosen by the round's own network id
  * (arena-client directory.js chainAnchorFor), never by a page.
@@ -341,7 +341,7 @@ export function isTaprootOutput(script) {
  * counted by a census as though it were at stake, which is the Sybil door 5A.3
  * exists to shut. It comes from genesis, never from the body.
  */
-// TEMPLATE 2 (kanban #295): the maturity is the advertisement's own `bond_maturity_height`, and the key is rebuilt
+// TEMPLATE 2: the maturity is the advertisement's own `bond_maturity_height`, and the key is rebuilt
 // with it - so a body naming any height but the one in the leaf rebuilds another key and is refused here. Whether
 // that height is far enough from the bond's confirmation is the census' question (`maturityStands`): this one has no
 // chain to read a confirmation off. Template 1 keeps genesis' maturity where it is still read (`bondMaturityOf`).
@@ -397,7 +397,7 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest', bond, anc
       why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
     };
 
-  // AN ANCESTOR'S BOND PAID THE ANCESTOR'S MARKER (spec 0A.9, kanban #209): the census found it by that marker, and it is
+  // AN ANCESTOR'S BOND PAID THE ANCESTOR'S MARKER (spec 0A.9): the census found it by that marker, and it is
   // carried into this network only by its operator's re-affirmation (census.js deriveCensus)
   if (ancestor ? !paysMarkerProgram(tx, ancestorMarker(network)) : !paysBondMarker(tx, network))
     return {

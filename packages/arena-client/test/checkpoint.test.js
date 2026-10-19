@@ -18,7 +18,7 @@
 // artefact the game runs - so what is committed to here is what a player would
 // be committing to. A test that hashed thirty-two fixed bytes would pass with
 // the core unplugged, which is the one thing it must not do.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -977,7 +977,7 @@ test('a reconnect adopts the NEWEST live mark, not the oldest', async () => {
   } finally { await node.close(); }
 });
 
-// A RELOAD AFTER THE ROUND STARTED (the owner 2026-10-03, "That run must not be lost"): a NEW client - the reloaded tab - with
+// A RELOAD AFTER THE ROUND STARTED (2026-10-03, "That run must not be lost"): a NEW client - the reloaded tab - with
 // the same session key and the same entry. The node takes the entry again as the one it holds, the client resumes without
 // recording a tick while it fetches, the core stepped through the node's transcript is the state the marks were hashed
 // from, and the next batch and the next mark are accepted.

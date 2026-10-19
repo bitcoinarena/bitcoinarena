@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODES THAT SERVED A ROUND IN THE LAST 24 HOURS (kanban #365, the owner 2026-10-15: an in-game item's price goes "50% an die
+// THE NODES THAT SERVED A ROUND IN THE LAST 24 HOURS (2026-10-15: an in-game item's price goes "50% an die
 // nodes die in den letzten 24h an einer Runde beteiligt waren"). The part of the item plan that moves no money (plan: comment 2310):
 // WHICH nodes, and in how many rounds each, read so that every node arrives at the same list.
 //
@@ -80,7 +80,7 @@ export function servedNodesDiffer(claimed, mine) {
 }
 
 /**
- * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (kanban #365, measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
+ * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
  * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
  * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
  * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.

@@ -68,7 +68,7 @@ export const TAPLEAF_VERSION = 0xc0;
 export const BOND_SCRIPT_TEMPLATE_VERSION = 1;
 
 /**
- * TEMPLATE 2: THE SAME TREE, AT THE BOND'S OWN MATURITY (kanban #295, spec 5A.3B: "`bond_maturity` is an absolute
+ * TEMPLATE 2: THE SAME TREE, AT THE BOND'S OWN MATURITY (spec 5A.3B: "`bond_maturity` is an absolute
  * locktime, reference 30 days after the bond confirms").
  *
  * Template 1 put genesis' `bondMaturity` in the recovery leaf - 100 on regtest AND on testnet4. That is a height, not a
@@ -76,7 +76,7 @@ export const BOND_SCRIPT_TEMPLATE_VERSION = 1;
  * same two leaves with the bond's own height in the CLTV, carried in its advertisement as `bond_maturity_height`, and a
  * census counts it only when that height is at least the block the bond confirmed in plus this network's offset.
  *
- * The offset sits here, beside genesis and not in it (the owner 2026-10-11, the #295 plan): a genesis field would move
+ * The offset sits here, beside genesis and not in it (2026-10-11, the plan): a genesis field would move
  * testnet4's network id, its series and every re-affirmation for a number no round reads.
  */
 export const BOND_TEMPLATE_V2 = 2;

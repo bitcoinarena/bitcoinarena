@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PROTOCOL RESERVES' SPLIT (§27A.9.1, kanban #397 slice 1): a paid round's mandatory 4 / 2 / 2 / 2 %, an item's 40 % nodes and
+// THE PROTOCOL RESERVES' SPLIT (§27A.9.1): a paid round's mandatory 4 / 2 / 2 / 2 %, an item's 40 % nodes and
 // 20 % reserves with the player's developers' share of 40/30/20/10/0 %, the reserve output - and today's versions untouched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +48,7 @@ test('the reserve output: 2 % of an entry, 20 % of an item, in its own federatio
   assert.deepEqual(reserveOutputsExpected({ kind: 'entry', federationId: fed, grossMsat: sat(100), free: true }), []);
 });
 
-test('today\'s versions untouched: the reserves version is not spoken yet, #377\'s 50-0 % item share stands', () => {
+test('today\'s versions untouched: the reserves version is not spoken yet, \'s 50-0 % item share stands', () => {
   assert.equal(RESERVES_VERSION, 11);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(RESERVES_VERSION), 'spoken since slice 3');
   assert.deepEqual(ITEM_DEV_SHARES, [50, 40, 30, 20, 10, 0]);

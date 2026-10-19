@@ -64,7 +64,7 @@ export class ReplayPool {
     this.running = 0;
     /** The keys in the order they were STARTED - what a starvation claim is checked against. */
     this.order = [];
-    /** THE MEASURED REPLAY SPEED (§34, kanban #303): the newest replays' wall time against the game time they covered. */
+    /** THE MEASURED REPLAY SPEED (§34): the newest replays' wall time against the game time they covered. */
     this.samples = [];
   }
 

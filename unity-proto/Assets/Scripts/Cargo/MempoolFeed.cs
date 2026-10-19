@@ -133,7 +133,7 @@ public class MempoolFeed : MonoBehaviour
     }
 
     /// <summary>
-    /// THE POOL KEEPS EVERY SIZE IT HAS (kanban #375, the owner 2026-10-16: "it must not be all of the same so no 9% 9% 9%"): over
+    /// THE POOL KEEPS EVERY SIZE IT HAS (2026-10-16: "it must not be all of the same so no 9% 9% 9%"): over
     /// `keep`, the oldest of the most common size goes - not the oldest of all, which threw out the rare large transactions
     /// first, since small ones arrive many times as often. `pool` is newest first.
     /// </summary>

@@ -6,7 +6,7 @@ using UnityEngine.InputSystem;
 #endif
 
 /// <summary>
-/// SPECTATE AFTER THE RUN (the owner 2026-10-03, PRIORITIES: "When wrecked/finished the *real* spectate mode should run"; the
+/// SPECTATE AFTER THE RUN (2026-10-03, PRIORITIES: "When wrecked/finished the *real* spectate mode should run"; the
 /// letter: "when the run ends WRECKED or FINISHED, switch to a free-roam spectate camera instead of freezing ... over about
 /// 3 s it rises from the chase view to a steep top-down view. Then arrows or swipe pan, and pinch or wheel zoom").
 ///
@@ -24,9 +24,9 @@ public class RunEndSpectate : MonoBehaviour
     public Transform truck;
     public LoadoutPanel loadout;
     public SpectatorCamera spectator;
-    /// <summary>The death sequence: in a live round this waits for its band to hold and fade (#131).</summary>
+    /// <summary>The death sequence: in a live round this waits for its band to hold and fade.</summary>
     public WastedSequence wasted;
-    /// <summary>The truck's wreck: put right when the next run's bay opens under this camera (#131).</summary>
+    /// <summary>The truck's wreck: put right when the next run's bay opens under this camera.</summary>
     public TruckHealth health;
     float _endSeenAt = -1f;
 
@@ -106,7 +106,7 @@ public class RunEndSpectate : MonoBehaviour
         Debug.Log("[blwp] spectate: back to the chase camera");
     }
 
-    // THE NEXT TRUCK IN VIEW (#131): 2 s after spectate lets go, where the camera is against the truck, once.
+    // THE NEXT TRUCK IN VIEW: 2 s after spectate lets go, where the camera is against the truck, once.
     float _leftAt = -1f, _reportFrom = -1f;
     bool _reported;
     void ReportChase()
@@ -140,14 +140,14 @@ public class RunEndSpectate : MonoBehaviour
         {
             bool ended = RunEndedHere();
             if (!ended) _endSeenAt = -1f; else if (_endSeenAt < 0f) _endSeenAt = Time.unscaledTime;
-            // A WRECK WAITS FOR ITS WASTED (#131): the core names the wreck in the same frame the truck's health does, so
+            // A WRECK WAITS FOR ITS WASTED: the core names the wreck in the same frame the truck's health does, so
             // "no band up yet" is not "the band is over" - measured on 0.0.2731, the rise began 0.1 s before WASTED came up.
             // It starts once this wreck's sequence has ended, or after hold + fade + 0.5 s if none ever came up.
             bool waitWasted = ended && wasted != null && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_WRECKED
                 && (wasted.BandUp || (wasted.LiveEndedAt < _endSeenAt
                     && Time.unscaledTime - _endSeenAt < wasted.holdSeconds + wasted.fadeOutSeconds + 0.5f));
             if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && !waitWasted && ended) Begin(truck.position);
-            // STRAIGHT ONTO THE NEXT TRUCK (#131, measured on 0.0.2732: 2 s into the next round the camera was still 67 m out on
+            // STRAIGHT ONTO THE NEXT TRUCK (measured on 0.0.2732: 2 s into the next round the camera was still 67 m out on
             // PLAY's 4.2 s fly-in over the field): after a spectate, the next round's fly-in is cut to the view behind the
             // truck - the player has just watched the field. PLAY from the lobby keeps its fly-in.
             if (_leftAt >= 0f && chase != null && chase.Flying && Time.unscaledTime - _leftAt < 60f)
@@ -161,7 +161,7 @@ public class RunEndSpectate : MonoBehaviour
         }
         if (cargoOpen || (Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE))
         {
-            // THE NEXT TRUCK IS WHOLE (#131): measured on 0.0.2731, the next round's bay opened on the last run's wreck,
+            // THE NEXT TRUCK IS WHOLE: measured on 0.0.2731, the next round's bay opened on the last run's wreck,
             // still burning, for its whole countdown - only PLAY put it right. The bay opening under this camera does now.
             if (health != null && health.IsDestroyed) { health.Revive(); Debug.Log("[blwp] spectate: the last run's wreck is put right for the next truck"); }
             Leave();
@@ -182,7 +182,7 @@ public class RunEndSpectate : MonoBehaviour
         Report();
     }
 
-    // THE READINGS (the owner 2026-10-03: "Pan ... Record the move. Zoom ... Record the change"): the page cannot see Unity's
+    // THE READINGS (2026-10-03: "Pan ... Record the move. Zoom ... Record the change"): the page cannot see Unity's
     // camera, so the camera says where it is - once when the rise is done, then at most every 0.25 s while a pan or a zoom
     // moves it - with the truck beside it, which must not move.
     bool _toldTop;

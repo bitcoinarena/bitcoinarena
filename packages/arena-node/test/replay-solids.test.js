@@ -79,7 +79,7 @@ test('the core builds the map Unity draws, box for box', () => {
     assert.ok(found, `${what} is not among the core's boxes`);
   };
 
-  // THE FOUR EDGES ARE NOT BOXES ANY MORE (ruling 4, the owner 2026-09-22): "the map edge is a clamp, not
+  // THE FOUR EDGES ARE NOT BOXES ANY MORE (ruling 4, 2026-09-22): "the map edge is a clamp, not
   // a wall. The core owes no wall solids, and the client stops drawing walls the core does not build."
   // This used to assert the four the player gathered - Wall_West/East at +-130 by 1.5 x 88, North/South
   // at +-85 by 133 x 1.5. Asserting their ABSENCE rather than deleting the lines keeps the ruling

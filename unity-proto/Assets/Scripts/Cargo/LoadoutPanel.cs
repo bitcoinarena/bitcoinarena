@@ -27,7 +27,7 @@ public class LoadoutPanel : MonoBehaviour
         get => _isOpen;
         private set
         {
-            // THE PAGE IS TOLD (the owner 2026-09-26 14:02: the node strip lay across the truck and LOAD while the cargo
+            // THE PAGE IS TOLD (2026-09-26 14:02: the node strip lay across the truck and LOAD while the cargo
             // was being chosen) - it keeps its node strip hidden while this panel is open.
             if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);
             _isOpen = value;
@@ -71,7 +71,7 @@ public class LoadoutPanel : MonoBehaviour
     }
 
     /// <summary>
-    /// CLOSE WITHOUT ROLLING OUT (the owner 2026-09-26, the 21:13 case): the node refused the entry before the run was live,
+    /// CLOSE WITHOUT ROLLING OUT (2026-09-26, the 21:13 case): the node refused the entry before the run was live,
     /// so the round is not played - the chooser closes, the bed is cleared, and the truck stays locked for the lobby.
     /// </summary>
     public void Dismiss()
@@ -136,7 +136,7 @@ public class LoadoutPanel : MonoBehaviour
         // AND THE RUN'S SESSION IS NOTED, so the replay the result offers is this run's and not the one before
         Blwp.BlwpCore.RunStarts();
 
-        // THE DRIVE STARTS TOP-DOWN, THE MINER IN FRAME (the owner 2026-09-26 14:08, 2026-09-27 11:31): PLAY's fly-in ran on
+        // THE DRIVE STARTS TOP-DOWN, THE MINER IN FRAME (2026-09-26 14:08, 2026-09-27 11:31): PLAY's fly-in ran on
         // under this panel, and a quick ROLL OUT drove off beneath it facing away from the miner. Rolling out ends it and
         // puts the camera over the truck with the gate it is driving to held in view until the player swipes.
         var chase = FindFirstObjectByType<ChaseCamera>();
@@ -168,7 +168,7 @@ public class LoadoutPanel : MonoBehaviour
         sorted.Sort((a, b) => b.FeeRate.CompareTo(a.FeeRate));
         foreach (var tx in sorted)
         {
-            // THE ROOM, AS C IS (the owner 2026-10-04 08:54: C is the bed fill, "not the BTC value"; the 2026-10-04 audit: AUTO
+            // THE ROOM, AS C IS (2026-10-04 08:54: C is the bed fill, "not the BTC value"; the 2026-10-04 audit: AUTO
             // stopped on room-or-BTC, so a BTC-bound load could leave C below its 60%). The 20 BTC cap still binds - TryAdd
             // refuses any parcel past it, and once it is reached nothing more goes on.
             if (bay.Fill >= autoFill || bay.BtcFill >= 1f) break;
@@ -185,7 +185,7 @@ public class LoadoutPanel : MonoBehaviour
     }
 
     /// <summary>
-    /// A RUN RESUMED AFTER A RELOAD (the owner 2026-10-03, the mid-run reload playthrough: the player saw this panel over the
+    /// A RUN RESUMED AFTER A RELOAD (2026-10-03, the mid-run reload playthrough: the player saw this panel over the
     /// resumed run, the arrows did not drive, the run ended MISSED). The run is already rolling in the core - its load is in
     /// the seats' record - so the panel closes and the truck is handed back, as a roll-out does, without a second load and
     /// without restarting anything (StartRound keeps a live round's core anyway).
@@ -249,7 +249,7 @@ public class LoadoutPanel : MonoBehaviour
 
         if (IsOpen && truck != null) truck.controlsLocked = true;
 
-        // THE CORE IS TOLD AS THE BED CHANGES, NOT ONLY AT ROLL OUT (the owner 2026-10-04 13:30, playtest, kanban #63: after
+        // THE CORE IS TOLD AS THE BED CHANGES, NOT ONLY AT ROLL OUT (2026-10-04 13:30, playtest,: after
         // AUTO the truck read 68% and LOAD stayed x0.00000). Whenever the bed differs from the load the core last took - AUTO,
         // a parcel added, a parcel removed - the load is declared again, so the core's C (and the LOAD the panel prints from
         // it) moves with the bed. A load the bridge drops (one a tick) is simply declared again on the next frame. Before the
@@ -304,7 +304,7 @@ public class LoadoutPanel : MonoBehaviour
 
         foreach (var c in yard.Captions())
         {
-            // IN ITS OWN CELL (kanban #375, the owner 2026-10-16: "must be gleichmäßig and fit the dialog"): the caption is the bottom
+            // IN ITS OWN CELL (2026-10-16: "must be gleichmäßig and fit the dialog"): the caption is the bottom
             // of the crate's cell, the cell's width - every caption of a row on one line, none wider than its cell, all inside the
             // panel. Before, each hung under its own crate at max(140 px, 13 % of the screen), wider than a phone's cell.
             var box = c.label.width > 0f ? c.label
@@ -419,11 +419,11 @@ public class LoadoutPanel : MonoBehaviour
         var count = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
         string ramp = yard.Captions().Count + " on the ramp";
         float countW = count.CalcSize(new GUIContent(ramp)).x;
-        // the add-ons button stands where the count did (kanban #374): the title keeps clear of it as of the count
+        // the add-ons button stands where the count did: the title keeps clear of it as of the count
         if (AddonsPanel.Instance != null && AddonsPanel.Instance.ShopAvailable)
             countW = new GUIStyle(_small) { fontStyle = FontStyle.Bold, wordWrap = false }.CalcSize(new GUIContent(AddonsLabel)).x + 20f;
 
-        // THE TITLE BETWEEN THE PILL AND THE COUNT, NEVER UNDER EITHER (the owner 2026-09-29 21:48, CARGO-BTC-2148: on his
+        // THE TITLE BETWEEN THE PILL AND THE COUNT, NEVER UNDER EITHER (2026-09-29 21:48, CARGO-BTC-2148: on his
         // phone "LIVE MEMPOOL" lay over "CHOOSE YOUR MEMPOOL CARGO", read "LIVE MEMPOOL C" / "HOOSE ..."). Centred, with
         // the wider of the two side boxes kept clear on both sides, and its font shrunk to the room that leaves.
         float side = 14f + Mathf.Max(tagW, countW + 2f) + 10f;
@@ -440,7 +440,7 @@ public class LoadoutPanel : MonoBehaviour
                       feed != null && feed.Fresh ? "● LIVE MEMPOOL" : "○ CONNECTING",
                       feed != null && feed.Fresh ? PanelSkin.Cyan : new Color(1f, 1f, 1f, 0.5f), tag);
 
-        // BUY ADD-ONS WHERE THE PARCELS ARE LOADED (kanban #374, the owner 2026-10-16): in the count's place when this game sells
+        // BUY ADD-ONS WHERE THE PARCELS ARE LOADED (2026-10-16): in the count's place when this game sells
         // something - the add-ons panel over the cargo screen
         var addons = AddonsPanel.Instance;
         if (addons != null && addons.ShopAvailable)
@@ -625,7 +625,7 @@ public class LoadoutPanel : MonoBehaviour
         bool refused = yard != null && Time.unscaledTime - yard.RefusedAt < 0.7f;
 
         // --- capacity -------------------------------------------------------
-        // THE GAUGE IS THE BED FILL - THE C THE LOAD WILL SET (the owner 2026-10-04 08:54: "the same fraction the gauge shows";
+        // THE GAUGE IS THE BED FILL - THE C THE LOAD WILL SET (2026-10-04 08:54: "the same fraction the gauge shows";
         // the 2026-10-04 audit: it drew room-or-BTC, so a BTC-bound truck read full while C stayed lower). The BTC carried
         // against the truck's 20 BTC cap is in the label beside it.
         Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), bay.Fill,
@@ -677,7 +677,7 @@ public class LoadoutPanel : MonoBehaviour
         // LOAD x DANGER x SPEED, while the score multiplies the core's cargo word - set once, at init, to 0.70 on this
         // core, whatever is loaded. The bed fill stays on the gauge as TRUCK FULL %, which does not enter the score. That
         // the loadout choice does not move the score is what this core does, and the panel now says so.
-        // THE CORE'S C, which moves with the bed (Update declares the load as it changes, #63): on 7e2123d1 the bed fill, on
+        // THE CORE'S C, which moves with the bed (Update declares the load as it changes): on 7e2123d1 the bed fill, on
         // a 2069b4c2 round the 0.7 its rules give every load - the panel prints what the run will be scored at.
         string load = LoadLabel(Blwp.BlwpCore.CargoWord);
         while (reward.fontSize > 12 && reward.CalcSize(new GUIContent(load)).x > rw) reward.fontSize--;
@@ -714,7 +714,7 @@ public class LoadoutPanel : MonoBehaviour
                   "you pick LOAD · DANGER and SPEED you earn driving", sub);
 
         // --- buttons ---------------------------------------------------------
-        // BIGGER TO TAP ON A PHONE (the owner 2026-09-29 21:48, CARGO-BTC-2148: AUTO and ROLL OUT were too small
+        // BIGGER TO TAP ON A PHONE (2026-09-29 21:48, CARGO-BTC-2148: AUTO and ROLL OUT were too small
         // to tap); a desktop keeps its size. `ButtonHeight` also sizes the bar (BottomBarRect), so the taller buttons
         // stay inside it.
         float bh = ButtonHeight(w, h, lh);
@@ -735,7 +735,7 @@ public class LoadoutPanel : MonoBehaviour
 
     public const string AddonsLabel = "BUY ADD-ONS";
 
-    /// <summary>The cargo screen's BUY ADD-ONS (kanban #374): at the title bar's right end, its words' width, 60 % of the bar high.</summary>
+    /// <summary>The cargo screen's BUY ADD-ONS: at the title bar's right end, its words' width, 60 % of the bar high.</summary>
     public static Rect AddonsButtonRect(Rect bar, GUIStyle style)
     {
         float tw = style.CalcSize(new GUIContent(AddonsLabel)).x + 20f;

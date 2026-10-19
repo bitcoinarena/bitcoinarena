@@ -1,6 +1,6 @@
 # What the protocol needs for more games and prediction markets
 
-Kanban #362 (the owner 2026-10-14 ~20:45Z): "research on what the protocol would need for further games and prediction markets. Be
+(2026-10-14 ~20:45Z): "research on what the protocol would need for further games and prediction markets. Be
 creative, what features do we need to really make an attractive platform. Think of it and think hard. Then implement those
 features."
 
@@ -14,8 +14,8 @@ features."
 | Money | Fedimint stake locks in two federations, Lightning in and out, donations to protocol and game devs, node fee shares |
 | Trust | bonded census, sortition committees (5 of 7), replay objection window, slashing, versioned protocol |
 | Distribution | signed manifests hosted by any node, plugin store, owner area, Nostr login, our relay, NWC |
-| Randomness | the round beacon (a round's committee and seed); a general block random number (kanban #366, `block-random.js`): the block at a NAMED height, used once 6 deep, seed = taggedHash(`ARENA/v1/BlockRandom`, block hash ‖ height ‖ label), numbers in [0, n) by rejection sampling (no modulo bias), any node recomputes it; seats answer `GET /block-random?height=&label=&n=&count=` (409 until 6 deep) |
-| Who served | the nodes that served a round in a window (kanban #365, `served-nodes.js`): read from signed FINALs, counted once per round, a root every node rebuilds; each seat holds only its own rounds, so a reader merges every seat's (`GET /served?finals=1`, `mergeServedRounds`, `tools/served-merge.mjs`) - measured 2026-10-15: 14 seats, 7 partial roots, one merged root on two machines |
+| Randomness | the round beacon (a round's committee and seed); a general block random number (`block-random.js`): the block at a NAMED height, used once 6 deep, seed = taggedHash(`ARENA/v1/BlockRandom`, block hash ‖ height ‖ label), numbers in [0, n) by rejection sampling (no modulo bias), any node recomputes it; seats answer `GET /block-random?height=&label=&n=&count=` (409 until 6 deep) |
+| Who served | the nodes that served a round in a window (`served-nodes.js`): read from signed FINALs, counted once per round, a root every node rebuilds; each seat holds only its own rounds, so a reader merges every seat's (`GET /served?finals=1`, `mergeServedRounds`, `tools/served-merge.mjs`) - measured 2026-10-15: 14 seats, 7 partial roots, one merged root on two machines |
 | Presentation | a per-round leaderboard derived from signed results (presentation, not authority) |
 
 ## 2. What is missing for an attractive platform
@@ -73,7 +73,7 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    (the template as its series line) and believes a line only once it hashes to that series id, then the contract must be
    its round byte for byte (`fetchSeriesTemplate`, `seriesRoundCheck`).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
-   **Frontend fees** (7). State: built (protocol 2026.0.9, RULED the owner 2026-10-15, path (a): out of the nodes' 5%, 20% of
+   **Frontend fees** (7). State: built (protocol 2026.0.9, RULED 2026-10-15, path (a): out of the nodes' 5%, 20% of
    it, the player's stake not increased). An entry names its website's payout key (`frontendPk`, marker 0xac, signed); the
    settlement pays that key 20% of the nodes' fee on the stakes it brought, off the top of the nodes' part of the fee locks
    (fee.js `frontendShares`, lock-settlement.js), and the nodes share the rest; the player's stake, fee lock and donation are

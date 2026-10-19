@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CLIENT BUILDS THE COMMITTEE ITSELF (kanban #296, spec 5A.6: "a client MUST NOT take a census, a committee or an
+// THE CLIENT BUILDS THE COMMITTEE ITSELF (spec 5A.6: "a client MUST NOT take a census, a committee or an
 // endpoint on the word of any API"). Until this the page asked every node GET /committee and took the set when they
 // agreed - so a set of colluding seats could name any committee and be dealt a player's stake.
 //
@@ -8,7 +8,7 @@
 //   HEADERS   the chain it agreed from independent providers (directory.js agreedChain), from a compiled-in anchor;
 //   CENSUS    every entry of the round's census as EVIDENCE a seat hands over (GET /census): its bond transaction proven
 //             into one of those headers, the advertisement it commits to, the output rebuilt as the bond from the
-//             network's arbitration set and a curve, its maturity (#295), its floor - and, for a carried bond, its
+//             network's arbitration set and a curve, its maturity, its floor - and, for a carried bond, its
 //             re-affirmation and update, proved and signed by the bond's key. The verified set must hash to the round's
 //             own census_root (censusRootOf, the seat's own function): an entry left out, added or altered is another
 //             root, and the round is refused. Spentness at census_height is in that root.
@@ -116,7 +116,7 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
   if (bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
-  // ROLES AND VERSION OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #351/#348): a bond whose update announces this round's
+  // ROLES AND VERSION OFF THE NEWEST ADVERTISEMENT (2026.0.2): a bond whose update announces this round's
   // version counts - asked of its first advertisement, every node that announced version 2 by update was refused (the seats'
   // census had the same order, fixed in e8f039d8). The update, when there is one, is asked below.
   const updated = !!(proofOf(item.update) && proofOf(item.update).transaction);
@@ -174,12 +174,12 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
   if (!census.ok) return census;
   const beacon = beaconFromChain(contract, { headers, firstHeight });
   if (!beacon.ok) return { ok: false, why: `no beacon: ${beacon.why}` };
-  // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf), as the seats do
+  // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (pick (c), known-game.js tableAnchorOf), as the seats do
   const anchor = tableAnchorOf(contract);
   const seeded = committeeSeedFromBeacon(contract, { roundId: anchor ? anchor.anchorId : roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
   if (!seeded.ok) return { ok: false, why: seeded.why };
   const committees = {};
-  // THE DRAW (§5A.7 reserve seats, kanban #301): more than the seats, in score order - a seating certificate is checked
+  // THE DRAW (§5A.7 reserve seats): more than the seats, in score order - a seating certificate is checked
   // against it, and the committee is who that certificate seats; before one, the draw's first slots
   const drawn = {};
   for (const role of roles) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3, kanban #324 step 3): the shortfall quoted with the fee of both
+// A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3): the shortfall quoted with the fee of both
 // gateway legs, moved on the player's confirmation - an invoice of the round federation's wallet paid from the other -, the
 // fee measured off the paying balance and both sides in the history; declined, nothing moves.
 import { test } from 'node:test';
@@ -106,7 +106,7 @@ test('the page\'s swap dialog shows the amount, the fee and the total; Cancel an
   assert.equal(await r2, true);
 });
 
-// TWO GATEWAYS, PAIR BY PAIR (kanban #466, testnet4 2026-10-18): gateway C's node had no outbound ("InsufficientBalance"), and gw-b
+// TWO GATEWAYS, PAIR BY PAIR (testnet4 2026-10-18): gateway C's node had no outbound ("InsufficientBalance"), and gw-b
 // found no route to C's invoice ("NoRoute"); left to the lock client's pick every swap ended Refunded. The legs now go through two
 // different listed gateways, and a Refunded payment - the money back - tries the next pair; another end stops.
 test('the pairs: named first, then each federation\'s list, never one gateway on both legs, at most SWAP_PAIRS_MAX; none listed - the lock client\'s pick', () => {

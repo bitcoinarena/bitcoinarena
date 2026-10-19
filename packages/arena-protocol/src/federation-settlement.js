@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE SETTLEMENT TRANSACTION PER FEDERATION, ALL FROM ONE PAYOUT TABLE (2026.0.3, kanban #348; the owner 2026-10-13 ~11:45Z: "Es
+// ONE SETTLEMENT TRANSACTION PER FEDERATION, ALL FROM ONE PAYOUT TABLE (2026.0.32026-10-13 ~11:45Z: "Es
 // muss möglich sein für alle Spiele über alle Federation zu zahlen").
 //
 // A Fedimint transaction spends and creates notes inside its own federation only, and a round that takes any federation
@@ -85,7 +85,7 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
       if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
     }
     const fp = split.map(({ p, msat }) => ({ ...p, owedMsat: p.owedMsat ?? p.msat, weightMsat: p.msat, msat, feeMsat: lnv2FeeMsat(fees, msat) }));
-    // A MARKET'S PROTOCOL RESERVE (kanban #454): this federation's part of the reserve line goes to this federation's reserve key
+    // A MARKET'S PROTOCOL RESERVE: this federation's part of the reserve line goes to this federation's reserve key
     for (const p of fp) {
       if (!p.reserve) continue;
       const k = typeof reserveKeyOf === 'function' ? reserveKeyOf(fid) : null;

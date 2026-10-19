@@ -30,7 +30,7 @@ public class WastedSequence : MonoBehaviour
     [Tooltip("Seconds before the respawn that everything comes back to normal.")]
     public float recover = 0.8f;
 
-    // IN A LIVE ROUND THE BAND HOLDS 3 s, THEN FADES (kanban #131, the owner 2026-10-04 15:16: "Remove the WASTED text after a
+    // IN A LIVE ROUND THE BAND HOLDS 3 s, THEN FADES (2026-10-04 15:16: "Remove the WASTED text after a
     // few seconds. Spectate stays"): the band, the slow motion and the grade are up for holdSeconds from the wreck, fade out
     // over fadeOutSeconds, and the sequence ends - the death orbit let go, time back to 1 - so the run-end spectate takes the
     // view and the next round opens on the chase camera. This replaces the 2026-09-27 hold-until-the-lobby in live rounds.
@@ -141,7 +141,7 @@ public class WastedSequence : MonoBehaviour
     {
         if (!_running) { Intensity = 0f; return; }
 
-        // THE LIVE ROUND'S OWN CLOCK (#131): hold, fade, end - nothing respawns there, so the respawn timer says nothing
+        // THE LIVE ROUND'S OWN CLOCK: hold, fade, end - nothing respawns there, so the respawn timer says nothing
         if (_live)
         {
             float since = Time.unscaledTime - _wreckedAt;
@@ -167,7 +167,7 @@ public class WastedSequence : MonoBehaviour
     }
 
     /// <summary>
-    /// THE LIVE ROUND'S CURVE (#131), <paramref name="since"/> the wreck in real seconds: up over <paramref name="fadeIn"/>,
+    /// THE LIVE ROUND'S CURVE, <paramref name="since"/> the wreck in real seconds: up over <paramref name="fadeIn"/>,
     /// full until <paramref name="hold"/>, down to 0 over <paramref name="fadeOut"/>, 0 after.
     /// </summary>
     public static float LiveIntensity(float since, float fadeIn, float hold, float fadeOut)

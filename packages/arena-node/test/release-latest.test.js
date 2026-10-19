@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NEW RELEASE IS AVAILABLE (kanban #471, release-latest.js): the newest release the Arena site names is offered only when the
+// A NEW RELEASE IS AVAILABLE (release-latest.js): the newest release the Arena site names is offered only when the
 // release key signed it and it is newer than this node's; versions compare as releases do (0.1.0-rc.2 < 0.1.0-rc.10 < 0.1.0 < 0.1.1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,7 +45,7 @@ test('the newest release: offered when signed and newer, refused unsigned, kept 
   assert.match(down.why, /could not be read: .* answered 404/);
 });
 
-test('release versions 2026.xx.yy and a fix 2026.xx.yy.zz (the owner 2026-10-19) compare part by part, and above the older 0.1.0-rc.N', async () => {
+test('release versions 2026.xx.yy and a fix 2026.xx.yy.zz (2026-10-19) compare part by part, and above the older 0.1.0-rc.N', async () => {
   const { newerVersion } = await import('../src/release-latest.js');
   for (const [a, b, want] of [['2026.1.0', '0.1.0-rc.25', true], ['2026.1.1', '2026.1.0', true], ['2026.1.1.1', '2026.1.1', true],
     ['2026.1.1', '2026.1.1.1', false], ['2026.2.0', '2026.1.9.9', true], ['2026.1.0', '2026.1.0', false], ['2027.1.0', '2026.9.9.9', true]]) {

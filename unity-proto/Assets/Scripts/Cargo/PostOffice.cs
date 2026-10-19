@@ -197,7 +197,7 @@ public class PostOffice : MonoBehaviour
     /// Kept OUT of the static batch. Anything that carries drawn lettering belongs here, whether or not the words
     /// change.
     ///
-    /// THE WHITEPAPER IS ON THIS LIST BECAUSE OF WHAT BATCHING DOES TO A MEASUREMENT (the owner 2026-09-18 22:16,
+    /// THE WHITEPAPER IS ON THIS LIST BECAUSE OF WHAT BATCHING DOES TO A MEASUREMENT (2026-09-18 22:16,
     /// photographed: the page sprawled across the depot). `StaticBatchingUtility.Combine` swaps every batched
     /// renderer's mesh for the combined building, so after it runs the plate's own renderer reports the BUILDING's
     /// box - 12.2 x 9.4 m - and so does the text hanging under it. `Fit` then measured one wrong box against another
@@ -451,7 +451,7 @@ public class PostOffice : MonoBehaviour
 
     public static Vector2 Face(Vector3 size)
     {
-        // THE THIN AXIS IS THICKNESS; THE OTHER TWO KEEP THEIR ORDER (the owner 2026-09-18 22:16, photographed: the
+        // THE THIN AXIS IS THICKNESS; THE OTHER TWO KEEP THEIR ORDER (2026-09-18 22:16, photographed: the
         // whitepaper spilling off its plaque). This used to return the biggest axis as the WIDTH and the middle one as
         // the height, which silently turns every portrait plate into a landscape one: the whitepaper's plate is
         // 9.4 wide x 12.2 tall and was read as 12.2 x 9.4, so the page was fitted to 11.4 m of width on a 9.4 m

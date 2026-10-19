@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER TAKES THE BOND BACK AFTER ITS LOCK (kanban #471 part D, bond-withdraw.js). Measured 2026-10-18 against testnet4 Bitcoin
+// THE OWNER TAKES THE BOND BACK AFTER ITS LOCK (bond-withdraw.js). Measured 2026-10-18 against testnet4 Bitcoin
 // Core: the recovery spend of test host seat 1's live template-2 bond (d4a317b8...:0, 50,000 sat, maturity 156,193, tip 156,900) built
 // here was accepted by testmempoolaccept (126 vB, fee 262 sat) and never broadcast.
 import { test } from 'node:test';

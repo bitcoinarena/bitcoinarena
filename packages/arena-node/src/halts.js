@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HALT, AS A SEAT OBSERVES AND PROVES IT (spec §23A.5 "How a halt is proven", RULED 2026-10-14 on the owner's delegation;
-// kanban #323), step 2 of the ruling. The proof itself is arena-protocol's halt-proof.js; this is the seat's part:
+//), step 2 of the ruling. The proof itself is arena-protocol's halt-proof.js; this is the seat's part:
 //
 //   OBSERVE  every `everyMs`, for each federation whose record this seat holds (not CLOSED), ask every guardian endpoint the
 //            record lists for its session count (`ask(endpoint)`, the stock API's session_count). The highest session any

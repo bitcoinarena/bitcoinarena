@@ -8,7 +8,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// THE LARGER TRUCK, AS DRAWN (kanban #369): when the core drives the larger truck's bed (255590 = 3.9 m, 1.3 x the standard
+/// THE LARGER TRUCK, AS DRAWN: when the core drives the larger truck's bed (255590 = 3.9 m, 1.3 x the standard
 /// 196608), the bay is 3.9 m from the same front, 30 % more crates fit, and the body is 0.9 m longer with the cab where it was;
 /// back to the standard truck, all of it is as before. The core's answer is stood in for by BlwpCore.TruckBedOverride (the editor
 /// has no core). Each state is rendered from the side into BLWP_SHOT_DIR when that is set.
@@ -163,7 +163,7 @@ public class LargeTruckTests
     }
 
     /// <summary>
-    /// THE MORPH WAITS FOR THE RUN (kanban #374, measured 2026-10-18 on live UI 221: a joined round's core starts with the entry's
+    /// THE MORPH WAITS FOR THE RUN (measured 2026-10-18 on live UI 221: a joined round's core starts with the entry's
     /// unlocks while the lobby's splash still shows; the 3.9 m bed was drawn at once and no player saw the morph). With a core
     /// (CoreInEditor stands in for one), a new bed behind the lobby is held - the old truck kept - through PLAY's fly-in, and morphs
     /// once the camera is at the truck.
@@ -200,7 +200,7 @@ public class LargeTruckTests
     }
 
     /// <summary>
-    /// THE MORPH (kanban #374, the owner 2026-10-16: "While the round is active there is an effect that the truck morphes from old to
+    /// THE MORPH (2026-10-16: "While the round is active there is an effect that the truck morphes from old to
     /// new"): in a live round the bay takes the core's new bed at once, and the body grows from the standard truck to the larger one
     /// over LargeTruckView.MorphS - past its new length and back - with the pulse light on, then rests at 3.9 m with the light off.
     /// The editor has no core, so MorphInEditor stands in for the live round. Shots at the start, mid-way and the end.

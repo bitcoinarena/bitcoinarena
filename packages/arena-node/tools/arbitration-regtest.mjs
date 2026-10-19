@@ -55,7 +55,7 @@ const accepts = (hex) => { const r = JSON.parse(cli('testmempoolaccept', JSON.st
 // ---- a bond, funded here (never a live one)
 const nodeSecret = schnorr.utils.randomSecretKey();
 const nodeKey = schnorr.getPublicKey(nodeSecret);
-// THE BOND AT ITS OWN HEIGHT (kanban #295, template 2): the next block plus regtest's offset - the slash leaf is the same
+// THE BOND AT ITS OWN HEIGHT (template 2): the next block plus regtest's offset - the slash leaf is the same
 const bondMaturity = maturityHeightFor(Number(cli('getblockcount')), 'regtest', { slackBlocks: 0 });
 const bondBuilt = bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: K, bondMaturity,
   internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });

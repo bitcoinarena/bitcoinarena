@@ -5,7 +5,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE NEXT ROUND IS PLAYED, NOT THE LOBBY (the owner 2026-09-30 09:39, item 2: "After the countdown the lobby comes back and the
+/// THE NEXT ROUND IS PLAYED, NOT THE LOBBY (2026-09-30 09:39, item 2: "After the countdown the lobby comes back and the
 /// player must join by hand. Wrong. The next round starts by itself. The player is already joined"). At the next round's
 /// start the page flips its join to "joined" and `continuing` off in one repaint; a poll that read both at once left the
 /// adopted join unstepped, and the last run's ended word brought the lobby back and dropped the join.

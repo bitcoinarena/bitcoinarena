@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #499: every setting of an installed node in arena.conf - read, mapped to the seat's ARENA_* settings, moved from an older
+//: every setting of an installed node in arena.conf - read, mapped to the seat's ARENA_* settings, moved from an older
 // node.env, changed one key at a time; src/run.js refuses a file that does not read.
 import test from 'node:test';
 import assert from 'node:assert/strict';

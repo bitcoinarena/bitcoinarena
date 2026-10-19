@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND'S CREATOR (§6 `creator_pubkey` / `creator_signature`, kanban #313; 2026.0.3). A contract may name the x-only key of whoever
+// A ROUND'S CREATOR (§6 `creator_pubkey` / `creator_signature`2026.0.3). A contract may name the x-only key of whoever
 // created it (contracts.js CREATOR_MARKER); the creator's BIP-340 signature over the round's id rides beside the contract, as the id
 // itself does - a signature cannot be inside the bytes it signs. "The creator gains no administrative power after publication - and
-// no influence over the committee either": the key says WHO published the round (whom a publication fee is paid back to, #304),
+// no influence over the committee either": the key says WHO published the round (whom a publication fee is paid back to),
 // and nothing else. A contract that names no creator needs no signature, and none is asked of it.
 //
 // No curve here: the verifier is the caller's (the seat's noble schnorr, the page's BLWP_CURVE), as for every signed record.
@@ -29,7 +29,7 @@ export function creatorSignatureStands(contract, signature, { verify }) {
 }
 
 /**
- * A SERIES THAT NAMES ITS CREATOR (kanban #313): one signature over the SERIES id stands for every round of it - a grid of
+ * A SERIES THAT NAMES ITS CREATOR: one signature over the SERIES id stands for every round of it - a grid of
  * 10,800 rounds is published by one transaction and posted as one line, so it is signed once. The template's creator key is in
  * the series id (it is in the template's bytes), so the signature binds the creator to every round the series makes. `seriesIdOf`
  * is series.js seriesId (injected: series.js imports this package's contracts, as this file does). { ok, why } as above.

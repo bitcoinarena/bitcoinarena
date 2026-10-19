@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// HOW MANY PLAY EACH GAME HERE NOW (kanban #338, the owner 2026-10-11: "Anzeigen wieviele nodes das haben und wieviele spieler
+// HOW MANY PLAY EACH GAME HERE NOW (2026-10-11: "Anzeigen wieviele nodes das haben und wieviele spieler
 // insgesamt drin sind"): per game this seat hosts, the rounds that are live now - open for entries or running - and the
 // players entered in them, from this seat's own round store - live from the seating close (start - 120 s) to the end. Each round's contract is read once (by rowid), the entries
 // counted with one query; the answer is kept 10 s, so GET /games stays cheap however often the chooser asks.
@@ -23,10 +23,10 @@ export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => nul
       const run = BigInt(c.blockTicks || 0) * 1000n / 60n;
       // LIVE from its seating close (start - 120 s, §5A.7: the first moment it takes an entry), not from its committee time:
       // a series is drawn up to 72 h ahead, and counting from there showed 1,266 "live" Tick Tock rounds
-      // A MARKET from its window's start (the owner 2026-10-11): it takes no order before it
+      // A MARKET from its window's start (2026-10-11): it takes no order before it
       const w = windowOf(c);
       const open = w ? w.startMs : c.startTimeMs - SEATING_LEAD_MS > c.committeeTimeMs ? c.startTimeMs - SEATING_LEAD_MS : c.committeeTimeMs;
-      // TO ITS LAST ENTRY'S RUN (the owner 2026-10-14 ~08:45Z: Tick Tock "shows no open round"): a round taking entries after its
+      // TO ITS LAST ENTRY'S RUN (2026-10-14 ~08:45Z: Tick Tock "shows no open round"): a round taking entries after its
       // start - the late join, a Tick Tock round's six hours - is live until its entry close plus one run, not its start plus one
       const lastRunEnd = c.entryCloseMs > c.startTimeMs ? c.entryCloseMs + run : c.startTimeMs + run;
       rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open, end: lastRunEnd + 30000n });

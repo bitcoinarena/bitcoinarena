@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE TESTNET4 TAIL THAT PAYS ITS DONATION IN THE FEDERATION, DRY AND OFF THE CHAIN (kanban #148, plan comment 222):
+// THE TESTNET4 TAIL THAT PAYS ITS DONATION IN THE FEDERATION, DRY AND OFF THE CHAIN (plan comment 222):
 // tools/testnet4-key-tail.mjs as it is run, against the fake bitcoin-cli, a fake signer node listing one paid round, and a fake
 // bitcoind JSON-RPC serving a chain of linked coinbase-only blocks for its census (no bonds: an empty census). A dry run writes
 // key-tail-<id>-dry.json - the live round carried forward with testnet4's set of keys as its donation set and the census at

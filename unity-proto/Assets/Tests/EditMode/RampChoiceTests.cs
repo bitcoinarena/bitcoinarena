@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 
 /// <summary>
-/// THE RAMP'S CHOICE (kanban #375, the owner 2026-10-16: "it must not be all of the same so no 9% 9% 9% etc, be more diverse but
+/// THE RAMP'S CHOICE (2026-10-16: "it must not be all of the same so no 9% 9% 9% etc, be more diverse but
 /// largest first"): the offers taken one size class at a time, the largest class first and the best paying within each; the ramp
 /// reads largest first.
 /// </summary>
@@ -39,7 +39,7 @@ public class RampChoiceTests
     }
 }
 
-/// <summary>THE FEED'S POOL KEEPS EVERY SIZE (kanban #375): over its limit the oldest of the most common size goes, not the oldest of all.</summary>
+/// <summary>THE FEED'S POOL KEEPS EVERY SIZE: over its limit the oldest of the most common size goes, not the oldest of all.</summary>
 public class FeedTrimTests
 {
     static MempoolFeed.Tx T(string id, int vsize) => new MempoolFeed.Tx { txid = id, vsize = vsize, feeSats = 1000, valueSats = 100000 };

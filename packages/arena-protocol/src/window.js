@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OBJECTION WINDOWS OF ONE ROUND, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+// THE OBJECTION WINDOWS OF ONE ROUND, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01).
 //
 //   window_open   = round_end                  the round's end as its contract fixes it (roundEndMs), in UTC
 //   window_close  = round_end + 600 s
 //   final_after   = window_close + 5 s         a seat signs FINAL only once its own clock reads this
 //
 // and, for an entry a valid objection suspended, chained from that same close - never from the objection's arrival or
-// the block it names (RULED the owner 2026-10-01):
+// the block it names (RULED 2026-10-01):
 //
 //   re-run window       [round_end + 600 s, round_end + 1200 s)    a re-run counts if it arrived before + 1205 s
 //   the re-run's own    [round_end + 1200 s, round_end + 1800 s)   FINAL on the re-run after + 1805 s

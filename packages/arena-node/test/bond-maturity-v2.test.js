@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A BOND MATURES AT ITS OWN HEIGHT (kanban #295, spec 5A.3B: "`bond_maturity` is an absolute locktime, reference 30 days
+// A BOND MATURES AT ITS OWN HEIGHT (spec 5A.3B: "`bond_maturity` is an absolute locktime, reference 30 days
 // after the bond confirms"). Template 1 put genesis' 100 in every recovery leaf - a height, so on testnet4 path A of
 // every bond was spendable the block it confirmed. Template 2 carries `bond_maturity_height` in the advertisement and the
 // same height in the leaf; the census counts it only at confirmation + the network's offset or later. Measured here on

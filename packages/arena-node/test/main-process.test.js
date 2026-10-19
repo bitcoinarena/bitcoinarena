@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE STARTED FROM ITS ENV AND A SERIES FILE, AS THE UNITS START IT (kanban #149 step 4, plan comment 249, Go 2026-10-05).
+// A NODE STARTED FROM ITS ENV AND A SERIES FILE, AS THE UNITS START IT (plan comment 249, Go 2026-10-05).
 // `node src/main.js 0 <store>` runs as a child process on port 0 (the bound port read from its first line), with
 // ARENA_SERIES_FILE, ARENA_ATTACH_PROOF_DIR and ARENA_DONATION_NETWORK=regtest; the chain half gives it a fake bitcoind (JSON-RPC
 // with a cookie file) serving a short mined chain that holds the node's bond and the round's publication.
@@ -40,7 +40,7 @@ const CWD = new URL('..', import.meta.url).pathname;
 function startMain(store, env, { args } = {}) {
   const child = spawn(process.execPath, [MAIN, ...(args || ['0', store])], { cwd: CWD, env: { ...process.env, ARENA_BITCOIND_URL: '', ARENA_BITCOIND_COOKIE: '',
     ARENA_STAKE_LOCK_BIN: '', ARENA_FEDERATION_CLIENT_DIR: '',
-    // AS THE UNITS WILL RUN IT (kanban #203): main.js names no game, the launcher names nextblock in ARENA_GAMES
+    // AS THE UNITS WILL RUN IT: main.js names no game, the launcher names nextblock in ARENA_GAMES
     ARENA_GAMES: NEXTBLOCK_REGISTRATION, PATH: process.env.PATH.split(':').filter((d) => !/fedimint|patched/.test(d)).join(':'), ...env },
   stdio: ['ignore', 'pipe', 'pipe'] });
   child.out = ''; child.err = '';

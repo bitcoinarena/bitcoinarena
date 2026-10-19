@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DETERMINISM GUARD IN THE SUITE (kanban #28; spec audit #15). tools/check-determinism.js refuses, in a core's source,
+// THE DETERMINISM GUARD IN THE SUITE (spec audit). tools/check-determinism.js refuses, in a core's source,
 // float literals, '* / %' outside the arithmetic files, Math members off its whitelist, Date and performance, and imports
 // from outside the package - and until now it ran on core/src only, by hand, and reported 49 hits nobody had pinned.
 //
@@ -41,7 +41,7 @@ export function guardLines(hash, tree, hits, baseline) {
   return lines;
 }
 
-// 68e2b3d6 (kanban #29, 2026-10-07): §4.11's objectives from the chart, RIDGE_GOAL gone; 7e2123d1 frozen beside it in
+// 68e2b3d6 (2026-10-07): §4.11's objectives from the chart, RIDGE_GOAL gone; 7e2123d1 frozen beside it in
 // core/frozen/7e2123d1 (its hash computed from its files: 7e2123d1990d1443...).
 test('the baseline names the four cores a seat installs, and core/src is the live core 68e2b3d6', () => {
   assert.deepEqual(Object.keys(BASELINE.cores).sort(), ['2069b4c2', '68e2b3d6', '7e2123d1', 'de2f263d']);

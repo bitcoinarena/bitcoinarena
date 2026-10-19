@@ -221,7 +221,7 @@ test('rubbish is refused as evidence rather than decoded into an offence', () =>
   }
 });
 
-// A PROOF AGAINST A RE-RUN SIGNER (§13A, RULED the owner 2026-09-24, slice C2c): the evidence is the accused's own signed
+// A PROOF AGAINST A RE-RUN SIGNER (§13A, RULED 2026-09-24, slice C2c): the evidence is the accused's own signed
 // re-run result, checked over rerunResultId, with the verifier injected (no curve lives in this package) - so a test
 // verifier that knows one signature stands in for the curve. Each refusal is by name; the two evidence shapes have
 // their own sizes, so neither reads as the other.

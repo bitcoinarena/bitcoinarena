@@ -33,7 +33,7 @@
   .layout { width: min(1280px, calc(100% - 32px)); margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
   aside { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 90px); overflow: auto; padding: 24px 8px 24px 0; font-size: 14.5px; }
   aside a.on { color: var(--btc); }
-  /* THE CONTENTS CAN BE CLOSED AND BROUGHT BACK (kanban #361): a button in the bar; closed on a desktop, the page takes the
+  /* THE CONTENTS CAN BE CLOSED AND BROUGHT BACK: a button in the bar; closed on a desktop, the page takes the
      whole width (remembered per viewer); on a phone it is a drawer over the page */
   .navbtn { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; padding: 0; }
   .navbtn svg { width: 20px; height: 20px; }
@@ -99,7 +99,7 @@
     aside { display: block; position: fixed; z-index: 30; top: 0; left: 0; bottom: 0; width: min(300px, 84vw); height: 100dvh; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; padding: 20px 20px calc(96px + env(safe-area-inset-bottom)); background: var(--panel); border-right: 1px solid var(--line); transform: translateX(-105%); transition: transform .22s; }
     body.nav-closed aside { display: block; }
     body.drawer aside { transform: none; box-shadow: 20px 0 60px rgba(0,0,0,.5); }
-    body.drawer { overflow: hidden; }   /* the page behind stays put: a swipe scrolls the contents (kanban #361, the owner's phone 22:34) */
+    body.drawer { overflow: hidden; }   /* the page behind stays put: a swipe scrolls the contents (the owner's phone 22:34) */
     body.drawer .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.5); } }
   @media (max-width: 560px) { nav.top .r a:not(.play):not(.back) { display: none; } nav.top .r { gap: 10px; font-size: 13px; } nav.top .in { gap: 10px; } .brand span { display: none; } .playcard { flex-direction: column; align-items: flex-start; } td.ep { white-space: normal; } h2 { margin-top: 48px; }
     .tbl.api { border: 0; overflow: visible; } .tbl.api thead { display: none; } .tbl.api table, .tbl.api tbody, .tbl.api tr, .tbl.api td { display: block; width: 100%; }
@@ -929,7 +929,7 @@ for (const node of committeeNodes)
 </main>
 </div>
 <script>
-// THE CONTENTS AND THE FOLDS (kanban #361). Everything is open without JavaScript; with it, the sections fold, the one a link
+// THE CONTENTS AND THE FOLDS. Everything is open without JavaScript; with it, the sections fold, the one a link
 // points at opens, and the contents remember whether they were closed (desktop) - storage may be refused, the page works anyway.
 (() => {
   const body = document.body, btn = document.getElementById('navbtn'), toc = document.getElementById('toc');

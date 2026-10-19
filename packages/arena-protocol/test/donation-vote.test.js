@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a recipient proposes a new split, the parent set's recipients accept or
+// THE DEVELOPERS' OWN BALLOT (§27A.4.1): a recipient proposes a new split, the parent set's recipients accept or
 // deny, and the proposal is a set in force from the block after the approval that took the accepting share above half - for
 // new rounds only, the network id unchanged. the owner's example: 66.67 / 33.33 -> 60 / 20 / 10 (+10 to a newcomer).
 import test from 'node:test';

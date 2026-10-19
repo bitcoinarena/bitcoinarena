@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A RANDOM NUMBER FROM A RECENT BITCOIN BLOCK THAT EVERY NODE CAN REPRODUCE (kanban #366).
+// A RANDOM NUMBER FROM A RECENT BITCOIN BLOCK THAT EVERY NODE CAN REPRODUCE.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { blockRandomSeed, blockRandomInt, blockRandomStream, blockRandomReady, blockRandom, blockRandomStands, blockHashFromDisplay,
   BLOCK_RANDOM_DEPTH, BLOCK_RANDOM_N_MAX } from '../src/block-random.js';
 import { toHex } from '../src/hash.js';
 
-// testnet4 block 156648 (the beacon of B's successor founding, kanban #326) - any 32-byte hash would do; a real one reads better
+// testnet4 block 156648 (the beacon of B's successor founding) - any 32-byte hash would do; a real one reads better
 const HASH = '000000000000000ab1e2b8a7c3f4e5d6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c';
 
 test('the same block, height and label give the same numbers anywhere; another label, height or block gives others', () => {

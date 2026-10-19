@@ -19,7 +19,7 @@ const constant = (name) => {
   assert.ok(m, `RunScore.cs names no ${name}`);
   return Number(m[1]);
 };
-// THE C# FACTORS, as written there (the owner 2026-09-25: the core's score is the product of its factors): each an integer
+// THE C# FACTORS, as written there (2026-09-25: the core's score is the product of its factors): each an integer
 // count of 1e-5, rounded once half up - DivRound(n, d) = (2n + d) / (2d) - exactly score.js's exposure5, time5, cargo5.
 const SCALE = constant('FactorScale');
 const divRound = (n, d) => Math.floor((2 * n + d) / (2 * d));

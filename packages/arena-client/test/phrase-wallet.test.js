@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE KEPT PHRASE WITH A WALLET IS FOUND (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a tab took an
+// THE KEPT PHRASE WITH A WALLET IS FOUND (2026-10-02: "I should have more than 0 sats on my wallet" - a tab took an
 // empty kept phrase while the history showed the funded one's deposit and stake).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

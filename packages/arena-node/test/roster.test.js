@@ -9,7 +9,7 @@
 // that closed 15 was exactly this.
 //
 // `src/roster.js` is that caller, and the guard below keeps it the only one.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
@@ -616,7 +616,7 @@ test('a round its chain never published, or published in its beacon block, is no
 });
 
 /**
- * A CENSUS IS DERIVED ONCE PER ROUND AND VIEW, NOT ON EVERY ASK (the owner 2026-09-17 19:15, the ghost lag).
+ * A CENSUS IS DERIVED ONCE PER ROUND AND VIEW, NOT ON EVERY ASK (2026-09-17 19:15, the ghost lag).
  *
  * Deriving one parses every transaction of every block of the round's view, and the payout's `gather` asks for it on
  * the finality cadence: measured live, that held the signer node's event loop - the one that pushes another player's
@@ -691,7 +691,7 @@ test('the committee and the seed are kept per view, and a new header builds them
   assert.equal(roster.committeeFor(rid, 'game'), committee, 'the same round, role and view assigned twice');
   assert.notEqual(roster.committeeFor(rid, 'settlement'), committee, 'another role answered with the game committee');
 
-  // ANOTHER VIEW OF THE SAME CHAIN IS THE SAME ANSWER (the owner 2026-09-18 01:30): the committee is made of the census
+  // ANOTHER VIEW OF THE SAME CHAIN IS THE SAME ANSWER (2026-09-18 01:30): the committee is made of the census
   // root and the seed, so a view rebuilt block by block does not assign it again - that rebuild was 132-165 ms inside a
   // pictured truck's stall. The seed's own chain check is not kept across it: `seeds` is keyed by the view.
   grown = 2;
@@ -723,7 +723,7 @@ test('the committee and the seed are kept per view, and a new header builds them
 // funding outputs, a height above the round's own `census_height`.
 test('the slash-owing door answers off the chain at a height above the round\'s own, and the census it reads there is not checked against the round\'s root', async () => {
   const { encodeSlashProof, joinSlashEvidence, slashProofId } = await import('../../arena-protocol/src/slash.js');
-  // a stand-in signed result: its bytes do not matter here, its type byte does - a stream of results is cut by it (kanban #312)
+  // a stand-in signed result: its bytes do not matter here, its type byte does - a stream of results is cut by it
   const { TYPE_RESULT } = await import('../../arena-protocol/src/constants.js');
   const standIn = () => { const x = new Uint8Array(SIGNED_RESULT_BYTES); x[0] = TYPE_RESULT; return x; };
   const { SIGNED_RESULT_BYTES } = await import('../../arena-protocol/src/result.js');
@@ -876,7 +876,7 @@ test('a census checked against its round\'s root is kept in the store and read b
   assert.equal(Buffer.from(derivedAgain.root).toString('hex'), Buffer.from(first.root).toString('hex'), 'a kept census with another root was used');
 });
 
-// ONE CENSUS FOR THE ROUNDS OF NO SERIES THAT NAME ONE (kanban #345): an RPS grid's rounds share a census height and a
+// ONE CENSUS FOR THE ROUNDS OF NO SERIES THAT NAME ONE: an RPS grid's rounds share a census height and a
 // network, and a derivation per round cost every seat 0.5-1.3 s per posted round. Kept by what the census is read from,
 // and still checked against each round's own root on every ask.
 test('rounds of no series naming one census share one derivation, and a round naming another root is still refused', () => {

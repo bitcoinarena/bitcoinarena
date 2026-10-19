@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET IN THE PAGE (kanban #206 slice 2, §0A.7a; the owner 2026-10-07 decisions A and B, plan 777): the pick sheet, the
+// A MARKET IN THE PAGE (§0A.7a; 2026-10-07 decisions A and B, plan 777): the pick sheet, the
 // pick handed to the seats, the join that ends 'picked', and an outcome the page believes only once it verifies.
 //   - the sheet: one button per outcome from the page's PINNED list (not a node), the stake, the 5% fee and the 0-5% donation
 //     lines; Cancel ends it and makes nothing; an unpinned market asks the second confirmation and stakes nothing without it;
@@ -40,7 +40,7 @@ test('the sheet: the pinned market\'s outcomes, the stake, the market\'s fees (0
   console.log('  SHEET:', JSON.stringify({ title: sheet.title, outcomes: sheet.outcomes.map((o) => o.label), lines: sheet.lines, confirm: sheet.confirm }));
   assert.deepEqual(sheet.outcomes.map((o) => o.label), ['above 100k', 'between', 'below 90k']);
   assert.equal(sheet.lines.stake, 'stake 1,000 sats');
-  // THE MARKET'S OWN RATES (kanban #235, the owner 2026-10-09: 0.5 % + 0.5 % by default), BOTH DUE AT RESOLUTION: one fee of 1 %,
+  // THE MARKET'S OWN RATES (2026-10-09: 0.5 % + 0.5 % by default), BOTH DUE AT RESOLUTION: one fee of 1 %,
   // in the fee lock, nothing donated at entry
   assert.equal(sheet.lines.fee, 'fees 1%: 10 sats - 0.5% nodes + 0.5% donation (half to the protocol devs, half to btc-close\'s dev), '
     + 'due once your pick is in at entry close - cancel before that costs nothing; back in full if the market is void or nobody picked right');
@@ -149,7 +149,7 @@ test('the pick: the entry carries it, every seat is handed the entry, the stake 
   for (const s of ['seat-a', 'seat-b']) for (const door of ['/entry', '/lock', '/fee-lock']) assert.ok(posts.includes(`${s}${door}`), `${s}${door} not handed`);
 });
 
-test('a hidden move is the tab\'s once the seats took its entry: onEntries before the guardians accept, the locks after (kanban #293)', async () => {
+test('a hidden move is the tab\'s once the seats took its entry: onEntries before the guardians accept, the locks after', async () => {
   const seed = b32(3);
   const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
   const entry = { ...entryFor(round, { seed, curve: (await import('../src/page-curve.js')).pageCurve, random: () => b32(5), pick: 1 }), roundId: ROUND_ID, sessionPubkey: b32(6) };
@@ -229,7 +229,7 @@ test('the outcome: verified when the pinned attestors signed it, UNVERIFIED for 
   console.log('  FREE LINES:\n   ' + freeLines.join('\n   '));
   assert.match(freeLines[0], /verified\) · your pick was right \(free round\)$/);
   assert.match(freeLines[1], /verified\) · your pick was wrong \(free round\)$/);
-  // NOBODY ON THE OTHER SIDE (kanban #350, the first paid Up/Down window, 2026-10-13 23:45Z): one order alone, its side won -
+  // NOBODY ON THE OTHER SIDE (the first paid Up/Down window, 2026-10-13 23:45Z): one order alone, its side won -
   // nothing filled, the lock comes back whole, not "you won 0 sats"
   const alone = [{ entryId: 'aa'.repeat(32), stakeMsat: 1_000_000n, feeMsat: 10_000n, donationMsat: 0n, pick: 0 }];
   const aloneTable = JSON.parse(JSON.stringify(pariMutuelTable({ entries: alone, outcome: 0 }), (k, v) => (typeof v === 'bigint' ? String(v) : v)));
@@ -238,7 +238,7 @@ test('the outcome: verified when the pinned attestors signed it, UNVERIFIED for 
   assert.match(aloneLines[0], /verified\) · nobody took the other side: your 1,000 sats come back whole when the lock expires$/);
 });
 
-test('the order (kanban #237): the entry carries its pick, limit price and expiry; an order without a pick or a whole price is refused', async () => {
+test('the order: the entry carries its pick, limit price and expiry; an order without a pick or a whole price is refused', async () => {
   const seed = b32(3);
   const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
   const curve = (await import('../src/page-curve.js')).pageCurve;
@@ -254,7 +254,7 @@ test('the order (kanban #237): the entry carries its pick, limit price and expir
   assert.throws(() => entryFor(round, { seed, curve, random: () => b32(5), pick: 0, limitPrice: 1.5 }), /a limit price is a whole number/);
 });
 
-test('an order brings its own amount (kanban #237): orderStakeMsat beside the contract is what the entry stakes and pays its fee on', async () => {
+test('an order brings its own amount: orderStakeMsat beside the contract is what the entry stakes and pays its fee on', async () => {
   const { stakeOf } = await import('../src/join.js');
   const round = { ...CONTRACT, id: ROUND_ID, stakeMsat: 0n };
   assert.equal(stakeOf(round), 0n);

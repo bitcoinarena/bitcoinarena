@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ITEM PURCHASE, AS A SEAT KEEPS IT (kanban #365): its own terms, then every output with the federation; one payment, one purchase.
+// AN ITEM PURCHASE, AS A SEAT KEEPS IT: its own terms, then every output with the federation; one payment, one purchase.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -66,7 +66,7 @@ test('refused by name: outputs the federation does not hold, or holds otherwise;
   assert.deepEqual([noFed.ok, noFed.status], [false, 503]);
 });
 
-// THE BUYER'S DEVELOPERS' SHARE (kanban #377, the owner 2026-10-16: "fully optional ... Node fees are never optional"): a 0 % purchase pays
+// THE BUYER'S DEVELOPERS' SHARE (2026-10-16: "fully optional ... Node fees are never optional"): a 0 % purchase pays
 // the seven nodes alone - 250 sat - and a seat keeps it as the buyer's, the record handed as the page sends it (decoded from its bytes)
 test('a purchase at 0 % - the nodes alone, 250 sat - is kept as the buyer\'s, read back from its bytes as the door reads it', async () => {
   const { decodePurchase, encodePurchase } = await import('../../arena-protocol/src/purchase.js');

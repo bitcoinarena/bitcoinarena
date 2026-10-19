@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LEADERBOARD PAYOUT, END TO END (kanban #460, the owner 2026-10-17/18): the pass rule - YES >= 25 % of the voting weight over the 2-week
+// A LEADERBOARD PAYOUT, END TO END (2026-10-17/18): the pass rule - YES >= 25 % of the voting weight over the 2-week
 // vote, no signal, a larger NO does not block it; the winners - the top N of the season by P&L, identities only (rows without one are
 // skipped and the next moves up), a tie at the cut sharing the places it spans; the 10 % cap; and the payout - seven guardian seats on
 // one fake federation pay the winners in the federation from the reserves, and a winner's page collects its payout as a zap.

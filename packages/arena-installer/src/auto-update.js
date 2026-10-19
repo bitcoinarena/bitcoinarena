@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AUTO UPDATE (kanban #505, the owner 2026-10-19: "Also include an Auto update for v0.1.1", "Publish it on a but unlisted for now, only nodes
+// AUTO UPDATE (2026-10-19: "Also include an Auto update for v0.1.1", "Publish it on a but unlisted for now, only nodes
 // see it. Later it's going to be on public GitHub"). A node updates itself to a newer release:
 //
 //   1. the newest release is the signed release/latest.json (release-latest.js: believed only under the Arena release key);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// POST /item-purchase and GET /items (kanban #365): the doors answer by name before any game sells an item.
+// POST /item-purchase and GET /items: the doors answer by name before any game sells an item.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';

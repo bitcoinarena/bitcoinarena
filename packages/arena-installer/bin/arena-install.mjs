@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE INSTALLER (kanban #471): start it, open the link it prints, finish in the browser.
+// THE INSTALLER: start it, open the link it prints, finish in the browser.
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
 //     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
@@ -10,10 +10,10 @@
 //     arena-install --add-custody [--home ~/.arena-node]
 //
 // --tunnel     open a Cloudflare quick tunnel (no account) and print its https link instead - by itself in a remote session (ssh, or
-//              Linux without a display: session.js, kanban #503)
+//              Linux without a display: session.js)
 // --local      the 127.0.0.1 link even in a remote session (an ssh port forward)
 // --port       the wizard's local port (127.0.0.1 only)
-// --seat-port  the node's port for connections from outside (8470, kanban #471 ruling 7)
+// --seat-port  the node's port for connections from outside (8470, ruling 7)
 // --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
 // --update     update this node to a downloaded release: SHA256SUMS and SHA256SUMS.sig beside the asset are checked against the Arena
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
@@ -49,7 +49,7 @@ const cloudflared = process.env.ARENA_CLOUDFLARED || 'cloudflared';   // the rel
 // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"). Awaited: nothing after the command runs.
 const finish = (code) => new Promise(() => { setTimeout(() => process.exit(code), 1500); });
 
-// AN UPDATE (kanban #471 part E): checked, unpacked beside the running release, the node moved to it (update.js)
+// AN UPDATE: checked, unpacked beside the running release, the node moved to it (update.js)
 if (args.includes('--update')) {
   const { updateNode } = await import('../src/update.js');
   const { checkAsset } = await import('../src/release-verify.js');
@@ -68,7 +68,7 @@ if (args.includes('--update')) {
   // the Windows asset is a .zip: Windows 10+ has tar (bsdtar), which reads zip too
   if (!existsSync(`${dir}/${name}`)) execFileSync('tar', [asset.endsWith('.zip') ? '-xf' : '-xzf', asset, '-C', dir]);
   const s = state.read();
-  // the auto update service (kanban #505) for a node that has none yet
+  // the auto update service for a node that has none yet
   const { installUpdater } = await import('../src/launchers.js');
   const { installProgram } = await import('../src/service.js');
   const { serviceFile } = await import('../src/node-services.js');
@@ -81,7 +81,7 @@ if (args.includes('--update')) {
   await finish(r.ok ? 0 : 1);
 }
 
-// A LARGER BOND (kanban #471 part D): the plan, then with --yes the broadcast
+// A LARGER BOND: the plan, then with --yes the broadcast
 if (args.includes('--rebond')) {
   const { rebond } = await import('../src/rebond.js');
   const { readFileSync } = await import('node:fs');
@@ -99,7 +99,7 @@ if (args.includes('--rebond')) {
   await finish(0);
 }
 
-// A FEDERATION FOR THE GATEWAY (kanban #471 slice 5, ruling 3: by invite)
+// A FEDERATION FOR THE GATEWAY (ruling 3: by invite)
 if (args.includes('--join-federation')) {
   const { joinFederation, testGateway } = await import('../src/gateway.js');
   const g = state.read().gateway;
@@ -120,7 +120,7 @@ if (args.includes('--add-custody')) {
 
 let tunnel = null, server = null;
 const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l), onDone: () => {
-  // the public address when the node has one (the owner 2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")
+  // the public address when the node has one (2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")
   const pub = (state.read().reach || {}).url;
   console.log(`\nDone. Your node runs as the user service arena-node.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/Dashboard/owner${pub ? '' : ' (this machine only)'}`);
   const l = state.read().launchers;
@@ -130,7 +130,7 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   server.close(); setTimeout(() => process.exit(0), 300);
 } });
 
-// THE TUNNEL ENDS WITH THE INSTALLER (kanban #503, measured on the test host: an installer ended by a signal left its cloudflared running,
+// THE TUNNEL ENDS WITH THE INSTALLER (measured on the test host: an installer ended by a signal left its cloudflared running,
 // holding a public link to nothing): Ctrl-C, a closed ssh session (SIGHUP) or a kill close the tunnel first
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { if (tunnel && tunnel.close) tunnel.close(); } catch { /* ending anyway */ } process.exit(130); });
 
@@ -138,7 +138,7 @@ server = http.createServer((req, res) => wizard.handle(req, res));
 server.listen(port, '127.0.0.1', async () => {
   const local = `http://127.0.0.1:${port}/?t=${wizard.token}`;
   console.log(`Arena node installer (testnet4). Node home: ${home}`);
-  // A REMOTE SESSION (kanban #503): an ssh login or a Linux machine without a display gets no window and no browser here - the setup
+  // A REMOTE SESSION: an ssh login or a Linux machine without a display gets no window and no browser here - the setup
   // page through a temporary Cloudflare link, to open on a phone or laptop (session.js); --local keeps the 127.0.0.1 link
   const mode = setupLinkMode(args);
   if (mode.tunnel) {

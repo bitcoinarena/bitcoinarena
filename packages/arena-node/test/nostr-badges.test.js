@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BADGES ON NOSTR (kanban #362, PLATFORM-RESEARCH item 13): a seat signs NIP-58 events - one Badge Definition (kind 30009) per
+// BADGES ON NOSTR (PLATFORM-RESEARCH item 13): a seat signs NIP-58 events - one Badge Definition (kind 30009) per
 // catalogue badge, a Badge Award (kind 8: an `a` tag 30009:<seat>:<d>, a `p` tag the player's x-only identity key) per badge
 // earned - each id NIP-01's hash and each signature BIP-340 by the seat's key. An award is issued once, across a restart; a
 // round counts once its settlement is ACCEPTED, read as the season reads it; nothing goes to a bare round key; and a real
@@ -181,7 +181,7 @@ test('the book: a round counts once ACCEPTED; each award is issued once, across 
   } finally { book.stop(); await relay.close(); }
 });
 
-// THE WEEKLY BOARD FROM THE NETWORK (kanban #362): a closed week's rounds as several seats hand them in, each entry with its
+// THE WEEKLY BOARD FROM THE NETWORK: a closed week's rounds as several seats hand them in, each entry with its
 // round key - in season-read.js's shape, the week before MON
 const MON = Date.UTC(2026, 9, 12);
 const DUE = MON + BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS;

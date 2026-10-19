@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GUARDIAN'S OWN ABSENCE ATTESTATIONS (spec §23A.4: "Each guardian signs, once a day while it lasts, (federation_id, peer,
-// last_seen_height, height) for every peer it has not seen in consensus"; kanban #322), the producing slice - absence.js holds the
+// last_seen_height, height) for every peer it has not seen in consensus"), the producing slice - absence.js holds the
 // signed objects and absences.js the seat's store. The node runs its guardian (§23A.2), so it asks it: the admin `status` of the
 // stock API names, per peer id, its connection and the last session it contributed to (measured on testnet4 A at 07:0xZ: six
 // peers connected, last_contribution 5082 = session_count). A peer is SEEN while it contributed to the newest or the previous
@@ -70,7 +70,7 @@ export async function wsAdminStatus(port, password, { timeoutMs = 10000, WebSock
 }
 
 /**
- * A GUARDIAN'S OWN DEPARTURE NOTICE (§23A.5, RULED the owner 2026-09-21 "Leaving is legitimate"): when its owner signs Leave, the
+ * A GUARDIAN'S OWN DEPARTURE NOTICE (§23A.5, RULED 2026-09-21 "Leaving is legitimate"): when its owner signs Leave, the
  * node signs (federation_id, its peer key, leave_after = tip + departure_notice, posted_at = tip) with its node key - the
  * shortest notice that stands. `own` is { federation (hex), peerKey } of the record that names this node a guardian.
  */

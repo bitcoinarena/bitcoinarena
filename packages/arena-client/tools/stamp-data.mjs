@@ -54,7 +54,7 @@ if (!back.equals(data)) throw new Error('the stamped stream does not decompress 
 writeFileSync(file, out);
 console.log(`lgwin ${lgwin}, ${orig.length} -> ${out.length} bytes, decompresses to the stamped data`);
 
-// THE STAMP INSIDE AN LZ4 BLOCK (kanban #200: the 0.0.2822 and 0.0.2829 builds keep `build` in a compressed block of
+// THE STAMP INSIDE AN LZ4 BLOCK (the 0.0.2822 and 0.0.2829 builds keep `build` in a compressed block of
 // data.unity3d, so the bytes above never hold it in the clear). The data is UnityWebData1.0: a file table, then the files;
 // data.unity3d is a UnityFS bundle whose blocks are LZ4. Its blocks are decompressed to find the stamp; the block(s)
 // holding it are stored UNCOMPRESSED with the new stamp (a UnityFS block names its own compression), every other block

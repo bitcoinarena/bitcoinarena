@@ -11,7 +11,7 @@
 // 0.10 is the rule the whole thing exists under: another player's truck is a
 // PICTURE. It is never an input to my simulation, and every one of these
 // frames came out of `ghosts.js` -> `replay.js`, the one door.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -174,7 +174,7 @@ test('a second identity\'s ghost arrives on the socket, carrying the truck the c
 });
 
 /**
- * A GHOST NEEDS NO MONEY. M3.3-19, the owner 2026-09-10 11:15: "satoshis are
+ * A GHOST NEEDS NO MONEY. M3.3-19, 2026-09-10 11:15: "satoshis are
  * optional; a stake-0 round must take entries without Lightning so ghosts can be
  * tested with no wallet". The Daily refused exactly this signer node.
  *

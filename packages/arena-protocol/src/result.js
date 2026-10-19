@@ -73,7 +73,7 @@ export const RESULTS_FOR_FINAL = 5;
 export const FRONT_MODE = Object.freeze({ LIVE: 1, SIM: 2 });
 
 export function encodePlayerResult(r) {
-  // A PRICE ROUND'S RESULT CARRIES ITS FRONT (§13 front_*, kanban #312) under its own type; every other result keeps its 168 bytes and id
+  // A PRICE ROUND'S RESULT CARRIES ITS FRONT (§13 front_*) under its own type; every other result keeps its 168 bytes and id
   const front = r.front !== undefined && r.front !== null;
   const w = new Writer();
   w.u8(front ? TYPE_RESULT_FRONT : TYPE_RESULT);
@@ -130,7 +130,7 @@ export const RESULT_BYTES = 168;
 export const SIGNED_RESULT_BYTES = RESULT_BYTES + RESULT_SIGNATURE_BYTES;
 /** A price round's result: + front (1) + open cents (4) + close cents (4) + mode (1). */
 export const RESULT_FRONT_BYTES = RESULT_BYTES + 10;
-/** THE SIZE OF THE RESULT STARTING AT `at`, by its type byte (kanban #312): a stream of results cuts record by record. */
+/** THE SIZE OF THE RESULT STARTING AT `at`, by its type byte: a stream of results cuts record by record. */
 export function resultBytesOf(bytes, at = 0) {
   const t = bytes[at];
   if (t === TYPE_RESULT) return RESULT_BYTES;

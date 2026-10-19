@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// reserve-bad-entries.mjs (kanban #397 slice 1, the fail measurement): three entries a version-11 round must refuse, sent to its seats
+// reserve-bad-entries.mjs (the fail measurement): three entries a version-11 round must refuse, sent to its seats
 // on testnet4 - the protocol reserves' rules as the seats hold them live.
 //   v10way       an entry that pays the old way on a v11 round: fee 4,000 msat, donation 4,000 (the developers' part only), no
 //                reserve lock. Expected at /entry: 409 "... are 6000 msat, not 4000"; nothing kept (GET /entry answers no entry).
@@ -8,7 +8,7 @@
 //                key - and an entry that names it and claims the right 6,000 msat. Expected at /lock: 409 "... is not 2000 msat to key
 //                ..."; no reserve row on any seat.
 //   otherkey     the same with 2,000 msat to a key that is not the federation's reserve key. Expected: the same refusal.
-//   right        the same lock with the reserve output right - 2,000 msat to the reserve key (the page's protocol-11 entry, kanban #397:
+//   right        the same lock with the reserve output right - 2,000 msat to the reserve key (the page's protocol-11 entry,:
 //                the headless tn4-live-run.mjs builds the pre-11 split and every seat refused it, "the node fee is 4000 msat (4 %), not
 //                5000"). Expected: the entry and its lock taken on the seats, and the federation's held reserves 2,000 msat higher.
 // The round: ROUND, else the next version-11 nextblock round of federation B open for entries and starting 75 s ahead.

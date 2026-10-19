@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SCREEN THAT WAITS ON THE PLAYER IS NOT A STALL (kanban #379). The page's loading watch runs under the page's name
+// A SCREEN THAT WAITS ON THE PLAYER IS NOT A STALL. The page's loading watch runs under the page's name
 // (page-script.js) with a fake clock and screen. Measured on live UI 166 before: the watch failed with "Nothing has loaded
 // for 90 seconds" behind the wallet start screen and behind the games list; a loading screen the player looks at still fails.
 import { test } from 'node:test';
@@ -12,7 +12,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const WATCH = slice('    const LOAD_STALL_S = 90;', "    }, 1000);\n");
-// the helpers after the watch, through stallMessage (before #379 only stallMessage was there)
+// the helpers after the watch, through stallMessage (before only stallMessage was there)
 const HELPERS = slice(HTML.includes('    function loadWaitsOnPlayer() {') ? '    function loadWaitsOnPlayer() {' : '    function stallMessage(at, progress) {', "+ '). Check your connection and reload the page.';\n    }\n");
 
 function run({ seconds, covered = () => false, startPending = () => false, hidden = () => false }) {

@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// THE RESULT SUMMARY'S WORDS (the owner 2026-10-04): the four lines on the end card, from the round result the page read -
+/// THE RESULT SUMMARY'S WORDS (2026-10-04): the four lines on the end card, from the round result the page read -
 /// names by outcome, the top-3 high score in the lobby's units, this player's result and net, and the preliminary balance
 /// list headed by how many runs five signers signed. Nothing is worked out here that the seats did not say.
 /// </summary>
@@ -62,7 +62,7 @@ public class ResultSummaryTests
         Assert.AreEqual("0.00001", ResultSummary.Score(1));
     }
 
-    // THE CARD WAITS FOR THE SIGNED RESULT (the owner 2026-10-04, option 1): the page's hold rides with the summary
+    // THE CARD WAITS FOR THE SIGNED RESULT (2026-10-04, option 1): the page's hold rides with the summary
     [Test]
     public void ThePagesHoldIsRead()
     {

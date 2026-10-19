@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STAKE-LOCK PORT'S GUARDIANS, SEND AND SETTLE: what the node hands the fork's blwp-stake-lock and how it reads it back
-// (kanban #149 step 2, plan comment 249, Go 2026-10-05). A stand-in tool logs its argv and prints, per mode, what the real
+// (plan comment 249, Go 2026-10-05). A stand-in tool logs its argv and prints, per mode, what the real
 // one prints (tools/stake-lock/src/main.rs: one JSON line on stdout, exit 0; a hard error on stderr, exit 1, no JSON).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -122,7 +122,7 @@ test('a tool that fails before it answers, or prints no JSON, is an error - neve
   await assert.rejects(stakeLockPort({ serve: false, bin: join(tmpdir(), 'no-such-blwp-stake-lock'), dataDir: '/d' }).feesRead(), /blwp-stake-lock: /);
 });
 
-// THE SPLIT (the owner 2026-10-05, decision (b) on comment 251): the live tool prints one JSON line and exits clean, or fails
+// THE SPLIT (2026-10-05, decision (b) on comment 251): the live tool prints one JSON line and exits clean, or fails
 // with no JSON; JSON followed by death is a kill after the print - the port's 60 s timeout while the client shuts down. A
 // JSON line printed before the process died is its answer: a settle that printed accepted true and was then killed was
 // submitted, and the seat must not settle that stake again. A tool killed before it answered is an error.
@@ -138,7 +138,7 @@ test('killed after it printed: its JSON is the answer (a settle killed after "ac
     /^Error: blwp-stake-lock settle timed out after 1500 ms/, 'killed before any JSON: an error that says it timed out, never read as accepted');
 });
 
-// THE GATEWAYS ANSWER (kanban #149, the owner 2026-10-05 on comment 266; stake-lock-port.js:98): the mapping of each gateway the
+// THE GATEWAYS ANSWER (2026-10-05 on comment 266; stake-lock-port.js:98): the mapping of each gateway the
 // live tool answers, which a seat reads to decide whether a paid round can open. The fake answers in the real tool's shape
 // (tools/stake-lock/src/main.rs gateways: a live one with its routing info, one that does not serve the federation with its
 // why) and the answer is read once a minute, not at every ask.

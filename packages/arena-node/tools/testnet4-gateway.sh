@@ -3,7 +3,7 @@
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # ONE LNv2 GATEWAY OF THE TESTNET FEDERATION, ON ONE testnet4 LND (the ruled pick A: one gateway on each testnet4 LND).
 # Stock gatewayd, base fee zero. Its Fedimint network label is the federation's: `testnet4`, which the guardians read off
-# the chain's block-1 hash once Fedimint knows it (tools/fedimint-testnet4.patch; the owner 2026-09-27 07:51) - the stock
+# the chain's block-1 hash once Fedimint knows it (tools/fedimint-testnet4.patch; 2026-09-27 07:51) - the stock
 # gatewayd asserts only that its LND and its label agree, and LND says testnet4. The LND's TLS certificate and admin macaroon are copied beside the
 # gateway's data, because the fedimint bundle runs in a user chroot that does not see /mnt/bitcoin (a separate mount).
 #

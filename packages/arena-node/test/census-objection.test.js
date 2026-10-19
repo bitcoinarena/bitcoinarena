@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A CLIENT'S CENSUS OBJECTION (§5A.4, kanban #299): the seat checks it on its own chain against the named explorer. Upheld - the explorer
+// A CLIENT'S CENSUS OBJECTION (§5A.4): the seat checks it on its own chain against the named explorer. Upheld - the explorer
 // names another block at the census height - the round takes no new entry and its row says census_objected; an explorer that agrees, or
 // cannot be asked, does not uphold it.
 import { test } from 'node:test';

@@ -79,7 +79,7 @@ export function decodeObjection(bytes) {
 export const objectionId = (o) => taggedHash(TAG.objection, encodeObjection(o));
 
 /**
- * THE OBJECTION AS IT TRAVELS (§13A, kanban #24, RULED the owner 2026-10-04): "a portable artifact consisting of round_id,
+ * THE OBJECTION AS IT TRAVELS (§13ARULED 2026-10-04): "a portable artifact consisting of round_id,
  * player_pubkey, transcript (inputs + checkpoints), receipts[], claimed_result, objector_signature". Until this, the
  * door took no body: an objection was only "one arrived", and it held only where the seat's own replay already
  * disagreed, so a player holding a receipted transcript could not overturn seats that agreed on a lie.
@@ -111,7 +111,7 @@ export function decodeObjectionBundle(bytes) {
   const signature = part();
   const transcript = part();
   const receipts = part();
-  // THE RUN'S INPUTS, a fifth part when the transcript carries none (kanban #24, measured live 2026-10-04: the live
+  // THE RUN'S INPUTS, a fifth part when the transcript carries none (measured live 2026-10-04: the live
   // client sends its ticks as play frames, so a live run's canonical transcript is its receipted marks over no batches,
   // and its inputs are what GET /replay/transcript hands out - JSON, absolute ticks). Checked against the marks' state
   // hashes by the replay; never trusted on their own.
@@ -207,7 +207,7 @@ export function finality({
   const window = contract && contract.objectionWindowMs;
   if (typeof window !== 'bigint')
     return { state: null, why: 'the round contract does not say how long the objection window is' };
-  // EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): any other number is an invalid contract.
+  // EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01): any other number is an invalid contract.
   if (window !== OBJECTION_WINDOW_MS)
     return { state: null, why: `the round contract's objection window is ${window} ms, not ${OBJECTION_WINDOW_MS}: an invalid contract` };
 

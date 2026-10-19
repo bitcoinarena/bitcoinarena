@@ -233,7 +233,7 @@ namespace Blwp
 
         /// <summary>
         /// WHETHER THE CORE TAKES THE TRUCK BACK: it stopped at a run's end and a new session is live
-        /// (the owner 2026-09-15 16:14, hole 1: a second PLAY in the same tab starts a new round). The
+        /// (2026-09-15 16:14, hole 1: a second PLAY in the same tab starts a new round). The
         /// page has already put the core into the new round's world when that session started
         /// recording; this only lets it drive again. A handover (`OnDisable`) is never taken back.
         /// </summary>
@@ -640,7 +640,7 @@ namespace Blwp
                 _prevHeading = BlwpCore.TruckHeading;
                 _havePrev = true;
 
-                // THE LIVE PRICE, every 300 ticks, before the tick it belongs to (the owner 2026-09-17 16:01: the chart was
+                // THE LIVE PRICE, every 300 ticks, before the tick it belongs to (2026-09-17 16:01: the chart was
                 // frozen - no sample had ever reached the core). The feed's last price; none while it is not live.
                 if (BlwpCore.SampleDue(BlwpCore.State))
                 {
@@ -654,7 +654,7 @@ namespace Blwp
 
         MarketFeed _feed;
 
-        // THE LIVE TAPE, FRESH FOR EVERY CORE (the owner 2026-09-17 16:44 / 16:46: the same seeded candles on every reload;
+        // THE LIVE TAPE, FRESH FOR EVERY CORE (2026-09-17 16:44 / 16:46: the same seeded candles on every reload;
         // "the prices must be 100% current, not pre-seeded and cached"). A new core - the page's first, a roll-out restart,
         // the network's init for a run - shows as the tick going back; each one asks Binance for the last 320 s at that
         // moment and hands the 64 five-second prices to the core before the next tick, while no live sample has landed.
@@ -708,7 +708,7 @@ namespace Blwp
         public const int MostTicksPerFrame = 8;
 
         /// <summary>
-        /// HOW MANY TICKS THIS FRAME STEPS, AND THE TIME IT GIVES UP (the owner 2026-09-16 12:26: "tanks
+        /// HOW MANY TICKS THIS FRAME STEPS, AND THE TIME IT GIVES UP (2026-09-16 12:26: "tanks
         /// suddenly become very fast and race to another place - not instant", on login, every time).
         ///
         /// The loop stepped at most `most` ticks a frame and kept the rest of the time owed. A frame
@@ -728,7 +728,7 @@ namespace Blwp
             => TicksDue(ref accumulator, step, most, out dropped, out _);
 
         /// <summary>
-        /// AND A DEBT IS JUMPED, NOT WALKED AND NOT THROWN AWAY (the owner 2026-09-18 10:42: "TANKS are in completely
+        /// AND A DEBT IS JUMPED, NOT WALKED AND NOT THROWN AWAY (2026-09-18 10:42: "TANKS are in completely
         /// different places in the two sessions, as if each tab has its own game").
         ///
         /// Dropping the time kept one page's world slower than another's: two tabs of one round showed the same block

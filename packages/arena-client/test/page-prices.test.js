@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE'S PRICE, APPLIED AT ITS TICK (§11, kanban #311): the page's own block (page-script.js) on a fake core,
+// THE COMMITTEE'S PRICE, APPLIED AT ITS TICK (§11): the page's own block (page-script.js) on a fake core,
 // client and seat. Measured: before any attested sample nothing changes; once the seats serve them, Unity's own price reaches
 // no core and no batch, and each attested sample (and the tape at tick 0) is handed to the core just before its tick, in the
 // tape's unit, and to the client with its signatures.

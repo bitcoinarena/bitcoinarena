@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RUN STOPS WHEN THE CORE SAYS IT IS OVER (the owner 2026-09-15 16:14).
+// THE RUN STOPS WHEN THE CORE SAYS IT IS OVER (2026-09-15 16:14).
 //
 // Measured before, replaying every run a signer node held: each truck that drove into the miner's
 // mouth was DELIVERED in the core - and its page recorded 620 to 5319 more ticks (10-89 s) while the
 // truck sat at the tunnel's back wall. `finish` is handed the core's word by the page; this measures
 // what it does with it on one real daemon: every held tick reaches the node, nothing after, the run
 // ends FINISHED (not an outcome - that is the replay's), and the socket is closed.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -95,7 +95,7 @@ test('the core\'s DELIVERED finishes only a run the client has been told it is p
   } finally { client.ended = true; client.close(); await n2.close(); }
 });
 
-// WRECKED AND MISSED LATCH IN THE CORE THE SAME WAY DELIVERED DOES (the owner 2026-09-15: "end the
+// WRECKED AND MISSED LATCH IN THE CORE THE SAME WAY DELIVERED DOES (2026-09-15: "end the
 // run here too, same client path"). Before this, only DELIVERED ended a run: a wrecked or missed
 // run went on recording to the run's last tick with the player on a truck that could not drive.
 for (const [state, word] of [[2, 'WRECKED'], [3, 'MISSED']]) {
@@ -149,7 +149,7 @@ test('when the core says the run is over, every held tick reaches the node, noth
     assert.equal(client.ended, true);
     assert.equal(client.ending, 'FINISHED', `ended ${client.ending}: ${client.endingReason}`);
     assert.equal(client.hold.length, 0);
-    // AND THE LINE STAYS UP, FOR WATCHING (the owner 2026-09-18 19:30: "spectate after a round: no action in the world,
+    // AND THE LINE STAYS UP, FOR WATCHING (2026-09-18 19:30: "spectate after a round: no action in the world,
     // as if no longer connected to the nodes"). It used to close here, and it is the only connection a page has, so a
     // player who pressed SPECTATE after their run was shown a world with nothing moving in it. What must not happen
     // is a tick going out past the end, and that is asserted below rather than bought by hanging up.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PERMANENT NAME ON THE OPERATOR'S OWN workers.dev (kanban #471, the owner 2026-10-18: "Implement workers dev tunnel"). For a node that
+// A PERMANENT NAME ON THE OPERATOR'S OWN workers.dev (2026-10-18: "Implement workers dev tunnel"). For a node that
 // cannot open a port and has no domain: its quick Cloudflare tunnel (a random name, new at every restart) sits behind a Worker on the
 // operator's own free Cloudflare account, https://arena-node-<id>.<their subdomain>.workers.dev - a name that never changes. The
 // Worker forwards every request (websockets too) to the tunnel; when the tunnel's name changes, the node uploads the Worker again with
@@ -28,7 +28,7 @@ async function cf(token, path, { method = 'GET', body = null, headers = {}, fetc
 /** The Worker: every request to the tunnel `target`, as it came; a redirect to the tunnel's own name turned back into the Worker's. */
 export function forwarderScript(target) {
   if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(target)) throw new Error('the Worker forwards only to a quick tunnel');
-  return `// The Arena node's permanent address (kanban #471), written by the node: it forwards to its quick tunnel, which it updates here.
+  return `// The Arena node's permanent address, written by the node: it forwards to its quick tunnel, which it updates here.
 const TARGET = ${JSON.stringify(target)};
 export default {
   async fetch(request) {

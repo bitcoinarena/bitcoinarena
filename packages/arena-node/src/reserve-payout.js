@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PAYOUT OF A PASSED FUNDING PROPOSAL FROM THE PROTOCOL RESERVES (§27A.9.3 "Payout", kanban #397 slice 8, the owner 2026-10-17: "Accepted:
+// THE PAYOUT OF A PASSED FUNDING PROPOSAL FROM THE PROTOCOL RESERVES (§27A.9.3 "Payout"2026-10-17: "Accepted:
 // the 5-of-7 LNURL payout you just wrote. Build that slice. No new fork.").
 //
 //   WHO SIGNS     the seven guardian seats of the federation that holds the reserves - its reserve key's DKG shares; any 5 of 7.
@@ -31,7 +31,7 @@ import { moveSeedOf } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
 
 /**
- * A LEADERBOARD PAYOUT'S MONEY (kanban #460): the inputs (reserve outputs) less their fees pay every winner's output and its fee; what is
+ * A LEADERBOARD PAYOUT'S MONEY: the inputs (reserve outputs) less their fees pay every winner's output and its fee; what is
  * left is the change back to the reserve key (largestPayoutMsat: it pays its own fee). `covers` false when the inputs fall short.
  */
 export function leaderboardAmounts({ inputs, winners, fees }) {
@@ -107,7 +107,7 @@ export function payoutAmounts({ inputs, contractMsat, fees }) {
 
 /**
  * THE MOST A MOVE CAN CARRY, in whole sat: the largest invoice whose contract at the gateway's fee, and its federation fee, all the given
- * reserve outputs still cover (kanban #397: a drained federation's reserves move whole, less the fees).
+ * reserve outputs still cover (a drained federation's reserves move whole, less the fees).
  */
 export function moveAmountSats(inputs, gwFee, fees) {
   const total = (inputs || []).reduce((t, x) => t + BigInt(x.amountMsat), 0n);
@@ -125,11 +125,11 @@ export function moveAmountSats(inputs, gwFee, fees) {
  * winnings-send.js; `network`; `keepRow(row)` a reserve row to keep (putDonationOutputs' shape); `broadcast(record)` to every seat.
  */
 // `leaderboards()` -> [{ id, federation (hex), amountSats, paymentHeight, decidableAt }] the leaderboard payouts whose vote passed here
-// (kanban #460); `winnersOf(id)` -> { ok, winners: [{ player, payoutPk (33-byte hex), msat }] } this seat's own reading of the season
+//; `winnersOf(id)` -> { ok, winners: [{ player, payoutPk (33-byte hex), msat }] } this seat's own reading of the season
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
   keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winnersOf = async () => ({ ok: false, why: 'no season reader' }) }) {
   db.exec(RESERVE_PAYOUT_SQL);
-  // A MOVE'S CLAIM (kanban #397, the drained-federation move): the destination's claim transaction and what it put under its reserve key
+  // A MOVE'S CLAIM (the drained-federation move): the destination's claim transaction and what it put under its reserve key
   for (const col of ['claim_txid', 'claim_msat']) if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} TEXT`);
   // A MOVE ONCE CALLED FOR STAYS KNOWN: planned, its inputs count as spent and the drained federation's unspent reserves read 0, so the
   // records no longer list it - and its signing, sending and claiming must go on
@@ -161,7 +161,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     item: `reserves moved from ${String(plan.federation).slice(0, 8)}` });
   const payoutsOf = (pr) => {
     const p = planOfRow(pr);
-    // A LEADERBOARD PAYOUT (kanban #460): one payout contract per winner, to its identity's refund key, then the change
+    // A LEADERBOARD PAYOUT: one payout contract per winner, to its identity's refund key, then the change
     if (p.kind === 'leaderboard') {
       const outs = p.winners.map((w) => ({ payoutPk: fromHex(w.payoutPk), msat: BigInt(w.msat) }));
       if (BigInt(p.changeMsat) > 0n) outs.push({ payoutPk: fromHex(p.reserveKey), msat: BigInt(p.changeMsat) });
@@ -175,7 +175,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     federationId: fromHex(plan.federation), recipientPk: fromHex(plan.reserveKey), amountMsat: BigInt(plan.changeMsat), contractId: `payout-change:${plan.proposal}`,
     senderOnContract: false, item: 'payout change' });
 
-  // A WINNER'S OUTPUT, kept as a row under its key (GET /donations?key= serves it): its page collects it as a zap (kanban #460, #463)
+  // A WINNER'S OUTPUT, kept as a row under its key (GET /donations?key= serves it): its page collects it as a zap
   const winnerRowsOf = (plan, txid) => plan.winners.map((w, i) => ({ outpoint: { txid: fromHex(txid), outIdx: BigInt(i) }, entryId: fromHex(plan.proposal), roundId: new Uint8Array(32),
     federationId: fromHex(plan.federation), recipientPk: fromHex(w.payoutPk), amountMsat: BigInt(w.msat), contractId: `leaderboard:${plan.proposal}:${i}`,
     senderOnContract: false, item: 'leaderboard payout' }));
@@ -298,7 +298,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   }
 
   /**
-   * DOES A LEADERBOARD PLAN STAND HERE (kanban #460) - a signer's own rebuild: the vote passed in its own record and the payment height is
+   * DOES A LEADERBOARD PLAN STAND HERE - a signer's own rebuild: the vote passed in its own record and the payment height is
    * reached; its own key of that federation; no other plan for it; every input one of its own unspent reserve outputs at that amount and
    * no more of them than the payout needs; the winners exactly as its own reading of the season names them (who, how much, in that
    * order); at most 10 % of that federation's reserves; the change as those inputs leave it.
@@ -517,7 +517,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     }
     return out;
   }
-  // THE LEADERBOARD PAYOUTS (kanban #460): from the payment height (and the vote decided) each guardian of the paying federation in
+  // THE LEADERBOARD PAYOUTS: from the payment height (and the vote decided) each guardian of the paying federation in
   // turn plans, signs and submits; PAID once the federation accepts the transaction - the winners' outputs are theirs then
   async function leaderboardRound({ height, feds }) {
     const out = [];
@@ -571,7 +571,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   }
   const payAmountsCover = (have, contractMsat, fees) => payoutAmounts({ inputs: have, contractMsat, fees }).covers;
 
-  // THE MOVES (kanban #397): each one the drained federation's guardians pay, then the destination's guardians claim
+  // THE MOVES: each one the drained federation's guardians pay, then the destination's guardians claim
   async function moveRound({ height, feds }) {
     const out = [];
     const ids = new Set((moves() || []).map((m) => m.id));

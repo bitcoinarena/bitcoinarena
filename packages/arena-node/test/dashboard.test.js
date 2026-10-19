@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// /Dashboard (the owner 2026-10-01 15:44): the figures and the page every node serves. An empty store says nothing earned,
+// /Dashboard (2026-10-01 15:44): the figures and the page every node serves. An empty store says nothing earned,
 // every category present, the guardian third and the costs at 0 with the reason named; the page reads dashboard.json.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,13 +24,13 @@ test('an empty node: every category and period is there, at 0, with 30 days of c
 
 test('the page draws dashboard.json and names every category', () => {
   const h = dashboardHtml();
-  assert.match(h, /<title>Bitcoin Arena · Node Dashboard<\/title>/);   // kanban #228: the engine's name on its node pages
+  assert.match(h, /<title>Bitcoin Arena · Node Dashboard<\/title>/);   //: the engine's name on its node pages
   assert.match(h, /fetch\('dashboard\.json'/);
   for (const n of ['Game/verify fee', 'Settlement fee', 'Guardian/custody fee', 'Other earnings', 'Lightning costs', 'Gateway costs', 'Absolute profit'])
     assert.ok(h.includes(n), n);
 });
 
-// THE ROUNDS ARE CLICKABLE (the owner 2026-10-03 22:25, plan accepted 2026-10-04): against a real node holding a round with an
+// THE ROUNDS ARE CLICKABLE (2026-10-03 22:25, plan accepted 2026-10-04): against a real node holding a round with an
 // entry - the page it serves carries the row toggle, the fetch of its own api/round-result (relative, so /guardian-N/ works)
 // and the replay link; and that endpoint answers every field the opened row draws.
 test('a real node: /dashboard opens a round to its players from api/round-result, each with a replay link', async () => {
@@ -76,7 +76,7 @@ test('a real node: /dashboard opens a round to its players from api/round-result
   } finally { await node.close(); }
 });
 
-// WHAT A NODE HOSTS (the owner 2026-10-03 22:50, plan accepted 2026-10-04): node 1 gateway A + LND 1, node 2 gateway B + LND 2,
+// WHAT A NODE HOSTS (2026-10-03 22:50, plan accepted 2026-10-04): node 1 gateway A + LND 1, node 2 gateway B + LND 2,
 // nodes 3-7 neither. A real node handed a hosts reader shows them; one without keeps both notes and no Hosts card.
 test('a real node that hosts an LND and a gateway shows them in dashboard.json; one that hosts neither keeps both notes', async () => {
   const { serve } = await import('../src/server.js');
@@ -112,7 +112,7 @@ test('a real node that hosts an LND and a gateway shows them in dashboard.json; 
   } finally { await hosting.close(); await bare.close(); }
 });
 
-// READABLE (kanban #125, the owner's playtest 2026-10-04 14:05, plan comment 218 accepted 2026-10-05). The Hosts card's label and
+// READABLE (the owner's playtest 2026-10-04 14:05, plan comment 218 accepted 2026-10-05). The Hosts card's label and
 // value both shrank and wrapped ("Routing fees, 30 / days" beside "0 sat · 0 / forwards"); the Notes card took the subtitle's
 // word-break:break-all and split inside words ("th e", "roun d", "gate way"); the fee chart's day lived only in an SVG title;
 // the Player column showed 8 hex of the key, because api/round-result read only a record's custom name.
@@ -179,7 +179,7 @@ test('api/round-result names every player: the custom name, else the lobby\'s ge
   } finally { await node.close(); }
 });
 
-// THE MONEY PATH (kanban #149 step 5, plan comment 249, Go 2026-10-05): a paying round in this node's store, its entries
+// THE MONEY PATH (plan comment 249, Go 2026-10-05): a paying round in this node's store, its entries
 // with this node's signed results, and the round's lock settlement. Earned only once the settlement is ACCEPTED - then
 // split as the settlement pays it (nodeFeeTable over the contract's own pools) and counted in the day, month, year and
 // the chart; before that, the same money is owed and never shown as earned.
@@ -254,7 +254,7 @@ test('a paying round with this node\'s results: an ACCEPTED settlement earns its
   }
 });
 
-// THE ROUNDS TABLE'S NET, AS THE DASHBOARD DRAWS IT (kanban #187 item 1 follow-up, the owner 2026-10-05 on comment 318). The
+// THE ROUNDS TABLE'S NET, AS THE DASHBOARD DRAWS IT (follow-up, 2026-10-05 on comment 318). The
 // page dashboardHtml() serves draws each player's result and netMsat from api/round-result with its own code: signedSat
 // ("+" before a positive net), the cell's class (ok positive, bad negative, none at zero or pending). Its renderer is lifted
 // out of the page as served and run with the four results playerBalance answers for a paying round.

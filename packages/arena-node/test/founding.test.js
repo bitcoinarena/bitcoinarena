@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FOUNDING CEREMONY AS THE SEATS RUN IT (spec §23A.2, kanban #320): eight guardian-capable nodes of eight operators; four drawn, three
+// A FOUNDING CEREMONY AS THE SEATS RUN IT (spec §23A.2): eight guardian-capable nodes of eight operators; four drawn, three
 // alternates. Every seat computes the same draw; the seated post signed setup codes, a code from anyone else is refused; with all
-// four codes in, each seated guardian adds the other three and starts the DKG (position 0 leads). THE WINDOW (kanban #320, comment
+// four codes in, each seated guardian adds the other three and starts the DKG (position 0 leads). THE WINDOW (comment
 // 2258): founding_window blocks from the beacon (trigger 100 -> beacon 101, window 10 -> it ends at 111), one window however many
 // replacements; a seated node with no code a FIFTH of the window (2 blocks) after it was seated is a no-show, replaced by the next
 // alternate in its position; at the window's end with no federation the founding is void.
@@ -145,7 +145,7 @@ test('the window passes without a federation: void at beacon + founding_window, 
   assert.deepEqual([m.seats[watcher].state().federation, m.seats[watcher].state().void], [true, false]);
 });
 
-// SEATED FIRST (§23A.6 step 1, kanban #326): a succession seats the old guardians n0..n2 first, in order - n0 leads - and draws one of the
+// SEATED FIRST (§23A.6 step 1): a succession seats the old guardians n0..n2 first, in order - n0 leads - and draws one of the
 // others; a seated-first node is held to the same fifth as a drawn one: silent, it is replaced by the next alternate in its position.
 function succession({ offline = new Set() } = {}) {
   const log = [];

@@ -498,7 +498,7 @@ public class CombatFx : MonoBehaviour
         return wrapper.transform;
     }
 
-    // THE DEAD ARE NOT SKINNED (kanban #266): WebGL skins on the CPU, every visible SkinnedMeshRenderer, every frame - and a
+    // THE DEAD ARE NOT SKINNED: WebGL skins on the CPU, every visible SkinnedMeshRenderer, every frame - and a
     // body never moves. In a named profile of the 7 s after 100 % (Pixel 7a profile, 10x CPU) Unity's skinned-mesh update was
     // 590-629 ms, DeformSkinnedMesh 438-501 ms. A body is the raw soldier prefab with no controller, so each holds the same
     // stored pose: that pose is baked once per mesh, and a body draws it as an ordinary mesh with its own materials.
@@ -837,7 +837,7 @@ public class CombatFx : MonoBehaviour
     {
         if (_live.Count >= maxPieces) return;
         var t = Take(_cubes, _cube, debrisMaterial ?? blastMaterial);
-        // ONE SIZE ABOVE THE BLAST POINT, not centred on it (the owner 2026-09-16 12:38, "black cube through
+        // ONE SIZE ABOVE THE BLAST POINT, not centred on it (2026-09-16 12:38, "black cube through
         // the road"). The blast point is on the road, so a chunk centred there started half inside it and
         // below its own resting height - measured on this rule, most chunks "landed" on their first frame,
         // right at the centre of the blast.

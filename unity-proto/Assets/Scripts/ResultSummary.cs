@@ -6,7 +6,7 @@ using System.Linq;
 using UnityEngine;
 
 /// <summary>
-/// THE RESULT SUMMARY ON THE END CARD (the owner 2026-10-04): who delivered and who did not, the high score, this player's
+/// THE RESULT SUMMARY ON THE END CARD (2026-10-04): who delivered and who did not, the high score, this player's
 /// win or loss, and a preliminary balance list - four lines under SCORE, above "copy game replay".
 ///
 /// Display only. Every number is the seats' own, from the round's /api/round-result as the page read it (index.html

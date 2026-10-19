@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CLAIMS ON A HALTED FEDERATION'S ESCROW (§23A.5 steps 2-4, kanban #323): the arbitration set's book, its doors, the
+// THE CLAIMS ON A HALTED FEDERATION'S ESCROW (§23A.5 steps 2-4): the arbitration set's book, its doors, the
 // offline note check's parsing, and the client that presents its notes - the federation's validation stubbed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -176,7 +176,7 @@ test('the claim key comes from the seed per federation; the payouts naming it ar
   finally { await doors.close(); }
 });
 
-test('the client presents its outputs still in issuance too: once, kept until taken, and "claimed before" counts as taken (kanban #323)', async () => {
+test('the client presents its outputs still in issuance too: once, kept until taken, and "claimed before" counts as taken', async () => {
   const { presentNotes, pendingRequestsKey } = await import('../../arena-client/src/liquidation-claim.js');
   const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   let asked = 0; const posts = [];

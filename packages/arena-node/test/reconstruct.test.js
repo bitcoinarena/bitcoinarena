@@ -128,7 +128,7 @@ const postedBy = (who, rid, result) => {
 };
 
 /**
- * HELD IN THE RESULT WINDOW (§13A, kanban #26 "posted within the window"; kanban #36): a seat counts only the results and postings
+ * HELD IN THE RESULT WINDOW (§13A, "posted within the window"): a seat counts only the results and postings
  * it held before the round's final_after (end + 600 s + 5 s), by its own clock. This fixture's round ended in 1970 and its seats
  * run on today's clock, so everything they hold arrived "after the window" and every run went VOID - on every machine, not only
  * the test host (measured 2026-10-16: "0 of 5 postings held in time"). What this file tests is reconstruction, not the window
@@ -275,7 +275,7 @@ async function everyoneReplays(nodes, stake) {
   // chain, a second away on the fixtures' block clock - waited for here, as a node waits for it.
   await untilNextBlock();
   // AND EVERY SEAT SIGNS IT FINAL TO EVERY SEAT (WINDOW-10-SPEC, as the two rounds below are signed): the round ended in 1970, so its
-  // window closed long ago - what a seat's own FINAL loop does live, done here at once (kanban #36: waited for, it was never in 8 s)
+  // window closed long ago - what a seat's own FINAL loop does live, done here at once (waited for, it was never in 8 s)
   const agreed = resultFinality(nodes[0].round, rid, out.eid);
   if (agreed.runId) {
     for (const holder of nodes) for (const who of nodes) {

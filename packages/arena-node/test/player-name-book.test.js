@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PLAYER'S NAME, NETWORK-WIDE (kanban #397 PIP, the owner 2026-10-17: "Have custom names in the protocol"): a seat keeps the newest
+// A PLAYER'S NAME, NETWORK-WIDE (PIP, 2026-10-17: "Have custom names in the protocol"): a seat keeps the newest
 // signed name per identity key and serves it on GET /funding; a name signed by another key, one breaking the lobby's rule, one dated
 // ahead of the seat's clock or an older one is not kept; an empty name stands (back to the generated one).
 import { test } from 'node:test';

@@ -19,7 +19,7 @@ const LIST = JSON.parse(readFileSync(at('../../arena-client/known-good-clients.j
 const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/NextBlock');
 // The lock client (W1b) makes the player's stake lock, so it is pinned too.
 const SCRIPTS = ['arena-client.js', 'blwp-curve.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
-// AND EACH GAME'S OWN (kanban #202: one list per game): nextblock's core bundle, and its mark (kanban #228)
+// AND EACH GAME'S OWN (one list per game): nextblock's core bundle, and its mark
 const MARK = ['nextblock-icon.svg', 'nextblock-wordmark.svg', 'favicon.ico', 'apple-touch-icon.png', 'nextblock-icon-192.png',
   'nextblock-icon-512.png', 'nextblock-og.png', 'site.webmanifest'];
 const GAME_SCRIPTS = { nextblock: ['blwp-core.js', ...MARK] };

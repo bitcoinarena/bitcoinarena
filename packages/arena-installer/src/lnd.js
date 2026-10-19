@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LIGHTNING FOR CUSTODY: LND, SET UP BY THE WIZARD (kanban #471 slice 5, "Custody help: set up LND (create or connect), its wallet and
+// LIGHTNING FOR CUSTODY: LND, SET UP BY THE WIZARD ("Custody help: set up LND (create or connect), its wallet and
 // the gateway, test it; or connect an existing LND"). Ruling 2: LND publishes a Windows build itself, so this part runs on all three.
 //
 //   install    LND v0.21.4-beta for this system from its GitHub release, checked against the SHA-256 its manifest names; the
@@ -69,12 +69,12 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
   const rpc = new URL(chain.url);
   const auth = chain.cookiePath ? [`bitcoind.rpccookie=${chain.cookiePath}`] : [`bitcoind.rpcuser=${chain.user}`, `bitcoind.rpcpass=${chain.password}`];
   const conf = [
-    '; The Arena node\'s Lightning node (kanban #471 slice 5), written by the installer.',
+    '; The Arena node\'s Lightning node, written by the installer.',
     // nat: LND asks the router (UPnP / NAT-PMP) to forward its peer port and announces the outside address - only when the wizard knows
     // neither: a node reached from outside announces externalip, one that is not runs Tor. LND STOPS when no router answers
     // (measured on the test host, rc.12: "unable to discover a NAT-PMP enabled device on the local network ... Shutting down"), so it is
     // never set beside Tor or an outside address.
-    // BEHIND TOR, ITS PEER PORT ON THIS MACHINE ONLY (kanban #471, the Windows VM 2026-10-19: listening on every network, lnd made Windows
+    // BEHIND TOR, ITS PEER PORT ON THIS MACHINE ONLY (the Windows VM 2026-10-19: listening on every network, lnd made Windows
     // Firewall ask to open it to public networks): inbound peers come through its onion, which Tor connects to locally (LND's own advice
     // for a Tor node, listen=localhost); a node reached from outside (externalip) or by its router (nat) listens on every interface
     '[Application Options]', `alias=${alias}`, `listen=${tor && !externalIp ? '127.0.0.1' : '0.0.0.0'}:${ports.p2p}`, ...(!tor && !externalIp ? ['nat=true'] : []), ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
@@ -208,7 +208,7 @@ export async function lndChannels(cfg, { rest = lndRest } = {}) {
     inboundSats: live.reduce((a, x) => a + x.remoteSats, 0), outboundSats: live.reduce((a, x) => a + x.localSats, 0) };
 }
 
-// THE FEDERATION'S CHANNEL RING (custody-agent.js, the owner 2026-10-18 "1 and 2"): peers by key, a connection to an address, and a
+// THE FEDERATION'S CHANNEL RING (custody-agent.js, 2026-10-18 "1 and 2"): peers by key, a connection to an address, and a
 // channel over a connection that already exists - whichever side dialled it (a node behind a tunnel dials out; the other opens).
 /** The pubkeys LND is connected to now. Answers { ok, peers: [hex], why }. */
 export async function lndPeers(cfg, { rest = lndRest } = {}) {
@@ -222,7 +222,7 @@ export async function lndConnect(cfg, { pubkey, host }, { rest = lndRest } = {})
   const r = await rest({ ...c, method: 'POST', path: '/v1/peers', body: { addr: { pubkey: String(pubkey).toLowerCase(), host }, perm: true, timeout: 20 } });
   return r.status === 200 || /already connected/i.test(errOf(r)) ? { ok: true } : { ok: false, why: errOf(r) };
 }
-/** The wallet's confirmed coins (kanban #494, the proof of a provider's free balance). Answers { ok, coins: [{ txid, vout, address, sats }] }. */
+/** The wallet's confirmed coins (the proof of a provider's free balance). Answers { ok, coins: [{ txid, vout, address, sats }] }. */
 export async function lndCoins(cfg, { rest = lndRest } = {}) {
   let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
   const r = await rest({ ...c, method: 'POST', path: '/v2/wallet/utxos', body: { min_confs: 1, max_confs: 2147483647 } });

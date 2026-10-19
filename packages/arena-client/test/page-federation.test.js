@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT THE PAGE DOES UNDER A FEDERATION'S SIGNED STATUS (spec §23A.1 / §23A.4, kanban #321), on the page's own code
+// WHAT THE PAGE DOES UNDER A FEDERATION'S SIGNED STATUS (spec §23A.1 / §23A.4), on the page's own code
 // (page-script.js): CRITICAL leaves Withdraw and Move only - Deposit refused by name, its buttons hidden; DRAINING closes
 // Deposit and nothing else; HALTED closes everything; OPEN and "unverified" change nothing. And the client's own
 // federationStatus: a record signed by the threshold of the census' bonded guardians is believed, anything else is
@@ -27,7 +27,7 @@ function page(status, extra = {}) {
   for (const id of ['arena-fed-note', 'blwp-money-why', 'blwp-settings']) el(id);
   const document = { getElementById: (id) => els[id] || null, body: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: (c) => classes.has(c) } } };
   const { move, wallet, ...fields } = extra;
-  // the wallet's own federation (its chip) holds the round's status unless a test names another (#402)
+  // the wallet's own federation (its chip) holds the round's status unless a test names another
   const st = status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined;
   const mine = wallet || (st ? st.federation || 'f'.repeat(64) : undefined);
   const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, BLWP_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
@@ -81,7 +81,7 @@ test('the client believes a record its census\' bonded guardians signed, and cal
   assert.equal(none.status, 'unverified', 'a census without its guardians: 4 bonded signers, short of 5');
 });
 
-// THE LOAD, SHOWN AND NOT REFUSED (§23A.3, kanban #324; refusing waits for the owner's ruling): an OPEN federation holding more
+// THE LOAD, SHOWN AND NOT REFUSED (§23A.3refusing waits for the owner's ruling): an OPEN federation holding more
 // than its guardians' bonds cover says so in the note, and a deposit still goes on
 test('an OPEN federation at load 4.33 says so in the note, and the deposit still goes on', async () => {
   const p = page('OPEN', { reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 });
@@ -97,10 +97,10 @@ test('an OPEN federation at load 4.33 says so in the note, and the deposit still
   assert.equal(under.els['arena-fed-note'].style.display, 'none', 'a load under 1 says nothing');
 });
 
-// THE NOTE SAYS THE WALLET'S FEDERATION (kanban #402, the owner 2026-10-17): the lobby checks rounds of A (load 4.33) and B (0.72) in
+// THE NOTE SAYS THE WALLET'S FEDERATION (2026-10-17): the lobby checks rounds of A (load 4.33) and B (0.72) in
 // turn; the note followed whichever came last and came and went. It now says the one on the wallet's chip, and a round of another
 // federation changes nothing - not its words, not whether it is shown.
-test('#402: the note follows the wallet\'s federation; rounds of another federation checked in turn leave it as it is', async () => {
+test('the note follows the wallet\'s federation; rounds of another federation checked in turn leave it as it is', async () => {
   const A = '337ae01a'.padEnd(64, '0'), B = 'b18947f0'.padEnd(64, '0');
   const a = { status: 'OPEN', allows: FEDERATION_ALLOWS.OPEN, reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 };
   const b = { status: 'OPEN', allows: FEDERATION_ALLOWS.OPEN, reserveSats: '108000', exposureCapSats: '150000', load: 0.72 };
@@ -125,7 +125,7 @@ test('#402: the note follows the wallet\'s federation; rounds of another federat
   assert.equal(r.els['arena-fed-note'].textContent, '');
 });
 
-// RULED A (the owner 2026-10-12, kanban #324): a deposit at load >= 1 is refused on mainnet only - a test network shows and warns
+// RULED A (2026-10-12): a deposit at load >= 1 is refused on mainnet only - a test network shows and warns
 test('load >= 1 refuses a deposit on a network that is not a test network, and on regtest and testnet4 refuses nothing', async () => {
   const MAIN = new Uint8Array(32).fill(0x6d);
   assert.equal(loadRefusesDeposit({ load: 4.3333, networkId: MAIN }), true);
@@ -142,7 +142,7 @@ test('load >= 1 refuses a deposit on a network that is not a test network, and o
   assert.equal((await p.openMoney('withdraw', () => {})).ok, true);
 });
 
-// MOVE, OFFERED FROM THE OTHERS' SIGNED LOADS (§23A.3, kanban #324): every federation the seats list is checked against the
+// MOVE, OFFERED FROM THE OTHERS' SIGNED LOADS (§23A.3): every federation the seats list is checked against the
 // census in one read (federationStatuses); the player's at 93 % and another at 40 % - Move is offered and the note says so
 test('two signed federations: the one above 90 % offers Move to the one below 50 %, and the note says it', async () => {
   const A = new Uint8Array(32).fill(0x37), B = new Uint8Array(32).fill(0x38);
@@ -175,7 +175,7 @@ test('two signed federations: the one above 90 % offers Move to the one below 50
   assert.equal(other.els['arena-fed-note'].style.display, 'none', 'an offer for another federation is not this one\'s note');
 });
 
-// THE DEPOSIT SCREEN'S SUMMARY (kanban #347, the owner 2026-10-12): funds, how many, health and capacity over all federations
+// THE DEPOSIT SCREEN'S SUMMARY (2026-10-12): funds, how many, health and capacity over all federations
 test('custodySummary: funds, count, health band and free capacity over the verified federations; the line and tooltip say them', async () => {
   const { custodySummary, custodySays } = await import('../src/federations.js');
   const a = { federation: 'aa', status: 'OPEN', reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 };

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE TWO GATEWAYS' PUBLIC ROOTS, REGISTERED AT ALL SEVEN GUARDIANS (the owner 2026-09-27: "Register both root URLs at all
+# THE TWO GATEWAYS' PUBLIC ROOTS, REGISTERED AT ALL SEVEN GUARDIANS (2026-09-27: "Register both root URLs at all
 # seven guardians. No 127.0.0.1 registration may remain.")
 #
 # A GATEWAY IS A ROOT, NEVER A PATH. The stock LNv2 client asks a gateway `base_url.join("/routing_info")`

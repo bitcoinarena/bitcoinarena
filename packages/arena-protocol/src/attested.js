@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ATTESTED OUTCOME AND THE PARI-MUTUEL TABLE (§0A.7a, kanban #206, the owner 2026-10-07): the result of a round of an
+// AN ATTESTED OUTCOME AND THE PARI-MUTUEL TABLE (§0A.7a2026-10-07): the result of a round of an
 // attested game - a prediction market - is not a replayed run but the outcome its attestors sign. The game's manifest
 // names the outcomes, the attestor keys and how many of them must sign (k of n, chosen by the game dev); a round's
 // entries each back one outcome (contracts.js `pick`); and the payout is pari-mutuel: the losing picks' net stakes are
@@ -77,17 +77,17 @@ export function decodeAttestation(bytes) {
  * too few signatures. Answers, never throws.
  */
 //
-// A ROUND OF A TEMPLATE (kanban #362 feature 5) names its own outcomes (contracts.js `event`): its attestors sign an index into
+// A ROUND OF A TEMPLATE (feature 5) names its own outcomes (contracts.js `event`): its attestors sign an index into
 // THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
 // marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
 // are not the question its attestors answered.
 export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null }) {
   if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
-  // A MARKET ON A GAME (kanban #362 feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
+  // A MARKET ON A GAME (feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
   // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
   if (isGameMarket(game))
     return { ok: false, why: `game "${game.gameName}" is a market on a game: its outcome is its source round's signed result, and no attestation decides it` };
-  // A SCALAR MARKET (kanban #362 feature 8) IS DECIDED BY A SIGNED VALUE, NEVER AN INDEX: its attestors sign a ValueAttestation
+  // A SCALAR MARKET (feature 8) IS DECIDED BY A SIGNED VALUE, NEVER AN INDEX: its attestors sign a ValueAttestation
   // (scalar.js valueAttestationStands) - an outcome attestation for it, even one its own attestors signed, is refused by name
   if (isScalar(game))
     return { ok: false, why: `game "${game.gameName}" is a scalar market: its attestors sign the observed value (a value attestation), and an outcome index decides nothing of it` };
@@ -118,8 +118,8 @@ export function attestationStands(a, { manifest: game, roundIdBytes, verify, rou
 }
 
 /**
- * THE PARI-MUTUEL TABLE (§0A.7a; the owner 2026-10-07): out of each entry's stake the fee and the donation as for any round
- * (§0A.8, kanban #205 - the entry's own feeMsat and donationMsat, already checked against the contract at the door), and
+ * THE PARI-MUTUEL TABLE (§0A.7a; 2026-10-07): out of each entry's stake the fee and the donation as for any round
+ * (§0A.8, - the entry's own feeMsat and donationMsat, already checked against the contract at the door), and
  * its NET stake into the pool. The losing picks' net stakes are split over the winning picks in proportion to each
  * winner's net stake, floored; the msats the floors leave go one each to the winners in the order of their entry ids.
  * Nobody picked the outcome: every entry's net stake goes back to it. Every millisatoshi of the gross is in the table:
@@ -146,7 +146,7 @@ export function pariMutuelTable({ entries, outcome }) {
     refunded = true;
   } else if (winningNet === 0n) {
     // A FREE ROUND (nothing staked): somebody was right, and there is nothing to split - each net (0) is its own. Not a refund:
-    // measured live (kanban #206), calling it one told the right pick "nobody picked it".
+    // measured live, calling it one told the right pick "nobody picked it".
     for (const r of rows) r.payoutMsat = r.netMsat;
   } else {
     for (const r of losers) r.payoutMsat = 0n;
@@ -170,7 +170,7 @@ export function pariMutuelTable({ entries, outcome }) {
  * attestation a seat keeps for the round, decoded.
  */
 //
-// A SCALAR MARKET'S STANDING (kanban #362 feature 8): its held attestations are VALUE attestations (scalar.js), each with a BigInt
+// A SCALAR MARKET'S STANDING (feature 8): its held attestations are VALUE attestations (scalar.js), each with a BigInt
 // `value` and no outcome index - ATTESTED answers that `value`; two standing values that differ are DISPUTED, exactly as two
 // outcomes are. A value held beside an index (which no seat can hold for one round: each door refuses the other kind) is a
 // contradiction too, never a mixture. A list with no value is read exactly as before.
@@ -188,7 +188,7 @@ export function outcomeStanding(held) {
 }
 
 /**
- * THE OUTCOME IS FINAL (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): the first standing attestation, held for the
+ * THE OUTCOME IS FINAL (§0A.7a2026-10-07): the first standing attestation, held for the
  * round's objection window (600 s, §13A) with no contradiction. `held` is every standing attestation the seat keeps, each
  * with the `receivedMs` it came at on the seat's clock, oldest first. Answers the standing, whether it is final, and when
  * it is (or will be). A contradiction inside the window makes the round DISPUTED and nothing settles; one after it is
@@ -207,7 +207,7 @@ export function outcomeFinality(held, { windowMs, nowMs }) {
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
 export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
-  // A MARKET WITH TERMS (kanban #235) DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
+  // A MARKET WITH TERMS DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
   // the outcome the market asked for (the price at 18:00 is not the price at 17:59)
   if (terms) {
     const t = marketTimes({ entryCloseMs, terms });
@@ -222,8 +222,8 @@ export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
 }
 
 /**
- * A MARKET ROUND'S TIMES (kanban #235): its resolution time - `resolveAfterCloseMs` after its entry close - and the deadline
- * its attestors have, `deadlineAfterResolveMs` after that. A round of a template (kanban #362 feature 5) names its own
+ * A MARKET ROUND'S TIMES: its resolution time - `resolveAfterCloseMs` after its entry close - and the deadline
+ * its attestors have, `deadlineAfterResolveMs` after that. A round of a template (feature 5) names its own
  * resolution time: its terms are `roundTermsOf(manifest, contract)`, whose `resolveAfterCloseMs` is the round's.
  */
 export function marketTimes({ entryCloseMs, terms }) {
@@ -232,7 +232,7 @@ export function marketTimes({ entryCloseMs, terms }) {
 }
 
 /**
- * THE MARKET TERMS A ROUND IS HELD TO (kanban #235; #362 feature 5): its manifest's, with a template round's own question and
+ * THE MARKET TERMS A ROUND IS HELD TO (feature 5): its manifest's, with a template round's own question and
  * resolution time in them (manifest.js marketOfRound); null for a market that names none. What attestationTimely, marketVoided
  * and the lock span (lock-expiry.js) take as `terms`.
  */
@@ -242,7 +242,7 @@ export const roundTermsOf = (manifest, contract) => {
 };
 
 /**
- * REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market round with no standing outcome at its deadline, or whose
+ * REFUND AT THE DEADLINE (2026-10-09): a market round with no standing outcome at its deadline, or whose
  * attestors contradicted themselves, is not settled on any outcome - it is VOID, and every stake goes back, its fee too.
  * Answers { voided, why } on the seat's clock; a round inside its deadline with no outcome yet is not decided here.
  */
@@ -258,7 +258,7 @@ export function marketVoided(held, { entryCloseMs, terms, nowMs }) {
 }
 
 /**
- * A MARKET'S OWN CLOCK (kanban #236, the owner 2026-10-09: "Period is 15 minutes on the market's own clock, not the games' 90 s
+ * A MARKET'S OWN CLOCK (2026-10-09: "Period is 15 minutes on the market's own clock, not the games' 90 s
  * grid"): a market whose manifest names a period (`roundPeriodMs`, e.g. 900 000 for BTC Up or Down 15m) runs one round per
  * period on the UTC grid - each round's entries close at the end of its period, and its WINDOW is the period before that
  * close. A seat refuses a round of it that closes off the grid. A market naming no period (0) has no grid.

@@ -110,7 +110,7 @@ export function reach({
   }
 
   let refusal = 'the transaction is not in any block of that chain';
-  // A CARRIED BOND (kanban #209, §0A.9): an ancestor bond with its re-affirmation and its advertisement update, all three
+  // A CARRIED BOND (§0A.9): an ancestor bond with its re-affirmation and its advertisement update, all three
   // proved into this chain; the three signatures by the bond's key are listed for Client.at to verify (`checks`)
   if (update || reaffirm) {
     const carried = acceptAncestorEndpoint({ chain: headers, transaction, branch, position, update, reaffirm });
@@ -216,7 +216,7 @@ export const PROVIDERS_NEEDED = 2;
 export const PROVIDER_WAIT_MS = 10000;
 
 /**
- * THE BLOCK A CLIENT ANCHORS A ROUND'S CHAIN TO, by the round's own network id (kanban #209): the client's constants, never
+ * THE BLOCK A CLIENT ANCHORS A ROUND'S CHAIN TO, by the round's own network id: the client's constants, never
  * a page's. Testnet4: block 154000; any other network: mainnet's genesis, as before.
  */
 export function chainAnchorFor(networkId) {
@@ -309,7 +309,7 @@ export async function discover({
         + 'chosen by whoever handed over the chain is not a block the client knows',
     };
 
-  // A CHAIN THIS PAGE HAS ALREADY PROVED IS NOT PROVED AGAIN FOR THE NEXT ROUND (the owner 2026-09-18 16:45).
+  // A CHAIN THIS PAGE HAS ALREADY PROVED IS NOT PROVED AGAIN FOR THE NEXT ROUND (2026-09-18 16:45).
   //
   // Measured in two real browsers: on PLAY again both tabs joined the next round and neither got a client, because
   // this read wants both signer nodes inside PROVIDER_WAIT_MS and a starved tab took 8746 ms for 240 bytes - where
@@ -330,7 +330,7 @@ export async function discover({
     if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
   }
 
-  // A BOND ALREADY PROVEN INTO THIS SAME PROOF BY THESE SAME PROVIDERS IS NOT ASKED AGAIN (the owner 2026-10-02, the join's
+  // A BOND ALREADY PROVEN INTO THIS SAME PROOF BY THESE SAME PROVIDERS IS NOT ASKED AGAIN (2026-10-02, the join's
   // 2-3 s): the page proves the chain and the bond at the PLAY click (warmTheSession) and the session hands back that very
   // proof - asked again it was 0.29 s of a funded paid join after the lock. Kept by the proof's headers and the providers
   // themselves (the objects, not their words), only an answer that held.
@@ -361,7 +361,7 @@ export async function discover({
   }
   if (!bond.ok) return { ok: false, why: `no bond: ${bond.why}`, refused: bond.refused };
 
-  // THE ROUND'S NETWORK'S MARKER (kanban #376, the owner 2026-10-16 06:24Z on his phone: "Not joined ... no proven endpoint: that
+  // THE ROUND'S NETWORK'S MARKER (2026-10-16 06:24Z on his phone: "Not joined ... no proven endpoint: that
   // transaction has no dust output to BOND_MARKER"): acceptAdvert looks for the regtest marker unless it is told the network, and
   // this door never told it - every seat bonded on testnet4 itself (bond template 2, 580d64fc) was refused at the player's PLAY
   const network = networkOf(networkId);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARBITRATION SET'S SERVICE (kanban #307, spec 5A.3B steps 1-5): unit arena-arbiter-<network>.
+// THE ARBITRATION SET'S SERVICE (spec 5A.3B steps 1-5): unit arena-arbiter-<network>.
 //
 // Every ARENA_ARBITER_EVERY_MS (60 s) it asks each seat named in ARENA_ARBITER_SEATS for the slash proofs it filed (GET
 // /slashes) and, for each one not handled yet:
@@ -114,7 +114,7 @@ async function handle(seat, s) {
     playersSats: String(slash.built.amounts.players), players } : { done: false, why: sent.why };
 }
 
-// AFTER PATH B (spec §5A.3B, kanban #307): the players' escrow into the round's federation, claimed, each share paid
+// AFTER PATH B (spec §5A.3B): the players' escrow into the round's federation, claimed, each share paid
 // (arbiter.js payOutSlash, through ARENA_STAKE_LOCK_BIN on the client in ARENA_ARBITER_CLIENT_DIR)
 const payOut = (proof, v) => payOutSlash({ proof, v, set, rpc, keep, say, bin: env.ARENA_STAKE_LOCK_BIN, dir: env.ARENA_ARBITER_CLIENT_DIR,
   feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000) });
@@ -128,7 +128,7 @@ async function loadGames() {
   return games;
 }
 
-// THE TABLE PAID (§23A.5 step 4, kanban #323): once a liquidating federation's claim window has closed, its escrow into the set's
+// THE TABLE PAID (§23A.5 step 4): once a liquidating federation's claim window has closed, its escrow into the set's
 // client of a SAFE federation (ARENA_LIQ_PAY_DIR, through ARENA_STAKE_LOCK_BIN) and each note's payout locked to its key
 async function payLiquidations() {
   if (!claims || !env.ARENA_LIQ_PAY_DIR || !env.ARENA_STAKE_LOCK_BIN) return;
@@ -168,7 +168,7 @@ async function payLiquidations() {
       const got = liquidationRemainderPayees({ msat, censusNodes: census.entries.map((e) => e.pubkey), slashed: Object.values(state.handled).map((h) => h.node).filter(Boolean),
         record, donation: forced.recipients });
       if (!got.ok) throw new Error(got.why);
-      // a payout is a lock to a refund key (the tool's `pay`, as #307's): the 33-byte form of each x-only key
+      // a payout is a lock to a refund key (the tool's `pay`, as 's): the 33-byte form of each x-only key
       return got.payees.map((x) => ({ ...x, key: `02${x.key}` }));
     };
     let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
@@ -201,7 +201,7 @@ const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).m
 const open = new Set();
 const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.handled).some((v) => v.node === toHex(nodeKey))
   ? { ok: false, why: 'a slash proof against this node is open or was posted' } : { ok: true });
-// A HALTED FEDERATION'S CLAIMS (§23A.5, kanban #323): ARENA_LIQ_CLIENTS=<federation hex>=<fedimint-cli data dir>,... - a client of
+// A HALTED FEDERATION'S CLAIMS (§23A.5): ARENA_LIQ_CLIENTS=<federation hex>=<fedimint-cli data dir>,... - a client of
 // each federation this set joined while it was OPEN, to check presented notes offline; ARENA_LIQ_ESCROWS=<federation hex>=<txid>:<vout>,...
 // - the escrow output its slashes paid; the claims kept in ARENA_LIQ_CLAIMS_FILE; the halt and the spent set read from the seats
 const pairs = (v) => new Map(String(v || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('=')).filter((x) => x.length === 2).map(([k, v2]) => [k.toLowerCase(), v2]));

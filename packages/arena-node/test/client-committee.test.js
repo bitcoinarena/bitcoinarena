@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CLIENT BUILDS THE COMMITTEE ITSELF (kanban #296, spec 5A.6: "a client MUST NOT take a census, a committee or an
+// THE CLIENT BUILDS THE COMMITTEE ITSELF (spec 5A.6: "a client MUST NOT take a census, a committee or an
 // endpoint on the word of any API"). Measured on the seat's own fixture chain: the census evidence a seat hands over
 // (Roster.censusEvidenceFor, GET /census), checked by the client against headers alone - every bond proven, rebuilt and
 // filtered, the set hashed to the round's census_root, the beacon off the same headers, the seat's sortition - gives
@@ -178,7 +178,7 @@ test('a withheld, added or altered entry is another root, and the round is refus
   assert.match(otherRoot.why, /this round names 0707070707070707/);
 });
 
-// SUPPORTED PROTOCOL VERSIONS (§27A.5, kanban #331): a node is counted for a round only if its bond's advertisement lists the
+// SUPPORTED PROTOCOL VERSIONS (§27A.5): a node is counted for a round only if its bond's advertisement lists the
 // round's protocol version - on the client's own check as on the seat's (census.js). The same evidence for a round that runs
 // another version names nobody: every entry refused by name, so the census root is not the round's
 test('an advertisement that does not list the round\'s protocol version is not counted', () => {
@@ -246,7 +246,7 @@ test('the page derives the settlement committee over the seats\' doors, deals to
     /every node that answered names another settlement committee/);
 });
 
-test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused (kanban #299)', async () => {
+test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused', async () => {
   const { displayHash } = await import('../../arena-client/src/explorer-check.js');
   const { rid, view, ev, contract } = setup();
   const headers = headersOf(view);

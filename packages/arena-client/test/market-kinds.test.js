@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PAGE'S MARKET LINES FOR PROTOCOLS 6 AND 7 (kanban #362, docs/PLATFORM-RESEARCH.md items 6 and 8): a scalar market's value and
+// THE PAGE'S MARKET LINES FOR PROTOCOLS 6 AND 7 (docs/PLATFORM-RESEARCH.md items 6 and 8): a scalar market's value and
 // a market on a game's source result, each checked by the page itself before a line says what a pick won - the value against the
 // attestors its manifest names, the source result against the committee the page derives (never the seats' list).
 import { test } from 'node:test';
@@ -138,11 +138,11 @@ test('a market on a game is believed only from its source round\'s result, signe
   const [won] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, table, check: ok }]]), nowMs: Number(S) });
   assert.equal(won.text, `tick-tock-fronts ${rid.slice(0, 8)}: 'BULLS' (source round ${toHex(SOURCE_ID).slice(0, 8)} ended BULLS, signed by its committee, verified) · you won 49.5 sats`);
   assert.deepEqual([won.state, won.gainMsat, won.final, won.finalAtMs], ['won', '49500', true, null]);
-  // kanban #447: every attested line says whether its result is final, and when - a lost one too, so the client counts it down
+  //: every attested line says whether its result is final, and when - a lost one too, so the client counts it down
   const lostTable = { ...table, rows: [{ ...table.rows[0], won: false, payoutMsat: '0' }] };
   const [lost] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
   assert.deepEqual([lost.state, lost.lostMsat, lost.final, lost.finalAtMs], ['lost', '98500', false, 1788200600000]);
-  // kanban #452: a pick with no row in the table stays unknown - unless the page read its position from the book (0 shares, 0 cost)
+  //: a pick with no row in the table stays unknown - unless the page read its position from the book (0 shares, 0 cost)
   const noRow = { ...table, rows: [] };
   const [unknown] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, finalAtMs: '1', table: noRow, check: ok }]]), nowMs: Number(S) });
   assert.equal(unknown.state, 'unknown');

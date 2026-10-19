@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #365): each item by id with the purchase that made it the player's and its owner's
-// proof for this entry (kanban #369), last of all.
+// THE ITEMS AN ENTRY PLAYS WITH (protocol 10): each item by id with the purchase that made it the player's and its owner's
+// proof for this entry, last of all.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeEntryContract, decodeEntryContract, entryId, ITEMS_ENTRY_MARKER, ENTRY_ITEMS_MAX, entryItemDigest } from '../src/contracts.js';
@@ -39,7 +39,7 @@ test('items that are not a list of ids with purchases, sorted and each once, are
   assert.throws(() => encodeEntryContract({ ...ENTRY, items: [ITEMS[0], ITEMS[0]] }), /sorted by id, each once/);
   assert.throws(() => encodeEntryContract({ ...ENTRY, items: [{ itemId: 'Big', purchaseId: b32(1), ownerSig: sig(1) }] }), /by its id and the 32-byte id/);
   assert.throws(() => encodeEntryContract({ ...ENTRY, items: [{ itemId: 'big', purchaseId: new Uint8Array(31), ownerSig: sig(1) }] }), /by its id and the 32-byte id/);
-  assert.throws(() => encodeEntryContract({ ...ENTRY, items: [{ itemId: 'big', purchaseId: b32(1) }] }), /owner's 64-byte signature/, 'no proof, no item (kanban #369)');
+  assert.throws(() => encodeEntryContract({ ...ENTRY, items: [{ itemId: 'big', purchaseId: b32(1) }] }), /owner's 64-byte signature/, 'no proof, no item');
   assert.throws(() => encodeEntryContract({ ...ENTRY, items: [{ itemId: 'big', purchaseId: b32(1), ownerSig: sig(1).subarray(0, 63) }] }), /owner's 64-byte signature/);
   const bytes = encodeEntryContract(ENTRY);
   // an unknown byte after the website's key is no item list
@@ -49,7 +49,7 @@ test('items that are not a list of ids with purchases, sorted and each once, are
   assert.throws(() => decodeEntryContract(empty), /empty list of items is not written/);
 });
 
-test('the owner\'s proof is bound to the round, the entry\'s key and the purchase (kanban #369)', () => {
+test('the owner\'s proof is bound to the round, the entry\'s key and the purchase', () => {
   const d = entryItemDigest({ roundId: b32(1), playerPubkey: b32(2), purchaseId: b32(3) });
   assert.equal(d.length, 32);
   assert.notEqual(toHex(d), toHex(entryItemDigest({ roundId: b32(9), playerPubkey: b32(2), purchaseId: b32(3) })), 'another round');

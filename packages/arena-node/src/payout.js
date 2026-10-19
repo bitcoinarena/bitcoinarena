@@ -4,7 +4,7 @@
 //
 // This file was the on-chain pool payout - a committee pool output, its signed payout table (§20), a FROST spend
 // broadcast by one asker, PAYOUT_QUEUED -> PAID - and that payout only ever ran after the hold invoice's settle. It is
-// deleted with the custody it served (§23.6, RULED the owner 2026-09-22 22:59; this cut RULED 2026-09-25): a round's
+// deleted with the custody it served (§23.6, RULED 2026-09-22 22:59; this cut RULED 2026-09-25): a round's
 // winners are paid by its lock settlement. What is left is what the lock settlement reads - the asker, chosen from the
 // round itself, and when another signer node takes over - and the four state words, which a store from before keeps.
 

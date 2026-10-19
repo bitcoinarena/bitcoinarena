@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEPOSIT BEFORE ANY ROUND (kanban #350, the owner 2026-10-12 "Yes": Deposit on the games screen before a game is picked).
+// A DEPOSIT BEFORE ANY ROUND (2026-10-12 "Yes": Deposit on the games screen before a game is picked).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { walletDepositChoices, WALLET_DEPOSIT_SATS, depositOffer } from '../src/page-lock.js';

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SOONEST ROUND WHEN NOTHING MUST BE DEPOSITED FIRST (the owner 2026-10-03: "I always have to wait for the next round that
+// THE SOONEST ROUND WHEN NOTHING MUST BE DEPOSITED FIRST (2026-10-03: "I always have to wait for the next round that
 // starts in XX minutes"): a funded wallet's paid row is the soonest series round with 15 s of entry left; a wallet that must
 // deposit first keeps the 90 s lead. The next round after a run skips one about to close.
 import test from 'node:test';
@@ -19,7 +19,7 @@ test('a funded wallet gets the round 20 s away; a wallet that must deposit gets 
   assert.deepEqual(funded.map((r) => r.id), ['a']);
   const empty = lobbyOnePerKind(rows, NOW, { paidSeriesOnly: true, leadMsFor: () => SERIES_JOIN_LEAD_MS });
   assert.deepEqual(empty.map((r) => r.id), ['b']);
-  assert.deepEqual(lobbyOnePerKind(rows, NOW, { paidSeriesOnly: true }).map((r) => r.id), ['a'], 'the default is no lead (#122)');
+  assert.deepEqual(lobbyOnePerKind(rows, NOW, { paidSeriesOnly: true }).map((r) => r.id), ['a'], 'the default is no lead');
 });
 
 test('the next round after a run skips one with under 15 s of entry left', () => {
@@ -28,7 +28,7 @@ test('the next round after a run skips one with under 15 s of entry left', () =>
   assert.equal(nextRoundAfter(played, [paid('ok', 20, 0), paid('next', 110, 1)], NOW).id, 'ok');
 });
 
-// KANBAN #122: "closes in" is never over 90 s - the soonest round whose entry is open, at every instant of a series
+// KANBAN: "closes in" is never over 90 s - the soonest round whose entry is open, at every instant of a series
 test('with no lead the paid row closes within 90 s at every instant of a 90 s series', () => {
   const series = Array.from({ length: 6 }, (_, i) => paid('r' + i, 45 + i * 90, i));
   let worst = 0;

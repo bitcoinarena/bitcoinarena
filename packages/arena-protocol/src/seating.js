@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESERVE SEATS (multiplayer_p2p.md §5A.7, RULED the owner 2026-09-28; kanban #301).
+// RESERVE SEATS (multiplayer_p2p.md §5A.7, RULED 2026-09-28).
 //
 // A node drawn up to 72 h ahead may be offline when its round comes, so each role draws more nodes than it seats
 // (sortition.js drawCommittee: 9 for 7 seats) and seats the ones that show up:
@@ -13,7 +13,7 @@
 // seats, and each node signs at most one per round and role. Two valid seatings for one round and role always share a
 // signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the round is void (§13C)
 // and the signer's bond is slashable (§5A.3B). A client enters a round only with a certificate it checked against the draw
-// it computes itself (client-committee.js). The round contract is unchanged (the owner 2026-10-11, decision A): it names the
+// it computes itself (client-committee.js). The round contract is unchanged (2026-10-11, decision A): it names the
 // round; who serves it is this certificate.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
@@ -26,7 +26,7 @@ const roleOfSeat = (b) => Object.keys(ROLE_BYTE).find((k) => ROLE_BYTE[k] === b)
 export const SEATING_ROLES = Object.freeze(['game', 'settlement']);
 
 /**
- * When a round's seating closes: start_time - 120 s. A MARKET'S (the owner 2026-10-11: "Der prediction market läuft immer z.B.
+ * When a round's seating closes: start_time - 120 s. A MARKET'S (2026-10-11: "Der prediction market läuft immer z.B.
  * zwischen 19:45 und 20:00. Man darf davor und danach nicht am Markt teilnehmen") is seated 120 s before its WINDOW opens
  * (attested.js marketWindowOf: entry_close - period), so its seats are certified when its first order may come.
  */

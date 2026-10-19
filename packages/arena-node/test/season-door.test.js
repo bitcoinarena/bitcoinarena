@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// GET /season (kanban #362 feature 1): one game's board across its rounds, from what this node holds - a result counts once
+// GET /season (feature 1): one game's board across its rounds, from what this node holds - a result counts once
 // FINAL here (the committee's threshold of verified results AND of FINAL signatures), an amount once the round's settlement
 // is ACCEPTED (the lock it did not claim back, plus the share it paid), a player under its identity, not its round key.
 // A real node on an in-memory store; its rows written as the doors and the settlement write them.
@@ -246,7 +246,7 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
   } finally { await d.close(); }
 });
 
-// THE WEEKLY BOARD BADGE READS THE NETWORK (kanban #362): a node with badges on, one free round of the last closed week with
+// THE WEEKLY BOARD BADGE READS THE NETWORK: a node with badges on, one free round of the last closed week with
 // three identities in it, and three other seats - two that hand in the same rounds with their round keys, one on a build
 // from before them (no `roundKeys`), which is not counted. Three seats agree (this one and two): the podium is awarded,
 // its evidence naming the week, the place, the 3 seats and the 3 that had to agree.

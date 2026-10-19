@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# ONE RELEASE ASSET OF THE ARENA NODE (kanban #471 part A): the seat, its protocol, the installer and nextblock from a commit, their
+# ONE RELEASE ASSET OF THE ARENA NODE: the seat, its protocol, the installer and nextblock from a commit, their
 # npm dependencies at pinned versions, a pinned Node runtime and cloudflared for the OS - each download checked against its published
 # SHA-256 - and the launcher (`arena-install`, `arena-install.cmd` on Windows). Run by CI for every tag (release.yml), the same way
 # each time.
@@ -28,7 +28,7 @@ declare -A CF_SHA=([linux-x64]=03f1f25d1cc93b9ad6c60569d44060bc4f17ed97075760ed8
 declare -A CF_BIN_SHA=([darwin-x64]=1ea07ae775b03236bd6be18ca1848d6bdc4af2f4f3bce398823b5a36e5761b75 [darwin-arm64]=9a0b19f67dc7a3011bc6b972c7ce06a5fcea8784ac6bd599ffa382ea4aeb5a6e)
 KEY="$OS-$ARCH"
 [[ -n "${NODE_SHA[$KEY]:-}" ]] || { echo "no runtime for $KEY (linux-x64, linux-arm64, darwin-x64, darwin-arm64, windows-x64)" >&2; exit 2; }
-# releases are 2026.xx.yy, a fix 2026.xx.yy.zz (the owner 2026-10-19); the older x.y.z(-rc.N) still builds
+# releases are 2026.xx.yy, a fix 2026.xx.yy.zz (2026-10-19); the older x.y.z(-rc.N) still builds
 [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9.]+)?$ ]] || { echo "version is like 2026.1.0 (a fix: 2026.1.0.1)" >&2; exit 2; }
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -74,7 +74,7 @@ case "$OS" in
     install -m 0755 "$CACHE/$CF_VER-$CF" "$STAGE/runtime/cloudflared.exe" ;;
 esac
 
-# 2b. TOR (kanban #471, the owner 2026-10-18: "find a way to connect to it via a tunnel" / "connect via tor to the other nodes as well"):
+# 2b. TOR (2026-10-18: "find a way to connect to it via a tunnel" / "connect via tor to the other nodes as well"):
 # the Tor Project's expert bundle, pinned by the SHA-256 of its sha256sums-signed-build.txt, unpacked to runtime/tor/ (tor and its
 # libraries). The node's LND runs hybrid through it: a permanent onion address with no open port. The Tor Project builds no linux-arm64
 # bundle: there the installer uses the system's tor (apt install tor) when it is installed.
@@ -94,7 +94,7 @@ fi
 ( cd "$STAGE/packages/arena-node" && npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts \
     @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3 >/dev/null )   # bcryptjs: the gateway's admin password hash (gateway.js)
 
-# 3b. THE CUSTODY BINARIES (kanban #471 slice 5): gatewayd, fedimintd and fedimint-cli of the patched fork 76012ad9119, built on the test host by
+# 3b. THE CUSTODY BINARIES: gatewayd, fedimintd and fedimint-cli of the patched fork 76012ad9119, built on the test host by
 # tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
 # custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
 # wizard says so (gateway.js findGatewayd).
@@ -136,12 +136,12 @@ if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; 
 
 # 4. the launcher: the installer on the release's own runtime, cloudflared beside it
 if [ "$OS" = windows ]; then
-  printf '%s\r\n' '@echo off' 'rem The Arena node installer (kanban #471): double-click, then open the link it prints. --tunnel on a remote machine.' \
+  printf '%s\r\n' '@echo off' 'rem The Arena node installer: double-click, then open the link it prints. --tunnel on a remote machine.' \
     'set "ARENA_CLOUDFLARED=%~dp0runtime\cloudflared.exe"' '"%~dp0runtime\node.exe" "%~dp0packages\arena-installer\bin\arena-install.mjs" %*' 'pause' > "$STAGE/arena-install.cmd"
 else
   cat > "$STAGE/arena-install" <<'SH'
 #!/bin/sh
-# The Arena node installer (kanban #471): ./arena-install, then open the link it prints. --tunnel on a remote machine.
+# The Arena node installer: ./arena-install, then open the link it prints. --tunnel on a remote machine.
 here="$(cd "$(dirname "$0")" && pwd)"
 ARENA_CLOUDFLARED="$here/runtime/cloudflared" exec "$here/runtime/node" "$here/packages/arena-installer/bin/arena-install.mjs" "$@"
 SH

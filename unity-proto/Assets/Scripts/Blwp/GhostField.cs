@@ -99,7 +99,7 @@ namespace Blwp
         /// <summary>
         /// HOW A TRUCK OF THIS SHAPE LIES AT A POSE - the pitch and roll of the ground under its four wheels.
         ///
-        /// the owner 2026-09-18 10:42: "Ghosts have NO physics. They must climb hills the same as his own truck." A
+        /// 2026-09-18 10:42: "Ghosts have NO physics. They must climb hills the same as his own truck." A
         /// ghost was given the ground's HEIGHT (`Rest`) and nothing else, so it stood dead level on a hillside while
         /// the local truck, drawn from the same four contact points, tilted. The local truck has no physics here
         /// either - `CoreDrivenTruck.Lie` is a drawing rule over the surface, not a rigidbody - so this is the same
@@ -125,7 +125,7 @@ namespace Blwp
         void Update() => Draw(PerFrame);
 
         /// <summary>
-        /// THE DEBUG LABEL OVER EACH GHOST (the owner 2026-09-17 19:15): the player's name, then how old the truck's newest
+        /// THE DEBUG LABEL OVER EACH GHOST (2026-09-17 19:15): the player's name, then how old the truck's newest
         /// picture is in ms and how it moved - an up arrow forward, a down arrow back, a left or right arrow for a turn,
         /// both when it did both. The page writes it (`ghostLabels` in @blwp/client) from what came through the nodes;
         /// a "~" before the age means this browser holds no stamp of the driver's clock and it is the time since the
@@ -168,7 +168,7 @@ namespace Blwp
         {
             // THE LABEL IS READ EVERY FRAME'S WORTH, NOT EVERY TENTH OF A SECOND. Read at 10 Hz it added up to another
             // 100 ms to an age that is already the picture's own, and the age over a truck is the one number a player
-            // has for the lag (the owner 2026-09-17 19:15). The read is a bridge call and a split of a short string.
+            // has for the lag (2026-09-17 19:15). The read is a bridge call and a split of a short string.
             if (Time.unscaledTime - labelsReadAt < 0.016f) return;
             labelsReadAt = Time.unscaledTime;
             labels = ParseLabels(ReadLabels());
@@ -183,7 +183,7 @@ namespace Blwp
         /// MainCamera" - and it made the drone's distance and the crater's ring wrong before it was fixed there.
         ///
         /// Here it was worse than wrong: `OnGUI` returned on a null camera, so the debug label over each truck - the
-        /// one number a player has for the lag (the owner 2026-09-17 19:15) - was never drawn in a player at all, only in
+        /// one number a player has for the lag (2026-09-17 19:15) - was never drawn in a player at all, only in
         /// the Editor tests that make their own tagged camera. Measured in a PlayMode world built by `Bootstrap`: two
         /// cameras, neither of them `Camera.main`.
         /// </summary>
@@ -222,7 +222,7 @@ namespace Blwp
         }
 
         /// <summary>
-        /// THE OTHER TRUCK IS MARKED AT THE EDGE WHEN IT IS OFF SCREEN (the owner 2026-09-18 06:45).
+        /// THE OTHER TRUCK IS MARKED AT THE EDGE WHEN IT IS OFF SCREEN (2026-09-18 06:45).
         ///
         /// The map parks one player per loading-bay door: 24 doors at a 6.8 m pitch, so two seats are a mean 54 m
         /// apart along the frontage. Measured from the camera a player drives with - `ChaseCamera` in Follow, 11 m
@@ -335,7 +335,7 @@ namespace Blwp
             if (string.IsNullOrEmpty(picture.Entry)) return;
 
             // CLEAR ALL (tick -2): the page started watching a new round, so no truck of the last one stands on
-            // (the owner 2026-09-17 17:12: "after the next round suddenly 3 ghosts").
+            // (2026-09-17 17:12: "after the next round suddenly 3 ghosts").
             if (picture.Tick == ClearTick)
             {
                 foreach (var t in trucks.Values) if (t != null) { Destroy(t.gameObject); Retired++; }

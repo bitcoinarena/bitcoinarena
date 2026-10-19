@@ -60,9 +60,9 @@ async function twoSignerNodes() {
 // it names". The rest of this family was migrated when the core moved; this one
 // was missed, and the refusal was correct the whole time.
 async function open(w, simCoreHash, configHash, blockTicks = BLOCK_TICKS, startDeadlineTicks) {
-  // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26: a result counts only if its seat held it before the round's end + 605 s)
+  // THE ROUND ENDS NOW, NOT IN 1970 (a result counts only if its seat held it before the round's end + 605 s)
   const c = presentDay({ ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
-    // THE ROUND'S GAME (kanban #202): the counter is a game of its own, nextblock plays the truck
+    // THE ROUND'S GAME: the counter is a game of its own, nextblock plays the truck
     gameId: toHex(simCoreHash) === COUNTER.hash ? COUNTER_GAME_ID : NEXTBLOCK.gameId,
     stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash, blockTicks, ...(startDeadlineTicks ? { startDeadlineTicks } : {}) }, testNow() + 3000);
   const rid = roundId(c);
@@ -119,7 +119,7 @@ test('the truck and a second title, the second under two configs, run on the sam
       high: { ...high, ...(await play(w, high.rid, COUNTER.adapter, HIGH.config)) },
     };
     for (const r of Object.values(runs)) for (const d of [w.a, w.b]) assert.equal(await say(d.port, `close ${toHex(r.rid)}`), 'closed');
-    // agreed and published at both inside the window, then past final_after (kanban #26), as a live round goes
+    // agreed and published at both inside the window, then past final_after, as a live round goes
     const ready = () => Object.values(runs).every((r) => [w.a, w.b].every((d) => { const f = resultFinality(d.round, r.rid, r.eid); return f.state === 'PROVISIONALLY_FINAL' && f.published === true; }));
     for (let t = Date.now(); Date.now() - t < 25000 && !ready(); await wait(200));
     skipTo(Math.max(...Object.values(runs).map((r) => Number(windowsOf(r.c).finalAfterMs))) + 50);
@@ -169,7 +169,7 @@ test('a signer node that does not host the second title refuses its round at the
     const truck = await post({ ...base, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH });
     console.log('  FACTS (not installed):', JSON.stringify({ counter: { ...counter, why: counter.why.slice(0, 100) }, truck: truck.status }));
     assert.equal(counter.status, 409);
-    // SINCE THE COUNTER IS A GAME (kanban #202) the round is refused as a game this node does not host
+    // SINCE THE COUNTER IS A GAME the round is refused as a game this node does not host
     assert.match(counter.why, /this node does not host game/);
     assert.equal(truck.status, 201, truck.why);
   } finally { await d.close(); }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE THREAD A CORE RUNS IN (spec §0A.6, kanban #328). Started only by core-sandbox.js, one per core, with the core's files
+// THE THREAD A CORE RUNS IN (spec §0A.6). Started only by core-sandbox.js, one per core, with the core's files
 // already read and checked by the node: it builds the sandbox - an empty vm context, code generation off, the clocks, the
 // randomness and the generated code taken out of its own realm, its modules linked to its own files only - and answers
 // the node's calls, a JSON string in and a JSON string out. It has no timeout of its own: the node waits for each answer
@@ -17,7 +17,7 @@ const ctrl = new Int32Array(ctrlBuffer);
 const DRIVER = readFileSync(new URL('./core-driver.js', import.meta.url), 'utf8');
 const REMOVED = ['Date', 'Intl', 'WebAssembly', 'SharedArrayBuffer', 'Atomics', 'eval', 'Function', 'WeakRef', 'FinalizationRegistry', 'console'];
 // run in the context before any core code: what the core must not have is taken out of its own realm
-// THE ARRAY BUDGET (kanban #343): a core's typed arrays and ArrayBuffers live outside the V8 heap, so the thread's heap limit
+// THE ARRAY BUDGET: a core's typed arrays and ArrayBuffers live outside the V8 heap, so the thread's heap limit
 // does not bound them (measured: 9.3 GB in 8 s past a 256 MB heap limit). Every constructor of them in the core's realm is
 // wrapped before the core loads - as the global and as each prototype's \`constructor\`, so \`slice\`, \`map\`, \`filter\`, \`from\`
 // (the species path) are counted too - and the allocation that would take the bytes alive past the budget throws. The

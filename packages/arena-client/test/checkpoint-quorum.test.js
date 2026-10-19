@@ -678,7 +678,7 @@ test('a checkpoint that wakes after the player\'s own link went is skipped, not 
   }
 });
 
-// A MARK BOTH DAEMONS STORED WHILE THIS CLIENT COUNTED NONE OF THEIR ANSWERS (kanban #155, measured live: testnet4
+// A MARK BOTH DAEMONS STORED WHILE THIS CLIENT COUNTED NONE OF THEIR ANSWERS (measured live: testnet4
 // ea63aa94 @1620, and the control on 0.0.2815, entry 0b68a08f @1140 - all 7 seats stored and receipted the mark, the page
 // set no pending link and kept the mark before as its head, and every later mark named that old parent: refused at every
 // seat "does not follow the chain head", the rest of the run never carried). No reload, no reconnect: the next mark must

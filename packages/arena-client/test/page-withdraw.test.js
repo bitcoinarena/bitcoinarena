@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE WITHDRAW PANEL'S EARLY STOP AND ITS WORDS (kanban #187 item 5, plan comment 298, Go 2026-10-05). index.html's
+// THE WITHDRAW PANEL'S EARLY STOP AND ITS WORDS (plan comment 298, Go 2026-10-05). index.html's
 // openWithdraw is lifted out of the page by its text and run as it is, against a fake panel, a fake status bar and fake
 // BLWPCLIENT readers. The page refuses an invoice above the readable balance before the wallet spends - the library checks
 // too, but the page's own stop and the words the player sees are what is measured here.
@@ -37,7 +37,7 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
 
 test('the balance line: how much can be withdrawn; an empty wallet; a balance that cannot be read', async () => {
   const p = panel({ can: 50000n });
-  // the same sentence while the balance is read, so the overlay keeps its size (kanban #510)
+  // the same sentence while the balance is read, so the overlay keeps its size
   assert.equal(p.els['blwp-wd-amount'].textContent, 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.');
   await tick();
   assert.equal(p.els['blwp-wd-amount'].textContent, 'You can withdraw up to 50 sat. Make an invoice in your own wallet for any amount up to that and paste it here.');

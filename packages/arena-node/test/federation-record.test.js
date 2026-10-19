@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FEDERATION RECORD (spec §23A.1 / §23A.4, kanban #321). The status bands exactly as §23A.1's table for 10, 7 and 4
+// THE FEDERATION RECORD (spec §23A.1 / §23A.4). The status bands exactly as §23A.1's table for 10, 7 and 4
 // guardians; the record's bytes and id; and seven guardian seats (federation-records.js) signing one record over the
 // census: all seated -> OPEN with 7 signatures; one guardian saying it leaves -> DRAINING; two -> CRITICAL; the seat then
 // calls the federation draining. A record short of its threshold, signed by a non-guardian, or with a foreign invite is
@@ -65,7 +65,7 @@ test('seven guardians sign one record: OPEN with all seated, DRAINING with one l
   assert.equal(v.ok, true, v.why);
   assert.equal(v.record.exposureCapSats, 3n * 50000n, '(f+1) x the smallest seated bond');
   assert.equal(open.s.seats[0].draining(toHex(FED)), null);
-  // THE CENSUS THE SEAT READS (kanban #356, GET /roles): its height and every entry, with the advert that names its roles
+  // THE CENSUS THE SEAT READS (GET /roles): its height and every entry, with the advert that names its roles
   const now = open.s.seats[0].censusNow();
   assert.deepEqual([now.ok, now.entries.length, now.entries.every((e) => e.pubkey && e.advert)], [true, open.s.census.entries.length, true], now.why);
   const one = await run([3]);
@@ -104,14 +104,14 @@ test('the seat\'s doors: GET /federations lists what it holds, GET /federation-r
     const none = await fetch(`${S}/federation-record?federation=${toHex(FED)}`);
     assert.equal(none.status, 404);
     assert.match((await none.json()).why, /holds no round/);
-    // GET /roles (kanban #356): a seat that reads no census yet says why, never an empty list
+    // GET /roles: a seat that reads no census yet says why, never an empty list
     const roles = await fetch(`${S}/roles`);
     assert.equal(roles.status, 503);
     assert.match(await roles.text(), /holds no round|no census/);
   } finally { await seat.close(); }
 });
 
-// SUCCESSION (§23A.6 steps 2, 4 and 5; kanban #325): the guardians sign the old federation's record DRAINING with the
+// SUCCESSION (§23A.6 steps 2, 4 and 5): the guardians sign the old federation's record DRAINING with the
 // successor they were told of; its seated guardians are named for the successor's guardian pool until the record is CLOSED
 test('a successor named: the seven sign DRAINING with successor_id, and the successor\'s rounds name the drain\'s seated guardians until CLOSED', async () => {
   const NEW = 'cd'.repeat(32);
@@ -146,7 +146,7 @@ test('a successor named: the seven sign DRAINING with successor_id, and the succ
   assert.equal(none.seats[0].list()[0].status, 'OPEN', 'no successor named: OPEN as before');
 });
 
-// THE GATHERER NAMES ITS CENSUS HEIGHT (kanban #321, measured on testnet4 2026-10-12): each seat took the newest round IT held,
+// THE GATHERER NAMES ITS CENSUS HEIGHT (measured on testnet4 2026-10-12): each seat took the newest round IT held,
 // a round posted ahead whose census it could not read yet - seats 2-7 answered "no chain view for that round" and no record
 // ever had more than 1 of its 5 signatures. Now a seat's own basis is the newest round whose census it reads, and a peer
 // signs at the height the gatherer names, from a round it holds at that height.
@@ -162,7 +162,7 @@ test('seats holding rounds at different census heights sign one record: the newe
   const asked = [];
   const seats = nodes.map((n, i) => federationRecords({
     round: { pubkey: n.pubkey, identity: { secret: n.secret }, db: { prepare: (sql) => ({
-      // the seat reads its rounds newest first since kanban #355: max(rowid), then rowid < ? DESC LIMIT ?, then rowid > ? for new ones
+      // the seat reads its rounds newest first since: max(rowid), then rowid < ? DESC LIMIT ?, then rowid > ? for new ones
       get: () => ({ m: rowsOf(i).length ? Math.max(...rowsOf(i).map((r) => r.rowid)) : null }),
       all: (a, limit) => (/DESC/.test(sql) ? rowsOf(i).filter((r) => r.rowid < a).sort((x, y) => y.rowid - x.rowid).slice(0, limit) : rowsOf(i).filter((r) => r.rowid > a)) }) } },
     roster: { censusFor: (rid) => (reads(i, rid) ? census : { ok: false, why: 'this node has no chain view for that round, so it cannot say who is bonded' }) },
@@ -186,7 +186,7 @@ test('seats holding rounds at different census heights sign one record: the newe
   assert.match((await seats[1].mySignature(toHex(FED), 300)).why, /^census height 300: this node has no chain view/);
 });
 
-// THE RESERVE AND THE LOAD IN THE RECORD (§23A.3, kanban #324): the gatherer reads the federation's on-chain reserve and names
+// THE RESERVE AND THE LOAD IN THE RECORD (§23A.3): the gatherer reads the federation's on-chain reserve and names
 // it; a seat signs only on its own same reading; the listed load is the signed reserve over the signed exposure cap
 test('the signed record carries the reserve the guardians name; the load is reserve over cap; a seat reading another reserve does not sign', async () => {
   const s = seven({ reserves: [650000, 650000, 650000, 650000, 650000, 650000, 650000] });
@@ -208,7 +208,7 @@ test('the signed record carries the reserve the guardians name; the load is rese
   assert.deepEqual([g3.ok, g3.why], [false, 'the reserve: no answer']);
 });
 
-// A FEDERATION FOUND, NOT CONFIGURED (kanban #348, the owner 2026-10-12: "Make it happen automatically so we don't have to update
+// A FEDERATION FOUND, NOT CONFIGURED (2026-10-12: "Make it happen automatically so we don't have to update
 // nodes, it needs to find federations"): a seat with no invite for a federation its census knows mirrors the record its
 // guardians' nodes hold - kept only when it stands against that seat's own census.
 function outsider(census, guardianSeats, nodes) {
@@ -237,7 +237,7 @@ test('a seat with no invite for a federation its census knows mirrors the record
   assert.equal(verifyFederationRecord(fromHex(listed[0].record), { census: s.census.entries, verify, inviteFederationId }).ok, true);
 });
 
-test('a seat that holds the invite but whose gather no guardian signs keeps the record its guardians hold (kanban #326)', async () => {
+test('a seat that holds the invite but whose gather no guardian signs keeps the record its guardians hold', async () => {
   const s = seven();
   for (const seat of s.seats) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
   const me = { secret: new Uint8Array(32).fill(0x56) }; me.pubkey = schnorr.getPublicKey(me.secret);
@@ -267,7 +267,7 @@ test('a mirrored record that does not stand against the seat\'s own census is no
   assert.deepEqual(o.list(), []);
 });
 
-test('a mirrored record that does not stand against the seat\'s older census stands against the census at its own height (kanban #326)', async () => {
+test('a mirrored record that does not stand against the seat\'s older census stands against the census at its own height', async () => {
   const s = seven();
   for (const seat of s.seats) await seat.gather(FED, inviteFederationId);
   const me = { secret: new Uint8Array(32).fill(0x57) }; me.pubkey = schnorr.getPublicKey(me.secret);
@@ -290,7 +290,7 @@ test('a mirrored record that does not stand against the seat\'s older census sta
   assert.equal(o2.list().length, 1);
 });
 
-test('2f + 1 guardians\' absence attestations held by the gatherer make the peer ABANDONED in the record every guardian signs (kanban #322)', async () => {
+test('2f + 1 guardians\' absence attestations held by the gatherer make the peer ABANDONED in the record every guardian signs', async () => {
   const { createAbsences, absenceHex } = await import('../src/absences.js');
   const { signAbsence } = await import('../../arena-protocol/src/absence.js');
   const ABANDON = 288;
@@ -312,7 +312,7 @@ test('2f + 1 guardians\' absence attestations held by the gatherer make the peer
   assert.match(said.why, /does not stand here: 4 guardian\(s\) attest the absence, the threshold is 5/);
 });
 
-test('a guardian\'s own departure notice, once due, makes it DEPARTED from leave_after in the record every guardian signs (kanban #322)', async () => {
+test('a guardian\'s own departure notice, once due, makes it DEPARTED from leave_after in the record every guardian signs', async () => {
   const { createAbsences, departureHex } = await import('../src/absences.js');
   const { signDeparture } = await import('../../arena-protocol/src/absence.js');
   const NOTICE = 18;
@@ -333,7 +333,7 @@ test('a guardian\'s own departure notice, once due, makes it DEPARTED from leave
   assert.match(said.why, /does not stand here: leave_after 156010 is less than departure_notice/);
 });
 
-test('a guardian with a due notice who stopped before its leave_after is ABANDONED, one gone from leave_after DEPARTED (§23A.5, rehearsal 14, kanban #326)', async () => {
+test('a guardian with a due notice who stopped before its leave_after is ABANDONED, one gone from leave_after DEPARTED (§23A.5, rehearsal 14)', async () => {
   const { createAbsences } = await import('../src/absences.js');
   const { signDeparture, signAbsence } = await import('../../arena-protocol/src/absence.js');
   const NOTICE = 18; const ABANDON = 288; const LEAVE = 156020;
@@ -354,7 +354,7 @@ test('a guardian with a due notice who stopped before its leave_after is ABANDON
   assert.deepEqual([onTime.got.gone, onTime.got.signers, onTime.gone[0].kind, onTime.gone[0].sinceHeight], [1, 7, 1, LEAVE], 'DEPARTED from leave_after');
 });
 
-test('seats that hold no round build and sign the record from their chain\'s census (kanban #495: the new second-host seats held no record, so no seated guardians and no gateway seats)', async () => {
+test('seats that hold no round build and sign the record from their chain\'s census (the new second-host seats held no record, so no seated guardians and no gateway seats)', async () => {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 21) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x70 + i)]); n.endpoint = `wss://nr-${i}.example`; }
   const entries = nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xb0 + i), vout: 0, bondSats: 50000n,
@@ -384,7 +384,7 @@ test('seats that hold no round build and sign the record from their chain\'s cen
   assert.equal(seats[0].seatedGuardians(toHex(FED)).length, 7, 'its seated guardians, for the gateway seats');
 });
 
-test('ARENA_RECORD_BASIS=chain: a seat holding only an old round takes the chain\'s newer census, which names the federation (kanban #326: T2\'s relay seats)', async () => {
+test('ARENA_RECORD_BASIS=chain: a seat holding only an old round takes the chain\'s newer census, which names the federation (T2\'s relay seats)', async () => {
   const nodes = Array.from({ length: 4 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 41) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x80 + i)]); n.endpoint = `wss://t2-${i}.example`; }
   const named = nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xc0 + i), vout: 0, bondSats: 50000n,

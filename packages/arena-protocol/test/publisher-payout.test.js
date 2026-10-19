@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SERIES PUBLISHER IS PAID BACK ITS PUBLICATION FEE (§5A.5, kanban #304; 2026.0.3): the fee proven from the parents the publication
+// THE SERIES PUBLISHER IS PAID BACK ITS PUBLICATION FEE (§5A.52026.0.3): the fee proven from the parents the publication
 // spends (each its own txid), capped at 10,000 sat, paid once - in round 0, or the first round of the series with entries - off the top
 // of the nodes' part of that round's fee locks, never the donation's.
 import { test } from 'node:test';

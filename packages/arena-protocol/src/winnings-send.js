@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WINNINGS ARE ALWAYS SENT, ON A FEDERATION ROUND (the owner 2026-09-21 13:25, "winnings are always sent. There is
+// WINNINGS ARE ALWAYS SENT, ON A FEDERATION ROUND (2026-09-21 13:25, "winnings are always sent. There is
 // no Collect"; ruled for FEDERATION 2026-09-23).
 //
 // A qualifier's payout is not a contract the winner must collect. It is an LNv2 outgoing contract that ONE

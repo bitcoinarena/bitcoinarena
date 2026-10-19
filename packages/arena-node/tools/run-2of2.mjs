@@ -13,7 +13,7 @@
  * Signer node A :18080 and signer node B :18081 (ARENA_PORT_A / ARENA_PORT_B) on the tailnet
  * address (ARENA_BIND). NEVER 8080: signal-cli holds it on this host, so the
  * launcher refuses it by name instead of meeting it as a bind error. Reachable
- * on Tailscale, not LAN (the owner 2026-09-08). The Daily page is https, so a
+ * on Tailscale, not LAN (2026-09-08). The Daily page is https, so a
  * browser reaches the signer nodes through the tailnet's https funnel - /blwp-a and
  * /blwp-b proxied to these two ports - and ARENA_WSS_<port> names that public
  * address; the lobby link is built from it (round-2of2.mjs `publicFor`).
@@ -56,7 +56,7 @@ if (!env.RT) {
   console.error('the Daily opens its rounds on a regtest bitcoind: name its datadir as RT= (and its RPCPORT=)');
   process.exit(2);
 }
-// A PAYING ROUND BESIDE THE FREE ONE IS A FEDERATION ROUND (HARD, the owner 2026-09-23 10:19: "New paying
+// A PAYING ROUND BESIDE THE FREE ONE IS A FEDERATION ROUND (HARD, 2026-09-23 10:19: "New paying
 // rounds are FEDERATION now"). ARENA_PAID_STAKE_MSAT names its stake, and the stake goes into a lock in the
 // round's federation - never into the committee's Lightning, which is the withdrawn Lightning custody and withdrawn (§23.6).
 //
@@ -65,7 +65,7 @@ if (!env.RT) {
 // fedimintd builds is 3-of-4, and two signer nodes cannot be three; `receiptsNeeded` defines 2 and 7 and
 // nothing between. So the free round keeps its 2-of-2 on A and B, unchanged, and the paying round stands on
 // ARENA_PAID_PORTS - seven ports - whose first nodes each advertise ONE guardian key of the federation, every key
-// on its own node (testnet 3 of 4: four guardian nodes, one node one guardian, the owner 2026-09-26), the others
+// on its own node (testnet 3 of 4: four guardian nodes, one node one guardian, 2026-09-26), the others
 // guarding nothing. The federation is read through the same port a signer node
 // verifies a lock with: ARENA_STAKE_LOCK_BIN, ARENA_FEDERATION_CLIENT_DIR (a client joined to it), and its
 // invite in ARENA_FEDERATION_INVITE or the file ARENA_FEDERATION_INVITE_FILE. Refused here, by name, without
@@ -111,14 +111,14 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
 
 // BOTH SIGNER NODES CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,
 // protocol roundEndMs), so every run is replayed, signed and made final.
-// A ROUND IS ABOUT ONE RUN LONG (the owner 2026-09-16 15:36: the lobby said "closes 30 min" beside a two-minute
+// A ROUND IS ABOUT ONE RUN LONG (2026-09-16 15:36: the lobby said "closes 30 min" beside a two-minute
 // play, and the same round id came back for half an hour). Entries close 150 s after the round starts - a run's
 // 9000 ticks - and the keeper opens the next with a minute to go. ARENA_ENTRY_WINDOW_MS names another.
 const entryWindowMs = BigInt(env.ARENA_ENTRY_WINDOW_MS || 150000);
 // ARENA_ROUND_PERIOD_MS=90000 (SPECTATE-2158): free rounds every 90 s, each run starting together at its round's start and
 // entry closing there - set with ARENA_ENTRY_WINDOW_MS=0 so the first round has the same shape.
 const roundPeriodMs = env.ARENA_ROUND_PERIOD_MS ? Number(env.ARENA_ROUND_PERIOD_MS) : null;
-// ATTACH (ARENA_ATTACH=1; the free grid gapless across a restart, the owner 2026-10-01: "The two free nodes run as their own
+// ATTACH (ARENA_ATTACH=1; the free grid gapless across a restart, 2026-10-01: "The two free nodes run as their own
 // processes, so an opener restart does not touch them"): the signer nodes run as units of their own on portA and portB, on
 // this pair's stores, and this tool opens rounds for them and starts none.
 const attach = env.ARENA_ATTACH === '1' ? { fundedFile: `${dir}/funded-rounds.txt`, proofDir: `${dir}/attach-proof` } : null;
@@ -139,7 +139,7 @@ if (paidSetup) {
   if (!fed.keys || fed.keys.length < fed.threshold)
     throw new Error(`the federation names ${fed.keys ? fed.keys.length : 0} guardian key(s) under a threshold of ${fed.threshold}`);
   receiptsNeeded(paidSetup.ports.length);
-  // ONE NODE IS ONE GUARDIAN (the owner 2026-09-26 22:54, spec §23A.2): every guardian key of the federation is advertised
+  // ONE NODE IS ONE GUARDIAN (2026-09-26 22:54, spec §23A.2): every guardian key of the federation is advertised
   // by its own node - all four of a 3-of-4, not the first threshold-many - and the rest are bonded census nodes that
   // guard nothing. A federation with more guardians than the committee has nodes cannot be seated one to a node.
   if (fed.keys.length > paidSetup.ports.length)

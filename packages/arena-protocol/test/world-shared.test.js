@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// #23 WORLD GRINDING (the owner 2026-10-04: "the player chooses nothing about the world"; §5A.5 round_seed(i) =
+// WORLD GRINDING (2026-10-04: "the player chooses nothing about the world"; §5A.5 round_seed(i) =
 // H(committee_seed(i) || "world")). Under config v4 of core 7e2123d1 every player of a round drives one world, made from the
 // round alone; under every older config (f51759b6 included) the player's own secret, key and join tick still make it, byte
 // for byte as published. And the grinding probe: 10 000 keys and secrets against one round.
@@ -15,7 +15,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const r32 = () => new Uint8Array(randomBytes(32));
 const ROUND = b32(0x31);
 const RANDOMNESS = b32(0x52);
-// WHICH CONFIGS SHARE ONE WORLD IS THE ROUND'S GAME'S TO SAY (kanban #203): nextblock's list, as its registration and the
+// WHICH CONFIGS SHARE ONE WORLD IS THE ROUND'S GAME'S TO SAY: nextblock's list, as its registration and the
 // client's known-games entry give it
 const SHARED = [toHex(computeCurrentConfigHash())];
 const v4 = { configHash: computeCurrentConfigHash(), censusRoot: b32(0x0c) };

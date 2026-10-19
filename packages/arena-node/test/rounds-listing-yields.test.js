@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEAT KEEPS ANSWERING WHILE IT LISTS ROUNDS (the owner 2026-10-04 07:15: "One listing held seat 1's loop 7.1 s. Cut that.").
+// A SEAT KEEPS ANSWERING WHILE IT LISTS ROUNDS (2026-10-04 07:15: "One listing held seat 1's loop 7.1 s. Cut that.").
 // Measured live before the cut: seat 7, one uncached GET /rounds of 1709 rounds held the loop 6368 ms and /identity waited
 // 6383 ms. Here a node holding four series (every round of the next 72 h) is asked for its whole listing while /identity
 // is asked every 10 ms: no /identity may wait behind the listing, and two listings asked together are one build, one answer.

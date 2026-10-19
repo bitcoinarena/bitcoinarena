@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// MUSIG2 HELD TO BIP-327'S PUBLISHED VECTORS (kanban #307; test-vectors/bip327, fetched from bitcoin/bips bip-0327/vectors):
+// MUSIG2 HELD TO BIP-327'S PUBLISHED VECTORS (test-vectors/bip327, fetched from bitcoin/bips bip-0327/vectors):
 // key sort, key aggregation with its errors, x-only and plain tweaks, nonce generation and aggregation with their errors,
 // signing and partial-signature verification with their failures, and signature aggregation. Then the bond's own key
 // path: the node and the 7 regtest arbitration members sign as one, nested, and the aggregate verifies under the bond's

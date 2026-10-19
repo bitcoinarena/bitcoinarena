@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GUARDIAN IS PAID TO THE PAYOUT KEY OF ITS CENSUS ADVERTISEMENT (§22A v4.6.4: "paid as one payout contract per guardian in the
-// round's settlement transaction to the payout_pubkey of his census advertisement"; kanban #33 gap 2). From SEATED_GUARDIAN_VERSION.
+// round's settlement transaction to the payout_pubkey of his census advertisement"; gap 2). From SEATED_GUARDIAN_VERSION.
 // Measured 2026-10-17 on the 13 census adverts of round 32cfad1c: every one names 32 bytes of 0x03 - a placeholder, not a key a
 // guardian holds. Such a key, or any x that is not on the curve, is no payout key: that guardian is paid at its node key, as before,
 // so no share is ever sent to a key nobody can spend.

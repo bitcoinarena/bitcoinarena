@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN Ed25519 CHECK FOR A GAME MANIFEST'S SIGNATURE (kanban #202, §0A.3), as arena-protocol/src/manifest.js takes it injected:
+// AN Ed25519 CHECK FOR A GAME MANIFEST'S SIGNATURE (§0A.3), as arena-protocol/src/manifest.js takes it injected:
 // verifyEd25519(signature, digest, key) with a raw 32-byte public key. node:crypto only - the protocol package carries
 // no curve.
 import { createPublicKey, verify } from 'node:crypto';

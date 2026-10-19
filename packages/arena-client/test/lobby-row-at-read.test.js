@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PAID ROW A FUNDED SEAT READS IS THE ROUND IT CAN STILL ENTER (kanban #121, the owner 2026-10-05: "A funded seat reads one
+// THE PAID ROW A FUNDED SEAT READS IS THE ROUND IT CAN STILL ENTER (2026-10-05: "A funded seat reads one
 // lobby row before it pays. That row is the round it can still enter. It is not the round after next."). The playtest of
 // 10-04 13:45 saw the round after next ("closes 1:52"); measured 10-05 01:30-01:33Z on 0.0.2740 with a seat holding 100 sat,
 // the row was never the round after next, but at each rollover Unity read the closed round ("closes in 0:00", not joinable)
 // for a further ~1 s, because the row was the LAST PAINT's pick. The row is picked when it is read, at the read's clock,
-// funded or not: lobbyRowsAt. A join held on a round keeps that round (lobbyKeepJoined, the owner 2026-10-02).
+// funded or not: lobbyRowsAt. A join held on a round keeps that round (lobbyKeepJoined, 2026-10-02).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { lobbyRowsAt } from '../src/lobby.js';
 
 const NOW = 1_800_000_000_000;
 const sid = new Uint8Array(32).fill(7);
-// a 90 s series of 100 sat rounds; entry closes at start + 32 s (late join, kanban #130)
+// a 90 s series of 100 sat rounds; entry closes at start + 32 s (late join)
 const round = (id, startInS, i) => ({ id, free: false, joinable: true, phase: 'open', stakeMsat: 100000n,
   startTimeMs: NOW + startInS * 1000, entryCloseMs: NOW + (startInS + 32) * 1000,
   contract: { seriesId: sid, startTimeMs: BigInt(NOW + startInS * 1000), roundIndex: BigInt(i) } });
@@ -41,7 +41,7 @@ test('a join held on a round whose entry has closed does not keep it: the row is
   assert.deepEqual(paid(lobbyRowsAt(rows, NOW + 21900, 'X')), ['X'], 'while its entry is open the held round stays the row');
 });
 
-// BUT A JOIN STILL GOING KEEPS ITS ROUND past the page's entry close (the owner 2026-10-02: "once a round has been selected with
+// BUT A JOIN STILL GOING KEEPS ITS ROUND past the page's entry close (2026-10-02: "once a round has been selected with
 // play the highlighting may no longer change"): PLAY a few seconds before the close is still "joining" when it passes, and
 // the seats take its entry until start + 45 s. Only a finished join ("joined", what a run's end and "exit game" leave) is
 // dropped once its round's entry has closed.

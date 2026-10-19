@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// 2026.0.3 STEP 5b - THE SEAT SIGNS, STORES AND SERVES ONE SETTLEMENT TRANSACTION PER FEDERATION (kanban #348). Two signer nodes of
+// 2026.0.3 STEP 5b - THE SEAT SIGNS, STORES AND SERVES ONE SETTLEMENT TRANSACTION PER FEDERATION. Two signer nodes of
 // a 2-of-2 claim key (a dealer's split) settle a round that takes any federation: the plan decided once (federationPlans: lockSettlement
 // + splitByFederation), then for each federation its own FROST signature over its own bytes (the peer's doors asked with
 // `&federation=`), its own submit through that federation's port, its own row (fed_lock_settlements) - served by /lock-settlement.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEV'S DONATION CLIENT (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): one private key, whose public
+// A DEV'S DONATION CLIENT (2026-10-03, FEDERATION.md "Donations in the federation"): one private key, whose public
 // half is this dev's recipient key in the network's donation set. It asks every seat it knows what that key was given
 // (GET /donations), learns from the answers in which federations the funds are, redeems each payout contract into its own
 // wallet in that federation, and withdraws to the dev's own LND. What decides is here, testable; the federation is the
@@ -61,7 +61,7 @@ export async function gatherDonations({ recipientPkHex, seats, fetcher = fetch, 
 }
 
 /** The payout contract a donation output is, as the lock client's `refund` rebuilds it (the seats' donationContractFields). */
-// `imageHex`: the sender's 32-byte player key when the seats say it is on the contract (kanban #156), zeros otherwise.
+// `imageHex`: the sender's 32-byte player key when the seats say it is on the contract, zeros otherwise.
 export const donationFields = (recipientPkHex, amountMsat, imageHex = '00'.repeat(32)) => JSON.stringify({
   paymentImage: { kind: 'hash', bytes: imageHex }, amountMsat: String(amountMsat),
   claimPk: recipientPkHex, refundPk: recipientPkHex, expiration: 0,
@@ -100,7 +100,7 @@ export async function redeemAll({ client, donations, recipientPkHex, secretHex, 
  * pay through a gateway (fees taken off by the stock client), made by the dev's LND and paid from the federation.
  */
 /**
- * ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (kanban #230, the owner 2026-10-07 11:50): each pass joined the federation
+ * ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (2026-10-07 11:50): each pass joined the federation
  * again and no client was ever closed - after 29 h a donor held ~720 sockets and 680 MB and spent 54-57% CPU between its 300 s
  * passes, and every one of those clients wrote the same wallet file. `join` is called once per federation; the join itself is
  * kept, so two asks never open two clients; a join that failed is forgotten and tried again on the next pass.
@@ -115,13 +115,13 @@ export function walletClients(join) {
     }
     return held.get(federationId);
   };
-  /** Drops a federation's client (kanban #357: before its wallet file is replaced by a recovered one); answers it, or null. */
+  /** Drops a federation's client (before its wallet file is replaced by a recovered one); answers it, or null. */
   get.forget = (federationId) => { const p = held.get(federationId) || null; held.delete(federationId); return p; };
   return get;
 }
 
 /**
- * E-CASH ISSUED TO THE WALLET AND NEVER CLAIMED, RECOVERED ON ITS OWN (kanban #357, plan agreed by the owner 2026-10-14). Measured that day:
+ * E-CASH ISSUED TO THE WALLET AND NEVER CLAIMED, RECOVERED ON ITS OWN (plan agreed by 2026-10-14). Measured that day:
  * 93,359 msat (dev a) and 34,596 msat (dev b) sat as outputs in issuance - refunds of failed withdrawals and change of redeems whose
  * state machines guardian WebSocket failures and restarts had cut off - until a hand-run recovery. One call per pass and federation,
  * after the redeem and before the withdrawal:
@@ -172,12 +172,12 @@ export async function claimUnclaimed({ federation, pendingOutputs, balanceMsat, 
 }
 
 export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blwp donations', gateways = [] }) {
-  // AN EMPTY WALLET IS NOTHING TO WITHDRAW, NOT A FAILED PASS (kanban #357, measured 2026-10-14 15:02Z: after both withdrawals the lock
+  // AN EMPTY WALLET IS NOTHING TO WITHDRAW, NOT A FAILED PASS (measured 2026-10-14 15:02Z: after both withdrawals the lock
   // client answered "Balance is too low to send any amount after fees", every pass failed there, and its record stopped)
   let can;
   try { can = BigInt(await client.withdrawableMsat()); } catch (e) { if (/too low/i.test(String(e && e.message))) can = 0n; else throw e; }
   if (can < minMsat) return { withdrawn: false, withdrawableMsat: can, why: `${can} msat withdrawable, below the ${minMsat} msat minimum` };
-  // THE GATEWAYS THE NETWORK NAMES FIRST, THEN THE CLIENT'S OWN PICK (kanban #357, measured 2026-10-14: left to the lock client, dev b
+  // THE GATEWAYS THE NETWORK NAMES FIRST, THEN THE CLIENT'S OWN PICK (measured 2026-10-14: left to the lock client, dev b
   // took a stale quick-tunnel gateway still registered in federation A - "Refunded" at 06:02Z and 14:39Z - while dev a, through the
   // gateway daily.json names, was paid at once). A refunded attempt leaves the e-cash in the wallet, so the next gateway is tried.
   const tried = [];
@@ -193,7 +193,7 @@ export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blw
   return { withdrawn: false, withdrawableMsat: can, state: 'Refunded', tried };
 }
 
-// A WITHDRAWAL THE NODE'S OWNER ASKED FOR (kanban #358, the owner 2026-10-14: "there's a withdrawal feature that withdraws it to
+// A WITHDRAWAL THE NODE'S OWNER ASKED FOR (2026-10-14: "there's a withdrawal feature that withdraws it to
 // lightning"): the owner gives an invoice or a Lightning address on the owner page; the node leaves the request in this client's
 // directory (withdraw-request.json) and the client pays it from one federation's wallet, through the gateways the network names.
 
@@ -274,7 +274,7 @@ export function routeWebSockets(routes, Real = globalThis.WebSocket) {
 }
 
 /**
- * THE RATE AT THE DONATION'S TIME (kanban #156, the owner 2026-10-05 08:17; source ruled the same day: a public price API the dev
+ * THE RATE AT THE DONATION'S TIME (2026-10-05 08:17; source ruled the same day: a public price API the dev
  * client calls itself, named in each record - no seat asks for a rate). CoinGecko's market chart around the time, per
  * currency; the price nearest the donation's own time is taken. Answers { ok, usd, eur, priceAtMs, provider } or why not.
  */
@@ -322,7 +322,7 @@ export function signDonationsRead({ secretHex, key, atMs, outpoints }) {
 }
 
 /**
- * RECORD, REDEEM, THEN TELL THE SEATS (kanban #156): each donation's rate is asked and its record written to disk first; a
+ * RECORD, REDEEM, THEN TELL THE SEATS: each donation's rate is asked and its record written to disk first; a
  * donation whose rate is not to be had is not recorded and not receipted (the seats keep it for the next pass). Then the
  * recorded ones are redeemed; only those recorded AND redeemed or already spent are named in a read receipt to every seat.
  */
@@ -339,7 +339,7 @@ export async function settleRead({ path, donations, client, key, seats, fetcher 
   recordDonations(path, fresh);
   for (const r of fresh) recorded.add(r.outpoint);
   const r = await redeemAll({ client, donations: donations.filter((d) => recorded.has(d.outpoint)), recipientPkHex: key.recipientPkHex, secretHex: key.secretHex, done });
-  // A DONATION REDEEMED IN AN EARLIER PASS THAT A SEAT STILL LISTS (kanban #209: a seat that indexed it again, or whose
+  // A DONATION REDEEMED IN AN EARLIER PASS THAT A SEAT STILL LISTS (a seat that indexed it again, or whose
   // earlier receipt it refused) is named again - recorded first like any other - so the seats' copy goes in the end
   const again = donations.filter((d) => done.has(d.outpoint)).map((d) => d.outpoint);
   const read = [...r.redeemed, ...r.spent].map((d) => d.outpoint).concat(again).filter((o) => recorded.has(o));

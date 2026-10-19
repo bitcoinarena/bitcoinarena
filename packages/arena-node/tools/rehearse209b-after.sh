@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE ARENA SIDE OF THE SEVEN-SEAT REHEARSAL (kanban #209 step 2): SOURCED by phase0's tn4-tools-regtest.sh after its six
+# THE ARENA SIDE OF THE SEVEN-SEAT REHEARSAL: SOURCED by phase0's tn4-tools-regtest.sh after its six
 # readings (AFTER=<this file>), so it has that run's $H, $B, $NODE, $NODE_PORTS, $CLIENT_DIR, $LOCK_BIN, $BTC_DIR,
 # $FORK_HOME, $ROUND, $PIDS and its say / reading / die / until_ / bc / bcn. The BLWP world is up: seven phase0 seats with
 # their guardians (run-testnet4-paid.mjs), their BLWP bonds, a BLWP paid round $ROUND with a stake locked (testnet4-lock.mjs).

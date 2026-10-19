@@ -34,7 +34,7 @@ async function served(name) {
   try { return readFileSync(join(where, name)); } catch { return null; }
 }
 
-// THE ENGINE'S SCRIPTS AND EACH GAME'S (kanban #202: one list per game): a page serves both, and both decide money.
+// THE ENGINE'S SCRIPTS AND EACH GAME'S (one list per game): a page serves both, and both decide money.
 const PINNED = [...Object.entries(LIST.pinned), ...Object.values(LIST.games || {}).flatMap((g) => Object.entries(g.pinned))];
 let good = true;
 for (const [name, hashes] of PINNED) {

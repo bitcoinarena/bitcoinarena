@@ -49,7 +49,7 @@ export function encodeEntry(e) {
   w.u32(e.height);
   w.vec([...e.roles].sort(), (r, ww) => ww.u8(ROLES.indexOf(r)),
         { sortedBy: (a, b) => (a < b ? -1 : a > b ? 1 : 0) });
-  // AND THE GAMES IT HOSTS (§0A.4, kanban #204), for the reason `roles` is here: the game/verify draw reads them, so the
+  // AND THE GAMES IT HOSTS (§0A.4), for the reason `roles` is here: the game/verify draw reads them, so the
   // root commits to them. Taken off the advertisement by RESOLVE, as the roles are.
   if (!Array.isArray(e.hostedGames)) throw new Error('a census entry names the games its node hosts ([] for none)');
   w.vec(e.hostedGames, (g, ww) => ww.bytes32(g));
@@ -110,7 +110,7 @@ export function censusMinimumFor(contract) {
  */
 /**
  * MAY THIS ENTRY SERVE THIS ROUND IN THIS ROLE: it declares the role, and for the game/verify pool (game, verify) it hosts
- * the round's game (§0A.4, kanban #204). Settlement and relay are game-agnostic: they sign payout tables and hold
+ * the round's game (§0A.4). Settlement and relay are game-agnostic: they sign payout tables and hold
  * custody, never replay, so they are drawn from the whole census.
  */
 export function eligibleFor(e, contract, role) {
@@ -122,7 +122,7 @@ export function eligibleFor(e, contract, role) {
 export function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
   const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
-  // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4, kanban #204): a game too few nodes host has no
+  // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4): a game too few nodes host has no
   // paying rounds, and says why
   if (have < minimum && poolOfRole(role) === GAME_VERIFY)
     return {
@@ -248,7 +248,7 @@ export function commitCensus(entries, { contract, view }) {
 }
 
 /**
- * THE ROOT OF A SET OF RESOLVED ENTRIES AT A HEIGHT AND DEPTH, with no chain view (kanban #296, spec 5A.6): the same
+ * THE ROOT OF A SET OF RESOLVED ENTRIES AT A HEIGHT AND DEPTH, with no chain view (spec 5A.6): the same
  * filters, sort and tree `commitCensus` applies - it calls this - so a client that verified each entry against headers
  * it agreed itself computes byte for byte the root a seat derives from blocks, and compares it with the round's.
  */
@@ -694,7 +694,7 @@ function candidatesIn(blocks, censusHeight, network) {
     for (const raw of block.transactions) {
       let tx;
       try { tx = parseTransaction(raw); } catch { continue; }
-      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9, kanban #209): a bond the BLWP
+      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9): a bond the BLWP
       // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
       // operator re-affirmed it for this network (deriveCensus)
       let ancestor = false;
@@ -1100,7 +1100,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     }
 
     // A TEMPLATE-2 BOND MATURES AT ITS OWN HEIGHT, AND THAT HEIGHT IS AT LEAST ITS CONFIRMATION PLUS THE NETWORK'S
-    // OFFSET (kanban #295, 5A.3B). The key above was rebuilt with the advertisement's height, so the leaf on chain
+    // OFFSET (5A.3B). The key above was rebuilt with the advertisement's height, so the leaf on chain
     // carries it; this asks whether it is far enough from the block the bond confirmed in - read off the chain when a
     // view was brought, else the entry's own height. One block short is a bond its node could take back before the
     // network's maturity, and it is excluded by name.
@@ -1136,13 +1136,13 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     // node that has not said it can serve the round it is being counted into.
     const roles = read.advert.roles || [];
     if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
-    // STEPPED OUT (§5A.3 "advertisement declares serving = true", kanban #302): with updates to come, the newest one decides below
+    // STEPPED OUT (§5A.3 "advertisement declares serving = true"): with updates to come, the newest one decides below
     if (!versionAfterUpdates && read.advert.serving === false) {
       excluded.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
       continue;
     }
 
-    // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #348, measured 2026-10-13 05:20Z: the first v2 grid's
+    // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2measured 2026-10-13 05:20Z: the first v2 grid's
     // census came out EMPTY - every node announced version 2 in an advertisement update confirmed at 156338, and this pass
     // refused each one on the version its bond committed to at creation, before deriveCensus applied the update). With
     // updates to come (`versionAfterUpdates`), deriveCensus asks the version of the newest advertisement instead.
@@ -1150,7 +1150,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
-        // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): a node left out for the version it speaks, as the page shows it
+        // PROTOCOL TOO OLD, BY NAME (scope 3): a node left out for the version it speaks, as the page shows it
         tooOld: true, speaks: versions,
         why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
           + `round runs ${protocolVersionName(contract.protocolVersion)}`,
@@ -1287,13 +1287,13 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   });
   if (!resolved.ok) return resolved;
 
-  // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; the owner 2026-09-28): for each resolved bond, the newest valid
+  // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; 2026-09-28): for each resolved bond, the newest valid
   // update confirmed at or below census_height - signed by the bond's own node key (`verifyUpdate`) - replaces the
   // advertisement the bond committed to at creation. The census's own filters then read the updated body: an update
   // that declares no role, or not this round's version, takes the node out of this census. With no `verifyUpdate`
   // nothing is applied: an update nobody checked is not an update.
   // A BOND OF THE ANCESTOR COUNTS ONLY ONCE ITS OPERATOR RE-AFFIRMED IT FOR THIS NETWORK (§27A.8.3, spec 0A.9; kanban
-  // #209): a re-affirmation at or below census_height, at or above the bond, signed by the bond's node key for this
+  //): a re-affirmation at or below census_height, at or above the bond, signed by the bond's node key for this
   // network id and this bond - checked with the same BIP-340 verify an update is (`verifyUpdate`). Opt-in per operator:
   // a bond nobody re-affirmed stays the ancestor's, and is named here, not counted.
   const reaffirmOut = [];
@@ -1345,7 +1345,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
         updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
         continue;
       }
-      // STEPPED OUT (§5A.3, kanban #302): "From the first series whose census_height is at or above that update's block, the node is
+      // STEPPED OUT (§5A.3): "From the first series whose census_height is at or above that update's block, the node is
       // not in the census and is never drawn"; an update with serving = true brings it back the same way
       if (u.advert.serving === false) {
         updatedOut.push({ ...e, notServing: true, why: `its newest advertisement update (block ${u.height}) says serving = false: its node stepped out of the census, its bond untouched` });
@@ -1356,7 +1356,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
           + `${versions.map(protocolVersionName).join(', ') || 'no version'} and this round runs ${protocolVersionName(contract.protocolVersion)}` });
         continue;
       }
-      // the update's games replace the bond's first advertisement's (kanban #204: a hosted-games change is an update)
+      // the update's games replace the bond's first advertisement's (a hosted-games change is an update)
       eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
         updatedBy: { txid: u.txid, height: u.height, position: u.position } });
     }

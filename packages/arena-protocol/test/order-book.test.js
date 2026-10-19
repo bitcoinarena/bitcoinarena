@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE MARKET ORDER BOOK (kanban #278): signed limit orders, one uniform price per batch, fees due at resolution.
+// THE MARKET ORDER BOOK: signed limit orders, one uniform price per batch, fees due at resolution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createPublicKey, sign, verify as edVerify } from 'node:crypto';

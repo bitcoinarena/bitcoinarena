@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PROJECT PROPOSALS ON BITCOIN-ARENA.IO (§27A.9.3, kanban #397, the owner 2026-10-17: "Add a Project Proposals section to the website
+// PROJECT PROPOSALS ON BITCOIN-ARENA.IO (§27A.9.32026-10-17: "Add a Project Proposals section to the website
 // where people can comment and review"; "Anyone can do a proposal to pay out"). The homepage reads the proposals the network's nodes
 // hold (GET /funding) and shows one only when at least `needed` of them hold it; it builds a proposal or a comment as the seats read
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
@@ -71,7 +71,7 @@ export async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fe
       publishedHeight: p.publishedHeight, signal: v.signal, vote: v.vote, cancelled: v.cancelled || null, signals: (v.signals || []).length,
       comments: [...comments.values()].sort((a, b) => a.atHeight - b.atHeight || (a.id < b.id ? -1 : 1)), holding: views.length });
   }
-  // PIP NUMBERS (the owner 2026-10-17: "Project improvement proposals, PIP - each item set to vote is prefixed with PIP"): the earliest
+  // PIP NUMBERS (2026-10-17: "Project improvement proposals, PIP - each item set to vote is prefixed with PIP"): the earliest
   // published is PIP-1 - by its published block, then its id - so a number never changes once the proposals before it are held
   [...proposals].sort((a, b) => a.publishedHeight - b.publishedHeight || (a.id < b.id ? -1 : 1)).forEach((p, i) => { p.pip = i + 1; });
   proposals.sort((a, b) => b.publishedHeight - a.publishedHeight);
@@ -103,7 +103,7 @@ export function signedComment({ secretKey, proposalId, parentId = null, atHeight
 }
 
 /**
- * THE PLAYER'S IN-GAME KEY (PIP, the owner 2026-10-17: "Users can sign in with their ingame key"): the identity key a wallet seed makes -
+ * THE PLAYER'S IN-GAME KEY (PIP, 2026-10-17: "Users can sign in with their ingame key"): the identity key a wallet seed makes -
  * the key the lobby, the board and the generated name use (identity.js) - and that generated name.
  */
 export function forumIdentity(seedHex, curve) {

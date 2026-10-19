@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (kanban #494, the owner 2026-10-18: "a button generate a new address for the lp
+// A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (2026-10-18: "a button generate a new address for the lp
 // wallet"): the owner signs it, the seat asks its provider service (ARENA_LIQUIDITY_PROVIDER_URL), the answer comes back; no other key,
 // and no provider service, is told so.
 import test from 'node:test';

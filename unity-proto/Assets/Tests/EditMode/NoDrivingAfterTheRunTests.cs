@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// NO DRIVING AFTER THE RUN (the owner 2026-09-27 13:25, phone, block 968830: after WASTED "WASD steers it ... the drive
+/// NO DRIVING AFTER THE RUN (2026-09-27 13:25, phone, block 968830: after WASTED "WASD steers it ... the drive
 /// sound plays", and after a delivery the same). Once the core has named the run - the words latch in S_STATE - or the
 /// session says it ended, DriveInput answers nothing: no throttle, no steer, no handbrake, for the core's inputs, the
 /// wheels and the engine note alike.

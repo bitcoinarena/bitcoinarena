@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// BUY ADD-ONS INSIDE UNITY (kanban #374): the page's add-ons view read, a purchase confirmed once and only once, the banner saying
+/// BUY ADD-ONS INSIDE UNITY: the page's add-ons view read, a purchase confirmed once and only once, the banner saying
 /// from which round the item plays, the item's button, and the truck's morph curve.
 /// </summary>
 public class AddonsPanelTests

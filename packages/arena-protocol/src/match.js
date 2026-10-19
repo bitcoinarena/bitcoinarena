@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SCORE ACROSS ROUNDS (kanban #280, the owner 2026-10-09: "The protocol must support a score across rounds, when the same two
+// A SCORE ACROSS ROUNDS (2026-10-09: "The protocol must support a score across rounds, when the same two
 // players stay in the game. I win: 1:0. Opponent wins: 1:1. It keeps counting until one player or both leave. The protocol
 // counts it up, attests it, and shows it in the results").
 //
@@ -29,7 +29,7 @@ export function matchProofId({ roundId, entryId, identityKey }) {
   return taggedHash(TAG.matchProof, w.finish());
 }
 
-// WHO IS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table, both read "You are alone in this
+// WHO IS AT THE TABLE (2026-10-09 playtest: two tabs at one table, both read "You are alone in this
 // round" until one picked): a tab at a head-to-head round's table says so to the round's seats with its identity key, signed
 // over (round, key), every PRESENCE_EVERY_MS; a seat counts it as there for PRESENCE_MS after the last one. Presence decides
 // nothing - it is what the table shows before a move is in.

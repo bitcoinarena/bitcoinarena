@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// KANBAN #131 (the owner 2026-10-04 15:16: "Remove the WASTED text after a few seconds. Spectate stays"): in a live round the
+/// KANBAN (2026-10-04 15:16: "Remove the WASTED text after a few seconds. Spectate stays"): in a live round the
 /// WASTED band holds 3 s from the wreck and fades out over 0.5 s - it no longer holds until the lobby.
 /// </summary>
 public class WastedLiveTests

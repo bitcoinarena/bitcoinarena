@@ -13,7 +13,7 @@ main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
 h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 0 0 8px; }
 .sub { color: var(--muted); margin: 0 0 20px; }
 a { color: #58a6ff; } a:visited { color: #a5b4fc; }
-ol.steps { display: flex; gap: 4px; padding: 0 0 2px; list-style: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 0 20px; }   /* one line (the owner 2026-10-18); a phone scrolls it */
+ol.steps { display: flex; gap: 4px; padding: 0 0 2px; list-style: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 0 20px; }   /* one line (2026-10-18); a phone scrolls it */
 ol.steps::-webkit-scrollbar { display: none; }
 ol.steps li { flex: none; white-space: nowrap; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12.5px; }
 ol.steps li.done { border-color: var(--ok); color: var(--ok); } ol.steps li.now { border-color: var(--accent); color: var(--text); }
@@ -67,7 +67,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .ff-note { color: var(--muted); font-size: 12.5px; }
     .role-ic { font-size: 26px; line-height: 1; } .role-earn { color: #f7931a; font-size: 12.5px; margin-top: 3px; } .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
     @media (max-width: 560px) { .ff-rows { grid-template-columns: 1fr; } }
-    /* THE ROLE CARDS (kanban #497): one line each - icon, name, what it does, its 1 % - its needs as chips, the rest behind "more" */
+    /* THE ROLE CARDS: one line each - icon, name, what it does, its 1 % - its needs as chips, the rest behind "more" */
     .rc { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 6px 0; } .rc:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
     .rc-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; } .rc-top input { width: auto; margin: 0; }
     .rc .role-ic { font-size: 22px; } .rc-name { flex: 1; min-width: 150px; } .rc-does { color: var(--muted); }
@@ -76,7 +76,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .chip.opt { border-color: #f7931a; color: #f7931a; } .rc-more { margin: 4px 0 0 34px; font-size: 12.5px; color: var(--muted); } .rc-more summary { cursor: pointer; } .rc-more p { margin: 4px 0; }
     @media (max-width: 560px) { .rc-chips, .rc-more { margin-left: 0; } }   /* the badge wraps to the left edge on a phone: chips under it, not indented */
 
-    /* THE INTRO (kanban #498): what a node is, what it earns, what it needs - before step 1 */
+    /* THE INTRO: what a node is, what it earns, what it needs - before step 1 */
     #s-intro .lead { font-size: 17px; line-height: 1.5; margin: 6px 0 14px; }
     #s-intro svg { width: 100%; height: auto; display: block; margin: 4px 0 14px; }
     .earn-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 14px; }
@@ -398,7 +398,7 @@ async function load() {
   if (!st.ok) { document.body.innerHTML = '<main><h1>Arena node setup</h1><p>' + esc(st.why) + '</p></main>'; return; }
   $('steps').innerHTML = STEPS.map(([k, t]) => `<li class="${st.done[k] ? 'done' : st.step === k ? 'now' : ''}">${t}</li>`).join('');
   { const now = $('steps').querySelector('.now'); if (now) $('steps').scrollLeft = Math.max(0, now.offsetLeft - $('steps').offsetLeft - 40); }   // the current step in view
-  // THE INTRO (kanban #498): before the first step is done, until "Set up my node" (remembered in this browser where it can be)
+  // THE INTRO: before the first step is done, until "Set up my node" (remembered in this browser where it can be)
   const intro = st.step === 'chain' && !st.done.chain && !introSeen();
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
@@ -481,7 +481,7 @@ $('seed-show').onclick = async () => { const r = await post('/api/seed/new'); if
   $('words').innerHTML = r.words.map((w, i) => `<span><b>${i + 1}</b>${esc(w)}</span>`).join(''); $('seed-show').hidden = true;
   $('confirm-inputs').innerHTML = r.positions.map((p) => `<div><label>word ${p}</label><input data-p="${p}" autocomplete="off" spellcheck="false"></div>`).join('');
   $('seed-written').hidden = false; $('confirm').hidden = true; };
-// THE WORDS LEAVE THE SCREEN BEFORE THEY ARE ASKED BACK (kanban #471, seen on the wizard's screenshot 06: the 24 words stood beside
+// THE WORDS LEAVE THE SCREEN BEFORE THEY ARE ASKED BACK (seen on the wizard's screenshot 06: the 24 words stood beside
 // the three inputs, so the check proved nothing): asked from the paper, not from the page
 $('seed-written').onclick = () => { $('words').innerHTML = ''; $('seed-written').hidden = true; $('confirm').hidden = false;
   const first = document.querySelector('#confirm-inputs input'); if (first) first.focus(); };

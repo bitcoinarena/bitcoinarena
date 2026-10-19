@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A HEAD-TO-HEAD ROUND ON TWO SIGNER NODES (kanban #233, the owner 2026-10-09: "Head-to-head in engine"): two players enter a
+// A HEAD-TO-HEAD ROUND ON TWO SIGNER NODES (2026-10-09: "Head-to-head in engine"): two players enter a
 // paying round of Rock Paper Scissors (test/plugins/rps - the game's own decide adapter under a test developer key), each
 // hiding its move behind a commitment; after entry close each reveals to both nodes; at the round's end every node pulls
 // the other's reveals, decides with the game's adapter and signs each entry's result; the round settles ACCEPTED.
@@ -101,7 +101,7 @@ test('a player who never reveals forfeits at both nodes, and the one who reveale
   assert.equal(r.state, 'ACCEPTED', r.why);
 });
 
-test('one player alone is not played (the owner 2026-10-09: "there must be 2 before the game starts"): VOID at both nodes, the stake back', async () => {
+test('one player alone is not played (2026-10-09: "there must be 2 before the game starts"): VOID at both nodes, the stake back', async () => {
   const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);

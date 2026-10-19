@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE IN-GAME ITEMS' DEVELOPERS' SHARE (kanban #377, the owner 2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game devs (25/25)
+// THE IN-GAME ITEMS' DEVELOPERS' SHARE (2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game devs (25/25)
 // but are fully optional. There is a screen in settings called advanced settings which has two select boxes, the existing donation
 // dropdown and a new one for ingame options: 50% 40% 30% 20% 10% 0%. The price shown in the buy screens is this dynamic, if the ingame
 // donations are zero the price is 250 Sats instead of 500 sats. Node fees are never optional. It is at the very bottom of the settings
@@ -30,7 +30,7 @@ test('Advanced settings is the last menu item of Settings and opens a screen of 
   assert.match(screen, /<select id="blwp-donation-select"/);
   const share = screen.slice(screen.indexOf('<select id="arena-items-share-select"'), screen.indexOf('</select>', screen.indexOf('arena-items-share-select')));
   assert.deepEqual([...share.matchAll(/<option value="(\d+)"( selected)?>(\d+)%<\/option>/g)].map((m) => [Number(m[1]), !!m[2]]),
-    [[40, true], [30, false], [20, false], [10, false], [0, false]]);   // the reserves' terms (kanban #442): 40 .. 0 %
+    [[40, true], [30, false], [20, false], [10, false], [0, false]]);   // the reserves' terms: 40 .. 0 %
   // the menu item opens the screen, Back and Settings' Close hide it
   assert.match(html, /getElementById\('blwp-advanced-go'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('blwp-settings-advanced'\)\.style\.display = '';/);
   assert.match(html, /getElementById\('blwp-advanced-back'\)\.addEventListener\('click', \(\) => \{ document\.getElementById\('blwp-settings-advanced'\)\.style\.display = 'none'; \}\);/);
@@ -41,7 +41,7 @@ test('the price at the share: 500 sat at the default 50 %, 250 sat at 0 %, kept 
   const src = html.slice(html.indexOf("    const ITEMS_SHARE_KEY = 'arena.items.devsPct';"), html.indexOf('    async function openShop() {'));
   const kept = new Map();
   const localStorage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => kept.set(k, String(v)) };
-  const window = { BLWP_BROWSER_STORE: () => localStorage };   // the page's one door to the browser's store (kanban #465)
+  const window = { BLWP_BROWSER_STORE: () => localStorage };   // the page's one door to the browser's store
   pageFunction(PAGE, ['window', 'localStorage', 'BLWPCLIENT'], src, '')(window, localStorage, { itemPriceFor, ITEM_DEV_SHARES });
   assert.equal(window.ARENA_ITEMS_SHARE(), 50);
   assert.equal(window.ARENA_ITEM_PRICE(500), 500n);
@@ -61,9 +61,9 @@ test('every buy screen prices at the share: the shop sheet, its paying line, the
   assert.equal((html.match(/String\(it\.priceSat\)/g) || []).length, 0, 'no list price shown as the price anywhere');
 });
 
-// OUTSIDE A SELLING GAME (kanban #442, the owner 2026-10-17: "This 50% is wrong if 20% are taken by a ingame item"): Settings opened from the
-// games screen or another game takes the terms of the newest version that sells items - the reserves' 40 .. 0 % - not #377's 50 %
-test('#442: with no game chosen the share and the price are the newest selling version\'s - nodes 40 %, reserves 20 %, 40 .. 0 %', async () => {
+// OUTSIDE A SELLING GAME (2026-10-17: "This 50% is wrong if 20% are taken by a ingame item"): Settings opened from the
+// games screen or another game takes the terms of the newest version that sells items - the reserves' 40 .. 0 % - not 's 50 %
+test('with no game chosen the share and the price are the newest selling version\'s - nodes 40 %, reserves 20 %, 40 .. 0 %', async () => {
   const { itemTermsOf, itemShareOn, itemPriceOn, shopOf } = await import('../src/item-buy.js');
   const src = html.slice(html.indexOf("    const ITEMS_SHARE_KEY = 'arena.items.devsPct';"), html.indexOf('    async function openShop() {'));
   const kept = new Map();

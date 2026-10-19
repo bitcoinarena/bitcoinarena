@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// A RESULT IS READ BEFORE THE LOBBY TAKES THE SCREEN (the owner 2026-09-18 19:30: "lobby comes back too fast when the
+/// A RESULT IS READ BEFORE THE LOBBY TAKES THE SCREEN (2026-09-18 19:30: "lobby comes back too fast when the
 /// truck reaches the goal - the player cannot read the result. Hold the result at least 5 seconds before the lobby").
 ///
 /// A run ends in the tick the core says DELIVERED and the page hands that word over in the same frame, so the lobby
@@ -47,7 +47,7 @@ public class ResultHoldTests
             "a run that did not start from the lobby was sent back to it");
     }
 
-    // THE LOBBY IS NOT DRAWN OVER THE RESULT CARD (the owner 2026-09-25): coverage, not the clock.
+    // THE LOBBY IS NOT DRAWN OVER THE RESULT CARD (2026-09-25): coverage, not the clock.
     [Test]
     public void TheLobbyNeverCoversTheResultCard()
     {
@@ -67,7 +67,7 @@ public class ResultHoldTests
         Assert.IsTrue(gui >= 0 && gate > gui && gate < depth, "OnGUI draws the lobby before asking whether the result card is up");
     }
 
-    // THE RESULT SCREEN HOLDS 8 s (the owner 2026-09-25 21:53: "stays up 3 seconds longer. It holds 5 s now ... Make that 8 s").
+    // THE RESULT SCREEN HOLDS 8 s (2026-09-25 21:53: "stays up 3 seconds longer. It holds 5 s now ... Make that 8 s").
     [Test]
     public void TheResultCardAndTheLobbysHoldAreEightSeconds()
     {

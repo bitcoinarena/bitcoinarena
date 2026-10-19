@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLAIMS ON A HALTED FEDERATION'S ESCROW, AS THE ARBITRATION SET TAKES THEM (spec §23A.5 steps 2-4, RULED the owner
-// 2026-09-21, kanban #323): "The arbitration set opens a claim window of claim_blocks ... The client ... presents each unspent
+// 2026-09-21): "The arbitration set opens a claim window of claim_blocks ... The client ... presents each unspent
 // note it holds for that federation, as it would present them to the federation itself ... A claim is valid if the note carries
 // the federation's signature, its nonce is not in the published spent set, and it has not been claimed before. Valid claims are
 // paid at face value from the escrow ... A note presented late is still paid from what is left, until drain_blocks".
@@ -121,8 +121,8 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
 }
 
 /**
- * PAYING THE TABLE (§23A.5 step 4, kanban #323), one pass at a time, every step kept (`v`, the service's state for this
- * federation) before the next, as payOutSlash does for a slash (§5A.3B, #307):
+ * PAYING THE TABLE (§23A.5 step 4), one pass at a time, every step kept (`v`, the service's state for this
+ * federation) before the next, as payOutSlash does for a slash (§5A.3B):
  *   1. from the claim window's close: the whole escrow is spent by k of the set to a peg-in address of its own client of a SAFE
  *      federation (`run` the stake-lock tool over that client), and claimed there;
  *   2. the table (`claims.plan`, over what that federation credited) is paid note by note: every note not paid yet, summed per

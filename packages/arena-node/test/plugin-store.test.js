@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PLUGIN STORE (kanban #276 step 5, the owner 2026-10-09: "See what other nodes host. Install it. Always scan for malicious
+// THE PLUGIN STORE (2026-10-09: "See what other nodes host. Install it. Always scan for malicious
 // code before install"; 2026-10-10: "games can be downloaded from other nodes"): a seat hands a hosted game over as a package;
 // another seat's owner installs it - its manifest, donation set and every file checked byte for byte, its code scanned -
 // and it runs from that seat's next start. A doctored file, code that reaches out, or an install not signed by the owner
@@ -91,14 +91,14 @@ test('install from another seat: signed by the owner, checked, kept; loaded at t
     assert.deepEqual(got.refused, []);
     assert.equal(toHex(got.registrations[0].gameId), RPS_ID);
     const [core] = [...got.registrations[0].cores.values()];
-    // never imported into the node's thread (kanban #328): it plays in its sandbox, moves in and verdicts out as JSON
+    // never imported into the node's thread: it plays in its sandbox, moves in and verdicts out as JSON
     assert.equal(core.adapter, undefined);
     assert.deepEqual(sandboxFor(core).call('decide', { moves: [{ key: 'a', move: 0 }, { key: 'b', move: 2 }] }), { a: 'WIN', b: 'LOSS' });
     assert.deepEqual(readdirSync(join(dir, RPS_ID)).sort().map((f) => f.split('-')[0]), ['client', 'core', 'package.json']);
   } finally { await a.close(); await b.close(); }
 });
 
-// ---- the App Store slice (the owner 2026-10-10: in the browser, no restart, updates as a setting, malicious checks) ----
+// ---- the App Store slice (2026-10-10: in the browser, no restart, updates as a setting, malicious checks) ----
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { signManifest } from '../../arena-donor/src/manifest-sign.js';

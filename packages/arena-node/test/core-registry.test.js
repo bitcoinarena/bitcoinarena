@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE OPENS ONLY A ROUND ON A CORE AND CONFIG IT RUNS, AND A RESULT NAMES THE CORE THAT REPLAYED
-// (M3 R1 step B; the owner 2026-09-15 08:07: "each round names its sim_wasm_hash and its game_config/
+// (M3 R1 step B; 2026-09-15 08:07: "each round names its sim_wasm_hash and its game_config/
 // config_hash. Signer nodes replay what that round names").
 //
 // Before step B every round was replayed by the one truck core whatever it named, and a result
 // took the contract's simCoreHash as its own - a signer node could sign "core X" over a replay of core Y.
 // Now the signer node's registry (plugins.js: each game it hosts, with the cores its operator installed for it - since
-// kanban #202 a second title is a game of its own) resolves the round's (simCoreHash, configHash); a pair it does not hold is refused at
+// a second title is a game of its own) resolves the round's (simCoreHash, configHash); a pair it does not hold is refused at
 // the door (27A.7.5: not selectable - it serves nothing there, and is not slashed); and resultFrom
 // refuses a replay that ran another core than the round names.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ import { coreOfGame, hostedPlugins, installedCoresOf } from '../src/plugins.js';
 import { TRUCK_BEFORE_FORK_HASH, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { testGame } from './plugins/sign.js';
 
-// THE CORE AND CONFIG A ROUND NAMES, WITHIN ITS GAME (kanban #202): nextblock's unless another game is given.
+// THE CORE AND CONFIG A ROUND NAMES, WITHIN ITS GAME: nextblock's unless another game is given.
 const coreForRound = (c, game = NEXTBLOCK) => coreOfGame(c, game);
 import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
@@ -60,7 +60,7 @@ test('the registry resolves a round by both hashes within its game, holds nextbl
   assert.equal(got.ok, true, got.why);
   assert.equal(got.core, TRUCK);
   const other = { name: 'a second title', hash: 'ab'.repeat(32), url: TRUCK.url, root: TRUCK.root, sourceHash: TRUCK.hash, adapter: TRUCK.adapter, configs: new Map([['cd'.repeat(32), {}]]) };
-  // A SECOND TITLE IS A GAME OF ITS OWN (kanban #202), hosted beside nextblock - never a core installed beside the truck
+  // A SECOND TITLE IS A GAME OF ITS OWN, hosted beside nextblock - never a core installed beside the truck
   const otherGame = testGame({ name: 'a second title', cores: new Map([[other.hash, other]]), runTicksMax: 10800 });
   const both = hostedPlugins([NEXTBLOCK, otherGame]);
   // THE TRUCK, 2069b4c2 KEPT BESIDE IT (path A, 2026-10-04), THE TRUCK BEFORE THE 82/90 FORK (its old hash: 2069b4c2 held
@@ -95,7 +95,7 @@ test('a result names the core that replayed the run, and one whose replay ran an
   assert.equal(unnamed.ok, false, 'a replay that names no core was signed');
 });
 
-// 2069b4c2 KEPT INSTALLED BESIDE THE TRUCK (the owner 2026-10-04, path A): every round published before C became the bed
+// 2069b4c2 KEPT INSTALLED BESIDE THE TRUCK (2026-10-04, path A): every round published before C became the bed
 // fill and T sank from 20 s names it, and is replayed by it - its frozen source, not the truck that moved on. The pre-fork
 // core d15c39bb rides on it too: 2069b4c2 is the core that ran those rounds hash for hash at 10800 ticks.
 import { TRUCK_2069, TRUCK_2069_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -122,7 +122,7 @@ test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork cor
   assert.equal(b.score, 0, 'an empty bed on the current core scores nothing');
 });
 
-// THE CONFIG A ROUND NAMES IS THE RULES IT PLAYS (the owner 2026-10-04, fix 1 of the spec audit): de2f263d runs its own
+// THE CONFIG A ROUND NAMES IS THE RULES IT PLAYS (2026-10-04, fix 1 of the spec audit): de2f263d runs its own
 // config, 2069b4c2 the founding one; de2f263d with the founding config only for a round made before the cut-over.
 import { TRUCK_CURRENT_CONFIG, FOUNDING_CONFIG_ON_DE2F_BEFORE_MS } from '../../nextblock/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../arena-protocol/src/genesis-ids.js';
@@ -133,7 +133,7 @@ test('each core runs the config of its own rules; the founding config on de2f263
   assert.equal(pair(TRUCK.hash, TRUCK_CURRENT_CONFIG, after).ok, true);
   assert.equal(TRUCK_CONFIG_HASH.length, 32);
   assert.equal(Buffer.from(TRUCK_CONFIG_HASH).toString('hex'), TRUCK_CURRENT_CONFIG, 'a round on the truck is made with another config');
-  // #23: the truck runs the per-player config v3 (f51759b6, the 10-06 series') beside the current shared-world v4
+  //: the truck runs the per-player config v3 (f51759b6, the 10-06 series') beside the current shared-world v4
   assert.equal(pair(TRUCK.hash, TRUCK_V3_CONFIG_HASH, after).ok, true, 'the 10-06 series\' config no longer opens');
   assert.equal(Buffer.from(TRUCK_V3_CONFIG_HASH).toString('hex').slice(0, 8), 'f51759b6');
   assert.equal(TRUCK_CURRENT_CONFIG.slice(0, 8), '2170f250');
@@ -148,7 +148,7 @@ test('each core runs the config of its own rules; the founding config on de2f263
   assert.match(pair(TRUCK.hash, GENESIS_CONFIG_HASH, before).why, /not the config/);
 });
 
-// 7e2123d1 KEPT INSTALLED BESIDE THE TRUCK (kanban #29, 2026-10-07): the core before §4.11's objectives became the chart's -
+// 7e2123d1 KEPT INSTALLED BESIDE THE TRUCK (2026-10-07): the core before §4.11's objectives became the chart's -
 // every round the live seats published on it, with the shared-world v4 or the per-player v3 config, is replayed by its
 // frozen source (core/frozen/7e2123d1), not by the truck that moved on to 68e2b3d6.
 import { CORE as FROZEN_7E21 } from '../../nextblock/frozen/7e2123d1/adapter.js';

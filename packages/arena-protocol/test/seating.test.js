@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESERVE SEATS (§5A.7, kanban #301): the draw, PRESENT, the seated, the SEATING certificate and its equivocation, on the
+// RESERVE SEATS (§5A.7): the draw, PRESENT, the seated, the SEATING certificate and its equivocation, on the
 // protocol's own code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

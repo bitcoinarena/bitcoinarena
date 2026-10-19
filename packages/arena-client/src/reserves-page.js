@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PROTOCOL RESERVES ON THE PAGE (§27A.9, kanban #397 slice 3): a version-11 round's entry pays the developers' 4 % and the
+// THE PROTOCOL RESERVES ON THE PAGE (§27A.9): a version-11 round's entry pays the developers' 4 % and the
 // reserves' 2 % - mandatory, not the player's donation choice - and locks the reserves' part to its federation's 5-of-7 reserve
 // key. The key is read from the round's signer nodes (GET /reserves), and taken only when at least `needed` of them name the
 // same one for that federation: no single seat can point the reserves somewhere else.
@@ -29,7 +29,7 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
 }
 
 /** What a version-11 entry gives beside its stake: { bps, donationMsat, reserveMsat, mandatory } - the developers' 4 % and the reserves' 2 %. */
-// `split` (kanban #462): the round's split in force at its census height (fee-proposal.js roundSplitBps); unset, today's
+// `split`: the round's split in force at its census height (fee-proposal.js roundSplitBps); unset, today's
 export function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
   const s = roundSplit(BigInt(stakeMsat), { split });
   return { bps: split.protocolDevs + split.gameDevs + split.reserves, donationMsat: s.protocolDevsMsat + s.gameDevsMsat + s.reservesMsat, reserveMsat: s.reservesMsat, mandatory: true };
@@ -39,7 +39,7 @@ export function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
 export const reservesDonationForRound = (round) => reservesDonation(stakeOf(round), round && round.feeSet ? roundSplitBps(round.feeSet) : ROUND_SPLIT_BPS);
 
 /**
- * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2, kanban #397 slice 4: "testnet.bitcoin-arena.io shows the total and the latest
+ * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2,: "testnet.bitcoin-arena.io shows the total and the latest
  * payments in"): GET /reserves on the network's nodes; a total is shown only when at least `needed` of them answer the same one,
  * and its payments in are those nodes' own list, newest first. Answers { ok, totalMsat, entries, paidIn, agreeing, asked } or why not.
  */
@@ -64,7 +64,7 @@ export async function fetchReservesTotal({ nodes, needed = 5, fetcher = (u, o) =
   return { ok: true, totalMsat: BigInt(best[0]), entries: Number(a.entries) || 0, paidIn: Array.isArray(a.paidIn) ? a.paidIn : [], agreeing: best[1].n, asked: asked.length };
 }
 
-// THE PAYMENTS OUT OF THE RESERVES ON THE PAGE (§27A.9.3, kanban #397, the owner 2026-10-17: "Yes. I agree with the payments-out plan"):
+// THE PAYMENTS OUT OF THE RESERVES ON THE PAGE (§27A.9.32026-10-17: "Yes. I agree with the payments-out plan"):
 // each node's payout records (GET /reserve-payouts) and its proposals with their votes (GET /funding). A payment out is shown only
 // when `needed` nodes list the same record, and - unless it is a drained federation's move, which no vote decides - only when as
 // many of them hold its proposal's bond-weighted vote as passed; a payout without that is never a payment here, it is an

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GAME IS A SIGNED MANIFEST, AND A ROUND IS PLAYED ONLY ON WHAT ITS MANIFEST LISTS (kanban #202, §0A.3, §0A.5).
+// A GAME IS A SIGNED MANIFEST, AND A ROUND IS PLAYED ONLY ON WHAT ITS MANIFEST LISTS (§0A.3, §0A.5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createPublicKey, sign, verify } from 'node:crypto';
@@ -42,7 +42,7 @@ test('a manifest encodes, decodes to itself, and its id is the hash of body and 
 });
 
 test('the encoder holds a manifest to one encoding and to the engine\'s result types and payout rules', () => {
-  // REPLAY and ATTESTED are the engine's (§0A.7a, kanban #206); anything else is not
+  // REPLAY and ATTESTED are the engine's (§0A.7a); anything else is not
   assert.throws(() => encodeManifestBody({ ...BODY, resultType: 9 }), /result type 9 is not one this engine has \(REPLAY, ATTESTED, HEAD_TO_HEAD\)/);
   // and a replayed game pays by the rank curve, not the attested games' pari-mutuel rule
   assert.throws(() => encodeManifestBody({ ...BODY, payoutRule: PAYOUT_RULE.PARI_MUTUEL }), /a replayed game pays by the rank curve/);

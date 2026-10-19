@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ENDPOINT OF A CARRIED BOND (kanban #209, measured 2026-10-10 05:35Z: a paid join on testnet4 was refused at the
+// THE ENDPOINT OF A CARRIED BOND (measured 2026-10-10 05:35Z: a paid join on testnet4 was refused at the
 // session - "no proven endpoint: the bond output commits to a different advertisement").
 //
 // §0A.9: bonds cross from the BLWP ancestor without a spend. The bond output stays where it is and keeps committing to its

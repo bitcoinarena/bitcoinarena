@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EACH NODE CHOOSES WHICH GAMES IT HOSTS - THE NODE HALF (kanban #204, §0A.4, comment 756; the owner 2026-10-07: a node
+// EACH NODE CHOOSES WHICH GAMES IT HOSTS - THE NODE HALF (§0A.4, comment 756; 2026-10-07: a node
 // whose advertisement names a game it does not host refuses to start, by name).
 //
 // Pair A hosts nextblock, pair B hosts tally (ARENA_GAMES' registrations, handed to serve as `plugins`), each with an
@@ -101,7 +101,7 @@ test('a node whose advertisement names a game it does not host does not start, b
   } finally { await d.close(); }
 });
 
-test('GET /games: every game this node hosts, each with the signed manifest that hashes to its id (kanban #208)', async () => {
+test('GET /games: every game this node hosts, each with the signed manifest that hashes to its id', async () => {
   const { decodeManifest, gameIdOf } = await import('../../arena-protocol/src/manifest.js');
   const { fromHex } = await import('../../arena-protocol/src/hash.js');
   const d = await serve(openStore(':memory:'), { port: 0, ...opts, plugins: [NEXTBLOCK, TALLY], ownAdvert: { hostedGames: [NEXTBLOCK.gameId, TALLY_GAME_ID] } });

@@ -50,7 +50,7 @@ export const TWO_GATEWAYS = [
 ];
 
 /**
- * A CHAIN THAT BONDS A ROUND'S COMMITTEE (RULED the owner 2026-09-25: a paying round opens only on a signer node that reads the
+ * A CHAIN THAT BONDS A ROUND'S COMMITTEE (RULED 2026-09-25: a paying round opens only on a signer node that reads the
  * chain - it counts the federation's guardians on the census, assigns its signer nodes from it, and seeds from its beacon).
  *
  * Two steps, because a daemon is made before its key - the contract's `nodes` - is known:
@@ -102,8 +102,8 @@ export function bondedChainSlot(port = lockPort()) {
 
 // `endpoints`: where each node is reached - a running daemon's own address (the census is where its peers learn it), a
 // placeholder for a key no daemon stands behind.
-// `hostedGames`: the games the bonded nodes' advertisements host (kanban #204) - nextblock unless a test hands others
-// `protocolVersions`: what the bonded nodes' advertisements speak (#349: a round of a version none of them speaks seats nobody) - [1]
+// `hostedGames`: the games the bonded nodes' advertisements host - nextblock unless a test hands others
+// `protocolVersions`: what the bonded nodes' advertisements speak (a round of a version none of them speaks seats nobody) - [1]
 export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [], hostedGames = [NEXTBLOCK_GAME_ID], protocolVersions = [1], declares = null } = {}) {
   const hosted = [...hostedGames].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
   slot.federationId = contract.federationId;

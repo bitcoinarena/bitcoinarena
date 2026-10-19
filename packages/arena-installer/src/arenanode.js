@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENANODE COMMAND (kanban #499, the owner 2026-10-19: "Take a look how openclaw is used using the openclaw command, ie openclaw status,
+// THE ARENANODE COMMAND (2026-10-19: "Take a look how openclaw is used using the openclaw command, ie openclaw status,
 // openclaw gateway restart etc. no messing with command line parameters"). One word, then what to act on:
 //
 //   arenanode status                     the node and every service: running, pid, what it answers
@@ -137,7 +137,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       io.err(`${name} config [get <key> | set <key> <value> | unset <key> | file]`); return 2;
     }
     case 'update': {
-      // NOW (kanban #505): the newest signed release fetched, checked and the node moved to it - whatever auto_update says
+      // NOW: the newest signed release fetched, checked and the node moved to it - whatever auto_update says
       const { checkOnce } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
       const r = await checkOnce({ home, latest: deps.latest, force: true, log: (l) => io.out(l), ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
@@ -145,7 +145,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       return r.ok ? 0 : 1;
     }
     case 'auto-update': {
-      // THE SERVICE (kanban #505): a check every few hours; it ends after an update, and its service starts it again from the new release
+      // THE SERVICE: a check every few hours; it ends after an update, and its service starts it again from the new release
       const { runAutoUpdate } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
       await runAutoUpdate({ home, latest: deps.latest });

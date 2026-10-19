@@ -41,7 +41,7 @@ public class DriveHud : MonoBehaviour
     static readonly Color Down = new Color(1f, 0.42f, 0.42f);
 
 
-    // THE HUD LOOKS NOTHING UP AND MEASURES NOTHING TWICE (kanban #266, comment 986, the owner 2026-10-08): in a named profile of the
+    // THE HUD LOOKS NOTHING UP AND MEASURES NOTHING TWICE (comment 986, 2026-10-08): in a named profile of the
     // 7 s after 100 % (Pixel 7a profile, 10x CPU) DriveHud.OnGUI spent 25-33 ms in FindFirstObjectByType and 42-43 ms in
     // GUIStyle.CalcSize, every frame, for objects that stay and labels that do not change. A found object is kept until it is
     // destroyed or its GameObject goes inactive - when FindFirstObjectByType would no longer return it - and a size is kept per
@@ -72,7 +72,7 @@ public class DriveHud : MonoBehaviour
 
     void Awake()
     {
-        // NO LAYOUT PASS (kanban #266, comment 983, the owner 2026-10-08): this HUD uses no GUILayout, so IMGUI's Layout call of
+        // NO LAYOUT PASS (comment 983, 2026-10-08): this HUD uses no GUILayout, so IMGUI's Layout call of
         // OnGUI built, measured and drew every label for nothing - 463-476 ms of the 7 s after 100 % at 10x CPU as an Android
         // phone (named profile), the whole draw twice a frame. Its buttons are plain GUI.Button, on the input and Repaint events.
         useGUILayout = false;
@@ -229,10 +229,10 @@ public class DriveHud : MonoBehaviour
             }
         }
 
-        // NOTHING UNDER THE RESULT CARD (the owner 2026-09-25, PRIORITIES item 3: "nothing overlaps"; measured 2026-09-26 at
+        // NOTHING UNDER THE RESULT CARD (2026-09-25, PRIORITIES item 3: "nothing overlaps"; measured 2026-09-26 at
         // 1280x720: CARGO / SCORE / BANKED ran under the card's bottom-right corner). The card carries the run's score and
         // its working while it stands, so this block steps aside until it is gone.
-        // AND UNDER THE WRECK'S SUMMARY (the owner 2026-10-04: on WASTED the summary panel and this block shared ~110 px at
+        // AND UNDER THE WRECK'S SUMMARY (2026-10-04: on WASTED the summary panel and this block shared ~110 px at
         // 1280x720) - the same rule: the summary carries this run's result, the block reads 0 there anyway.
         bool scoreBlock = !ArrivalShowing && !_wreckSummaryUp;
         if (scoreBlock != _scoreBlockWas)
@@ -304,7 +304,7 @@ public class DriveHud : MonoBehaviour
         // the score column on the right.
         var box = PracticeBox(w, h);
 
-        // A SIGNED RUN SENDS NO PRACTICE (the owner 2026-10-04): the box says so and does nothing, like SIM
+        // A SIGNED RUN SENDS NO PRACTICE (2026-10-04): the box says so and does nothing, like SIM
         bool signedRun = Blwp.BlwpNet.Live;
         bool on = Blwp.PracticeMode.On && !signedRun;
         var tint = on ? new Color(0.45f, 0.75f, 1f) : new Color(1f, 0.55f, 0.30f);
@@ -546,7 +546,7 @@ public class DriveHud : MonoBehaviour
         => price > 0 ? $"{changePct:+0.00;-0.00;0.00}% 24h" : "";
 
     /// <summary>
-    /// WHAT IS BROKEN, IN WORDS A PLAYER CAN ACT ON (the owner 2026-09-18 20:04).
+    /// WHAT IS BROKEN, IN WORDS A PLAYER CAN ACT ON (2026-09-18 20:04).
     ///
     /// A socket's own vocabulary is not a message: "connecting … (error)" says nothing about which connection, what
     /// it costs the player, or whether the game is still worth watching - and photographed at 20:00 it was the whole
@@ -594,7 +594,7 @@ public class DriveHud : MonoBehaviour
         => runEnded || !sessionLive || !socketDown;
 
     /// <summary>
-    /// WHETHER A SPECTATOR IS SHOWN THE MARKET AT ALL (the owner 2026-09-18 20:00).
+    /// WHETHER A SPECTATOR IS SHOWN THE MARKET AT ALL (2026-09-18 20:00).
     ///
     /// Only when there is a price. Without one the driving HUD says "connecting ... (status)" under the dashes, which
     /// is the market socket's own telemetry; with no price, no box and no chrome around it, a spectator got that line
@@ -730,7 +730,7 @@ public class DriveHud : MonoBehaviour
         if (rowToo && FitLine(liqStyle, line, LiquidationBox(w, h).width, 10))
             Shadowed(LiquidationBox(w, h), line, liqStyle, new Color(1f, 0.72f, 0.25f));
 
-        // AND ACROSS THE MIDDLE OF THE SCREEN, while the cloud stands (the owner 2026-09-19 13:10: "when a liquidation
+        // AND ACROSS THE MIDDLE OF THE SCREEN, while the cloud stands (2026-09-19 13:10: "when a liquidation
         // nuke/bomb hits, show in the CENTER of the screen how much was liquidated, e.g. $305000 Short liquidated").
         // The headline row is 13 px of orange in the corner of a screen with a mushroom cloud in the middle of it -
         // the number belongs where the eye already is. Same clock as the line: it is up exactly while a cloud is.
@@ -778,7 +778,7 @@ public class DriveHud : MonoBehaviour
         if (block == null || block.Remaining <= 0f) return;
 
         int left = Mathf.CeilToInt(block.Remaining);
-        // before a joined round starts this is the round's countdown to its start (#64), and nothing is late yet
+        // before a joined round starts this is the round's countdown to its start, and nothing is late yet
         bool late = left <= 30 && !block.StartsIn;
 
         var style = new GUIStyle(GUI.skin.label)
@@ -835,18 +835,18 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// HOW LONG THE RESULT CARD STANDS: 8 s (the owner 2026-09-25 21:53: "The result screen stays up 3 seconds longer. It
+    /// HOW LONG THE RESULT CARD STANDS: 8 s (2026-09-25 21:53: "The result screen stays up 3 seconds longer. It
     /// holds 5 s now ... Make that 8 s"). Full strength for most of it, the last 28% a fade. The lobby's own hold,
     /// SplashScreen.ResultHoldSeconds, is this same number - one clock - and the lobby waits for the card in any case.
     /// </summary>
     public const float ArrivalHoldSeconds = 8f;
 
     /// <summary>
-    /// THE CARD STANDS WHILE THE NEXT ROUND IS COMING (the owner 2026-09-29 21:58, SPECTATE-2158): its 8 s, and on for as
+    /// THE CARD STANDS WHILE THE NEXT ROUND IS COMING (2026-09-29 21:58, SPECTATE-2158): its 8 s, and on for as
     /// long as the page takes the player to the next round - until "exit game" or that round's start - instead of the lobby.
     /// </summary>
     public static float ArrivalHoldFor(bool continuing) => continuing ? float.MaxValue : ArrivalHoldSeconds;
-    // AND WHILE THIS RUN'S RESULT IS NOT SIGNED YET (the owner 2026-10-04, option 1): the seats sign at the round's close, so with
+    // AND WHILE THIS RUN'S RESULT IS NOT SIGNED YET (2026-10-04, option 1): the seats sign at the round's close, so with
     // continue off the card - and the lobby behind it (SplashScreen.LobbyMayCover) - waits for the page's `hold` to clear.
     float ArrivalHoldNow => ArrivalHoldFor(SplashScreen.Continuing || ResultHolding);
 
@@ -885,7 +885,7 @@ public class DriveHud : MonoBehaviour
     {
         float bw = style != null ? Measure(style, label).x + fontSize * 1.6f : fontSize * 8f;
         float bh = fontSize * 2.2f;
-        // above the next round's box while it stands (kanban #9), else above the screen's edge as before
+        // above the next round's box while it stands, else above the screen's edge as before
         float limit = SplashScreen.Continuing ? CardFloor(h, true, SplashScreen.NextBoxTop) : h - 4f;
         float y = Mathf.Min(card.yMax + 4f, limit - bh);
         return new Rect(card.xMax - bw, y, bw, bh);
@@ -992,7 +992,7 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawArrivalCard(int w, int h)
     {
-        // A CARD THAT IS GONE TAKES ITS "copied!" WITH IT - but only when no copy control is up at all (the owner 2026-09-29
+        // A CARD THAT IS GONE TAKES ITS "copied!" WITH IT - but only when no copy control is up at all (2026-09-29
         // 17:45, SEE-AND-COPIED-1745: on WRECKED - no result card - this reset ran every frame and wiped the lone
         // control's press before the page answered, so "copied!" never stood). DrawCopyReplayAlone resets it then.
         if (ArrivalIsHiddenBy(SendOffShowing)) return;
@@ -1013,18 +1013,18 @@ public class DriveHud : MonoBehaviour
         string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
         string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime, runScore.LastScore);
         string footLine = ArrivalFootLine(missed);
-        // NO WHO-LEADS ROW AND NO RUN-STOPPED SENTENCE (the owner 2026-09-29 21:01 CARD-NARROW-2101 and 21:03
+        // NO WHO-LEADS ROW AND NO RUN-STOPPED SENTENCE (2026-09-29 21:01 CARD-NARROW-2101 and 21:03
         // NO-STOPPED-LINE-2103): LEVEL / BULLS / BEARS and the lead percent (ChartHud.LiveLeading) do not belong on the
         // result, and "RUN STOPPED - the core said DELIVERED at tick N" goes on every ending. The headline says the ending.
 
         // Sized off the WIDTH, not the smaller dimension, and scaled together to keep the card's bottom on screen.
         float head0 = CardHead(w, h, true);
         var probe = CardIn(w, h, 10f);
-        // COPY GAME REPLAY, on the card whenever the run that just ended is one the bridge kept (the owner 2026-09-27 13:19:
+        // COPY GAME REPLAY, on the card whenever the run that just ended is one the bridge kept (2026-09-27 13:19:
         // every ending, the run that just ended and not the one before - `BlwpCore.ReplayForThisRun`, taken at the end
         // from the session ROLL OUT found for this run). No longer waiting for the session's closing word as well.
         bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;
-        // THE RESULT SUMMARY (the owner 2026-10-04): under SCORE, above "copy game replay", on a networked run's card
+        // THE RESULT SUMMARY (2026-10-04): under SCORE, above "copy game replay", on a networked run's card
         if (replay) ReadSummary(w, h, head0); else { _summaryLines.Clear(); ResultHolding = false; }
         int summary = _summaryLines.Count;
         float scale = ArrivalScale(w, h, head0, 0f, false, replay, summary);
@@ -1048,7 +1048,7 @@ public class DriveHud : MonoBehaviour
         var card = CardIn(w, h, ArrivalHeight(padY, heights));
         var rows = ArrivalRows(card, padY, heights);
 
-        // THE CARD FOLDS (the owner 2026-09-29 22:00, PRIORITIES item 2): a control under the card collapses it so the game
+        // THE CARD FOLDS (2026-09-29 22:00, PRIORITIES item 2): a control under the card collapses it so the game
         // and spectating are what is seen; "show result" brings it back - during its 8 s and during the countdown.
         var foldStyle = new GUIStyle(GUI.skin.button) { fontSize = Mathf.Max(11, line.fontSize), fontStyle = FontStyle.Bold };
         if (_cardFolded)
@@ -1066,7 +1066,7 @@ public class DriveHud : MonoBehaviour
         GUI.DrawTexture(new Rect(card.x, card.yMax - 2f, card.width, 2f), _flat);
         GUI.color = Color.white;
 
-        // THE GAME'S MARK ON ITS RESULT (kanban #228): the icon in the card's top right corner, and its name beside it where
+        // THE GAME'S MARK ON ITS RESULT: the icon in the card's top right corner, and its name beside it where
         // the card is wide enough that the name stays clear of the centred headline
         {
             float s = Mathf.Clamp(rows[0].height * 0.62f, 16f, 30f);
@@ -1140,7 +1140,7 @@ public class DriveHud : MonoBehaviour
     /// <summary>
     /// THE ONE "copy game replay" CONTROL, on whatever says the run is over: the result card's own row, or - on the
     /// endings with no card, WASTED and a run the timer or a VOID stopped, and an empty truck - its own row under the
-    /// WASTED band (the owner 2026-09-27 13:19: "After every round end he must be able to copy a replay").
+    /// WASTED band (2026-09-27 13:19: "After every round end he must be able to copy a replay").
     /// </summary>
     void DrawCopyReplay(Rect row, int fontSize, GUIStyle line)
     {
@@ -1161,7 +1161,7 @@ public class DriveHud : MonoBehaviour
                 Debug.Log("[blwp] copy game replay: " + (_replayCopied ? "handed to the page" : "no networked run to copy"));
                 if (_replayCopied) { _copyPressedAt = Time.unscaledTime; _copiedAt = -1f; }
             }
-            // "copied!" (the owner 2026-09-26 07:12): once the page says the clipboard holds the link - its write resolved -
+            // "copied!" (2026-09-26 07:12): once the page says the clipboard holds the link - its write resolved -
             // not on the press. Beside the button on its own row, so it covers no other line of the card.
             if (_copyPressedAt >= 0f && _copiedAt < 0f && Blwp.BlwpCore.ReplayCopied)
             {
@@ -1208,7 +1208,7 @@ public class DriveHud : MonoBehaviour
 
     /// <summary>
     /// THE WRECK'S SUMMARY PANEL: under its lone copy-game-replay control, `lines` rows, its font shrunk (to 9 at least) so
-    /// the panel ends above `floor` - the screen's edge, or the next round's box while it stands (kanban #9).
+    /// the panel ends above `floor` - the screen's edge, or the next round's box while it stands.
     /// </summary>
     public static Rect WreckSummaryPanel(int w, int h, int lines, float floor, out int fontSize)
     {
@@ -1245,12 +1245,12 @@ public class DriveHud : MonoBehaviour
         GUI.color = Color.white;
         DrawCopyReplay(row, line.fontSize, line);
 
-        // THE RESULT SUMMARY ON A WRECK TOO (the owner 2026-10-04): a wreck draws no card, so the same lines stand under its
+        // THE RESULT SUMMARY ON A WRECK TOO (2026-10-04): a wreck draws no card, so the same lines stand under its
         // lone control - and the lobby waits for the same hold (SplashScreen reads ResultHolding)
         ReadSummary(w, h, CardHead(w, h, true));
         _wreckSummaryUp = _summaryLines.Count > 0;
         if (_summaryLines.Count == 0) return;
-        // ABOVE THE NEXT ROUND'S BOX while it stands (kanban #9), else above the screen's edge as before
+        // ABOVE THE NEXT ROUND'S BOX while it stands, else above the screen's edge as before
         float panelFloor = SplashScreen.Continuing ? CardFloor(h, true, SplashScreen.NextBoxTop) : h - 4f;
         var panel = WreckSummaryPanel(w, h, _summaryLines.Count, panelFloor, out int summaryFont);
         var sl = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = summaryFont };
@@ -1289,7 +1289,7 @@ public class DriveHud : MonoBehaviour
     /// build's font (13:05 shot: "those fees go to the miners   the score is what the run pays you") and the
     /// decimals came out under the browser's culture ("load 0,83" on a German machine) - this build speaks English.
     /// </summary>
-    /// BTC TO THE MINERS, NOT SAT FEES (the owner 2026-09-29 21:48, CARGO-BTC-2148): the truck carries transactions' BTC.
+    /// BTC TO THE MINERS, NOT SAT FEES (2026-09-29 21:48, CARGO-BTC-2148): the truck carries transactions' BTC.
     public static string ArrivalHeadline(bool missed, double btc) =>
         missed ? "BLOCK MINED WITHOUT YOU"
                : "DELIVERED  " + LoadoutPanel.BtcLabel(btc) + " to the miners";
@@ -1301,7 +1301,7 @@ public class DriveHud : MonoBehaviour
         missed ? "SCORE  0" : "SCORE  +" + CoreScoreFactors.Points(score);
 
     /// <summary>
-    /// THE CORE'S FACTORS AND THEIR PRODUCT (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). C, E and T to
+    /// THE CORE'S FACTORS AND THEIR PRODUCT (2026-09-25: "load C x danger E x speed T x 1000 = S"). C, E and T to
     /// FIVE decimals (RULED): at four, lanes 10.2 and -10.2 printed C 0.7000 and E 0.2662 for an exact product of 279.461,
     /// and 1000 x 0.7000 x 0.2662 x 1.5 rounds to 280 against the core's 279; at five the printing error is about 0.02
     /// point. S is the core's own S_DELIVERED integer, the same number as the SCORE line. A missed run prints no product:
@@ -1550,7 +1550,7 @@ public class DriveHud : MonoBehaviour
     /// answer is fewer words rather than smaller ones.
     /// </summary>
     /// <summary>
-    /// ONE LINE, WHOLE, OR NOT AT ALL (the owner 2026-09-29 21:18, CLIP-2118: on his phone "24h" under the percent was cut in
+    /// ONE LINE, WHOLE, OR NOT AT ALL (2026-09-29 21:18, CLIP-2118: on his phone "24h" under the percent was cut in
     /// half by its row, "UNDER FIRE" was clipped to a lone red R in the gap, and a log line started off the card's left
     /// edge). The label is not wrapped; its font shrinks to fit `width`, down to `floor`; and if it still does not fit
     /// the caller draws nothing rather than a clipped piece of it.
@@ -1612,7 +1612,7 @@ public class DriveHud : MonoBehaviour
     public Rect CardIn(int w, int h, float height)
     {
         float pad = Mathf.Max(10f, h * 0.022f);
-        // A PHONE HELD UPRIGHT GETS THE WIDTH (the owner 2026-09-29 21:01, CARD-NARROW-2101: on his phone the centre column
+        // A PHONE HELD UPRIGHT GETS THE WIDTH (2026-09-29 21:01, CARD-NARROW-2101: on his phone the centre column
         // broke RUN STOPPED and DELIVERED mid-word). The gap between the columns there is a strip; the card takes the
         // screen's width under the left column (SIM, the column's last box) for the eight seconds it stands.
         if (h > w)
@@ -1644,7 +1644,7 @@ public class DriveHud : MonoBehaviour
     public static float ArrivalLineFont(float head) => Mathf.RoundToInt(head * 0.48f);
     public static float RunStoppedFont(int w, int h) => Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);
 
-    /// <summary>COPY GAME REPLAY (the owner 2026-09-25 18:39): the control's label, exactly.</summary>
+    /// <summary>COPY GAME REPLAY (2026-09-25 18:39): the control's label, exactly.</summary>
     public const string CopyReplayLabel = "copy game replay";
 
     public static float[] ArrivalRowHeights(float head, float mid, float line, float stoppedHeight, bool lead)
@@ -1684,7 +1684,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// THE NEXT ROUND'S BOX IS THE CARD'S FLOOR (kanban #9, MF 19 - measured unattended on 0.0.2523: "joining next round ·
+    /// THE NEXT ROUND'S BOX IS THE CARD'S FLOOR (MF 19 - measured unattended on 0.0.2523: "joining next round ·
     /// exit game" stood over the result summary's lines, "1 still driving" and "YOU PENDING"). From the run's end until the
     /// next start the page draws that box at 18% above the bottom (index.html #blwp-next), and the card here was let down to
     /// 98% of the screen, so a card with its summary ran under the box. While the page takes the player to the next round
@@ -1944,7 +1944,7 @@ public class DriveHud : MonoBehaviour
         new Rect(w * 0.02f, h * 0.012f, w * 0.4f, SmallFont(w, h) * 1.6f);
 
     /// <summary>
-    /// WHERE A BROKEN CONNECTION IS SAID (the owner 2026-09-18 20:04): directly under the corner where the market note
+    /// WHERE A BROKEN CONNECTION IS SAID (2026-09-18 20:04): directly under the corner where the market note
     /// sits, in the small style, on the HUD a player is already reading. Not the headline, and not the sky.
     /// </summary>
     public Rect TroubleBox(int w, int h) =>
@@ -2050,7 +2050,7 @@ public class DriveHud : MonoBehaviour
     public static bool? MobileOverride;
 
     /// <summary>
-    /// ON MOBILE, DIRECTLY ABOVE THE LEFT / RIGHT CONTROLS (the owner 2026-09-17 12:40: "MOBILE: HUD further down, directly
+    /// ON MOBILE, DIRECTLY ABOVE THE LEFT / RIGHT CONTROLS (2026-09-17 12:40: "MOBILE: HUD further down, directly
     /// ABOVE the left/right controls. Not mid-screen over the truck"). Its left edge at the left pad's, its bottom half a
     /// margin over the pads; as wide as 1.2x the old chart where that stops short of the throttle column, as tall as it is
     /// where the left column (PRACTICE / SIM) leaves the room. The score column keeps right of it.
@@ -2079,7 +2079,7 @@ public class DriveHud : MonoBehaviour
     public static bool? PadsOverride;
 
     /// <summary>
-    /// THE HUD CHART TOP RIGHT, ABOVE THE BUTTONS - EVERY SCREEN (the owner 2026-09-17 12:35, HARD FAIL: "the HUD is in the
+    /// THE HUD CHART TOP RIGHT, ABOVE THE BUTTONS - EVERY SCREEN (2026-09-17 12:35, HARD FAIL: "the HUD is in the
     /// center covering the truck. It must sit TOP RIGHT, above the buttons. Not center, not over the steering arrows").
     /// His screen showed the pads, so the desktop-only rule of the last build left it in the middle. Measured from his
     /// screenshot: a Unity screen of about 3072x1515 (PRACTICE 200 px of the shot for its fixed 300 px). The chart takes the
@@ -2099,7 +2099,7 @@ public class DriveHud : MonoBehaviour
         // before: the column y 215-346 over the wanted row y 225-259)
         if (!under) bottom = Mathf.Min(bottom, h - m - ManifestContentHeight(w, h) - pad * 0.5f);
         float below = m * 0.5f + RowHeight(w, h) + m * 0.5f + (under ? pad * 0.5f + ManifestContentHeight(w, h) : 0f);
-        // SCALED, NOT SQUEEZED (the owner 2026-09-17, L1: "scaled to the shorter height"): one factor for both sides, so it
+        // SCALED, NOT SQUEEZED (2026-09-17, L1: "scaled to the shorter height"): one factor for both sides, so it
         // fits the height and leaves the headline gap left of it a readable card's width (150 px)
         float gapPad = Mathf.Max(10f, h * 0.022f);
         float room = (w - m) - (HeadlineLeft(w, h) + 150f + gapPad);
@@ -2116,7 +2116,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// The corner chart's full size: 1.2x the old chart, and on the desktop 30% smaller than that (the owner 2026-09-17 16:01,
+    /// The corner chart's full size: 1.2x the old chart, and on the desktop 30% smaller than that (2026-09-17 16:01,
     /// same corner). A phone on its side keeps the 1.2x.
     /// </summary>
     public Vector2 CornerFullSize(int w, int h) => ChartHud.BaseSize(w, h) * ChartHud.Scale * (Mobile ? 1f : ChartHud.DesktopScale);
@@ -2139,7 +2139,7 @@ public class DriveHud : MonoBehaviour
     public bool ChartTopRight(int w, int h)
     {
         // a phone held upright stands the chart over the drive pads; held on its side it is a wide screen with the same
-        // right-side buttons, and takes this corner (L1, the owner 2026-09-17)
+        // right-side buttons, and takes this corner (L1, 2026-09-17)
         if (Mobile && h > w) return false;
         var chart = ChartPanel(w, h);
         return chart.height >= CornerFullSize(w, h).y * 0.5f - 0.01f;
@@ -2147,7 +2147,7 @@ public class DriveHud : MonoBehaviour
 
     /// <summary>
     /// The sound and debug buttons, where the HUD draws and clicks them: TouchPad's corner, or with the HUD chart top right,
-    /// in the row under the chart, at the right margin (the owner 2026-09-17: "have the HUD above the sound button and the
+    /// in the row under the chart, at the right margin (2026-09-17: "have the HUD above the sound button and the
     /// other button").
     /// </summary>
     public Rect SettingsRect(TouchPad.Pad pad, int w, int h)
@@ -2159,7 +2159,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// WHERE THE PAGE'S CONSOLE BUTTON GOES (the owner 2026-10-04: it sat on the chart's header). The page cannot see this HUD,
+    /// WHERE THE PAGE'S CONSOLE BUTTON GOES (2026-10-04: it sat on the chart's header). The page cannot see this HUD,
     /// so the HUD says, in its own pixels: the screen it laid out, the bottom of the top-right corner's furniture (chart,
     /// sound and menu row, wanted pips, debug readout - ChartCorner), the corner's right edge, and the throttle pad's
     /// rectangle the button must not land on. The page places the button from these alone.
@@ -2181,7 +2181,7 @@ public class DriveHud : MonoBehaviour
              + ",\"floor\":" + floor.ToString("0.#", I)
              + ",\"right\":" + (w - m).ToString("0.#", I) + ",\"padX\":" + up.x.ToString("0.#", I) + ",\"padY\":" + up.y.ToString("0.#", I)
              + ",\"padW\":" + up.width.ToString("0.#", I) + ",\"m\":" + m.ToString("0.#", I)
-             // WHETHER THE PADS ARE DRAWN (kanban #198): the open console stands above the throttle pad only where there is one
+             // WHETHER THE PADS ARE DRAWN: the open console stands above the throttle pad only where there is one
              + ",\"pads\":" + (PadsShown ? 1 : 0) + "}";
     }
     string _consoleSlotSent;
@@ -2307,7 +2307,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// THE ASSAULT BANNER, under the block clock (the owner 2026-09-20 16:22: "a banner BULLS ASSAULT HIGH and a
+    /// THE ASSAULT BANNER, under the block clock (2026-09-20 16:22: "a banner BULLS ASSAULT HIGH and a
     /// sound when it starts ... then HIGH TAKEN or ASSAULT ON HIGH FAILS").
     ///
     /// UNDER the clock and not over the price: the headline stack owns the top of the gap and 16:26 says the log
@@ -2324,7 +2324,7 @@ public class DriveHud : MonoBehaviour
     public static float AssaultBannerFont(int w, int h) => Mathf.Round(Mathf.Clamp(Mathf.Min(w, h) * 0.046f, 18f, 40f));
 
     /// <summary>
-    /// THE DESKTOP ASSAULT LOG, ON THE LEFT HUD STACK UNDER SIM (the owner 2026-09-20 16:26 for the log itself, and
+    /// THE DESKTOP ASSAULT LOG, ON THE LEFT HUD STACK UNDER SIM (2026-09-20 16:26 for the log itself, and
     /// 2026-09-20 18:0x for where it goes: "Left column. Under SIM, left-aligned, small font, same six assault
     /// lines, colour still by side. Not the right column - that edge already carries WANTED and the touch
     /// buttons, and the road has to stay clear").
@@ -2748,7 +2748,7 @@ public class DriveHud : MonoBehaviour
     /// ends, and it moves when that one does.
     /// </summary>
     /// <summary>
-    /// THE HIGH / LOW LINE'S PLACE, CENTRAL ON THE SCREEN (the owner 2026-09-17 12:55): the run-stopped row - reserved in the
+    /// THE HIGH / LOW LINE'S PLACE, CENTRAL ON THE SCREEN (2026-09-17 12:55): the run-stopped row - reserved in the
     /// headline stack and empty while a run is on - centred on the screen where the gap allows, as wide as its text and never
     /// wider than the gap; where there is no gap (a phone held upright), centred under the block clock on the whole width.
     /// </summary>
@@ -2779,7 +2779,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// UNDER THE BLOCK CLOCK - UNLESS THE CARGO PANEL IS OVER THAT BAND (the owner 2026-09-20).
+    /// UNDER THE BLOCK CLOCK - UNLESS THE CARGO PANEL IS OVER THAT BAND (2026-09-20).
     ///
     /// The bay is where this line is needed MOST: a truck still choosing cargo when the block closes is the
     /// path that ends VOID, and it is the one the player cannot read. Measured at 1280x800, the two rects sat
@@ -3102,7 +3102,7 @@ public class DriveHud : MonoBehaviour
 
     /// <summary>
     /// The line under DROP-OFF: metres while the run is on, DELIVERED once the core says so
-    /// (the owner 2026-09-15 16:14). Measured before: the trucks the core had delivered went on
+    /// (2026-09-15 16:14). Measured before: the trucks the core had delivered went on
     /// to the tunnel's back wall and the HUD read 11-30 m to a drop-off already made.
     /// </summary>
     public static string DropOffWords(bool delivered, float distance) =>
@@ -3114,7 +3114,7 @@ public class DriveHud : MonoBehaviour
     /// Fades up with the sequence rather than snapping on, and sits slightly
     /// above centre the way GTA does - dead centre reads as a menu.
     /// </summary>
-    // AFTER THE BAND, A SMALL LINE (#131): while the run-end spectate has the view of a WRECKED run, the top of the screen
+    // AFTER THE BAND, A SMALL LINE: while the run-end spectate has the view of a WRECKED run, the top of the screen
     // says so in a few words, so the war on screen reads as watched, not as the game going on without the player.
     RunEndSpectate _afterRun;
     void DrawSpectating(int w, int h)
@@ -3248,7 +3248,7 @@ public class DriveHud : MonoBehaviour
                  health.IsDestroyed
                      ? (DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)
                         ? $"WRECKED — back in {Mathf.CeilToInt(health.RespawnIn)}s"
-                        : "WRECKED")      // a live round's wreck does not come back (the owner 2026-09-27 13:25)
+                        : "WRECKED")      // a live round's wreck does not come back (2026-09-27 13:25)
                      : health.IsInvulnerable
                          ? "HEALTH 100%  ·  protected"
                          : $"HEALTH {Mathf.CeilToInt(health.Fraction * 100f)}%",
@@ -3358,7 +3358,7 @@ public class DriveHud : MonoBehaviour
 
     void OnGUI()
     {
-        // NOTHING ON THE FIRST FRAME (kanban #266, the owner 2026-10-08): the first OnGUI's text layout and font-atlas fill were
+        // NOTHING ON THE FIRST FRAME (2026-10-08): the first OnGUI's text layout and font-atlas fill were
         // 320 ms inside Unity's 2.2 s start-up hold at 10x CPU as an Android phone (named profile, DriveHud.OnGUI first draw);
         // drawn from the next frame on, that work leaves the hold.
         if (FirstGuiFrame.Now()) return;
@@ -3372,7 +3372,7 @@ public class DriveHud : MonoBehaviour
         Styles();
         int w = Screen.width, h = Screen.height;
 
-        // SPECTATE: price only (the owner 2026-09-07, a13 / a16).
+        // SPECTATE: price only (2026-09-07, a13 / a16).
         // The free camera is looking at the map; every other box is driving
         // chrome. EXIT stays on SpectatorCamera.
         var spectator = Found(ref _spectatorFound);
@@ -3386,7 +3386,7 @@ public class DriveHud : MonoBehaviour
 
         if (market != null && !loading && spectating)
         {
-            // SPECTATE IS NOT A BILLBOARD (the owner 2026-09-18 20:00, photographed): with no price yet, the headline
+            // SPECTATE IS NOT A BILLBOARD (2026-09-18 20:00, photographed): with no price yet, the headline
             // drew "— — —" and under it the market's connection telemetry - "connecting ... (error)" - at 4.5% of the
             // short side. Driving, that line sits under a price with the HUD's own chrome around it; spectating there
             // is no price, no box and no chrome, so it stood alone across the sky over the mempool.
@@ -3399,7 +3399,7 @@ public class DriveHud : MonoBehaviour
                          $"${market.Price:N0}   {market.DayChangePct:+0.00;-0.00;0.00}% 24h", note,
                          market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f));
             DrawConnectionTrouble(w, h, note, true);
-            // AND WHAT A NUKE COST, ACROSS THE MIDDLE (the owner 2026-09-19 15:55: "liquidation text CENTER of screen,
+            // AND WHAT A NUKE COST, ACROSS THE MIDDLE (2026-09-19 15:55: "liquidation text CENTER of screen,
             // also in spectate"). Everything else on this branch is driving chrome and stays off, but the
             // liquidation is the market hitting the battlefield the spectator is watching - it is the one thing on
             // that screen that is not about the truck. The headline row is not drawn here: there is no headline
@@ -3571,7 +3571,7 @@ public class DriveHud : MonoBehaviour
 }
 
 /// <summary>
-/// THE FIRST FRAME THAT DRAWS ANY HUD (kanban #266): true for every OnGUI call in the frame in which the first one came, for
+/// THE FIRST FRAME THAT DRAWS ANY HUD: true for every OnGUI call in the frame in which the first one came, for
 /// every HUD that asks - so DriveHud and SplashScreen both begin drawing on the frame after it, outside Unity's start-up hold.
 /// </summary>
 static class FirstGuiFrame

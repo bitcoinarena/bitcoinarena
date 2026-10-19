@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RUN A TESTNET4 TOOL OFF THE CHAIN (kanban #148): the tool as a child process, its bitcoin-cli the fake one
+// RUN A TESTNET4 TOOL OFF THE CHAIN: the tool as a child process, its bitcoin-cli the fake one
 // (fake-bitcoin-cli.mjs, every call logged and scripted), its signer node a local server answering `routes`, its out dir a
 // temp dir. Answers the exit code, both streams, every cli call and the files the tool wrote.
 import { createServer } from 'node:http';

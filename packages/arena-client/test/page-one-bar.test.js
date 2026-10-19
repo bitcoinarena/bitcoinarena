@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE LOADING BAR, NOT TWO (kanban #341, the owner 2026-10-11: "The progress bar while loading is split in two: one stretch to 90,
+// ONE LOADING BAR, NOT TWO (2026-10-11: "The progress bar while loading is split in two: one stretch to 90,
 // then another to 100. It should be one bar."). Measured in Chrome at 3x: at 90 % the bar ended in a rounded cap and the
-// creep layer (90 -> 99 %, kanban #266) began after it in a lighter gradient of its own - a notch and a colour step. On the
+// creep layer (90 -> 99 %) began after it in a lighter gradient of its own - a notch and a colour step. On the
 // page's own code: while the creep runs the bar's end is square, the creep starts on the bar's end colour, and the bar is
 // marked creeping exactly while the creep runs.
 import test from 'node:test';
@@ -33,7 +33,7 @@ test('the track is marked creeping from 90 % until 100 %, as the creep runs', ()
   const at = (c) => step(document, pct, c, (fn, ms) => later.push([fn, ms]));
   at(0.5); assert.equal(els.track.classList.has('creeping'), false);
   at(0.9); assert.equal(els.track.classList.has('creeping'), true); assert.equal(els.creep.classList.has('on'), true);
-  at(1); assert.equal(els.creep.classList.has('on'), true, 'the creep stays while the bar slides to 100 % (#386)');
+  at(1); assert.equal(els.creep.classList.has('on'), true, 'the creep stays while the bar slides to 100 %');
   assert.deepEqual(later.map(([, ms]) => ms), [250], 'and goes when the bar\'s 0.25 s move has ended');
   later[0][0](); assert.equal(els.track.classList.has('creeping'), false); assert.equal(els.creep.classList.has('on'), false);
 });

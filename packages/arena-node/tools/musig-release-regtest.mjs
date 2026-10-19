@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * THE COOPERATIVE RELEASE, ACCEPTED BY BITCOIND (kanban #307, spec §5A.3B key path: MuSig2(node_key, arbitration aggregate)):
+ * THE COOPERATIVE RELEASE, ACCEPTED BY BITCOIND (spec §5A.3B key path: MuSig2(node_key, arbitration aggregate)):
  * on a regtest chain a bond output is funded at the key bond-script.js builds for a node and the regtest arbitration set; a
  * spend of it back to the wallet is signed on its KEY PATH - the seat's half over its owner doors (POST /owner/musig/*,
  * signed by the owner), the 7 members' over the arbiter's doors (POST /musig/*) - aggregated to one BIP-340 signature,

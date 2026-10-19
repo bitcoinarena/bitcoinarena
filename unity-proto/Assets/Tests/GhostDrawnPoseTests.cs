@@ -184,7 +184,7 @@ public class GhostDrawnPoseTests
         TestContext.WriteLine($"one frame after a 6 m picture the ghost has moved "
                               + $"{Vector3.Distance(wasAt, oneFrameIn):F3} m of "
                               + $"{Vector3.Distance(wasAt, target):F3} m");
-        // AND IT STANDS ON THE PICTURE THAT LANDED, IN THAT FRAME (the owner 2026-09-18 05:10). It used to walk there over a
+        // AND IT STANDS ON THE PICTURE THAT LANDED, IN THAT FRAME (2026-09-18 05:10). It used to walk there over a
         // whole interval and so was still on the picture before it when the next one arrived: measured against the wire,
         // the picture was 22 ms old at the median while the drawn pose was 322 ms. The PLACE is the newest picture's at
         // once; what is walked round is the hull's facing, which is not a place.
@@ -192,7 +192,7 @@ public class GhostDrawnPoseTests
             "the ghost did not move at all on the frame after a new picture");
         Assert.Less(Vector3.Distance(oneFrameIn, target), 0.001f,
             "the ghost is not standing on the picture that landed: it is still walking to it");
-        // AND POINTING THE WAY IT SAYS, IN THE SAME FRAME (the owner 2026-09-18 05:45). The place bound here first and the
+        // AND POINTING THE WAY IT SAYS, IN THE SAME FRAME (2026-09-18 05:45). The place bound here first and the
         // facing was still turned from the pose before it over one ease, so the hull carried the whole-interval lag the
         // place had just lost: measured on the Daily against the same land-frame clock over 5813 pictures, the place
         // was 38 ms old at the median and the facing 138 ms, p90 52 against 156, 32 places over 300 ms against 67 facings.

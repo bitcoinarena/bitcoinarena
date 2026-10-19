@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WINNINGS ARE ALWAYS SENT ON A FEDERATION ROUND (the owner 2026-09-21: "winnings are always sent. There is no
+// WINNINGS ARE ALWAYS SENT ON A FEDERATION ROUND (2026-09-21: "winnings are always sent. There is no
 // Collect"; ruled for FEDERATION 2026-09-23 - refund key the committee's, gateway the lowest live key, invoice taken
 // only if its amount and its LUD-06 description hash stand).
 //
@@ -38,7 +38,7 @@ async function untilPaid(w, eid, ms = 30000) {
   return got;
 }
 
-test('WINNINGS-AUTO (RULED the owner 2026-10-01): a qualifier who named an address is paid by its payout contract to its own key - no invoice asked, no gateway paid; settling again pays nothing more', async () => {
+test('WINNINGS-AUTO (RULED 2026-10-01): a qualifier who named an address is paid by its payout contract to its own key - no invoice asked, no gateway paid; settling again pays nothing more', async () => {
   const port = lockPort();
   const addr = lnurl(port);
   const w = await lockRound({ port, serveOpts: { lnurlFetch: addr.fetchLike, winningsEveryMs: 500 } });

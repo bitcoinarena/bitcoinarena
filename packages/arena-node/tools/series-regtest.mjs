@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE REFUSES WHAT A SERIES DOES NOT DERIVE, AS A PROCESS (the owner 2026-09-29, the accepted series sequence, step 3):
+// A NODE REFUSES WHAT A SERIES DOES NOT DERIVE, AS A PROCESS (2026-09-29, the accepted series sequence, step 3):
 // "Private regtest: bitcoind on 30601, nodes on 41221+, two main.js processes, one series. Accept a genuine round i. Refuse
 // a moved window, index 960, an id that is not the hash, and an entry, a lock, and a settlement commit that name such a
-// round." Never testnet4, no bond, nothing spent. Since kanban #148 (2026-10-05) the seats are on 23421/23431 - below the
+// round." Never testnet4, no bond, nothing spent. Since (2026-10-05) the seats are on 23421/23431 - below the
 // ephemeral range - and the series' run is the 82 s one every 90 s series runs (RUN_82_TICKS): the seats refused the
 // 180 s BLOCK_TICKS run once the run had to fit its slot. test/series-regtest-tool.test.js runs this with CHAIN=0.
 //
@@ -65,7 +65,7 @@ const start = (k, withSeries) => {
   // CHAIN=0: no chain view - a genuine round whose template names no census this chain has is then stored (the series
   // door is before the chain's); with the chain the same round passes the series door and meets the census check
   const e = { ...env, ...(env.CHAIN === '0' ? {} : { ARENA_BITCOIND_URL: `http://127.0.0.1:${RPCPORT}`, ARENA_BITCOIND_COOKIE: `${RT}/regtest/.cookie` }), ARENA_FUND_FREE_ROUNDS: '1',
-    // the games its nodes host (kanban #203: main.js names none): nextblock
+    // the games its nodes host (main.js names none): nextblock
     ARENA_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname,
     ARENA_DONATION_NETWORK: 'regtest', ...(withSeries ? { ARENA_SERIES_FILE: join(dir, 'series.txt') } : {}) };
   delete e.ARENA_ATTACH_PROOF_DIR;

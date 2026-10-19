@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION'S RESERVE KEY (§27A.9.2, kanban #397 slice 2, custody "A"): its seven guardian seats make a 5-of-7 key with the
+// A FEDERATION'S RESERVE KEY (§27A.9.2custody "A"): its seven guardian seats make a 5-of-7 key with the
 // DKG a round's claim key uses, under the federation's own reserve epoch. Five sign a payout message, four cannot, every seat
 // serves the same key at GET /reserves - and the key is never a round committee's key over the same seven nodes.
 import { test } from 'node:test';
@@ -56,7 +56,7 @@ test('seven guardian seats make a 5-of-7 reserve key: five sign, four do not, al
     const served = await Promise.all(nodes.map(async (n) => (await (await fetch(`http://127.0.0.1:${n.port}/reserves`)).json()).federations.find((f) => f.federationId === toHex(FED))));
     assert.ok(served.every((f) => f && f.key === toHex(key) && f.needed === 5 && Object.keys(f.publicShares).length === 7), JSON.stringify(served[0]).slice(0, 300));
 
-    // SLICE 4: WHAT IS HELD (kanban #397): seat 0 verified a 2,000 msat reserve output at a lock and kept it; its /reserves
+    // SLICE 4: WHAT IS HELD: seat 0 verified a 2,000 msat reserve output at a lock and kept it; its /reserves
     // counts it, the others hold nothing yet - then each takes it from seat 0 once ITS federation port holds that contract
     const OUT = { txid: new Uint8Array(32).fill(0x44), outIdx: 4n };
     const outHex = `${toHex(OUT.txid)}:4`;
@@ -78,7 +78,7 @@ test('seven guardian seats make a 5-of-7 reserve key: five sign, four do not, al
     assert.deepEqual(totals, ['2000', '2000', '2000', '2000', '2000', '2000', '0'], 'six take it; the seat whose federation does not hold it keeps nothing');
     assert.equal((await figures(nodes[3], '?all=1')).federations[0].paidIn.length, 1);
 
-    // SLICE 8: THE PAYOUT'S DOORS (kanban #397): nothing paid yet; a record that is no payout, or a commit for no plan, is refused
+    // SLICE 8: THE PAYOUT'S DOORS: nothing paid yet; a record that is no payout, or a commit for no plan, is refused
     assert.deepEqual((await (await fetch(`http://127.0.0.1:${nodes[0].port}/reserve-payouts`)).json()).payouts, []);
     assert.deepEqual(f0.payouts, []);
     const post = async (path, body) => { const r = await fetch(`http://127.0.0.1:${nodes[0].port}${path}`, { method: 'POST', body: JSON.stringify(body) }); return [r.status, await r.json()]; };

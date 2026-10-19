@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// IN-GAME ITEMS (kanban #365): a manifest's catalogue (protocol 10) and the 25 / 25 / 50 split of a purchase.
+// IN-GAME ITEMS: a manifest's catalogue (protocol 10) and the 25 / 25 / 50 split of a purchase.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createPublicKey, sign, verify } from 'node:crypto';
@@ -74,7 +74,7 @@ test('the split: 50 % equal per served node, the rest halved between protocol de
   assert.deepEqual([odd.perNodeMsat, odd.nodesMsat, odd.devsMsat, odd.protocolMsat, odd.gameMsat, odd.sumMsat, odd.nodes.length], [166n, 498n, 503n, 251n, 252n, 1001n, 3], 'a key listed twice is one node');
   const one = itemSplit({ priceMsat: 1n, nodes: [k(5)] });
   assert.deepEqual([one.protocolMsat, one.gameMsat, one.nodesMsat], [0n, 1n, 0n]);
-  // 500 sat (the larger truck, #369) over the 12 nodes measured on 2026-10-15: 20,833 msat each (249,996), the devs 125,002 each
+  // 500 sat (the larger truck) over the 12 nodes measured on 2026-10-15: 20,833 msat each (249,996), the devs 125,002 each
   const truck = itemSplit({ priceMsat: 500000n, nodes: Array.from({ length: 12 }, (_, i) => k(i + 1)) });
   assert.deepEqual([truck.perNodeMsat, truck.nodesMsat, truck.protocolMsat, truck.gameMsat], [20833n, 249996n, 125002n, 125002n]);
   assert.throws(() => itemSplit({ priceMsat: 1000n, nodes: [] }), /no node served a round/);

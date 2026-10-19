@@ -61,7 +61,7 @@ const committeeReceipts = () => [1, 2, 3, 4, 5].map((n) => ({ nodePubkey: commit
 /** An objection is always checked AGAINST a round and a result; these are it. */
 const about = { roundId: b32(1), signedResultId: resultId(result()) };
 
-// WINDOW-10-SPEC (RULED the owner 2026-10-01): the field stays on the wire and in the id, and it must say 600000 - a contract
+// WINDOW-10-SPEC (RULED 2026-10-01): the field stays on the wire and in the id, and it must say 600000 - a contract
 // naming 0, 599999 or 600001 is invalid (roundWindowsAreValid), and finality() reads no window from it.
 test('the window is exactly 600000 ms: the field is in the signed round, and any other number is an invalid contract', () => {
   const c = contract();

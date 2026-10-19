@@ -17,7 +17,7 @@ import { join, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-// A FILE PATH, NOT A URL'S PATHNAME (kanban #471, measured on the windows-x64 release's first run: "/D:/a/..." became
+// A FILE PATH, NOT A URL'S PATHNAME (measured on the windows-x64 release's first run: "/D:/a/..." became
 // "D:\\D:\\a\\...\\src" and the node did not start); and the hashed names are relative paths with "/" on every system, sorted as such
 // - on Windows relative() answers "\\", which would hash another core than the one on Linux and macOS.
 const ROOT = fileURLToPath(new URL('../src', import.meta.url));

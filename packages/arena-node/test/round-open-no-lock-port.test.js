@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PAYING ROUND DOES NOT OPEN ON A SIGNER NODE THAT REACHES NO FEDERATION (§23.6; RULED the owner 2026-09-25: "a paying round
+// A PAYING ROUND DOES NOT OPEN ON A SIGNER NODE THAT REACHES NO FEDERATION (§23.6; RULED 2026-09-25: "a paying round
 // on a node with no lock port is refused with 409 before round.open ... Nothing stored or listed.").
 //
 // MEASURED before this test (2026-09-25, a scratch probe): POST /round's federation checks - the two-gateway count and the

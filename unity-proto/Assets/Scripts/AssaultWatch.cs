@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using L = Blwp.Layout;
 
 /// <summary>
-/// WHAT THE WAR IS DOING, IN WORDS (the owner 2026-09-20 16:22 and 16:26: "assaults are not perceptible. the owner
+/// WHAT THE WAR IS DOING, IN WORDS (2026-09-20 16:22 and 16:26: "assaults are not perceptible. the owner
 /// cannot see them").
 ///
 /// THE CLOCK IS NOT THE PROBLEM. Measured over eight seeds and a whole block each, the core declared 21

@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace Blwp
 {
     /// <summary>
-    /// THE LIVE TAPE, FRESH (the owner 2026-09-17 16:44: "reload always shows the SAME world candles - not live"; 16:46: "the
+    /// THE LIVE TAPE, FRESH (2026-09-17 16:44: "reload always shows the SAME world candles - not live"; 16:46: "the
     /// prices must be 100% current, not pre-seeded and cached"). Binance's 1 s BTCUSDT klines for the last 320 s, asked at
     /// the moment a core starts and never kept: the price standing at each of the 64 five-second marks ending at the newest
     /// kline, oldest first, in the tape's unit. Pure, for the tests; the fetch is CoreDrivenTruck's.

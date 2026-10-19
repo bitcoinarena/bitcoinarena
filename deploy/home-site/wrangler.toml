@@ -1,4 +1,4 @@
-# kanban #238: the bitcoin-arena.io homepage behind its password gate. A Worker (not Pages) because a Worker custom domain gets
+#: the bitcoin-arena.io homepage behind its password gate. A Worker (not Pages) because a Worker custom domain gets
 # its DNS record from Cloudflare, and the OAuth token here cannot write DNS.
 name = "bitcoin-arena-site"
 main = "worker.js"
@@ -15,12 +15,12 @@ directory = "./www"
 binding = "ASSETS"
 run_worker_first = true
 
-# kanban #269: the phones' ?bench=1 results, kept 30 days (read with `wrangler kv key list --binding BENCH`)
+#: the phones' ?bench=1 results, kept 30 days (read with `wrangler kv key list --binding BENCH`)
 [[kv_namespaces]]
 binding = "BENCH"
 id = "83351bd43e524815a441e37295a53ba8"
 
-# kanban #272: the testnet4 bond announcements, read through mempool.space every 2 minutes (worker.js scheduled) and
+#: the testnet4 bond announcements, read through mempool.space every 2 minutes (worker.js scheduled) and
 # served at /api/chain-nodes; the page checks them itself
 [[kv_namespaces]]
 binding = "CHAIN"

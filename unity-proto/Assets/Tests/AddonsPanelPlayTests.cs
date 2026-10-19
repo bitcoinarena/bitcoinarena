@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// BUY ADD-ONS IN THE RUNNING GAME (kanban #374): Bootstrap gives the game an AddonsPanel; with the page's view standing in
+/// BUY ADD-ONS IN THE RUNNING GAME: Bootstrap gives the game an AddonsPanel; with the page's view standing in
 /// (AddonsPanel.TestState) the cargo screen offers BUY ADD-ONS, the panel opens and buys through the page, and a purchase the page
 /// reports is confirmed by the banner - once.
 /// </summary>

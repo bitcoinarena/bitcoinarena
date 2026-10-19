@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OPERATOR UI'S PAIRING AND SCOPED TOKENS (spec §27A.7.7, kanban #332): a blwp-operator: URI with a 32-byte token, printed on
+// THE OPERATOR UI'S PAIRING AND SCOPED TOKENS (spec §27A.7.7): a blwp-operator: URI with a 32-byte token, printed on
 // first start; read / vote / config scopes, none of which moves money; minted and revoked by the owner's signature only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,7 +56,7 @@ test('on a running seat: the pairing token reads status and signs a vote; config
     assert.equal(st.ok, true);
     assert.equal(typeof st.node, 'string');
     assert.equal(typeof st.roundsHeld, 'number');
-    // THE VOTE ACTION (#332 on #329): the node's bond key signs, the door answers the 77-byte "ARN" 'V' payload and broadcasts nothing
+    // THE VOTE ACTION (on): the node's bond key signs, the door answers the 77-byte "ARN" 'V' payload and broadcasts nothing
     const { decodeVote, voteMessage: vm, CHOICE: C } = await import('../../arena-protocol/src/ballot.js');
     const pid = 'ab'.repeat(32);
     const castVote = (body, tok = token) => fetch(base + '/operator/vote', { method: 'POST', headers: { authorization: `Bearer ${tok}` }, body: JSON.stringify(body) });

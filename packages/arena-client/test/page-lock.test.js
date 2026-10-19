@@ -144,7 +144,7 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
       ids_match: id === stored, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
     return JSON.stringify({ stake: one(0, 's1', 's1', stakeMsat), fee: one(1, 'f1', badFee ? 'f2' : 'f1', feeMsat) });
   };
-  // THE DONATION IN THE SAME TRANSACTION (the owner 2026-10-03): stake, fee when a hash is given, then one output per donation;
+  // THE DONATION IN THE SAME TRANSACTION (2026-10-03): stake, fee when a hash is given, then one output per donation;
   // `badDonation` 'key' or 'amount' answers an output that is not the share it was asked for
   if (donations) Fake.prototype.lockWithDonations = async function (point, stakeMsat, hash, feeMsat, claim, refund, delta, given) {
     const ds = JSON.parse(given);
@@ -191,7 +191,7 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
 const ask = (extra = {}) => lockStake({ round, roundId: rid, invite: INVITE, seed, stake: { stakePoint: POINT },
   claimKey, playerPubkey: player, ...extra });
 
-// THE PLAYER WALLET (§24A.1, RULED the owner 2026-09-25): the stake is spent from one wallet per seed and FEDERATION. The
+// THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the stake is spent from one wallet per seed and FEDERATION. The
 // top-up is its own act (`fundPlayerWallet`); the stake asks for no deposit. Measured before (rehearsal item 8,
 // 27e1fbb9): lockStake joined a wallet keyed by seed and ROUND and paid a Lightning invoice inside the stake.
 test('the page tops up the player wallet - under the seed\'s secret for this FEDERATION, not this round - then spends the stake from it with no deposit, to the attested key and the player\'s refund key', async () => {
@@ -283,7 +283,7 @@ test('one player wallet per seed and federation: two rounds of one federation op
   assert.throws(() => walletSecretFor(seed, new Uint8Array(32)), /per federation, and no federation id was given/);
 });
 
-// PICK (b), THE GATE ON THE PAGE (the owner 2026-09-14), UNDER THE RULED FEE (07:44: "Fedimint base fee is
+// PICK (b), THE GATE ON THE PAGE (2026-09-14), UNDER THE RULED FEE (07:44: "Fedimint base fee is
 // 0 - run the federation with disable_base_fees"). The stand-in answers the ruled rule; the old one - 1000
 // msat on every input and output, what the regtest guardians answered before 07:44 - is now a federation
 // the page refuses. Until then this file's 100 sat test measured "no fee lock: the base fee would eat it".
@@ -601,7 +601,7 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.equal(back.stake.state, 'gone');
   assert.match(owedLine(back), /Stake 980000 msat: no longer in the federation - back to your key after its expiry/);
   assert.doesNotMatch(owedLine(back), /No stake back/, 'a stake back by the player\'s key read as no stake back');
-  // KANBAN #133 (playtest 2026-10-04: a DELIVERED player's 96 sat sat at "paying out" for 2 h and no seat was ever asked
+  // KANBAN (playtest 2026-10-04: a DELIVERED player's 96 sat sat at "paying out" for 2 h and no seat was ever asked
   // for the stake back): a settled round whose signer nodes do not answer where the lock is is still waiting - never
   // "no lock", which is final and closed the round's record for good. Answered with no lock, it is final as before.
   const down = (url) => (url.includes('/stake-lock') ? Promise.reject(new Error('tunnel dropped')) : signerNodes({ payout: false })(url));
@@ -622,7 +622,7 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.deepEqual(spent, ['refund', 'redeem', 'withdraw'], 'the payout, the stake and the withdraw were not one action');
   assert.equal(done.withdraw.ok, true);
 
-  // WINNINGS-AUTO (RULED the owner 2026-10-01): the same owed money, collected BY ITSELF into the player's federation
+  // WINNINGS-AUTO (RULED 2026-10-01): the same owed money, collected BY ITSELF into the player's federation
   // wallet - opened for this federation, the payout redeemed and the stake back - and nothing withdrawn; the history
   // row is what the wallet's balance grew by.
   spent.length = 0;
@@ -794,7 +794,7 @@ test('a winner\'s tab closed before withdrawing: the old timer\'s collect strand
   assert.deepEqual(inTab.paid.map((x) => x.msat), [1957000n]);
 });
 
-// A WITHDRAW SURVIVES THE TAB (the owner 2026-09-14, spec §24). Live, run A3: the page's Withdraw
+// A WITHDRAW SURVIVES THE TAB (2026-09-14, spec §24). Live, run A3: the page's Withdraw
 // collected both into the round's wallet, the tab was closed before it paid out, and >= 973312 msat
 // went with the tab's sessionStorage. The page now keeps the round's record and its wallet in the
 // browser's storage; this drives the page's own functions over one such storage.
@@ -891,7 +891,7 @@ test('a Withdraw cut off after its collect: the next start finds the kept round,
   assert.equal(after.balance, 0n);
 });
 
-// A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14: alice on her desktop, then her
+// A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, 2026-09-14: alice on her desktop, then her
 // iPhone two hours later, holding only her seed). The signer nodes list what they settled; the device derives
 // its own key per round and asks for exactly that key.
 test('a device holding only the seed matches its own key against the keys each settled round pays and its locks\' refund keys, asks nothing per round, fetches only a matched round and checks it against its id', async () => {
@@ -949,7 +949,7 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   const spends = /redeemPayout|returnStake|refundKept|withdrawCollected|withdrawPlayerWallet|collectOwed|collectAndWithdraw|\.refund\(|\.redeem\(|\.withdraw\(/;
   const timed = [...page.matchAll(/setInterval\((\w+), \d+\)/g)].map((m) => m[1]);
   assert.ok(timed.includes('lookThePayout'), `the look is not on a timer (${timed.join(', ')})`);
-  // WINNINGS-AUTO (RULED the owner 2026-10-01): the timed look collects what is owed into the player wallet by itself - and
+  // WINNINGS-AUTO (RULED 2026-10-01): the timed look collects what is owed into the player wallet by itself - and
   // that one call is the only money it moves: it redeems, never withdraws (the spends below stay off every timer)
   const look = page.slice(page.search(/function lookThePayout\(/), page.indexOf('\n    }\n', page.search(/function lookThePayout\(/)));
   assert.match(look, /BLWPCLIENT\.collectIntoPlayerWallet\(/, 'the look does not collect into the player wallet by itself');
@@ -970,7 +970,7 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   const fromWallet = [...page.matchAll(/BLWPCLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
   const settingsAt = page.indexOf("document.getElementById('blwp-wd-go').onclick = async () => {");
   const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
-  // AND A ZAP OR A TIP (kanban #362 item 14): the zap box's pay(), reached only from its Zap press - one call, inside it
+  // AND A ZAP OR A TIP: the zap box's pay(), reached only from its Zap press - one call, inside it
   const zapPayAt = page.indexOf('async function pay(invoice) {');
   const zapGoAt = page.indexOf("go.addEventListener('click', async () => {", zapPayAt);
   const zapPays = [...page.matchAll(/return pay\(invoice\);/g)].map((m) => m.index);
@@ -1331,7 +1331,7 @@ test('the join link carries the federation\'s invite, and refuses one that is no
   assert.throws(() => joinQuery(`${base}&federation=http://evil.test`), /not a federation invite code/);
 });
 
-// A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30: "Do not pick a gateway at random"). The
+// A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (2026-09-30 14:30: "Do not pick a gateway at random"). The
 // lock client's plan named 'http://gw' (its own pick); the operator lists the funded gateway, and the receive names that.
 test('a deposit goes through the listed funded gateway, not the lock client\'s pick', async () => {
   const { LockClient, log } = lockClient();
@@ -1362,7 +1362,7 @@ test('an estimated deposit asks no depositFor, and its invoice carries the margi
 });
 
 
-// THE WALLET'S HISTORY (the owner 2026-09-30 16:15; accepted sequence): one list per federation in the tab's vault - a
+// THE WALLET'S HISTORY (2026-09-30 16:15; accepted sequence): one list per federation in the tab's vault - a
 // deposit once its receive is claimed, a stake when saveLock keeps the lock (its entry added on commit), a withdrawal
 // when it succeeds; and a stake row names its round and entry, from which the replay link is built.
 test('the wallet history: a deposit, then a stake, then a withdrawal are three rows; the stake row names its round and entry, and a replay link is built from it', async () => {
@@ -1405,7 +1405,7 @@ test('stakes kept before the history existed are read into it once', () => {
 });
 
 
-// GROSS-INVOICE-2053 (the owner 2026-09-30 20:53): the deposit is the gross round amount, chosen in round tabs.
+// GROSS-INVOICE-2053 (2026-09-30 20:53): the deposit is the gross round amount, chosen in round tabs.
 test('the deposit tabs are this round\'s stake times 1, 2, 5 and 10, then Custom - 100 sat is 100, 200, 500, 1000', () => {
   const c100 = depositChoices(100000n);
   assert.deepEqual(c100.map((c) => c.label), ['1 round', '2 rounds', '5 rounds', '10 rounds', 'Custom']);
@@ -1439,7 +1439,7 @@ function noteClient() {
   return { LockClient: Note, log };
 }
 
-test('N rounds play N rounds (the owner 2026-10-01): the "N rounds" tab, a whole number of sats, funds N rounds\' locks - 1, 2, 5 and 10', async () => {
+test('N rounds play N rounds (2026-10-01): the "N rounds" tab, a whole number of sats, funds N rounds\' locks - 1, 2, 5 and 10', async () => {
   for (const [i, N] of [[0, 1], [1, 2], [2, 5], [3, 10]]) {
     const { LockClient, log } = noteClient();
     const tab = tabStorage(); const sd = b32(0x80 + N);
@@ -1475,7 +1475,7 @@ test('the Settings tabs are sized as the join sizes them - with the donation - s
   assert.equal(locks.donationCostMsat, ceilNote(two));
 });
 
-test('the donation is paid by the player (the owner 2026-10-01): an N rounds deposit pays each round\'s stake lock, fee lock and every donation share from the player wallet - never asked again, N = 1 and 10', async () => {
+test('the donation is paid by the player (2026-10-01): an N rounds deposit pays each round\'s stake lock, fee lock and every donation share from the player wallet - never asked again, N = 1 and 10', async () => {
   const { TEST_DONATION_SET_REGTEST } = await import('../../arena-protocol/src/test-donation-sets.js');
   const { splitDonation } = await import('../../arena-protocol/src/donation.js');
   const recipients = TEST_DONATION_SET_REGTEST.recipients;
@@ -1656,13 +1656,13 @@ test('a rest under the federation\'s 5 sat floor is invoiced at 5 sat; more is i
   assert.deepEqual(o.choices.map((c) => [c.key, c.msat]), [['rest', 5000n]]);
 });
 
-test('1 sat = 1 sat (the owner 2026-10-01): a 100 sat round - stake lock 96, fee lock 2, donation 2 - is 100 sat, and N rounds N x 100', async () => {
+test('1 sat = 1 sat (2026-10-01): a 100 sat round - stake lock 96, fee lock 2, donation 2 - is 100 sat, and N rounds N x 100', async () => {
   assert.equal(NOTE_MSAT, 1n, 'the lock client issues notes from 1 msat');
   const { LockClient } = noteClient();
   const locks = { amount: 96000n, feeMsat: 2000n, zeroFees: true, donationCostMsat: 1334n + 666n };
   assert.deepEqual([1, 2, 5, 10].map((n) => roundsDepositMsat(n, locks, LockClient)), [100000n, 200000n, 500000n, 1000000n]);
 });
-test('a withdrawal names the funded gateway to the lock client (the owner 2026-10-01 08:34: the stock pick sent an LND-a invoice to gateway A and it was refunded)', async () => {
+test('a withdrawal names the funded gateway to the lock client (2026-10-01 08:34: the stock pick sent an LND-a invoice to gateway A and it was refunded)', async () => {
   const seen = [];
   const client = { withdrawableMsat: async () => '50000',
     withdraw: async (invoice, gw) => { seen.push(gw); return JSON.stringify({ state: 'Success', preimage: 'ab'.repeat(32), invoice_msat: 5000, gateway: gw }); } };
@@ -1672,7 +1672,7 @@ test('a withdrawal names the funded gateway to the lock client (the owner 2026-1
   assert.deepEqual(seen, ['https://gw-b.example/']);
 });
 
-test('the invoice defines the withdrawal (the owner 2026-10-01): its amount is read off it; no amount and not an invoice are said so', () => {
+test('the invoice defines the withdrawal (2026-10-01): its amount is read off it; no amount and not an invoice are said so', () => {
   assert.deepEqual(invoiceAmountMsat(bolt11For(99000n)), { ok: true, msat: 99000n });
   assert.equal(invoiceAmountMsat('hello').why, 'That is not a Lightning invoice.');
   assert.equal(invoiceAmountMsat('').ok, false);
@@ -1689,7 +1689,7 @@ test('a withdrawal of a chosen amount pays only an invoice of exactly that amoun
   assert.equal(good.ok, true, good.why);
 });
 
-// THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): "a node refuses to open it,
+// THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01): "a node refuses to open it,
 // list it or take an entry for it" - and the page, which reads every round through fetchRound (the lobby's rows and a
 // join alike), lists and joins none, whatever a node answers.
 test('WINDOW-10-SPEC: the page lists and joins only a round whose objection window is 600000 ms - 0, 599999 and 600001 refused by name', async () => {
@@ -1730,7 +1730,7 @@ test('two players of one round in one browser keep a collect each, and each tab 
   assert.ok(t2.has('arena.collect.' + lr), 'another seed\'s old record was removed');
 });
 
-// THE LOCK GOES TO EVERY SIGNER NODE AT ONCE (JOIN-TIME-1359, the owner 2026-10-02: "PLAY to a committed entry is the clock"):
+// THE LOCK GOES TO EVERY SIGNER NODE AT ONCE (JOIN-TIME-1359, 2026-10-02: "PLAY to a committed entry is the clock"):
 // handed one after another, seven nodes that each verify in the federation (~1.8 s) made the stake lock ~13 s of the paid
 // join. Seven nodes that each take 300 ms are all answered in about 300 ms, and the answers keep the nodes' order.
 test('handLock asks every signer node at once and keeps their order', async () => {
@@ -1762,7 +1762,7 @@ test('a wallet the lobby could not open is joined again at PLAY, and a join that
   console.log('  FACTS:', JSON.stringify({ ms: Date.now() - t0, joins, steps }));
   assert.equal(got, good);
   assert.equal(joins, 2);
-  // (since kanban #376 PLAY waits for the lobby's open until it is refused at joinWaitMs - never a second client beside a live one)
+  // (since PLAY waits for the lobby's open until it is refused at joinWaitMs - never a second client beside a live one)
   assert.ok(steps.some((s) => /did not open \(.*did not open the player wallet in 0 s.*\) - joining the federation again/.test(s)), 'PLAY did not say the lobby wallet failed to open');
   const never = { join: () => new Promise(() => {}) };
   await assert.rejects(playerWallet({ round, invite: INVITE, seed: b32(0x94), LockClient: never, storage: tabStorage(), joinWaitMs: 100 }),
@@ -1786,7 +1786,7 @@ test('a committed lock is reused before the start, and resumed until the close, 
   const r = keptLockUse(kept, { entry, beforeStart: true });
   assert.equal(r.use, 'reuse'); assert.equal(r.resumed, true); assert.equal(r.kept, kept);
   assert.equal(keptLockUse(kept, { entry, beforeStart: false }).use, 'staked', 'a closed round: the run is not resumed');
-  // AFTER THE START, BEFORE THE CLOSE (the owner 2026-10-03, "That run must not be lost"): resumed from the seats' record
+  // AFTER THE START, BEFORE THE CLOSE (2026-10-03, "That run must not be lost"): resumed from the seats' record
   const running = keptLockUse(kept, { entry, beforeStart: false, beforeClose: true });
   assert.equal(running.use, 'reuse'); assert.equal(running.resumed, 'running'); assert.equal(running.kept, kept);
   assert.equal(keptLockUse(kept, { entry: null, beforeStart: false, beforeClose: true }).use, 'staked', 'running, no kept entry');
@@ -1795,7 +1795,7 @@ test('a committed lock is reused before the start, and resumed until the close, 
   assert.equal(keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) }, { entry, beforeStart: true }).use, 'staked', 'another entry');
 });
 
-// DONATIONS IN THE FEDERATION (the owner 2026-10-03): a round whose set pays keys locks the stake, the fee and one payout
+// DONATIONS IN THE FEDERATION (2026-10-03): a round whose set pays keys locks the stake, the fee and one payout
 // contract per share in ONE transaction; each output is checked against its share; the outpoints are kept across a reload.
 test('a set of keys: one lockWithDonations call, the shares in the set\'s order, each output checked, kept for a reload', async () => {
   const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
@@ -1812,7 +1812,7 @@ test('a set of keys: one lockWithDonations call, the shares in the set\'s order,
     const got = await go;
     const calls = log.filter((l) => l.lock || l.lockHash || l.lockBoth || l.lockWithDonations);
     assert.deepEqual(calls.map((c) => Object.keys(c)[0]), ['lockWithDonations'], 'stake, fee and donation were not one transaction');
-    // EACH DONATION CARRIES THE SENDER (kanban #156, the owner 2026-10-05): the player's x-only key as its payment image
+    // EACH DONATION CARRIES THE SENDER (2026-10-05): the player's x-only key as its payment image
     assert.deepEqual(calls[0].lockWithDonations.donations, [{ pk: '02' + 'a1'.repeat(32), msat: '1334', image: toHex(player) }, { pk: '03' + 'b2'.repeat(32), msat: '666', image: toHex(player) }]);
     assert.equal(calls[0].lockWithDonations.hash === '', !feeRule, 'a fee hash only when the fee lock is due');
     assert.equal(!!got.feeLock, !!feeRule);
@@ -1829,7 +1829,7 @@ test('a set of keys: one lockWithDonations call, the shares in the set\'s order,
   }
 });
 
-// THE LOCK ANSWERED ON SUBMISSION (the owner 2026-10-03, OPEN-LIST-2140 item 3): the entry's outpoints come back before the
+// THE LOCK ANSWERED ON SUBMISSION (2026-10-03, OPEN-LIST-2140 item 3): the entry's outpoints come back before the
 // guardians accept the lock; acceptance is checked after, and a lock held elsewhere or refused rejects `accepted`.
 test('a submitted lock answers its outpoints before acceptance; acceptance is checked after, and a moved or refused lock rejects', async () => {
   const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
@@ -1852,7 +1852,7 @@ test('a submitted lock answers its outpoints before acceptance; acceptance is ch
   }
 });
 
-// A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (kanban #27, the owner 2026-10-04): the page marks a typed-in seed;
+// A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (2026-10-04): the page marks a typed-in seed;
 // that seed's player wallet, kept nowhere in this browser, is opened by LockClient.recover (Fedimint's own recovery) - not
 // joined empty. A seed this page made is joined; a wallet this browser keeps is reopened by join even when marked; a lock
 // client built before recover existed joins.
@@ -1887,7 +1887,7 @@ test('an imported seed with no wallet here is recovered from the federation; a m
   assert.deepEqual((await opened(tab2, other, false)).calls, ['join']);
 });
 
-// §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock the tab
+// §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock the tab
 // keeps for a round no seat settles and no seat knows - round 49a50535, measured live: 100 sat back only after its expiry -
 // is handed to the round's signer nodes (POST /refused-lock); once one keeps it, /stake-lock names it and the forfeit is the
 // stake owed back now, by forfeit, with no settlement; returnStake redeems it without waiting for one.
@@ -1936,7 +1936,7 @@ test('a kept lock for a round the signer nodes refuse is handed to them, owed ba
   assert.equal(offered.stakeMsat, 0n);
 });
 
-test('a tab\'s orders in one market round (kanban #336): each its own key, its own collect record, done on its own; order 0 keeps the record it always had', () => {
+test('a tab\'s orders in one market round: each its own key, its own collect record, done on its own; order 0 keeps the record it always had', () => {
   const tab = new Map();
   const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
     key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
@@ -1955,7 +1955,7 @@ test('a tab\'s orders in one market round (kanban #336): each its own key, its o
   assert.deepEqual(after.filter((r) => r.done).map((r) => r.order), [1], 'only order 1 is done');
 });
 
-test('an order the book never filled comes back whole (kanban #336): its stake lock and its fee lock, both redeemed by forfeit; a fee the seats keep is left', async () => {
+test('an order the book never filled comes back whole: its stake lock and its fee lock, both redeemed by forfeit; a fee the seats keep is left', async () => {
   const signerNodes = [0x21, 0x22].map((n) => pageCurve.pointX(b32(n)));
   const order = 1;
   const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve, order });
@@ -1990,7 +1990,7 @@ test('an order the book never filled comes back whole (kanban #336): its stake l
   assert.deepEqual(calls.map((c) => String(c.amount)), ['54450'], 'a filled order\'s fee is the seats\': only the stake is redeemed');
 });
 
-// A SLASH'S PAYOUT (kanban #307, §5A.3B): the arbitration service lists the share it locked to the wronged player's refund
+// A SLASH'S PAYOUT (§5A.3B): the arbitration service lists the share it locked to the wronged player's refund
 // key; the player's page collects it by Refund under that key, as a settlement payout; another seed finds none
 test('a wronged player\'s page collects its slash payout from the arbitration service\'s list - by Refund under its key - and another seed\'s asks the wallet nothing', async () => {
   const wronged = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
@@ -2026,7 +2026,7 @@ test('a wronged player\'s page collects its slash payout from the arbitration se
 });
 
 const round100q = { ...round, stakeMsat: 100000n };   // a 100 sat round, as the tests above make it
-// A WALLET WHOSE NOTES ARE STILL BEING ISSUED (kanban #376, the owner 2026-10-16 06:25Z, right after buying the larger truck:
+// A WALLET WHOSE NOTES ARE STILL BEING ISSUED (2026-10-16 06:25Z, right after buying the larger truck:
 // "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - the join asked a deposit and never
 // started; measured on a page with one pinned seed: 0 sat read for more than 6 minutes after a restore while the seed held 3000 sat,
 // and a "Claimed" deposit still read 0 - the notes were being issued). Each fails if a funded wallet is told insufficient and sent
@@ -2101,7 +2101,7 @@ test('issuance not landed by the entry close is said, and waited no longer', asy
   assert.match(steps[0], /is being issued 5000 msat more/);
 });
 
-// ONE CLIENT PER WALLET (kanban #376, measured on live UI 147 with one pinned seed: an open of 21-25 s, PLAY's "did not open in
+// ONE CLIENT PER WALLET (measured on live UI 147 with one pinned seed: an open of 21-25 s, PLAY's "did not open in
 // 15 s - joining the federation again", and a second lock client over the same store - its awaitReceive answered "Operation not
 // found" for the deposit the first had invoiced, and a balance read off one was quoted "insufficient funds" on the other). A slow
 // open is waited for: every caller gets the one client, the federation is joined once, and the wait is said.

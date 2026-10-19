@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SANDBOX A GAME'S CORE RUNS IN, AND THE ONLY WAY THIS NODE RUNS ONE (spec §0A.6, kanban #328).
+// THE SANDBOX A GAME'S CORE RUNS IN, AND THE ONLY WAY THIS NODE RUNS ONE (spec §0A.6).
 //
 // "It runs it only in the replay worker: no network, no file system, no clock, no randomness but the round's seed, the
 // same integers on every machine." Before this a core was imported like any module of the node - in the replay worker,
@@ -41,7 +41,7 @@ export const STEP_MS = 30000;
 export const ASK_MS = 2000;
 /** Loading a core: its thread started and its modules' top level evaluated. */
 export const LOAD_MS = 10000;
-// ITS MEMORY (kanban #343, spec §0A.6): time alone did not bound it - measured, a core that allocated in a loop took the node
+// ITS MEMORY (spec §0A.6): time alone did not bound it - measured, a core that allocated in a loop took the node
 // to 2.9 GB before a 20 s deadline ended it. Three limits, each measured on the card:
 /** The bytes of typed arrays and ArrayBuffers alive in one core's sandbox (core-host.js counts them; the core's real need
  *  is 0.28 MB for a whole 10800-tick replay, so 64 MB is about 228 times it). */
@@ -51,7 +51,7 @@ export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoung
 /** THE BACKSTOP: how far this process may grow while one call into a core runs - read every 2 ms by the core supervisor. */
 export const RSS_BACKSTOP = 512 * 1024 * 1024;
 /** The supervisor ends a core this far below the backstop: it reads the process every 2 ms, and a core allocating at full
- *  speed keeps going for the moments its isolate takes to stop (measured on the card, kanban #343). */
+ *  speed keeps going for the moments its isolate takes to stop (measured on the card). */
 const BACKSTOP_MARGIN_MB = 96;
 /** After a core is ended: how long the node waits for its supervisor to say the thread is gone. */
 const EXIT_WAIT_MS = 3000;

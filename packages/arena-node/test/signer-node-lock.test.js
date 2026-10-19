@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE VERIFIES THE PLAYER'S STAKE LOCK BEFORE THE STAKE IS COMMITTED (§23.1 step 5).
 //
-// Custody is the stake lock (FEDERATION.md, the owner 2026-09-11): the player's
+// Custody is the stake lock (FEDERATION.md, 2026-09-11): the player's
 // client locks the net stake in the round's federation as a stock LNv2
 // OutgoingContract - payment_image Point(stake_point), claim_pk the round's
 // key, refund_pk the player, expiration >= height + 144. "STAKE_COMMITTED is

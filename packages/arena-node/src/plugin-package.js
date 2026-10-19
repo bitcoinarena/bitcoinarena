@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PLUGIN STORE'S PACKAGE (kanban #276 step 5, the owner 2026-10-09: "Choose supported games and markets, as a plugin store.
+// THE PLUGIN STORE'S PACKAGE (2026-10-09: "Choose supported games and markets, as a plugin store.
 // See what other nodes host. Install it. Always scan for malicious code before install"; 2026-10-10: "some sort of plugin
 // system where games can be downloaded from other nodes"). A seat serves each game it hosts as one package: its signed
 // manifest, its developer's donation set, its cores' sources and its clients - and an installing seat takes it only when
@@ -64,14 +64,14 @@ export function installPackage(dir, pkg, gameId) {
   return at;
 }
 
-/** ONE INSTALLED PACKAGE AS A REGISTRATION (activated at once, kanban #276: no restart): its cores imported from disk. */
+/** ONE INSTALLED PACKAGE AS A REGISTRATION (activated at once,: no restart): its cores imported from disk. */
 export async function registrationFromPackage(at, pkg) {
   const manifest = decodeManifest(fromHex(pkg.manifest));
   const cores = new Map();
   for (const c of pkg.cores) {
     const file = join(at, `core-${c.hash}.mjs`);
     if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
-    // NEVER IMPORTED INTO THIS THREAD (kanban #328, §0A.6): loaded into its sandbox from the bytes just checked
+    // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked
     const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((c.configs || []).map((h) => [h, {}])) };
     if (!sandboxFor(core).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
     cores.set(c.hash, core);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PUBLISHED ROUND FIRST, ITS BEACON AFTER (the owner 2026-09-30, the fcb15cca refusal, pick (b)).
+// A PUBLISHED ROUND FIRST, ITS BEACON AFTER (2026-09-30, the fcb15cca refusal, pick (b)).
 //
 // Measured on testnet4: the paying runner broadcast round fcb15cca's publication (37af92a0, 2 sat/vB) at 21:48:57Z;
 // it sat in the mempool ~3.5 h and confirmed at 154489, after the round's beacon block (~154477). The runner had
@@ -47,7 +47,7 @@ export async function awaitPublishedBeacon({ contract, txid, view, rpc, feeRate 
     const v = await view();
     const tip = v.firstHeight + v.blocks.length - 1;
     if (bumpedAt === null) bumpedAt = tip;
-    // A SERIES ROUND (a grid's, kanban #293) IS PUBLISHED BY ITS SERIES' "ARN" SERIES series_id, not one of its own
+    // A SERIES ROUND (a grid's) IS PUBLISHED BY ITS SERIES' "ARN" SERIES series_id, not one of its own
     const pub = contract.seriesId instanceof Uint8Array ? findSeriesPublication(v, contract.seriesId) : findPublication(v, rid);
     const beaconAt = beaconBlockIn(contract, v);
     // THE BEACON BLOCK CAME FIRST: not a published round, whatever confirms later.
@@ -57,7 +57,7 @@ export async function awaitPublishedBeacon({ contract, txid, view, rpc, feeRate 
           : `round ${tag}'s beacon block ${beaconAt} came while its publication ${current.slice(0, 16)} was unconfirmed: it is not a published round` };
     if (!pub) {
       // UNCONFIRMED: no beacon is named. A block that came without it raises its fee.
-      // ONLY A BLOCK THAT TOOK OTHERS' TRANSACTIONS SAYS THE FEE WAS TOO LOW (kanban #293, measured 2026-10-12 07:42-07:43Z:
+      // ONLY A BLOCK THAT TOOK OTHERS' TRANSACTIONS SAYS THE FEE WAS TOO LOW (measured 2026-10-12 07:42-07:43Z:
       // testnet4 blocks 156204-156209 were coinbase-only, minimum-difficulty, 20 min apart in their timestamps - the grid's
       // 0.15 sat/vB was raised to 1.2 for nothing; 156203 before them took a 0.15 sat/vB transaction among 220)
       const tookOthers = v.blocks.slice(Math.max(0, bumpedAt + 1 - v.firstHeight)).some((b) => (b.transactions || []).length > 1);

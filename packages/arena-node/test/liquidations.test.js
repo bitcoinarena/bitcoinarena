@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// GET /liquidations AND POST /liquidations/spent-set (spec §23A.5 steps 1-2, kanban #323): what a seat mirrors of a halted
+// GET /liquidations AND POST /liquidations/spent-set (spec §23A.5 steps 1-2): what a seat mirrors of a halted
 // federation - the halt it counts from, the clocks, and the guardians' newest spent-note set.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #130 AT THE SEAT'S DOOR (the owner 2026-10-04 14:30: "Join closes when 45 s remain. A player who would have 45 s or
+// KANBAN AT THE SEAT'S DOOR (2026-10-04 14:30: "Join closes when 45 s remain. A player who would have 45 s or
 // less left must not enter and waits for the next round"). A late-join series round (entry_close = start + 45 s in its
 // bytes) takes a new entry only before start + 37 s - at that instant 45 s of its run remain, so it is refused - and a late
 // entry joins at the round's ticks already gone (less 10 s), so its run ends with the round's at start + 82 s.

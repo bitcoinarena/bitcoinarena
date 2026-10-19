@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SIX TREND DOTS AGAINST THE CANDLES ON THE SAME HUD (the owner 2026-09-19 21:39,
+// THE SIX TREND DOTS AGAINST THE CANDLES ON THE SAME HUD (2026-09-19 21:39,
 // hud-sideways-five-red-2139.png: "SIDEWAYS is wrong - last five candles are RED").
 //
 // §4.14 reads "the colour of the last SIX FINISHED candles". A candle is what §4.15 draws, and this prints the two

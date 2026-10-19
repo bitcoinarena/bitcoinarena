@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// §13B AT ANY TICK (kanban #25, RULED the owner 2026-10-04): "A player who publishes two different checkpoints for the same
+// §13B AT ANY TICK (RULED 2026-10-04): "A player who publishes two different checkpoints for the same
 // (round_id, player_pubkey, tick), or two chains that diverge at any tick, forfeits the entry." Before: only two FIRST marks
 // diverted to forfeit; a fork at a later tick was stored and the canonical run signed as ever. On a 2-of-2 round of two
 // running seats, the player's run with a first mark at tick 60 and, at its end, mark X sent only to seat A and a
@@ -99,7 +99,7 @@ test('(c) with nobody qualified, the proven equivocator\'s lock is claimed like 
     assert.equal(facts.cheatLockHeld, false);
     assert.equal(claims.includes('LOSER STAKE'), false, 'an honest loser\'s lock was claimed with nobody qualified');
     assert.equal(facts.loserLockHeld, true, 'the honest loser\'s lock does not expire back to its player');
-    // THE REMAINDER SPLIT of the equivocator's net stake (its stake less the 5% fee, kanban #205): 75% to the two sitting
+    // THE REMAINDER SPLIT of the equivocator's net stake (its stake less the 5% fee): 75% to the two sitting
     // seats, 25% to the donation set; the seats' fee shares - half of the two players' 5% fee locks each - beside it
     const net = STAKE - entryFeeMsat(STAKE), seatFee = (2n * entryFeeMsat(STAKE)) / 2n, sum = (xs) => xs.reduce((t, x) => t + BigInt(x), 0n);
     const seats = facts.payouts.filter((x) => x === String(net * 75n / 100n / 2n));
@@ -109,7 +109,7 @@ test('(c) with nobody qualified, the proven equivocator\'s lock is claimed like 
   } finally { await w.close(); }
 });
 
-// THE #25 AUDIT. (d) THE EQUIVOCATOR'S OBJECTION: the FORFEIT is signed over the canonical transcript, whose inputs a replay
+// THE AUDIT. (d) THE EQUIVOCATOR'S OBJECTION: the FORFEIT is signed over the canonical transcript, whose inputs a replay
 // would "contradict" - a stranger's check of the player's own bundle holds against FORFEIT/0 - so the seat holding the proof
 // refuses it at the door by §13B, before any replay, and stores nothing; the entry stays FORFEIT.
 test('(d) the equivocator objecting to its own FORFEIT with its canonical transcript is refused at the door by §13B, and the FORFEIT stands', async () => {
@@ -249,7 +249,7 @@ test('(g) a split on a fork with nobody qualified: §13C FORFEIT, the equivocato
   } finally { await w.close(); }
 });
 
-// (h) A PAGE STUCK ON AN OLD HEAD IS NOT A CHEAT (RULED the owner 2026-10-05 (b); measured on testnet4: ea63aa94 and c35157df
+// (h) A PAGE STUCK ON AN OLD HEAD IS NOT A CHEAT (RULED 2026-10-05 (b); measured on testnet4: ea63aa94 and c35157df
 // sent marks naming an old parent after their seats had moved on). Its head H is receipted by both seats; its next mark S
 // names H's parent - two chains from one parent on paper - but S is refused at every seat, never receipted: no FORFEIT, the
 // run signed as ever, FINAL, and its lock settles as a loser's or a winner's would.
@@ -278,7 +278,7 @@ test('(h) a page stuck on an old head - a later mark naming the old parent, refu
   } finally { await w.close(); }
 });
 
-test('(i) a page stuck on an old head for 63 marks (measured live on 0.0.2815, kanban #155) costs each seat a bounded number of signature checks, not 63 x 63 per call, and is not forfeited', async () => {
+test('(i) a page stuck on an old head for 63 marks (measured live on 0.0.2815) costs each seat a bounded number of signature checks, not 63 x 63 per call, and is not forfeited', async () => {
   const N = 63;
   const w = await lockRound();
   try {

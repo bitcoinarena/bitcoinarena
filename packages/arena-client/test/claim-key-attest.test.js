@@ -13,7 +13,7 @@
 // MEASURED BEFORE (TASKBOOK, aed31be): GET /claim-key 404 on every signer node, the
 // page's bundle had no way to check a key, entryFor wrote a zero attestation,
 // claimKeyIsAttested had 0 callers in node and client.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../arena-node/test/lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -165,7 +165,7 @@ test('a stranger\'s signed claim key counts for nothing, and a node not assigned
   } finally { await f.close(); }
 });
 
-// NO HOLD ROUND (RULED the owner 2026-09-24, the enum slice's fifth cut): a paying round that names no federation was the
+// NO HOLD ROUND (RULED 2026-09-24, the enum slice's fifth cut): a paying round that names no federation was the
 // hold invoice's, and the page used to build its entry - a stake, no lock, no attestation. It is not a round of this
 // network: entryFor refuses it before any key is asked, and zero attestations are a free round's only.
 test('a round whose stake goes into a lock gets no entry without an attested key; a paying round naming no federation gets no entry at all', async () => {
@@ -179,7 +179,7 @@ test('a round whose stake goes into a lock gets no entry without an attested key
   } finally { await f.close(); }
 });
 
-test('the claim key is asked of every node at once: ten nodes of 200 ms each answer in well under the 2 s one after another took (kanban #353)', async () => {
+test('the claim key is asked of every node at once: ten nodes of 200 ms each answer in well under the 2 s one after another took', async () => {
   const nodes = Array.from({ length: 10 }, (_, i) => `https://seat-${i}.example`);
   let open = 0, most = 0;
   const fetcher = async () => { open++; most = Math.max(most, open); await new Promise((r) => setTimeout(r, 200)); open--;

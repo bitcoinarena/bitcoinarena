@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NO-QUORUM OUTCOME - payout.js noQuorumOutcome on its own (kanban #146, fifth surface; plan comment 194, Go
+// THE NO-QUORUM OUTCOME - payout.js noQuorumOutcome on its own (fifth surface; plan comment 194, Go
 // 2026-10-05). It decides the card's "no quorum VOID" and "proven equivocation FORFEIT" paths, and that a FINAL result is
 // never voided; finality.js asks it at the in-time quorum, on a provisional run and on a suspended one. Until now protocol's
 // own suite never called it (payout.js lines 329-369 uncovered). No defect was read from the source before this file.

@@ -62,7 +62,7 @@ export function seedFromPhrase(phrase) {
 }
 
 /**
- * WHAT THE PLAYER TYPED, AS THE 64 HEX importSeed TAKES (kanban #27, the owner 2026-10-04): the 24 words of his backup -
+ * WHAT THE PLAYER TYPED, AS THE 64 HEX importSeed TAKES (2026-10-04): the 24 words of his backup -
  * checked, so a wrong word is refused by name and never restores an empty wallet - or the 64 hex digits as before.
  * The words encode the 32-byte seed directly (no BIP-39 key stretching: the keys stay this game's own hash of the
  * seed), so they restore this game's wallet and nothing else. Answers { ok, hex, from: 'words' | 'hex' } or { ok:false, why }.

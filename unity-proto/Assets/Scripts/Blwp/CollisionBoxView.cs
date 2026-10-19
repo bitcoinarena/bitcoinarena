@@ -6,7 +6,7 @@ using UnityEngine;
 namespace Blwp
 {
     /// <summary>
-    /// THE COLLISION IS VISIBLE (the owner 2026-09-25 20:56, again 20:57: visible collisions, before testnet - the miner and
+    /// THE COLLISION IS VISIBLE (2026-09-25 20:56, again 20:57: visible collisions, before testnet - the miner and
     /// the post office, "the post office is the mempool building").
     ///
     /// What is coloured is what the truck is resolved against: the core's own boxes (st.solids, rules/map.js), read back

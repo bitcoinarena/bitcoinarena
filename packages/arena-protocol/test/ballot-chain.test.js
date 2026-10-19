@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE BALLOT READ OFF THE CHAIN, ACTIVATION AND REPEAL (spec §27A.7.3, §27A.7.5-6, kanban #329).
+// THE BALLOT READ OFF THE CHAIN, ACTIVATION AND REPEAL (spec §27A.7.3, §27A.7.5-6).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -76,7 +76,7 @@ test('a repeal - a config the network ran before - runs on the short schedule; a
   assert.equal(REPEAL_SCHEDULES.mainnet.voting, 720);
 });
 
-// THE DEPOSIT (RULED the owner 2026-10-13, option A): one P2TR output per share of the network's keyed donation set, split as a donation
+// THE DEPOSIT (RULED 2026-10-13, option A): one P2TR output per share of the network's keyed donation set, split as a donation
 test('a proposal\'s deposit: its transaction pays each key of the keyed set its share; the confirmation height is the publication', () => {
   const pk = (i) => Uint8Array.from([0x02, ...schnorr.getPublicKey(new Uint8Array(32).fill(i))]);
   const set = [{ recipientPk: pk(1), shareBps: 6000, label: 'protocol a' }, { recipientPk: pk(2), shareBps: 4000, label: 'protocol b' }];
@@ -100,7 +100,7 @@ test('a proposal\'s deposit: its transaction pays each key of the keyed set its 
   assert.equal(depositScriptOf(pk(2)).length, 34);
 });
 
-// GOING LIVE (§27A.7.5, kanban #329): a round is bound to the config live at its creation (its census height)
+// GOING LIVE (§27A.7.5): a round is bound to the config live at its creation (its census height)
 test('a round names the config live at its census height: before an activation the old one, after it the new one, and nothing else of the ballot\'s', () => {
   const genesis = { configHash: H(1), config: Uint8Array.of(1) };
   const a = { id: H(0xa), parent: H(1), configHash: H(2), config: Uint8Array.of(2), activationHeight: 500 };

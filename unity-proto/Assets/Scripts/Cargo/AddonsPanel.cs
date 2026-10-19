@@ -33,7 +33,7 @@ public class AddonsState
 }
 
 /// <summary>
-/// BUY ADD-ONS INSIDE UNITY (kanban #374, the owner 2026-10-16: "The buy feature must also be inside unity on the loading screen as
+/// BUY ADD-ONS INSIDE UNITY (2026-10-16: "The buy feature must also be inside unity on the loading screen as
 /// 'buy addons' where you load the packages, and when the round has closed and the countdown is showing there is also the option to
 /// buy items. There is a visual confirmation in unity when the game is active and an item has been purchased.").
 ///
@@ -153,7 +153,7 @@ public class AddonsPanel : MonoBehaviour
         _small = new GUIStyle(_body);
         _small.normal.textColor = new Color(1f, 1f, 1f, 0.62f);
         _btn = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold, wordWrap = false };
-        // THE BUY BUTTON IS SOLID ORANGE WITH BLACK WORDS (kanban #376, the owner's phone 06:24Z: "The buy button isn't readable" - a
+        // THE BUY BUTTON IS SOLID ORANGE WITH BLACK WORDS (the owner's phone 06:24Z: "The buy button isn't readable" - a
         // grey skin button tinted orange by GUI.color, its words dark on dark): its own background, never a tint
         _orange = Solid(new Color(0.97f, 0.58f, 0.10f)); _orangeHi = Solid(new Color(1f, 0.70f, 0.28f)); _orangeBusy = Solid(new Color(0.55f, 0.40f, 0.20f));
         _buy = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold, wordWrap = false, alignment = TextAnchor.MiddleCenter };
@@ -165,7 +165,7 @@ public class AddonsPanel : MonoBehaviour
     static Texture2D Solid(Color c) { var t = new Texture2D(1, 1); t.SetPixel(0, 0, c); t.Apply(); return t; }
 
     /// <summary>
-    /// THE ITEM'S PICTURE (kanban #376, the owner: "no icon"): the shop sheet's truck, drawn - an orange bed, a grey cab, two wheels - in
+    /// THE ITEM'S PICTURE (the owner: "no icon"): the shop sheet's truck, drawn - an orange bed, a grey cab, two wheels - in
     /// a dark tile, the page's ITEM_PICTURE in rectangles.
     /// </summary>
     void Icon(Rect r, string itemId)
@@ -229,7 +229,7 @@ public class AddonsPanel : MonoBehaviour
         {
             foreach (var it in _s.items)
             {
-                // THE WORDS FIT (kanban #376, the owner: "text doesn't fit" - "· 500" then "sat" cut at the row's floor): the icon, the words
+                // THE WORDS FIT (the owner: "text doesn't fit" - "· 500" then "sat" cut at the row's floor): the icon, the words
                 // in the room left between it and the button, and the row as tall as the words need; the price is on the button
                 float icon = 52f * scale, bw = Mathf.Min(140f * scale, inner * 0.36f), bh = 40f * scale, gap = 12f * scale;
                 float textX = icon + 2f * gap, textW = inner - textX - bw - 2f * gap;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE AS A SERVICE ON MACOS AND WINDOWS (kanban #471 slice 4): a launchd agent (and one for the tunnel) bootstrapped into the
+// THE NODE AS A SERVICE ON MACOS AND WINDOWS: a launchd agent (and one for the tunnel) bootstrapped into the
 // user's GUI domain; on Windows, launchers beside the node's home and scheduled tasks at logon - or, when the user does not want the
 // node started after a reboot, started once and no task. The commands are recorded here (no launchctl or schtasks on this machine);
 // the plist was read back by Python's plistlib on 2026-10-18 (Label, RunAtLoad, KeepAlive, ProgramArguments as written).

@@ -84,7 +84,7 @@ for (const k of Object.keys(map).filter((k) => /^(POST_|MINER_)/.test(k) && type
 // here because it did NOT and nothing threw: `BlockClock.RunTicks` was a hand-written 9000 while `BLOCK_TICKS`
 // had moved to 10800 (c01cc655, "a round is three minutes"). The HUD's clock therefore reached 0:00 thirty
 // seconds before the core would say MISSED, and the round ran on with a timer showing nothing left - which is
-// the owner's 2026-09-20 16:21 report, "when the round timer hits 0 the game must end. It used to. It no longer
+// 2026-09-20 16:21 report, "when the round timer hits 0 the game must end. It used to. It no longer
 // does". A number the two engines both need is generated from the one that decides it.
 const gate = await import(new URL('../src/rules/gate.js', import.meta.url));
 out += '\n        // the block (src/rules/gate.js): how long a run lasts and what the core calls its endings\n';

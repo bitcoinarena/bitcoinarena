@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE TESTNET4 STACK TOOLS, EACH RUN AS IT IS RUN LIVE, ON A PRIVATE REGTEST (kanban #148 step 6, plan comment 235,
+# THE TESTNET4 STACK TOOLS, EACH RUN AS IT IS RUN LIVE, ON A PRIVATE REGTEST (plan comment 235,
 # Go 2026-10-05). The binaries are the patched fork (/home/arena/blwp-testnet4/patched/bin); stock Fedimint is not used.
 # ARENA_TN4_NETWORK=regtest is the one thing the tools are told differently from live, with the paths and ports of this
 # run in place of the live ones.
@@ -191,7 +191,7 @@ until_ "both gateways hold e-cash" 600 credited
 reading "3 peg-in: {\"ok\":true,\"gatewayA\":{\"beforeMsat\":$BEFORE_A,\"afterMsat\":$(ecash $GWA $H/gw-a/password)},\"gatewayB\":{\"beforeMsat\":$BEFORE_B,\"afterMsat\":$(ecash $GWB $H/gw-b/password)}}"
 [ "$BEFORE_A" = 0 ] && [ "$BEFORE_B" = 0 ] || die "a gateway held e-cash before its peg-in"
 
-# ---- 7. THE ARBITER'S PEG-IN (kanban #307, spec §5A.3: "the arbitration set pegs it into the round's federation"): its own
+# ---- 7. THE ARBITER'S PEG-IN (spec §5A.3: "the arbitration set pegs it into the round's federation"): its own
 # client joined to the federation, a peg-in address (stake-lock --mode pegin-address), a payment to it, the claim once the
 # federation has seen it confirmed (--mode pegin-claim) - the e-cash the shares are then locked from. PEGIN_BIN names the build.
 # PEGIN_ONLY=1 takes it right after reading 7 (lock latency), on the federation as it stands, and stops there.
@@ -211,7 +211,7 @@ if [ -n "${PEGIN_BIN:-}" ]; then
   PC=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
   reading "7b pegin claim: {\"claim\":${PC:-null},\"seconds\":$(( $(date +%s) - T0 )),\"txid\":\"$TXID\"}"
   [ -n "$PC" ] || die "reading 7 failed: no claim"
-  # 7c. THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B, kanban #307): an escrow output of the arbitration set, as a slash's
+  # 7c. THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B): an escrow output of the arbitration set, as a slash's
   # path B pays it, spent by 5 of its 7 members to a fresh peg-in address of the arbiter's client; then that peg-in claimed
   PA2=$(HOME=$FORK_HOME timeout 300 $PEGIN_BIN --mode pegin-address --data-dir $ARB 2>>"$LOG" | grep '"mode":"pegin-address"')
   ADDR2=$(echo "$PA2" | js 'o=>o.address')
@@ -223,7 +223,7 @@ if [ -n "${PEGIN_BIN:-}" ]; then
   PC2=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR2" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
   reading "7c escrow into the federation: {\"exit\":$ESC_RC,\"spend\":$(grep '"step":"escrow into the federation"' $H/escrow.out | tail -1 || echo null),\"claim\":${PC2:-null},\"seconds\":$(( $(date +%s) - T1 ))}"
   [ -n "$PC2" ] || die "reading 7c failed: the escrow's peg-in was not claimed"
-  # 7d. THE SLASH'S PAYOUTS (§5A.3B "locks each share to its player", kanban #307): two wronged players' shares from the
+  # 7d. THE SLASH'S PAYOUTS (§5A.3B "locks each share to its player"): two wronged players' shares from the
   # arbiter's e-cash, in one transaction, each a pre-expired lock only that player's key moves (stake-lock --mode pay)
   pkOf() { "$NODE" --input-type=module -e "import { secp256k1 } from '@noble/curves/secp256k1.js'; console.log(Buffer.from(secp256k1.getPublicKey(Buffer.from('$1', 'hex'), true)).toString('hex'))"; }
   PS1=$(openssl rand -hex 32); PS2=$(openssl rand -hex 32); PK1=$(pkOf $PS1); PK2=$(pkOf $PS2)
@@ -263,7 +263,7 @@ if [ -n "${PEGIN_BIN:-}" ]; then
 fi
 }
 
-# ---- 7 (kanban #178). THE STAKE LOCK'S ACCEPTANCE TIME: lock-latency-regtest.mjs, 20 locks through the page's wasm lock
+# ---- 7. THE STAKE LOCK'S ACCEPTANCE TIME: lock-latency-regtest.mjs, 20 locks through the page's wasm lock
 # client on this federation (alice pays the deposit through a gateway); submit -> accepted on one clock, the 200 ms line.
 # Recorded, not a stop: the run goes on to the paid round whatever it measures. LOCK_LATENCY_ONLY=1 stops after it.
 ( cd "$HERE/.." && INVITE_FILE=$H/invite-code WASM_PKG=$WASM LNCLI=$LNCLI PAYER_DIR=$H/alice PAYER_RPC=127.0.0.1:${LRPC[alice]} \
@@ -321,6 +321,6 @@ LNADDR_PUBLIC=http://localhost:$LNADDR LNADDR_LND_DIR=$H/bob LNADDR_LND_RPC=127.
 reading "6 lightning address: $(grep '"reading":6' "$LOG" | tail -1)"
 
 [ -n "${PEGIN_ONLY:-}" ] || pegin
-[ "${SUCCESSION:-}" = 1 ] && . "$HERE/succession-stage.sh"   # kanban #325: the successor, the drain, the notes moved
+[ "${SUCCESSION:-}" = 1 ] && . "$HERE/succession-stage.sh"   #: the successor, the drain, the notes moved
 
 say "ALL SIX READINGS TAKEN"

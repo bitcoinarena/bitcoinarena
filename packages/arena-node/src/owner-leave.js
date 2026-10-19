@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LEAVE WITHOUT BEING SLASHED (kanban #276 step 2, the owner 2026-10-09: "Leave rounds, attestations, and custody without being
+// LEAVE WITHOUT BEING SLASHED (2026-10-09: "Leave rounds, attestations, and custody without being
 // slashed"). What the protocol slashes: a false or double signature, and a fee claimed for service not given (slash.js); a
 // node absent from a round is not slashed ("a node that took nothing has cost nobody anything"). So a seat leaves by taking
 // no new round from the moment its owner says so and serving every round it already holds to the end: past its end and its

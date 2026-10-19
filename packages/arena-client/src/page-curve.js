@@ -38,7 +38,7 @@ export const combinePoints = (terms) => {
   return sum === null ? new Uint8Array(33) : sum.toBytes(true);
 };
 
-/** ECDSA over a 32-byte digest by a 33-byte key: a developer's ballot signature (§27A.4.1, kanban #382). */
+/** ECDSA over a 32-byte digest by a 33-byte key: a developer's ballot signature (§27A.4.1). */
 export const verifyEcdsa = (sig, digest, key) => { try { return secp256k1.verify(sig, digest, key); } catch { return false; } };
 
 /** BIP-340. Node adverts and receipts are schnorr under the bond key. */
@@ -69,7 +69,7 @@ export const ecdhShared = (secret, theirXOnly) => {
 export const signSchnorr = (message, secret) => schnorr.sign(message, secret);
 
 /**
- * THE TWO OPERATIONS A BOND'S OUTPUT KEY IS REBUILT WITH (kanban #296: the client checks each census bond itself), as a
+ * THE TWO OPERATIONS A BOND'S OUTPUT KEY IS REBUILT WITH (the client checks each census bond itself), as a
  * seat's curve.js does them on x-only keys: Q = lift_x(P) + t*G with its parity, and the sum of lift_x(key)*coefficient.
  */
 export const bondTweakPoint = (P, t) => {

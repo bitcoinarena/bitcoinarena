@@ -74,7 +74,7 @@ import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
-// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202/#203, §0A.4): nextblock, as nextblock/bin/node.mjs does.
+// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (§0A.4): nextblock, as nextblock/bin/node.mjs does.
 const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
 
 
@@ -101,7 +101,7 @@ export async function guardianFieldsFromNode(url) {
 }
 
 /**
- * THE 82/90 HARD FORK (the owner 2026-10-01: "Prepare new rounds with 82/90 seconds for free and paid in 24 hours ... Change
+ * THE 82/90 HARD FORK (2026-10-01: "Prepare new rounds with 82/90 seconds for free and paid in 24 hours ... Change
  * the core, it's basically a hard fork"; "The round length must be part of the contract"): a round starting at or after
  * RUN_82_FROM_MS names 4920 ticks - 82 s at the core's 65536/1092 ticks a second - and every run of it ends there; one
  * starting before names the core's old 10800. The instant is series k=2's start on the testnet4 grid, 2026-10-03 00:00Z,
@@ -113,7 +113,7 @@ export const RUN_82_TICKS = 4920;
 export const ROUNDS_AHEAD = Number(process.env.ARENA_ROUNDS_AHEAD || 10);
 const COMMITTEE_LEAD_MS = process.env.ARENA_COMMITTEE_LEAD_MS ? Math.max(Number(MIN_ENTRY_WINDOW_MS), Number(process.env.ARENA_COMMITTEE_LEAD_MS)) : null;
 /**
- * PUBLISH AHEAD (ARENA_PUBLISH_AHEAD=1; the free grid gapless across a restart, the owner 2026-10-01): each round is mined into
+ * PUBLISH AHEAD (ARENA_PUBLISH_AHEAD=1; the free grid gapless across a restart, 2026-10-01): each round is mined into
  * a block and posted to the signer nodes as soon as it is drafted - they store it and assign its signer nodes once the
  * block past its committee time is on the chain (server.js) - and the chain's own block clock, a unit of its own, makes
  * that block. Unset, the opener waits for each beacon itself, as before.
@@ -133,10 +133,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // nothing between, so these are the two shapes a round may take.
                                      extraPorts = [],
                                      bDownAtStart = false,
-                                     // EACH SEAT CLOSES A ROUND ITSELF AT ITS END (kanban #233), as a live seat does with
+                                     // EACH SEAT CLOSES A ROUND ITSELF AT ITS END, as a live seat does with
                                      // ARENA_CLOSE_AT_END=1 - for a stack nobody else closes rounds on (the demo)
                                      closeAtEnd = false,
-                                     // NO FIRST ROUND (kanban #293, the on-demand head-to-head grid): the template is built and the
+                                     // NO FIRST ROUND (the on-demand head-to-head grid): the template is built and the
                                      // seats attached, and nothing is published or posted until openGrid / openNext is asked
                                      openFirst = true,
                                      store = ':memory:', rpc = null, cli = null,
@@ -144,10 +144,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
                                      stakeMsat = 0n,
-                                     // THE ROUND'S CONFIG (#23): the truck's current one - one world per round - unless a
+                                     // THE ROUND'S CONFIG: the truck's current one - one world per round - unless a
                                      // caller that is about per-player worlds names the v3 config (f51759b6).
                                      configHash = TRUCK_CONFIG_HASH,
-                                     // HOW LONG A ROUND TAKES ENTRIES after its start (the owner 2026-09-16 15:36:
+                                     // HOW LONG A ROUND TAKES ENTRIES after its start (2026-09-16 15:36:
                                      // "FREE shows closes 30 min but a play is ~2 min"). Half an hour unless the
                                      // caller names a window - the Daily names one run's length.
                                      entryWindowMs = 1_800_000n,
@@ -200,33 +200,33 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // no guardian whatever this says; the Daily's nodes hold none.
                                      guardianChain = {},
                                      // THE CHAIN THE BONDS AND THE ROUND ARE ON. Regtest, which the opener mines, unless
-                                     // the caller names testnet4 (the owner 2026-09-27 07:51: the paying round on testnet4):
+                                     // the caller names testnet4 (2026-09-27 07:51: the paying round on testnet4):
                                      // then `cli` is that bitcoind's, `wallet` the one that pays the bonds, and every
                                      // block is somebody else's - waited for, never mined. A member's store may be named
                                      // outright (`storePaths`, in member order), for nodes that already hold their key.
                                      network = 'regtest', wallet = undefined, storePaths = [],
-                                     // AN ENTRY CLOSE AT A WALL-CLOCK INSTANT, for the first round (the owner 2026-09-27
+                                     // AN ENTRY CLOSE AT A WALL-CLOCK INSTANT, for the first round (2026-09-27
                                      // 17:24: the testnet4 round finished by 23:00). On testnet4 committee_time is the
                                      // tip's own timestamp, which runs up to two hours ahead of the wall clock, so no
                                      // window can be sized before the census: the window is what is left from
                                      // committee_time to this instant, never under thirty minutes. Unset: as before.
                                      entryCloseAtMs = null,
-                                     // ATTACH (the owner 2026-09-29: the seven blwp-tn4-node units own the guardians): the nodes
+                                     // ATTACH (2026-09-29: the seven blwp-tn4-node units own the guardians): the nodes
                                      // already run, one process each, on `portA`, `portB`, ... - this tool starts none and opens
                                      // no store. `{ fundedFile, proofDir }`: the paying rounds it opens are named in
                                      // `fundedFile` (the nodes' ARENA_FUNDED_ROUNDS_FILE); the bond proof the page reads is
                                      // written to `proofDir` (the nodes' ARENA_ATTACH_PROOF_DIR). Identities come from each
                                      // node's GET /identity, bonds from the chain by public key; no bond is posted.
                                      attach = null,
-                                     // 90 s ROUNDS (the owner 2026-09-29 21:58, SPECTATE-2158: "Free rounds are also 90 s rounds, same
+                                     // 90 s ROUNDS (2026-09-29 21:58, SPECTATE-2158: "Free rounds are also 90 s rounds, same
                                      // as paying. A new free round every 90 s, run at most 82 s"): with `roundPeriodMs` the keeper
                                      // opens each next round of a kind at the last one's start + the period, its entry closing
                                      // at that start - the series' round shape (protocol series.js seriesRound).
                                      roundPeriodMs = null,
-                                     // THE GAMES THE SEATS HOST (kanban #206: a market beside nextblock), and fields over every round
+                                     // THE GAMES THE SEATS HOST (a market beside nextblock), and fields over every round
                                      // this tool opens (a market's game id, no core, no config) - none given: nextblock, as before
                                      plugins = null, roundFields = null,
-                                     // THE DONATION SET IN FORCE AT THE CENSUS HEIGHT (kanban #348, measured 2026-10-12 22:0xZ: federation
+                                     // THE DONATION SET IN FORCE AT THE CENSUS HEIGHT (measured 2026-10-12 22:0xZ: federation
                                      // B's first round named the built-in test set efffd27f and every seat refused it - "at census height
                                      // 156288 this network's donation set in force is serial 3 (a5dc55c1...)"): (height, networkId) ->
                                      // the set's id bytes, as the grid keeper reads it; null keeps the built-in set
@@ -425,7 +425,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (cli) {
     const rt = regtest(cli, { network, ...(wallet ? { wallet } : {}) });
     onChain = rt;
-    // ARENA_BOND_SATS ON REGTEST (kanban #324: a federation whose bonds cover little, so its load is high - Move is offered
+    // ARENA_BOND_SATS ON REGTEST (a federation whose bonds cover little, so its load is high - Move is offered
     // only from one above 90 %): each bond that amount, out of a funding output 5 000 sats larger, instead of half a coin
     const bondOverride = rt.minable && process.env.ARENA_BOND_SATS ? BigInt(process.env.ARENA_BOND_SATS) : null;
     const bondAmount = bondOverride !== null ? { bondSats: bondOverride, fundBtc: (Number(bondOverride + 5000n) / 1e8).toFixed(8) }
@@ -437,7 +437,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       ...m.guardian,
       ...(bondAmount.bondSats !== undefined ? { bondSats: bondAmount.bondSats } : {}),
     });
-    // A BOND THAT ONCE CONFIRMED STAYS VALID (spec §5A.3; the owner 2026-09-28 07:39: "The operator does not post again.
+    // A BOND THAT ONCE CONFIRMED STAYS VALID (spec §5A.3; 2026-09-28 07:39: "The operator does not post again.
     // Change the node so a confirmed unspent bond for that node key is reused"). Off regtest - where every block is
     // somebody else's and a fresh set costs a confirmation and six more - each node's newest confirmed, unspent bond
     // that says what the node says now is used as it stands; a node posts only when it has none. Regtest keeps posting:
@@ -450,7 +450,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     for (const [i, b] of reused.entries())
       if (b && b.updatedBy) console.log(`[bond] node ${members[i].name}: its advertisement is the update ${b.updatedBy.txid} (height ${b.updatedBy.height})`);
     const toPost = members.map((m, i) => (reused[i] ? null : i)).filter((i) => i !== null);
-    // A FIRST BOND FOR A NODE THAT HAS NONE (kanban #348, the owner 2026-10-12: "Poste neue bonds wenn nötig, du kannst auch neue
+    // A FIRST BOND FOR A NODE THAT HAS NONE (2026-10-12: "Poste neue bonds wenn nötig, du kannst auch neue
     // nodes auf dem test host dafür starten, für eine zweite Federation"): with ARENA_POST_FIRST_BONDS=1 an attached node whose
     // key has no confirmed unspent bond AT ALL is bonded here - its secret read from its own store, read-only, beside the
     // running node. A node with any bond is never bonded again (the 2026-09-28 rule below stands for it).
@@ -470,7 +470,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         console.log(`[bond] node ${m.name} has no bond on chain: its first one is posted (ARENA_POST_FIRST_BONDS)`);
       }
     }
-    // OFF REGTEST A MISSING BOND STOPS THE RUN, IT IS NOT POSTED (§5A.2; the owner 2026-09-28, the advertisement-update
+    // OFF REGTEST A MISSING BOND STOPS THE RUN, IT IS NOT POSTED (§5A.2; 2026-09-28, the advertisement-update
     // letter: "accept an updated advert and select the existing bond. If none matches, stop. Do not post a bond"). A
     // node whose bond says something else is given an advertisement update (tools/testnet4-advert-update.mjs), not a
     // second bond.
@@ -478,7 +478,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if ((!rt.minable || attach) && blocked.length)
       throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${blocked.map((i) => members[i].name).join(', ')} `
         + 'say now: publish an advertisement update for the existing bond; no bond is posted here');
-    // EACH BOND INCLUDED AS IT IS BUILT (kanban #321/#307, measured on the test host regtest stack 2026-10-11 15:58Z: "names 7
+    // EACH BOND INCLUDED AS IT IS BUILT (measured on the test host regtest stack 2026-10-11 15:58Z: "names 7
     // committee keys and the census assigns 6"): a template-2 bond fixes its maturity (the tip + 1 + 6 + the offset) when it
     // is built, and on regtest each bond's funding mines a block while the stack's own miner adds one every 20 s - seven
     // built first and included together left the first confirming more than 6 blocks later, short of its maturity, and the
@@ -486,12 +486,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const postedAt = [];
     const posted = toPost.map((i) => members[i]).map((m, j) => {
       const p = rt.postBond(m.id.secret, {
-        // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (the owner 2026-09-25 21:41: the replay link a player copies
+        // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (2026-09-25 21:41: the replay link a player copies
         // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
         // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
         // while the advert already said ARENA_WSS_<port>; the census reads the bond.
         endpoint: process.env[`ARENA_WSS_${m.port}`] || `ws://${host}:${m.port}`,
-        // THE GAMES IT HOSTS, as its advertisement above names them (kanban #204, #206)
+        // THE GAMES IT HOSTS, as its advertisement above names them
         hostedGames: plugins ? plugins.map((p) => p.gameId).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))) : [NEXTBLOCK_GAME_ID],
         // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
@@ -518,7 +518,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     heights.push(...postedAt);
     bondHeight = Math.max(...heights);
     bondFloor = Math.min(...heights);
-    // SIX DEEP, AND ON A REAL CHAIN THOSE ARE SOMEBODY ELSE'S BLOCKS (RULED, the owner 2026-09-21 17:01).
+    // SIX DEEP, AND ON A REAL CHAIN THOSE ARE SOMEBODY ELSE'S BLOCKS (RULED 2026-09-21 17:01).
     //
     // `rt.bury(6)` mines on regtest, exactly as `rt.mine(6)` did, and WAITS everywhere else. The round's
     // beacon is the first block after `committee_time`, so an operator who can make blocks on the round's
@@ -541,13 +541,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     for (const [j, p] of posted.entries()) bonded[toPost[j]].onChainTxid = p.txid;
     for (const [i, b] of reused.entries()) if (b) bonded[i].onChainTxid = b.txid;
     // ATTACHED: the advertisement and signature the bond itself committed to, so the page's proof is the chain's words.
-    // A FIRST BOND POSTED IN THIS RUN (ARENA_POST_FIRST_BONDS, kanban #348) has no `reused` entry: it is read back off the chain
+    // A FIRST BOND POSTED IN THIS RUN (ARENA_POST_FIRST_BONDS) has no `reused` entry: it is read back off the chain
     // now that it is buried (measured 19:40Z on federation B: "Cannot read properties of null (reading 'maturity')")
     if (attach) for (const [i, b0] of reused.entries()) {
       const b = b0 || rt.findBond({ pubkey: members[i].id.pubkey }, wantFor(members[i], i));
       if (!b) throw new Error(`node ${members[i].name}: its bond is not on chain as posted - no census can name it`);
       const built = bondOutputKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys,
-        arbitrationK: rt.genesis.arbitrationK, bondMaturity: b.maturity ?? rt.genesis.bondMaturity,  // template 2: the bond's own (kanban #295)
+        arbitrationK: rt.genesis.arbitrationK, bondMaturity: b.maturity ?? rt.genesis.bondMaturity,  // template 2: the bond's own
         internalKey: bondInternalKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys }, { combine }).internalKey,
       }, { tweakPoint, combine });
       const transaction = bondTransaction(b.bondAdvert, { signature: b.bondSignature, outputKey: built.outputKey });
@@ -610,7 +610,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     : null;
   const source = rpc || localCall;
   const beacon = source ? chainBeacon({ call: source, window: 400 }) : null;
-  // A ROUND POSTED AHEAD IS READ WHEN IT IS FIRST ASKED ABOUT (kanban #292), as the seat daemon does (main.js randomnessFor):
+  // A ROUND POSTED AHEAD IS READ WHEN IT IS FIRST ASKED ABOUT, as the seat daemon does (main.js randomnessFor):
   // `beacon.for` only answers what was read, and nothing here read a round published ahead - the demo's 8 s rounds posted
   // ahead stayed "this node has no beacon for that round" and were never joinable
   const randomnessFor = beacon ? (q) => { const got = beacon.for(q); if (!got && q && q.contract) beacon.refresh(q.contract).catch(() => {}); return got; } : undefined;
@@ -625,7 +625,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // round whose census height is below the signer nodes' view gets its own - from 20
   // below that height to the tip, read once: its bonds and beacon are deep.
   const older = new Map();
-  // AND IT IS READ OFF THE LOOP (the owner 2026-09-17 19:15, the ghost lag). Measured live with the daemon's own timing:
+  // AND IT IS READ OFF THE LOOP (2026-09-17 19:15, the ghost lag). Measured live with the daemon's own timing:
   // one close held the event loop 7,627 ms in `beacon` - this read, two synchronous bitcoin-cli spawns a block from
   // twenty below an old round's census to the tip, on the thread that answers /play and pushes a pictured truck. The
   // read now runs on bitcoind's RPC without holding the loop, once per height; until it is there the round is PENDING,
@@ -677,10 +677,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
-  // A TEST OWNER (kanban #321, the CRITICAL rehearsal): ARENA_TEST_OWNER_PUBKEY=<hex> gives every seat this harness starts an
+  // A TEST OWNER (the CRITICAL rehearsal): ARENA_TEST_OWNER_PUBKEY=<hex> gives every seat this harness starts an
   // owner already claimed by that key, kept in memory - so a test signs a leave as an owner page would (POST /owner/leave)
   // THE FEDERATION'S INVITE, AS A SEAT'S ARENA_FEDERATION_INVITE GIVES IT (main.js): without it a harness seat signs no
-  // FederationRecord - "this seat names no invite for that federation" (measured on the test host stack, kanban #325)
+  // FederationRecord - "this seat names no invite for that federation" (measured on the test host stack)
   const seatInvite = () => (invite ? { federationInvite: invite } : {});
   const testOwner = () => (process.env.ARENA_TEST_OWNER_PUBKEY ? { owner: { store: (() => { let o = { pubkey: String(process.env.ARENA_TEST_OWNER_PUBKEY).toLowerCase(), claimedAtMs: Date.now() };
     return { read: () => o, write: (x) => { o = x; }, writeCode: () => {} }; })() } } : {});
@@ -768,7 +768,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // beacon's view below reaches back past committee_time from the same start.
     censusView = onChain.blocksFrom(Math.max(0, bondFloor - 20), onChain.height());
   }
-  // THE CONFIG THE BALLOT MADE LIVE AT THIS CENSUS HEIGHT (§27A.7.5, kanban #329): an attached seat that counts the ballot answers
+  // THE CONFIG THE BALLOT MADE LIVE AT THIS CENSUS HEIGHT (§27A.7.5): an attached seat that counts the ballot answers
   // GET /config, and a round created after an activation names the new hash (configForNewRound) - one whose config the ballot
   // never named keeps the caller's. A seat that counts none answers 404 and nothing changes. The keeper's later rounds keep this
   // round's census height, so they keep its config too: rounds created under one census are bound to the config live there.
@@ -809,10 +809,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     nodes: [a.round.pubkey, b.round.pubkey, ...rest.map((d) => d.round.pubkey)],
     ...(roundFields || {}),
   };
-  // 2026.0.2 - THE ROUND NAMES NO DRAW (kanban #348, RULED the owner 2026-10-13): ARENA_PROTOCOL_VERSION=2 writes a v2 contract
+  // 2026.0.2 - THE ROUND NAMES NO DRAW (RULED 2026-10-13): ARENA_PROTOCOL_VERSION=2 writes a v2 contract
   // with no nodes; every seat draws its 7 from the census and the beacon and writes them in itself. A census of 14 nodes
   // (two federations) can then open a round at all.
-  // AND 2026.0.3 (kanban #313 / #314 / #304): ARENA_PROTOCOL_VERSION=3 is a v2 round (no draw named) at version 3, which may name its
+  // AND 2026.0.3: ARENA_PROTOCOL_VERSION=3 is a v2 round (no draw named) at version 3, which may name its
   // creator and its rules; every node of testnet4 advertises 1,2,3 since 156545/156546
   const VERSION = Number(process.env.ARENA_PROTOCOL_VERSION || 1);
   const V2 = VERSION >= 2;
@@ -859,7 +859,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const census = deriveCensus(censusView, {
     contract: asSeen,
     bond: bondSetFor(network),
-    // AS THE SEATS DERIVE IT (roster.js): updates and re-affirmed ancestor bonds checked with BIP-340 (kanban #209)
+    // AS THE SEATS DERIVE IT (roster.js): updates and re-affirmed ancestor bonds checked with BIP-340
     verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     // RESOLVED FROM THE VIEW ITSELF, the way `roster.censusFor` does it: 5A.2
     // puts the advertisement body in the witness of the funding transaction,
@@ -895,7 +895,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // chain's clock needs, and bounded, so a chain that never names one says so.
   // One function for every round this tool publishes: the first, and each one
   // the opener adds (M3.3-34) - each under its own beacon block.
-  // NOTHING HERE BLOCKS THE SIGNER NODES (the owner 2026-09-17 19:15: ghosts "only every 300-600 ms"). Both signer nodes
+  // NOTHING HERE BLOCKS THE SIGNER NODES (2026-09-17 19:15: ghosts "only every 300-600 ms"). Both signer nodes
   // share this process's event loop, and every round this keeper opened read the WHOLE chain since the start again -
   // two synchronous bitcoin-cli spawns a block, from 20 below the bonds to the tip, twice or more an opening. The Daily
   // mines ~10 blocks a minute, so twenty minutes after a start that was ~440 blocking spawns every round: measured from
@@ -953,7 +953,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const paid = (await chainRpc('fundrawtransaction', onChain.minable ? [raw] : [raw, { fee_rate: 2, replaceable: true }])).hex;
     const signed = (await chainRpc('signrawtransactionwithwallet', [paid])).hex;
     // ON TESTNET4 IT IS BROADCAST, and the chain's own blocks carry it and then pass committee_time: nothing is
-    // mined, so nothing here can choose the beacon. ITS OWN PUBLICATION FIRST (the owner 2026-09-30, the fcb15cca refusal):
+    // mined, so nothing here can choose the beacon. ITS OWN PUBLICATION FIRST (2026-09-30, the fcb15cca refusal):
     // no beacon is named, and nothing is posted, until the publication has confirmed below the beacon block; its fee is
     // raised while it waits; a round whose beacon block came first answers `dead` and is never posted.
     if (!onChain.minable) {
@@ -966,7 +966,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       return got.dead ? got : got.named;
     }
     await chainRpc('generateblock', [await chainRpc('getnewaddress', []), [signed]]);
-    // PUBLISHED AHEAD (the owner 2026-10-01: "publish each round as soon as it is drafted; the block clock names the beacon
+    // PUBLISHED AHEAD (2026-10-01: "publish each round as soon as it is drafted; the block clock names the beacon
     // later"): mined into a block now, and the beacon left to the chain's own block clock - the round is posted at once.
     if (PUBLISH_AHEAD && c.committeeTimeMs > BigInt(Date.now()) + 5000n) return { ahead: true };
     let tries = 0;
@@ -1023,7 +1023,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (funded.nameRound && openFirst) funded.nameRound(roundId(contract));
   if (beforeRound) await beforeRound();
   // BOTH DAEMONS, ONE ROUND: posted to each, and both must name it the same.
-  /** THE OTHER NODES OF THE CENSUS a v2 round is drawn from (kanban #348): [node key hex, https root], ARENA_ROUTE_MAP applied. */
+  /** THE OTHER NODES OF THE CENSUS a v2 round is drawn from: [node key hex, https root], ARENA_ROUTE_MAP applied. */
   function otherCensusSeats() {
     const own = new Set([a, b, ...rest].map((d) => toHex(d.round.pubkey)));
     const routes = (process.env.ARENA_ROUTE_MAP || '').split(',').filter(Boolean).map((x) => x.split('='));
@@ -1039,7 +1039,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // "404 this node holds no such round" to the claim key, and the round could
     // not be played at all. A committee member that was never told of the round
     // is not a committee member.
-    // ALL OF THEM AT ONCE (kanban #293, measured on the paid regtest stack: one after another, each seat's first "no chain
+    // ALL OF THEM AT ONCE (measured on the paid regtest stack: one after another, each seat's first "no chain
     // view" and its 3 s retry added up - 11-20 s an opening, and 8 s head-to-head rounds closed 11-20 s apart)
     await Promise.all([a, b, ...rest].map(async (node, at) => {
       // ATTACHED, A NODE READS A ROUND'S VIEW OFF ITS OWN BITCOIND THE FIRST TIME IT IS ASKED (main.js chainFor) and
@@ -1050,7 +1050,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         if (r.ok) break;
         why = await r.text();
         // AND A NODE WHOSE OWN VIEW HAS NOT YET READ THE PUBLICATION this tool saw confirm below the beacon: asked again,
-        // not exited on (the owner 2026-09-30). A round whose beacon came first never gets here - it is drafted again.
+        // not exited on (2026-09-30). A round whose beacon came first never gets here - it is drafted again.
         if (!(attach && /no chain view|view .*pending|no beacon|no publication transaction/i.test(why)) || tries >= 100) break;
         await new Promise((res) => setTimeout(res, 3000));
       }
@@ -1060,7 +1060,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const rid = toHex(roundId(c));
     if (opened.some((o) => o !== rid))
       throw new Error(`the ${opened.length} daemons named the round differently: ` + opened.join(' '));
-    // A V2 ROUND GOES TO EVERY NODE OF ITS CENSUS (kanban #348): any of them may be drawn, and a drawn node that never held
+    // A V2 ROUND GOES TO EVERY NODE OF ITS CENSUS: any of them may be drawn, and a drawn node that never held
     // the round signs no PRESENT. Each at its advertised endpoint (wss -> https), through ARENA_ROUTE_MAP's host aliases
     // ("from=to,..."; the test host reaches the the test host's seats at tn4.bitcoin-arena.io); best effort, each answer logged.
     if (V2) {
@@ -1142,7 +1142,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // from 2026-09-06), so a round opened on it today would be past its entry
   // close before anybody saw it: refused by name rather than listed as open.
   const held = openFirst ? [contract] : [];
-  // NO GAP BETWEEN 90 s ROUNDS ACROSS A RESTART (the owner 2026-10-01: "There may be no gaps between 90 sec rounds"): the rounds
+  // NO GAP BETWEEN 90 s ROUNDS ACROSS A RESTART (2026-10-01: "There may be no gaps between 90 sec rounds"): the rounds
   // this pair already holds - written by the opener before it stopped, still in the signer nodes' stores - are the grid it
   // goes on from. Without them a restart began a new grid at its own first round, and the slots in between went unplayed.
   if (roundPeriodMs && a && a.round && typeof a.round.openRounds === 'function') {
@@ -1178,15 +1178,15 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // second one 6 s later. Now is later than that tip, so the rule still holds.
     const tip = await tipHeader();
     let committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
-    // `kind.committeeAtMs` (kanban #292): a committee time further ahead - with ARENA_PUBLISH_AHEAD the round is mined into a
+    // `kind.committeeAtMs`: a committee time further ahead - with ARENA_PUBLISH_AHEAD the round is mined into a
     // block and posted at once, and the chain's own block clock names its beacon later. Without it every opening waited for
     // its committee time and mined six blocks: 12-23 s each, so 8 s head-to-head rounds could not follow each other
     if (kind.committeeAtMs !== undefined && BigInt(kind.committeeAtMs) > committee) committee = BigInt(kind.committeeAtMs);
     let start = committee + MIN_ENTRY_WINDOW_MS;
-    // `kind.entryAfterStartMs` (kanban #233): this kind's own entry window after its start - a head-to-head round closes its
+    // `kind.entryAfterStartMs`: this kind's own entry window after its start - a head-to-head round closes its
     // entries a couple of minutes in, not when the first round's (a 30-minute nextblock window) would
     let close = start + (kind.entryAfterStartMs !== undefined ? BigInt(kind.entryAfterStartMs) : (contract.entryCloseMs - contract.startTimeMs));
-    // `kind.entryCloseAtMs` (kanban #236): an exact entry close - a market on its own period closes on its UTC grid
+    // `kind.entryCloseAtMs`: an exact entry close - a market on its own period closes on its UTC grid
     if (kind.entryCloseAtMs !== undefined) close = BigInt(kind.entryCloseAtMs);
     if (roundPeriodMs) {
       // ON THE PERIOD: the last round of this kind's start + 90 s, stepped on until its committee time is still ahead of
@@ -1213,12 +1213,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
       ...(kind.custody ? { custody: kind.custody } : {}),
       committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start),
-      // ANOTHER GAME'S ROUND ON THE SAME SEATS (kanban #208): its fields over this one (a market's game id, no core, no config)
+      // ANOTHER GAME'S ROUND ON THE SAME SEATS: its fields over this one (a market's game id, no core, no config)
       ...(kind.fields || {}) };
-    // `kind.stakeExpiryFor(round)` (kanban #236): a market round's own lock span, sized from its times (lock-expiry.js)
+    // `kind.stakeExpiryFor(round)`: a market round's own lock span, sized from its times (lock-expiry.js)
     if (typeof kind.stakeExpiryFor === 'function') next.stakeExpiryBlocks = kind.stakeExpiryFor(next);
     censusView = await viewToTip();
-    // THE KEEPER'S OWN WORK, NAMED (the owner 2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
+    // THE KEEPER'S OWN WORK, NAMED (2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
     // name nothing but 0-20 ms of frames while this thread burns 190-250 ms, and the keeper opening a round is the
     // last stretch of this thread nobody timed: it runs in the same process as both signer nodes, so whatever it holds,
     // the pictured trucks wait for. One name, on both of its stretches; nothing is moved.
@@ -1234,9 +1234,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     return nextId;
   }
 
-  // A GRID ON DEMAND (kanban #293, the owner 2026-10-11, path B: "When a table waits, one transaction carries the next 30 min
+  // A GRID ON DEMAND (2026-10-11, path B: "When a table waits, one transaction carries the next 30 min
   // of rounds, about an hour ahead"): `slots` slots `windowMs` apart, `tables` rounds side by side in each, every one a
-  // whole round contract of `kind`. PUBLISHED AS ONE SHORT SERIES PER TABLE (the owner 2026-10-12: "Pick S ... one ARN S
+  // whole round contract of `kind`. PUBLISHED AS ONE SHORT SERIES PER TABLE (2026-10-12: "Pick S ... one ARN S
   // series_id output per table, two per grid"; series.js gridIsValid - lead >= 45 min, at most 30 min of rounds, its own
   // entry window): table k is a template - the first slot's round, its committee time k ms before the grid's so the
   // tables' ids differ - with `grid`, its period and its count; round i of it is derived, never authored, and nothing per
@@ -1260,10 +1260,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         ...(kind.custody ? { custody: kind.custody } : {}),
         committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: first, blockTicks: runTicksAt(start),
         ...(kind.fields || {}),
-        // A TABLE'S OWN FIELDS (the owner 2026-10-14: "Each game may only have one round posting per day"): one transaction carries every
+        // A TABLE'S OWN FIELDS (2026-10-14: "Each game may only have one round posting per day"): one transaction carries every
         // federation's tables of a game, each table naming its federation here
         ...((kind.tableFields || [])[k] || {}) };
-      // a lock span sized from the round's times (kanban #236) is the LAST round's, so it holds for every round of the table
+      // a lock span sized from the round's times is the LAST round's, so it holds for every round of the table
       if (typeof kind.stakeExpiryFor === 'function') {
         const lastStart = start + BigInt(slots - 1) * BigInt(windowMs);
         t.stakeExpiryBlocks = kind.stakeExpiryFor({ ...t, startTimeMs: lastStart, entryCloseMs: lastStart + BigInt(entryAfterStartMs) });
@@ -1278,11 +1278,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const root = censusRootFor(templates[0]);
     if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
     for (const t of templates) t.censusRoot = root;
-    // THE RULES IT IS SETTLED UNDER (§6, kanban #314): a v3 grid names this build's four rule hashes, the last-mark disconnect rule, a
+    // THE RULES IT IS SETTLED UNDER (§6): a v3 grid names this build's four rule hashes, the last-mark disconnect rule, a
     // claim window of 1 day and each role's floor at the round's bond_min - unless `kind.rules` is false
     for (const t of templates) if (Number(t.protocolVersion) >= 3 && kind.rules !== false && !t.rules)
       t.rules = buildRules({ claimWindowDays: 1, bondMinGameVerifySats: BigInt(t.bondMinSats), bondMinSettlementSats: BigInt(t.bondMinSats) });
-    // THE CREATOR (kanban #313): `kind.creatorSecret` names this publisher in every template (2026.0.3) and signs each series id
+    // THE CREATOR: `kind.creatorSecret` names this publisher in every template (2026.0.3) and signs each series id
     if (kind.creatorSecret) for (const t of templates) t.creatorPubkey = schnorr.getPublicKey(kind.creatorSecret);
     const ids = templates.map((t) => seriesId(t));
     if (kind.creatorSecret) templates.forEach((t, k) => { t.creatorSignature = schnorr.sign(seriesCreatorMessage(ids[k]), kind.creatorSecret); });
@@ -1292,9 +1292,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // 30+ relays several. One zero-value OP_RETURN "ARN" SERIES series_id (36 bytes) per table.
     const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
     const outs = ids.map((id) => { const o = seriesPublicationOutput(id); return Buffer.concat([le(0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]); });
-    // AND ANY OTHER ZERO-VALUE OUTPUT THE CALLER NAMES - the duty marker of the slot this grid posts (kanban #352, duty.js)
+    // AND ANY OTHER ZERO-VALUE OUTPUT THE CALLER NAMES - the duty marker of the slot this grid posts (duty.js)
     for (const o of extraOutputs) outs.push(Buffer.concat([le(o.value || 0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]));
-    // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; the owner 2026-10-12
+    // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; 2026-10-12
     // "Mach das deutlich sparsamer"); the wallet signs
     const { hex: signed, vsize, fee } = await fundAtRate(chainRpc, outs, feeRate);
     const lines = templates.map((t) => seriesLineOf(t, encodeRoundContract));
@@ -1311,11 +1311,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // the first 900 rounds' contracts for the tools that read them (a 24 h grid derives 21,600; every seat derives them itself)
       contracts: grid.slice(0, 900).map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
-    // THE DUTY KEEPER (kanban #352) waits for nothing here: it posts the series to the seats itself once the publication confirms
+    // THE DUTY KEEPER waits for nothing here: it posts the series to the seats itself once the publication confirms
     if (!waitBeacon) for (const sid of ids) if (funded.nameRound) funded.nameRound(sid);   // named funded before any seat is asked
     if (!waitBeacon) return { ok: true, published: true, txid, series: ids.map((id) => toHex(id)), lines, rounds: grid.length,
       lastCloseMs: grid[grid.length - 1].entryCloseMs, firstStartMs: start };
-    // LOOKED FOR UNTIL THE GRID'S LAST ROUND HAS STARTED, not 240 looks (kanban #293, measured 2026-10-12: grid 8290176f was
+    // LOOKED FOR UNTIL THE GRID'S LAST ROUND HAS STARTED, not 240 looks (measured 2026-10-12: grid 8290176f was
     // published at 156211 and its beacon 156216 was 4 deep when the keeper gave up after 2 h - "neither a beacon above its
     // publication nor a dead round after 240 looks" - testnet4's coinbase-only blocks came one per 20 min)
     const sleepMs = Number(process.env.ARENA_PUBLISH_LOOK_MS || 60000);
@@ -1346,7 +1346,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         }
         return { port: node.port, ok: false, why };
       }));
-      // AND A V2 GRID TO EVERY OTHER NODE OF ITS CENSUS (kanban #348): any of them may be drawn for a round of it
+      // AND A V2 GRID TO EVERY OTHER NODE OF ITS CENSUS: any of them may be drawn for a round of it
       if (V2) for (const [key, url] of otherCensusSeats()) {
         let ok = false, why = '';
         for (let t = 0; t < 20 && !ok; t++) {
@@ -1362,7 +1362,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       for (const x of answers) if (!x.ok) console.log(`[grid] series ${toHex(ids[k]).slice(0, 16)} refused by ${x.port}: ${x.why}`);
       posted.push({ series: toHex(ids[k]), seats: answers.filter((x) => x.ok).length, of: answers.length });
     }
-    // THE PUBLISHER'S FEE, ASKED AGAIN (kanban #304): the seats that did not take a proof yet, every 10 min until each has, 30 h at most
+    // THE PUBLISHER'S FEE, ASKED AGAIN: the seats that did not take a proof yet, every 10 min until each has, 30 h at most
     function proveLater(id, txHex, parents, seats, untilMs = Date.now() + 30 * 3600 * 1000) {
       setTimeout(async () => {
         const still = [];
@@ -1374,7 +1374,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         else if (still.length) console.log(`[grid] series ${toHex(id).slice(0, 16)}: publication fee never proven at ${still.length} seat(s)`);
       }, 600000);
     }
-    // THE PUBLISHER'S FEE, PROVEN (§5A.5, kanban #304): a grid that names its creator posts its publication and that transaction's
+    // THE PUBLISHER'S FEE, PROVEN (§5A.5): a grid that names its creator posts its publication and that transaction's
     // parents (the wallet's own, so it holds them) to every seat it posted the series to - each seat proves the fee from the bytes and
     // pays it back (capped) to the creator's key in the series' first round with entries
     let proven = null;
@@ -1450,7 +1450,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   return {
     id, url, lobbyUrl, contract, openNext, openGrid, keepOpen,
-    // A SERIES LINE TO EVERY SEAT THIS TOOL RUNS AND EVERY OTHER NODE OF THE CENSUS (kanban #352, as openGrid posts a grid's): the
+    // A SERIES LINE TO EVERY SEAT THIS TOOL RUNS AND EVERY OTHER NODE OF THE CENSUS (as openGrid posts a grid's): the
     // seats that took it, and why the others did not
     postSeries: async (line) => {
       const targets = [...[a, b, ...rest].map((n) => [String(n.port), `http://${host}:${n.port}`]), ...otherCensusSeats()];
@@ -1466,7 +1466,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       }));
       return { took: answers.filter((x) => x.ok).length, of: answers.length, refused: answers.filter((x) => !x.ok) };
     },
-    // THE CHAIN, FOR THE DUTY KEEPER (kanban #352): the view to the tip, and the census's node keys at a height - derived as the seats do
+    // THE CHAIN, FOR THE DUTY KEEPER: the view to the tip, and the census's node keys at a height - derived as the seats do
     dutyChain: {
       view: async () => (censusView = await viewToTip()),
       censusKeysAt: (height) => {
@@ -1651,13 +1651,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('Ctrl-C stops the daemons.');
 }
 
-// HEAD-TO-HEAD ROUNDS BACK TO BACK, NO HOLE (kanban #292, #293; the owner 2026-10-10: no series, "8 second rounds with no delays
+// HEAD-TO-HEAD ROUNDS BACK TO BACK, NO HOLE (2026-10-10: no series, "8 second rounds with no delays
 // at all, seamless"): one round closing every `windowMs` on a grid kept `leadMs` ahead. Each round's committee time is
 // `committeeAheadMs` before its close - more than 5 s ahead, so with ARENA_PUBLISH_AHEAD=1 it is published ahead and posted at
 // once (measured on the demo seats: 1.9 s an opening, 135 of 135 closes 8.0 s apart); its beacon comes from the chain's own
 // blocks and each seat assigns it ~65 s after committee time, before its window. Opening one round per tick fell behind the
 // grid (12-23 s an opening); this opens until the grid is `leadMs` ahead.
-// TABLES (kanban #293, the owner 2026-10-10: "When one player is waiting, one round is being opened. A 2nd player joins that
+// TABLES (2026-10-10: "When one player is waiting, one round is being opened. A 2nd player joins that
 // round. A 3rd player gets a second round, the 4th player joins that round. 5th player gets the 3rd round and so on"): a
 // round cannot be opened the moment a player comes (its committee needs a beacon 6 deep), so each slot of the grid holds
 // `tables()` rounds side by side, opened ahead as one. Table k's committee time is k ms before table 0's - the one field
@@ -1672,7 +1672,7 @@ export function tablesNeeded(rows, nowMs, { windowMs = 8000, spare = 1, gameId =
   const inPlay = Math.max(0, ...bySlot.values());
   return inPlay + Math.max(0, spare);
 }
-// AND REMEMBERED (kanban #293, measured with 5 bots on the demo seats: a slot's table count read from the slots taking picks at
+// AND REMEMBERED (measured with 5 bots on the demo seats: a slot's table count read from the slots taking picks at
 // the moment it was opened - 150 s before it plays - stayed 1 for 20 slots after five players came and then swung 1-2-3, and
 // pairs were split for lack of tables): at least `min` tables a slot, and the busiest in-play count of the last `holdMs` plus
 // the spare - a burst of up to `min` players' pairs is seated at once, and a table count does not drop while a match goes on.

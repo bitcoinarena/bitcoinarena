@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT COMPUTES THE COMMITTEE ITSELF, AND A SEAT THAT SAYS OTHERWISE REFUSES THE ROUND (multiplayer_p2p.md, "The client computes
-// the committee itself", RULED the owner 2026-09-28: "a node's committee answer, a contract's node list or a seating certificate that
+// the committee itself", RULED 2026-09-28: "a node's committee answer, a contract's node list or a seating certificate that
 // differs from the client's own computation -> the round is refused, the lobby says which node answered what, and no share is sealed,
-// no stake locked, no entry signed"). Kanban #32 slice 2, measured 2026-10-16 on live testnet4: guardian-3 forging its /committee was
+// no stake locked, no entry signed")., measured 2026-10-16 on live testnet4: guardian-3 forging its /committee was
 // named and the join still dealt to the client's seven, on 12 of 12 rounds.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,7 +55,7 @@ test('the page: a round refused for a seat\'s committee or seating is kept out o
   assert.match(body, /if \(\/the round is refused: \/\.test\(join\.why\)\) \(window\.BLWP_CLOSED_ROUNDS = window\.BLWP_CLOSED_ROUNDS \|\| new Set\(\)\)\.add\(id\);/);
 });
 
-// GENESIS-BOUND PARAMETERS AT JOIN TIME (kanban #32 slice 3, the owner 2026-10-16: "On a test genesis that binds, a deviating contract is
+// GENESIS-BOUND PARAMETERS AT JOIN TIME (2026-10-16: "On a test genesis that binds, a deviating contract is
 // refused by the seat and by the client, by parameter name"). The binding genesis here is mainnet's shape built from stand-in launch
 // inputs inside the test - no mainnet genesis exists in this build. testnet4's own genesis does not bind: its contracts keep their values.
 test('a binding genesis: the join refuses a contract by the parameter it names otherwise, before asking any seat', async () => {

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// GHOSTS ARE REALTIME THROUGH THE NODE (the owner 2026-09-17 17:05 / 17:12: "60 s+ delay"). Measured end to end on a real
+// GHOSTS ARE REALTIME THROUGH THE NODE (2026-09-17 17:05 / 17:12: "60 s+ delay"). Measured end to end on a real
 // daemon at the page's cadence - six ticks every 100 ms from the driver, a watcher subscribed - every picture is the newest
 // tick the driver had published when it arrived.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import WebSocket from 'ws';
@@ -129,7 +129,7 @@ test('a watcher is shown the driver\'s newest published tick, ten pictures a sec
 });
 
 test('a truck that drove before anybody watched is pictured at its newest tick, not replayed from its start', async () => {
-  // the owner 2026-09-17 19:15: "in the second round the ghost does not appear reliably - sometimes missing, then at the
+  // 2026-09-17 19:15: "in the second round the ghost does not appear reliably - sometimes missing, then at the
   // wrong position". A run was stepped only when a watcher asked, STEP_BUDGET ticks a push, so a truck that drove 20 s
   // alone was first shown 150 ticks into its run.
   const { node, client, rid, theirEid, where } = await rig();

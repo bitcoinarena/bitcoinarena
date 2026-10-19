@@ -4,7 +4,7 @@ using System.Linq;
 using NUnit.Framework;
 
 /// <summary>
-/// AUTOPLAY'S ON/OFF FLAG (kanban #151: no test named AutoPlay.cs). `AutoPlay.Asked` is on only when the player was
+/// AUTOPLAY'S ON/OFF FLAG (no test named AutoPlay.cs). `AutoPlay.Asked` is on only when the player was
 /// started with `-autoplay` on its command line - no key, menu or setting turns it on. Run once without the flag (off) and
 /// once with it (on): the same test holds both ways, reading the command line the process was really given.
 /// </summary>

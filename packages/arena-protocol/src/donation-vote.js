@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382, the owner 2026-10-16: "I can propose to add a third person so instead of
+// THE DEVELOPERS' OWN BALLOT (§27A.4.12026-10-16: "I can propose to add a third person so instead of
 // 66,33 it would perhaps be 60,20,10%. This donation set change works without changing the network id and becomes active
 // immediately for all new rounds (not old rounds) after being confirmed by 50.01% of the currently active dev sets. The ui
 // includes a proposal ui so one of the devs can propose something and another dev sees it in his ui and can click accept or

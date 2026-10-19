@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESTORE THE SEED IN SETTINGS, OVERWRITING THE CURRENT ONE (kanban #154, the owner 2026-10-04 23:48; plan accepted 2026-10-05).
+// RESTORE THE SEED IN SETTINGS, OVERWRITING THE CURRENT ONE (2026-10-04 23:48; plan accepted 2026-10-05).
 // restoreSeed takes what the player typed - the 24 words or the 64 hex - and REPLACES the tab's one current seed
 // (sessionStorage 'arena.player.seed', origin 'imported'). There is never a second active seed. The old phrase stays in the
 // browser's kept list (localStorage 'arena.seeds'), inactive, so its wallet and round records are not stranded. Refused
@@ -73,7 +73,7 @@ test('a live run in this tab is refused with "leave the round first", and the se
   assert.equal(session.getItem('arena.player.seed'), OLD);
 });
 
-// AND THE PAGE (kanban #154: "Move restore into Settings"): the Settings seed card has the field and "use my seed", wired to
+// AND THE PAGE ("Move restore into Settings"): the Settings seed card has the field and "use my seed", wired to
 // restoreSeed; the round page under the refund fingerprint has no restore field any more.
 test('Settings has the restore field wired to restoreSeed; the round page has none', () => {
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url).pathname, 'utf8');

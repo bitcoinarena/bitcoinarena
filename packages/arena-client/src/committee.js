@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE THIS CLIENT DEALS TO, BUILT BY THE CLIENT (kanban #296, spec 5A.6). It used to be asked of every node
+// THE COMMITTEE THIS CLIENT DEALS TO, BUILT BY THE CLIENT (spec 5A.6). It used to be asked of every node
 // (`fetchSettlementSignerNodes`, GET /committee) and taken when they agreed - seats that agree can name anybody. Now:
 //   1. the headers, agreed from the round's nodes' GET /headers (at least two sources, most work, from the network's
 //      compiled-in anchor - directory.js chainAnchorFor);
@@ -36,7 +36,7 @@ export const BOND_TERMS = Object.freeze({
 const CHAIN_KEPT_MS = 60000;
 const keptChains = new Map();     // network:censusHeight:committeeTime -> { at, chain, firstHeight }
 const keptCensus = new Map();     // round's census root -> evidence
-const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version (kanban #349)
+const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
 const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
 
 const baseOf = (u) => String(u).replace(/\/+$/, '');
@@ -52,14 +52,14 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   const had = keptChains.get(key);
   if (had && nowMs - had.at < CHAIN_KEPT_MS) return had;
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
-  // A FEW SEATS, NOT EVERY ONE (headers.js headerSources, kanban #378): two must agree, two may be slow
+  // A FEW SEATS, NOT EVERY ONE (headers.js headerSources): two must agree, two may be slow
   const providers = headerSources(nodes).map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
   const chain = await agreedChain(providers, { least: Math.min(least, providers.length), anchor });
   if (!chain.ok) return { ok: false, why: `no agreed headers: ${chain.why}` };
   const at = chain.headers.findIndex((h) => toHex(blockHashOf(h)) === toHex(anchor));
   if (at < 0) return { ok: false, why: 'the agreed headers do not hold the anchor' };
   const firstHeight = (anchorAt ? anchorAt.height : anchorHeightFor(contract.networkId)) - at;
-  // A PARTY OUTSIDE THE NETWORK (§5A.4, kanban #299): with an explorer named, the agreed chain's block at the CENSUS HEIGHT must be the
+  // A PARTY OUTSIDE THE NETWORK (§5A.4): with an explorer named, the agreed chain's block at the CENSUS HEIGHT must be the
   // explorer's - another block refuses the round by name. The TIP is asked too and only said: testnet4 reorganises 11-14 blocks deep,
   // so a tip that differs can be either side's lag. An explorer that cannot be asked is said, never taken as agreement.
   let explorerSaid = null;
@@ -86,7 +86,7 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
       const j = await r.json();
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
-      // the nodes this seat left out for their protocol version (kanban #349): shown, never counted
+      // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
       return { ok: true, entries: j.entries, from: u, refused };
     } catch (e) { refused.push(`${u}: ${e.message}`); }
@@ -106,7 +106,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   if (!curve || typeof curve.bondTweakPoint !== 'function' || typeof curve.bondCombine !== 'function' || typeof curve.verify !== 'function')
     return { ok: false, why: 'this page brings no curve to rebuild the bonds with' };
   const network = networkOf(contract.networkId);
-  // A CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.6, kanban #32 slice 3, the owner 2026-10-16: "the client refuses to join and names the
+  // A CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.62026-10-16: "the client refuses to join and names the
   // mismatched parameter, at join time"): where the network's genesis binds (mainnet; a binding test genesis passed as `genesis`), a
   // contract naming other committee slots, threshold or census confirmations is refused by that parameter's name, as the seat refuses
   // it at POST /round. testnet4's genesis does not bind (2026-10-14 ruling): its contracts keep their own values.
@@ -118,7 +118,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const t0 = Date.now();
   let [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
   if (!chain.ok) {
-    // A CENSUS THAT DOES NOT STAND OUTSIDE THE NETWORK IS OBJECTED (§5A.4, kanban #299): handed to every seat, each checks it on its
+    // A CENSUS THAT DOES NOT STAND OUTSIDE THE NETWORK IS OBJECTED (§5A.4): handed to every seat, each checks it on its
     // own chain against the same explorer; upheld, the round takes no new entry there - so other clients refuse it too
     if (chain.explorer && chain.explorer.census && chain.explorer.census.mismatch && explorer) {
       chain.objected = await Promise.all(nodes.map(async (u) => {
@@ -132,7 +132,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
   // A CENSUS THAT DOES NOT HASH TO THE CONTRACT'S ROOT NAMES ITS SEAT, AND THE NEXT SEAT IS ASKED (the spec's "The client computes the
   // committee itself": "A census entry missing from what a node sent shows as a root that does not match the contract's census_root,
-  // and the client asks another source"; kanban #32, measured 2026-10-16: one seat's census with an entry dropped refused the whole
+  // and the client asks another source"measured 2026-10-16: one seat's census with an entry dropped refused the whole
   // round and named nobody)
   const censusRefused = []; const skip = new Set();
   let got;
@@ -149,12 +149,12 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
-  // THE SEATING (§5A.7 reserve seats, kanban #301): each role's certificate, asked of the seats and checked against the draw
+  // THE SEATING (§5A.7 reserve seats): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
-  // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before #301).
+  // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before).
   got.seating = {};
-  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (kanban #293 pick (c)): that round's certificate, asked and checked as its own
+  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (pick (c)): that round's certificate, asked and checked as its own
   const anchor = tableAnchorOf(contract);
   const seatId = anchor ? anchor.anchorId : roundId;
   const seatHex = toHex(seatId);
@@ -174,13 +174,13 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
-    // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (kanban #32, measured 2026-10-16 on live testnet4: guardian-1 handing a
+    // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
     got.seating[role] = found ? { ...found, refused } : spoke ? { missing: true, refused } : null;
     if (found) got.committees[role] = found.seated;
   }
-  // EVERY SEAT'S ANSWER FOR EVERY ROLE, against this client's own (kanban #32: the settlement role alone was compared). A seat agrees
+  // EVERY SEAT'S ANSWER FOR EVERY ROLE, against this client's own (the settlement role alone was compared). A seat agrees
   // when every role it answered is the client's; null when it answered none (a seat that does not hold the round: not a lie)
   const seats = [];
   if (compare) {
@@ -208,9 +208,9 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
 
 /**
  * WHAT A JOIN DEALS TO (replaces `fetchSettlementSignerNodes`): the settlement committee this client derived. Refused when the client
- * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED the owner 2026-09-28), when ANY seat's committee
+ * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED 2026-09-28), when ANY seat's committee
  * answer or seating certificate differs from the client's own computation: "the round is refused, the lobby says which node answered
- * what, and no share is sealed, no stake locked, no entry signed" (kanban #32, measured 2026-10-16 on live testnet4: one seat
+ * what, and no share is sealed, no stake locked, no entry signed" (measured 2026-10-16 on live testnet4: one seat
  * forging its /committee was named and the join still dealt to the client's seven).
  */
 export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
@@ -237,7 +237,7 @@ export function settlementSignerNodesFrom(got) {
 }
 
 /**
- * THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3, "the page shows node X: protocol too old"): as the seat that
+ * THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (scope 3, "the page shows node X: protocol too old"): as the seat that
  * handed over the census named them ([{ node, speaks }]), or []. Shown beside the facts, never counted: the census root decides.
  */
 export const tooOldFor = (contract) => keptTooOld.get(toHex(contract.censusRoot)) || [];
@@ -245,7 +245,7 @@ export const tooOldFor = (contract) => keptTooOld.get(toHex(contract.censusRoot)
 // null for a contract naming no census root (the page hands this whole, and names no contract field itself: join.test.js)
 export const checkedCensusFor = (contract) => { if (!contract || !(contract.censusRoot instanceof Uint8Array)) return null; const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
 /**
- * THE NEWEST CENSUS THIS CLIENT CHECKED, and how many nodes it bonds (kanban #348, the owner 2026-10-12: "in the same settings
+ * THE NEWEST CENSUS THIS CLIENT CHECKED, and how many nodes it bonds (2026-10-12: "in the same settings
  * window show how many nodes the network currently has"): the census at the highest height among the rounds this page checked,
  * its distinct node keys counted. null before any census is checked.
  */

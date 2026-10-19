@@ -50,7 +50,7 @@ test('and a node whose bond does not say so is not listed as a guardian', () => 
   for (const e of read.eligible.filter((x) => whoIs(x.pubkey) !== 'honest')) assert.equal(e.advert.guardianEndpoint, '');
 });
 
-// THE CENSUS READS THE NEWEST ADVERTISEMENT (§5A.2; the owner 2026-09-28, the advertisement-update letter: "the node
+// THE CENSUS READS THE NEWEST ADVERTISEMENT (§5A.2; 2026-09-28, the advertisement-update letter: "the node
 // census: read the newest update, not the original bond advert"). One block on top of the recorded chain carries an
 // update of the honest bond naming a new guardian key; with the census height there, the honest entry is the same bond
 // with the updated advertisement. The fixture holds no node secret, so the signature check is the test's: an update
@@ -89,7 +89,7 @@ test('an update of the honest bond at or below the census height replaces its ad
   assert.equal(early.entries.find((x) => whoIs(x.pubkey) === 'honest').updatedBy, undefined);
 });
 
-// 2026.0.2 (kanban #348, measured 2026-10-13 05:20Z on testnet4): THE VERSION IS THE NEWEST ADVERTISEMENT'S. Every node announced
+// 2026.0.2 (measured 2026-10-13 05:20Z on testnet4): THE VERSION IS THE NEWEST ADVERTISEMENT'S. Every node announced
 // version 2 in an update; the first v2 grid's census came out empty, because the version was asked of the bond's first
 // advertisement before the update was applied. An update to [1, 2] now puts the node into a v2 census; without it, not.
 test('a v2 census counts a node whose update announces version 2, and not one whose bond alone speaks version 1', async () => {
@@ -112,7 +112,7 @@ test('a v2 census counts a node whose update announces version 2, and not one wh
   const notUpdated = deriveCensus(view, { contract: { ...contract, protocolVersion: 2 }, resolve, bond: BOND, verifyUpdate: () => true });
   assert.equal(notUpdated.entries.length, 0);
   assert.match(notUpdated.excluded.find((x) => whoIs(x.pubkey) === 'honest').why, /speaks 1 and this round runs 2/);
-  // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): the exclusion says so, with what the node speaks
+  // PROTOCOL TOO OLD, BY NAME (scope 3): the exclusion says so, with what the node speaks
   const out = notUpdated.excluded.find((x) => whoIs(x.pubkey) === 'honest');
   assert.equal(out.tooOld, true); assert.deepEqual(out.speaks, [1]);
   // and an update that still speaks 1 only is too old the same way, through the update
@@ -125,7 +125,7 @@ test('a v2 census counts a node whose update announces version 2, and not one wh
   assert.equal(out1.tooOld, true); assert.equal(out1.step, 'update'); assert.match(out1.why, /update speaks 1 and this round runs 2/);
 });
 
-// STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED the owner 2026-09-28; kanban #302): an advertisement update with serving = false takes the
+// STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED 2026-09-28): an advertisement update with serving = false takes the
 // node out of every census at or above its block, its bond untouched; one with serving = true brings it back the same way. The
 // advertisement bytes of a serving node are what they were.
 test('an update saying serving = false steps the node out of the census from its block on; serving = true brings it back', async () => {

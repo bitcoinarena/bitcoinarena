@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ITEM ON THE RESERVES' TERMS (§27A.9.1, kanban #397 slice 5): a game version requiring protocol 11 sells its items for nodes
+// AN ITEM ON THE RESERVES' TERMS (§27A.9.1): a game version requiring protocol 11 sells its items for nodes
 // 40 %, the protocol reserves exactly 20 % to the federation's 5-of-7 reserve key, and the developers the buyer's 40/30/20/10/0 % -
 // and a record that leaves the reserves' share out, pays it short or long, or to another key, does not stand.
 import { test } from 'node:test';
@@ -90,7 +90,7 @@ test('refused: the reserve share missing, 1 msat short or long, to another key, 
   assert.match(why(old), /requires protocol 11: its items pay the protocol reserves, and this record does not/);
   assert.equal(purchaseStands(old, { manifest: V3, networkSet: NETWORK, gameSet: GAME, served: SERVED, verify }).ok, true, 'version 3 keeps its terms');
   assert.match(purchaseStands(bought(), { manifest: V3, networkSet: NETWORK, gameSet: GAME, served: SERVED, verify, reserveKey: RESERVE }).why, /does not sell on those terms/);
-  // the record carries any whole percent since the fees can change by proposal (kanban #462); which ones a buyer may choose is the
+  // the record carries any whole percent since the fees can change by proposal; which ones a buyer may choose is the
   // fees in force' - with today's, 50 is refused where the outputs are built (above) and where a seat checks the record
   assert.doesNotThrow(() => encodePurchase({ ...bought(), devsPct: 50 }));
   assert.throws(() => encodePurchase({ ...bought(), devsPct: 101 }), /whole percent/);

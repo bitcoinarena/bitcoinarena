@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// TOP-N PRIZE SPLITS AT THE NODE (kanban #362 feature 3): the node reads a round's payout rule off the manifest it hosts the
+// TOP-N PRIZE SPLITS AT THE NODE (feature 3): the node reads a round's payout rule off the manifest it hosts the
 // round's game under (plugins.js payoutRuleOfRound), and its settlement plan, its signed table and its standing line all
 // compute the protocol's table - the same F a slash proof recomputes.
 import { test } from 'node:test';

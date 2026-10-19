@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LEADERBOARD PAYOUT REQUEST (kanban #460, the owner 2026-10-17: "new proposal type, not a withdrawal but re-assign to the federation when
+// A LEADERBOARD PAYOUT REQUEST (2026-10-17: "new proposal type, not a withdrawal but re-assign to the federation when
 // a specific protocol version is active ... Example: distribution of X sats for the best 10 p&l of last week ... Which game/market/all
 // global and the top count. Amount is divided equally or configurable. Time period is last 7 days, last 14 days, last month. Payment
 // date is another field ... Same protections apply as it only returns it to the federation and pays out top users ... Voting is 2 weeks,
@@ -74,7 +74,7 @@ export function leaderboardVotePeriod({ proposal, schedule = FUNDING_SCHEDULES.s
 }
 
 /**
- * THE ONLY PASS TEST (the owner 2026-10-18): YES weight >= 25 % of the voting weight. `count` funding.js fundingTally's answer over the
+ * THE ONLY PASS TEST (2026-10-18): YES weight >= 25 % of the voting weight. `count` funding.js fundingTally's answer over the
  * voting census (voteWeights): `yesSats` the YES weight, `totalSats` the weight of everyone who could vote. A larger NO, ABSTAIN, the
  * share of YES among YES + NO: none of them moves it. Answers the count with `passed` and `yesOfAllPct` as this rule reads them.
  */

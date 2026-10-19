@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FEDERATION RECORDS A SEAT SIGNS, GATHERS AND MIRRORS (spec §23A.4, kanban #321).
+// THE FEDERATION RECORDS A SEAT SIGNS, GATHERS AND MIRRORS (spec §23A.4).
 //
 // The body is built from what every seat of a series reads the same: the census of the newest round it holds (the
 // census nodes whose bond advertisements name the federation in guardian_of[]), at that round's census height - so seats
@@ -41,7 +41,7 @@ export function seatedOf(record) {
 }
 
 /** The federations a census knows: every federation some census node guards. */
-/** A seat with no round: the chain census this many blocks below the tip, at a multiple of CHAIN_BASIS_STEP (kanban #495). */
+/** A seat with no round: the chain census this many blocks below the tip, at a multiple of CHAIN_BASIS_STEP. */
 export const CHAIN_BASIS_LAG = 6;
 export const CHAIN_BASIS_STEP = 6;
 
@@ -55,24 +55,24 @@ export function federationsOf(census) {
 const leaveMessage = (id, leaving) => Uint8Array.from([...id, leaving ? 1 : 0]);
 
 // `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
-// (§23A.6 steps 2 and 4, kanban #325) - both read into the body every guardian seat builds the same way
+// (§23A.6 steps 2 and 4) - both read into the body every guardian seat builds the same way
 export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
   successorOf = () => null, closedOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null,
-  // THE GUARDIANS' ADDRESSES FROM THE FEDERATION'S OWN CONFIGURATION (kanban #326, federation-endpoints.js): async (fidHex) -> Map(peer key
+  // THE GUARDIANS' ADDRESSES FROM THE FEDERATION'S OWN CONFIGURATION (federation-endpoints.js): async (fidHex) -> Map(peer key
   // hex -> API URL) | null; a guardian it names takes that endpoint into the body, one it does not keeps its advert's
   endpointsOf = null,
-  // THE CENSUS AT A RECORD'S OWN HEIGHT (kanban #326, measured live 2026-10-15): async (height) -> census entries | null, from this seat's
+  // THE CENSUS AT A RECORD'S OWN HEIGHT (measured live 2026-10-15): async (height) -> census entries | null, from this seat's
   // chain (main.js ballot.censusEntriesAt). A seat whose basis is an older census than the record's (node 15: 156388, B's record at
   // 156538, its guardians' current keys in the newer census) checks a mirrored record against the census the record names
   censusAt = null,
-  // THE CHAIN'S TIP (kanban #495): async () -> height, for the census a seat that holds no round builds and checks records from
+  // THE CHAIN'S TIP: async () -> height, for the census a seat that holds no round builds and checks records from
   chainTip = null,
-  // THE CHAIN'S CENSUS FIRST (kanban #326): a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
+  // THE CHAIN'S CENSUS FIRST: a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
   // with 14 nodes, before T2's own bonds, so they never built T2's record - takes the chain's census before any held round's
   chainFirst = false }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
-  // THE HALT A LIQUIDATION COUNTS FROM (§23A.5, kanban #323): the lowest-height signed HALTED record of the run of HALTED records
+  // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
   // this seat holds - kept with its bytes, so anyone checks it - and forgotten once a newer record is not HALTED (a recovery)
   const halted = new Map();                  // federation id hex -> { height, bytes }
   function keep(fid, bytes, v) {
@@ -84,9 +84,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     else if (!halted.has(fid) || halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
   }
 
-  // ROUNDS BY CENSUS HEIGHT, each read once (kanban #321, measured on testnet4 2026-10-12: a seat holds thousands of rounds,
+  // ROUNDS BY CENSUS HEIGHT, each read once (measured on testnet4 2026-10-12: a seat holds thousands of rounds,
   // and reading them all at every ask held the loop 3-6 s per GET /federation-record) - AND NEWEST FIRST, only as far as a basis
-  // is found (kanban #355, measured 2026-10-14: the first GET /federation-record after a start read and decoded all 86,607 stored
+  // is found (measured 2026-10-14: the first GET /federation-record after a start read and decoded all 86,607 stored
   // rounds, 66 MB of contracts, holding the seat's loop 4.9-9.7 s; the census it wants is a recent round's, among the newest rows)
   const byHeight = new Map();                // census height -> [{ rid, contract }]
   const CHUNK = 500, MAX_CHUNKS = 4;
@@ -115,12 +115,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   };
   /**
    * THE CENSUS A RECORD IS BUILT FROM, and its height. Without `atHeight`: the newest held round whose census this seat can
-   * read. With it (a gathering seat names its height, kanban #321): a held round at exactly that census height - so every
+   * read. With it (a gathering seat names its height): a held round at exactly that census height - so every
    * guardian seat builds the gatherer's body, never one of its own. Measured live before: seats 2-7 of testnet4 each took
    * their own newest round, a round posted ahead whose census they could not read yet ("this node has no chain view for
    * that round"), and no record ever had more than 1 signature of the 5 it needs.
    */
-  // A SEAT THAT HOLDS NO ROUND READS THE CENSUS OFF ITS OWN CHAIN (kanban #495, measured on the test host 2026-10-18: the seven new seats and
+  // A SEAT THAT HOLDS NO ROUND READS THE CENSUS OFF ITS OWN CHAIN (measured on the test host 2026-10-18: the seven new seats and
   // the three installer nodes held no round - "this seat holds no round, so it reads no census" - so no federation record, no seated
   // guardians, no gateway seats, ever, on a node that runs no series). The height is shared: the tip less CHAIN_BASIS_LAG, down to a
   // multiple of CHAIN_BASIS_STEP, so a federation's seats name the same one; a gatherer's named height is read too. Read ahead by
@@ -173,7 +173,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         tried.add(h);
         for (const x of byHeight.get(h) || []) {
           const census = roster.censusFor(x.rid);
-          // A CENSUS THAT HOLDS NO NODE IS NO BASIS (kanban #348, the owner's playtest 2026-10-13 07:42: "No federation info"): the
+          // A CENSUS THAT HOLDS NO NODE IS NO BASIS (the owner's playtest 2026-10-13 07:42: "No federation info"): the
           // first v2 grids carried an empty census (fixed in e8f039d8), and as the highest census height they hid every record
           if (census.ok && (census.entries || []).length) return { ok: true, census, height: h, networkId: x.contract.networkId };
           why = census.ok ? `the census at height ${h} holds no node` : census.why;
@@ -206,7 +206,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   const epsFor = async (fidHex) => { if (!endpointsOf) return null; try { return await endpointsOf(String(fidHex).toLowerCase()); } catch { return null; } };
 
   /** THIS SEAT'S SIGNATURE (GET /federation-record): only a guardian of the federation signs, over the body it builds. */
-  // THE RESERVE IN THE BODY (§23A.3, kanban #324): the gatherer reads it from the guardians (`reserveOf`, a threshold of them
+  // THE RESERVE IN THE BODY (§23A.3): the gatherer reads it from the guardians (`reserveOf`, a threshold of them
   // naming one sum) and names it; a seat signs a body naming a reserve only when its own reading is the same
   async function reserveFor(federationIdHex, guardians, named = null) {
     if (!reserveOf) return named === null || BigInt(named) === 0n ? { ok: true, reserveSats: 0n } : { ok: false, why: 'this seat reads no reserve, so it signs none' };
@@ -257,11 +257,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       let good = false; try { good = schnorr.verify(fromHex(said.leaveSig), leaveMessage(plainId, true), g.nodePubkey); } catch { good = false; }
       if (good) gone.push({ peerKey: g.peerKey, sinceHeight: b.height, kind: GONE.DEPARTED, proofRef: plainId });
     }
-    // WHO IS PROVEN ABANDONED (§23A.4, kanban #322): 2f + 1 guardians' absence attestations this seat holds, for at least
+    // WHO IS PROVEN ABANDONED (§23A.4): 2f + 1 guardians' absence attestations this seat holds, for at least
     // abandon_blocks - gone ABANDONED since the proof's height, under the proof's id; the attestations go along on the second
     // ask, so every guardian seat checks exactly that set
     // AND WHO GAVE NOTICE (§23A.5): a standing departure notice due at this height - DEPARTED from its leave_after, under its id
-    // BOTH HELD for one guardian (FEDERATION.md rehearsal 14, kanban #326): "a departure that stops serving before its leave_after"
+    // BOTH HELD for one guardian (FEDERATION.md rehearsal 14): "a departure that stops serving before its leave_after"
     // is abandonment (§23A.5) - the proof wins when the absence it attests began before the notice's leave_after
     const departed = [];
     const absent = [];
@@ -385,10 +385,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const b = basis();
       if (!b.ok) return [b];
       const out = [];
-      // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (kanban #348, the owner 2026-10-12: "Make it happen
+      // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (2026-10-12: "Make it happen
       // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
       // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
-      // AND A GATHER THAT FAILS IS MIRRORED TOO (kanban #326, measured live 2026-10-15): a seat that holds a federation's invite but
+      // AND A GATHER THAT FAILS IS MIRRORED TOO (measured live 2026-10-15): a seat that holds a federation's invite but
       // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
       // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
       // stands against this seat's census all the same
@@ -402,27 +402,27 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       return out;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
-      // THE LOAD (§23A.3, kanban #324): the signed record's reserve over its signed exposure cap
+      // THE LOAD (§23A.3): the signed record's reserve over its signed exposure cap
       ...(k.record ? { reserveSats: String(k.record.reserveSats), exposureCapSats: String(k.record.exposureCapSats),
         load: k.record.exposureCapSats > 0n ? Number((k.record.reserveSats * 10000n) / k.record.exposureCapSats) / 10000 : null } : {}),
       // the successor's guardian pool takes this drain's seated guardians (predecessorGuardians), shown with the record
       ...(k.record && k.record.successorId && k.record.successorId.some((x) => x) ? { successor: toHex(k.record.successorId) } : {}) })),
     draining: (fidHex) => draining.get(fidHex) || null,
-    /** THE INVITE A FEDERATION'S SIGNED RECORD CARRIES (kanban #348): how this node joins a federation it did not found. */
+    /** THE INVITE A FEDERATION'S SIGNED RECORD CARRIES: how this node joins a federation it did not found. */
     inviteOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k && k.record && k.record.invite ? String(k.record.invite) : null; },
     /** The kept record of a federation ({ record, status, height }) and, while it is HALTED, the halt it counts from. */
-    /** THE ACTIVE SEATS OF THIS SEAT'S CENSUS, by node key (halts.js, kanban #323): who may observe a halt. */
+    /** THE ACTIVE SEATS OF THIS SEAT'S CENSUS, by node key (halts.js): who may observe a halt. */
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
-    /** THE CENSUS THIS SEAT READS, its entries and height (kanban #356: GET /roles), or why none. */
+    /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height } : null; },
     haltOf: (fidHex) => halted.get(String(fidHex).toLowerCase()) || null,
     haltedFederations: () => [...halted.keys()],
-    // THE DRAIN IS PAID (§23A.6 step 5, kanban #325): the seated guardians of every federation whose verified record says
+    // THE DRAIN IS PAID (§23A.6 step 5): the seated guardians of every federation whose verified record says
     // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody. One that fell to
     // CRITICAL while draining is still drained by its seated guardians, and paid ("until its record is CLOSED"); a HALTED one
     // serves nothing
-    // THE FEDERATION'S SEATED GUARDIANS, BY NODE KEY (§22A v4.6.4 from SEATED_GUARDIAN_VERSION, kanban #33): its newest record's
+    // THE FEDERATION'S SEATED GUARDIANS, BY NODE KEY (§22A v4.6.4 from SEATED_GUARDIAN_VERSION): its newest record's
     // guardians that are not gone (§23A.1); null when this seat holds no record of it (the census rule then stands)
     seatedGuardians(fidHex) {
       const k = kept.get(String(fidHex).toLowerCase());

@@ -202,7 +202,7 @@ test('no entry at all is not an accusation', () => {
   }
 });
 
-test('since the 2026-10-14 ruling the offence is withdrawn: no proof slashes (§5A.13, kanban #360)', () => {
+test('since the 2026-10-14 ruling the offence is withdrawn: no proof slashes (§5A.13)', () => {
   const then = ask();
   assert.equal(then.slashed, true, 'the same proof slashed under the old rule');
   const now = slashHoldsOnConflict({ proof: {}, entry: {}, signedByNode: {}, advert: {}, committee: [] });

@@ -31,7 +31,7 @@ public class ChaseCamera : MonoBehaviour
     //
     // `cloudLookUp`, `cloudPullBack` and `cloudLift` were three tunables that
     // tilted the view up at the mushroom and stood the camera further off to
-    // fit it. the owner 2026-09-07 07:39: "when the atom bomb comes the camera is
+    // fit it. 2026-09-07 07:39: "when the atom bomb comes the camera is
     // still ripped from his hands. That must not happen. View stays
     // unchanged." So the view is the player's; a strike is something he sees
     // if he looks at it, and the camera does not look for him.
@@ -54,12 +54,12 @@ public class ChaseCamera : MonoBehaviour
         else { _driveView = View; View = Mode.God; }
     }
 
-    // THE DRIVE IS SEEN FROM ABOVE, WITH ITS DESTINATION IN IT (the owner 2026-09-27 11:31: "On drive start it goes
+    // THE DRIVE IS SEEN FROM ABOVE, WITH ITS DESTINATION IN IT (2026-09-27 11:31: "On drive start it goes
     // top-down. The destination stays in focus unless he swipes away himself"). From ROLL OUT the camera looks steeply
     // down on the truck and on where the run is going - the miner's mouth - and frames both, the truck at the bottom of
     // the screen and the mouth above it, coming down as the gap closes. A swipe hands the view to the player: from then
     // until the next ROLL OUT the camera follows the truck from above at the angle he dragged it to, the mouth is not
-    // held, and nothing brings it back - no timed return (the owner 2026-09-27: the 11:31 letter over the look-return).
+    // held, and nothing brings it back - no timed return (2026-09-27: the 11:31 letter over the look-return).
     [Header("Top-down")]
     [Tooltip("Where the run is going: the miner's gate. Set at ROLL OUT.")]
     public Vector3? destination;
@@ -195,7 +195,7 @@ public class ChaseCamera : MonoBehaviour
     public bool Flying => _flyLeft > 0f;
 
     /// <summary>
-    /// THE FLIGHT ENDS AT ROLL OUT, AND THE DRIVE STAYS FIRST PERSON (the owner 2026-09-29 12:45, PLAYTEST-ROLL-1245: "when
+    /// THE FLIGHT ENDS AT ROLL OUT, AND THE DRIVE STAYS FIRST PERSON (2026-09-29 12:45, PLAYTEST-ROLL-1245: "when
     /// he does roll out, the view suddenly becomes top-down instead of first person. It must stay first person"). PLAY
     /// starts a 4.2 s fly-in over the field; ROLL OUT ends it and puts the camera where the follow rests - the truck's
     /// position, `distance` back along its heading, `height` up, looking down the road ahead - so the next frame is the
@@ -378,7 +378,7 @@ public class ChaseCamera : MonoBehaviour
         // Everything else eases back - including a finger resting inside the
         // dead zone, which is a tap in progress and not a held view.
         _dragIdle += Time.unscaledDeltaTime;
-        // THE TOP-DOWN HOLDS THE SWIPE (the owner 2026-09-27, over the older look-return ruling): after the finger lifts,
+        // THE TOP-DOWN HOLDS THE SWIPE (2026-09-27, over the older look-return ruling): after the finger lifts,
         // the dragged angle stays and the mouth is not pulled back into frame. The next ROLL OUT holds it again.
         if (View == Mode.Overhead) return;
         if (recentreAfter > 0f && _dragIdle > recentreAfter)

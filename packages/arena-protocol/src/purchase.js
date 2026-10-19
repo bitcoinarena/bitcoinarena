@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ITEM, BOUGHT (kanban #365 step 2): the buyer's signed record of one purchase, and the check any node makes of it.
+// AN ITEM, BOUGHT: the buyer's signed record of one purchase, and the check any node makes of it.
 //
 // THE MONEY IS ONE FEDERATION TRANSACTION from the buyer's e-cash whose outputs are pre-expired payout contracts, each spendable only
 // by its payee's key - the same outputs a round's donation pays its recipients in today (page-lock.js lockSubmit, role "donation").
@@ -30,7 +30,7 @@ export const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
 export const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
 export const PURCHASE_OUTPUTS_MAX = 255;
 /**
- * A RECORD WITH THE BUYER'S DEVELOPERS' SHARE (kanban #377): written as version PURCHASE_SHARE_VERSION, the share (a u8 percent, one of
+ * A RECORD WITH THE BUYER'S DEVELOPERS' SHARE: written as version PURCHASE_SHARE_VERSION, the share (a u8 percent, one of
  * ITEM_DEV_SHARES) after the price. A purchase at the full 50 % is written as before (ITEMS_VERSION, no share byte) - the same bytes
  * and id a seat that has not rolled yet reads - and a version-10 record reads as 50 %.
  */
@@ -38,7 +38,7 @@ export const PURCHASE_SHARE_VERSION = 11;
 /** How far before the purchase its served window may end: the buyer's client merges the seats' lists just before it pays. */
 export const PURCHASE_WINDOW_SLACK_MS = 3600000;
 /**
- * A RECORD ON THE RESERVES' TERMS (§27A.9.1, kanban #397 slice 5): the purchase of an item a game version requiring protocol 11 sells
+ * A RECORD ON THE RESERVES' TERMS (§27A.9.1): the purchase of an item a game version requiring protocol 11 sells
  * pays nodes 40 %, the protocol reserves 20 % and the developers the buyer's 40/30/20/10/0 % (itemSplitReserves). Its record is
  * written as LAYOUT 12 - a record layout, not a protocol version - naming after the price the share (a u8, always written), the
  * game version's id it was bought under (32 bytes) and the reserve key it paid (33 bytes): the 5-of-7 key of the payment's federation.
@@ -117,7 +117,7 @@ export function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, dev
 }
 
 /**
- * THE OUTPUTS A PURCHASE ON THE RESERVES' TERMS MUST PAY (§27A.9.1, kanban #397 slice 5): nodes 40 % of the list price, equal per
+ * THE OUTPUTS A PURCHASE ON THE RESERVES' TERMS MUST PAY (§27A.9.1): nodes 40 % of the list price, equal per
  * served node (each floored; what the floors leave is not paid); the protocol reserves exactly 20 %, ONE output to `reserveKey`;
  * the developers the buyer's share over the two donation sets as a round's donation is split. [{ pk, msat }] sorted by key, with
  * `reserve` { pk, msat } named apart. A reserve key that is also another payee's key is refused: the reserves' output stands alone.
@@ -149,7 +149,7 @@ export function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, game
  * `gameSet` the donation sets; `served` the reader's own merged list for the record's window ({ fromMs, toMs, nodes, root });
  * `verify(sig, digest, key)` BIP340. Answers { ok, id } or { ok: false, why }.
  */
-// `fees`: the fee set in force (kanban #462): the item parts on the reserves' terms; unset, today's
+// `fees`: the fee set in force: the item parts on the reserves' terms; unset, today's
 export function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey = null, fees = null }) {
   const no = (why) => ({ ok: false, why });
   let id; try { id = purchaseId(p); } catch (e) { return no(`that purchase does not encode: ${e.message}`); }
@@ -163,7 +163,7 @@ export function purchaseStands(p, { manifest, networkSet, gameSet, served, verif
     return no('the served window ends at most an hour before the purchase, and not after it');
   if (!served || BigInt(served.fromMs) !== BigInt(p.servedFromMs) || BigInt(served.toMs) !== BigInt(p.servedToMs) || served.root !== toHex(p.servedRoot))
     return no(`the purchase paid the served list ${toHex(p.servedRoot).slice(0, 16)}, and the one read here is ${served && served.root ? served.root.slice(0, 16) : 'none'}`);
-  // WHICH TERMS (kanban #397 slice 5): a game version requiring protocol 11 sells on the reserves' terms only, and a record on
+  // WHICH TERMS: a game version requiring protocol 11 sells on the reserves' terms only, and a record on
   // them names that very version and the reserve key of its federation that the reader holds; an older version, the old terms
   const reservesTerms = Number(manifest.requiredProtocolVersion) >= RESERVES_VERSION;
   const onReserves = p.reserveKey !== undefined && p.reserveKey !== null;
@@ -180,7 +180,7 @@ export function purchaseStands(p, { manifest, networkSet, gameSet, served, verif
     try { want = purchaseOutputsReserves({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(p.devsPct), reserveKey, fees }).outputs; }
     catch (e) { return no(e.message); }
   } else {
-    // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is
+    // THE BUYER'S SHARE: one of ITEM_DEV_SHARES, the nodes' half whatever it is
     const devsPct = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
     if (!itemDevShareOk(devsPct)) return no(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %, and the purchase names ${p.devsPct}`);
     try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct }).outputs; }

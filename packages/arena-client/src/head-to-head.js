@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A HEAD-TO-HEAD ROUND, FROM THE PAGE (kanban #233): the player's hidden move, its reveal to the round's seats after entry
+// A HEAD-TO-HEAD ROUND, FROM THE PAGE: the player's hidden move, its reveal to the round's seats after entry
 // close, and the reveals the seats hold - for any head-to-head game; which moves a game has, and what beats what, are the
 // game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
 // entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
@@ -20,7 +20,7 @@ export function moveCommitment({ roundId, sessionPubkey, move, salt }) {
 }
 
 /** The reveal to every seat: POST /reveal?entry= { move, salt }. Answers each seat's status. */
-// `identity`: { key, sig } (identity.js identityProofFor, kanban #280) - the tab's identity on this entry, for a score across rounds
+// `identity`: { key, sig } (identity.js identityProofFor) - the tab's identity on this entry, for a score across rounds
 export async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetcher = fetch }) {
   const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt), ...(identity ? { identity } : {}) });
   return Promise.all(nodes.map(async (node) => {

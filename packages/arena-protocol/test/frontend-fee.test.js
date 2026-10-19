@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, kanban #362 roadmap item 7; RULED the owner 2026-10-15, path (a): "Take it out of the
+// THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, roadmap item 7; RULED 2026-10-15, path (a): "Take it out of the
 // nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased by this fee").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -68,7 +68,7 @@ test('the website is paid 20% of the nodes\' fee on the stakes it brought; the n
   assert.equal(entryFeeMsat(2000000n), 100000n);
 });
 
-// THE SAME 20% ON AN ORDER BOOK (kanban #362 comment 2295): the book's fee lines, at the plan's numbers - two 10,000 sat orders, YES and
+// THE SAME 20% ON AN ORDER BOOK (comment 2295): the book's fee lines, at the plan's numbers - two 10,000 sat orders, YES and
 // NO at 0.50, both filled, Up/Down fees (node 0.5% + donation 0.5%), YES wins.
 test('an order book pays the website 20% of the nodes\' part of the fees; the donation and the players are untouched', async () => {
   const { bookLedger, bookSettlement } = await import('../src/book-ledger.js');
@@ -108,7 +108,7 @@ test('an order book pays the website 20% of the nodes\' part of the fees; the do
   const others = (s) => s.payouts.filter((p) => !['signer node', 'frontend', 'donation key'].includes(p.kind)).map((p) => [toHex(p.payoutPk), p.msat]);
   assert.deepEqual(others(viaSite), others(plain), 'every player line is the same');
   assert.equal(sumOf(others(plain).map((x) => x[1])), 19800000n, 'the winner is paid the whole pool');
-  // kanban #457: the book names what it paid each winner, by its player key - a season reads it (the winner's out, its own stake back
+  //: the book names what it paid each winner, by its player key - a season reads it (the winner's out, its own stake back
   // and its winnings), not 0
   assert.deepEqual(plain.stakeShares.map((x) => [toHex(x.pubkey), x.msat]), [[toHex(player.a), 19800000n]]);
 });

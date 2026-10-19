@@ -334,7 +334,7 @@ export function next(s) {                       // s: Int32Array(4)
 
 Seeding: the player sub-seed (32 bytes, from `H(round_randomness ‖ pubkey ‖
 secret ‖ join_tick)`) is expanded into the four words with `splitmix32`. The
-secret is a field of the Entry Contract (the owner 2026-09-08), so a node can replay. The
+secret is a field of the Entry Contract (2026-09-08), so a node can replay. The
 **draw order is part of the protocol** and must be documented rule by rule —
 two implementations that draw the same numbers in a different order produce
 different worlds. Every rule module therefore takes an explicit stream
@@ -717,7 +717,7 @@ Built on `@noble/curves/secp256k1` for scalar and point arithmetic. Roughly
 Threshold signature implementations fail subtly, especially around nonce
 handling, and a green test suite is not a review.
 
-Operationally, the settlement wallet has **one** shape (the owner 2026-09-21,
+Operationally, the settlement wallet has **one** shape (2026-09-21,
 spec §23.6): a **Fedimint-class federation**. Guardians hold funds under
 threshold consensus; the daemon is a Fedimint client that reads locks,
 submits the settlement transaction and watches confirmations (spec §23A.4).
@@ -888,7 +888,7 @@ buffer growth, SQLite write throughput.
 
 ### 12.1 A scripted winner and the round's own beacon (RULED 2026-09-25, B)
 
-the owner 2026-09-25 10:52, spec only. A paying round is now seeded from the
+2026-09-25 10:52, spec only. A paying round is now seeded from the
 round's own beacon (multiplayer_p2p.md §5A.5: the block hash of the bonded
 chain), and that hash differs in every round of every run. So a winner's
 **recorded** inputs, captured against one run's world, do not deliver in
@@ -1017,7 +1017,7 @@ behaviour behind the handbrake, the grip and the camera pitch has to be
 derived again from scratch. That is an iteration with the player at the
 wheel, not a mechanical port.
 
-**M1 army on screen.** Tanks, infantry and gunships are not decoration. Armour and infantry doctrine, truck exception: **WAR_TACTICS.md** (was TANK_TACTICS.md; the owner 2026-09-16).
+**M1 army on screen.** Tanks, infantry and gunships are not decoration. Armour and infantry doctrine, truck exception: **WAR_TACTICS.md** (was TANK_TACTICS.md; 2026-09-16).
 Each pursues a real goal: close on the front, hold the line, engage a
 foe, or fall back if overrun — the same jobs `Army.cs` already names.
 Gunships run the length of the front on their own side and always aim a
@@ -1032,7 +1032,7 @@ near the front; blast size follows liquidation size; the crater lasts
 10–20 rounds and units avoid it. Driving the truck through fallout
 costs health and can kill, with a warning and the atom symbol.
 
-**M1 liquidation picture (the owner 2026-09-03).** The rules above are not
+**M1 liquidation picture (2026-09-03).** The rules above are not
 enough until the player can see them. For now: stand-in models (plane,
 atom bomb, crater bowl). Claude Design later. The crater is a hole in the
 ground: after a bomb, the truck drives *into* that hole (core surface =
@@ -1040,7 +1040,7 @@ uploaded relief minus crater). Radiation is visible on the ground; the
 warning and atom symbol stay. Presentation only — do not reopen the core
 rules.
 
-**M1 liquidation feeds and HUD (the owner 2026-09-04).** There is no free
+**M1 liquidation feeds and HUD (2026-09-04).** There is no free
 all-exchange liquidation feed. Subscribe BTC forced orders from Binance,
 Bybit, OKX, Bitget, Gate.io, MEXC, Kraken Futures and Hyperliquid, and
 merge them into the same OnLiquidation. Wait with no time cap until each

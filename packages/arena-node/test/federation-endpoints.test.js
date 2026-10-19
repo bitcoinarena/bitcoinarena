@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ENDPOINT GAP (kanban #326, the owner 2026-10-15): a record's guardian endpoints come from the federation's OWN configuration, not
+// THE ENDPOINT GAP (2026-10-15): a record's guardian endpoints come from the federation's OWN configuration, not
 // from the one guardian_endpoint a node advertises. Federation B (s0..s3) and its successor S (s0..s2 seated first + s4, the 15th):
 // s0..s2 run two guardians - B's at /guardian, S's at /guardian-next - and advertise one endpoint. B's record keeps /guardian; S's
 // names /guardian-next for s0..s2 and /guardian for s4; the halt observer asks exactly those.

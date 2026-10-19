@@ -125,11 +125,11 @@ test('a batch for a round or an entry the node has not got is refused', () => {
  * exactly like this: one more import, in one more place, for one good reason.
  */
 //
-// AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07: the signer nodes replay the core a round names; several
+// AND SINCE M3 R1 (2026-09-15 08:03/08:07: the signer nodes replay the core a round names; several
 // cores at once) THE DOOR HAS TWO HALVES: one file brings the cores, and replay.js is the only file that STEPS one, the
-// core it is handed. Since kanban #202 (a game is a plugin) NO engine file imports a core at all: the launcher, main.js,
+// core it is handed. Since (a game is a plugin) NO engine file imports a core at all: the launcher, main.js,
 // imports the game's registration (core/plugin/nextblock.js) and hands it to serve(), and plugins.js passes each round's
-// core on. Measured before the split: the one file that did both was replay.js; before #202, cores.js imported the cores.
+// core on. Measured before the split: the one file that did both was replay.js; before, cores.js imported the cores.
 test('the node imports no core and registers no game, and only the sandbox\'s driver steps a core', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
   const imports = [];
@@ -146,9 +146,9 @@ test('the node imports no core and registers no game, and only the sandbox\'s dr
     if (/\bstep\s*\(/.test(src)) steps.push(f);
   }
   assert.deepEqual(imports, [], 'an engine file imports a core');
-  // since kanban #203 not even the launcher: main.js hosts what ARENA_GAMES names, nextblock's bin/node.mjs names nextblock
+  // since not even the launcher: main.js hosts what ARENA_GAMES names, nextblock's bin/node.mjs names nextblock
   assert.deepEqual(registrations, [], 'an engine file registers a game');
-  // since kanban #328 (spec §0A.6) the one door is core-driver.js, run inside the core's sandbox; replay.js hands it the run
+  // since (spec §0A.6) the one door is core-driver.js, run inside the core's sandbox; replay.js hands it the run
   assert.deepEqual(steps, ['core-driver.js'], 'a core is stepped somewhere other than the sandbox\'s driver, or nowhere');
 
   // and that door replays a finished transcript - neither it nor replay.js ticks anything
@@ -201,7 +201,7 @@ test('a player who joined late starts at his own joinTick, not at zero', () => {
 });
 
 /**
- * A BATCH LANDS WHOLE OR NOT AT ALL - and that is also why it is one commit (the owner 2026-09-17 19:15, the ghost lag).
+ * A BATCH LANDS WHOLE OR NOT AT ALL - and that is also why it is one commit (2026-09-17 19:15, the ghost lag).
  *
  * Every row written outside a transaction is its own commit, so a batch of six ticks with a sample cost seven disk
  * syncs on the thread that also pushes other players' trucks: measured live, `batch stored` held that loop 24-46 ms.
@@ -228,7 +228,7 @@ test('a batch that fails part of the way through leaves no tick behind', () => {
 });
 
 
-// KANBAN #130 (the owner 2026-10-04 14:30): the 15 s grace after entry_close is gone - a late-join round takes a new entry only
+// KANBAN (2026-10-04 14:30): the 15 s grace after entry_close is gone - a late-join round takes a new entry only
 // before start + 37 s, when more than 45 s of its run (to start + 82 s) remain; late-entry-cutoff.test.js has the rest.
 test('a late-join round takes a new entry until start + 37 s, refuses one from then, and takes the same entry again after (2026-10-04)', () => {
   let now = 0;
@@ -251,7 +251,7 @@ test('a round closing entry at its start keeps the old door: no time limit at en
   assert.ok(r.enter(entryFor(rid)));
 });
 
-test('a batch that carries the committee\'s word on its price (kanban #311): taken when it stands and is the price played; refused otherwise', async () => {
+test('a batch that carries the committee\'s word on its price: taken when it stands and is the price played; refused otherwise', async () => {
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
   const { receiptsNeeded } = await import('../../arena-protocol/src/genesis.js');
@@ -271,7 +271,7 @@ test('a batch that carries the committee\'s word on its price (kanban #311): tak
   assert.equal(r.transcript(rid, eid).ticks.length, 2, 'taken');
 });
 
-test('a seat running the committee\'s feed for the round (kanban #311 slice 3) refuses a bare price; a batch with no price, or an attested one, is taken', async () => {
+test('a seat running the committee\'s feed for the round refuses a bare price; a batch with no price, or an attested one, is taken', async () => {
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
   const { receiptsNeeded } = await import('../../arena-protocol/src/genesis.js');

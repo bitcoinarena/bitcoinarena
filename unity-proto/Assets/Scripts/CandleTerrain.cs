@@ -6,7 +6,7 @@ using UnityEngine;
 using L = Blwp.Layout;
 
 /// <summary>
-/// THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15), a RAISED RIBBON on ONE SURFACE (492f128 PLAYTEST FIX, the owner 2026-09-17
+/// THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15), a RAISED RIBBON on ONE SURFACE (492f128 PLAYTEST FIX, 2026-09-17
 /// 13:51: "he can drive onto candles without getting stuck"). Every body is its whole slot, bodies touch, the plateau is
 /// 1 m over the ground and every free edge is a 4 m ramp at 25%; nothing is a wall. The chart MOVES (13:49): the core
 /// slides the slots toward the post office by `CV_SHIFT`, half a slot per sample, and a new candle grows out of the ground.
@@ -17,7 +17,7 @@ using L = Blwp.Layout;
 /// held two to four seconds, staggered, so a rebuild asks the bridge for few cells; the mesh is rebuilt ten times a second and slid by the shift
 /// in between, so it glides at the core's 0.576 m/s.
 ///
-/// The look (§4.15 client rows, the owner 2026-09-17 15:20 and 15:30): matte TradingView green #26a69a / red #ef5350, the
+/// The look (§4.15 client rows, 2026-09-17 15:20 and 15:30): matte TradingView green #26a69a / red #ef5350, the
 /// plateau 20% lighter than its ramps; NO GLOW ("I do not want to see through the candles") and no column: the WICK IS
 /// GROUND, a 0.5 m ridge with a 1 m top beyond the body's ends, ramped at 25%, in the core's layer like the body and drawn
 /// the same way; the forming candle's top face pulses at 1 Hz; the seam a 0.5 m white line on the ground. Nothing about a
@@ -31,7 +31,7 @@ public class CandleTerrain : MonoBehaviour
     public const float Station = 0.5f, XStation = 1f, Lift = 0.03f, SeamHalf = 0.25f;
     public const float RebuildSeconds = 0.1f, GroundSeconds = 2f;
     /// <summary>
-    /// THE RIBBON IS REBUILT WHEN SOMETHING ON IT CHANGED (kanban #266, the owner 2026-10-08, comment 979): every RebuildSeconds it
+    /// THE RIBBON IS REBUILT WHEN SOMETHING ON IT CHANGED (2026-10-08, comment 979): every RebuildSeconds it
     /// was rebuilt whatever changed - in a named profile of the 7 s after 100 % (Pixel 7a profile, 10x CPU) LateUpdate was
     /// 522-623 ms, ~70 rebuilds. Now a rebuild needs the core's candle words to change (all but the shift), the surface
     /// signature to change, or the ribbon to have slid SlideMetres since it was built; between, it slides as it always did.
@@ -43,7 +43,7 @@ public class CandleTerrain : MonoBehaviour
     readonly int[] _words = new int[L.CV_TOTAL];
     Mesh _body, _tail, _seam;
     /// <summary>The last TailCandles candles are their own mesh: the forming candle's words move with the price every tick (kanban
-    /// #266, comment 980), and its neighbour reads its z, so a change in the forming candle alone rebuilds these two.</summary>
+    ///, comment 980), and its neighbour reads its z, so a change in the forming candle alone rebuilds these two.</summary>
     public const int TailCandles = 2;
     float _tailShift;
     Material _formingTop;
@@ -142,7 +142,7 @@ public class CandleTerrain : MonoBehaviour
     public static Parts Build(int[] v, Func<float, float, float> ground) => Build(v, ground, 0, int.MaxValue);
 
     /// <summary>
-    /// Candles [from, to) only (kanban #266, comment 980): each candle's geometry reads the words and the ground and nothing
+    /// Candles [from, to) only (comment 980): each candle's geometry reads the words and the ground and nothing
     /// built before it, so the parts of [0, k) followed by those of [k, n) are the parts of [0, n).
     /// </summary>
     public static Parts Build(int[] v, Func<float, float, float> ground, int from, int to)
@@ -375,7 +375,7 @@ public class CandleTerrain : MonoBehaviour
             BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Blwp.BlwpCore.FrontlineZ, Surface, _seamVerts, _seamTris);
             Set(_seam, _seamVerts, _seamTris);
             Rebuilds++;
-            // THE SURFACE CHECK NOT AT START (kanban #266, measured 2026-10-08 in a named profile at 10x CPU as an Android phone:
+            // THE SURFACE CHECK NOT AT START (measured 2026-10-08 in a named profile at 10x CPU as an Android phone:
             // SurfaceCheck - ~170 points, each against every body triangle - was 226 ms inside Unity's start, from the first
             // rebuilds' lines). The first three lines say so; the check is logged at rebuild 30 and every 600th, as the probe reads it.
             if (Rebuilds <= 3 || Rebuilds == 30 || Rebuilds % 600 == 0)

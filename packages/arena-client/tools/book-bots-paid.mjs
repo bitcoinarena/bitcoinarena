@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BOTS THAT BUILD ORDER DEPTH WITH REAL WALLETS (kanban #236, the owner 2026-10-08: "A few bots simulate real bot behavior and
+// BOTS THAT BUILD ORDER DEPTH WITH REAL WALLETS (2026-10-08: "A few bots simulate real bot behavior and
 // build order depth"; the winnings paid out, measured to the msat). On the test host's paid regtest Up or Down market
 // (market-series-regtest.sh, SERIES_GAME=updown): each bot is a browser context on the page - its own player wallet, funded
 // over Lightning from alice's lnd through the page's own deposit - and places its orders through the market's own door
@@ -163,7 +163,7 @@ for (const stop = Date.now() + 1500000; Date.now() < stop; await wait(15000)) {
 }
 const finalBook = await getJson(`${seats[0]}/book?round=${round.id}`);
 const outcomeDoc = await getJson(`${seats[0]}/outcome?round=${round.id}`);
-// THE COLLECT (kanban #336: "every order's payout or return collected to the msat"): the page collects a payout and a
+// THE COLLECT ("every order's payout or return collected to the msat"): the page collects a payout and a
 // returned lock into the player wallet on its own; each bot's balance is read every 20 s until it has not moved for a
 // minute, up to COLLECT_WAIT_MS (default 8 min)
 const collected = [];

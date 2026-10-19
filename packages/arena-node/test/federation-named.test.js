@@ -9,7 +9,7 @@
 // (409): its federation, the 144-block expiry, its relays. A free round opens as before. A record
 // carrying custody byte 0 - the withdrawn THRESHOLD_LN (RULED 2026-09-22 22:59) - does not parse,
 // so the door answers it as it answers any bytes that do not decode (400), and no encoder makes it.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';

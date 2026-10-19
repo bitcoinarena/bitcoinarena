@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ROCK PAPER SCISSORS, ALWAYS PLAYABLE (kanban #233, "Two players can always play each other. It is a demo."): a private
+// ROCK PAPER SCISSORS, ALWAYS PLAYABLE ("Two players can always play each other. It is a demo."): a private
 // regtest bitcoind, two seats hosting nextblock and rock-paper-scissors (each advertising both), free 15-second rounds of
-// Rock Paper Scissors back to back (kanban #279), and the lobby link printed.
+// Rock Paper Scissors back to back, and the lobby link printed.
 // Regtest only: no bond on any other chain, no money. The seats are reached publicly through the named tunnel when
 // ARENA_WSS_<port> names them (rps-a / rps-b.bitcoin-arena.io).
 //
@@ -40,27 +40,27 @@ const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPC}/`, cookiePath: join(rt, 
 
 // A ROCK PAPER SCISSORS ROUND: its fields as the plugin names them (RPS_ROUND_FIELDS)
 const RPS_FIELDS = RPS_ROUND_FIELDS;
-// AND THE UP/DOWN MARKET (kanban #278, #236): the seats also host the test market btc-updown-15m (Polymarket's BTC Up or Down
+// AND THE UP/DOWN MARKET: the seats also host the test market btc-updown-15m (Polymarket's BTC Up or Down
 // 15m: its own 15-minute period, its terms, 2 of 3 attestors with test keys) and run it as a series, below; each seat runs
 // its order book for those rounds (GET /book?round=). Regtest only: test keys, free rounds.
-// THE SEATS' STORES ON DISK (kanban #280): a restart keeps their rounds and keys - the Up/Down series and its measurement go on
-// PUBLISHED AHEAD OR NOT AT ALL (kanban #292): without it every 8 s round takes 12-23 s to open and the rounds have holes
-if (env.ARENA_PUBLISH_AHEAD !== '1') { console.error('set ARENA_PUBLISH_AHEAD=1: the rounds are opened ahead (kanban #292)'); process.exit(2); }
+// THE SEATS' STORES ON DISK: a restart keeps their rounds and keys - the Up/Down series and its measurement go on
+// PUBLISHED AHEAD OR NOT AT ALL: without it every 8 s round takes 12-23 s to open and the rounds have holes
+if (env.ARENA_PUBLISH_AHEAD !== '1') { console.error('set ARENA_PUBLISH_AHEAD=1: the rounds are opened ahead'); process.exit(2); }
 mkdirSync(join(dir, 'seats'), { recursive: true });
 const round = await standUpRound({ host: '127.0.0.1', portA: 21651, portB: 21652, rpc, cli, page: env.ARENA_PAGE, store: join(dir, 'seats'),
   plugins: [NEXTBLOCK, ROCK_PAPER_SCISSORS, UPDOWN.registration], closeAtEnd: true });
 say({ step: 'up', nodes: round.nodes, lobby: round.lobbyUrl });
-// SHORT ROUNDS BACK TO BACK (kanban #279: 15 s; #280, the owner 2026-10-09 17:04: 10 s): each round takes picks for WINDOW_MS,
+// SHORT ROUNDS BACK TO BACK (15 s2026-10-09 17:04: 10 s): each round takes picks for WINDOW_MS,
 // and the next one's begin as this one's end - entry closes on that grid. A round is joinable only once both seats took it,
 // ~95 s after its committee time on this 10 s chain (its beacon 6 deep), so rounds are opened LEAD_MS ahead and kept in
 // flight: whenever the last close is under LEAD_MS + 15 s away, the next is opened 15 s after it.
-// 10 S (kanban #280, the owner 2026-10-09 17:04: "Set rounds to 10 seconds")
-// 8 S (#291, the owner 2026-10-09: "reduce the round length to 8 seconds")
+// 10 S (2026-10-09 17:04: "Set rounds to 10 seconds")
+// 8 S (2026-10-09: "reduce the round length to 8 seconds")
 const WINDOW_MS = 8000n;
 const LEAD_MS = 150000n;
-// BACK TO BACK, NO HOLE (kanban #292, measured 2026-10-10 10:52Z: closes 14-23 s apart for 8 s rounds): round-2of2's
+// BACK TO BACK, NO HOLE (measured 2026-10-10 10:52Z: closes 14-23 s apart for 8 s rounds): round-2of2's
 // keepBackToBack - published ahead, the 8 s grid kept 150 s ahead
-// TABLES (kanban #293): as many rounds a slot as the tables in play now, plus one spare - read off seat A's own listing
+// TABLES: as many rounds a slot as the tables in play now, plus one spare - read off seat A's own listing
 const countTables = tableCounter({ min: Number(env.RPS_MIN_TABLES || 3), spare: 1, windowMs: Number(WINDOW_MS), gameId: toHex(ROCK_PAPER_SCISSORS.gameId) });
 const rpsTables = async () => { try { const d = await (await fetch('http://127.0.0.1:21651/rounds')).json();
   return countTables(d.rounds || [], Date.now()); } catch { return 3; } };
@@ -68,7 +68,7 @@ keepBackToBack(round, { fields: RPS_FIELDS, windowMs: WINDOW_MS, leadMs: LEAD_MS
   onOpen: ({ id, entryCloseMs, table, tables, tookMs }) => say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), table, tables, tookMs }),
   onError: (e) => say({ step: 'not opened', why: e.message }) });
 
-// THE 15-MINUTE SERIES (kanban #236, the owner 2026-10-09: "one round per UTC quarter hour ... Open at least one quarter hour
+// THE 15-MINUTE SERIES (2026-10-09: "one round per UTC quarter hour ... Open at least one quarter hour
 // ahead; orders until the window ends"): a round for every window ending within the next 45 minutes - opened at least 15 min
 // before its window starts - its entries closing exactly at its window's end (the market's period grid, which every seat
 // checks), its locks sized to outlive it (lock-expiry.js). The attestor daemons resolve each one at its window's end.

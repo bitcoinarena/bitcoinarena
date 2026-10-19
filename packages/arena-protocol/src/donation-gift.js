@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DONATION TO THE DEVELOPERS, OUTSIDE ANY ROUND (kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to
+// A DONATION TO THE DEVELOPERS, OUTSIDE ANY ROUND (2026-10-17: "donate to developer, a popup opens with an amount to
 // choose from 100, 500, 1000, 5000 satoshis or custom"; "B e cash").
 //
 // The player's wallet pays the amount in ONE federation transaction whose outputs are pre-expired payout contracts to the keys of a
@@ -20,14 +20,14 @@ export const TYPE_DONATION_GIFT = 0x44;          // 'D'
 export const DONATION_GIFT_VERSION = 1;
 export const GIFT_TO_NETWORK = 0, GIFT_TO_GAME = 1;
 /**
- * A ZAP FROM THE SEASON BOARD (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user not
+ * A ZAP FROM THE SEASON BOARD (2026-10-17: "zaps in the leaderboard go to the federation's account of the user not
  * an external lightning payment"): a gift whose 32-byte target is the player's identity key - the key the board names - and whose
  * one output is a pre-expired payout contract to refundKeyOf(identity) in the donor's federation, which only that player's page
  * can spend (its identity secret). No set: the player is the whole of it. The name field stays empty.
  */
 export const GIFT_TO_PLAYER = 2;
 export const playerGiftRecipients = (identity) => [{ recipientPk: refundKeyOf(identity), shareBps: DONATION_BPS_TOTAL, label: 'player' }];
-/** The amounts the popup offers, in sat (the owner 2026-10-17), and the smallest and largest custom amount. */
+/** The amounts the popup offers, in sat (2026-10-17), and the smallest and largest custom amount. */
 export const GIFT_CHOICES_SAT = Object.freeze([100, 500, 1000, 5000]);
 export const GIFT_MIN_SAT = 1, GIFT_MAX_SAT = 10_000_000;
 /** How far a record may be dated ahead of a seat's clock. */

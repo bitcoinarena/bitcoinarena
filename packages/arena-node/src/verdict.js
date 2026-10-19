@@ -98,7 +98,7 @@ export function resultFrom({ answer, contract, entry, transcript, entryId, nodeP
       ? transcript.hash : transcriptHash(transcript),
     simCoreHash: contract.simCoreHash,
     nodePubkey,
-    // A PRICE ROUND'S RESULT CARRIES THE FRONT ITS RUN ENDED ON (§13 front_*, kanban #312), read off the run's own attested samples
+    // A PRICE ROUND'S RESULT CARRIES THE FRONT ITS RUN ENDED ON (§13 front_*), read off the run's own attested samples
     ...(priceRound ? frontOfRun(transcript.batches) : {}),
   };
   // The bytes come back with it: what is stored and served must be what was
@@ -161,7 +161,7 @@ export function verifiedFinal(records, { contract, signerNodes: joined }) {
 
   for (const rec of records || []) {
     const bytes = rec instanceof Uint8Array ? rec : rec && rec.bytes;
-    // a result's size is its type's (kanban #312: a price round's carries its front, 10 bytes more)
+    // a result's size is its type's (a price round's carries its front, 10 bytes more)
     let size = -1; if (bytes instanceof Uint8Array) { try { size = signedResultBytesOf(bytes); } catch { size = -1; } }
     if (!(bytes instanceof Uint8Array) || bytes.length !== size) { forged++; continue; }
 

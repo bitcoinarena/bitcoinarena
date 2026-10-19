@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE COLLECT'S LINES IN THE LOBBY (kanban #153, the owner 2026-10-07): the page writes up to three strings - another kept seed's
+/// THE COLLECT'S LINES IN THE LOBBY (2026-10-07): the page writes up to three strings - another kept seed's
 /// record, a failed collect, an uncollectable record - and their kind; Unity draws them under the round rows, one colour per
 /// kind, and draws nothing when the page wrote none. These read the page's JSON as the lobby does (JsonUtility).
 /// </summary>

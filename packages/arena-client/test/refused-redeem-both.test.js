@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A REFUSED ROUND'S TWO PLAYER LOCKS ARE REDEEMED TOGETHER (kanban #191, measured live 07:58Z on 0.0.2809, round 422ecd2e of
+// A REFUSED ROUND'S TWO PLAYER LOCKS ARE REDEEMED TOGETHER (measured live 07:58Z on 0.0.2809, round 422ecd2e of
 // series a69552a0): the seats kept both - the stake (out 0, 96000 msat, image a point) and the node-fee lock (out 1, 2000 msat,
 // image H(F), kept under H(handout id || "fee")) - the page counted 98000 msat owed, and the collect put 96000 in: the lock
 // client's redeem refused every lock whose image is not a point ("only a stake lock, whose image is a point, is redeemed

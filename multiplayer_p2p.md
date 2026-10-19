@@ -1,7 +1,7 @@
 # Bitcoin Arena — protocol v1 (formerly BTC Logistics War / BLWP)
 ## Providerless P2P protocol for games and other contests with a stake
 
-> **Bitcoin Arena and nextblock (RULED, the owner 2026-10-06).** The engine and
+> **Bitcoin Arena and nextblock (RULED 2026-10-06).** The engine and
 > the game are separated. **Bitcoin Arena** is the engine: custody,
 > settlement and verify, for any number of games and, later, other contests
 > such as prediction markets. **Tick Tock, Next Block** ("nextblock",
@@ -12,7 +12,7 @@
 > donation of 2.5% to the protocol devs and 2.5% to the game dev, which the
 > player may lower as today. Every wire tag is renamed, so every id changes;
 > BLWP never ran on a public network, so Bitcoin Arena starts as protocol
-> version **1** (§0A.9, the owner 2026-10-06). Where this document says BLWP it
+> version **1** (§0A.9, 2026-10-06). Where this document says BLWP it
 > means the Bitcoin Arena protocol; where it describes the truck, it describes
 > nextblock.
 
@@ -20,8 +20,8 @@
 **Version:** Bitcoin Arena protocol v1, draft. Earlier drafts (BLWP) remain in git history.
 **Date:** 2026-10-06
 
-> **Late join and background stake (the owner 2026-10-02 / 2026-10-03, written
-> 2026-10-03; the run's end and the door RULED again 2026-10-04 14:30, #130).**
+> **Late join and background stake (2026-10-02 / 2026-10-03, written
+> 2026-10-03; the run's end and the door RULED again 2026-10-04 14:30).**
 > A series may name an entry close 45 s after a round's start; the signer
 > nodes take a new entry only before start + 37 s (45 s or less of the run
 > left is too late), and a late joiner's run ends with everybody's at
@@ -32,7 +32,7 @@
 > start deadline is `ENTRY_VOID` (§16).
 > §5A.5 Timing, §13A, §23.1 step 5.
 
-> **WINDOW-10-SPEC (the owner 2026-10-01 09:40), anchored the same day.** The
+> **WINDOW-10-SPEC (2026-10-01 09:40), anchored the same day.** The
 > objection window is **exactly 600 seconds of wall time**, then `FINAL` if
 > no valid objection landed. It opens at the **round's end as its contract
 > fixes it** - the same UTC instant on every node, chosen by nobody - and a
@@ -44,12 +44,12 @@
 > §6 (`objection_window_W`), §12, §13A, §13C, §14, §24, §24B.1, the worked
 > example, §34's capacity line and the overview diagram.
 
-> **The federation has a life (the owner 2026-09-21).** A
+> **The federation has a life (2026-09-21).** A
 > federation now holds standing balances across many rounds, so
 > §23A says what the spec never said: how a federation is founded and by
 > whom (bonded, guardian-capable census nodes drawn by sortition; **at least
 > ten guardians, 7 of 10, for the first mainnet federation**; the testnet
-> federation is **5 of 7**, seven nodes and one guardian per node, the owner 2026-09-27); how many outages it absorbs
+> federation is **5 of 7**, seven nodes and one guardian per node, 2026-09-27); how many outages it absorbs
 > and when it is declared draining; several federations at once and how a
 > player's client picks one by load, not per round; how a guardian leaves,
 > what abandonment is, and what its bond then pays; succession back to
@@ -57,7 +57,7 @@
 > guardians, seats and clients talk; how a player finds his federation on
 > any device; and the **BIP39 seed of 12 or 24 words** every player writes
 > down, from which the wallet, the round keys and the identity key derive.
-> **Bonds (the owner 2026-09-28):** a confirmed, unspent bond stays the bond for
+> **Bonds (2026-09-28):** a confirmed, unspent bond stays the bond for
 > every later round, restart and advertisement; a new advertisement is an
 > update transaction, not a new bond; maturity is not expiry (§5A.2,
 > §5A.3B).
@@ -67,7 +67,7 @@
 > **leave a federation with notice and keep his bond** as a census node
 > (§23A.5); every role is opt-in (§5A.1). And: **FEDERATION is the only
 > custody** - THRESHOLD_LN does not exist, past rounds included, no decode-only
-> value (the owner 2026-09-22 22:59) - and **guardians
+> value (2026-09-22 22:59) - and **guardians
 > are not parked**: §23A is to be built now, on a testnet federation of
 > seven guardians, 5 of 7 (§23.6, §23A.1). **Players cannot lose** (the owner, last): the exposure cap is
 > what the smallest halting set's bonds cover, slashed guardian bonds wait
@@ -85,7 +85,7 @@
 > §23A (new), §24, §24B (new), §25.2, §27A.4, §27A.6, `FEDERATION.md`,
 > `IMPLEMENTATION.md` §9.
 
-> **The player wallet (the owner 2026-09-21).** The round
+> **The player wallet (2026-09-21).** The round
 > wallet of §24 becomes the **player wallet**: one e-cash wallet per player
 > seed and federation, kept in the browser, that the player deposits into
 > over Lightning, plays stakes from, receives winnings and refunds into
@@ -106,7 +106,7 @@
 > §24, §24A, the worked example, `FEDERATION.md` (flow, residuals,
 > rehearsal, rulings).
 
-> **The custody construction is fixed (the owner 2026-09-11).**
+> **The custody construction is fixed (2026-09-11).**
 > A stake no longer waits as a held HTLC in a Lightning node. It waits as a
 > **stake lock**: a contract inside a Fedimint-class federation, enforced by
 > the guardians' consensus, that only the round's settlement committee can
@@ -204,10 +204,10 @@ fee-on-top model, the P2P pool — is unchanged.
 
 ---
 
-# 0A. Bitcoin Arena: the engine, its games, and nextblock *(RULED, the owner 2026-10-06)*
+# 0A. Bitcoin Arena: the engine, its games, and nextblock *(RULED 2026-10-06)*
 
 Everything in this chapter is RULED by the owner on 2026-10-06 unless a line
-says RULED HERE. It is GAP until built; the board tasks #201-#209 carry the
+says RULED HERE. It is GAP until built; the board tasks carry the
 work.
 
 ## 0A.1 Names
@@ -215,7 +215,7 @@ work.
 | What | Name | In code |
 |---|---|---|
 | the engine and its protocol | **Bitcoin Arena**, protocol v1 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
-| the first game | **Tick Tock, Next Block** - short "nextblock" (the owner 2026-10-06) | `nextblock` (its core, its Unity project and its page assets in one package) |
+| the first game | **Tick Tock, Next Block** - short "nextblock" (2026-10-06) | `nextblock` (its core, its Unity project and its page assets in one package) |
 | the site | `bitcoin-arena.io` (not registered yet; the current pages stay until it is) | |
 | the repository | `github.com/a tester/bitcoin-arena`, with the whole history of this one kept | |
 
@@ -248,7 +248,7 @@ result), inside the replay sandbox (§0A.6).
 ## 0A.3 A game is a manifest anyone may register
 
 **Every developer can register a game on the network and name its donation
-set (RULED, the owner 2026-10-06).** Nobody approves it. A game exists once its
+set (RULED 2026-10-06).** Nobody approves it. A game exists once its
 manifest is published:
 
 ```text
@@ -278,7 +278,7 @@ game_id = H(GameManifest)
 ```
 
 **Published by being served, anchored by the seats that host it** *(RULED,
-2026-10-10, kanban #333; replaces the earlier `OP_RETURN "ARN" GAME game_id`
+2026-10-10replaces the earlier `OP_RETURN "ARN" GAME game_id`
 publication)*: every seat that hosts a game serves its manifest body (`GET
 /games`), and a reader checks it alone - `H(body) = game_id` and the
 developer's signature - so serving needs no trust. On chain, a game is named
@@ -344,7 +344,7 @@ kind a game is: `REPLAY` (a replayed run, §10) or `ATTESTED` (§0A.7a).
 Nothing in the engine may assume that a result is a replayed run outside the
 code that handles `REPLAY`.
 
-## 0A.7a Non-replay plugins: attested results *(RULED, the owner 2026-10-07, board #206)*
+## 0A.7a Non-replay plugins: attested results *(RULED 2026-10-07, board)*
 
 **Result source.** A round of an `ATTESTED` game has no core, no config and
 no run: its manifest lists no cores, `run_ticks_max` 0, no rank curve and no
@@ -390,19 +390,18 @@ not know the price; they know who the game dev said may say it. `GET
 its own, naming **different** outcomes. The seat holds both: the pair is the
 proof that the attestors contradicted themselves, the round is `DISPUTED`,
 **and it settles on neither outcome** - no table is built from it.
-*(RULED, 2026-10-10, kanban #334)* **A disputed round is VOID at once:** every
+*(RULED, 2026-10-10)* **A disputed round is VOID at once:** every
 stake lock and fee lock comes back whole by the return door (the seats' forfeit
 to each player's own key), no fee is taken, and nobody waits for a lock's
 expiry. **Attestors post a bond the contradiction proof slashes - before
-mainnet** (with the node bonds' enforcement, #307); on testnet there is no
+mainnet** (with the node bonds' enforcement); on testnet there is no
 attestor bond, and the proof is published so the market's developer can drop
 the attestor from the next manifest.
 
 **The payout rule: pari-mutuel** (RULED: no counterparty - the losers pay the
 winners). Out of each entry's stake come the market's fees: its manifest's,
 0.5 % nodes + 0.5 % donation by default (§0A.7b.3), **due once the entry is
-in the round at its entry close, paid out at resolution** (the owner
-2026-10-09): a market entry's fee lock holds both, it makes no donation
+in the round at its entry close, paid out at resolution** (2026-10-09): a market entry's fee lock holds both, it makes no donation
 outputs at entry, and before entry close it can be cancelled at no cost. The rest is its net stake in the pool. With outcome `o`:
 - every entry that picked `o` gets its own net stake back plus
   `floor(losing_pool x its_net / winning_net)`, where `losing_pool` is the sum
@@ -415,7 +414,7 @@ The settlement seats build this table from the stored entries' picks and the
 held outcome **without running any game code**. A manifest of an attested
 game must pick `PARI_MUTUEL`; a replayed game must pick `RANK_CURVE`.
 
-**Slices.** Slice 1 (board #206): the manifest type, the pick, the
+**Slices.** Slice 1 (board): the manifest type, the pick, the
 attestation and its refusals, the dispute, and the table - all read at
 `GET /outcome` and `/api/rounds`; an attested round's settlement is **held**,
 nothing of it moves. Slice 2: the settlement transaction paying that table
@@ -452,7 +451,7 @@ is no core.
    signatures are the proof: the round is `DISPUTED`, and nothing is paid out
    of it.
 
-## 0A.7b The market we build first: "Bitcoin Up or Down - 15 minutes" *(the owner 2026-10-09: "match this polymarket market", board #235/#278)*
+## 0A.7b The market we build first: "Bitcoin Up or Down - 15 minutes" *(2026-10-09: "match this polymarket market", board /#278)*
 
 The model is Polymarket's series **BTC Up or Down 15m**
 (polymarket.com/event/btc-updown-15m-1791598500, read 2026-10-09 from its
@@ -481,7 +480,7 @@ samples ([{at_ms, price}], integer prices) and computes the price to beat
 start) and the end price (the same 60 s average before the window's end),
 each reading weighted by how long it stood. Up if `end price >= price to
 beat`, else Down. **Read, not averaged over the window (corrected 2026-10-10,
-kanban #236 comment 1154):** the "TWAP" in Polymarket's rule is Chainlink's
+comment 1154):** the "TWAP" in Polymarket's rule is Chainlink's
 TWAP 60 s *stream*, read at the two ends. Averaging the whole window instead
 disagreed with Polymarket in 2 of 4 live windows; end against start agreed
 in 4 of 4. The comparison is exact
@@ -509,7 +508,7 @@ clears it the same way: no arrival order, nothing to front-run.
 - **What does not fill** is not charged: its stake and its fee come back.
   What fills pays its fee (§0A.7b.3).
 
-**Standing orders, every second** (the owner 2026-10-09: "Order batches alle 1s,
+**Standing orders, every second** (2026-10-09: "Order batches alle 1s,
 wenn möglich alle 0.5s"). A player places a limit order at any time, and it
 is matched in the next batch. **Batches run every 0.5 s** (`BATCH_MS`;
 measured, §0A.7b.5: seven seats agreed every batch's set in at most 275 ms
@@ -529,7 +528,7 @@ Selling a position before resolution (Polymarket's sell button) is a later
 slice: a sell of Up at p is an order matched against a buy of Up at >= p in
 the same batch.
 
-**0A.7b.3 Fees (the owner 2026-10-09).** A market's fees are its manifest's:
+**0A.7b.3 Fees (2026-10-09).** A market's fees are its manifest's:
 0.5 % to the nodes and 0.5 % donation by default, at most 5 % each and 10 %
 together.
 - **The fee falls due when an order fills** ("when an order is filled, the
@@ -550,7 +549,7 @@ together.
   if Up wins.
 
 **0A.7b.4 Still to build.** ~~Market rounds on their own 15 min period
-instead of the 90 s grid~~ (AS BUILT 2026-10-10, kanban #236/#237: a market's series runs on
+instead of the 90 s grid~~ (AS BUILT 2026-10-10,: a market's series runs on
 its manifest's `round_period` - 96 rounds a day for 15 min - and every other game's series stays on the 90 s grid with
 its id unchanged; `series.js` reads the period off the template, `series-writer.js` stamps it from the manifest), with lock expiry per round (window end + deadline
 + objection window). The batch record signed by the seats. Cancel at the
@@ -559,7 +558,7 @@ Positions as locks and the payout per share. The reference attestor daemon
 (three price sources, `upDownOutcome`). Selling before resolution. The
 market page: Up/Down prices, the price to beat, the order entry, positions.
 
-**0A.7b.4a Each order brings its own amount; market and limit orders** (AS BUILT 2026-10-10, kanban #237; the owner 2026-10-10:
+**0A.7b.4a Each order brings its own amount; market and limit orders** (AS BUILT 2026-10-102026-10-10:
 "Make the larger protocol change as needed to support both market and limit orders"). In a paid market round an order's
 stake is the player's own, 1 sat to 100,000 sat (`order-book.js` MIN_ORDER_MSAT, MAX_ORDER_MSAT); the round's
 `stake_msat` is what a plain pick stakes. The seat checks the order's 1 % fee on its own amount. A **limit order** names a
@@ -568,7 +567,7 @@ over the price now with a 60 s expiry: it fills at its batch's one clearing pric
 back at settlement. Both go through the same entry, deposit and locks; the page hands their locks to every seat until
 entry close, since a batch needs 5 seats holding an order's locks.
 
-**0A.7b.5 How the seats agree a batch** (kanban #278 step 4). A page posts
+**0A.7b.5 How the seats agree a batch**. A page posts
 a signed order to every seat (`POST /order`), and each seat keeps it with the
 time it arrived. Batch k takes what reached any seat before its cutoff,
 (k + 1) x the interval in ms since the epoch, so every seat names the same k
@@ -599,8 +598,7 @@ Every batch was held and signed by all seven seats, and all seven cleared
 the 40 batches identically. Orders backed by locks, the certificate and the
 void are §0A.7b.6.
 
-**0A.7b.6 Positions backed by locks** (kanban #278, comment 1127; the owner
-2026-10-09: "Pick (a)").
+**0A.7b.6 Positions backed by locks** (comment 1127; 2026-10-09: "Pick (a)").
 
 **Orders and locks:**
 - **An order is an entry** with a limit price and an expiry after its pick
@@ -656,7 +654,7 @@ max 344 ms, so 0.5 s holds (with the 100 ms grace). A batch that must first
 void or certify an earlier one took up to 532 ms; the book is then one batch
 late.
 
-## 0A.7c Event-market templates *(AS BUILT 2026-10-14, kanban #362 feature 5; docs/PLATFORM-RESEARCH.md)*
+## 0A.7c Event-market templates *(AS BUILT 2026-10-14, feature 5; docs/PLATFORM-RESEARCH.md)*
 
 **Why.** A market's question lived in its signed manifest, so every new
 question ("Will X happen by Y?") needed a newly signed manifest that nodes
@@ -665,7 +663,7 @@ terms, and **anyone opens a new question by publishing one round of it**.
 
 **The template, in the manifest.** An `ATTESTED` manifest may name, after its
 own marker byte `0x04` (behind the market terms, before the required version;
-`0x03` is a top split's payout shares, kanban #362 feature 3). The manifest's
+`0x03` is a top split's payout shares, feature 3). The manifest's
 trailing fields, each after its own marker and in this order: an attested
 game's market terms `0x01` and template `0x04`, a head-to-head game's table, a
 top split's shares `0x03` (never two result types' fields in one manifest),
@@ -683,7 +681,7 @@ Everything a market's trust and money are made of stays the manifest's: its
 attestor keys and threshold, its fees, its attestors' deadline and its source
 rule - its market terms (§0A.7b.3), **which a template must name**. Its terms'
 `resolve_after_close_ms` is then the **earliest** a round may resolve after its
-entry close. A template **requires protocol version 2026.0.4 or later** (#349),
+entry close. A template **requires protocol version 2026.0.4 or later**,
 as a top split does: its rounds carry their question in a contract tail the
 builds of that version read, the census seats a round's nodes only among those
 whose advert lists its version - so a seat without the code is never seated
@@ -732,7 +730,7 @@ bytes (`x-question`, `x-outcomes`, `x-resolve-at-ms`), `GET /outcome` answers
 the round's question and labels; the page's lobby shows the question from the
 contract it checked, not a node's word.
 
-## 0A.7d Markets on games *(AS BUILT 2026-10-15, kanban #362 feature 6, protocol 2026.0.6; docs/PLATFORM-RESEARCH.md item 6)*
+## 0A.7d Markets on games *(AS BUILT 2026-10-15, feature 6, protocol 2026.0.6; docs/PLATFORM-RESEARCH.md item 6)*
 
 **Why.** Every game round already ends in a result its own committee signs.
 A market whose outcome **is** that signed result needs no oracle and no
@@ -757,7 +755,7 @@ written empty): no attestation decides it, and `POST /outcome` refuses one
 for it by name (an empty attestation would otherwise meet a threshold of 0).
 It must name market terms (fees, question, `resolve_after_close_ms`,
 `deadline_after_resolve_ms`), runs on no grid (`round_period` 0), and
-**requires protocol version 2026.0.6 or later** (#349). Every outcome must be
+**requires protocol version 2026.0.6 or later**. Every outcome must be
 some value's (no pick that can never win). Tick Tock's natural market:
 `outcomes [BULLS, BEARS]`, `mapping [0, 1, 0xff]` - FLAT refunds; a three-way
 market maps FLAT to a third outcome instead.
@@ -873,7 +871,7 @@ attested one (arena-node `game-market.js`):
 Left: the page's market lines. **Dormant until seats advertise 6**: a
 version-6 round draws a committee only from nodes whose advert lists 6.
 
-## 0A.7e Scalar markets *(AS BUILT 2026-10-15, kanban #362 feature 8, protocol 2026.0.7; docs/PLATFORM-RESEARCH.md item 8)*
+## 0A.7e Scalar markets *(AS BUILT 2026-10-15, feature 8, protocol 2026.0.7; docs/PLATFORM-RESEARCH.md item 8)*
 
 **Why.** "A numeric outcome (a price, a count) paid linearly between bounds.
 Richer questions than buckets; one market instead of many." One market asks
@@ -895,7 +893,7 @@ Its `outcomes` are exactly the two **sides**, `[LONG, SHORT]` (LONG = pick 0,
 SHORT = pick 1); its attestors are k of n as for any attested market; it must
 name market terms (fees, question, `resolve_after_close_ms` - when the value
 is read - and `deadline_after_resolve_ms`), and it **requires protocol version
-2026.0.7 or later** (#349). **No round byte changes**: a round of a scalar
+2026.0.7 or later**. **No round byte changes**: a round of a scalar
 market is an attested round whose entries pick a side; `roundFitsManifest`
 refuses a round of it below version 7 by name. A node too old to know the
 field cannot read the manifest (trailing bytes); every manifest without it
@@ -1001,9 +999,9 @@ A version-8 manifest; dormant until seats advertise 8.
 
 ## 0A.8 The money: 10% of the gross stake
 
-*(Kanban #397, the owner 2026-10-16: with the protocol reserves the split becomes nodes 4 %, developers 4 %, reserves 2 %, and items 40 / 40 / 20 - §27A.9, not yet built; the table below is the split in force.)*
+*(2026-10-16: with the protocol reserves the split becomes nodes 4 %, developers 4 %, reserves 2 %, and items 40 / 40 / 20 - §27A.9, not yet built; the table below is the split in force.)*
 
-RULED (the owner 2026-10-06):
+RULED (2026-10-06):
 
 ```text
 stake (gross, what leaves the wallet)              100%
@@ -1028,7 +1026,7 @@ stake (gross, what leaves the wallet)              100%
   same whoever the recipients are.
 - Free rounds carry no fee and no donation.
 
-**The website that brought the entry** *(RULED the owner 2026-10-15, kanban #362
+**The website that brought the entry** *(RULED 2026-10-15, 
 roadmap item 7, path (a); AS BUILT, protocol 2026.0.9)*: an entry may name the
 33-byte payout key of the page that brought it (`frontend_pk`, marker `0xac`,
 last of the entry, in its signed bytes - so no seat can swap it). At
@@ -1039,7 +1037,7 @@ of the nodes' part of the fee locks; the nodes share the rest. **The player
 pays nothing more**: the stake, the fee lock (5%) and the donation are what
 they would be without it. Only on a round of version 9 or later (a seat
 refuses the entry otherwise, by name), so its seats are only nodes that pay it;
-every entry without it keeps its bytes. **An order book** (kanban #362 comment
+every entry without it keeps its bytes. **An order book** (comment
 2295) pays the same 20% of the nodes' part of the fees each claimed order paid
 (its buy and sell fees x `node_bps / (node_bps + donation_bps)`), floored per
 order, as a line before the seats' in its settlement (`bookLockSettlement`,
@@ -1048,9 +1046,9 @@ are unchanged.
 
 ## 0A.9 Protocol version 1, and the move from BLWP
 
-**Every wire tag is renamed (RULED, the owner 2026-10-06), so every id changes.
+**Every wire tag is renamed (RULED 2026-10-06), so every id changes.
 BLWP never ran on a public network, so this is Bitcoin Arena protocol
-version 1, not a version 2 of anything (the owner 2026-10-06).** RULED HERE:
+version 1, not a version 2 of anything (2026-10-06).** RULED HERE:
 
 - tagged hashes move from `BLWP/v1/...` to `ARENA/v1/...` and the
   publication magic from `"BLW"` to `"ARN"`; `protocol_version` stays **1**;
@@ -1308,7 +1306,7 @@ A keypair. The public key identifies the player; the private key signs Entry
 Contracts, session data and protocol messages. No email or password. Wallet
 identity and game identity need not be the same key.
 
-**Display name (the owner 2026-09-08, M3; key ruled 2026-09-12).** Default is
+**Display name (2026-09-08, M3; key ruled 2026-09-12).** Default is
 derived from the player's **identity key** - the tab's stable key, never a
 round key - so every client shows the same string for one player in the lobby,
 on the board and in every round:
@@ -1324,7 +1322,7 @@ from their verified display record: the custom name if they chose one, else
 the default from the identity key the record carries. The
 LNURL-pay `comment` on donations (rounds published with an LNURL set only;
 a key set pays inside the federation, §22A) is the player **public key as
-hex**, not the display name (the owner 2026-09-08). It is omitted if
+hex**, not the display name (2026-09-08). It is omitted if
 `commentAllowed` is under 64 characters.
 
 **Browser key (M3).** The secret is stored in the browser (`arena.player.v1`)
@@ -1516,12 +1514,12 @@ developer approval is required.
 
 # 5. Unity vs deterministic core
 
-**The truck game is one use of this network** (the owner 2026-09-15). The seats
+**The truck game is one use of this network** (2026-09-15). The seats
 and the federation are a generic consensus and custody layer. They replay
 and settle a named core (`sim_wasm_hash`) and the round's rule set
 (`config_hash` / `game_config`); they do not embed truck, cargo or map. A
 second game is a new core + client on the same nodes and federation. **Several
-games and several rule sets run at once** (the owner 2026-09-15 08:07): each
+games and several rule sets run at once** (2026-09-15 08:07): each
 round names its core and its rules; two titles and two configs can be live
 on the same seats in the same window. Not a rewrite of the seats. M3 keeps
 that split as far as it will go.
@@ -1587,7 +1585,7 @@ The advertisement is **not** what makes a node eligible. The bond output is
 (§5A.2). The advertisement is the body that the bond output commits to, so
 that chain data alone identifies both the node and its terms.
 
-**Every role is opt-in (RULED, the owner 2026-09-21).** A node says in its
+**Every role is opt-in (RULED 2026-09-21).** A node says in its
 advertisement what it takes part in, and is drawn for nothing else. The
 three roles are independent: `game_verify` (replay and sign results),
 `settlement` (hold a share of the preimages and sign the settlement
@@ -1650,7 +1648,7 @@ bond and wait for confirmations. That is intended — the delay is what makes
 census membership expensive, and it is the same property that makes the
 census objective. It is paid **once**.
 
-**A bond, once confirmed, stays the bond (RULED, the owner 2026-09-28 07:39).**
+**A bond, once confirmed, stays the bond (RULED 2026-09-28 07:39).**
 
 - **It does not expire.** A bond output that has confirmed and is unspent
   is the node's bond at every later `census_height` - for every later
@@ -1702,10 +1700,10 @@ bond_amount >= bond_min(role)
 committed advertisement body retrievable and hash-matching
 advertisement signature valid under node_pubkey
 advertisement declares the role and a supported protocol version
-advertisement declares serving = true          (the owner 2026-09-28, below)
+advertisement declares serving = true          (2026-09-28, below)
 ```
 
-**Stepping out without unbonding** *(RULED, the owner 2026-09-28)*. A node that
+**Stepping out without unbonding** *(RULED 2026-09-28)*. A node that
 will be offline - maintenance, a move, retirement - publishes an
 advertisement update (§5A.2) with `serving = false`. From the first series
 whose `census_height` is at or above that update's block, the node is not in
@@ -1827,7 +1825,7 @@ minus the round's own seats (the witnesses) and 25% to the donation set of
   sets of payout contracts, and an entry named by both is paid from both.
   The witnesses excluded from each bond's nodes' share are the round's
   seats, all of them, the other slashed ones included - a slashed node is
-  not an active census node at any height after its spend in any case. **Nothing is ever burned (RULED, the owner 2026-09-21),
+  not an active census node at any height after its spend in any case. **Nothing is ever burned (RULED 2026-09-21),
 here or anywhere in this protocol**: a slash that destroys value pays
 nobody for the harm and makes the slashing itself worthless to prove, so
 every remainder in this document has a recipient. The Round Contract's
@@ -1860,7 +1858,7 @@ script path B (slash)
 ```
 
 `bond_maturity` is an absolute locktime, reference 30 days after the bond
-confirms. It is **not an expiry** (RULED, the owner 2026-09-28): it is only the
+confirms. It is **not an expiry** (RULED 2026-09-28): it is only the
 earliest height at which path A lets the node take its money back, and its
 purpose is that **arbitration can never freeze a bond forever**: if
 arbitration disappears, path A returns the money to its owner. A bond past
@@ -2056,7 +2054,7 @@ the coinbase), and both uses pass the value through a tagged hash again -
 anything else. Changing the code to the old formula would move every seed
 and buy no security. The spec follows the code.
 
-**Bitcoin is the mainnet source** *(ruled, the owner 2026-09-11; drand
+**Bitcoin is the mainnet source** *(ruled, 2026-09-11; drand
 removed)*. The beacon is a value that **does not exist yet** when the
 contract is published — and "published" is objective: the
 contract's hash confirms in a block strictly below the beacon block
@@ -2154,7 +2152,7 @@ gets no entry receipts.
   block confirms within the grace period, the round never opens for entry;
   since no stake was committed, nothing needs refunding.
 
-### Round series — a new round every 90 seconds *(RULED, the owner 2026-09-28)*
+### Round series — a new round every 90 seconds *(RULED 2026-09-28)*
 
 **The nodes open a new round every 90 seconds, continuously.** A publication
 and a beacon per round cannot carry that: each costs a transaction and waits
@@ -2177,15 +2175,14 @@ publication           OP_RETURN "BLW" SERIES series_id, confirmed before
                       series_start (CENSUS3D-1401; a series has nothing to
                       grind, below)
 committee_time        = series_start - series_lead_min
-series_lead_min       a genesis parameter (§27A.6): mainnet 72 h (the owner
-                      2026-09-28 11:31, HORIZON72-1131; census, committee
+series_lead_min       a genesis parameter (§27A.6): mainnet 72 h (2026-09-28 11:31, HORIZON72-1131; census, committee
                       time and lead one 72 h since 14:02, CENSUS3D-1401);
                       testnet4 24 h (14:05, TN24-1405), with its census
                       cut 36 h ahead (14:09, TN24-POST-1409)
 beacon, depth         as above, once per series; reached inside the 72 h
 ```
 
-**Timing - every network, every round *(RULED, the owner 2026-09-28; replaces
+**Timing - every network, every round *(RULED 2026-09-28; replaces
 0a4c25c4's 15 s entry window and 90 s run)*.** A new round starts every
 **90 seconds**, and **every run of a round starts together** at its
 `start_time` and lasts at most **82 seconds** (`round_duration_s` = 82,
@@ -2203,22 +2200,21 @@ entry_close(i)     = start_time(i) + late_join  late_join = 0 or 45 s, fixed by 
                                                 (in its template, so in its series id)
 last_entry(i)      = start_time(i) + 37 s       a late-join round: a NEW entry at or after it
                                                 is refused - 45 s or less of the run is left
-                                                (#130); the same entry posted again is taken
+; the same entry posted again is taken
 join_tick          = the round's ticks already gone at the join (0 before the start); the
                      run is blockTicks - join_tick and ends on the round's last tick
 run ends           <= start_time(i) + 82 s      every run, late joiners included
 result card        >= 8 s, then "joining next round in N s" + "exit game"
 ```
 
-**Late join (RULED, the owner 2026-10-02 and 2026-10-03: "Joining an existing
+**Late join (RULED 2026-10-02 and 2026-10-03: "Joining an existing
 round is possible with 45 seconds in").** A series may let players join a
 round that is already running, up to **45 seconds** after its start. The 45
 seconds are part of the series template (`entry_close - start_time`), so
 they are in the series id and every round of the series derives them; a
 series names either 0 or 45 s and nothing else.
 
-**The run ends with the round; the door closes when 45 s remain *(RULED,
-the owner 2026-10-04 14:30, #130: "They always end at the 82/90 boundary ... A
+**The run ends with the round; the door closes when 45 s remain *(RULED 2026-10-04 14:30,: "They always end at the 82/90 boundary ... A
 later join does not extend the round. The late joiner has less time. Join
 closes when 45 s remain")*.** The signer nodes are stricter than the bytes:
 a new entry of a late-join round is refused from `start_time + 37 s` on (at
@@ -2271,7 +2267,7 @@ not `H(series_id || i)` of a published series whose beacon it holds, or whose
 `i` is outside `0 .. round_count - 1`, or whose entry window is not the one
 derived above.
 
-**72 hours, about 3 days *(RULED, the owner 2026-09-28 14:02, CENSUS3D-1401;
+**72 hours, about 3 days *(RULED 2026-09-28 14:02, CENSUS3D-1401;
 replaces CENSUS90-1400 and the 84 h / 120 h schedule of HORIZON72-1131)*.**
 A series' census is cut and its `committee_time` falls **72 h** before its
 first entry opens, both at the same instant. Inside those 72 h, and before
@@ -2309,7 +2305,7 @@ The census cutoff, `committee_time` and the lead are one number, 72 h
 (CENSUS3D-1401). The 120 h census of HORIZON72-1131, the 90 h of
 CENSUS90-1400 and the 84 h `committee_time` are withdrawn.
 
-**Testnet4 runs a 24 h lead *(RULED, the owner 2026-09-28 14:05, TN24-1405)*,
+**Testnet4 runs a 24 h lead *(RULED 2026-09-28 14:05, TN24-1405)*,
 so a round can be tested the next day, with its census cut 36 h ahead
 *(RULED 14:09, TN24-POST-1409)*.** On testnet4 `committee_time` and
 `series_lead_min` are **24 h**: `committee_time` falls at
@@ -2368,7 +2364,7 @@ ignored. Nothing is chosen, so there is nothing to grind: the old argument
 candidate". If no publication confirms in time - before `series_start(k)` on
 mainnet, below the beacon block on testnet4 - series `k` does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
-**One node on duty posts the next 24 h, and a missed slot falls to the next (RULED, the owner 2026-10-13 ~18:35Z, kanban #352).**
+**One node on duty posts the next 24 h, and a missed slot falls to the next (RULED 2026-10-13 ~18:35Z).**
 "Wir müssen jeden Tag verlässlich follow up rounds für alle Spiele und Networks posten, jeden Tag für die nächsten 24h. Das macht
 immer eine bestimmte deterministische node die gerade Dienst hat ... diese node postet die Runden die in 24h starten. Wichtig ist dass
 keine gap entsteht. Wenn die Node ihren Slot verpasst, macht die nächste Node, verantwortlich für die nächste Runde das, und die Runde
@@ -2515,7 +2511,7 @@ This is what §5A.10 turns into a rule: the stake ceiling is set so that the
 capital required to reach these probabilities exceeds the pools it could
 take.
 
-### The client computes the committee itself *(RULED, the owner 2026-09-28)*
+### The client computes the committee itself *(RULED 2026-09-28)*
 
 **A client never takes a node's word for who serves a round.** Before it
 seals a stake-secret share, signs an entry or lists a round as joinable, the
@@ -2577,7 +2573,7 @@ networks run smaller committees, and because the sizes are part of the
 network's identity a small-committee network can never be mistaken for
 this one.
 
-### Reserve seats *(RULED, the owner 2026-09-28)*
+### Reserve seats *(RULED 2026-09-28)*
 
 A node drawn up to 72 h ahead (§5A.5, round series) may be offline when its
 round comes. So each role draws **more nodes than it seats**:
@@ -2851,7 +2847,7 @@ creator decides who earns.
 
 ## 5A.13 Player–node separation
 
-> **A player declares no operator.** (RULED the owner 2026-10-14 ~20:01Z: "Remove the do you run arena nodes section and also
+> **A player declares no operator.** (RULED 2026-10-14 ~20:01Z: "Remove the do you run arena nodes section and also
 > remove it from the specs".) The Entry Contract carries no operator declaration, the client asks for none, and no node is
 > made conflicted, unpaid or slashable by one.
 
@@ -3106,8 +3102,8 @@ and its result carries `front_mode = SIM` - the same fallback the client
 already shows for every feed - and nodes replay it the same way. The player
 never chooses the price; he can only replay it or not play.
 
-**Protocol 5: the median of signed readings** *(RULED, the owner 2026-10-14
-~21:50Z, kanban #312: "Build A as protocol 5 ... each seat signs the price it
+**Protocol 5: the median of signed readings** *(RULED 2026-10-14
+~21:50Z,: "Build A as protocol 5 ... each seat signs the price it
 read, and the sample is the median of five signed readings. Nobody proposes a
 price, so nobody chooses BULLS, BEARS, or FLAT. That signature change is
 protocol 5.")*. Measured before it: rounds `6b51be20` / `a45f2ae5` were signed
@@ -3168,8 +3164,7 @@ round_randomness = hash(beacon_block)                // §5A.5 (ruled 2026-09-24
 player_seed      = H(round_randomness || player_pubkey || player_secret)
 ```
 
-**One world per round where the round's config says so *(RULED, the owner
-2026-10-04, #23)*.** Under a shared-world config (`2170f250`, §27A.7.8) the
+**One world per round where the round's config says so *(RULED 2026-10-04)*.** Under a shared-world config (`2170f250`, §27A.7.8) the
 world is `round_seed = H(committee_seed || "world")` (§5A.5) for every player
 of the round: no `player_secret`, key or `join_tick` moves it, the entry's
 `world_secret` is 32 zero bytes, and a node refuses an entry that names any
@@ -3223,7 +3218,7 @@ RoundResult {
 }
 ```
 
-**From protocol 5** *(RULED, the owner 2026-10-14 ~21:50Z, kanban #312)*
+**From protocol 5** *(RULED 2026-10-14 ~21:50Z)*
 `open_cents` and `close_cents` are the **medians** of the committee's signed
 readings of sample 0 and of the round's closing sample (the last at or before
 its last tick), each standing with at least five readings (§11). A seat keeps
@@ -3254,7 +3249,7 @@ close plus the tolerance, with no valid objection. The player's winnings or refu
 # 13A. Objection window and replay veto
 
 After a result is `PROVISIONALLY_FINAL`, the window `W` runs: **exactly 10
-minutes, 600 seconds of wall time** (RULED, the owner 2026-10-01 09:40,
+minutes, 600 seconds of wall time** (RULED 2026-10-01 09:40,
 WINDOW-10-SPEC).
 
 **The window, stated once.**
@@ -3264,8 +3259,7 @@ WINDOW-10-SPEC).
   carried it as a window in blocks at both ends, and §13A allowed any value
   up to 6 hours. None of that stands. There is one window on every network
   and in every round: 600 seconds.
-- **The clock: the same start and the same length on every node (RULED,
-  the owner 2026-10-01).** Wall time, not blocks, and not a moment any node
+- **The clock: the same start and the same length on every node (RULED 2026-10-01).** Wall time, not blocks, and not a moment any node
   observes or any signer writes down:
 
   ```text
@@ -3356,7 +3350,7 @@ consistent, and deterministic replay under the round's `sim_wasm_hash`
 produces `claimed_result ≠ signed_result`. Anyone can check this; there is
 no judgement involved, only replay.
 
-**AS BUILT (the owner 2026-10-04, kanban #24).** `POST
+**AS BUILT (2026-10-04).** `POST
 /objection?round=&entry=[&block=]` takes the objection as its body and
 refuses an empty one: 400, "an objection carries its transcript and
 receipts (13A)". The body is a bundle of four length-prefixed parts:
@@ -3487,12 +3481,11 @@ objects carry their own verification.
 - The rule is bound into the Entry Contract via `equivocation_rule_hash`,
   so the player accepted it before staking.
 
-**AS BUILT (the owner 2026-10-04, kanban #25).**
+**AS BUILT (2026-10-04).**
 - **What counts:** two checkpoints of one entry, each signed by its session
   key, with different ids and either the same tick or the same parent. It
   holds at any tick, the first included. The proof check is
-  `provesEquivocation`, with no replay. **Same parent, RULED the owner
-  2026-10-05 (b):** a pair from one later parent forfeits only when both
+  `provesEquivocation`, with no replay. **Same parent, RULED 2026-10-05 (b):** a pair from one later parent forfeits only when both
   marks were receipted by a seat, each in some seat's chain. A mark a seat
   refused for not following its head was never carried and does not count.
   That is a page stuck on an old head, measured on testnet4: ea63aa94 sent
@@ -3554,7 +3547,7 @@ nodes replay that object, so "node A saw more than node B" cannot by itself
 produce disagreement.
 
 **Result window.** The result window **equals the objection window** -
-600 seconds of wall time (the owner 2026-09-15; fixed at 600 s by
+600 seconds of wall time (2026-09-15; fixed at 600 s by
 WINDOW-10-SPEC, 2026-10-01). A seat that cannot retrieve the transcript in
 that window treats the entry as VOID.
 
@@ -3577,7 +3570,7 @@ the infrastructure's fault and refunds.
 > **Why:** An earlier draft had no rule at all. A committee that could not agree left
 > funds in an undefined state with no path forward.
 
-**AS BUILT (the owner 2026-10-04, kanban #26).** The result window's deadline
+**AS BUILT (2026-10-04).** The result window's deadline
 is `final_after`: the round's end + 600 s + 5 s, in wall-clock ms, on each
 seat's own clock, by when that seat **held** each record. A PlayerResult
 carries no signed time, so its held time is its deadline, as for
@@ -3778,13 +3771,13 @@ T  time      in [0.25,1.5]  reference_ticks / elapsed_ticks, clamped
 C  cargo     in [0,1]       room used / bed capacity
 ```
 
-**T, the time factor** *(the owner 2026-10-04)*. `reference_ticks` (par) is
+**T, the time factor** *(2026-10-04)*. `reference_ticks` (par) is
 **1800 ticks**, about 30 s at 1092/65536 s a tick. T is 1.5 - the ceiling -
 for any run of 1200 ticks (20 s) or less, falls from there, is 1 at par, and
 reaches the floor 0.25 at 7200 ticks (120 s). In ticks the clamp is
 `elapsed held to [1200, 7200]`; the tick count, not seconds, is the rule.
 
-**C, the cargo factor** *(the owner 2026-10-04)*. C is how full the truck is:
+**C, the cargo factor** *(2026-10-04)*. C is how full the truck is:
 the **room used over the bed's capacity**, 0 for an empty bed and 1 for a
 full one. The room is the core's own `roomFor(vsize)` summed over the
 parcels loaded, and it is declared with the load at roll-out, so a replay
@@ -4024,7 +4017,7 @@ gross_round_volume = Σ stake of every financially activated entry
 
 ## Node fee: 5% mandatory, to the round's sitting seats and its federation's guardians
 
-**RULED (the owner 2026-10-06, §0A.8): the node fee is 5% of the gross stake**,
+**RULED (2026-10-06, §0A.8): the node fee is 5% of the gross stake**,
 in the same three equal pools. It replaces the 2% ruled 2026-09-15.
 
 ```text
@@ -4035,10 +4028,10 @@ node_fee = 5.00% of gross_round_volume
                                  the Round Contract names, §23A)
 ```
 
-**RULED (the owner 2026-09-21): guardians earn from the node fee** (2% under BLWP, 5% in Bitcoin Arena). They carry the
+**RULED (2026-09-21): guardians earn from the node fee** (2% under BLWP, 5% in Bitcoin Arena). They carry the
 reserve, the bond and the liability of every round the federation settles,
 and until this ruling had no income at all (Fedimint base fees are 0). The
-three-way equal split is RULED HERE, and confirmed by the owner 2026-10-06 with the total at 5%. The guardian pool
+three-way equal split is RULED HERE, and confirmed by 2026-10-06 with the total at 5%. The guardian pool
 is divided evenly among the guardians **seated** (§23A.1: not gone) at the
 round's `FINAL`, and paid as one payout contract per guardian in the round's
 settlement transaction (§23.2), to the `payout_pubkey` of the guardian's
@@ -4056,11 +4049,11 @@ earn).
 Each pool's share is divided among the round's **sitting seats** - the seats
 the census seated for this round, its `nodes` - however many there are: two
 in a 2-of-2, seven in a 5-of-7. Not seven census slots when the round is
-2-of-2 (the owner 2026-09-15). In a 5-of-7 each eligible seat receives
+2-of-2 (2026-09-15). In a 5-of-7 each eligible seat receives
 `(5/3)% / 7 ≈ 0.238%` of gross volume for its role; in a 2-of-2, `(5/3)% / 2`.
 An operator selected for both roles earns both shares, because it performs
 both services. A fee lock is sized for the same seats the settlement pays.
-The node fee is **5%** (the owner 2026-10-06; it was 2%, the owner 2026-09-15). Fedimint's own base fees are **0**:
+The node fee is **5%** (2026-10-06; it was 2%, 2026-09-15). Fedimint's own base fees are **0**:
 the federation runs with `disable_base_fees`. Lightning `min_htlc` / routing
 is not a federation fee.
 
@@ -4076,7 +4069,7 @@ distribute the remaining msat in ascending `H(round_id ‖ node_pubkey)` order.
 ## The donation set
 
 A donation goes to a **set** of recipients with declared shares, not to one
-address. *(RULED, the owner 2026-10-03: "We'll use the federation(s) as
+address. *(RULED 2026-10-03: "We'll use the federation(s) as
 donation layer"; FEDERATION.md "Donations in the federation".)* The set
 names **keys**, not LNURLs - one set for the network, valid in every
 federation:
@@ -4226,7 +4219,7 @@ The donation is not a protocol fee and not a node-controlled parameter. The
 player selects it in the client:
 
 ```text
-developer_donation = 0% | 1% | 2% | 3% | 4% | 5%      (the owner 2026-09-21, §24B)
+developer_donation = 0% | 1% | 2% | 3% | 4% | 5%      (2026-09-21, §24B)
   half -> the protocol devs' donation set  (the network's, §27A.4)
   half -> the game dev's donation set      (the round's game manifest, §0A.3)
 ```
@@ -4234,8 +4227,7 @@ developer_donation = 0% | 1% | 2% | 3% | 4% | 5%      (the owner 2026-09-21, §2
 The reference client offers exactly these six, on its settings screen
 (§24B); `custom` is withdrawn from the reference client, and the protocol
 cap below stays for clients that are not it. **The reference client
-defaults to 5%: 2.5% to the protocol devs and 2.5% to the game dev (RULED,
-the owner 2026-10-06, §0A.8)**; it was 2%. When both sets are the same
+defaults to 5%: 2.5% to the protocol devs and 2.5% to the game dev (RULED 2026-10-06, §0A.8)**; it was 2%. When both sets are the same
 recipients, as for nextblock, each recipient is paid once, the sum of both
 halves. The player may change it, including
 to zero; a round with `donation_bps = 0` is fully valid.
@@ -4402,7 +4394,7 @@ been removed from this document.
    enough: the player built it, and a short expiry alone would let a loser
    refund before settlement.
 
-   **Play does not wait for it (RULED, the owner 2026-10-02: "Joining the
+   **Play does not wait for it (RULED 2026-10-02: "Joining the
    round should take at most 2-3 seconds from clicking the Join button to
    the round actually loading").** The round loads and the player drives at
    once; the stake is checked **in the background**. The seats take and
@@ -4448,7 +4440,7 @@ federation's own consensus view of Bitcoin.
 | `REFUSED` — a round the signer nodes refuse (its donation set is not the one in force at its census height, or its series is not held), a stake locked for it and never entered | Forfeit at once → it returns to the player's key, without waiting for expiry | Each of ≥5 settlement signer nodes on its own record: it refuses the round, the lock stakes no entry it holds, the lock's image is `A0` of a handout it accepted for that round and its refund key that handout player's (who entered nothing), the federation holds the lock under the round's claim key; 5-of-7 signature over the lock's contract id; only the player's key redeems it |
 | Payout to a qualifier | A payout contract in the same settlement transaction: a lock already past expiry whose refund key is the qualifier, redeemable at once by that key alone | Final payout table (5-of-7) + 5-of-7 settlement signature |
 
-> **WINNINGS-AUTO (RULED, the owner 2026-10-01).** Winnings are paid
+> **WINNINGS-AUTO (RULED 2026-10-01).** Winnings are paid
 > **automatically into the player's federation wallet**. Every qualifier is
 > paid by its payout contract in the settlement transaction - to its round
 > key, inside the federation - and never by a Lightning send to an address it
@@ -4465,7 +4457,7 @@ round: every loser's stake lock and every fee lock in; one payout contract
 per qualifier and per paid node slot out. Every settlement node rebuilds it
 from the public payout table and signs only the transaction it rebuilt.
 
-> **REFUSED-RETURN (RULED, the owner 2026-10-06 08:57).** A round the signer
+> **REFUSED-RETURN (RULED 2026-10-06 08:57).** A round the signer
 > nodes refuse gets an immediate refund: a stake that was locked for it and
 > never entered is not held until its expiry. The player's client hands the
 > lock to the round's signer nodes; each checks it against its own record
@@ -4511,7 +4503,7 @@ seed - the player's money, not a pool.
 
 ## 23.6 Construction and maturity — stated honestly
 
-**RULED (the owner 2026-09-21): there is one custody construction, FEDERATION,
+**RULED (2026-09-21): there is one custody construction, FEDERATION,
 on every network.** The Round Contract's `custody_rules` names it and
 nothing else; a round naming anything else is invalid, on regtest too,
 because the regtest federation of `FEDERATION.md` runs on one laptop and
@@ -4534,7 +4526,7 @@ unpatched:
 Not used, by rule: a single-operator Lightning endpoint of any kind, a
 patched federation, a Lightning node run by the committee.
 
-**THRESHOLD_LN does not exist (RULED, the owner 2026-09-22 22:59).** It once
+**THRESHOLD_LN does not exist (RULED 2026-09-22 22:59).** It once
 named a threshold-signed Lightning node (FROST over channel operations)
 that was measured and found not buildable on lnd (its remote signer asks
 for ECDSA by the node key and for MuSig2 shares, which a FROST committee
@@ -4557,16 +4549,15 @@ FEDERATION, which is the one outcome this ruling names. The door §23.6 once lef
 for a later migration is closed with it: if such a node ever hardens, that
 is a new revision, not a standing option.
 
-**Guardians are not parked (the owner 2026-09-21; released again, the owner
-2026-09-24 morning).** The parking of "which
+**Guardians are not parked (2026-09-21; released again, 2026-09-24 morning).** The parking of "which
 guardians" and `federationIsBonded` (PRIORITIES, 2026-09-16) is lifted. The
-fleet pin's move to HEAD is released the same morning (the owner 2026-09-24),
+fleet pin's move to HEAD is released the same morning (2026-09-24),
 so no rule in this chapter waits on the pin any more. The three slash
 rulings - the slashing height, the affected players, several slashed nodes
 - are closed at `e554dad2` (§5A.3); any "blocked on three rulings" note
 elsewhere is stale.
 §23A is to be built now: on testnet with a federation of **seven guardians,
-5 of 7** (the owner 2026-09-27; it replaces the 3-of-4 of 2026-09-26 and the
+5 of 7** (2026-09-27; it replaces the 3-of-4 of 2026-09-26 and the
 2-of-2 that ran before it), on seven nodes, one guardian per node
 (§23A.1's testnet column, §23A.2),
 `federationIsBonded` on as ruled (the owner 07:33); on regtest with the
@@ -4586,7 +4577,7 @@ but the design. A federation is therefore valid for a paying round only if:
   `guardian_of[]` (§5A.1) with a bond at or above the bracket's
   `bond_min_settlement`, so a guardian who colludes is slashable like any
   seat. **Every guardian / node must have its own bond or it may not take
-  part** (the owner 2026-09-15). `federationIsBonded` stays on;
+  part** (2026-09-15). `federationIsBonded` stays on;
 - the client has fetched the federation's configuration from its guardians
   and its hash equals `federation_id`;
 - `federation_id` is on the client's known-good list, or the client shows it
@@ -4603,7 +4594,7 @@ Lightning stays open for when it hardens.
 
 ---
 
-# 23A. Federation lifecycle *(the owner 2026-09-21)*
+# 23A. Federation lifecycle *(2026-09-21)*
 
 A federation was at first something a round named and a stake sat in
 for one round. Since the player wallet (§24A.1), it holds players' balances across many rounds.
@@ -4623,21 +4614,21 @@ Fedimint's consensus runs with `n` guardians and tolerates `f` faulty ones
 where `n = 3f + 1`; a transaction is accepted by `2f + 1`. Nothing in this
 chapter changes that; it chooses `n`.
 
-**RULED (the owner 2026-09-21): the first mainnet federation has at least ten
+**RULED (2026-09-21): the first mainnet federation has at least ten
 guardians.** Ten is `f = 3`: seven of ten sign, three may be down at once
 and no player notices anything. `federation_nominal` is a genesis parameter
 (§27A.6), per network:
 
 | | mainnet | testnet | regtest |
 |---|---|---|---|
-| guardians `n` | **10** | **7** (the owner 2026-09-27) | 4 |
+| guardians `n` | **10** | **7** (2026-09-27) | 4 |
 | sign `n - f` (stock) | 7 | **5** | 3 |
 | down at once, no effect `f` | 3 | **2** | 1 |
 
 The signing threshold is stock Fedimint's, `n - floor((n - 1) / 3)`, which
 equals `2f + 1` wherever this chapter writes that: 7 of 10, 5 of 7, 3 of 4.
 
-**RULED (the owner 2026-09-27 10:04): testnet is seven nodes and seven
+**RULED (2026-09-27 10:04): testnet is seven nodes and seven
 guardians, 5 of 7**, one guardian per node. It replaces the 3-of-4 ruling of
 2026-09-26 22:54, which replaced the 2-of-2 that ran before it. Two may be
 down and nothing stops, and a guardian lost leaves a DRAINING band before
@@ -4645,7 +4636,7 @@ CRITICAL, so testnet runs the same bands and the same succession mainnet
 runs. Mainnet stays at least ten, 7 of 10. The committee sizes of the game
 and of settlement are not this ruling.
 
-**The testnet guardian endpoints (the owner 2026-09-27).** Every guardian
+**The testnet guardian endpoints (2026-09-27).** Every guardian
 endpoint is a **public `wss://` a phone can open** (§23A.4: the client
 talks to any guardian directly). Testnet's seven are on Tailscale Funnel:
 
@@ -4697,7 +4688,7 @@ has only one loss of margin - and CRITICAL starts the succession of
 `federation_min = 2f + 1` is the CRITICAL line. Below it nothing moves and
 no rule here can help; §22 says so.
 
-**Timings (RULED the owner 2026-09-21: fast; 36 h for arbitration).**
+**Timings (RULED 2026-09-21: fast; 36 h for arbitration).**
 Everything in this chapter that waits, waits in blocks, and on mainnet:
 
 | what | parameter | mainnet | ≈ |
@@ -4715,21 +4706,19 @@ the owner: much shorter) and regtest in tens of blocks; both in §27A.6.
 ## 23A.2 Who the guardians are: founding
 
 A guardian is a **bonded census node** (§5A.2), nothing else was ever
-allowed (§23.6, the owner 2026-09-15: every guardian has his own bond). To be
+allowed (§23.6, 2026-09-15: every guardian has his own bond). To be
 drawn it must also:
 
 - advertise `guardian_capable` and a `guardian_endpoint` (§5A.1): it runs
   fedimintd and will answer the client and the seats there;
-- **one node is one guardian, and the node runs it (RULED, the owner
-  2026-09-26, again 2026-09-27).** A node that advertises `guardian_capable` starts its own
+- **one node is one guardian, and the node runs it (RULED 2026-09-26, again 2026-09-27).** A node that advertises `guardian_capable` starts its own
   guardian inside itself with **zero configuration**: the node creates the
   guardian's keys from its own, takes part in the founding ceremony when
   drawn, serves `guardian_endpoint` itself, and stops the guardian when the
   role is turned off (§5A.1). The operator sees one thing - the node - and
   never a second service, a second config file or a second process to
   keep up. A node is never two guardians of one federation. Its
-  `guardian_endpoint` is a public `wss://` a phone can open (the owner
-  2026-09-27);
+  `guardian_endpoint` is a public `wss://` a phone can open (2026-09-27);
 - carry a bond of at least `bond_min_guardian`, the settlement floor of the
   highest bracket the network offers, because a guardian's exposure is the
   federation's whole reserve, not one round's;
@@ -4751,14 +4740,13 @@ that becomes the founding's `trigger_height` (the earliest wins):
    decided by threshold signature to be replaced.
 3. **Load.** Every OPEN federation has been at or above 80% of its
    exposure cap (§23A.3) for `abandon_blocks`.
-4. **Cohort** (protocol 2026.0.14; the owner 2026-10-18, kanban #471 ruling 3:
+4. **Cohort** (protocol 2026.0.14; 2026-10-18, ruling 3:
    "10 new nodes find each other on the network automatically and create a
    new federation"). While a federation exists, the census holds at least
    `cohort_nominal` = **10** guardian-capable operators (an endpoint, at
    least `bond_min_guardian`) that guard no OPEN federation. An operator
    whose advertisement names a federation the seat holds no record of
-   counts as guarding it, as for an OPEN one *(the owner 2026-10-18, kanban
-   #495)*; a DRAINING federation frees its guardians, as before. They found a
+   counts as guarding it, as for an OPEN one *(2026-10-18)*; a DRAINING federation frees its guardians, as before. They found a
    federation of their own, of `cohort_nominal` seats, drawn as below. The
    trigger is the first height of the current run at or above 10: once
    their adverts name the new federation in `guardian_of[]` the run ends,
@@ -4770,14 +4758,14 @@ that becomes the founding's `trigger_height` (the earliest wins):
 the beacon block after `trigger_height` and the tag `'BLWP/v1/GUARDIAN'`,
 over the guardian-capable census minus operators already guarding an OPEN
 federation, one ticket per operator. `federation_nominal` are drawn, then
-three alternates in order. Nobody hand-picks (the owner 2026-09-16 08:23; that
+three alternates in order. Nobody hand-picks (2026-09-16 08:23; that
 ruling named the sitting *seats* of a round, and the guardians of a
 federation are drawn the same way but **once**, at founding - a Fedimint
 federation's key set is fixed by its setup ceremony and cannot be redrawn
 per round).
 
 **The ceremony** is stock Fedimint setup - the guardians' distributed key
-generation, unpatched, `disable_base_fees` on (the owner 2026-09-15) - among
+generation, unpatched, `disable_base_fees` on (2026-09-15) - among
 the drawn, within `founding_window` blocks of the beacon. A drawn node that
 has not joined the ceremony within a fifth of the window is replaced by the
 next alternate; it is not slashed, because it held nothing. If the window
@@ -4815,7 +4803,7 @@ exposure_cap = (f + 1) × the smallest bond among its seated guardians
 load         = on-chain reserve / exposure_cap
 ```
 
-**Why `f + 1` and the smallest (RULED, the owner 2026-09-21: players cannot
+**Why `f + 1` and the smallest (RULED 2026-09-21: players cannot
 lose).** `f + 1` gone is the smallest number of guardians that halts the
 federation (§23A.1). Their bonds are what §23A.5's liquidation pays the
 players from. So the reserve may never exceed what the smallest possible
@@ -4904,7 +4892,7 @@ Bitcoin cannot check liveness either.
 | **Departure with notice** | a signed `(federation_id, peer, leave_after_height)` with `leave_after >= now + departure_notice`, posted like a record | recorded `DEPARTED` at that height; if the federation would then be DRAINING, succession starts **now** (§23A.6) so the successor is OPEN before he goes; he serves until the earlier of the federation's CLOSED and the successor's OPEN, then his seat is gone with no offence and **his bond is untouched**: he stays a bonded census node, keeps sitting as a seat, and may be drawn as a guardian again (below) |
 | **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
 
-**Leaving is legitimate, and costs nothing (RULED, the owner 2026-09-21).**
+**Leaving is legitimate, and costs nothing (RULED 2026-09-21).**
 Guarding a federation is a term of service, not a life sentence, and leaving
 it is not leaving the network. A guardian who posts his departure notice and
 serves it out keeps his bond exactly as it is: he remains an eligible census
@@ -4916,7 +4904,7 @@ cooperative). The offence is never *leaving*; it is leaving **without
 serving the notice**, because that is the one thing that turns a planned
 succession into an emergency.
 
-**Where a slashed guardian bond goes (RULED, the owner 2026-09-21: players
+**Where a slashed guardian bond goes (RULED 2026-09-21: players
 cannot lose; the rest 75% to the nodes, 25% to the developers).** The
 slashing transaction (§5A.3B) does not pay anyone yet. It pays the whole
 bond into a **liquidation escrow** of that federation: an output under the
@@ -4948,7 +4936,7 @@ waits for the federation's end. Recipients are a function of chain state
 at the spending height, remainders in ascending `H(txid ‖ node_pubkey)`
 order, so every observer computes the same list.
 
-**Liquidation (RULED, the owner 2026-09-21).** A federation that has been
+**Liquidation (RULED 2026-09-21).** A federation that has been
 HALTED for `abandon_blocks` with no recovery is liquidated:
 
 1. The guardians still seated publish, signed, their copy of the
@@ -4956,7 +4944,7 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    redeemed) as of the last session they hold. Any one copy suffices; the
    newest session wins.
 2. The arbitration set opens a **claim window** of `claim_blocks` - **36
-   hours** on mainnet (RULED, the owner 2026-09-21) - and advertises where claims go (§5A.3B's endpoints; every seat mirrors them
+   hours** on mainnet (RULED 2026-09-21) - and advertises where claims go (§5A.3B's endpoints; every seat mirrors them
    at `GET /liquidations`). The client does the rest on its own: on every
    start it presents each unspent note it holds for that federation, as it
    would present them to the federation itself. A player who has only his
@@ -5131,7 +5119,7 @@ upgrade, a change of `federation_nominal` by §27A).
    Its guardians MUST serve until CLOSED (§23A.5: stopping earlier is
    abandonment); after CLOSED they may stop, and their bonds mature as any
    node's.
-5. **Serving the drain is paid (the owner 2026-09-21: "no incentive to stay
+5. **Serving the drain is paid (2026-09-21: "no incentive to stay
    in a draining federation"; RULED HERE).** From DRAINING to CLOSED no
    round names the old federation, so its guardian pool would be empty
    while its guardians still hold every note not yet moved and every lock
@@ -5147,7 +5135,7 @@ upgrade, a change of `federation_nominal` by §27A).
    sooner the more players move, which the client does on every start.
 6. **What is left behind.** Notes in a CLOSED federation are lost to their
    holder, and it is said here: the client migrates on every start for
-   `drain_blocks` - four weeks (the owner 2026-09-21) - the lobby says so
+   `drain_blocks` - four weeks (2026-09-21) - the lobby says so
    from the first day, and a player who never opens the game in four weeks
    has kept a game balance for four weeks against the advice on every
    screen. The federation's guardians cannot
@@ -5177,7 +5165,7 @@ Nothing is typed, and no link decides it.
   under that seed; the one that has it is his, and the stock recovery
   rebuilds the notes. Unredeemed contracts are found through
   `GET /settled?since=` as §24 already says.
-  **RULED AS BUILT (the owner 2026-10-04, kanban #27): no guardian backup.** The
+  **RULED AS BUILT (2026-10-04): no guardian backup.** The
   notes come back through Fedimint's own **recovery**, which the client
   runs in the browser. mintv2 rescans the federation's issuance history for
   the notes this wallet secret's keys made. The fork's recovery timed out
@@ -5199,18 +5187,18 @@ Nothing is typed, and no link decides it.
 
 ## 23A.8 The player seed: twelve or twenty-four words
 
-**RULED (the owner 2026-09-21):** the player receives a **BIP39 mnemonic** -
+**RULED (2026-09-21):** the player receives a **BIP39 mnemonic** -
 twelve words by default, twenty-four on request (RULED HERE: twelve is the
 default because the balance is a game balance under a stake ceiling, and a
 seed that is written down beats one that is not) - to write down. It is
 shown from the settings screen (§24B), backed up by the player typing **all**
 of its words back, in order, which the client checks - the button is named
-**Backup** (the owner 2026-09-21; three words in random positions is
+**Backup** (2026-09-21; three words in random positions is
 withdrawn) - never leaves the browser, and is
 never seen by any node, seat, guardian or gateway. On another device the
 player types it, and nothing else is needed (§23A.7).
 
-**RULED AS BUILT (the owner 2026-10-04, kanban #27): no standard BIP-39
+**RULED AS BUILT (2026-10-04): no standard BIP-39
 derivation and no migration.** The page shows **24 words**, which encode
 the 32-byte player seed directly: the BIP-39 wordlist and checksum over
 those bytes as entropy, never PBKDF2 key stretching (`bip39.js`). Every
@@ -5248,14 +5236,14 @@ the screen that shows the words, in those words.
 
 ---
 
-## 23A.9 Gateway seats: who hosts the federation's Lightning *(the owner 2026-10-18)*
+## 23A.9 Gateway seats: who hosts the federation's Lightning *(2026-10-18)*
 
 > "We need 2 guardians per federation and there is currently no process who
 > will host the guardian. Modify the spec for it and come up with additional
 > incentives from the custody node fee that people want to host a guardian.
 > If more than 2 nodes in the federation want to host a guardian a clear
 > process must choose the best guardians possible, make the rules and
-> requirements clear." (the owner 2026-10-18, kanban #471)
+> requirements clear." (2026-10-18)
 
 **What is meant.** The thing hosted is the federation's **Lightning
 gateway**, the role that needs a peg-in. A federation keeps its 4 to 10
@@ -5287,7 +5275,7 @@ all of these hold:
 
 An **epoch** is 144 blocks, about a day.
 
-**The channel ring** *(the owner 2026-10-18; the installer's LND had no inbound liquidity, so its gateway could take no deposit)*:
+**The channel ring** *(2026-10-18; the installer's LND had no inbound liquidity, so its gateway could take no deposit)*:
 once a federation is founded, its custody nodes, in node-key order, each open one public channel of 150,000 sat (testnet4) to the
 next. Every gateway then has one channel out and one in, made by the federation's own nodes, with nothing run by anyone else.
 - The opener dials the next node at the Lightning address its claim names. LND asks the router for its peer port (UPnP/NAT-PMP);
@@ -5295,7 +5283,7 @@ next. Every gateway then has one channel out and one in, made by the federation'
 - A node nobody can dial dials its previous neighbour, which then opens over that connection.
 - A pair where neither side can be dialled stays without a ring channel and says so.
 
-**The outside channel and Tor** *(the owner 2026-10-18: "If the incoming channels are only connected between them with nothing outside it's no good"; "Measure if lnd is accessible from the outside after installing if not install tor")*:
+**The outside channel and Tor** *(2026-10-18: "If the incoming channels are only connected between them with nothing outside it's no good"; "Measure if lnd is accessible from the outside after installing if not install tor")*:
 - Each gateway also opens one channel of 100,000 sat (testnet4) to a well-connected hub outside its federation, so payers and payees on the wider Lightning network reach it. On testnet4 the hub is the the test host's LND C at its onion address; mainnet hubs are named before mainnet.
 - Most installed nodes take no incoming connection (no open port, a dynamic address). Before LND starts, two seats try to reach its peer port (9735) from outside:
   - reached: LND announces that address;
@@ -5365,11 +5353,11 @@ It then sets the gateway up: LND, its channels, the gateway on it, and the
 peg-in from the node's wallet. The node announces its gateway, and its
 federation's guardians rank it from the next epoch on.
 
-## 23A.10 Liquidity providers: incoming Lightning for every new node *(the owner 2026-10-18)*
+## 23A.10 Liquidity providers: incoming Lightning for every new node *(2026-10-18)*
 
 > "This is a real problem. On mainnet everybody needs incoming liquidity. Spec a fourth service for nodes: LND liquidity provider.
 > This service alone listens to new nodes and creates incoming liquidity for them. Incentive are part of the 4 % node fees. Gets 1 %
-> from the node fees in the federation like other services." (the owner 2026-10-18)
+> from the node fees in the federation like other services." (2026-10-18)
 
 ### The problem
 
@@ -5391,7 +5379,7 @@ the network, so that node can receive. It is a role like game/verify, settlement
 
 | Requirement | Testnet4 | Mainnet |
 |---|---|---|
-| The **liquidity amount** L: one channel to one node | 100,000 sat | 250,000 sat (the owner 2026-10-18: "250k per node") |
+| The **liquidity amount** L: one channel to one node | 100,000 sat | 250,000 sat (2026-10-18: "250k per node") |
 | **Deposit**: coins in the provider's LND wallet, free for new channels, when it starts and to stay eligible | ≥ 5 × L = 500,000 sat | ≥ 10 × L = 2,500,000 sat |
 | Its own LND, reachable (an open port, or Tor: §23A.9 "The outside channel and Tor") | yes | yes |
 | A bond | ≥ `bond_min` | ≥ `bond_min` |
@@ -5400,7 +5388,7 @@ L matches the inbound a gateway seat needs (§23A.9), so one provider channel ma
 
 ### Who opens to whom: at least 1, at most 2 per node
 
-**Any number of nodes can be providers** - unlimited (the owner 2026-10-18: "There can be an unlimited amount of liquidity providers";
+**Any number of nodes can be providers** - unlimited (2026-10-18: "There can be an unlimited amount of liquidity providers";
 "It's also not that it's limited to 2 LPs, that is just our setup now" - the two on testnet4, LND C and LND D, are only the start).
 The limit is per **new node**: each gets channels from one or two of them. The liquidity pool is shared by all of them, by coins held.
 
@@ -5429,7 +5417,7 @@ From **protocol 2026.0.16** the node fee of a paid round (4 % on protocol 11 and
 game/verify, settlement, custody, liquidity.
 - The **liquidity pool** of a round goes to the **liquidity seats** of the round's federation: the providers with an
   active channel of ≥ L to at least one of the federation's custody nodes.
-- **Weighted by available balance** *(the owner 2026-10-18: "Fee must be dependant on available balance too if there is more than
+- **Weighted by available balance** *(2026-10-18: "Fee must be dependant on available balance too if there is more than
   one")*. With more than one seat, each provider's share is proportional to its **weight**: the liquidity it makes available to
   the federation, floored to 10,000 sat.
   - weight = the capacity of its channels to the federation's custody nodes + its **free balance** (coins in its LND wallet, ready
@@ -5445,10 +5433,10 @@ game/verify, settlement, custody, liquidity.
   - the shares are floored, and the leftover millisatoshis go out in the round's order, as in every pool.
   - in the guardians' signed list (the liquidity seating) each weight is **floored to L** (100,000 sat testnet4, 250,000 mainnet):
     free balances move by the minute, and guardians reading a few minutes apart must still sign the same list to reach the threshold.
-- **Below the deposit, no share** *(the owner 2026-10-18: "Once a liquidity provider has not enough funds left he never receives
+- **Below the deposit, no share** *(2026-10-18: "Once a liquidity provider has not enough funds left he never receives
   part of the 1%")*: a provider whose **proven free balance + the capacity of the channels it gave** is below the deposit minimum
   (5 × L on testnet4, 10 × L on mainnet) has weight 0 and earns nothing of the liquidity pool. Once topped up to the minimum it earns
-  again. *(the owner 2026-10-18, "ok accepted": the channels it gave count, so giving liquidity never removes the share - measured:
+  again. *(2026-10-18, "ok accepted": the channels it gave count, so giving liquidity never removes the share - measured:
   LND D held 600,000, gave one channel of 100,000 and kept 496,150 free; free-only it would have dropped out after one channel.)*
 - The federation's guardians check every provider's claim each epoch (144 blocks) and **sign the list**, the same way as the
   gateway seating (§23A.9: threshold of the seated guardians). The settlement pays only a signed list.
@@ -5506,7 +5494,7 @@ would show only a deposit. Therefore:
 A lost player seed loses the locks it can refund. That is the trade for
 having no node in the refund path.
 
-**The player wallet survives the tab (the owner 2026-09-14; generalized to
+**The player wallet survives the tab (2026-09-14; generalized to
 the player wallet 2026-09-21).** Collecting a payout from the federation and
 paying it out over Lightning takes minutes (measured live: 414 s from the
 press to the player's invoice settled). A tab closed inside that time used
@@ -5522,7 +5510,7 @@ and the rules are:
   player creates a fresh seed, which is a new player (§0.12: two tabs are
   two players only while neither has deposited or entered); a browser with a
   kept player opens that player, one tab at a time.
-- **Winnings and refunds arrive on their own (the owner 2026-09-21).** The
+- **Winnings and refunds arrive on their own (2026-09-21).** The
   client redeems every forfeit and every payout contract for one of its
   round keys into the player wallet the moment it is available: while the
   tab is open, as soon as the committee's signature or the settlement
@@ -5535,7 +5523,7 @@ and the rules are:
 - **Pending, then in the wallet.** From `STAKE_COMMITTED` the lobby and the
   end screen show the stake as **pending**. The winnings, or the stake coming
   back, show as **pending the moment the player's result is
-  `PROVISIONALLY_FINAL`** (RULED, the owner 2026-10-01, WINDOW-10-SPEC) - not
+  `PROVISIONALLY_FINAL`** (RULED 2026-10-01, WINDOW-10-SPEC) - not
   when the objection window closes and not when the payout table is final -
   with the amount and what they wait on: the window's close in UTC, the
   settlement signature, the redemption. While other players' results are
@@ -5553,13 +5541,13 @@ and the rules are:
   federation for its key. The wallet is never dropped by the client.
   Cleared browser storage loses the wallet's notes unless the federation's
   stock backup restores them from the seed (FEDERATION.md rehearsal item
-  10; AS BUILT, kanban #27: Fedimint's recovery from the seed, run in the
+  10; AS BUILT,: Fedimint's recovery from the seed, run in the
   browser, finds them again, §23A.7); what the federation still holds in contracts for a round key comes
   back from the seed alone.
-- **On another device** (the owner 2026-09-14: alice plays on her desktop,
+- **On another device** (2026-09-14: alice plays on her desktop,
   forgets to withdraw, and plays on her iPhone two hours later): the seed
   backup is brought in. The wallet's notes recover through the federation's
-  stock backup under that seed (AS BUILT, kanban #27: through Fedimint's
+  stock backup under that seed (AS BUILT,: through Fedimint's
   own recovery under that seed, in the browser, with no backup kept by the
   guardians, §23A.7). For contracts not yet redeemed, the client
   asks each seat for the rounds it settled in the last 24 hours
@@ -5588,7 +5576,7 @@ where the stake comes from and where the winnings go.
 
 ## 24A.1 The player wallet
 
-**RULED (the owner 2026-09-21):** the round wallet of §24 is the **player
+**RULED (2026-09-21):** the round wallet of §24 is the **player
 wallet**: one wallet per player seed and federation, kept in the browser,
 into which the player deposits, from which every stake is paid, into which
 every payout and refund is collected **automatically the moment it is
@@ -5670,7 +5658,7 @@ this case, not a second path (§23.1 step 3).
 
 **Donations** (§27A.4, §22A "The donation set") are paid at entry from the
 player wallet **inside the federation**: one output per recipient key in the
-same transaction as the stake and fee locks *(RULED, the owner 2026-10-03;
+same transaction as the stake and fee locks *(RULED 2026-10-03;
 replaces the Lightning payment to each recipient's LNURL ruled here
 earlier, which stays for the rounds published with an LNURL set)*.
 
@@ -5743,7 +5731,7 @@ in time, stated in §24A.1 and §22, and shown to the player.
 
 ---
 
-# 24B. The lobby, the settings screen and the seed — what the player sees *(the owner 2026-09-21)*
+# 24B. The lobby, the settings screen and the seed — what the player sees *(2026-09-21)*
 
 Three rulings on the reference client, written here because §24A.1 and
 §23A.8 depend on them. A client whose hash is on the known-good list (§5)
@@ -5774,7 +5762,7 @@ screen. It holds exactly:
   choice is the client's and the player's; no node may change it (§27A.4).
 - **Seed phrase.** A button that shows the player's twelve or twenty-four
   words (§23A.8), behind a screen that first says what they are (below),
-  and a button named **Backup** (the owner 2026-09-21) that asks the player to
+  and a button named **Backup** (2026-09-21) that asks the player to
   type every word back in order and checks them. Until a Backup has
   succeeded once, the settings screen and the lobby both show that **no
   backup exists**.
@@ -5787,8 +5775,7 @@ the lobby (§23A.7); wallet actions are lobby actions (§24B.1).
 **RULED:** when the game loads and the seed has never been verified, the
 lobby says so before anything else: *no backup of your seed phrase exists;
 if this browser is lost, so is your balance; open settings to write it
-down.* The notice is a line, not a modal, and it gates **nothing** (the owner
-2026-09-21: no lock): the player may deposit, enter and play with it
+down.* The notice is a line, not a modal, and it gates **nothing** (2026-09-21: no lock): the player may deposit, enter and play with it
 standing. It stays until a Backup has succeeded once. The warning is the
 whole of it, and the balance the player risks by ignoring it is his.
 
@@ -6127,8 +6114,7 @@ reaches. A node declaring a node fee of 90% moves nothing.
 
 **Changing a declaration is deliberately not free.** It means an
 advertisement update (§5A.2): a transaction, its fee and its confirmations.
-It never means a new bond - a confirmed bond stays the bond (the owner
-2026-09-28). Governance therefore moves at the speed of capital, and a
+It never means a new bond - a confirmed bond stays the bond (2026-09-28). Governance therefore moves at the speed of capital, and a
 campaign to swing a parameter is visible on chain while it is being
 assembled.
 
@@ -6288,7 +6274,7 @@ The damage is bounded in every row: donations are voluntary, capped by
 `donation_bps_max`, and every recipient is displayed before wallet approval
 (§22A). A player who has donations switched off is unaffected by all of it.
 
-### 27A.4.1 The developers' own ballot (kanban #382, the owner 2026-10-16)
+### 27A.4.1 The developers' own ballot (2026-10-16)
 
 The developers paid by a donation set may replace it themselves, without the admin key and without
 a new network id:
@@ -6387,7 +6373,7 @@ a state whose origin nobody can check.
 | committee slots | 7 | 3 | **2** |
 | threshold | 5 | 2 | **2** |
 | minimum census | 10 | 3 | **2** |
-| guardians per federation (`federation_nominal`) | **10** (7 of 10) | **7** (5 of 7, the owner 2026-09-27) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
+| guardians per federation (`federation_nominal`) | **10** (7 of 10) | **7** (5 of 7, 2026-09-27) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
 | `federation_min` | 7 | 5 | 3 |
 | `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | **12 / 18 / 18 / 144 / 9** (≈ 2 h / 3 h / 3 h / 24 h / 1.5 h; the owner: much shorter) | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
@@ -6540,10 +6526,10 @@ scrambles one strike; a simulation toggle covers quiet tape. Aim is
 tactical near the front. Crater radius follows liquidation size, lasts
 10–20 rounds, and is avoided by units. The truck taking that ground is
 irradiated (health, death) with a visible atom warning. Not a gunship.
-The picture is M1 too (the owner 2026-09-03): Claude-designed bomber and
+The picture is M1 too (2026-09-03): Claude-designed bomber and
 atom-bomb-on-drop, Bitcoin skins for bears and for bulls, a crater the
 truck drives into after the bomb, radiation on the ground. HUD warning
-stays. Not a later polish letter. Feeds (the owner 2026-09-04): no free
+stays. Not a later polish letter. Feeds (2026-09-04): no free
 all-exchange tape; BTC liquidations from Binance, Bybit, OKX, Bitget,
 Gate.io, MEXC, Kraken Futures, Hyperliquid into the same strike. HUD
 shows amount per exchange; many in one tick become one summary (sums +
@@ -6572,7 +6558,7 @@ diff, or a set of independently addressable fields. It is one object.
 those *is* creating a different network, and no vote can move you to another
 network. Its operator vote cannot touch the donation set: that set changes by
 the admin key (§27A.4) or by the developers it pays, through their own ballot
-(§27A.4.1, kanban #382, the owner 2026-10-16) - never by the nodes. And it cannot change protocol rules or message
+(§27A.4.12026-10-16) - never by the nodes. And it cannot change protocol rules or message
 formats, which ship as software and are adopted by being run (§27A.5).
 
 ### 27A.7.2 The proposal
@@ -6763,7 +6749,7 @@ after `bond_maturity` or by a valid slash, and no operator token touches
 either. **A fully compromised operator API costs a vote, never a bond** -
 which is why it is safe for this to be a convenient web UI at all.
 
-### 27A.7.8 Until the ballot is built *(interim, the owner 2026-10-04)*
+### 27A.7.8 Until the ballot is built *(interim, 2026-10-04)*
 
 The ballot of §27A.7.2-§27A.7.4 and the fork certificate of §27A.8.1 are not
 built yet. Until they are, a change to the game's rules is made **by the
@@ -6804,7 +6790,7 @@ founding config `bbae68dc`. The second, the same day: core `7e2123d1` with
 config `f51759b6`, whose exposure is weighted by the load's heat as §18A.3
 writes it (`de2f263d` weighted it by C, which counted a full bed twice);
 `de2f263d` stays installed for the free rounds made on it.
-The third, the same day (the owner 2026-10-04, #23 world grinding): config
+The third, the same day (2026-10-04, world grinding): config
 `2170f250` (`encodeGameConfigV4`: v3's fields and a world rule) on the same
 core `7e2123d1` - one world per round, `round_seed`, shared by every player
 of the round (§12). `f51759b6` stays installed for the rounds published on
@@ -6925,8 +6911,7 @@ FORK = 0x46 ('F'); the signature is the bond's node key over
 One small transaction, the same shape as a vote (§27A.7.3). It moves no
 capital, spends no bond, and starts no new maturity clock. It names no
 outpoint: the signature binds it to one bond, and a census tries it against
-the ancestor bonds it found, as a tally tries a vote (kanban #209:
-`reaffirm.js`; it also pays this network's marker dust, so it is findable as
+the ancestor bonds it found, as a tally tries a vote (`reaffirm.js`; it also pays this network's marker dust, so it is findable as
 an advertisement update is). The ancestor's bonds are found by the ancestor's
 marker and read by its advertisement layout and id (`ancestor.js`); one that
 is not re-affirmed is named in the census and not counted.
@@ -7013,12 +6998,12 @@ is §27A.7, because none of it changes what a transcript *is*.
 
 ---
 
-## 27A.9 Protocol reserves and project funding *(kanban #397, the owner 2026-10-16; SPEC LOCKED, not yet built)*
+## 27A.9 Protocol reserves and project funding *(2026-10-16; SPEC LOCKED, not yet built)*
 
 The network gets a fund of its own, the **protocol reserves** - a DAO treasury that no single key
 spends. Every paid round pays into it; the bonded nodes decide, in two stages, what it pays out.
 
-### 27A.9.1 The split *(RULED the owner 2026-10-16)*
+### 27A.9.1 The split *(RULED 2026-10-16)*
 
 A paid round's 10 % of the gross stake (§0A.8) is split anew:
 
@@ -7029,20 +7014,20 @@ A paid round's 10 % of the gross stake (§0A.8) is split anew:
 | **protocol reserves** | - | **2 %** |
 | net stake | ≥ 90 % | ≥ 90 % |
 
-**The whole split is mandatory** *(LOCKED the owner 2026-10-16)*: nodes 4 %, reserves 2 % and the
+**The whole split is mandatory** *(LOCKED 2026-10-16)*: nodes 4 %, reserves 2 % and the
 developers' 4 % (2 % protocol, 2 % game). The developers' share is no donation on this version, and
 the player cannot lower it; §0A.8's lowerable 5 % does not carry into it.
 
-An in-game item (§0A.9, kanban #365/#377) pays **40 % nodes** and **20 % protocol reserves** of its
+An in-game item (§0A.9) pays **40 % nodes** and **20 % protocol reserves** of its
 list price, both mandatory, and the **developers' share the player chooses: 40, 30, 20, 10 or 0 %**
-(protocol + game, half each) *(the owner 2026-10-16: "yes it's 40 30 20 10 0"; it replaces #377's
-50-0 % on this version)*. As in #377 the developers' share is added on top: the player pays
+(protocol + game, half each) *(2026-10-16: "yes it's 40 30 20 10 0"; it replaces 's
+50-0 % on this version)*. As in the developers' share is added on top: the player pays
 60 % + the chosen share of the list price - 100 % at the default of 40 %, 60 % at 0 %.
 
 The new split is a protocol version: rounds of a game version that requires it carry it, older
 rounds keep theirs ("updates before feature freeze": versions run side by side).
 
-**Rounding, as built** *(kanban #397 slice 1, `arena-protocol/src/reserves.js`, protocol version 11 -
+**Rounding, as built** *(`arena-protocol/src/reserves.js`, protocol version 11 -
 `RESERVES_VERSION`, not yet spoken)*: every share is floored to the msat; a round's net stake takes what
 the floors leave, so the parts sum exactly to the gross. An item's developers' share is split half to the
 protocol developers (floored) and the rest to the game developers, and its price is the sum of its parts:
@@ -7054,7 +7039,7 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
 - Each paid entry's reserve share is an output of its own in the entry's federation, like a donation
   output (§22A): amount = 2 % of the gross stake, floored to msat; an item purchase's reserve output
   = 20 % of its price.
-- **Custody: the federations' guardians** *(the owner 2026-10-16: "Guardians. Multiple federations. When
+- **Custody: the federations' guardians** *(2026-10-16: "Guardians. Multiple federations. When
   one federation is drained it is automatically moved to a healthy one"; this replaces the earlier
   custody (a))*:
   - The reserves are held in the federations themselves, in each federation where entries paid
@@ -7064,7 +7049,7 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - **When a federation is drained** (§23A: draining, succession, liquidation), its reserves move
     automatically to a healthy federation, as the players' funds do. No vote is needed for that
     move; it is recorded on every node like a payout.
-- **The move, as built** *(kanban #397, the owner 2026-10-17 decision A)*:
+- **The move, as built** *(2026-10-17 decision A)*:
     - **Trigger** (every seat, from its own verified records): federation X is DRAINING or CRITICAL and still holds unspent reserves.
       A HALTED federation waits; its notes are frozen.
     - **Destination:** X's successor when it is OPEN with a reserve key, else the lowest-id OPEN federation with one. No healthy
@@ -7077,7 +7062,7 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
       - then Y's 5-of-7 claims it into a reserve output (`--mode claim-incoming`, FROST-signed).
     - **Recorded** on every seat (state CLAIMED). `/reserves` shows X at 0 and Y up by the claim.
     - **Not built:** a move out of a HALTED federation, splitting over destinations, a re-try after a refund.
-- **The reserve output, concretely** *(slice 3 plan, kanban #397)*: in the entry's ONE lock transaction
+- **The reserve output, concretely** *(slice 3 plan)*: in the entry's ONE lock transaction
   (FEDERATION.md "Donations in the federation"), beside the stake lock, the fee lock and the developers'
   outputs, one **reserve lock**: an LNv2 contract with `claim_pk` = `refund_pk` = the federation's
   reserve key (§27A.9.2, the 5-of-7 key of its guardian seats, `GET /reserves`) and an expiry far beyond
@@ -7088,10 +7073,10 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - On version 11 the developers' outputs are the mandatory 2 % + 2 % (no `donation_bps` to lower) and
     the fee lock is 4 %.
   - An item purchase on version 11 carries its reserve lock (20 % of the list price) the same way.
-  - **As built for items** *(kanban #397 slice 5, the owner 2026-10-16: "Go" on (A))*: a game version decides an item's terms.
+  - **As built for items** *(2026-10-16: "Go" on (A))*: a game version decides an item's terms.
     - A version whose manifest requires protocol 11 (Tick Tock v4, 76f50510…, v3 in every other term) sells its items on the
       reserves' terms: nodes 40 % (equal per served node, floored), **exactly 20 % to the payment federation's reserve key as
-      one output**, and the developers' 40/30/20/10/0 % over the two donation sets. An older version keeps #377's terms.
+      one output**, and the developers' 40/30/20/10/0 % over the two donation sets. An older version keeps 's terms.
     - The purchase record is written as **layout 12** (a record layout, not a protocol version). It names the share, the game
       version's id and the reserve key it paid (`purchaseOutputsReserves`, `purchaseStands` in `purchase.js`).
     - A seat checks the record against that version and against the federation's reserve key it holds. A record on the old
@@ -7105,7 +7090,7 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
 - Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,
   and every payout with the proposal that decided it - all from its own store, as `/donations` is.
 - testnet.bitcoin-arena.io shows the total and the latest payments in and out.
-- **As built** *(kanban #397 slice 4)*:
+- **As built** **:
   - `GET /reserves` answers `totalMsat` and `entries` over all federations, the newest 50 payments in (`paidIn`), and per
     federation its `reserveKey`, `heldMsat`, `entries` and `paidIn`. With `?all=1` it lists every payment in.
   - `payouts` stays `[]` until payouts are built.
@@ -7116,8 +7101,8 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - So every seat that reaches the federation comes to the same total.
   - The node dashboard's round list has a Reserves column: what each round paid in.
   - bitcoin-arena.io shows the reserves' live total under the fees (Economics), with its payments in and how many nodes agree,
-    once five nodes name the same total *(the owner 2026-10-17: "Find a prominent place on the website ... Under the fees")*. The
-    Arena games screen no longer carries a reserves box (the owner 2026-10-17: "no need to show the details").
+    once five nodes name the same total *(2026-10-17: "Find a prominent place on the website ... Under the fees")*. The
+    Arena games screen no longer carries a reserves box (2026-10-17: "no need to show the details").
 
 ### 27A.9.3 Project funding proposals
 
@@ -7125,7 +7110,7 @@ A **project funding proposal** is a forum post with threads:
 
 - `purpose` (free text: what the money is for);
 - `amount_sats` (X) and `lnurl` (where X is paid);
-- `author`: **any key**, which signs it - a player, a developer or a node *(the owner 2026-10-17: "Anyone can do a proposal to
+- `author`: **any key**, which signs it - a player, a developer or a node *(2026-10-17: "Anyone can do a proposal to
   pay out, doesn't have to be the dev"; it replaces "a bonded node's key")*. The proposal may pay anyone's LNURL.
 
 Anyone - node or player - may comment, in threads; comments are signed by their writer's key and
@@ -7136,17 +7121,17 @@ carry no weight in any count.
 - Nodes signal support.
 - It passes when the nodes supporting it are **at least 15 % of the nodes active in the 72 hours
   (432 blocks) before** its signal period ends.
-- **An active node** *(LOCKED the owner 2026-10-16)* is a node that served a round in those 72 hours;
+- **An active node** *(LOCKED 2026-10-16)* is a node that served a round in those 72 hours;
   nodes are counted one each, not by bond.
 - This filters and starts the discussion; nothing is paid on a signal.
-- **As built** *(kanban #397 slice 6, the owner 2026-10-16: signals are "signed messages kept and passed on by the seats. Not on-chain
+- **As built** *(2026-10-16: signals are "signed messages kept and passed on by the seats. Not on-chain
   signals"; the spec timings are the rule on testnet4 and mainnet)*:
   - `FundingProposal` { network_id, author, published_height, amount_sats, lnurl, purpose } (type 0x2e), signed BIP340 by its
     author. A seat keeps it when its signature stands and it is not dated ahead of the seat's chain; the author may be any key
-    (the owner 2026-10-17; until then only a bonded node in the seat's census).
+    (2026-10-17; until then only a bonded node in the seat's census).
   - `FundingComment` { proposal_id, parent_id, author, at_height, text } (0x2f), signed by anyone.
   - `FundingSignal` { proposal_id, node, at_height } (0x30), signed by a bonded node.
-  - `PlayerName` { network_id, player, at_ms, name } (0x31), signed by the player's identity key *(the owner 2026-10-17: "Have custom
+  - `PlayerName` { network_id, player, at_ms, name } (0x31), signed by the player's identity key *(2026-10-17: "Have custom
     names in the protocol")*. `name` follows the lobby's rule (1-24 letters and digits, with space, dot, dash or underscore between);
     empty means the name made from the key. A seat keeps the newest per player and refuses one dated more than 10 minutes ahead
     of its clock; `GET /funding` serves them as `names`. A page checks each signature itself, so a node can leave a name out but
@@ -7171,15 +7156,15 @@ carry no weight in any count.
   ABSTAIN, the last one by height counts.
 - Eligible: the bonds active at the start of the vote (snapshot), and of those only bonds **3 months old and locked 3 months
   past the vote**, weighted by their age (§27A.9.5 rules 1, 2).
-- ~~**Turnout** *(the owner 2026-10-16: "30%")*: at least 30 % of all bonded capital votes.~~ *Replaced 2026-10-17 by §27A.9.5
+- ~~**Turnout** *(2026-10-16: "30%")*: at least 30 % of all bonded capital votes.~~ *Replaced 2026-10-17 by §27A.9.5
   rule 3: YES at least 20 % of everyone who could vote.*
-- **Passes at 60 %** *(RULED the owner 2026-10-16: "Voting threshold is 60%")*: YES holds at least 60 % of
+- **Passes at 60 %** *(RULED 2026-10-16: "Voting threshold is 60%")*: YES holds at least 60 % of
   the bond weight that voted YES or NO (ABSTAIN counts for turnout only).
 - Comments continue.
-- **As built** *(kanban #397 slice 7, the owner 2026-10-17: "The vote is the next slice. Use the sequence you just wrote")*:
+- **As built** *(2026-10-17: "The vote is the next slice. Use the sequence you just wrote")*:
   - Only a signal a seat decided **passed** opens a vote. It runs [signalEnd, signalEnd + 2016), with signalEnd = published + 1008.
   - **The census** is the bonds active at signalEnd: #329's `censusAt`, taken once and kept. Each bond weighs its amount.
-  - **A vote** is #329's 77-byte OP_RETURN "ARN" 'V': proposal_id[0:8], YES / NO / ABSTAIN, and the bond key's BIP340
+  - **A vote** is 's 77-byte OP_RETURN "ARN" 'V': proposal_id[0:8], YES / NO / ABSTAIN, and the bond key's BIP340
     signature over (proposal id, choice).
     - It counts only inside the period.
     - Per bond, the last vote by height counts; a tie in one block goes to the lower txid.
@@ -7188,7 +7173,7 @@ carry no weight in any count.
   - **Reading:** each voting block is read once for the proposal's votes and held to by its hash. A reorg of held blocks
     reads them again.
   - **Deciding:** a seat decides once the last voting block (signalEnd + 2015) is 6 deep, counting the block itself, as
-    #329. It writes the outcome once with that block's hash: YES / NO / ABSTAIN / total sat, turnout %, approval %, bonds
+. It writes the outcome once with that block's hash: YES / NO / ABSTAIN / total sat, turnout %, approval %, bonds
     voted.
     - Later votes, a later census or more blocks do not move it.
     - A reorg that replaces the counted last block reopens it.
@@ -7201,7 +7186,7 @@ carry no weight in any count.
 - The payout is recorded beside the proposal on every node.
 - One payout per proposal.
 - A proposal larger than the reserves at payout time pays nothing and says so.
-- **As built** *(kanban #397 slice 8, the owner 2026-10-17: "Accepted: the 5-of-7 LNURL payout you just wrote. Build that slice.
+- **As built** *(2026-10-17: "Accepted: the 5-of-7 LNURL payout you just wrote. Build that slice.
   No new fork.")*, in `arena-node/src/reserve-payout.js`:
   - **Who signs:** the seven guardian seats of the federation that holds the reserves (its reserve key's DKG shares); any 5 of
     7 sign.
@@ -7228,19 +7213,19 @@ carry no weight in any count.
   - **Shown:** `GET /reserves` lists `payouts` and no longer counts spent outputs; `GET /reserve-payouts`.
   - **Not built:** a re-try after a refund, a payout split over federations, giving up on an LNURL silent for days.
 
-### 27A.9.4 Decided *(the owner 2026-10-16)*
+### 27A.9.4 Decided *(2026-10-16)*
 
 1. Turnout: at least 30 % of all bonded capital must vote, or the vote fails and nothing is paid.
 2. On this version the whole round split is mandatory: nodes 4 %, reserves 2 %, developers 4 %
    (2 % protocol, 2 % game). The developers' share is not a donation the player can lower.
 3. Items: nodes 40 %, reserves 20 %, developers 40 / 30 / 20 / 10 / 0 % as the player chooses
-   (replacing #377's 50-0 %).
+   (replacing 's 50-0 %).
 4. Custody: the federations' guardians, in several federations. A drained federation's reserves move
    automatically to a healthy one.
 5. An active node for the 15 % served a round in the last 72 hours, counted one per node.
    *Superseded 2026-10-17 by §27A.9.5 D6: served rounds in 3 of the last 4 weeks, with a seasoned bond.*
 
-### 27A.9.5 The hijack defences: five rules *(LOCKED the owner 2026-10-17: "Make it 3 months", "older nodes that have been longer in the game can get a factor that increases their weight", "It needs to be more simple so people understand it" - comment 2820, "Yes and document it"; it replaces D1-D6 of comment 2819)*
+### 27A.9.5 The hijack defences: five rules *(LOCKED 2026-10-17: "Make it 3 months", "older nodes that have been longer in the game can get a factor that increases their weight", "It needs to be more simple so people understand it" - comment 2820, "Yes and document it"; it replaces D1-D6 of comment 2819)*
 
 **The attack they close:** anyone may propose a payout to themselves (§27A.9.3). Without these rules an attacker bonds a lot of
 bitcoin after seeing the proposal, votes YES, takes the payout and unbonds when the ~30-day bond lock ends: about 5 weeks of parked
@@ -7257,7 +7242,7 @@ capital for all of the reserves.
 **The signal** counts only active nodes: a bond 3 months old (rule 1's age) and rounds served in **3 of the last 4 weeks**
 (`week` 1,008).
 
-**As built** *(kanban #397, `arena-protocol/src/funding.js`: `voteWeights`, `ageFactor`, `fundingTally`, `capStands`,
+**As built** *(`arena-protocol/src/funding.js`: `voteWeights`, `ageFactor`, `fundingTally`, `capStands`,
 `trancheSchedule`, `activeInWeeks`; `arena-node/src/funding-book.js`: `payments`)*:
 - The vote's census keeps each bond's confirmation height and its advertisement's `bond_maturity` (template 2). A bond without one
   has no vote.
@@ -7276,14 +7261,14 @@ capital for all of the reserves.
   - No vote can pass in a network's first 3 months.
   - Mainnet needs a bond index before rule 1 can be met after restarts.
 
-**On bitcoin-arena.io** *(the owner 2026-10-17: "Add a Project Proposals section to the website where people can comment and
+**On bitcoin-arena.io** *(2026-10-17: "Add a Project Proposals section to the website where people can comment and
 review")*:
 - A **Project proposals** section lists every proposal five of the testnet's nodes hold, with its stage and every comment, threaded.
 - A visitor comments, replies or proposes with their own key: an nsec, or a key that browser keeps. The page builds and signs the
   same `FundingComment` / `FundingProposal` the seats read (`arena-client/src/funding-page.js`, the Arena page's bundle) and hands
   it to every node (`POST /funding`).
 
-**Project improvement proposals (PIPs)** *(the owner 2026-10-17: "Project improvement proposals, PIP. Each item set to vote are prefixed
+**Project improvement proposals (PIPs)** *(2026-10-17: "Project improvement proposals, PIP. Each item set to vote are prefixed
 with PIP. Users can sign in with their ingame key and their custom name or their generated name")*:
 - The forum is its own page beside the Arena: testnet.bitcoin-arena.io/proposals.
 - Every proposal five nodes hold is a **PIP-N**, numbered by publication: published block, then id. The earliest is PIP-1.
@@ -7291,7 +7276,7 @@ with PIP. Users can sign in with their ingame key and their custom name or their
   nsec or a new key also works.
 - Everyone is shown by name: their `PlayerName`, else the name made from their key. A name set in the game's Settings or on the
   forum is signed and handed to every node.
-- A PIP has three parts *(kanban #432, the owner 2026-10-17)*: a title, what it does (Markdown, tables included), and how it improves
+- A PIP has three parts *(2026-10-17)*: a title, what it does (Markdown, tables included), and how it improves
   Bitcoin Arena (its games, protocol, tools or players, not only the protocol). They are kept in the proposal's one signed
   `purpose` (at most 4,000 characters) as the title line, the content, and a last section `## How it improves Bitcoin Arena`. The
   forum renders the Markdown safely: no HTML a writer types reaches the page.

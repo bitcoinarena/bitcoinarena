@@ -15,7 +15,7 @@ import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
-// THE LOBBY COUNTS PLAYERS, NOT ENTRIES (the owner 2026-09-16 15:36: "after each successful run lobby says 1
+// THE LOBBY COUNTS PLAYERS, NOT ENTRIES (2026-09-16 15:36: "after each successful run lobby says 1
 // joined then 2 then 3 as if he never left"). Every PLAY is a new entry; measured on the Daily, one free round
 // held 7 entries from a single player key, and its row said 7 joined.
 const b32 = (n) => new Uint8Array(32).fill(n);

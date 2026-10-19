@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// WHERE THE PAGE'S CONSOLE BUTTON GOES (the owner 2026-10-04): DriveHud.ConsoleSlot tells the page, in Unity's pixels, the
+/// WHERE THE PAGE'S CONSOLE BUTTON GOES (2026-10-04): DriveHud.ConsoleSlot tells the page, in Unity's pixels, the
 /// bottom of the top-right corner's furniture, its right edge and the throttle pad. Measured live: at 1280x720 the button
 /// first sat on the chart's header, then at 844x390 on the WANTED caption. The slot's top must be below all of it - and on
 /// a phone held upright (the chart over the pads, ChartTopRight false) it falls back to the settings icons' corner.
@@ -58,7 +58,7 @@ public class ConsoleSlotTests
         finally { Object.DestroyImmediate(hud.gameObject); }
     }
 
-    /// <summary>WHETHER THE PADS ARE DRAWN (kanban #198): the page stands the open console one margin above the throttle pad
+    /// <summary>WHETHER THE PADS ARE DRAWN: the page stands the open console one margin above the throttle pad
     /// only where there is one, else at the screen's bottom margin - the slot says DriveHud.PadsShown.</summary>
     [Test]
     public void TheSlotSaysWhetherThePadsAreDrawn()
