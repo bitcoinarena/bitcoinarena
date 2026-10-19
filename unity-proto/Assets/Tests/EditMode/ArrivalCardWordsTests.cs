@@ -23,6 +23,17 @@ using UnityEngine;
 /// </summary>
 public class ArrivalCardWordsTests
 {
+    // THE PAGE AS IT RUNS (kanban #521): index.html and the game page parts it loads from games/<game>/, which hold the
+    // lines that once sat in index.html itself.
+    static string PageText()
+    {
+        string dir = System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock");
+        var sb = new System.Text.StringBuilder(System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "index.html")));
+        foreach (string g in System.IO.Directory.GetDirectories(System.IO.Path.Combine(dir, "games")))
+            foreach (string f in System.IO.Directory.GetFiles(g, "*.js")) sb.Append('\n').Append(System.IO.File.ReadAllText(f));
+        return sb.ToString();
+    }
+
     static string[] AllLines() => new[]
     {
         DriveHud.ArrivalHeadline(false, 0.0036), DriveHud.ArrivalHeadline(true, 0),
@@ -343,8 +354,8 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("_copiedAt < 0f && Arena.ArenaCore.ReplayCopied", hud);
         string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
         StringAssert.Contains("c === window.ARENA_REPLAY_URL", lib);
-        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
-        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.ARENA_REPLAY_COPIED = link.url;", page);
+        string page = PageText();
+        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
     }
 
     // THE CARD STANDS AT FULL STRENGTH AND NOTHING IS UNDER IT (PRIORITIES item 3: "nothing overlaps", "stays up ... 8 s";
@@ -362,10 +373,10 @@ public class ArrivalCardWordsTests
             "the score block draws under the card");
         StringAssert.Contains("if (watch == null) return;\n        // not under the result card", hud.Replace("\r\n", "\n"));
         StringAssert.Contains("if (ArrivalShowing) return;", hud);
-        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
+        string page = PageText();
         StringAssert.Contains("window.ARENA_CARD_UP = true;", page);
         // the node strip still steps aside under the card; since the console (427bab76) it also tells the Console button so
-        StringAssert.Contains("if (!window.ARENA_ROUND || window.ARENA_CARD_UP || window.ARENA_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
+        StringAssert.Contains("if (!window.BLWP_ROUND || window.ARENA_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
     }
 
     // THE COPIED REPLAY IS THE CARD'S RUN (2026-09-26 14:08): a session is its page join's (ARENA_ENTRY); another
