@@ -5,7 +5,7 @@
 // player key is one this wallet makes for that round, read back with their side, limit, expiry, stake and the key's order index.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { myOrdersFromEntries } from '../src/market.js';
+import { myOrdersFromEntries } from '../../btc-updown/page/market.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 

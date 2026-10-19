@@ -18,7 +18,7 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { YES, NO } from '../../arena-protocol/src/order-book.js';
 import { UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { fairUp, quoteLadder, depthOf, stakeFor } from '../../arena-client/src/book-bot.js';
+import { fairUp, quoteLadder, depthOf, stakeFor } from '../../btc-updown/page/book-bot.js';
 
 const UPDOWN = testAttestedGame({ name: 'btc-updown-15m', outcomes: [...UP_DOWN_OUTCOMES] });
 const ROUND = { gameId: UPDOWN.registration.gameId, simCoreHash: b32(0), configHash: b32(0), donationSetId: donationSetId(TEST_DONATION_SET_KEYS_REGTEST.recipients), entryCloseMs: 900000n };

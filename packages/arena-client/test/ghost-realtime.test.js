@@ -23,7 +23,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
-import { watchGhosts, GHOST_BACKLOG, playersLine, newestPose } from '../src/ghost-field.js';
+import { watchGhosts, GHOST_BACKLOG, playersLine, newestPose } from '../../nextblock/page/ghost-field.js';
 import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';

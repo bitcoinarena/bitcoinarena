@@ -41,7 +41,7 @@ walk(SRC + 'client.js');
 // once the client has decoded one; the client does not import it, because a
 // client that publishes a run should not depend on whether anybody is drawing
 // the others.
-walk(SRC + 'ghost-field.js');
+walk(ROOT + 'nextblock/page/ghost-field.js');   // Tick Tock's own page part (kanban #521)
 // THE PROTOCOL RESERVES: the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
 walk(SRC + 'reserves-page.js');
 // AND PROJECT PROPOSALS: bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
@@ -96,7 +96,7 @@ walk(SRC + 'winnings.js');
 walk(SRC + 'item-buy.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
-walk(SRC + 'market.js');
+walk(ROOT + 'btc-updown/page/market.js');   // Up/Down's own page part (kanban #521)
 // AND A HEAD-TO-HEAD ROUND'S HIDDEN MOVE AND ITS REVEAL
 walk(SRC + 'head-to-head.js');
 // AND THE GAMES: the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.

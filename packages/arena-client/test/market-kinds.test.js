@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, verify as edVerify, createPublicKey } from 'node:crypto';
-import { marketForRound, checkMarketOutcome, marketLines, scalarValueLine, pickRecord, fetchSeriesTemplate, roundOfPick } from '../src/market.js';
+import { marketForRound, checkMarketOutcome, marketLines, scalarValueLine, pickRecord, fetchSeriesTemplate, roundOfPick } from '../../btc-updown/page/market.js';
 import { seriesId, seriesRound } from '../../arena-protocol/src/series.js';
 import { seriesLineOf } from '../../arena-protocol/src/series-line.js';
 import { encodeManifest, manifestBodyId, gameIdOf, decodeManifest, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, SOURCE_KIND, GAME_MARKET_REFUND,

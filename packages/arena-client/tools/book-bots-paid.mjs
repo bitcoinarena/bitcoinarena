@@ -16,7 +16,7 @@
 //   OUT=<dir> [CDP=9351] [DEPOSIT_SAT=20000] [SHARES=100] node book-bots-paid.mjs
 import { execFile } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { fairUp, quoteLadder } from '../src/book-bot.js';
+import { fairUp, quoteLadder } from '../../btc-updown/page/book-bot.js';
 import { UPDOWN } from '../../arena-node/test/plugins/updown/index.js';
 import { attestorSign } from '../../arena-node/test/plugins/sign.js';
 import { encodeAttestation } from '../../arena-protocol/src/attested.js';
