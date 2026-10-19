@@ -186,7 +186,7 @@ test('the command on the PATH: a script with the node\'s home in it, linked into
     const c = writeCommand({ home, release: '/r', node: '/r/runtime/node', platform: 'linux', env: { HOME: H, PATH: '/usr/bin' } });
     assert.equal(c.name, 'arenanode');
     assert.equal(readFileSync(join(home, 'bin', 'arenanode'), 'utf8').split('\n')[2], `exec '/r/runtime/node' '/r/packages/arena-installer/bin/arenanode.mjs' --home '${home}' --name arenanode "$@"`);
-    assert.equal(realpathSync(join(H, '.local', 'bin', 'arenanode')), join(home, 'bin', 'arenanode'));
+    assert.equal(realpathSync(join(H, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')), 'macOS: /var is /private/var - both sides real');
     assert.match(readFileSync(join(H, '.profile'), 'utf8'), /export PATH=".*\/\.local\/bin:\$PATH"/, '~/.local/bin was not on the PATH: the login profile puts it there');
     assert.match(c.note, /new terminal/);
     // a file of that name that is not ours stays

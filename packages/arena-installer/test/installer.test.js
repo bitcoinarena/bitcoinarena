@@ -272,7 +272,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   // THE ARENANODE COMMAND (kanban #499): written with this node's home in it, and on the PATH (~/.local/bin)
   const cmd = readFileSync(join(home, 'bin', 'arenanode'), 'utf8');
   assert.match(cmd, /exec '[^']+' '[^']+\/packages\/arena-installer\/bin\/arenanode\.mjs' --home '[^']+' --name arenanode "\$@"/);
-  assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), join(home, 'bin', 'arenanode'), 'linked into ~/.local/bin');
+  assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')), 'linked into ~/.local/bin');
   assert.equal((await c.get('/api/state')).json.launchers.command.name, 'arenanode');
   const fin = (await c.post('/api/finish')).json;
   assert.deepEqual([fin.ok, fin.mode, fin.owner], [true, 'direct', `http://127.0.0.1:${seatPort}/Dashboard/owner`], 'the user is told how to reach the node');
