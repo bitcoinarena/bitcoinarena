@@ -154,6 +154,22 @@ test('the doctor: a stopped service, a stale announced address and a missing bon
   } finally { s.close(); rmSync(n.root, { recursive: true, force: true }); }
 });
 
+test('the doctor: a bond confirmed too late to count says so, with the way out (measured: seven testnet4 bonds confirmed 23 blocks late)', async () => {
+  const n = linuxNode({ port: 8470 });
+  try {
+    const { sh } = fakeSh();
+    const state = JSON.parse(readFileSync(join(n.home, 'state.json'), 'utf8'));
+    const st = (h) => async (url) => (String(url).includes('/tx/') ? { json: async () => ({ confirmed: true, block_height: h }) } : (() => { throw new Error('offline'); })());
+    writeFileSync(join(n.home, 'state.json'), JSON.stringify({ ...state, bond: { txid: 'e6'.repeat(32), maturity: 157121 } }));
+    let by = Object.fromEntries((await doctor({ home: n.home, platform: 'linux', env: n.env, sh, fetcher: st(157000) })).map((c) => [c.check, c]));
+    assert.equal(by.Bond.ok, false);
+    assert.match(by.Bond.says, /confirmed in block 157000, too late: its maturity 157121 is 23 block\(s\) short of that plus the lock, so the census never counts it/);
+    assert.match(by.Bond.fix, /^post a new bond: arena-install \(the bond step\); this one is locked until block 157121$/);
+    by = Object.fromEntries((await doctor({ home: n.home, platform: 'linux', env: n.env, sh, fetcher: st(156977) })).map((c) => [c.check, c]));
+    assert.equal(by.Bond.ok, true, by.Bond.says);
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
 test('arenanode status / config / help: a table of every service, settings read and changed in arena.conf', async () => {
   const n = linuxNode({ port: 8470 });
   try {

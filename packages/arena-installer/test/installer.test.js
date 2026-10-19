@@ -248,7 +248,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.match(s.wallet.address, /^tb1p/);
   assert.equal((await c.post('/api/finish')).json.ok, false, 'not finished before the bond is posted or deferred');
   const none = (await c.post('/api/bond/check')).json;
-  assert.deepEqual([none.ok, none.coins.length, none.enough, none.lock.maturity], [true, 0, false, 156900 + 151]);
+  assert.deepEqual([none.ok, none.coins.length, none.enough, none.lock.maturity], [true, 0, false, 156900 + 1 + 144 + 144]);
   const found = (await c.post('/api/bond/check')).json;
   assert.deepEqual([found.totalSats, found.enough], [366000, true]);
   assert.deepEqual(found.parts, { bond: 50000, fees: 2000, advertUpdate: 5000, pegIn: 50000, outside: 103000, ring: 153000 }, 'custody: the bond, the advertisement update\'s reserve, the peg-in, the outside and the ring channel');
