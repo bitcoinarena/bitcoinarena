@@ -10,7 +10,7 @@
 //               (the user signs up / logs in in the browser; the installer waits for the certificate), the tunnel created, its DNS
 //               name routed, a user service runs it; tested from outside (through Cloudflare's edge) before it is saved
 //   quick       an anonymous trycloudflare.com tunnel as a user service: no account, but a new name at every restart
-import { port } from './instance.js';
+import { port, named } from './instance.js';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -215,7 +215,10 @@ export const tunnelNameSince = (text, sinceMs = null) => {
   const fresh = sinceMs === null ? lines : lines.filter((l) => { const m = /(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)/.exec(l); return m && Date.parse(m[1]) >= Math.floor(sinceMs / 1000) * 1000; });
   return quickTunnelName(fresh.join('\n'));
 };
-export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, waitMs = 45000, home = null, platform = process.platform, readLog = (f) => readFileSync(f, 'utf8'), sinceMs = null }) {
+// THIS NODE'S TUNNEL UNIT BY DEFAULT (measured on the test host 2026-10-19, 2026.1.0 installed as a second node, instance t471: the wizard's
+// service step said "the quick tunnel gave no name" while arena-tunnel--t471.service had logged its trycloudflare name - the default read
+// arena-tunnel.service, the first node's unit, which the test host does not have)
+export async function quickTunnelUrl({ unit = `${named('arena-tunnel')}.service`, sh = run, waitMs = 45000, home = null, platform = process.platform, readLog = (f) => readFileSync(f, 'utf8'), sinceMs = null }) {
   const until = Date.now() + waitMs;
   while (Date.now() < until) {
     let text = '';
@@ -234,7 +237,9 @@ export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, 
  */
 // A NEW QUICK TUNNEL'S NAME TAKES LONGER THAN 30 s TO RESOLVE everywhere (measured 2026-10-18 in the Linux VM, rc.6: ENOTFOUND for all 10
 // tries 3 s apart, then HTTP 200 a few minutes later): about 2 minutes of tries before the install step says it failed.
-export async function testPublicUrl({ url, identity, fetcher = fetch, tries = 30, waitMs = 4000 }) {
+// NOT ENOUGH (measured on the test host 2026-10-19, 2026.1.0 fresh install: the tunnel registered 11:34:54Z, its name had no record even
+// at 1.1.1.1 until 11:39:39Z, 4 min 45 s; the wizard's service step had failed with ENOTFOUND at ~2 min): 120 tries, about 8 minutes.
+export async function testPublicUrl({ url, identity, fetcher = fetch, tries = 120, waitMs = 4000 }) {
   let why = 'not tried';
   for (let i = 0; i < tries; i++) {
     const t0 = Date.now();

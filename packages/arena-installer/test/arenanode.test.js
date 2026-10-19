@@ -267,3 +267,18 @@ test('Windows, processes this user cannot see into (the Arena Node window in the
     assert.ok(!/stopped/.test(out.join('\n')));
   } finally { s.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('a node installed fresh knows its release: the one this code is part of, when state.json names none (2026.1.0 fresh on the test host: "version unknown", no auto update)', async () => {
+  const { nodeOf } = await import('../src/node-services.js');
+  const root = mkdtempSync(join(tmpdir(), 'own-release-'));
+  try {
+    const rel = join(root, 'arena-node-2026.1.0-linux-x64'); mkdirSync(rel, { recursive: true }); writeFileSync(join(rel, 'VERSION'), '2026.1.0\n');
+    const home = join(root, 'home'); mkdirSync(home);
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4' }));
+    assert.deepEqual([nodeOf(home, { ownRelease: rel }).version, nodeOf(home, { ownRelease: rel }).release], ['2026.1.0', rel]);
+    assert.equal(nodeOf(home, { ownRelease: null }).version, null, 'a checkout is no release');
+    const other = join(root, 'arena-node-2026.1.1-linux-x64'); mkdirSync(other); writeFileSync(join(other, 'VERSION'), '2026.1.1\n');
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ release: { path: other } }));
+    assert.equal(nodeOf(home, { ownRelease: rel }).version, '2026.1.1', 'the release state.json records wins');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

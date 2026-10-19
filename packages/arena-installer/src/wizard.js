@@ -328,6 +328,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
       const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot });
       if (!r.ok) return { ok: false, why: r.why };
+      // THE RELEASE THE NODE RUNS, RECORDED AT THE INSTALL as an update records it (node-services.js nodeOf: its version, the auto update)
+      s = state.save({ release: { path: release, atMs: Date.now() } });
       // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
       // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
       let reachTest = null;
