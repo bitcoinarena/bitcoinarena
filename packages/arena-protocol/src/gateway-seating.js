@@ -7,15 +7,16 @@
 // it. With no standing seating for an epoch there are no gateway seats in it, and the guardian pool stays the guardians' (fee.js).
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
+import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
 
-export const GATEWAY_SEATING_TAG = 'BLWP/v1/GATEWAY_SEATING';
+export const GATEWAY_SEATING_TAG = TAG_PAIRS.gatewaySeating[0];   // the tag before the switch (tag-switch.js, kanban #525)
 
 /** The 32 bytes a seating's signatures cover: the federation, the epoch, the seats (node keys, sorted). */
-export function gatewaySeatingHash({ federationId, epoch, seats }) {
+export function gatewaySeatingHash({ federationId, epoch, seats }, tag = tagAt('gatewaySeating', { epoch })) {
   const w = new Writer();
   w.bytes32(fromHex(federationId)); w.u32(epoch);
   w.vec([...seats].map((s) => String(s).toLowerCase()).sort(), (s, ww) => ww.bytes32(fromHex(s)));
-  return taggedHash(GATEWAY_SEATING_TAG, w.finish());
+  return taggedHash(tag, w.finish());
 }
 
 /** One guardian's signature on a seating. */
@@ -35,7 +36,7 @@ export function standingSeating({ signed = [], federationId, epoch, seated, thre
   for (const s of signed) {
     if (!s || String(s.federationId).toLowerCase() !== String(federationId).toLowerCase() || s.epoch !== epoch || !allowed.has(String(s.guardian).toLowerCase())) continue;
     let good = false;
-    try { good = verify(fromHex(s.signature), gatewaySeatingHash(s), fromHex(s.guardian)); } catch { good = false; }
+    try { good = tagsAccepted('gatewaySeating', { epoch: s.epoch }).some((t) => verify(fromHex(s.signature), gatewaySeatingHash(s, t), fromHex(s.guardian))); } catch { good = false; }
     if (!good) continue;
     const key = [...s.seats].map((x) => String(x).toLowerCase()).sort().join(',');
     const row = byBody.get(key) || { seats: key ? key.split(',') : [], signers: new Set() };

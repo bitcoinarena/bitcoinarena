@@ -225,6 +225,7 @@ import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
+import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 
 // who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
 const presenceByRound = new WeakMap();
@@ -501,6 +502,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // results to ARENA_NOSTR_PUBLISH. Their images are named under ARENA_BADGE_IMAGE_BASE, else the first stable public address.
   nostrBadgesOn = badgesOn(), badgeImageBase = imageBaseOf(process.env.ARENA_BADGE_IMAGE_BASE) || replayPublic[0] || null,
   nostrBadgesTickMs = 60000 } = {}) {
+  // THE TAG SWITCH'S NETWORK (tag-switch.js, kanban #525): the chain this seat follows names whose BLWP/v1 -> ARENA/v1 point it uses
+  { const n = { 'bitcoin-regtest': 'regtest', 'bitcoin-testnet4': 'testnet4' }[chain]; if (n) setTagNetwork(n); }
   let bondWarned = false;   //: a foreign bond proof is said once
   // THE GAMES THIS NODE HOSTS (M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.

@@ -13,9 +13,11 @@ import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex, bytesToBigInt, sha256 } from './hash.js';
 import { utf8Encode } from './utf8.js';
 import { addressScript, HRP_OF } from './address.js';
+import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
 
-export const LIQUIDITY_CLAIM_TAG = 'BLWP/v1/LIQUIDITY_CLAIM';
-export const LIQUIDITY_TICKET_TAG = 'BLWP/v1/LIQUIDITY';
+// the tags before the switch (tag-switch.js, kanban #525)
+export const LIQUIDITY_CLAIM_TAG = TAG_PAIRS.liquidityClaim[0];
+export const LIQUIDITY_TICKET_TAG = TAG_PAIRS.liquidityTicket[0];
 /** The liquidity amount L (one channel to one node) and the deposit a provider keeps, per network (§23A.10). */
 export const LIQUIDITY_TERMS = Object.freeze({
   testnet4: Object.freeze({ channelSats: 100_000n, depositSats: 500_000n }),     // 5 x L
@@ -29,7 +31,7 @@ export const MAX_FUNDS = 50;
 const LN_KEY = /^0[23][0-9a-f]{64}$/;
 
 /** The 32 bytes a claim's signature covers. */
-export function liquidityClaimHash(c) {
+export function liquidityClaimHash(c, tag = tagAt('liquidityClaim', { ms: c.atMs })) {
   const w = new Writer();
   w.bytes32(fromHex(c.node)); w.bytes(fromHex(c.lightningPubkey), 33); w.str(String(c.lightningAddr || ''));
   w.u64(BigInt(c.freeSats)); w.u64(BigInt(c.atMs));
@@ -38,7 +40,7 @@ export function liquidityClaimHash(c) {
   // the coins that prove its free balance, each signed by its address key (fundsMessage)
   w.vec([...(c.funds || [])].sort((a, b) => (`${a.txid}:${a.vout}` < `${b.txid}:${b.vout}` ? -1 : 1)), (f, ww) => {
     ww.bytes32(fromHex(f.txid)); ww.u32(Number(f.vout)); ww.str(String(f.address)); ww.u64(BigInt(f.sats)); ww.str(String(f.signature)); });
-  return taggedHash(LIQUIDITY_CLAIM_TAG, w.finish());
+  return taggedHash(tag, w.finish());
 }
 
 /** A claim signed with `sign(hash32) -> sig64` by node key `node` (hex). */
@@ -61,13 +63,13 @@ export function checkLiquidityClaim(c, verify) {
     || !Number.isInteger(x.vout) || x.vout < 0 || !/^\d+$/.test(String(x.sats || '')) || typeof x.address !== 'string' || typeof x.signature !== 'string')))
     return { ok: false, why: `a liquidity claim lists at most ${MAX_FUNDS} coins: txid, vout, address, amount, signature` };
   let good = false;
-  try { good = verify(fromHex(c.signature), liquidityClaimHash(c), fromHex(c.node)); } catch { good = false; }
+  try { good = tagsAccepted('liquidityClaim', { ms: c.atMs }).some((t) => verify(fromHex(c.signature), liquidityClaimHash(c, t), fromHex(c.node))); } catch { good = false; }
   return good ? { ok: true } : { ok: false, why: 'the liquidity claim is not signed by its node key' };
 }
 
-export const liquidityTicket = (nodeHex, providerHex) => {
+export const liquidityTicket = (nodeHex, providerHex, atMs) => {
   const w = new Writer(); w.bytes32(fromHex(nodeHex)); w.bytes32(fromHex(providerHex));
-  return bytesToBigInt(taggedHash(LIQUIDITY_TICKET_TAG, w.finish()));
+  return bytesToBigInt(taggedHash(tagAt('liquidityTicket', { ms: atMs }), w.finish()));
 };
 
 /**
@@ -75,7 +77,7 @@ export const liquidityTicket = (nodeHex, providerHex) => {
  * claims; `skipped` Set of `${node}:${provider}` a provider was ranked for and did not open within an hour. Answers
  * [{ node, lightningPubkey, have, open: [provider node hex] }] for every node with fewer than MAX_PROVIDERS_PER_NODE channels.
  */
-export function assignLiquidity({ needs, claims, network = 'testnet4', skipped = new Set() }) {
+export function assignLiquidity({ needs, claims, network = 'testnet4', skipped = new Set(), atMs = Date.now() }) {
   const L = LIQUIDITY_TERMS[network].channelSats;
   const out = [];
   for (const n of needs) {
@@ -84,7 +86,7 @@ export function assignLiquidity({ needs, claims, network = 'testnet4', skipped =
     const have = providers.filter((c) => c.channels.some((x) => x.peer === n.lightningPubkey && BigInt(x.capacitySats) >= L)).map((c) => c.node);
     if (have.length >= MAX_PROVIDERS_PER_NODE) continue;
     const candidates = providers.filter((c) => !have.includes(c.node) && BigInt(c.freeSats) >= L && !skipped.has(`${n.node}:${c.node}`))
-      .sort((a, b) => { const x = liquidityTicket(n.node, a.node), y = liquidityTicket(n.node, b.node); return x < y ? -1 : x > y ? 1 : 0; });
+      .sort((a, b) => { const x = liquidityTicket(n.node, a.node, atMs), y = liquidityTicket(n.node, b.node, atMs); return x < y ? -1 : x > y ? 1 : 0; });
     out.push({ node: n.node, lightningPubkey: n.lightningPubkey, have, open: candidates.slice(0, MAX_PROVIDERS_PER_NODE - have.length).map((c) => c.node) });
   }
   return out;
@@ -107,7 +109,7 @@ export function liquidityWeight(claim, federationLnKeys, network = 'testnet4', f
 // THE FREE BALANCE, PROVEN (spec §23A.10): "the claim lists the wallet's outpoints, each with a signature by its address key (LND
 // SignMessageWithAddr), and a guardian counts only outpoints that are unspent on its own chain and signed". The message names the
 // provider's node, so a coin proves one provider's balance only.
-export const fundsMessage = (node, txid, vout) => `BLWP/v1/LIQUIDITY_FUNDS:${String(node).toLowerCase()}:${String(txid).toLowerCase()}:${Number(vout)}`;
+export const fundsMessage = (node, txid, vout, tag = TAG_PAIRS.liquidityFunds[0]) => `${tag}:${String(node).toLowerCase()}:${String(txid).toLowerCase()}:${Number(vout)}`;
 
 const varStr = (bytes) => { const n = bytes.length; const len = n < 253 ? [n] : [253, n & 255, n >> 8]; return Uint8Array.from([...len, ...bytes]); };
 /** The digest Bitcoin's signmessage (and LND's SignMessageWithAddr) signs: sha256d(varstr(prefix) || varstr(message)). */
@@ -143,7 +145,8 @@ export async function provenFreeSats({ claim, network = 'testnet4', curve, txOut
   for (const f of (claim.funds || []).slice(0, MAX_FUNDS)) {
     const k = `${f.txid}:${f.vout}`;
     if (seen.has(k)) continue; seen.add(k);
-    if (!addressSigned({ address: f.address, message: fundsMessage(claim.node, f.txid, f.vout), signature: f.signature, network, curve })) continue;
+    // the coin's message under the tags of the claim's time (tag-switch.js, kanban #525)
+    if (!tagsAccepted('liquidityFunds', { ms: claim.atMs }).some((t) => addressSigned({ address: f.address, message: fundsMessage(claim.node, f.txid, f.vout, t), signature: f.signature, network, curve }))) continue;
     let o = null; try { o = await txOut(f.txid, Number(f.vout)); } catch { o = null; }
     if (!o || o.script !== toHex(addressScript(f.address, HRP_OF[network]))) continue;
     total += BigInt(o.sats);

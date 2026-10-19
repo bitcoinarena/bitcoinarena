@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO THE GUARDIANS ARE: FOUNDING BY SORTITION (§23A.2). "Bond-weighted stateless sortition, §5A.6 unchanged, with the beacon
-// block after trigger_height and the tag 'BLWP/v1/GUARDIAN', over the guardian-capable census minus operators already guarding an OPEN
+// block after trigger_height and the guardian tag (BLWP/v1/GUARDIAN, ARENA/v1/GUARDIAN from the switch: tag-switch.js), over the guardian-capable census minus operators already guarding an OPEN
 // federation, one ticket per operator. federation_nominal are drawn, then three alternates in order. Nobody hand-picks." A drawn guardian
 // that does not take part within founding_window is a no-show, replaced by the next alternate in order.
 //
@@ -11,15 +11,16 @@ import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG } from './constants.js';
 import { weightOf } from './sortition.js';
+import { tagAt } from './tag-switch.js';
 
 export const ALTERNATES = 3;
 
 const outpointOrder = (a, b) => { const x = toHex(a.txid) + ':' + a.vout, y = toHex(b.txid) + ':' + b.vout; return x < y ? -1 : x > y ? 1 : 0; };
 
-/** One operator's ticket on the founding's seed: H_tag(seed || its lowest bond outpoint). */
-export function guardianTicket(seed, entry) {
+/** One operator's ticket on the founding's seed: H_tag(seed || its lowest bond outpoint) - the tag by the trigger height (kanban #525). */
+export function guardianTicket(seed, entry, height) {
   const w = new Writer(); w.bytes32(seed); w.bytes32(entry.txid); w.u32(entry.vout);
-  return bytesToBigInt(taggedHash(TAG.guardianTicket, w.finish()));
+  return bytesToBigInt(taggedHash(tagAt('guardianTicket', { height }), w.finish()));
 }
 
 /**
@@ -35,7 +36,7 @@ export function guardianTicket(seed, entry) {
  * their nodes), minus `guardingOpen`; then three alternates. `drawn` is the whole seated list, seated-first and drawn alike - the
  * no-show rule (replaceNoShows) applies to every position.
  */
-export function drawGuardians({ entries, seed, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [] }) {
+export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [] }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
   const opOf = (e) => String((e.advert && e.advert.operatorId) || toHex(e.pubkey));
@@ -61,7 +62,7 @@ export function drawGuardians({ entries, seed, nominal, bondMinGuardian, guardin
     return { ok: false, eligible: pool.length, seatedFirst: first.length, why: first.length
       ? `${first.length} seated first, and ${pool.length} other guardian-capable operators hold bond_min_guardian and guard no OPEN federation: the ${missing} missing seats of ${nominal} are not filled, a federation is not founded with fewer`
       : `${pool.length} guardian-capable operators hold bond_min_guardian and none guards an OPEN federation: a federation of ${nominal} is not founded with fewer${allDrawn}` };
-  const scored = pool.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry), weight: weightOf(x.bondSats, bondMinGuardian) }))
+  const scored = pool.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry, height), weight: weightOf(x.bondSats, bondMinGuardian) }))
     .sort((a, b) => { const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); });
   return { ok: true, eligible: pool.length, seatedFirst: first.length, drawn: [...first, ...scored.slice(0, missing).map((s) => s.entry)],
     alternates: scored.slice(missing, missing + ALTERNATES).map((s) => s.entry),

@@ -25,7 +25,9 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+/** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
+export const TAG_SWITCH_VERSION = 18;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -400,10 +402,7 @@ export const TAG = {
   seriesCreator: 'ARENA/v1/SeriesCreator',
   // A RULE A CONTRACT NAMES (§6 *_rule_hash): the rule's text under this tag
   contractRule: 'ARENA/v1/ContractRule',
-  // A GUARDIAN FOUNDING'S TICKET (§23A.2): the spec's own tag
-  guardianTicket: 'BLWP/v1/GUARDIAN',
-  // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD: a node's rank for a slot
-  duty: 'BLWP/v1/DUTY',
+  // (A GUARDIAN FOUNDING'S TICKET and WHO IS ON DUTY: their tags switch from BLWP/v1 to ARENA/v1 at one point - tag-switch.js, kanban #525)
   // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5)
   haltObservation: 'ARENA/v1/HaltObservation',
   entryContract: 'ARENA/v1/EntryContract',

@@ -8,7 +8,7 @@
 //   SLOT          one UTC hour. Slot i's duty is the rounds of hour i + 24: [(i + 24) h, (i + 25) h), for every plan item (a game in a
 //                 network/federation) - one grid each.
 //   WHO           the census at the slot's anchor - the first block whose median time past is beyond the slot's start less 3 h, fixed for
-//                 everybody once it exists - ranked by H('BLWP/v1/DUTY' || network_id || slot || node key); the first is on duty.
+//                 everybody once it exists - ranked by H(duty tag || network_id || slot || node key) (BLWP/v1/DUTY, ARENA/v1/DUTY from the switch: tag-switch.js); the first is on duty.
 //   POSTED        a slot of an item is posted when a transaction carries its marker, OP_RETURN "ARN" 'D' slot item (duty marker), in the
 //                 chain or the mempool, beside the grid's series publications.
 //   MISSED        the duty node of the CURRENT slot posts every slot of the last DUTY_LOOKBACK_SLOTS not posted yet, oldest first, before
@@ -18,6 +18,7 @@ import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, sha256, toHex } from './hash.js';
 import { TAG } from './constants.js';
 import { OP_RETURN, parseTransaction, commitmentsOf } from './tx.js';
+import { tagAt } from './tag-switch.js';
 
 export const DUTY_SLOT_MS = 3600000;
 export const DUTY_AHEAD_SLOTS = 24;
@@ -46,10 +47,10 @@ export async function anchorHeight(slot, { mtpAt, tip, low = 0, slotMs = DUTY_SL
 
 const u32 = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, false); return b; };
 
-/** A node's rank for a slot: H_duty(network_id || slot || node key). */
+/** A node's rank for a slot: H_duty(network_id || slot || node key) - the tag by the slot's hour (tag-switch.js, kanban #525). */
 export function dutyTicket(networkId, slot, nodeKey) {
   const w = new Writer(); w.bytes32(networkId); w.u32(slot); w.bytes32(nodeKey);
-  return bytesToBigInt(taggedHash(TAG.duty, w.finish()));
+  return bytesToBigInt(taggedHash(tagAt('duty', { ms: slot * 3_600_000 }), w.finish()));
 }
 
 /** The slot's nodes in duty order (node keys, 32 bytes each; one per key): the first is on duty. */

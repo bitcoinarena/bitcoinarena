@@ -45,6 +45,9 @@ export const PROTOCOL_RELEASES = Object.freeze([
   // the owner's emergency key: the advert names it; a request it signs takes an offline node out - a non-guardian at once, a guardian
   // before abandon_blocks as DEPARTED - with its bond untouched (§23A.5a)
   Object.freeze({ version: 17, year: 2026, x: 0 }),
+  // the tag switch: the last eleven BLWP/v1 tags (duty, guardian, gateway, liquidity, founding) become ARENA/v1 at one point per
+  // network - a height H and its block's time - both accepted until it, the new one only from it (tag-switch.js)
+  Object.freeze({ version: 18, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
