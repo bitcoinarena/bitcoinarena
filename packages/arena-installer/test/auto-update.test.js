@@ -51,6 +51,7 @@ test('a newer signed release: this system\'s pieces fetched, joined and checked,
     assert.equal(applied[0].newRelease, join(home, 'releases', 'arena-node-0.1.1-linux-x64'));
     assert.equal(applied[0].node, join(home, 'releases', 'arena-node-0.1.1-linux-x64', 'runtime', 'node'));
     assert.equal(applied[0].port, 8470);
+    assert.equal(typeof applied[0].installUpdaterFn, 'function', 'the update brings the auto update service where it is missing');
     assert.equal(JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8')).to, '0.1.1', 'recorded for status and the owner page');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
