@@ -116,7 +116,7 @@ test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw
 });
 
 // kanban #398 (the owner 2026-10-17: "leave the back link always in the header and move the balance to the other buttons"): the bar's own
-// ← right after the logo, the balance pushed right beside Deposit, the client's own "← Arena" hidden in its frame; ← closes an open sheet
+// ← right after the logo, the balance pushed right beside Deposit, the client's own "← Arena" hidden in its frame; ← closes an open sheet and goes to the arena (kanban #529)
 // first, else ARENA_GAME.back
 test('the way back is in the bar, the balance on the right, the client\'s own back hidden', () => {
   const HTML = readFileSync(PAGE, 'utf8');
@@ -133,6 +133,7 @@ test('the way back is in the bar, the balance on the right, the client\'s own ba
   const document = { getElementById: () => btn, querySelector: () => (sheet ? { click: () => { closed++; } } : null) };
   const window = { ARENA_GAME: { back: () => { backs++; } } };
   pageFunction(PAGE, ['document', 'window'], src)(document, window);
+  // kanban #529: over a sheet ← closes it and goes back to the arena too
   sheet = true; btn.onclick(); sheet = null; btn.onclick();
-  assert.deepEqual([closed, backs], [1, 1]);
+  assert.deepEqual([closed, backs], [1, 2]);
 });
