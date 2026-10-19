@@ -218,7 +218,7 @@ test('nothing writes a heat any more, and the browser bundle offers no way to', 
   assert.equal(/ArenaSetHeat\s*:/.test(jslib), false, 'the bridge still exports a heat door');
   assert.equal(/bool\s+SetHeat\s*\(/.test(cs), false, 'ArenaCore still offers SetHeat');
   assert.match(jslib, /ArenaSubmitLoad\s*:/, 'the bridge has no way to declare a load');
-  assert.match(jslib, /Module\.blwpNet\.load\(/, 'the bridge declares a load and never publishes it');
+  assert.match(jslib, /Module\.arenaNet\.load\(/, 'the bridge declares a load and never publishes it');
 
   // THE BUNDLE'S OWN LIST, which is what a page can reach. `setHeat`,
   // `setGround` and `setSolids` were all on it; all three were host doors into
