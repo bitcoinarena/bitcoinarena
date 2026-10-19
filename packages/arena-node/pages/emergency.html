@@ -19,7 +19,7 @@ input{width:100%;font:16px ui-monospace,monospace;padding:10px;border-radius:10p
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
 </style></head><body>
 <h1>My node is offline</h1>
-<div class="sub">Take your own node out of the network while it is away, so it keeps its bond. You need the emergency code you wrote down
+<div class="sub">Take your own node out of the network while it is offline, so it keeps its bond. You need the emergency code you wrote down
 when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</b> - this page does not want them.</div>
 <div class="card">
   <h3>What it does</h3>
@@ -27,14 +27,14 @@ when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</
     <tr><th>Your node</th><th>Taken out</th><th>Bond</th></tr>
     <tr><td>no guardian role</td><td>at once, from every seating</td><td>yours</td></tr>
     <tr><td>a guardian, in time</td><td>at once; its federation's succession starts now</td><td>yours</td></tr>
-    <tr><td>a guardian, too late (absent longer than the network allows: ~48 h on mainnet, 12 blocks on testnet4)</td><td>nothing changes: it is abandonment</td><td>slashed</td></tr>
+    <tr><td>a guardian, too late (offline longer than the network allows: ~48 h on mainnet, 12 blocks on testnet4)</td><td>nothing changes: it is abandonment</td><td>slashed</td></tr>
   </table>
   <p class="sub" style="margin-top:8px">Coming back afterwards needs a new advertisement from the node. The code can do nothing else: no money, no settings.</p>
 </div>
 <div class="card" id="step1">
   <label for="code">Emergency code</label>
   <input id="code" placeholder="ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" autocapitalize="characters">
-  <button class="primary" id="find">Find my node</button>
+  <button class="primary" id="find">Leave network while my node is offline</button>
   <div class="err" id="err1"></div>
 </div>
 <div class="card" id="step2" hidden></div>
@@ -64,7 +64,7 @@ $('find').onclick = async () => {
     <div class="row"><span>Signed at block</span><b>${esc(found.tip)}</b></div>
     ${found.held ? '<p class="ok">This node already holds a leave request for it.</p>' : ''}
     <div class="warn">Taking it out cannot be undone: the node serves again only with a new advertisement.</div>
-    <button class="primary" id="go">Take my node out</button><div class="err" id="err2"></div>`;
+    <button class="primary" id="go">Yes, leave the network</button><div class="err" id="err2"></div>`;
   $('go').onclick = send;
 };
 async function send() {
