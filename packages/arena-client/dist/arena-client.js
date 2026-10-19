@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -686,6 +686,9 @@ const SEATED_GUARDIAN_VERSION = 13;
 const COHORT_VERSION = 14;
 /** 2026.0.15 (kanban #471, §23A.9): a third of the guardian pool goes to the federation's two gateway seats (the record names them). */
 const GATEWAY_SEAT_VERSION = 15;
+/** 2026.0.16 (kanban #494, §23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
+ * federation's liquidity providers, who open incoming channels to new nodes). */
+const LIQUIDITY_VERSION = 16;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -6855,6 +6858,8 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 14, year: 2026, x: 0 }),
   // gateway seats: the guardian pool splits 2/3 to the seated guardians, 1/3 to the federation's two gateway seats (kanban #471, §23A.9)
   Object.freeze({ version: 15, year: 2026, x: 0 }),
+  // liquidity providers: the node fee in four pools of a quarter, the fourth to the federation's providers (kanban #494, §23A.10)
+  Object.freeze({ version: 16, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -6931,7 +6936,10 @@ const SETTLEMENT = 'settlement';
 const GUARDIAN = 'guardian';
 // THE GATEWAY SEATS (2026.0.15, §23A.9): a third of the guardian pool, to the federation's two seated gateways
 const GATEWAY = 'gateway';
-const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY];
+// THE LIQUIDITY PROVIDERS (2026.0.16, §23A.10): a quarter of the node fee, to the providers with a channel to one of the federation's
+// custody nodes (appended as index 4: every earlier table's id is unchanged)
+const LIQUIDITY = 'liquidity';
+const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY, LIQUIDITY];
 
 /**
  * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
@@ -6992,7 +7000,10 @@ function grossVolumeMsat(entries) {
  */
 // `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
 // was checked against at the door; the network's 5 % if none is named
-function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS }) {
+// `weights`: { liquidity: Map(node hex -> sat) } - the providers' available balance from the federation's signed liquidity seating
+// (2026.0.16, §23A.10); without it the liquidity pool is split evenly
+const LIQUIDITY_WEIGHT_STEP = 10000n;
+function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS, weights = null }) {
   const gross = grossVolumeMsat(entries);
   const fee = (gross * BigInt(feeBps)) / 10000n;
   // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
@@ -7000,20 +7011,28 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
   // two-pool table exactly as before - 1% and the rest.
   const guardians = ((pools && pools[GUARDIAN]) || []).filter((k) => eligible.has(hex(k)));
   let shareOf;
-  if (guardians.length) {
+  const v = Number(contract && contract.protocolVersion);
+  if (guardians.length && v >= LIQUIDITY_VERSION) {
+    // FOUR QUARTERS (2026.0.16, §23A.10): game/verify, settlement, custody and liquidity; the custody quarter takes the floors' leftover.
+    // With no eligible liquidity provider, its quarter is custody's (the guardians', then a third of it the gateway seats').
+    const quarter = fee / 4n;
+    const providers = ((pools && pools[LIQUIDITY]) || []).filter((k) => eligible.has(hex(k)));
+    shareOf = providers.length ? { [GAME_VERIFY]: quarter, [SETTLEMENT]: quarter, [GUARDIAN]: fee - 3n * quarter, [LIQUIDITY]: quarter }
+      : { [GAME_VERIFY]: quarter, [SETTLEMENT]: quarter, [GUARDIAN]: fee - 2n * quarter };
+  } else if (guardians.length) {
     const third = fee / 3n;
     shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
-    // A 2026.0.15 ROUND WITH A SEATED GATEWAY (§23A.9): one third of the guardian pool is the gateway seats', the guardians keep the rest;
-    // with no eligible gateway the guardians keep it all, as before
-    const gateways = ((pools && pools[GATEWAY]) || []).filter((k) => eligible.has(hex(k)));
-    if (Number(contract && contract.protocolVersion) >= GATEWAY_SEAT_VERSION && gateways.length) {
-      const gw = shareOf[GUARDIAN] / 3n;
-      shareOf[GATEWAY] = gw; shareOf[GUARDIAN] -= gw;
-    }
   } else {
     // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
     const first = fee / 2n;
     shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
+  }
+  // A 2026.0.15 ROUND WITH A SEATED GATEWAY (§23A.9): one third of the guardian (custody) pool is the gateway seats', the guardians keep
+  // the rest; with no eligible gateway the guardians keep it all, as before. On 2026.0.16 the custody pool is a quarter of the fee.
+  const gateways = ((pools && pools[GATEWAY]) || []).filter((k) => eligible.has(hex(k)));
+  if (guardians.length && v >= GATEWAY_SEAT_VERSION && gateways.length) {
+    const gw = shareOf[GUARDIAN] / 3n;
+    shareOf[GATEWAY] = gw; shareOf[GUARDIAN] -= gw;
   }
 
   const id = roundId(contract);
@@ -7032,9 +7051,14 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
     // Floor the base share, then hand the leftover out one millisatoshi at a
     // time in the round's own order - 22A's rule, and the one `payout.js`
     // already uses for the pool so there is one implementation of it.
-    const each = amount / BigInt(earning.length);
-    let left = amount - each * BigInt(earning.length);
-    for (const k of earning) signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + each);
+    // THE LIQUIDITY POOL BY AVAILABLE BALANCE (2026.0.16, §23A.10; the owner 2026-10-18: "Fee must be dependant on available balance too if
+    // there is more than one"): each provider's weight floored to 10,000 sat, its share floored; with no weights (or all 0) evenly
+    const w = pool === LIQUIDITY && weights && weights[LIQUIDITY]
+      ? earning.map((k) => { const x = BigInt(weights[LIQUIDITY].get(hex(k)) || 0n); return (x / LIQUIDITY_WEIGHT_STEP) * LIQUIDITY_WEIGHT_STEP; }) : null;
+    const total = w ? w.reduce((a, b) => a + b, 0n) : 0n;
+    const shares = total > 0n ? w.map((x) => (amount * x) / total) : earning.map(() => amount / BigInt(earning.length));
+    let left = amount - shares.reduce((a, b) => a + b, 0n);
+    earning.forEach((k, i) => signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + shares[i]));
     // WITH THREE POOLS THE LEFTOVER MSATS TAKE TURNS ACROSS THEM: the order goes on where the pool before stopped, so
     // a node does not take the extra millisatoshi of every third (measured: 4000 msat over two nodes, 2001 and 1999).
     // The two-pool table keeps its own order, exactly as before.
@@ -15361,14 +15385,16 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : []),
-    ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : [])].map(toHex));
+    ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : []), ...(Array.isArray(signerNodes[LIQUIDITY]) ? signerNodes[LIQUIDITY] : [])].map(toHex));
   // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13, kanban #309): its operator plays the round (operator-conflict.js); the
   // caller names them on `signerNodes.conflicted` (hex), and their shares go to the rest of their pool as any absent node's
   for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
   let table;
   // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397): its fee locks hold that, and the table owes that
   const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
-  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
+  // the liquidity providers' weights (2026.0.16, §23A.10): `signerNodes.liquidityWeights` node hex -> sat, from the standing liquidity seating
+  const weights = signerNodes.liquidityWeights instanceof Map ? { liquidity: signerNodes.liquidityWeights } : null;
+  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, weights, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'
   const donationOwedMsat = donation ? poolMsat - table.fee : 0n;
@@ -15392,7 +15418,8 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   for (const [k, msat] of table.signerNodes) {
     const node = k.slice(k.indexOf(':') + 1);
     // a gateway seat's share (2026.0.15, §23A.9) goes where its guardian share goes: its advert's payout key
-    const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`)) ? payoutOf.get(node) : null;
+    // a liquidity provider's share (2026.0.16, §23A.10) too
+    const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`) || k.startsWith(`${LIQUIDITY}:`)) ? payoutOf.get(node) : null;
     if (pk && !(pk instanceof Uint8Array && pk.length === 33)) return refuse('a guardian is paid to a 33-byte payout key');
     const key = pk ? `payout:${toHex(pk)}` : node;
     owed.set(key, (owed.get(key) || 0n) + msat);
