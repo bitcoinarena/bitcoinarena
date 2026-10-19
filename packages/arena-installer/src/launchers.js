@@ -161,3 +161,13 @@ export function writeCommand({ home, release, node, platform = process.platform,
   }
   return { name, file, link: null, dir: null, note: `run it as ${file}` };
 }
+
+/**
+ * THE AUTO UPDATE SERVICE (kanban #505): `<home>/bin/arenanode auto-update` as a service of this node - its command names the node's own
+ * arenanode, not a release, so an update moves everything else and never stops it mid-way; it ends with 75 after an update and comes
+ * back from the new release (systemd Restart=on-failure, launchd KeepAlive, the Windows launcher's loop). Answers installProgram's answer.
+ */
+export function installUpdater({ home, installProgram, platform = process.platform, env = process.env, sh = undefined, boot = true }) {
+  const cmd = join(home, 'bin', platform === 'win32' ? `${commandName()}.cmd` : commandName());
+  return installProgram({ id: 'updater', description: 'The Arena node\'s auto update', args: [cmd, 'auto-update'], home, boot, platform, env, againOn: 75, ...(sh ? { sh } : {}) });
+}

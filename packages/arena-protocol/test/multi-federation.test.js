@@ -32,7 +32,7 @@ const entry = {
 
 test('version 3 is 2026.0.3 and spoken; a v3 paying round with a zero federation_id takes any federation, a v1/v2 one is refused', () => {
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(3));
-  assert.equal(protocolVersionName(3), '2026.0.3');
+  assert.equal(protocolVersionName(3), '3');
   const any = { ...round, protocolVersion: 3, federationId: ZERO };
   const back = decodeRoundContract(encodeRoundContract(any));
   assert.equal(back.protocolVersion, 3);

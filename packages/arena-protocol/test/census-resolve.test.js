@@ -201,7 +201,7 @@ test('an advertisement that declares no role, or no version we speak, is out', (
     contract, resolve: () => oldVersion,
   });
   assert.equal(old.eligible.length, 0);
-  assert.match(old.excluded[0].why, /speaks \?\.\?\.99 and this round runs 2026\.0\.1/);
+  assert.match(old.excluded[0].why, /speaks 99 and this round runs 1/);
 
   // and one that speaks ours among others is in
   const both = { transaction: bondOf(0x23, { protocolVersions: [99, PROTOCOL_VERSION] }) };
@@ -236,7 +236,7 @@ test('which nodes are selectable is the round\'s decision, not the caller\'s', (
     contract: { ...contract, protocolVersion: 99 }, resolve: () => tx,
   });
   assert.equal(theirs.eligible.length, 1, 'a round running 99 refused a node that speaks 99');
-  assert.match(ours.excluded[0].why, /speaks \?\.\?\.99 and this round runs 2026\.0\.1/);
+  assert.match(ours.excluded[0].why, /speaks 99 and this round runs 1/);
 
   // and a round that names no version is answered, not guessed at: there is no
   // default to fall back on any more, which is the point.

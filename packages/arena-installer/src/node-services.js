@@ -34,6 +34,7 @@ export const SERVICES = Object.freeze([
   { id: 'custody', title: 'Custody agent' },
   { id: 'liquidity', title: 'Liquidity provider' },
   { id: 'workers', title: 'workers.dev keeper' },
+  { id: 'updater', title: 'Auto update' },
   { id: 'node', title: 'Arena node (seat)' },
   { id: 'guardian', title: 'Guardian (fedimintd)', inside: 'node' },
   { id: 'tunnel', title: 'Tunnel (cloudflared)' },

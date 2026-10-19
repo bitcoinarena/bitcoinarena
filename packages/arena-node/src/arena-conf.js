@@ -32,6 +32,7 @@ export const CONF_KEYS = Object.freeze([
   ['guardian_endpoint', 'custody: the guardian\'s public websocket (<public_url>/guardian)'],
   ['liquidity_claim_file', 'liquidity: the provider\'s claim'],
   ['liquidity_provider_url', 'liquidity: the provider service\'s local address'],
+  ['auto_update', '1 (default): the node updates itself to a newer signed release; 0: only by hand (arenanode update)'],
 ]);
 const KNOWN = new Set(CONF_KEYS.map(([k]) => k));
 const PORT_NAMED = Object.freeze({ public_url: 'ARENA_WSS_', guardian_endpoint: 'ARENA_GUARDIAN_ENDPOINT_', guardian_next_endpoint: 'ARENA_GUARDIAN_NEXT_ENDPOINT_' });
