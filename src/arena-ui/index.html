@@ -60,6 +60,11 @@
     // no money - preferences, caches, connections - goes through this one door; a tab's player and money are vault()'s and the seed
     // keeper's (join.test.js names the three)
     window.ARENA_BROWSER_STORE = function () { try { return window.localStorage; } catch (e) { return null; } };
+    // THE NAMES A GAME'S OWN CLIENT READS, UNDER ARENA'S NAME TOO (kanban #523): a client version from now on reads ARENA_JOIN,
+    // ARENA_JOIN_ANSWER and ARENA_ROW_NODES; the versions already played (RPS 1-3) keep reading BLWP_*, so both stay - the same value
+    ['JOIN', 'JOIN_ANSWER', 'ROW_NODES'].forEach(function (n) {
+      Object.defineProperty(window, 'ARENA_' + n, { configurable: true, get: function () { return window['BLWP_' + n]; } });
+    });
     (function () {
       try {
         var q = new URLSearchParams(location.search).get('game');
