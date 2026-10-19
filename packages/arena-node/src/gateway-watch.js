@@ -18,7 +18,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
   let incumbents = [];
-  const baseOf = (u) => String(u).replace(/\/+$/, '');
+  // a seat's advert names its endpoint as wss://... (the guardian socket's address); its HTTP doors are the same address over https
+  // (measured 2026-10-19 21:1xZ: fetch refused every wss:// claim URL - "unknown scheme" - so no claim stood and no gateway was seated)
+  const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
   async function probe() {
     const fid = await federationId();
     if (!fid) return { ok: false, why: 'this node guards no federation' };

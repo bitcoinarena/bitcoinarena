@@ -27,3 +27,19 @@ test('the page script parses, and it limits itself: six at once, 10 s each, ever
   assert.match(script, /signal: AbortSignal\.timeout\(ASK_MS\)/);
   assert.match(script, /setInterval\(read, 60000\)/);
 });
+
+test('each federation\'s gateway row is its own guardians\' answer, not the first seat\'s', async () => {
+  // measured 2026-10-19 ~21:15Z: a guardian seat ranks only its own federation (the ?federation= is not read), so the first seat that
+  // answered - one of A's - filled B's row with A's epoch and "0 of 2" too
+  const at = script.indexOf('  async function paintGateways(');
+  const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
+  const answers = { a1: { federationId: A, epoch: 1090, seated: ['01'.repeat(32)], why: 'A ranked' }, b1: { federationId: B, epoch: 1090, seated: [], why: 'B ranked' } };
+  const ask = async (s) => ({ ok: true, body: answers[s] });
+  const el = { innerHTML: '' };
+  const fn = new Function('ask', '$', 'dot', 'short', 'esc', src + '\nreturn paintGateways;')(ask, () => el, (c) => `[${c}]`, (x, n) => String(x).slice(0, n), (x) => String(x));
+  await fn([{ federation: A }, { federation: B }], ['a1', 'b1'], []);
+  const rows = el.innerHTML.split('<tr>').filter((r) => r.includes('[ok]') || r.includes('[warn]') || r.includes('[bad]'));
+  assert.match(rows[0], /aaaaaaaaaaaa.*1 of 2.*A ranked/s);
+  assert.match(rows[1], /bbbbbbbbbbbb.*0 of 2.*B ranked/s, 'B is ranked by a seat of B');
+});
