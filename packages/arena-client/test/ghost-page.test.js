@@ -21,7 +21,7 @@ test('loaded after the bundle, it puts the jslib\'s functions on BLWPCLIENT, and
   assert.equal(typeof BLWPCLIENT.watchGhosts, 'undefined', 'the engine bundle carries no ghost code');
   const window = { BLWPCLIENT: { ...BLWPCLIENT } };
   new Function('window', readFileSync(PAGE_JS, 'utf8'))(window);
-  const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   for (const name of ['watchGhosts', 'tickClock', 'ghostLabels', 'ghostLabelText', 'newestPose']) {
     assert.ok(jslib.includes('BLWPCLIENT.' + name), `the jslib no longer calls ${name}`);
     assert.equal(typeof window.BLWPCLIENT[name], 'function', name);

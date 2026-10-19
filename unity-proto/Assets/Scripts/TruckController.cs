@@ -154,9 +154,9 @@ public class TruckController : MonoBehaviour
             // the body kinematic while the core answers and rewrites the transform from core words
             // every frame. So the jump a player sees is this teleport and nothing else, and the size of
             // it is the CORE's before-and-after, not Unity's. Measured here rather than inferred.
-            var before = Blwp.BlwpCore.TruckPosition(0f);
-            bool took = Blwp.BlwpCore.Teleport(spawnPosition, spawnRotation.eulerAngles.y);
-            var after = Blwp.BlwpCore.TruckPosition(0f);
+            var before = Arena.ArenaCore.TruckPosition(0f);
+            bool took = Arena.ArenaCore.Teleport(spawnPosition, spawnRotation.eulerAngles.y);
+            var after = Arena.ArenaCore.TruckPosition(0f);
             float moved = Vector2.Distance(new Vector2(before.x, before.z), new Vector2(after.x, after.z));
             Debug.Log($"[spawnmark] respawn teleport {(took ? "taken" : "REFUSED")}: core was "
                       + $"{before.x:F2},{before.z:F2} -> {after.x:F2},{after.z:F2}, moved {moved:F2} m in 2-D; "

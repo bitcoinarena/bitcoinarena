@@ -3,7 +3,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15), a RAISED RIBBON on ONE SURFACE (492f128 PLAYTEST FIX, 2026-09-17
@@ -334,7 +334,7 @@ public class CandleTerrain : MonoBehaviour
 
     void LateUpdate()
     {
-        if (!Blwp.BlwpCore.Available || Blwp.BlwpCore.CandleView(_words) == 0) return;
+        if (!Arena.ArenaCore.Available || Arena.ArenaCore.CandleView(_words) == 0) return;
         LiveWords = _words;
         EnsureMeshes();
         float now = Time.unscaledTime, shift = _words[L.CV_SHIFT] / ONE;
@@ -345,8 +345,8 @@ public class CandleTerrain : MonoBehaviour
             if (_formingTop.HasProperty("_BaseColor")) _formingTop.SetColor("_BaseColor", c);
             _formingTop.color = c;
         }
-        int surfaceSig = Blwp.BlwpCore.ReliefEpoch * 1000003 + Blwp.BlwpCore.StrikeCount * 1009 + Blwp.BlwpCore.CraterCount;
-        if (_ground == null) _ground = new GroundCache(Blwp.BlwpCore.TerrainAt) { Hold = GroundSeconds };
+        int surfaceSig = Arena.ArenaCore.ReliefEpoch * 1000003 + Arena.ArenaCore.StrikeCount * 1009 + Arena.ArenaCore.CraterCount;
+        if (_ground == null) _ground = new GroundCache(Arena.ArenaCore.TerrainAt) { Hold = GroundSeconds };
         _ground.Now = now;
         bool surfaceChanged = surfaceSig != _builtSurface;
         if (surfaceChanged) _ground.Clear();
@@ -372,7 +372,7 @@ public class CandleTerrain : MonoBehaviour
                 Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed, p.FormingTop);
             }
             _formingGreen = tail.FormingGreen || p.FormingGreen;
-            BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Blwp.BlwpCore.FrontlineZ, Surface, _seamVerts, _seamTris);
+            BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Arena.ArenaCore.FrontlineZ, Surface, _seamVerts, _seamTris);
             Set(_seam, _seamVerts, _seamTris);
             Rebuilds++;
             // THE SURFACE CHECK NOT AT START (measured 2026-10-08 in a named profile at 10x CPU as an Android phone:
@@ -457,7 +457,7 @@ public class CandleTerrain : MonoBehaviour
         for (float x = -70f; x <= 100f; x += 14.3f)
             for (float z = -44f; z <= 44f; z += 7.3f)
             {
-                float core = Blwp.BlwpCore.SurfaceAt(x, z);
+                float core = Arena.ArenaCore.SurfaceAt(x, z);
                 float drawn = terrain.DrawnHeightAt(x, z);
                 float top = TopAt(verts, tris, x, z);
                 if (!float.IsNaN(top)) { top -= Lift; inBody++; drawn = float.IsNaN(drawn) ? top : Mathf.Max(drawn, top); }

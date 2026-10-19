@@ -79,11 +79,11 @@ public class SpectatorCamera : MonoBehaviour
             // moving the camera 12 m and called it, rightly, no jump at all. 95 m keeps each spot in front of its
             // own building and 103 m from the other.
             case Spot.Miner:
-                look = new Vector3(gate != null ? gate.gateX : Blwp.Layout.MINER_X / 65536f, 30f, 0f);
+                look = new Vector3(gate != null ? gate.gateX : Arena.Layout.MINER_X / 65536f, 30f, 0f);
                 at = look + new Vector3(-95f, 60f, 0f);
                 break;
             case Spot.PostOffice:
-                look = new Vector3(post != null ? post.postX : Blwp.Layout.POST_X / 65536f, 25f, 0f);
+                look = new Vector3(post != null ? post.postX : Arena.Layout.POST_X / 65536f, 25f, 0f);
                 at = look + new Vector3(95f, 55f, 0f);
                 break;
             case Spot.Overview:

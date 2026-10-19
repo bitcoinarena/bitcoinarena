@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BYTES C# READS, DRIVEN HERE.
 //
-// `blwp.jslib` is the file `node --test` cannot load, and that is not a small
+// `arena.jslib` is the file `node --test` cannot load, and that is not a small
 // thing: the session's state word lived in it, was wrong on the socket-up VOID
 // path, and survived an audit that was looking straight at it. The word has
 // moved into the client where the other tests read it - and what is left here
@@ -38,7 +38,7 @@ import { HOSTED } from '../../arena-node/test/plugins/hosted.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const require = createRequire(import.meta.url);
 const core = require('../../nextblock/dist/blwp-core.js');
-const JSLIB = new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url);
+const JSLIB = new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url);
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
@@ -83,21 +83,21 @@ async function playing() {
 
 test('the bridge answers nothing at all before a session exists', () => {
   const { library, read } = bridge();
-  assert.equal(library.BlwpNetEnded(), 0);
-  assert.equal(read(library.BlwpNetEnding).n, 0, 'a run that never started has no ending');
-  assert.equal(read(library.BlwpNetStatus).text, 'off');
+  assert.equal(library.ArenaNetEnded(), 0);
+  assert.equal(read(library.ArenaNetEnding).n, 0, 'a run that never started has no ending');
+  assert.equal(read(library.ArenaNetStatus).text, 'off');
 });
 
 test('a live run tells the game nothing has ended', async () => {
   const { node, client } = await playing();
   const { Module, library, read } = bridge();
   try {
-    Module.blwpNet = { seen: 120, client, error: '' };
-    assert.equal(library.BlwpNetEnded(), 0, 'a live run was reported as over');
-    const e = read(library.BlwpNetEnding);
+    Module.arenaNet = { seen: 120, client, error: '' };
+    assert.equal(library.ArenaNetEnded(), 0, 'a live run was reported as over');
+    const e = read(library.ArenaNetEnding);
     assert.equal(e.n, 0);
     assert.equal(Module.HEAPU8[0], 0, 'and it must leave a terminated empty string');
-    assert.match(read(library.BlwpNetStatus).text, /^ready /);
+    assert.match(read(library.ArenaNetStatus).text, /^ready /);
   } finally { client.close(); await node.close(); }
 });
 
@@ -114,7 +114,7 @@ test('a socket-up VOID reaches the bytes C# reads', async () => {
   const { node, client } = await playing();
   const { Module, library, read } = bridge();
   try {
-    Module.blwpNet = { seen: BLOCK_TICKS + 1, client, error: '' };
+    Module.arenaNet = { seen: BLOCK_TICKS + 1, client, error: '' };
     // TWICE THE ROUND, so the hold fills whatever the round's length is. It
     // was 1200 against a 600-tick round; a round is the core's 9000 now,
     // because a node refuses any other, and a fixed 1200 would no longer fill
@@ -122,15 +122,15 @@ test('a socket-up VOID reaches the bytes C# reads', async () => {
     for (let i = 0; i < 2 * BLOCK_TICKS; i++) client.record([45875, 0, 0, 0, 0]);
     assert.equal(client.ended, true, 'the hold should have filled');
 
-    assert.equal(library.BlwpNetEnded(), 1, 'the game was never told the run had ended');
+    assert.equal(library.ArenaNetEnded(), 1, 'the game was never told the run had ended');
 
-    const e = read(library.BlwpNetEnding);
+    const e = read(library.ArenaNetEnding);
     assert.match(e.text, /^VOID a tick was dropped at \d+/, 'the word and the reason, both');
     assert.equal(Module.HEAPU8[e.n], 0, 'and it is a terminated string');
     assert.equal(e.text.includes('DELIVERED') || e.text.includes('FAILED'), false,
       'the bridge must repeat the client\'s word, not choose one');
 
-    const line = read(library.BlwpNetStatus).text;
+    const line = read(library.ArenaNetStatus).text;
     assert.equal(line.split(' ')[0], 'ended', `the panel still said: ${line}`);
     assert.equal(/(^| )ready( |$)/.test(line), false, `ready printed beside a VOID: ${line}`);
     assert.match(line, /VOID a tick was dropped/);
@@ -139,11 +139,11 @@ test('a socket-up VOID reaches the bytes C# reads', async () => {
 
 test('the page prints its own word only while there is no client to have one', () => {
   const { Module, library, read } = bridge();
-  Module.blwpNet = { seen: 0, client: null, state: 'error', error: 'the node refused the round' };
-  const line = read(library.BlwpNetStatus).text;
+  Module.arenaNet = { seen: 0, client: null, state: 'error', error: 'the node refused the round' };
+  const line = read(library.ArenaNetStatus).text;
   assert.equal(line.split(' ')[0], 'error');
   assert.match(line, /\(the node refused the round\)/);
-  assert.equal(library.BlwpNetEnded(), 0, 'a session that never opened has not ended');
+  assert.equal(library.ArenaNetEnded(), 0, 'a session that never opened has not ended');
 });
 
 // THE GAME'S TICKS PAST THE RUN'S END ARE NOT INPUTS. `net.tick` is built inside the

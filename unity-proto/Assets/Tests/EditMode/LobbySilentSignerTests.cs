@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// NEVER HANG FOREVER, THE LOBBY'S HALF (2026-09-17). Measured before on the Daily with its tunnels silent: a round past its

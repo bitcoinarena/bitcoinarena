@@ -11,7 +11,7 @@ using UnityEngine.TestTools;
 /// `SpawnMark` re-asks the post office where the bay is whenever `MempoolTerrain` rebuilds, and puts a
 /// still-held truck back on it. It used to decide "still in its bay" on a THREE-dimensional distance
 /// against a mark whose height moves with the ground. The core's rule is two-dimensional:
-/// `BlwpCore.Teleport` takes x and z and drops y, because the core recomputes height from its own
+/// `ArenaCore.Teleport` takes x and z and drops y, because the core recomputes height from its own
 /// surface. A 3-D budget therefore counts a HEIGHT-ONLY rebuild as movement and skips a re-seat on a
 /// truck the core still has standing in its bay.
 ///
@@ -24,7 +24,7 @@ using UnityEngine.TestTools;
 /// It asserts the RULE, not a survival time, and it loosens nothing: `parkedWithin` stays at its
 /// shipped value and the 3-D distance is recorded rather than accommodated.
 ///
-/// THERE IS NO CORE IN PLAYMODE. `BlwpInit` is a stub that returns 0, so `BlwpCore.Available` is false
+/// THERE IS NO CORE IN PLAYMODE. `ArenaInit` is a stub that returns 0, so `ArenaCore.Available` is false
 /// and `Teleport` returns false without moving anything. The third number is therefore what the code
 /// COMMANDS in x/z - the spawn mark against the truck's own x/z - and it is labelled commanded rather
 /// than dressed up as core movement.
@@ -33,7 +33,7 @@ public class SpawnMarkParkedTests
 {
     [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
 
-    [SetUp] public void PracticeOffSoNothingIsWithheld() => Blwp.PracticeMode.On = false;
+    [SetUp] public void PracticeOffSoNothingIsWithheld() => Arena.PracticeMode.On = false;
 
     GameObject _boot;
     TruckController _truck;

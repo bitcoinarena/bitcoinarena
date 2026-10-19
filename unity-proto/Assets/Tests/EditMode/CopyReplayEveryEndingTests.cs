@@ -9,7 +9,7 @@ using UnityEngine;
 /// hide it"). The result card carries the control for a delivery and a miss with freight aboard; every other ending -
 /// WASTED, a run the timer or a VOID stopped, a truck with nothing on the bed - has no card, so the same control is
 /// drawn on its own row. Which run it copies is the bridge's: the run that just ended, kept at its end from the session
-/// ROLL OUT found for it (blwp.jslib `BlwpRunStarts`).
+/// ROLL OUT found for it (arena.jslib `ArenaRunStarts`).
 /// </summary>
 public class CopyReplayEveryEndingTests
 {

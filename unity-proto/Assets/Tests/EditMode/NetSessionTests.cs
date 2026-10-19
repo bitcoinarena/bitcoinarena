@@ -6,8 +6,8 @@ using UnityEngine;
 /// <summary>
 /// WHEN A SESSION IS ASKED FOR, and when it is not.
 ///
-/// The rest of step B cannot be checked in an editor at all: `BlwpNet` is a
-/// stub outside a WebGL player, exactly as `BlwpCore` is, so nothing here will
+/// The rest of step B cannot be checked in an editor at all: `ArenaNet` is a
+/// stub outside a WebGL player, exactly as `ArenaCore` is, so nothing here will
 /// ever open a socket, sign a mark or receive a receipt. What CAN be pinned is
 /// the rule that decides whether a session should exist - and that is worth
 /// pinning, because every way of getting it wrong is quiet.
@@ -25,38 +25,38 @@ public class NetSessionTests
     [Test]
     public void WithANodeAndACoreDrivingItOpensOnce()
     {
-        Assert.IsTrue(Blwp.NetSession.ShouldOpen("http://node", true, false, 30, Settle));
-        Assert.IsTrue(Blwp.NetSession.ShouldOpen("http://node", true, false, 900, Settle));
+        Assert.IsTrue(Arena.NetSession.ShouldOpen("http://node", true, false, 30, Settle));
+        Assert.IsTrue(Arena.NetSession.ShouldOpen("http://node", true, false, 900, Settle));
     }
 
     [Test]
     public void NoNodeMeansNoSession()
     {
-        Assert.IsFalse(Blwp.NetSession.ShouldOpen("", true, false, 900, Settle),
+        Assert.IsFalse(Arena.NetSession.ShouldOpen("", true, false, 900, Settle),
             "a player with no node to play against gets the game they had before");
-        Assert.IsFalse(Blwp.NetSession.ShouldOpen(null, true, false, 900, Settle));
+        Assert.IsFalse(Arena.NetSession.ShouldOpen(null, true, false, 900, Settle));
     }
 
     [Test]
     public void NothingIsCommittedToWhileTheCoreIsNotDriving()
     {
-        Assert.IsFalse(Blwp.NetSession.ShouldOpen("http://node", false, false, 900, Settle),
+        Assert.IsFalse(Arena.NetSession.ShouldOpen("http://node", false, false, 900, Settle),
             "a mark taken with no core behind it commits to a state that is not the round");
     }
 
     [Test]
     public void ASessionIsOpenedOnceAndNotAgain()
     {
-        Assert.IsFalse(Blwp.NetSession.ShouldOpen("http://node", true, true, 900, Settle),
+        Assert.IsFalse(Arena.NetSession.ShouldOpen("http://node", true, true, 900, Settle),
             "a second session is a second entry for one player");
     }
 
     [Test]
     public void TheWorldIsLetSettleFirst()
     {
-        Assert.IsFalse(Blwp.NetSession.ShouldOpen("http://node", true, false, 0, Settle));
-        Assert.IsFalse(Blwp.NetSession.ShouldOpen("http://node", true, false, 29, Settle));
-        Assert.IsTrue(Blwp.NetSession.ShouldOpen("http://node", true, false, 30, Settle),
+        Assert.IsFalse(Arena.NetSession.ShouldOpen("http://node", true, false, 0, Settle));
+        Assert.IsFalse(Arena.NetSession.ShouldOpen("http://node", true, false, 29, Settle));
+        Assert.IsTrue(Arena.NetSession.ShouldOpen("http://node", true, false, 30, Settle),
             "and it opens on the tick it is allowed to, not one later");
     }
 
@@ -68,9 +68,9 @@ public class NetSessionTests
     [Test]
     public void TheCadenceIsTenHertzAndOneHertz()
     {
-        Assert.AreEqual(60, Blwp.BlwpNet.TicksPerSecond);
-        Assert.AreEqual(6, Blwp.BlwpNet.BatchEvery, "batches are 10 Hz");
-        Assert.AreEqual(60, Blwp.BlwpNet.MarkEvery, "checkpoints are 1 Hz");
+        Assert.AreEqual(60, Arena.ArenaNet.TicksPerSecond);
+        Assert.AreEqual(6, Arena.ArenaNet.BatchEvery, "batches are 10 Hz");
+        Assert.AreEqual(60, Arena.ArenaNet.MarkEvery, "checkpoints are 1 Hz");
     }
 
     /// <summary>
@@ -80,14 +80,14 @@ public class NetSessionTests
     [Test]
     public void OutsideAPlayerThereIsNoSession()
     {
-        Assert.IsFalse(Blwp.BlwpNet.Compiled);
-        Assert.IsFalse(Blwp.BlwpNet.Running);
-        Assert.AreEqual("off", Blwp.BlwpNet.Status());
-        Assert.AreEqual(0, Blwp.BlwpNet.Marks);
-        Assert.IsFalse(Blwp.BlwpNet.Start("http://node"),
+        Assert.IsFalse(Arena.ArenaNet.Compiled);
+        Assert.IsFalse(Arena.ArenaNet.Running);
+        Assert.AreEqual("off", Arena.ArenaNet.Status());
+        Assert.AreEqual(0, Arena.ArenaNet.Marks);
+        Assert.IsFalse(Arena.ArenaNet.Start("http://node"),
             "an editor must not report that it opened a session");
-        Assert.AreEqual("", Blwp.BlwpNet.Ending(), "and it has no run to have ended");
-        Assert.IsFalse(Blwp.BlwpNet.Ended);
+        Assert.AreEqual("", Arena.ArenaNet.Ending(), "and it has no run to have ended");
+        Assert.IsFalse(Arena.ArenaNet.Ended);
     }
 
     /// <summary>
@@ -104,11 +104,11 @@ public class NetSessionTests
     [Test]
     public void AnEndedRunStopsBeingDriven()
     {
-        Assert.IsTrue(Blwp.CoreDrivenTruck.ShouldStop(true, true),
+        Assert.IsTrue(Arena.CoreDrivenTruck.ShouldStop(true, true),
             "a VOID run must stop being stepped, not merely stop publishing");
-        Assert.IsFalse(Blwp.CoreDrivenTruck.ShouldStop(true, false),
+        Assert.IsFalse(Arena.CoreDrivenTruck.ShouldStop(true, false),
             "a live run keeps driving: an outage is not an ending");
-        Assert.IsFalse(Blwp.CoreDrivenTruck.ShouldStop(false, true),
+        Assert.IsFalse(Arena.CoreDrivenTruck.ShouldStop(false, true),
             "and a truck the core never drove is not stopped by it");
     }
 
@@ -119,11 +119,11 @@ public class NetSessionTests
     [Test]
     public void AnEndedRunTakesNoMoreInput()
     {
-        Assert.IsTrue(Blwp.CoreDrivenTruck.LocksControls(false, true),
+        Assert.IsTrue(Arena.CoreDrivenTruck.LocksControls(false, true),
             "steering a round that cannot settle is the thing this door is about");
-        Assert.IsTrue(Blwp.CoreDrivenTruck.LocksControls(true, false),
+        Assert.IsTrue(Arena.CoreDrivenTruck.LocksControls(true, false),
             "the game's own lock still locks");
-        Assert.IsFalse(Blwp.CoreDrivenTruck.LocksControls(false, false),
+        Assert.IsFalse(Arena.CoreDrivenTruck.LocksControls(false, false),
             "and a live run is driven by the player, as it always was");
     }
 

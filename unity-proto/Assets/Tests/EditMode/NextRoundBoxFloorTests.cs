@@ -7,7 +7,7 @@ using UnityEngine;
 /// THE NEXT ROUND'S BOX COVERS NO RESULT (MF 19 - measured unattended on 0.0.2523: "joining next round · exit
 /// game" stood over the result summary's lines, "1 still driving" and "YOU PENDING").
 ///
-/// The box is the page's (index.html #blwp-next), drawn from the run's end until the next start; the card, its fold
+/// The box is the page's (index.html #arena-next), drawn from the run's end until the next start; the card, its fold
 /// control and a wreck's summary are Unity's. So the box is modelled here as the page's CSS draws it - at the bottom edge
 /// in landscape, between the touch pads on a touch screen, above them upright - and the page hands Unity its top
 /// (nextBoxTop), which is what these tests hand DriveHud.CardFloor. Each screen is in canvas pixels at its device pixel

@@ -7,7 +7,7 @@
 // own names (those it calls later - fail, show, canvas, config, boot, stage, ... - are the page's by then). The loader's file
 // name is the build's, which only the page's template is filled with: index.html hands it over as window.ARENA_UNITY_LOADER.
 // Its markup - the next round's box and the link's warning - is put where it stood; its CSS is unity-page.css beside this file.
-document.getElementById('arena-bal-split').insertAdjacentHTML('afterend', '<div id="blwp-next" role="status"><span id="arena-next-say"></span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons</button><button id="arena-next-donate" type="button">&hearts; Donate</button><button id="arena-next-exit" type="button">exit game</button></div>');
+document.getElementById('arena-bal-split').insertAdjacentHTML('afterend', '<div id="arena-next" role="status"><span id="arena-next-say"></span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons</button><button id="arena-next-donate" type="button">&hearts; Donate</button><button id="arena-next-exit" type="button">exit game</button></div>');
 document.getElementById('arena-lobby').insertAdjacentHTML('beforebegin', '<div id="arena-link-warn" role="alert" style="display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(92vw,720px);padding:8px 14px;border-radius:8px;background:#b3261e;color:#fff;font:600 14px/1.35 system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.4)"></div>');
 document.getElementById('arena-fps-toggle').closest('label').insertAdjacentHTML('beforebegin', '<select id="arena-gfx-select" aria-label="Graphics"><option value="auto" selected>Auto (by device)</option><option value="high">High</option><option value="low">Low</option></select><div class="muted" id="arena-gfx-now"></div>');   // Settings' graphics line
 document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<section class="settings-card" id="arena-set-bench"><h3>Benchmark</h3><label class="muted"><input type="checkbox" id="arena-bench-on"> On - off by default</label><div class="muted">Spectates the round and measures this device\'s frame rate with each graphics cost switched off in turn; the result shows under the FPS line. While it is on, a tap on the FPS line runs it too.</div><button id="arena-bench-go" type="button" disabled>Run the benchmark</button></section>');   // the benchmark's card
@@ -127,7 +127,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
           + ';cascades=' + (m.cascades || 0) + ';shadowres=' + (m.shadowres || 0) + ';shadowdist=' + (m.shadowdist || 0)); } catch { /* no receiver: pixels only */ }
       }
       async function run() {
-        if (running || !window.unityInstance || document.body.classList.contains('blwp-clean')) return;
+        if (running || !window.unityInstance || document.body.classList.contains('arena-clean')) return;
         running = true; window.ARENA_BENCH_RUNNING = true;
         const res = [], list = modes();
         try {
@@ -302,7 +302,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     window.ARENA_SECURE_RUN = async (word, run, { tries = 30, everyMs = 3000 } = {}) => {
       if (!run || !/DELIVERED/.test(String(word || '')) || !BLWPCLIENT.secureTranscript) return null;
       const M = window.unityInstance && window.unityInstance.Module;
-      const n = M && (M.blwpRunNet || M.blwpNet);
+      const n = M && (M.arenaRunNet || M.blwpRunNet || M.arenaNet || M.blwpNet);
       const finalTick = n && n.client && Number.isInteger(n.client.nextTick) ? n.client.nextTick : null;
       if (!finalTick || !run.roundHex || !run.entryHex) return null;
       let el = document.getElementById('arena-securing');
@@ -354,7 +354,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       startResultSummary(run);
       // and the run made safe on two signer nodes before it is celebrated
       if (window.ARENA_SECURE_RUN && (!window.ARENA_SECURING || window.ARENA_SECURING !== (run && run.entryHex))) { window.ARENA_SECURING = run && run.entryHex; window.ARENA_SECURE_RUN(word, run).catch(() => {}); }
-      { const pl = document.getElementById('blwp-players'); if (pl) pl.style.display = 'none'; }
+      { const pl = document.getElementById('arena-players'); if (pl) pl.style.display = 'none'; }
       if (noLobby && !window.ARENA_LOBBY_STARTING) {
         window.ARENA_LOBBY_STARTING = true;
         showTheLobbyIfOneWasNamed()
@@ -413,7 +413,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     // "joining next round in N seconds" BESIDE "exit game", after the result card and until the next start - the words
     // and the timing are BLWPCLIENT.nextRoundView's
     (function paintNext() {
-      const box = document.getElementById('blwp-next');
+      const box = document.getElementById('arena-next');
       const n = window.ARENA_NEXT; const j = window.BLWP_JOIN;
       let v = { show: 'lobby' };
       const waiting = n && window.BLWP_CONTINUE !== false && (n.state === 'looking'
@@ -441,7 +441,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     // WHERE THE NEXT ROUND'S BOX STARTS: its top edge as a fraction of the game canvas from the canvas's top while
     // it is up, else 0 - Unity ends the result card, its fold control and a wreck's summary above it
     window.ARENA_NEXT_BOX_TOP = () => {
-      const b = document.getElementById('blwp-next'); const c = document.getElementById('canvas');
+      const b = document.getElementById('arena-next'); const c = document.getElementById('canvas');
       if (!b || !c || b.style.display === 'none') return 0;
       const br = b.getBoundingClientRect(); const cr = c.getBoundingClientRect();
       if (!(cr.height > 0) || !(br.height > 0)) return 0;
@@ -481,7 +481,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       window.BLWP_CONTINUE = false;
       cancelNextJoin('exited');
       console.log('[arena] exit game: no next round');
-      document.getElementById('blwp-next').style.display = 'none';
+      document.getElementById('arena-next').style.display = 'none';
     });
 
     // ---------------------------------------------------------------- the run's link to the signer nodes, said while it is driven
@@ -498,7 +498,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       const bar = document.getElementById('arena-link-warn');
       if (!bar) return;
       const M = window.unityInstance && window.unityInstance.Module;
-      const n = M && (M.blwpRunNet || M.blwpNet);
+      const n = M && (M.arenaRunNet || M.blwpRunNet || M.arenaNet || M.blwpNet);
       const c = n && n.client;
       let say = '';
       // THE RUN THAT ENDED, judged on the session that carried it: the page hands the next round a new session at once
@@ -681,7 +681,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       return 'play · ' + which + ' ' + sock;
     }
     function paintPlayers() {
-      const el = document.getElementById('blwp-players');
+      const el = document.getElementById('arena-players');
       if (!el) return;
       if (window.ARENA_CARD_UP && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing) window.ARENA_CARD_UP = false;
       // hidden while the cargo panel is open (2026-09-26 14:02) - the pads and TRUCK FULL stay; this line does not
@@ -690,7 +690,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       el.style.display = consoleOpen() ? 'block' : 'none';
       const inst = window.unityInstance;
       const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
-      const net = mod && mod.blwpNet;
+      const net = mod && (mod.arenaNet || mod.blwpNet);
       const joined = !!(window.BLWP_ENTRY);
       const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
       // WHETHER ANYBODY IS DRAWING THEM. A field filling with pictures nobody

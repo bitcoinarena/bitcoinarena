@@ -277,7 +277,7 @@ public class ArrivalCardWordsTests
         Assert.AreEqual("DANGER  ×0.23", DriveHud.DangerLabel(CoreScoreFactors.Exposure(4842601)));
         Assert.AreEqual("DANGER  ×0.32", DriveHud.DangerLabel(CoreScoreFactors.Exposure(6652286)), "the live run of round 14bff641");
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/RunScore.cs"));
-        StringAssert.Contains("public float Exposure => CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);", src);
+        StringAssert.Contains("public float Exposure => CoreScoreFactors.Exposure(Arena.ArenaCore.ExposureWord);", src);
     }
 
     // THE LOADOUT PANEL'S LOAD IS THE CORE'S C (RULED 2026-09-26, A): the same C the card prints, never Unity's float bed
@@ -292,10 +292,10 @@ public class ArrivalCardWordsTests
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
         // (playtest 2026-10-04 13:30: LOAD x0.00000 after AUTO): the panel prints the core's own C, and the load is
         // declared to the core whenever the bed changes, so the two move together before ROLL OUT
-        StringAssert.Contains("string load = LoadLabel(Blwp.BlwpCore.CargoWord);", src);
-        StringAssert.Contains("if (bed != _bedDeclared && Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))", src,
+        StringAssert.Contains("string load = LoadLabel(Arena.ArenaCore.CargoWord);", src);
+        StringAssert.Contains("if (bed != _bedDeclared && Arena.ArenaCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))", src,
             "the bed's changes are not declared to the core");
-        StringAssert.Contains("Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList)", src, "the load carries the bed's vsizes");
+        StringAssert.Contains("Arena.ArenaCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList)", src, "the load carries the bed's vsizes");
         StringAssert.DoesNotContain("$\"×{Mathf.Clamp01(bay.Fill):0.00}\"", src, "the bed fill is printed as the LOAD factor again");
         StringAssert.Contains("of {CargoBay.BtcLimit:0.##} BTC", src, "the gauge reads the BTC on board against the truck's limit");
     }
@@ -340,11 +340,11 @@ public class ArrivalCardWordsTests
         Assert.IsTrue(DriveHud.CopiedTooltipShows(10f, 12.9f));
         Assert.IsFalse(DriveHud.CopiedTooltipShows(10f, 13f));
         string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
-        StringAssert.Contains("_copiedAt < 0f && Blwp.BlwpCore.ReplayCopied", hud);
-        string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        StringAssert.Contains("c === window.BLWP_REPLAY_URL", lib);
+        StringAssert.Contains("_copiedAt < 0f && Arena.ArenaCore.ReplayCopied", hud);
+        string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
+        StringAssert.Contains("c === window.ARENA_REPLAY_URL", lib);
         string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
-        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
+        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.ARENA_REPLAY_COPIED = link.url;", page);
     }
 
     // THE CARD STANDS AT FULL STRENGTH AND NOTHING IS UNDER IT (PRIORITIES item 3: "nothing overlaps", "stays up ... 8 s";
@@ -365,29 +365,29 @@ public class ArrivalCardWordsTests
         string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("window.ARENA_CARD_UP = true;", page);
         // the node strip still steps aside under the card; since the console (427bab76) it also tells the Console button so
-        StringAssert.Contains("if (!window.BLWP_ROUND || window.ARENA_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
+        StringAssert.Contains("if (!window.ARENA_ROUND || window.ARENA_CARD_UP || window.ARENA_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
     }
 
-    // THE COPIED REPLAY IS THE CARD'S RUN (2026-09-26 14:08): a session is its page join's (BLWP_ENTRY); another
+    // THE COPIED REPLAY IS THE CARD'S RUN (2026-09-26 14:08): a session is its page join's (ARENA_ENTRY); another
     // join replaces it, and the card offers and makes the copy only from the current join's session.
     [Test]
     public void TheCopiedReplayIsTheRunOnScreen()
     {
-        string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
+        string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
         // THE RUN THAT ENDED, kept at its end from the session ROLL OUT found for it (2026-09-27 13:19); the
         // button and the copy read that run and nothing the page has on hand at the click
-        StringAssert.Contains("Module.blwpRunNet = (net && !(net.client && net.client.ended)) ? net : null;", lib);
-        StringAssert.Contains("var mine = n === Module.blwpRunNet", lib);
-        StringAssert.Contains("return Module.blwpEndedRun ? 1 : 0;", lib);
-        StringAssert.Contains("var run = Module.blwpEndedRun;", lib);
+        StringAssert.Contains("Module.arenaRunNet = (net && !(net.client && net.client.ended)) ? net : null;", lib);
+        StringAssert.Contains("var mine = n === Module.arenaRunNet", lib);
+        StringAssert.Contains("return Module.arenaEndedRun ? 1 : 0;", lib);
+        StringAssert.Contains("var run = Module.arenaEndedRun;", lib);
         string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
-        StringAssert.Contains("bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;", hud);
+        StringAssert.Contains("bool replay = runScore != null && Arena.ArenaCore.ReplayForThisRun;", hud);
         string panel = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
-        StringAssert.Contains("Blwp.BlwpCore.RunStarts();", panel);
+        StringAssert.Contains("Arena.ArenaCore.RunStarts();", panel);
         // and the root: a session another page join has replaced is over, and the next start replaces it
-        StringAssert.Contains("pageEntry: (typeof window !== 'undefined' && window.BLWP_ENTRY) || null,", lib);
-        StringAssert.Contains("if (n && n.pageEntry && typeof window !== 'undefined' && window.BLWP_ENTRY && window.BLWP_ENTRY !== n.pageEntry) return 1;", lib);
-        StringAssert.Contains("&& window.BLWP_ENTRY !== Module.blwpNet.pageEntry) {", lib);
+        StringAssert.Contains("pageEntry: (typeof window !== 'undefined' && window.ARENA_ENTRY) || null,", lib);
+        StringAssert.Contains("if (n && n.pageEntry && typeof window !== 'undefined' && window.ARENA_ENTRY && window.ARENA_ENTRY !== n.pageEntry) return 1;", lib);
+        StringAssert.Contains("&& window.ARENA_ENTRY !== Module.arenaNet.pageEntry) {", lib);
     }
 }
 

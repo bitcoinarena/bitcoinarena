@@ -226,7 +226,7 @@ test('a round with no randomness shows nobody anything, in the same words as bef
  * This is the LIVE path - the one every watcher's picture comes off - and it
  * kept its own warm state. Until letter 40 nothing on it applied a load,
  * because nothing anywhere carried one: the page wrote the heat into its own
- * core through `BlwpSetHeat` and no batch, mark or transcript held it. So a
+ * core through `ArenaSetHeat` and no batch, mark or transcript held it. So a
  * watcher was shown a truck driven with an empty bed while its driver was
  * being hunted for a full one, and the two part further with every tick.
  */
