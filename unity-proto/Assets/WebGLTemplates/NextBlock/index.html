@@ -816,7 +816,22 @@
     body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-deposit, body:has(#arena-season.show) #blwp-hdr-deposit, body:has(#arena-shop.show) #blwp-hdr-deposit,
     body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-withdraw, body:has(#arena-season.show) #blwp-hdr-withdraw, body:has(#arena-shop.show) #blwp-hdr-withdraw {
       display: inline-flex; align-items: center; flex: none; }
-    @media (max-width: 560px) { #blwp-money #blwp-hdr-deposit, #blwp-money #blwp-hdr-withdraw { display: none; } }
+    /* EVERY MAIN GAME SCREEN, THE LOBBY TOO, HAS DEPOSIT AND WITHDRAW (kanban #518, the owner 2026-10-19: "All main game screens incl lobby in
+       next block show deposit & withdrawal"): with the backup warning out of the header there is room; a phone shows their icons, as it
+       shows the trophy and the bag */
+    #blwp-hdr-deposit, #blwp-hdr-withdraw { gap: 6px; }
+    #blwp-hdr-deposit svg, #blwp-hdr-withdraw svg { width: 15px; height: 15px; flex: none; }
+    @media (min-width: 561px) { #blwp-hdr-deposit svg, #blwp-hdr-withdraw svg { display: none; } }
+    @media (max-width: 560px) { #blwp-hdr-deposit .word, #blwp-hdr-withdraw .word { display: none; } #blwp-hdr-deposit, #blwp-hdr-withdraw { padding: 0 9px; } }
+    /* the backup warning in the loading screen: its whole sentence and its button, under the progress, on a phone too */
+    #boot #blwp-backup-warn { flex: none; width: min(560px, 90vw); box-sizing: border-box; margin: 0; z-index: 3; position: relative; }
+    @media (max-width: 480px) { #boot #blwp-backup-warn { padding: 6px 10px; border: 2px solid #ff9d2e; background: rgba(58,32,0,0.94); }
+      #boot #blwp-backup-notice { display: inline; } #boot #blwp-backup-cta::before { content: none; } }
+    /* and in the deposit popup (paintMoney) */
+    #blwp-deposit .dep-backup, #arena-withdraw .dep-backup { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 6px 10px; text-align: left;
+      background: rgba(58,32,0,0.94); border: 2px solid #ff9d2e; border-radius: 6px; color: #ffcf8a; font: 600 13px/1.25 system-ui, sans-serif; }
+    #blwp-deposit .dep-backup span, #arena-withdraw .dep-backup span { flex: 1; min-width: 0; }
+    #blwp-deposit .dep-backup button, #arena-withdraw .dep-backup button { flex: none; font: 700 13px system-ui, sans-serif; padding: 6px 10px; cursor: pointer; background: #ff9d2e; color: #241400; border: 0; border-radius: 4px; }
     body.blwp-clean #blwp-hdr-bal, body.blwp-clean #blwp-hdr-deposit, body.blwp-clean #blwp-hdr-withdraw { display: none !important; }
     body.arena-fed-draining #blwp-hdr-deposit, body.arena-fed-critical #blwp-hdr-deposit, body.arena-fed-closed #blwp-hdr-deposit,
     body.arena-fed-halted #blwp-hdr-deposit, body.arena-fed-halted #blwp-hdr-withdraw { display: none !important; }
@@ -1235,18 +1250,12 @@
   <div id="blwp-money">
     <a id="arena-game-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
-    <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
-         warning is the only thing standing between a player and losing a wallet he never wrote down. -->
-    <div id="blwp-backup-warn" style="display:none">
-      <span id="blwp-backup-notice"></span>
-      <button id="blwp-backup-cta" type="button">Back up now</button>
-    </div>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (kanban #208, the owner 2026-10-08 11:38): the platform page, beside the gear -->
     <!-- THE WALLET IN EVERY HEADER (kanban #513, #515, #516, the owner 2026-10-19: "the header is missing balance, deposit and withdrawls"):
          the same balance button, Deposit and Withdraw as the games screen's bar, the same handlers -->
     <button id="blwp-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="blwp-hdr-sats">&ndash; sat</b></button>
-    <button id="blwp-hdr-deposit" type="button">Deposit</button>
-    <button id="blwp-hdr-withdraw" type="button">Withdraw</button>
+    <button id="blwp-hdr-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
+    <button id="blwp-hdr-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
     <!-- THE SEASON BOARD OF THE CHOSEN GAME (kanban #362), beside the gear once a game is chosen -->
     <button id="blwp-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <!-- THE GAME'S SHOP (kanban #365, #369), beside the Leaderboard once a game that sells items is chosen -->
@@ -1908,6 +1917,14 @@
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
+    <!-- THE BACKUP WARNING IS IN THE LOADING SCREEN, NOT THE HEADER (kanban #518, the owner 2026-10-19: "backup warning should always be in the
+         loading screen instead of the header"; "When doing a deposit the popup in there shows the warning again"): every game's loading
+         screen says it while the wallet has no backup, with its own way out; the deposit popup says it again (paintMoney). PLAY is never
+         refused, so the warning is what stands between a player and a wallet never written down (the owner 2026-09-21 20:01). -->
+    <div id="blwp-backup-warn" style="display:none">
+      <span id="blwp-backup-notice"></span>
+      <button id="blwp-backup-cta" type="button">Back up now</button>
+    </div>
     <div class="build-line" id="boot-build">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
     <div id="blwp-deposit"></div>
     <div id="err"></div>
@@ -4588,10 +4605,28 @@
       // A PHONE GETS THE SHORT WORDS (kanban #8, measured at 360 px: the ten-line warning covered the game's title); the button
       // beside it and Settings say the rest, the full sentence is its title
       const notice = document.getElementById('blwp-backup-notice');
-      notice.textContent = line && window.innerWidth <= 560 ? 'No backup' : line;
-      notice.title = line || '';
+      if (notice) { notice.textContent = line; notice.title = line || ''; }
+      // IN THE LOADING SCREEN, ALWAYS, NOT OVER THE LOBBY (kanban #518): the box sits in #boot, so it goes with the loading screen
       const warn = document.getElementById('blwp-backup-warn');
-      if (warn) warn.style.display = line && overLobby ? 'flex' : 'none';
+      if (warn) warn.style.display = line ? 'flex' : 'none';
+      // AND AGAIN IN THE DEPOSIT AND THE WITHDRAW POPUP (kanban #518, the owner 2026-10-19: "When doing a deposit the popup in there shows the
+      // warning again", "Withdrawal screen also gets the warning"): a wallet with no backup is lost with this browser; its button closes the
+      // popup (nothing was paid or sent) and opens the 24 words
+      const popups = [[document.getElementById('blwp-deposit'), (el) => el.classList.contains('deposit-modal') && el.childElementCount > 0, '.dep-title', '.dep-close'],
+        [document.getElementById('arena-withdraw'), (el) => el.classList.contains('show'), '.wd-head', '.wd-close']];
+      for (const [el, open, after, close] of popups) {
+        if (!el || !open(el)) continue;
+        let box = el.querySelector('.dep-backup');
+        if (line && !box) {
+          box = document.createElement('div'); box.className = 'dep-backup';
+          const t = document.createElement('span'); t.textContent = line;
+          const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Back up now';
+          b.addEventListener('click', () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'blwp-deposit') { el.textContent = ''; el.className = ''; } else el.classList.remove('show');
+            const cta = document.getElementById('blwp-backup-cta'); if (cta) cta.click(); });
+          box.append(t, b);
+          const head = el.querySelector(after); if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
+        } else if (!line && box) box.remove();
+      }
       document.getElementById('blwp-settings-backup').textContent = line || 'This wallet is backed up.';
       // THE BALANCE IS READ, NEVER COMPUTED HERE. Until the player wallet of §24A.1 exists this says what
       // it honestly knows - nothing yet - rather than inventing a number the page would then be trusted for.

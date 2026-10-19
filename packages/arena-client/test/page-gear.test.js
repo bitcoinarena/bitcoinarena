@@ -23,18 +23,20 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
   for (const id of ['blwp-money', 'blwp-settings', 'blwp-lobby-balance', 'blwp-backup-notice', 'blwp-backup-warn', 'blwp-settings-backup',
     'blwp-lobby-confirmed', 'blwp-bal-confirmed', 'blwp-lobby-pending', 'blwp-bal-pending', 'blwp-balance-line', 'blwp-money-why']) el(id);
   const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 430, height: 932 }) };
-  const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : els[id] || null) };
+  // the backup warning sits in the loading screen (kanban #518): it is gone with #boot
+  const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'blwp-backup-warn' && !boot ? null : els[id] || null) };
   const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
   pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
     document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
-  return { money: els['blwp-money'].style.display, warn: els['blwp-backup-warn'].style.display, balance: els['blwp-lobby-balance'].style.display };
+  return { money: els['blwp-money'].style.display, warn: boot ? els['blwp-backup-warn'].style.display : 'gone', balance: els['blwp-lobby-balance'].style.display };
 }
 
 test('the strip with the gear is up from the loading screen on: before Unity, over its title, over the lobby', () => {
-  assert.deepEqual(strip({ unity: false, boot: true, lobby: undefined }), { money: '', warn: 'none', balance: 'none' }, 'the loading screen: the gear alone');
-  assert.deepEqual(strip({ lobby: { showing: true, lobby: false } }), { money: '', warn: 'none', balance: 'none' }, 'Unity\'s title, no lobby: the gear alone');
-  assert.deepEqual(strip({}), { money: '', warn: 'flex', balance: 'flex' }, 'the lobby: the gear, the warning and the balance, as before');
+  // kanban #518 (the owner 2026-10-19: "backup warning should always be in the loading screen instead of the header")
+  assert.deepEqual(strip({ unity: false, boot: true, lobby: undefined }), { money: '', warn: 'flex', balance: 'none' }, 'the loading screen: the header and the backup warning');
+  assert.deepEqual(strip({ lobby: { showing: true, lobby: false } }), { money: '', warn: 'gone', balance: 'none' }, 'Unity\'s title, no lobby: the header alone');
+  assert.deepEqual(strip({}), { money: '', warn: 'gone', balance: 'flex' }, 'the lobby: the header and the balance, no warning in the header');
 });
 
 test('over a round\'s own screens and while driving the strip is gone', () => {
@@ -80,6 +82,7 @@ test('the gear has one click handler: the main script no longer adds its own', (
 });
 
 test('a wallet the player brought in - restored words or a Nostr account - shows no backup warning (kanban #387)', () => {
-  assert.equal(strip({}).warn, 'flex', 'a seed minted here and never checked: the warning');
-  assert.equal(strip({ broughtIn: true }).warn, 'none', 'restored or opened from Nostr: no warning');
+  // read on the loading screen, where the warning is since kanban #518
+  assert.equal(strip({ boot: true }).warn, 'flex', 'a seed minted here and never checked: the warning');
+  assert.equal(strip({ boot: true, broughtIn: true }).warn, 'none', 'restored or opened from Nostr: no warning');
 });
