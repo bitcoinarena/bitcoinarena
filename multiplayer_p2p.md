@@ -6762,7 +6762,7 @@ UI  --(operator token, over TLS to the node's own endpoint)-->  node
                             builds, signs and broadcasts the vote tx
 ```
 
-Pairing is a `blwp-operator:` URI - endpoint plus a 32-byte token the node
+Pairing is an `arena-operator:` URI (an old `blwp-operator:` one still pairs) - endpoint plus a 32-byte token the node
 prints on first start - pasted or scanned. The UI asks for an action; the
 node performs it. **No key ever leaves the node**, and there is no service
 in the middle to compromise, subpoena or shut down.

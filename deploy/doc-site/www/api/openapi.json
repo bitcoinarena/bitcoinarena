@@ -6094,7 +6094,7 @@
      "Operators"
     ],
     "summary": "[signed] Mint an operator token",
-    "description": "Mints a scoped operator token.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, id, scopes, uri (blwp-operator: pairing URI)}; 400/401/403/404/409\n\nSource: `packages/arena-node/src/server.js` line 3621.",
+    "description": "Mints a scoped operator token.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, id, scopes, uri (arena-operator: pairing URI; an old blwp-operator: URI still pairs)}; 400/401/403/404/409\n\nSource: `packages/arena-node/src/server.js` line 3621.",
     "operationId": "post_owner_operator_mint",
     "requestBody": {
      "required": true,
@@ -6107,7 +6107,7 @@
     },
     "responses": {
      "200": {
-      "description": "{ok, id, scopes, uri (blwp-operator: pairing URI)}.",
+      "description": "{ok, id, scopes, uri (arena-operator: pairing URI; an old blwp-operator: URI still pairs)}.",
       "content": {
        "application/json": {}
       }
