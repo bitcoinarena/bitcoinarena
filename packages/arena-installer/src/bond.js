@@ -36,8 +36,10 @@ export function lockOf(tip, { nowMs = Date.now(), maturity = maturityHeightFor(t
   return { maturity, blocks, offset: BOND_MATURITY_OFFSET[NETWORK], estimatedMs: nowMs + blocks * BLOCK_MS };
 }
 
-/** The node's roles as its advertisement names them: the wizard's verify is game + verify (§5A.1 roles). */
-export const advertRoles = (roles) => [...new Set(roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])))].filter((r) => r !== 'custody');
+/** The node's roles as its advertisement names them: the wizard's verify is game + verify (§5A.1 roles). Custody is said by the guardian
+ *  endpoint, liquidity by the provider's own signed claim (GET /liquidity-claim, §23A.10) - neither is an advertisement role (measured on
+ *  macOS node A, kanban #471: a liquidity node's bond was refused, "unknown role: liquidity"). */
+export const advertRoles = (roles) => [...new Set(roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])))].filter((r) => r !== 'custody' && r !== 'liquidity');
 
 /** The bond output key of a node key at a maturity height (template 2). */
 export function bondKeyAt(nodeKey, maturity) {
