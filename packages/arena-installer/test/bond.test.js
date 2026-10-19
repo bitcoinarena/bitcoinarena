@@ -52,6 +52,7 @@ test('the bond: two transactions, the census reads the second as this node\'s te
   assert.throws(() => buildBond({ wallet: w, nodeSecret, coins: [{ txid: '22'.repeat(32), vout: 0, sats: 40000 }], tip: 1, operatorId: 'x', roles: ['verify'], endpoint: 'https://x', payoutPubkey: payoutKeyOf(seed) }),
     /a bond of 50000 sat needs at least/);
   assert.deepEqual(advertRoles(['settlement']), ['settlement']);
+  assert.deepEqual(advertRoles(['verify', 'settlement', 'custody', 'liquidity']), ['game', 'verify', 'settlement'], 'custody and liquidity are no advertisement roles (macOS node A: "unknown role: liquidity")');
   const lock = lockOf(156900, { nowMs: 0 });
   assert.deepEqual([lock.maturity, lock.blocks, lock.estimatedMs], [157051, 151, 151 * 600000]);
 });
