@@ -740,16 +740,12 @@
        right side. on mobile ... make the leaderboard button only the trophy icon"): in a game's own client the bar reads logo, ← Arena,
        then on the right the balance, Deposit, Withdraw, the trophy and the gear; the client's own "← Arena" inside its frame is hidden
        by the page (the bar's does the same, ARENA_GAME.back); on a phone ← and the trophy are icons and the buttons tighter */
-    #arena-wb-back, #arena-wb-site { display: none; }
+    #arena-wb-back { display: none; }
     body.arena-own-client #arena-wb-back { display: inline-flex; flex: none; align-items: center; gap: 4px; }
     body.blwp-clean #arena-wb-back { display: none !important; }
-    /* AND ON THE GAMES SCREEN, IN THE SAME PLACE (kanban #403/#404, the owner 2026-10-17: "back link to bitcoin-arena.io in arena ... where the
-       new back to arena button is on the other pages ... changing the text from arena to bitcoin-arena.io"): "← bitcoin-arena.io" */
-    body.arena-picking:not(.arena-own-client) #arena-wb-site { display: inline-flex; flex: none; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 4px;
-      border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; font: 600 13px system-ui, sans-serif; text-decoration: none; white-space: nowrap; }
-    #arena-wb-site:hover, #arena-wb-site:focus-visible { color: #f7931a; outline: none; }
-    @media (max-width: 560px) { #arena-wb-back .word, #arena-wb-site .word { display: none; } }
-    @media (max-width: 420px) { #arena-wb-site { padding: 6px 7px !important; } }
+    /* NO "← bitcoin-arena.io" ON THE GAMES SCREEN (kanban #508, the owner 2026-10-19: "the button is superfluous and redundant. the bitcoin
+       Arena logo already links back to the homepage") */
+    @media (max-width: 560px) { #arena-wb-back .word { display: none; } }
     @media (max-width: 420px) { #arena-wallet-bar { gap: 5px !important; } #arena-wallet-bar button:not(#arena-wb-gear) { padding: 6px 7px !important; font-size: 12.5px !important; } }
     #arena-wallet-bar .wb-bal b { color: #f7931a; }
     /* THE BITCOIN ARENA LOGO, TOP LEFT, TO THE MAIN PAGE (kanban #433, the owner 2026-10-17: "show the Bitcoin arena logo on the left on
@@ -796,6 +792,77 @@
     #arena-wallet-bar #arena-wb-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
     #arena-wb-why { position: absolute; top: 100%; left: 8px; right: 8px; padding: 6px 8px; background: #2a1d0b; border: 1px solid #5a4a22; border-radius: 4px; }
     #arena-wb-why:empty { display: none; }
+
+    /* ONE HEADER, ONE SIZE (kanban #507, the owner 2026-10-19: "the gear icon apparently does not have the same dimensions on all screens which
+       leads to the header still jumping. same for leaderboard. compare game loading screen with arena or a game page"): the games screen's
+       bar drew its buttons 4 px round from a 6 px padding, a game's own header (Unity's, the loading screen's, the leaderboard's, the shop's)
+       7 px padding and 6 px round, 6 px from the top - so every button moved between screens. Now every header button is 32 px tall at
+       4 px from the top, the same border, round, font and gaps, the gear 38 x 32 */
+    #arena-wallet-bar { gap: 6px; }
+    body #blwp-money { top: calc(4px + env(safe-area-inset-top, 0px)); gap: 6px; }
+    #arena-wallet-bar button, #arena-games-back, #blwp-season-go, #blwp-shop-go, #blwp-settings-go, #blwp-hdr-bal, #blwp-hdr-deposit, #blwp-hdr-withdraw {
+      height: 32px; box-sizing: border-box; padding: 0 10px; border-radius: 6px; border: 1px solid #3a4452; background: rgba(22,27,34,0.94); color: #e8eaed;
+      font: 600 13px/1 system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+    #arena-wallet-bar #arena-wb-gear, #blwp-settings-go { width: 38px; padding: 0; font-size: 20px; }
+    #arena-wallet-bar #arena-wb-deposit, #blwp-hdr-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
+    /* THE BALANCE IS A BUTTON (kanban #517, the owner 2026-10-19: "the balance in the header should also have the layout of a button") */
+    #arena-wallet-bar .wb-bal, #blwp-hdr-bal { display: inline-flex; align-items: center; gap: 4px; }
+    #arena-wallet-bar .wb-bal b, #blwp-hdr-bal b { color: #f7931a; font-weight: 700; }
+    #arena-wallet-bar .wb-bal span { color: #9aa4b1; font-weight: 600; }
+    /* THE WALLET IN A GAME'S OWN HEADER (kanban #513, #515, #516): balance, Deposit and Withdraw over Unity, its loading screen, the
+       leaderboard and the shop, as on the games screen; a phone keeps the balance (Deposit and Withdraw are in Settings and the lobby) */
+    #blwp-hdr-bal, #blwp-hdr-deposit, #blwp-hdr-withdraw { display: none; }
+    body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-bal, body:has(#arena-season.show) #blwp-hdr-bal, body:has(#arena-shop.show) #blwp-hdr-bal,
+    body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-deposit, body:has(#arena-season.show) #blwp-hdr-deposit, body:has(#arena-shop.show) #blwp-hdr-deposit,
+    body.arena-game-chosen:not(.arena-own-client) #blwp-hdr-withdraw, body:has(#arena-season.show) #blwp-hdr-withdraw, body:has(#arena-shop.show) #blwp-hdr-withdraw {
+      display: inline-flex; align-items: center; flex: none; }
+    @media (max-width: 560px) { #blwp-money #blwp-hdr-deposit, #blwp-money #blwp-hdr-withdraw { display: none; } }
+    body.blwp-clean #blwp-hdr-bal, body.blwp-clean #blwp-hdr-deposit, body.blwp-clean #blwp-hdr-withdraw { display: none !important; }
+    body.arena-fed-draining #blwp-hdr-deposit, body.arena-fed-critical #blwp-hdr-deposit, body.arena-fed-closed #blwp-hdr-deposit,
+    body.arena-fed-halted #blwp-hdr-deposit, body.arena-fed-halted #blwp-hdr-withdraw { display: none !important; }
+    #blwp-hdr-why { position: absolute; top: calc(100% + 4px); right: 0; max-width: min(92vw, 520px); padding: 6px 8px; background: #2a1d0b; border: 1px solid #5a4a22;
+      border-radius: 4px; color: #ffe2b0; font: 13px/1.35 system-ui, sans-serif; }
+    #blwp-hdr-why:empty { display: none; }
+    /* THE NAME BESIDE THE MARK IN A GAME'S HEADER TOO (kanban #514, the owner 2026-10-19: "is missing the "Bitcoin Arena" label on the tic toc
+       next block game and on all game loadings screens (desktop version)"): as the games screen draws it */
+    body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home {
+      display: inline-flex; align-items: center; gap: 8px; width: auto; height: 32px; margin-right: 6px; background: none; border-radius: 0; color: #e8eaed;
+      font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+    #arena-game-home i { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-weight: 800; color: #1a0f00; text-shadow: none;
+      background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
+    #arena-game-home:hover span { color: #f7931a; }
+    @media (max-width: 560px) { #arena-game-home span { display: none; } }
+    /* BUILD AND DONATE AT THE WINDOW'S BOTTOM RIGHT ON EVERY SCREEN (kanban #504, #516, the owner 2026-10-19: "on the arena page, the donate and
+       version info are shown bellow the arena. they should be at the same position as on the game pages: bottom right of the window. the game
+       loading screen are missing this information at all"): the games screen, a game's loading screen, the leaderboard and the shop draw the
+       build line and Donate as a game's own client does */
+    body.arena-picking #arena-donate-go, body.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-donate-go,
+    body:has(#arena-season.show) #arena-donate-go, body:has(#arena-shop.show) #arena-donate-go {
+      display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
+      border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
+    body.arena-picking #arena-build, body.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-build,
+    body:has(#arena-season.show) #arena-build, body:has(#arena-shop.show) #arena-build {
+      display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px; padding: 0 100px 0 8px;
+      background: none; border-radius: 0; font-size: 10px; text-align: right; }
+    body.arena-picking #arena-games .foot-row, body.arena-game-chosen:has(#boot:not(.done)) #boot-build { display: none; }
+    body.arena-picking #arena-games .box { padding-bottom: 36px; }
+    body.blwp-clean #arena-donate-go, body.blwp-clean #arena-build { display: none !important; }
+    /* ONE PLACE AND ONE LOOK FOR EVERY OVERLAY (kanban #512, the owner 2026-10-19: "the overlays (balance, deposit, withdraw, ...) should all open
+       at the same starting position. they also should look alike. title (left aligned, amber), an 'x' to close (missing at balance), no extra
+       close button (balance)"): under the header, centred, 420 px wide, scrolling within the window */
+    #arena-bal-split, #arena-withdraw, #blwp-deposit.deposit-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); bottom: auto; right: auto;
+      transform: translateX(-50%); width: min(92vw, 420px); max-width: none; max-height: calc(100vh - 70px - env(safe-area-inset-top, 0px)); overflow-y: auto; box-sizing: border-box;
+      background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+    #arena-bal-split .ov-head, #arena-withdraw .wd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+    #arena-bal-split h4, #arena-withdraw h3, #blwp-deposit .dep-title { margin: 0; color: #f7931a; text-align: left; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; }
+    #blwp-deposit .dep-title { margin: 0 0 8px; padding-right: 28px; }
+    #arena-bal-split .ov-close, #arena-withdraw .wd-close, #blwp-deposit .dep-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1;
+      cursor: pointer; padding: 2px 6px; margin: 0; width: auto; }
+    #arena-bal-split .ov-close:hover, #arena-withdraw .wd-close:hover, #blwp-deposit .dep-close:hover { color: #f7931a; }
+    /* WITHDRAW KEEPS ITS SIZE WHILE THE BALANCE IS READ (kanban #510, the owner 2026-10-19: "the withdraw overlay changes dimension because it does
+       not have the wallet amount when opening. use a placeholder while loading the balance"): the amount line holds two lines from the start */
+    #arena-withdraw #blwp-wd-amount { min-height: calc(2 * 1.45em); }
+    #arena-withdraw #blwp-wd-chosen { min-height: 1.45em; }
 
     /* Who is in this round. Hidden until a round is named. Pointer-events none
        so it cannot steal the canvas.
@@ -1166,7 +1233,7 @@
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
-    <a id="arena-game-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i></a>
+    <a id="arena-game-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
          warning is the only thing standing between a player and losing a wallet he never wrote down. -->
@@ -1175,11 +1242,17 @@
       <button id="blwp-backup-cta" type="button">Back up now</button>
     </div>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (kanban #208, the owner 2026-10-08 11:38): the platform page, beside the gear -->
+    <!-- THE WALLET IN EVERY HEADER (kanban #513, #515, #516, the owner 2026-10-19: "the header is missing balance, deposit and withdrawls"):
+         the same balance button, Deposit and Withdraw as the games screen's bar, the same handlers -->
+    <button id="blwp-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="blwp-hdr-sats">&ndash; sat</b></button>
+    <button id="blwp-hdr-deposit" type="button">Deposit</button>
+    <button id="blwp-hdr-withdraw" type="button">Withdraw</button>
     <!-- THE SEASON BOARD OF THE CHOSEN GAME (kanban #362), beside the gear once a game is chosen -->
     <button id="blwp-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <!-- THE GAME'S SHOP (kanban #365, #369), beside the Leaderboard once a game that sells items is chosen -->
     <button id="blwp-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
     <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
+    <div id="blwp-hdr-why" role="status"></div>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
        withdraw, the seed, the backup warning: that is Settings"): the wallet, the name, the donation, and the seed with
@@ -1188,8 +1261,7 @@
   <div id="arena-wallet-bar" role="toolbar" aria-label="wallet">
     <a id="arena-wb-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-wb-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
-    <a id="arena-wb-site" href="https://bitcoin-arena.io/" title="Back to bitcoin-arena.io" aria-label="Back to bitcoin-arena.io"><span aria-hidden="true">&larr;</span><span class="word">bitcoin-arena.io</span></a>
-    <span class="wb-bal"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></span>
+    <button class="wb-bal" type="button" title="Your balance by federation"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></button>
     <button id="arena-wb-deposit" type="button">Deposit</button>
     <button id="arena-wb-withdraw" type="button">Withdraw</button>
     <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
@@ -4659,7 +4731,18 @@
     function openMoney(which, say = (t) => { document.getElementById('blwp-money-why').textContent = t; }, opts = {}) {
       // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
       // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
-      const ctx = moneyContext(which);
+      const ctx = moneyContext(which, opts.seatRound || null);
+      // A WITHDRAW FROM THE GAMES SCREEN (kanban #509, the owner 2026-10-19: "the withdraw button on the arena page opens a deposit error message.
+      // it should open the withdraw overlay instead"): no game picked lists no round, and the wallet is read through a round - a paid round of
+      // the games asked from their own seats, as the donation reads its sets there (paidRoundFromSeats); the withdraw still reads the
+      // federation that holds the money (moneyContext)
+      if (!ctx.ok && which === 'withdraw' && opts.overlay && !opts.seatRound && typeof paidRoundFromSeats === 'function') {
+        say('Opening your wallet \u2026');
+        return paidRoundFromSeats(window.ARENA_GAMES_FULL || []).then((row) => {
+          if (!row) { say('No paid round is listed on the games\' nodes right now, so the wallet cannot be read. Try again in a moment.'); return { ok: false, why: 'no round' }; }
+          say(''); return openMoney(which, say, Object.assign({}, opts, { seatRound: row }));
+        }, (e) => { say('The wallet could not be opened: ' + (e && e.message ? e.message : e)); return { ok: false, why: String(e) }; });
+      }
       // A DEPOSIT WITH NO ROUND LISTED (kanban #350, the owner 2026-10-12 "Yes": Deposit works on the games screen before a game is
       // picked) - after the federation's own record is asked, as any deposit is (below)
       const lob0 = window.BLWP_LEDGER_LOBBY; const seed0 = typeof walletSeed === 'function' ? walletSeed() : null;
@@ -4769,6 +4852,9 @@
     // player could only ever deposit by joining. Painted while the bar is up; why-not lines under it, for 8 s; a wait ("…")
     // until what it waits for answers.
     function paintWalletBar() {
+      // a game's own header (Unity's, the leaderboard's, the shop's) shows the same balance (kanban #515)
+      { const hb = window.BLWP_WALLET_BALANCE; const he = document.getElementById('blwp-hdr-sats');
+        if (he) { const t = hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat'; if (he.textContent !== t) he.textContent = t; } }
       const bar = document.getElementById('arena-wallet-bar');
       if (!bar || !(document.body.classList.contains('arena-own-client') || document.body.classList.contains('arena-picking'))) return;
       const bal = window.BLWP_WALLET_BALANCE;
@@ -4801,6 +4887,14 @@
       for (const [id, which] of [['arena-wb-deposit', 'deposit'], ['arena-wb-withdraw', 'withdraw']]) {
         const el = document.getElementById(id);
         if (el) el.addEventListener('click', () => { openMoney(which, barSay, { overlay: true }); });
+      }
+      // A GAME'S OWN HEADER, THE SAME TWO (kanban #515), its why-line under that header
+      let hdrTimer = null;
+      const hdrSay = (t) => { const el = document.getElementById('blwp-hdr-why'); if (!el) return; el.textContent = t; clearTimeout(hdrTimer);
+        if (t && !t.endsWith('\u2026')) hdrTimer = setTimeout(() => { el.textContent = ''; }, 8000); };
+      for (const [id, which] of [['blwp-hdr-deposit', 'deposit'], ['blwp-hdr-withdraw', 'withdraw']]) {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', () => { openMoney(which, hdrSay, { overlay: true }); });
       }
       const gear = document.getElementById('arena-wb-gear');
       if (gear) gear.addEventListener('click', () => { document.getElementById('blwp-settings-go').click(); });
@@ -5123,8 +5217,9 @@
       window.ARENA_DEPOSIT_FEDERATION = pick;
       return pick;
     }
-    function moneyContext(which = 'deposit') {
-      const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract) || moneyRound();
+    function moneyContext(which = 'deposit', seatRound = null) {
+      const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract) || moneyRound()
+        || (seatRound ? { free: false, id: seatRound.id, raw: Object.assign({ stakeMsat: seatRound.contract.stakeMsat }, seatRound) } : null);   // a round asked from the seats (kanban #509)
       const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
       if (!row) return { ok: false, why: document.body.classList.contains('arena-picking')
         ? 'Choose a game first: its rounds set the deposit amounts. Your balance is shown above.'
@@ -5175,7 +5270,7 @@
       // off until the wallet says how much it can send; off for good at 0
       const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; go.disabled = !on; };
       usable(false);
-      amountEl.textContent = 'Checking how much you can withdraw …';
+      amountEl.textContent = 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.';
       const readInvoice = () => {
         const a = BLWPCLIENT.invoiceAmountMsat(inv.value);
         chosen = a.ok ? a.msat : null;
@@ -7383,7 +7478,11 @@
         const bal = window.BLWP_WALLET_BALANCE; const loads = window.ARENA_FED_LOADS || new Map();
         const sat = (n) => Number(n || 0).toLocaleString('en-US') + ' sat';
         el.textContent = '';
-        const h = document.createElement('h4'); h.textContent = 'Your balance by federation'; el.append(h);
+        const head = document.createElement('div'); head.className = 'ov-head';
+        const h = document.createElement('h4'); h.textContent = 'Your balance';
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'ov-close'; x.title = 'Close'; x.textContent = '\u00d7';
+        x.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none'; });
+        head.append(h, x); el.append(head);
         const parts = bal && Array.isArray(bal.parts) ? bal.parts : [];
         if (!parts.length) { const r = document.createElement('div'); r.className = 'row'; r.textContent = bal ? 'No federation holds funds of this wallet yet' : 'Loading your wallet \u2026'; el.append(r); }
         for (const x of [...parts].sort((a, b) => b.sats - a.sats)) {
@@ -7402,14 +7501,13 @@
           const a = document.createElement('div'); a.textContent = 'Total' + (parts.length > 1 ? ' (' + parts.length + ' federations)' : '');
           const v = document.createElement('b'); v.textContent = sat(bal.sats) + (bal.arriving ? ' + ' + sat(bal.arriving) + ' arriving' : '') + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : ''); t.append(a, v); el.append(t);
         }
-        const c = document.createElement('button'); c.type = 'button'; c.textContent = 'Close'; c.addEventListener('click', () => { el.style.display = 'none'; }); el.append(c);
       };
       window.ARENA_SHOW_BALANCE_SPLIT = () => {
         const el = splitEl(); if (!el) return;
         paintSplit(); el.style.display = '';
         if (window.BLWP_SUM_BALANCES) window.BLWP_SUM_BALANCES().then(() => { if (el.style.display !== 'none') paintSplit(); }, () => {});
       };
-      for (const sel of ['#arena-wallet-bar .wb-bal', '#blwp-lobby-balance', '#blwp-set-wallet .bal-grid']) {
+      for (const sel of ['#arena-wallet-bar .wb-bal', '#blwp-hdr-bal', '#blwp-lobby-balance', '#blwp-set-wallet .bal-grid']) {
         const el = document.querySelector(sel);
         if (el) el.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_SHOW_BALANCE_SPLIT(); });
       }
@@ -8221,6 +8319,9 @@
       const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
       const list = sheet.querySelector('.items'); const state = sheet.querySelector('.state');
       const say = (t, bad) => { state.textContent = t || ''; state.classList.toggle('bad', !!bad); };
+      // "SHOP" ONCE (kanban #516, the owner 2026-10-19: "shop is shown twice. one amber title is enough"): the amber line says Shop, the
+      // title is the game's name, as the leaderboard's
+      const title = document.getElementById('arena-shop-title'); if (title) title.textContent = (chosen && (chosen.title || chosen.name)) || 'Shop';
       sheet.classList.add('show'); list.textContent = ''; say(shop ? 'Reading what you own …' : 'This game sells nothing.');
       if (!shop) return;
       const seats = shop.game.nodes || [];
@@ -8490,6 +8591,36 @@
       if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[blwp] shop: ' + e.message)));
       const back = document.querySelector('#arena-shop .back');
       if (back) back.addEventListener('click', () => document.getElementById('arena-shop').classList.remove('show'));
+    }
+    // ONE OVERLAY AT A TIME, AND ITS OWN BUTTON CLOSES IT (kanban #506, #511, #516; the owner 2026-10-19: "click on the leaderboard opens the
+    // leaderboard. clicking it again should close it ... same for the other buttons: balance, deposit, withdraw"; "when opening an overlay
+    // (leaderboards, withdraw, balance, gear, ...), any already open overlay should close"; the shop: "clicking a second time on the button
+    // should return to the game"). Before a header button's own handler (the capture phase): open already - closed by its own close, so a
+    // deposit offer is still rejected and the withdraw panel goes back to Settings; else every other open overlay is closed first.
+    {
+      const byId = (id) => document.getElementById(id);
+      const OVERLAYS = {
+        balance: { open: () => { const e = byId('arena-bal-split'); return !!e && e.style.display !== 'none' && e.childElementCount > 0; },
+          close: () => { byId('arena-bal-split').style.display = 'none'; } },
+        deposit: { open: () => { const e = byId('blwp-deposit'); return !!e && e.classList.contains('deposit-modal') && e.childElementCount > 0; },
+          close: () => { const c = document.querySelector('#blwp-deposit .dep-close'); if (c) c.click(); else { const e = byId('blwp-deposit'); e.textContent = ''; e.className = ''; } } },
+        withdraw: { open: () => !!byId('arena-withdraw') && byId('arena-withdraw').classList.contains('show'),
+          close: () => { const c = document.querySelector('#arena-withdraw .wd-close'); if (c && c.onclick) c.click(); else byId('arena-withdraw').classList.remove('show'); } },
+        leaderboard: { open: () => !!(window.ARENA_SEASON && window.ARENA_SEASON.isOpen()), close: () => window.ARENA_SEASON.close() },
+        shop: { open: () => !!byId('arena-shop') && byId('arena-shop').classList.contains('show'), close: () => byId('arena-shop').classList.remove('show') },
+        settings: { open: () => !!byId('blwp-settings') && byId('blwp-settings').style.display !== 'none', close: () => byId('blwp-settings-close').click() },
+      };
+      const BUTTONS = { 'arena-wb-deposit': 'deposit', 'blwp-hdr-deposit': 'deposit', 'arena-wb-withdraw': 'withdraw', 'blwp-hdr-withdraw': 'withdraw',
+        'blwp-hdr-bal': 'balance', 'arena-wb-season': 'leaderboard', 'blwp-season-go': 'leaderboard', 'blwp-shop-go': 'shop',
+        'arena-wb-gear': 'settings', 'blwp-settings-go': 'settings' };
+      document.addEventListener('click', (e) => {
+        const b = e.target && e.target.closest ? e.target.closest('button') : null; if (!b) return;
+        const name = BUTTONS[b.id] || (b.classList.contains('wb-bal') ? 'balance' : null);
+        if (!name) return;
+        if (OVERLAYS[name].open()) { e.stopImmediatePropagation(); e.preventDefault(); try { OVERLAYS[name].close(); } catch { /* gone already */ } return; }
+        for (const [k, o] of Object.entries(OVERLAYS)) if (k !== name) { try { if (o.open()) o.close(); } catch { /* not on this page */ } }
+      }, true);
+      window.ARENA_OVERLAYS = OVERLAYS;
     }
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })

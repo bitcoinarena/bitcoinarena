@@ -47,7 +47,7 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   const HTML = readFileSync(PAGE, 'utf8');
   // depositPick (the one pick, kanban #353) and moneyContext, which follows it
   const a = HTML.indexOf('    function depositPick(lobbyInvite) {');
-  const m = HTML.indexOf('    function moneyContext(which = \'deposit\') {');
+  const m = HTML.indexOf('    function moneyContext(which = \'deposit\', seatRound = null) {');
   assert.ok(a > 0 && m > a, 'depositPick comes before moneyContext');
   const slice = HTML.slice(a, HTML.indexOf('\n    }\n', m) + 7);
   const run = (held, which = 'deposit', parts = []) => {
