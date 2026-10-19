@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network health</title>
+<meta name="description" content="Every node of the Bitcoin Arena network: its version, roles, bond, Lightning and channels, the federations, gateway seats, liquidity providers, fees and games - read live from the nodes.">
+<!-- THE NETWORK'S HEALTH (kanban #526, the owner 2026-10-19 ~14:15Z: "a health dashboard showing the network, all nodes with their
+     versions, federations, capacity, lnd, channels, liquidity providers und alles was ich vergessen hab"; ~14:17Z "Unter Arena-ui").
+     Nothing new to trust and nothing kept: daily.json names the seats to start from, one seat's census (/roles) names every node,
+     and each node is asked its own public doors - /owner/version, /owner/bond, /dashboard.json (its LND), /liquidity-claim,
+     /gateway-claim. The federations, gateway seats, liquidity seatings, fees, reserves and games come from the seats. Six requests
+     at a time, every 60 s; a node that does not answer in 10 s is red. -->
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 18px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 2px; } .lead { color: var(--muted); margin: 0 0 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .fact { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; } .fact b { display: block; font-size: 18px; } .fact span { color: var(--muted); font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; border-top: 0; position: sticky; top: 0; background: var(--panel); }
+  td.wrap { white-space: normal; min-width: 180px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .tag { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; margin: 0 3px 2px 0; font-size: 11px; color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  button { background: #1e2833; color: var(--text); border: 1px solid #3a4a5c; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Network health</h1>
+  <p class="lead">Every node of the Bitcoin Arena network (testnet4), read live from the nodes themselves - nothing here is stored or trusted beyond what each node signs or answers.</p>
+  <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>every 60 s · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span><a href="../">← Bitcoin Arena</a></div>
+  <div class="card"><h2>Network</h2><div class="facts" id="network"></div></div>
+  <div class="card"><h2>Nodes</h2><div class="scroll"><table id="nodes"></table></div></div>
+  <div class="card"><h2>Federations</h2><div class="scroll"><table id="feds"></table></div></div>
+  <div class="card"><h2>Gateway seats</h2><div class="scroll"><table id="gateways"></table></div></div>
+  <div class="card"><h2>Liquidity providers</h2><div class="scroll"><table id="liquidity"></table></div></div>
+  <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll"><table id="lnd"></table></div></div>
+  <div class="card"><h2>Games and markets</h2><div class="scroll"><table id="games"></table></div></div>
+  <div class="card"><h2>Fees in force</h2><div class="facts" id="fees"></div></div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const short = (h, n = 8) => (h ? esc(String(h).slice(0, n)) : '-');
+  const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
+  const satMsat = (v) => (v == null ? '-' : Math.floor(Number(v) / 1000).toLocaleString('en-US'));
+  const dot = (c) => `<span class="dot ${c}"></span>`;
+  const ASK_MS = 10000, AT_ONCE = 6;
+  // A SEAT'S ADDRESS THROUGH daily.json's ROUTES, as the Arena page takes it (the longest host/path key wins): a seat that
+  // advertises its tailnet name is reached at its public name
+  let ROUTES = {};
+  const viaAlt = (u) => {
+    let x; try { x = new URL(String(u).replace(/^ws(s?):/, 'http$1:')); } catch { return String(u); }
+    const path = x.pathname.replace(/\/+$/, '');
+    const hit = Object.keys(ROUTES).filter((k) => k === x.host || (x.host + path).startsWith(k + '/') || (x.host + path) === k).sort((p, q) => q.length - p.length)[0];
+    return (hit ? x.protocol + '//' + ROUTES[hit] + path : x.origin + path).replace(/\/+$/, '');
+  };
+  // AT MOST SIX REQUESTS AT ONCE, each with its own 10 s: the nodes are not to be loaded by a page anybody can open
+  let running = 0; const queue = [];
+  const slot = () => new Promise((r) => { if (running < AT_ONCE) { running++; r(); } else queue.push(r); });
+  const free = () => { const n = queue.shift(); if (n) n(); else running--; };
+  async function ask(base, path, as = 'json') {
+    await slot(); const t0 = performance.now();
+    try {
+      const r = await fetch(base + path, { signal: AbortSignal.timeout(ASK_MS), cache: 'no-store' });
+      const ms = Math.round(performance.now() - t0);
+      if (!r.ok) { let why = ''; try { why = (await r.json()).why || ''; } catch { /* not JSON */ } return { ok: false, status: r.status, why, ms }; }
+      return { ok: true, ms, body: as === 'json' ? await r.json() : await r.arrayBuffer() };
+    } catch (e) { return { ok: false, status: 0, why: e.name === 'TimeoutError' ? 'no answer in 10 s' : e.message, ms: Math.round(performance.now() - t0) }; }
+    finally { free(); }
+  }
+  const first = async (seats, path) => { for (const s of seats) { const a = await ask(s, path); if (a.ok) return { seat: s, ...a }; } return null; };
+
+  let reading = false;
+  async function read() {
+    if (reading) return; reading = true; $('read').textContent = 'reading …';
+    try {
+      const daily = await (await fetch('../daily.json', { cache: 'no-store' })).json();
+      const net = daily.testnet || daily;
+      ROUTES = net.alt || daily.alt || {};
+      const seats = [...new Set((net.node || []).map(viaAlt))];
+      // EVERY NODE OF THE CENSUS, from the first seat that answers /roles
+      const roles = await first(seats, '/roles');
+      const nodes = roles ? roles.body.nodes.map((n) => ({ ...n, base: viaAlt(n.endpoint) })) : seats.map((s) => ({ node: null, base: s, roles: [], serving: null, guardianOf: [] }));
+      // THE SEATS' OWN READS run beside the nodes' (measured: /network-games asks every seat itself and took most of the first 15 s);
+      // only the tip is waited for before the nodes' rows
+      const [feesP, fedsP, gamesP, reservesP, fundingP] = ['/fees', '/federations', '/network-games', '/reserves', '/funding'].map((p) => first(seats, p));
+      const fees = await feesP;
+      const tip = fees ? fees.body.tip : null;
+      let feds = null, reserves = null, funding = null;
+      // EACH NODE'S OWN DOORS: its version first - a node that does not answer that is red and is asked nothing more (measured on
+      // preview UI 246: asking every door of every node, the unreachable ones' 10 s each held the page at "reading" past 60 s)
+      // painted as each one answers: a node that does not answer holds its slot for 10 s, and the rows of those that do are not held with it
+      paintNodes(nodes, tip);
+      await Promise.all(nodes.map(async (n) => { n.version = await ask(n.base, '/owner/version'); paintNodes(nodes, tip); }));
+      paintNetwork({ tip, nodes, seats, roles, feds, reserves });
+      paintNodes(nodes, tip);
+      $('read').textContent = 'reading each node … (' + nodes.filter((n) => n.version.ok).length + ' of ' + nodes.length + ' answered)';
+      await Promise.all(nodes.filter((n) => n.version.ok).map(async (n) => {
+        const [b, d, lc, gc] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim')]);
+        Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc });
+      }));
+      [feds, reserves, funding] = await Promise.all([fedsP, reservesP, fundingP]);
+      paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
+      paintNodes(nodes, tip);
+      const fedList = feds ? feds.body.federations : [];
+      paintFeds(fedList);
+      await paintGateways(fedList, seats, nodes);
+      await paintLiquidity(fedList, nodes, tip);
+      paintLnd(nodes);
+      paintGames(await gamesP);
+      paintFees(fees);
+      $('read').textContent = 'read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked';
+      window.ARENA_HEALTH = { atMs: Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
+    } catch (e) { $('read').innerHTML = '<span class="bad">could not read the network: ' + esc(e.message) + '</span>'; }
+    finally { reading = false; }
+  }
+
+  function paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding }) {
+    const up = nodes.filter((n) => n.version && n.version.ok).length;
+    const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const p = Math.max(...(n.version.body.protocols || [0])); protos.set(p, (protos.get(p) || 0) + 1); }
+    const bonds = nodes.reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : 0), 0);
+    const facts = [
+      ['Bitcoin tip (testnet4)', tip == null ? '-' : sat(tip), tip == null ? 'bad' : ''],
+      ['Census nodes', nodes.length + (roles ? ' (census at ' + sat(roles.body.censusHeight) + ')' : ''), roles ? '' : 'bad'],
+      ['Answering', up + ' of ' + nodes.length, up === nodes.length ? 'ok' : up >= nodes.length * 0.7 ? 'warn' : 'bad'],
+      ['Newest protocol run', [...protos].sort((a, b) => b[0] - a[0]).map(([p, c]) => p + ' on ' + c).join(', ') || '-', protos.size > 1 ? 'warn' : 'ok'],
+      ['Bonds proven', sat(bonds) + ' sat', ''],
+      ['Federations', feds ? feds.body.federations.length : '-', feds ? '' : 'bad'],
+      ['Protocol reserves', reserves ? satMsat(reserves.body.totalMsat) + ' sat' : '-', ''],
+      ['Seats in daily.json', seats.length, ''],
+      // THE NEWEST SETTLEMENT any node's dashboard shows, and how long ago: rounds that stopped settling show here first
+      ...(() => { const last = Math.max(0, ...nodes.flatMap((n) => (n.dash && n.dash.ok ? n.dash.body.settlements || [] : []).map((x) => Number(x.madeMs) || 0)));
+        if (!last) return [['Last settlement', '-', 'muted']];
+        const h = (Date.now() - last) / 3600000;
+        return [['Last settlement (any node)', h < 1 ? Math.round(h * 60) + ' min ago' : Math.round(h) + ' h ago', h > 26 ? 'warn' : 'ok']]; })(),
+      ['Funding proposals', funding ? String(funding.body.proposals.length) + (funding.body.leaderboards.length ? ' · ' + funding.body.leaderboards.length + ' leaderboard payouts' : '') : '-', ''],
+    ];
+    $('network').innerHTML = facts.map(([k, v, c]) => `<div class="fact"><b class="${c}">${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+  }
+
+  function paintNodes(nodes, tip) {
+    const rows = nodes.map((n, i) => {
+      const v = n.version, b = n.bond;
+      const health = !v ? 'warn' : !v.ok ? 'bad' : n.serving === false || v.ms > 3000 ? 'warn' : 'ok';
+      const proto = v && v.ok ? Math.max(...(v.body.protocols || [0])) : null;
+      const bd = b && b.ok && b.body.bond ? b.body.bond : null, lock = b && b.ok ? b.body.lock : null;
+      const role = (n.roles || []).map((r) => `<span class="tag">${esc(r)}</span>`).join('') + (n.guardianOf && n.guardianOf.length ? `<span class="tag">guardian of ${n.guardianOf.map((f) => short(f, 6)).join(', ')}</span>` : '')
+        + (n.liq && n.liq.ok ? '<span class="tag">liquidity</span>' : '') + (n.gw && n.gw.ok ? '<span class="tag">gateway</span>' : '');
+      return `<tr><td>${dot(health)}${i + 1}</td><td class="mono">${short(n.node, 12)}</td><td class="mono">${esc((n.base || '').replace(/^https?:\/\//, ''))}</td>
+        <td>${!v ? '<span class="muted">asking …</span>' : v.ok ? v.ms + ' ms' : `<span class="bad">${esc((v.status || '') + ' ' + v.why)}</span>`}</td>
+        <td>${v && v.ok ? esc(v.body.version || 'checkout') + (v.body.commit ? ' <span class="mono muted">' + short(v.body.commit, 7) + '</span>' : '') : '-'}</td>
+        <td>${proto == null ? '-' : proto}</td><td class="wrap">${role || '-'}</td><td>${n.serving == null ? '-' : n.serving ? '<span class="ok">yes</span>' : '<span class="warn">no</span>'}</td>
+        <td>${bd ? sat(bd.sats) + ' sat' : '-'}</td><td>${lock ? (lock.blocksLeft > 0 ? `<span class="warn">matures in ${lock.blocksLeft}</span>` : 'mature') : '-'}</td></tr>`;
+    });
+    $('nodes').innerHTML = '<tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th></tr>' + rows.join('');
+  }
+
+  function paintFeds(list) {
+    const rows = list.map((f) => {
+      const load = f.exposureCapSats ? Number(f.load || 0) : null;
+      const st = String(f.status || ''), c = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
+      return `<tr><td>${dot(c)}<span class="mono">${short(f.federation, 12)}</span></td><td>${esc(st || '-')}</td><td>${sat(f.height)}</td>
+        <td>${Array.isArray(f.signers) ? f.signers.length : esc(f.signers)}</td><td>${sat(f.reserveSats)}</td><td>${sat(f.exposureCapSats)}</td>
+        <td>${load == null ? '-' : `<span class="${load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok'}">${(load * 100).toFixed(0)} %</span>`}</td></tr>`;
+    });
+    $('feds').innerHTML = '<tr><th>Federation</th><th>Status</th><th>Record height</th><th>Signers</th><th>Reserve (sat)</th><th>Cap (sat)</th><th>Load</th></tr>' + (rows.join('') || '<tr><td colspan="7" class="muted">no federation record read</td></tr>');
+  }
+
+  async function paintGateways(feds, seats, nodes) {
+    const rows = [];
+    for (const f of feds) {
+      const g = await first(seats, '/gateway-seats?federation=' + f.federation);
+      if (!g) { rows.push(`<tr><td>${dot('bad')}<span class="mono">${short(f.federation, 12)}</span></td><td colspan="4" class="bad">no seat answered</td></tr>`); continue; }
+      const b = g.body, seated = b.seated || [];
+      const c = seated.length >= 2 ? 'ok' : seated.length ? 'warn' : 'bad';
+      rows.push(`<tr><td>${dot(c)}<span class="mono">${short(f.federation, 12)}</span></td><td>${esc(b.epoch)}</td><td>${seated.length} of 2</td>
+        <td class="mono">${seated.map((s) => short(s.node || s, 10)).join(', ') || '-'}</td><td class="wrap muted">${esc(b.why || '')}</td></tr>`);
+    }
+    const claims = nodes.filter((n) => n.gw && n.gw.ok).map((n) => `<span class="tag mono">${short(n.node, 10)} · LND ${short(n.gw.body.lightningPubkey, 10)}</span>`).join('');
+    $('gateways').innerHTML = '<tr><th>Federation</th><th>Epoch</th><th>Seated</th><th>Seats</th><th>Why</th></tr>' + (rows.join('') || '<tr><td colspan="5" class="muted">no federation</td></tr>')
+      + `<tr><td colspan="5" class="wrap"><span class="muted">Nodes that claim a gateway: </span>${claims || '<span class="muted">none</span>'}</td></tr>`;
+  }
+
+  async function paintLiquidity(feds, nodes, tip) {
+    const providers = nodes.filter((n) => n.liq && n.liq.ok);
+    const epoch = tip == null ? null : Math.floor(tip / 144);
+    const weights = new Map();
+    // THE NEWEST SIGNED SEATING of each federation - this epoch's, or the last one's while this one's gather has not run yet -
+    // from the first of its guardians that holds one
+    const used = new Map();
+    if (epoch != null) for (const f of feds) {
+      found: for (const e of [epoch, epoch - 1]) for (const n of nodes.filter((x) => (x.guardianOf || []).includes(f.federation))) {
+        const s = await ask(n.base, `/liquidity-seating?federation=${f.federation}&epoch=${e}`);
+        if (s.ok) { for (const p of s.body.providers || []) weights.set(f.federation.slice(0, 8) + ':' + p.node, p.weight); used.set(f.federation, e); break found; }
+      }
+    }
+    const rows = providers.map((n) => {
+      const c = n.liq.body, free = Number(c.freeSats || 0), given = (c.channels || []).reduce((s, x) => s + Number(x.capacitySats || 0), 0);
+      const w = [...weights].filter(([k]) => k.endsWith(':' + n.node)).map(([k, v]) => k.split(':')[0] + ' ' + sat(v)).join(', ');
+      const age = Math.round((Date.now() - Number(c.atMs || 0)) / 60000);
+      const col = free + given >= 500000 ? 'ok' : 'warn';
+      return `<tr><td>${dot(col)}<span class="mono">${short(n.node, 12)}</span></td><td class="mono">${short(c.lightningPubkey, 12)}</td><td>${sat(free)}</td>
+        <td>${(c.channels || []).length} · ${sat(given)} sat</td><td>${(c.funds || []).length}</td><td>${w || '<span class="muted">not seated</span>'}</td>
+        <td class="${age > 20 ? 'warn' : ''}">${age} min ago</td></tr>`;
+    });
+    $('liquidity').innerHTML = `<tr><th>Provider node</th><th>LND</th><th>Free (claimed, sat)</th><th>Channels given</th><th>Coins proven by signature</th><th>Seating weight (epoch ${[...new Set(used.values())].join(', ') || (epoch == null ? '-' : epoch)})</th><th>Claim signed</th></tr>`
+      + (rows.join('') || '<tr><td colspan="7" class="muted">no node serves a liquidity claim</td></tr>');
+  }
+
+  function paintLnd(nodes) {
+    const rows = nodes.filter((n) => n.dash && n.dash.ok && n.dash.body.hosts && n.dash.body.hosts.lnd).map((n) => {
+      const l = n.dash.body.hosts.lnd;
+      const c = !l.synced ? 'bad' : Number(l.activeChannels || 0) === 0 ? 'warn' : 'ok';
+      return `<tr><td>${dot(c)}<span class="mono">${short(n.node, 12)}</span></td><td>${esc(l.alias || '-')}</td><td class="mono">${short(l.pubkey, 12)}</td>
+        <td>${l.synced ? '<span class="ok">yes</span>' : '<span class="bad">no</span>'}</td><td>${esc(l.activeChannels)}</td>
+        <td>${satMsat(l.localMsat)}</td><td>${satMsat(l.remoteMsat)}</td><td>${esc(l.forwards30d == null ? '-' : l.forwards30d)}</td></tr>`;
+    });
+    $('lnd').innerHTML = '<tr><th>Node</th><th>Alias</th><th>LND key</th><th>Synced</th><th>Active channels</th><th>Local (sat)</th><th>Remote / inbound (sat)</th><th>Forwards 30 d</th></tr>'
+      + (rows.join('') || '<tr><td colspan="8" class="muted">no node shows an LND on its dashboard</td></tr>');
+  }
+
+  function paintGames(g) {
+    if (!g) { $('games').innerHTML = '<tr><td class="bad">no seat answered /network-games</td></tr>'; return; }
+    const byName = new Map();
+    for (const x of g.body.games) { const k = x.name || x.title; const a = byName.get(k) || { title: x.title || k, type: x.type, versions: [], seats: 0 }; a.versions.push(x.version); a.seats = Math.max(a.seats, (x.seats || []).length || 0); byName.set(k, a); }
+    const rows = [...byName].map(([k, a]) => `<tr><td>${dot(a.seats >= 3 ? 'ok' : a.seats ? 'warn' : 'bad')}${esc(a.title)}</td><td>${esc(a.type || '-')}</td>
+      <td>${a.versions.filter((v) => v != null).sort((p, q) => Number(p) - Number(q)).join(', ') || '-'}</td><td>${a.seats}</td></tr>`);
+    const answered = (g.body.seats || []).filter((s) => s.answered).length;
+    $('games').innerHTML = `<tr><th>Game or market</th><th>Type</th><th>Versions</th><th>Seats hosting (most of any version)</th></tr>` + rows.join('')
+      + `<tr><td colspan="4" class="muted">${answered} of ${(g.body.seats || []).length} seats answered the games read</td></tr>`;
+  }
+
+  function paintFees(f) {
+    if (!f) { $('fees').innerHTML = '<div class="fact bad">no seat answered /fees</div>'; return; }
+    const i = f.body.inForce || {};
+    const facts = [['Node fee (round)', (i.roundNodeBps / 100) + ' %'], ['Donation (round)', (i.roundDonationBps / 100) + ' %'], ['Reserves (round)', (i.roundReserveBps / 100) + ' %'],
+      ['Market node fee', (i.marketNodeBps / 100) + ' %'], ['Market donation', (i.marketDonationBps / 100) + ' %'], ['Market reserves', (i.marketReserveBps / 100) + ' %'],
+      ['Items: nodes / reserves / devs', i.itemNodesPct + ' / ' + i.itemReservesPct + ' / ' + i.itemDevsPct + ' %'], ['Website share', i.websitePct + ' %']];
+    $('fees').innerHTML = facts.map(([k, v]) => `<div class="fact"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+  }
+
+  $('again').onclick = read;
+  read(); setInterval(read, 60000);
+})();
+</script>
+</body>
+</html>
