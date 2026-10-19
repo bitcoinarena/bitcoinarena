@@ -34,8 +34,11 @@ $buttons['Close'].Add_Click({ $form.Close() })
 # a command's output, shown in the box (arenanode: status, doctor, restart)
 function Show-Command([string]$what) {
   $form.Cursor = 'WaitCursor'; $box.Text = "arenanode $what ..."; $form.Refresh()
-  $out = & cmd /c "`"$command`" $what 2>&1"
-  $box.Text = ($out -join "`r`n"); $form.Cursor = 'Default'
+  # arenanode writes UTF-8 (its check marks): the console page set to it, and read as it (measured in the Windows VM: mojibake for the check mark)
+  $was = [Console]::OutputEncoding; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  $out = & cmd /c "chcp 65001 >nul & `"$command`" $what 2>&1"
+  [Console]::OutputEncoding = $was
+  $box.Text = ($out -join "`r`n"); $box.SelectionStart = 0; $box.SelectionLength = 0; $form.Cursor = 'Default'
 }
 function Show-Installed {
   $title.Text = "Your Arena node is installed. Its services, as 'arenanode status' shows them (also in a new console: arenanode help):"
