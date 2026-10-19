@@ -638,3 +638,248 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
         // AND THE TAB'S MARKET LINES after them: its picks, then their outcomes as this page checked them
         collect: BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.ARENA_RECORDS || [], { failed: window.ARENA_COLLECT_FAILED || new Map(), held: window.ARENA_COLLECT_HELD || new Set() }).concat(marketViewLines(true)) : marketViewLines(true) });
     }
+
+    // ---------------------------------------------------------------- the run's line in the console: the two nodes' health, the play socket, the players
+    const nodeHealth = {};
+    // A NODE'S NAME ON THE STRIP IS ITS PLACE IN THIS PAGE'S NODE LIST - A, B, then 3, 4 ... (2026-09-26 14:02:
+    // "A ...", "B ...", "silly-rocket-..." - do not cut a name with three dots). It was read off a /blwp-a path, which a
+    // quick tunnel's name never has, so both nodes read "..." for as long as the page ran.
+    const nodeLetter = (i) => (i === 0 ? 'A' : i === 1 ? 'B' : String(i + 1));
+    const pageNodes = () => (new URLSearchParams(location.search).get('node') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    // ONLY THE TWO THE STRIP SHOWS, EVERY 30 S, ONE PROBE AT A TIME (2026-10-16: "Lower the amount of concurrent
+    // connections and network load"; measured on preview UI 156 during one run: 1036 of 1050 GET /identity came from here -
+    // every node= of the page's address, 14 seats in a round, every 2 s, for a line that names A and B only)
+    async function probeNodes() {
+      if (probeNodes.busy) return;
+      probeNodes.busy = true;
+      const nodes = (new URLSearchParams(location.search).get('node') || '')
+        .split(',').map((s) => s.trim()).filter(Boolean).slice(0, 2);
+      try { await Promise.all(nodes.map(async (u, i) => {
+        const name = nodeLetter(i);
+        try {
+          const r = await fetch(u.replace(/\/+$/, '') + '/identity');
+          nodeHealth[name] = r.ok ? 'ok' : 'http ' + r.status;
+        } catch (e) {
+          nodeHealth[name] = 'down';
+        }
+      })); } finally { probeNodes.busy = false; }
+    }
+    function playLine(net) {
+      if (!net) return 'play · not started';
+      if (net.error) return 'play · ' + net.error;
+      const c = net.client;
+      if (!c) return 'play · ' + (net.state || 'opening');
+      const where = c.base || '';
+      // A NODE LETTER, or a short host - never the whole tunnel URL (13:05: it was 46 characters of it across
+      // the price). The letter is what a reader needs; the host, cut to its first label and 14 characters, is
+      // enough to tell two tunnels apart.
+      // the node's letter from this page's list; a host not in it by its whole first label, never cut
+      const hostOf = (u) => { try { return new URL(u).host + new URL(u).pathname.replace(/\/+$/, ''); } catch (e) { return String(u || ''); } };
+      const at = pageNodes().findIndex((n) => hostOf(n) === hostOf(String(where).replace(/^ws/, 'http')));
+      const which = at >= 0 ? nodeLetter(at) : (() => { try { return new URL(where).hostname.split('.')[0]; } catch (e) { return String(where || 'node'); } })();
+      const sock = c.sock && c.sock.readyState === 1 ? 'up' : (c.state || 'no socket');
+      return 'play · ' + which + ' ' + sock;
+    }
+    function paintPlayers() {
+      const el = document.getElementById('blwp-players');
+      if (!el) return;
+      if (window.ARENA_CARD_UP && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing) window.ARENA_CARD_UP = false;
+      // hidden while the cargo panel is open (2026-09-26 14:02) - the pads and TRUCK FULL stay; this line does not
+      if (!window.BLWP_ROUND || window.ARENA_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }
+      consoleHas('players', true);
+      el.style.display = consoleOpen() ? 'block' : 'none';
+      const inst = window.unityInstance;
+      const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
+      const net = mod && mod.blwpNet;
+      const joined = !!(window.BLWP_ENTRY);
+      const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
+      // WHETHER ANYBODY IS DRAWING THEM. A field filling with pictures nobody
+      // takes reads the same as an empty round unless the line says so.
+      const stalled = !!(net && net.ghosts && net.ghosts.stalled);
+      // AND WHERE THE NEWEST OF THEM IS. Each player parks at their own bay -
+      // 24 doors, 6.8 m apart - so two tabs start up to 156 m apart on one
+      // apron, and a truck drawn correctly at the far end is off screen. Read
+      // this against the other tab's own position readout: the same numbers
+      // mean the picture is right and the camera is pointed elsewhere.
+      const at = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.newestPose && net)
+        ? BLWPCLIENT.newestPose(net.ghosts) : null;
+      const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || 'checking')).join(' · ');
+      // AND WHETHER THIS TAB'S OWN INPUTS ARE LANDING. A tab whose batches the
+      // node refuses keeps its socket, its player count and its driving, and
+      // loses only every watcher's picture of it - frozen at the last tick that
+      // landed. It is the one fault none of the numbers above can show.
+      const refused = (net && net.client && net.client.refusedWhy) || null;
+      // WHY THERE IS NO SIGNER NODE, AND WHAT THE SIGNER NODE COST. Both went to the console
+      // only, so a refused signer node read exactly like a round nobody was sent to
+      // and a free round read exactly like a funded one. The hold state is the
+      // NODE's word, kept by `Client.join` from the answer it already gives.
+      const joinRefused = window.BLWP_JOIN_REFUSED || null;
+      // THE COUNT RUNS FROM THE SIGNER NODE, not only from this page's own payment: a
+      // payment that lands after payStake gave up would otherwise never be
+      // counted. Started once; stopped at N >= T, at the run's end, or on close.
+      const c = net && net.client;
+      // AND THE DONATION, ONCE THE SIGNER NODES HOLD THE STAKE (M3.2 6e, §24A.2, §22A):
+      // measured before, it went as soon as the signer nodes took the entry - before
+      // "Pay the stake" - so a joined player who never paid the stake donated.
+      // `c.stakeCommitted` is the signer nodes' count; the Client refuses before it too.
+      // the player's wallet pays each recipient of the checked set its share,
+      // through the player's own Client (\`payDonation\`) - an entry and a set,
+      // never an invoice. A failed
+      // share is reported and not redirected; the entry stands either way. It
+      // waits for a connected wallet, and runs once per page - and ONCE PER
+      // PLAYER PER ROUND ACROSS A RELOAD: handed the tab's sessionStorage, the
+      // Client notes each share before its wallet is asked and never asks a
+      // noted one again, so a reload over a kept lock reports and sends nothing.
+      // A LOOPBACK RECIPIENT GOES OVER ITS LISTED ROUTE (2026-10-03, option A): the paid rounds of 10-02..10-04 name
+      // testnet4's test donation set, http://127.0.0.1:18777/lnurlp/blwp-test-a and -b - a player's browser reached nothing
+      // there, every share was UNPAID and nothing was deducted. daily.json's testnet.alt names a route for 127.0.0.1:18777
+      // (the testnet4 donation service, the same two recipients); only a loopback recipient that has one is sent there.
+      const donationFetch = (u) => {
+        try {
+          const x = new URL(String(u)), alt = (window.ARENA_ALT_ROUTES || {})[x.host];
+          if (alt && (x.hostname === '127.0.0.1' || x.hostname === 'localhost')) return fetch('https://' + alt + x.pathname + x.search);
+        } catch { /* as named */ }
+        return fetch(u);
+      };
+      if (c && c.joinedEntry && window.ARENA_DONATION_SET && typeof c.joinedEntry.donationMsat === 'bigint'
+          && c.joinedEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && (wallet || window.ARENA_PLAYER_PAYER)) {
+        const heldWallet = wallet ? wallet.current() : { ok: false };
+        // NO OUTSIDE WALLET CONNECTED: the player wallet pays it (2026-10-01: "donation is paid by the player as well")
+        if (!heldWallet.ok && window.ARENA_PLAYER_PAYER) {
+          donationPaying = true;
+          window.ARENA_DONATION_PAID = { state: 'paying' };
+          c.payDonation(c.joinedEntry, window.ARENA_DONATION_SET, {
+            round: window.BLWP_ROUND, payWith: window.ARENA_PLAYER_PAYER, log: spent, storage: window.sessionStorage, fetcher: donationFetch,
+          }).then((said) => {
+            window.ARENA_DONATION_PAID = BLWPCLIENT.donationPaidState(window.ARENA_DONATION_SET, said);
+            paintWallet(); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
+          }).catch((e) => { window.ARENA_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
+        } else if (heldWallet.ok) {
+          donationPaying = true;
+          window.ARENA_DONATION_PAID = { state: 'paying' };
+          c.payDonation(c.joinedEntry, window.ARENA_DONATION_SET, {
+            round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent, storage: window.sessionStorage,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), fetcher: donationFetch,
+          }).then((said) => {
+            window.ARENA_DONATION_PAID = BLWPCLIENT.donationPaidState(window.ARENA_DONATION_SET, said);
+            paintWallet();
+          }).catch((e) => { window.ARENA_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
+        }
+      }
+      if (c && c.watchStake && c.joinedEntry && window.ARENA_STAKE && window.ARENA_STAKE.signerNodeKeys
+          && !c.stakeWatch && !c.stakeCommitted && !c.ended && !c.stakeWatchStopped) {
+        net.client.watchStake({
+          signerNodes: window.ARENA_STAKE.signerNodeKeys, nodes: window.ARENA_STAKE.nodes, contract: window.BLWP_ROUND,
+        }).catch((e) => console.error('[arena] stake count: ' + e.message));
+      }
+      const stake = window.ARENA_STAKE
+        ? Object.assign({}, window.ARENA_STAKE, {
+          seen: (net && net.client && net.client.stakeCount) || null,
+        })
+        : null;
+      const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
+        ? BLWPCLIENT.playersLine({ joined, others, stalled, at, refused, joinRefused, stake, names: window.ARENA_OTHER_NAMES || [] })
+        : (joined ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not joined');
+      el.textContent = ab + '\n' + playLine(net) + '\n' + who;
+    }
+    // WHO THE OTHER PLAYERS ARE (M3.3-34): this tab hands the round's signer nodes its
+    // name, signed with the round key it is joined under, and asks them for the
+    // others' - every record checked against its player's key before its name
+    // is drawn. A signer node that has not joined this player yet refuses it (409), so
+    // it is handed again until every signer node has kept it. The name decides nothing.
+    // Each ask is given 8 s, and one exchange runs at a time: a signer node that does
+    // not answer must not hold the others' names back. When no signer node answers,
+    // `namesOf` says so and the names already drawn stay drawn.
+    const namesKept = new Set();
+    let namesBusy = false;
+    const namesFetch = (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) }));
+    async function exchangeNames() {
+      if (namesBusy || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.namesOf) return;
+      if (!window.BLWP_ROUND || !window.BLWP_ENTRY || !window.BLWP_CURVE) return;
+      namesBusy = true;
+      const said = { posted: [], error: null };
+      try {
+        const nodes = window.BLWP_NODES || [];
+        const left = nodes.filter((n) => !namesKept.has(n));
+        if (left.length) {
+          try {
+            const signed = BLWPCLIENT.nameRecordFor(window.BLWP_ROUND, { storage: window.sessionStorage,
+              random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE });
+            for (const s of await BLWPCLIENT.postName(signed, left, { fetcher: namesFetch })) {
+              said.posted.push(s.node + ' ' + s.status);
+              if (s.status === 201 || s.status === 200) namesKept.add(s.node);
+            }
+          } catch (e) { said.error = 'name: ' + e.message; console.error('[arena] name: ' + e.message); }
+        }
+        try {
+          const mine = window.BLWP_ENTRY.playerPubkey ? BLWPCLIENT.toHex(window.BLWP_ENTRY.playerPubkey) : null;
+          const all = await BLWPCLIENT.namesOf({ roundId: BLWPCLIENT.roundId(window.BLWP_ROUND), nodes, fetcher: namesFetch,
+            verify: (s, m, k) => !!window.BLWP_CURVE.verify(s, m, k) });
+          window.ARENA_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
+          // AND WHOSE NAME IS WHOSE, for the debug label over each ghost (2026-09-17 19:15).
+          window.BLWP_NAMES_BY_PLAYER = Object.fromEntries(all.map((x) => [x.player, x.name]));
+        } catch (e) { said.error = 'names: ' + e.message; console.error('[arena] names: ' + e.message); }
+      } finally {
+        // WHAT THE LAST EXCHANGE DID, for a harness or a player's console.
+        window.ARENA_NAMES_SAID = { posted: said.posted, kept: [...namesKept], shown: window.ARENA_OTHER_NAMES || [],
+          error: said.error, atMs: Date.now() };
+        namesBusy = false;
+      }
+    }
+    setInterval(exchangeNames, 3000);
+    setInterval(paintPlayers, 500);
+    probeNodes();
+    setInterval(probeNodes, 30000);
+    // the first paint of the line once the page's own script is in (it asks the console, consoleHas, which that script declares)
+    document.addEventListener('DOMContentLoaded', () => paintPlayers());
+
+    // ---------------------------------------------------------------- the add-ons panel Unity draws
+    // ADD-ONS INSIDE UNITY (2026-10-16: "The buy feature must also be inside unity on the loading screen as 'buy
+    // addons' where you load the packages, and when the round has closed and the countdown is showing there is also the option to buy
+    // items. There is a visual confirmation in unity when the game is active and an item has been purchased."). Unity draws the panel
+    // from ARENA_ADDONS_VIEW and buys through ARENA_ADDONS_BUY - the same purchase as the shop sheet (buyShopItem). A purchase counts
+    // from the next entry this page builds: an entry already made (the run going, or the next round's join held to its start) keeps
+    // what it named, since every node replays the run from it - `from` says which.
+    const addons = { owned: null, ownedFor: '', busy: '', said: '', bad: false, seq: 0, bought: null };
+    const addonsShop = () => { const chosen = window.ARENA_GAME_CHOSEN; return chosen && BLWPCLIENT.shopOf ? BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name) : null; };
+    // 'after-next' when the round this page is joining - not started yet - already has its entry, else 'next': the next entry it builds
+    window.ARENA_ADDONS_FROM = (join, entryRound) => (join && join.state === 'joining' && join.round && entryRound === join.round ? 'after-next' : 'next');
+    async function addonsRead() {
+      const shop = addonsShop(); if (!shop) return;
+      try { addons.owned = await itemsOwnedNow(shop.game.name, shop.game.nodes || [], { fresh: true }); addons.ownedFor = shop.game.name; if (!addons.busy) { addons.said = ''; addons.bad = false; } }
+      catch (e) { addons.said = 'What you own could not be read: ' + e.message; addons.bad = true; }
+    }
+    window.ARENA_ADDONS_OPEN = () => { addonsRead(); return 1; };
+    window.ARENA_ADDONS_VIEW = () => {
+      const shop = addonsShop();
+      if (!shop) return { shop: false };
+      const use = itemsUse(shop.game.name);
+      const owned = addons.ownedFor === shop.game.name ? (addons.owned || []) : [];
+      return { shop: true, game: shop.game.name, read: addons.owned !== null, busy: addons.busy, said: addons.said, bad: addons.bad, seq: addons.seq,
+        bought: addons.bought, devsPct: window.ARENA_ITEMS_SHARE(), items: shop.items.map((it) => ({ id: it.id, name: it.name, what: ITEM_WHAT[it.id] || '', priceSat: Number(window.ARENA_ITEM_PRICE(it.priceSat)), listSat: Number(it.priceSat),
+          owned: owned.some((o) => o.itemId === it.id), use: !use || use.includes(it.id) })) };
+    };
+    window.ARENA_ADDONS_BUY = (itemId) => {
+      const shop = addonsShop(); const it = shop && shop.items.find((x) => x.id === itemId);
+      if (!it || addons.busy) return 0;
+      addons.busy = itemId; addons.said = 'Paying ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat …'; addons.bad = false;
+      (async () => {
+        const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+        if (got.ok) {
+          const from = window.ARENA_ADDONS_FROM(window.BLWP_JOIN, window.ARENA_ENTRY_ROUND);
+          addons.seq += 1; addons.bought = { seq: addons.seq, id: it.id, name: it.name, txid: String(got.txid || ''), from };
+          addons.said = it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'; addons.bad = false;
+          console.log('[arena] add-on bought in Unity: ' + it.id + ', tx ' + String(got.txid).slice(0, 16) + ', plays from ' + from);
+          await addonsRead();
+          if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE().catch(() => {});
+        } else { addons.said = 'Not bought (' + got.step + '): ' + got.why; addons.bad = true; }
+        addons.busy = '';
+      })();
+      return 1;
+    };
+    window.ARENA_ADDONS_USE = (itemId, on) => {
+      const shop = addonsShop(); if (!shop) return 0;
+      const now = new Set(itemsUse(shop.game.name) || (addons.owned || []).map((x) => x.itemId));
+      if (on) now.add(itemId); else now.delete(itemId);
+      setItemsUse(shop.game.name, [...now]); return 1;
+    };

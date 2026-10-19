@@ -13,6 +13,8 @@ import { itemPriceFor, ITEM_DEV_SHARES } from '../../arena-protocol/src/items.js
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const html = readFileSync(PAGE, 'utf8');
+// AND UNITY'S ADD-ONS VIEW, which is Tick Tock's page part (kanban #521): every buy screen is in one or the other
+const shipped = html + '\n' + readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 
 // the owner ~13:40Z: "Advanced settings muss ein eigener Menüpunkt sein ganz unten und dann geht ein neuer Screen auf"
 test('Advanced settings is the last menu item of Settings and opens a screen of its own: the donation dropdown and the in-game share 40 .. 0 %', () => {
@@ -54,11 +56,11 @@ test('the price at the share: 500 sat at the default 50 %, 250 sat at 0 %, kept 
 });
 
 test('every buy screen prices at the share: the shop sheet, its paying line, the wallet check, Unity\'s add-ons view and its paying line', () => {
-  assert.equal((html.match(/String\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\)/g) || []).length, 5);
-  assert.match(html, /const need = window\.ARENA_ITEM_PRICE\(it\.priceSat\) \* 1000n;/);
-  assert.match(html, /priceSat: Number\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\), listSat: Number\(it\.priceSat\)/);
-  assert.match(html, /BLWPCLIENT\.buyItem\(\{ manifest: shop\.game\.manifest, itemId: it\.id, networkSet: ds\.target\.network, gameSet: ds\.target\.game, wallet, federationId, devsPct,/);
-  assert.equal((html.match(/String\(it\.priceSat\)/g) || []).length, 0, 'no list price shown as the price anywhere');
+  assert.equal((shipped.match(/String\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\)/g) || []).length, 5);
+  assert.match(shipped, /const need = window\.ARENA_ITEM_PRICE\(it\.priceSat\) \* 1000n;/);
+  assert.match(shipped, /priceSat: Number\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\), listSat: Number\(it\.priceSat\)/);
+  assert.match(shipped, /BLWPCLIENT\.buyItem\(\{ manifest: shop\.game\.manifest, itemId: it\.id, networkSet: ds\.target\.network, gameSet: ds\.target\.game, wallet, federationId, devsPct,/);
+  assert.equal((shipped.match(/String\(it\.priceSat\)/g) || []).length, 0, 'no list price shown as the price anywhere');
 });
 
 // OUTSIDE A SELLING GAME (2026-10-17: "This 50% is wrong if 20% are taken by a ingame item"): Settings opened from the

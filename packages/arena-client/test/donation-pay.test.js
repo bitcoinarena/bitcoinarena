@@ -559,7 +559,8 @@ test('no donation leaves the wallet before the signer nodes hold the stake: unco
 });
 
 test('the page asks for the donation only once the signer nodes hold the stake', () => {
-  const page = readFileSync(PAGE, 'utf8');
+  // paid through Unity's own Client in the run's line: Tick Tock's page part (kanban #521)
+  const page = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
   const at = page.indexOf('c.payDonation(c.joinedEntry');
   assert.ok(at > 0, 'the page no longer pays the donation through its Client');
   const guard = page.slice(page.lastIndexOf('if (c && c.joinedEntry', at), at);

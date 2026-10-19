@@ -19,7 +19,7 @@ import { test } from 'node:test';
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -294,9 +294,10 @@ test('the signer node a page takes carries the round\'s own amounts', () => {
 // around it. So the template is read here, the way the client bundle beside it
 // already is.
 test('the page joins a named round and still invents none', () => {
-  const page = readFileSync(
-    new URL('../../../src/arena-ui/index.html',
-      import.meta.url).pathname, 'utf8');
+  // THE PAGE AS IT SHIPS: index.html and each game's page part it loads (packages/<game>/page/*-page.js, kanban #521)
+  const games = new URL('../../', import.meta.url);
+  const parts = readdirSync(games).flatMap((g) => { try { return readdirSync(new URL(`${g}/page/`, games)).filter((n) => /-page\.js$/.test(n)).map((n) => new URL(`${g}/page/${n}`, games)); } catch { return []; } });
+  const page = [new URL('../../../src/arena-ui/index.html', import.meta.url), ...parts].map((u) => readFileSync(u.pathname, 'utf8')).join('\n');
 
   for (const call of ['joinFromQuery', 'entryFor', 'tabSeed', 'playerFor'])
     assert.ok(new RegExp('BLWPCLIENT\\.' + call + '\\s*\\(').test(page),

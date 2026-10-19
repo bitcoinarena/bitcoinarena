@@ -9,12 +9,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+// the donation is paid through Unity's own Client in the run's line: Tick Tock's page part (kanban #521)
+const UNITY = new URL('../../nextblock/page/unity-page.js', import.meta.url);
+const html = readFileSync(UNITY, 'utf8');
 const from = html.indexOf('      const donationFetch = (u) => {');
 const to = html.indexOf('      };', from) + '      };'.length;
 const make = (routes) => {
   const asked = [];
-  const f = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['window', 'fetch'], html.slice(from, to), 'return donationFetch;')({ ARENA_ALT_ROUTES: routes }, (u) => { asked.push(u); return 'answer'; });
+  const f = pageFunction(UNITY, ['window', 'fetch'], html.slice(from, to), 'return donationFetch;')({ ARENA_ALT_ROUTES: routes }, (u) => { asked.push(u); return 'answer'; });
   return { f, asked };
 };
 
