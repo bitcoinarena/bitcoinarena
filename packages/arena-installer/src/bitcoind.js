@@ -98,7 +98,9 @@ export function configureCore({ home, network = 'testnet4', prune = false, dbcac
     `# The Arena node's own Bitcoin Core (kanban #471 ruling 8), written by the installer.`,
     ...(network === 'testnet4' ? ['testnet4=1'] : []),
     'server=1', `dbcache=${dbcacheMb}`, ...(prune ? ['prune=2000'] : []),
-    `[${sect}]`, 'rpcbind=127.0.0.1', 'rpcallowip=127.0.0.1', `rpcport=${p.rpc}`, `port=${p.p2p}`, '',
+    // ITS PEER PORT ON THIS MACHINE ONLY (kanban #471, the Windows VM 2026-10-19: listening on every network, bitcoind made Windows Firewall
+    // ask the user to open it to public networks): the node needs no inbound Bitcoin peers - its outbound ones are as before
+    `[${sect}]`, 'rpcbind=127.0.0.1', 'rpcallowip=127.0.0.1', `rpcport=${p.rpc}`, `port=${p.p2p}`, `bind=127.0.0.1:${p.p2p}`, '',
   ].join('\n');
   writeFileSync(join(datadir, 'bitcoin.conf'), conf);
   const cookieDir = network === 'mainnet' ? datadir : join(datadir, network);
