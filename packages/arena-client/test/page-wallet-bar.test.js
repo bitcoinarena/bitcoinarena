@@ -118,11 +118,11 @@ test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw
 // first, else ARENA_GAME.back
 test('the way back is in the bar, the balance on the right, the client\'s own back hidden', () => {
   const HTML = readFileSync(PAGE, 'utf8');
-  assert.match(HTML, /<span>Bitcoin Arena<\/span><\/a>\s*<button id="arena-wb-back" type="button"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/button>\s*<a id="arena-wb-site"/);
+  assert.match(HTML, /<span>Bitcoin Arena<\/span><\/a>\s*<button id="arena-wb-back" type="button"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/button>\s*<button class="wb-bal" type="button"/);
   assert.match(HTML, /#arena-wallet-bar \.wb-bal \{ flex: 0 1 auto; min-width: 0; margin-left: auto;/);
-  // kanban #403/#404: on the games screen, in the same place, "← bitcoin-arena.io"
-  assert.match(HTML, /<a id="arena-wb-site" href="https:\/\/bitcoin-arena\.io\/"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">bitcoin-arena\.io<\/span><\/a>\s*<span class="wb-bal">/);
-  assert.match(HTML, /body\.arena-picking:not\(\.arena-own-client\) #arena-wb-site \{ display: inline-flex;/);
+  // kanban #508 (the owner 2026-10-19: "the button is superfluous and redundant. the bitcoin Arena logo already links back to the homepage"):
+  // no "← bitcoin-arena.io" on the games screen any more (#403/#404 added it); kanban #517: the balance is a button
+  assert.doesNotMatch(HTML, /arena-wb-site/);
   assert.match(HTML, /body\.arena-own-client #arena-wb-back \{ display: inline-flex;/);
   assert.match(HTML, /'#back,button\.back\{display:none!important\}'/);
   const from = HTML.indexOf("      { const wbBack = document.getElementById('arena-wb-back');");

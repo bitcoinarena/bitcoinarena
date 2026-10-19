@@ -35,7 +35,8 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
 
 test('the balance line: how much can be withdrawn; an empty wallet; a balance that cannot be read', async () => {
   const p = panel({ can: 50000n });
-  assert.equal(p.els['blwp-wd-amount'].textContent, 'Checking how much you can withdraw …');
+  // the same sentence while the balance is read, so the overlay keeps its size (kanban #510)
+  assert.equal(p.els['blwp-wd-amount'].textContent, 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.');
   await tick();
   assert.equal(p.els['blwp-wd-amount'].textContent, 'You can withdraw up to 50 sat. Make an invoice in your own wallet for any amount up to that and paste it here.');
   assert.deepEqual([p.els['blwp-wd-invoice'].disabled, p.els['blwp-wd-go'].disabled], [false, false]);
