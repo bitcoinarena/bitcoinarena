@@ -3,14 +3,14 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// THE COLLISION IS VISIBLE (2026-09-25 20:56, again 20:57: visible collisions, before testnet - the miner and
     /// the post office, "the post office is the mempool building").
     ///
     /// What is coloured is what the truck is resolved against: the core's own boxes (st.solids, rules/map.js), read back
-    /// through <see cref="BlwpCore.Solids"/> - not a renderer's bounds and not a tag, which are what Unity draws and not
+    /// through <see cref="ArenaCore.Solids"/> - not a renderer's bounds and not a tag, which are what Unity draws and not
     /// what the core stops the truck on. Only the boxes the truck's body can reach are drawn, by the core's own vertical
     /// rule (solids.js pushOut): a box whose foot is above the ground plus BODY_HEIGHT is a lintel the truck drives under.
     ///
@@ -45,13 +45,13 @@ namespace Blwp
 
         void Update()
         {
-            if (!BlwpCore.Available) return;
-            if (Time.unscaledTime - _askedAt < 0.5f && _epoch == BlwpCore.ReliefEpoch) return;
+            if (!ArenaCore.Available) return;
+            if (Time.unscaledTime - _askedAt < 0.5f && _epoch == ArenaCore.ReliefEpoch) return;
             _askedAt = Time.unscaledTime;
-            int n = BlwpCore.Solids(_words);
+            int n = ArenaCore.Solids(_words);
             n = Mathf.Min(n, _words.Length / 6);
-            if (_epoch == BlwpCore.ReliefEpoch && Same(n)) return;
-            _epoch = BlwpCore.ReliefEpoch;
+            if (_epoch == ArenaCore.ReliefEpoch && Same(n)) return;
+            _epoch = ArenaCore.ReliefEpoch;
             _drawn = new int[n * 6];
             System.Array.Copy(_words, _drawn, n * 6);
             Build(n);
@@ -82,13 +82,13 @@ namespace Blwp
             var faces = new List<int>();
             var edges = new List<int>();
             int drawn = 0;
-            const float ONE = BlwpCore.ONE;
+            const float ONE = ArenaCore.ONE;
             for (int i = 0; i < n; i++)
             {
                 int o = i * 6;
                 int cx = _words[o], cz = _words[o + 1], hx = _words[o + 2], hz = _words[o + 3];
                 int yLow = _words[o + 4], yHigh = _words[o + 5];
-                int floor = Mathf.RoundToInt(BlwpCore.SurfaceAt(cx / ONE, cz / ONE) * ONE);
+                int floor = Mathf.RoundToInt(ArenaCore.SurfaceAt(cx / ONE, cz / ONE) * ONE);
                 if (!TruckCanHit(yLow, yHigh, floor)) continue;
                 drawn++;
                 var lo = new Vector3((cx - hx) / ONE, yLow / ONE, (cz - hz) / ONE);
@@ -112,11 +112,11 @@ namespace Blwp
         int CountWest(int n)
         {
             int k = 0;
-            const float ONE = BlwpCore.ONE;
+            const float ONE = ArenaCore.ONE;
             for (int i = 0; i < n; i++)
             {
                 int o = i * 6;
-                int floor = Mathf.RoundToInt(BlwpCore.SurfaceAt(_words[o] / ONE, _words[o + 1] / ONE) * ONE);
+                int floor = Mathf.RoundToInt(ArenaCore.SurfaceAt(_words[o] / ONE, _words[o + 1] / ONE) * ONE);
                 if (_words[o] < 0 && TruckCanHit(_words[o + 4], _words[o + 5], floor)) k++;
             }
             return k;

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// Another player's truck, drawn and nothing else.
@@ -104,7 +104,7 @@ namespace Blwp
         /// run. `y` null keeps whatever height the object had.
         ///
         /// AND THE HEADING IS IN TURNS. The word is the core's T_HEADING, the
-        /// same word `BlwpCore.TruckHeading` reads for the local truck, and the
+        /// same word `ArenaCore.TruckHeading` reads for the local truck, and the
         /// core measures a heading as a fraction of a full turn in Q16.16 -
         /// 16384 is a quarter turn, which is the 90 degrees the M1 build reads
         /// out at the start line. Dividing it by 65536 the way a metre is
@@ -137,7 +137,7 @@ namespace Blwp
             // Nothing is extrapolated, no pose is invented between two pictures, and this reads no rigidbody, no
             // collider and no clock: the hull stands and points where the node proved it did, and waits there.
             _want = new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
-            _wantHeading = BlwpCore.Degrees(heading);
+            _wantHeading = ArenaCore.Degrees(heading);
             _placed = true;
             _lie = lie;
             transform.SetPositionAndRotation(_want, Lying());

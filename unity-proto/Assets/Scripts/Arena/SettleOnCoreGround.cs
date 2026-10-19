@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// Keeps things that were set down once sitting on the ground the CORE says.
@@ -52,7 +52,7 @@ namespace Blwp
         /// the same analytic relief `BuildBoundary` used at scene build.
         /// </summary>
         public float Surface(float x, float z) =>
-            BlwpCore.HasSurface ? BlwpCore.SurfaceAt(x, z)
+            ArenaCore.HasSurface ? ArenaCore.SurfaceAt(x, z)
                                 : (terrain != null ? terrain.SampleWorld(x, z) : 0f);
     }
 }

@@ -157,7 +157,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
     assert.equal(later.z, at.get(119).z);
     assert.notEqual(later.x, first.x, 'the truck did not move at all, so this proves nothing');
 
-    // THE FRAMES UNITY WILL DRAW, kept: the exact twelve ints `BlwpNextGhost`
+    // THE FRAMES UNITY WILL DRAW, kept: the exact twelve ints `ArenaNextGhost`
     // hands across, from this real two-node run, so the renderer's own test
     // draws what a player was actually sent rather than numbers invented in
     // C#.
@@ -186,7 +186,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
     }
 
     if (process.env.DUMP_GHOSTS) {
-      // Twelve ints a line, the way `BlwpNextGhost` writes them, so the
+      // Twelve ints a line, the way `ArenaNextGhost` writes them, so the
       // renderer's test needs no JSON reader to draw what a player was
       // actually sent.
       const lines = [

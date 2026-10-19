@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// THE CHART DRAWS THE CORE'S OBJECTIVES, AND ONLY THEM (WAR_TACTICS.md §4.11 and its §0 client row): HIGH, LOW and

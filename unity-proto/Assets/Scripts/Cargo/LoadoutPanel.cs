@@ -29,7 +29,7 @@ public class LoadoutPanel : MonoBehaviour
         {
             // THE PAGE IS TOLD (2026-09-26 14:02: the node strip lay across the truck and LOAD while the cargo
             // was being chosen) - it keeps its node strip hidden while this panel is open.
-            if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);
+            if (_isOpen != value) Arena.ArenaCore.LoadoutOpen(value);
             _isOpen = value;
         }
     }
@@ -109,7 +109,7 @@ public class LoadoutPanel : MonoBehaviour
         // gates damage, danger, delivery and score alike.
         if (truck != null)
         {
-            var core = truck.GetComponent<Blwp.CoreDrivenTruck>();
+            var core = truck.GetComponent<Arena.CoreDrivenTruck>();
             if (core != null) core.StartRound();
         }
 
@@ -129,12 +129,12 @@ public class LoadoutPanel : MonoBehaviour
         // replay of the same transcript carried 0, so a committee and every
         // ghost it drew hunted a run the player was not driving. Two integers
         // cross now, the bridge publishes them, and the core decides the cost.
-        if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList);
+        if (bay != null) Arena.ArenaCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList);
         // and kept with the page for this round, so a reload mid-run puts these parcels back on the bed (ResumeDriving)
-        if (bay != null) Blwp.BlwpCore.KeepCargo(BedText(bay.Slots));
+        if (bay != null) Arena.ArenaCore.KeepCargo(BedText(bay.Slots));
 
         // AND THE RUN'S SESSION IS NOTED, so the replay the result offers is this run's and not the one before
-        Blwp.BlwpCore.RunStarts();
+        Arena.ArenaCore.RunStarts();
 
         // THE DRIVE STARTS TOP-DOWN, THE MINER IN FRAME (2026-09-26 14:08, 2026-09-27 11:31): PLAY's fly-in ran on
         // under this panel, and a quick ROLL OUT drove off beneath it facing away from the miner. Rolling out ends it and
@@ -197,11 +197,11 @@ public class LoadoutPanel : MonoBehaviour
         if (truck != null) truck.controlsLocked = false;
         // THE RUN'S PARCELS BACK ON THE BED (the redone playthrough: the resumed truck drove with "CARGO empty"): the ones ROLL
         // OUT kept for this round. Display only - the core already carries the load it was handed.
-        var kept = ParseBed(Blwp.BlwpCore.KeptCargo());
+        var kept = ParseBed(Arena.ArenaCore.KeptCargo());
         if (bay != null && kept.Count > 0) { bay.Clear(); foreach (var tx in kept) bay.TryAdd(tx); }
         ConfirmedSats = bay != null ? bay.FeeCarried : 0;
         ConfirmedAt = Time.unscaledTime;
-        Blwp.BlwpCore.RunStarts();
+        Arena.ArenaCore.RunStarts();
         var chase = FindFirstObjectByType<ChaseCamera>();
         if (chase != null)
         {
@@ -209,7 +209,7 @@ public class LoadoutPanel : MonoBehaviour
             chase.destination = gate != null ? gate.Mouth : (Vector3?)null;
             chase.EndFlyIn();
         }
-        Debug.Log($"[blwp] resumed run: the cargo panel closed, driving on with {kept.Count} parcel(s) kept from before the reload");
+        Debug.Log($"[arena] resumed run: the cargo panel closed, driving on with {kept.Count} parcel(s) kept from before the reload");
     }
 
     /// <summary>The bed as text the page keeps: "txid,fee,vsize,value" per parcel, ';' between them, in loading order.</summary>
@@ -239,7 +239,7 @@ public class LoadoutPanel : MonoBehaviour
 
     void Update()
     {
-        if (IsOpen && Blwp.BlwpCore.ResumedRun()) ResumeDriving();
+        if (IsOpen && Arena.ArenaCore.ResumedRun()) ResumeDriving();
         if (health != null && health.IsDestroyed && !_wasDestroyed)
         {
             if (bay != null) bay.Clear();
@@ -257,7 +257,7 @@ public class LoadoutPanel : MonoBehaviour
         if (IsOpen && bay != null)
         {
             string bed = BedSignature();
-            if (bed != _bedDeclared && Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))
+            if (bed != _bedDeclared && Arena.ArenaCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))
                 _bedDeclared = bed;
         }
     }
@@ -679,7 +679,7 @@ public class LoadoutPanel : MonoBehaviour
         // the loadout choice does not move the score is what this core does, and the panel now says so.
         // THE CORE'S C, which moves with the bed (Update declares the load as it changes): on 7e2123d1 the bed fill, on
         // a 2069b4c2 round the 0.7 its rules give every load - the panel prints what the run will be scored at.
-        string load = LoadLabel(Blwp.BlwpCore.CargoWord);
+        string load = LoadLabel(Arena.ArenaCore.CargoWord);
         while (reward.fontSize > 12 && reward.CalcSize(new GUIContent(load)).x > rw) reward.fontSize--;
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f), load, reward);
 

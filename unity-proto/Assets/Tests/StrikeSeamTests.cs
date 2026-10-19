@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using System.Collections;
-using Blwp;
+using Arena;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -108,7 +108,7 @@ public class StrikeSeamTests
         Assert.AreEqual(Bear, _theatre.PendingSide, "und deren Seite");
 
         // now the core consumes: one strike, and the theatre is told
-        _theatre.Spent(BlwpCore.StrikeCount + 1);
+        _theatre.Spent(ArenaCore.StrikeCount + 1);
 
         Assert.AreEqual(Bear, _theatre.ArmedSide, "der Krater gehoert der 5-Mio-Baer-Order");
         Assert.AreEqual("bear", _theatre.Wearing(_theatre.ArmedSide), "und die Haut auch");
@@ -124,7 +124,7 @@ public class StrikeSeamTests
         Assert.AreEqual(5_000_000, _theatre.PendingUsd, 1.0, "immer noch die groessere");
         Assert.AreEqual(Bear, _theatre.PendingSide);
 
-        _theatre.Spent(BlwpCore.StrikeCount + 1);
+        _theatre.Spent(ArenaCore.StrikeCount + 1);
 
         Assert.AreEqual(Bear, _theatre.ArmedSide);
         Assert.AreEqual("bear", _theatre.Wearing(_theatre.ArmedSide));
@@ -145,7 +145,7 @@ public class StrikeSeamTests
 
         Assert.AreEqual(1_000_000, _theatre.PendingUsd, 1.0);
         Assert.AreEqual(Bull, _theatre.PendingSide, "SELL schliesst einen Long");
-        _theatre.Spent(BlwpCore.StrikeCount + 1);
+        _theatre.Spent(ArenaCore.StrikeCount + 1);
         Assert.AreEqual("bull", _theatre.Wearing(_theatre.ArmedSide));
     }
 }

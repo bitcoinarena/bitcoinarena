@@ -78,7 +78,7 @@ public class CargoBay : MonoBehaviour
     /// This number no longer reaches the simulation. `LoadoutPanel` hands the
     /// core the LOAD at roll-out - fee sats and hundredths of a BTC - and the
     /// core's own `rules/cargo.js` decides what it costs; from the first tick
-    /// on, every gauge reads `BlwpCore.Heat`, which is the word the shooting
+    /// on, every gauge reads `ArenaCore.Heat`, which is the word the shooting
     /// reads. What is left here is the gauge the player watches WHILE they
     /// choose, before there is a round to ask.
     ///

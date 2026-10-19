@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
 using UnityEngine;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// WAR_TACTICS.md §4.15: the candles are drawn where the core stands everything on them. The core's words and its
@@ -210,15 +210,15 @@ public class CandleTerrainTests
     [Test]
     public void ARebuildIsDueForACandleWordButNotForTheShift()
     {
-        var built = new int[Blwp.Layout.CV_TOTAL];
+        var built = new int[Arena.Layout.CV_TOTAL];
         for (int i = 0; i < built.Length; i++) built[i] = i * 7;
         var now = (int[])built.Clone();
         Assert.IsFalse(CandleTerrain.WordsChanged(now, built), "the same words call for a rebuild");
-        now[Blwp.Layout.CV_SHIFT] += 123456;
+        now[Arena.Layout.CV_SHIFT] += 123456;
         Assert.IsFalse(CandleTerrain.WordsChanged(now, built), "the shift alone calls for a rebuild");
-        now[Blwp.Layout.CV_FIRST + 5] += 1;
+        now[Arena.Layout.CV_FIRST + 5] += 1;
         Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a changed candle word does not call for a rebuild");
-        now = (int[])built.Clone(); now[Blwp.Layout.CV_FORMING] = -1;
+        now = (int[])built.Clone(); now[Arena.Layout.CV_FORMING] = -1;
         Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a new forming candle does not call for a rebuild");
     }
 

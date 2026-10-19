@@ -94,7 +94,7 @@ public class RunEndSpectate : MonoBehaviour
         _height = startHeight;
         _dragging = _pinching = false;
         if (chase != null) chase.enabled = false;
-        Debug.Log($"[blwp] spectate: the run is over, the camera rises over {at.x:0},{at.z:0}");
+        Debug.Log($"[arena] spectate: the run is over, the camera rises over {at.x:0},{at.z:0}");
     }
 
     public void Leave()
@@ -103,7 +103,7 @@ public class RunEndSpectate : MonoBehaviour
         Active = false;
         if (chase != null) chase.enabled = true;
         _leftAt = Time.unscaledTime; _reportFrom = _leftAt; _reported = false;
-        Debug.Log("[blwp] spectate: back to the chase camera");
+        Debug.Log("[arena] spectate: back to the chase camera");
     }
 
     // THE NEXT TRUCK IN VIEW: 2 s after spectate lets go, where the camera is against the truck, once.
@@ -122,15 +122,15 @@ public class RunEndSpectate : MonoBehaviour
         var cam = _cam != null ? _cam.transform : transform;
         float d = Vector3.Distance(cam.position, truck.position);
         float ahead = Vector3.Dot(cam.forward, (truck.position - cam.position).normalized);
-        Debug.Log($"[blwp] chase: 2 s after spectate, the camera is {d:0.0} m from the truck, facing it {ahead:0.00}, chase on {(chase != null && chase.enabled)}, death orbit {(chase != null && chase.deathOrbit.HasValue ? "set" : "none")}, truck {(health != null && health.IsDestroyed ? "still a wreck" : "whole")}");
+        Debug.Log($"[arena] chase: 2 s after spectate, the camera is {d:0.0} m from the truck, facing it {ahead:0.00}, chase on {(chase != null && chase.enabled)}, death orbit {(chase != null && chase.deathOrbit.HasValue ? "set" : "none")}, truck {(health != null && health.IsDestroyed ? "still a wreck" : "whole")}");
     }
 
     /// <summary>Whether the core says this live round's run ended WRECKED or DELIVERED (a MISSED end is not spectated).</summary>
     static bool RunEndedHere()
     {
-        if (!Blwp.BlwpCore.Available || DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)) return false;
-        int s = Blwp.BlwpCore.RunState;
-        return s == Blwp.Layout.RUN_DELIVERED || s == Blwp.Layout.RUN_WRECKED;
+        if (!Arena.ArenaCore.Available || DeliveryGate.BackToTheBay(Arena.ArenaNet.RoundSeed)) return false;
+        int s = Arena.ArenaCore.RunState;
+        return s == Arena.Layout.RUN_DELIVERED || s == Arena.Layout.RUN_WRECKED;
     }
 
     void Update()
@@ -143,7 +143,7 @@ public class RunEndSpectate : MonoBehaviour
             // A WRECK WAITS FOR ITS WASTED: the core names the wreck in the same frame the truck's health does, so
             // "no band up yet" is not "the band is over" - measured on 0.0.2731, the rise began 0.1 s before WASTED came up.
             // It starts once this wreck's sequence has ended, or after hold + fade + 0.5 s if none ever came up.
-            bool waitWasted = ended && wasted != null && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_WRECKED
+            bool waitWasted = ended && wasted != null && Arena.ArenaCore.RunState == Arena.Layout.RUN_WRECKED
                 && (wasted.BandUp || (wasted.LiveEndedAt < _endSeenAt
                     && Time.unscaledTime - _endSeenAt < wasted.holdSeconds + wasted.fadeOutSeconds + 0.5f));
             if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && !waitWasted && ended) Begin(truck.position);
@@ -154,16 +154,16 @@ public class RunEndSpectate : MonoBehaviour
             {
                 chase.EndFlyIn();
                 _reported = false; _reportFrom = Time.unscaledTime;   // the report comes 2 s after this cut
-                Debug.Log("[blwp] spectate: the next round's fly-in is cut to the truck");
+                Debug.Log("[arena] spectate: the next round's fly-in is cut to the truck");
             }
             ReportChase();
             return;
         }
-        if (cargoOpen || (Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE))
+        if (cargoOpen || (Arena.ArenaCore.Available && Arena.ArenaCore.RunState == Arena.Layout.RUN_LIVE))
         {
             // THE NEXT TRUCK IS WHOLE: measured on 0.0.2731, the next round's bay opened on the last run's wreck,
             // still burning, for its whole countdown - only PLAY put it right. The bay opening under this camera does now.
-            if (health != null && health.IsDestroyed) { health.Revive(); Debug.Log("[blwp] spectate: the last run's wreck is put right for the next truck"); }
+            if (health != null && health.IsDestroyed) { health.Revive(); Debug.Log("[arena] spectate: the last run's wreck is put right for the next truck"); }
             Leave();
             return;
         }
@@ -195,7 +195,7 @@ public class RunEndSpectate : MonoBehaviour
         if (Rise < 1f) { _toldTop = false; return; }
         bool moved = (_focus - _toldFocus).sqrMagnitude > 0.01f || Mathf.Abs(_height - _toldHeight) > 0.05f;
         if (_toldTop && (!moved || Time.unscaledTime - _toldAt < 0.25f)) return;
-        Debug.Log($"[blwp] spectate {(_toldTop ? "moved" : "top-down")}: focus {_focus.x:0.0},{_focus.z:0.0} height {_height:0.0} m, "
+        Debug.Log($"[arena] spectate {(_toldTop ? "moved" : "top-down")}: focus {_focus.x:0.0},{_focus.z:0.0} height {_height:0.0} m, "
                 + $"camera {transform.position.x:0.0},{transform.position.y:0.0},{transform.position.z:0.0} pitch {transform.eulerAngles.x:0.0}, "
                 + $"truck {(truck != null ? $"{truck.position.x:0.0},{truck.position.z:0.0}" : "-")}");
         _toldTop = true; _toldAt = Time.unscaledTime; _toldFocus = _focus; _toldHeight = _height;

@@ -12,7 +12,7 @@ using UnityEngine.TestTools;
 ///
 /// This was the last clause of §11.5 held up only by a count read over CDP from a running build. The word and the
 /// pin are asserted in the JS core suite where the rules live; this asserts the half that lives in Unity - that
-/// ArmyRenderer reads `BlwpCore.UnitPosture` and poses from it.
+/// ArmyRenderer reads `ArenaCore.UnitPosture` and poses from it.
 ///
 /// NOTHING HERE TOUCHES PHYSX. The units are kinematic with gravity off (ArmyRenderer sets isKinematic = true,
 /// useGravity = false, and ignores unit-vs-unit collision), so a Rigidbody would have nothing to say about a
@@ -31,7 +31,7 @@ public class PostureDrawTests
         Assert.IsNotNull(renderer, "no ArmyRenderer in the scene");
 
         // THIS CANNOT RUN IN THE EDITOR, AND IT SAYS SO RATHER THAN PASSING. The core is the JS bundle:
-        // `BlwpCore.Available` is set by `BlwpInit`, an extern that exists only in a browser build, so in EditMode
+        // `ArenaCore.Available` is set by `ArenaInit`, an extern that exists only in a browser build, so in EditMode
         // and PlayMode the core is stubbed, its state array is zeros, every unit reads DEAD - and the renderer
         // therefore draws no men at all. There is no hook to inject a state: `_state` is private static with no
         // setter.
@@ -43,10 +43,10 @@ public class PostureDrawTests
         // set is not a guard.
         //
         // So it is IGNORED with its reason, which shows up in the skipped count instead of inflating the passed
-        // one. It becomes real the day BlwpCore gains a test seam for its state, or the day this suite runs
+        // one. It becomes real the day ArenaCore gains a test seam for its state, or the day this suite runs
         // against a browser build. Until then the pose is held by the renderer's own count read over CDP from a
         // running build - a hand measurement, and listed as one.
-        if (!Blwp.BlwpCore.Available)
+        if (!Arena.ArenaCore.Available)
             Assert.Ignore("the core is stubbed in the editor, so no man is drawn and nothing about the pose can "
                           + "be asserted here; the pose is measured on a real build over CDP");
 
@@ -56,11 +56,11 @@ public class PostureDrawTests
             yield return null;
             renderer.Submit();
             int down = 0, men = 0;
-            for (int i = 0; i < Blwp.Layout.UNITS; i++)
+            for (int i = 0; i < Arena.Layout.UNITS; i++)
             {
-                if (Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+                if (Arena.ArenaCore.UnitIsArmour(i) || !Arena.ArenaCore.UnitAlive(i)) continue;
                 men++;
-                if (Blwp.BlwpCore.UnitPosture(i) != Blwp.Layout.POSTURE_STAND) down++;
+                if (Arena.ArenaCore.UnitPosture(i) != Arena.Layout.POSTURE_STAND) down++;
             }
             Assert.Greater(men, 0, "no living man was drawn, so this frame proves nothing");
             Assert.AreEqual(down, renderer.MenDrawnDown,

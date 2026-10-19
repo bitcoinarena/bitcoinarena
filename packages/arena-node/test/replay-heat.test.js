@@ -7,7 +7,7 @@
 // down: HOW HARD THE WAR HUNTS THE LOAD.
 //
 // `CargoBay.Heat` worked the wanted level out in floats on the Unity side and
-// `BlwpSetHeat` wrote the answer straight into the page's own core. A host
+// `ArenaSetHeat` wrote the answer straight into the page's own core. A host
 // write is in no batch, no mark and no transcript, so the page's core carried
 // 57229 and every replay of the same transcript carried 0 - and a ghost is a
 // replay, which is why the other truck was drawn somewhere its driver had
@@ -211,13 +211,13 @@ test('the ghost of a loaded run is at the pose that run actually reached', () =>
  */
 test('nothing writes a heat any more, and the browser bundle offers no way to', () => {
   const root = new URL('../../../', import.meta.url).pathname;
-  const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/blwp.jslib', 'utf8');
-  const cs = readFileSync(root + 'unity-proto/Assets/Scripts/Blwp/BlwpCore.cs', 'utf8');
+  const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/arena.jslib', 'utf8');
+  const cs = readFileSync(root + 'unity-proto/Assets/Scripts/Arena/ArenaCore.cs', 'utf8');
   const bundle = readFileSync(root + 'packages/nextblock/dist/blwp-core.js', 'utf8');
 
-  assert.equal(/BlwpSetHeat\s*:/.test(jslib), false, 'the bridge still exports a heat door');
-  assert.equal(/bool\s+SetHeat\s*\(/.test(cs), false, 'BlwpCore still offers SetHeat');
-  assert.match(jslib, /BlwpSubmitLoad\s*:/, 'the bridge has no way to declare a load');
+  assert.equal(/ArenaSetHeat\s*:/.test(jslib), false, 'the bridge still exports a heat door');
+  assert.equal(/bool\s+SetHeat\s*\(/.test(cs), false, 'ArenaCore still offers SetHeat');
+  assert.match(jslib, /ArenaSubmitLoad\s*:/, 'the bridge has no way to declare a load');
   assert.match(jslib, /Module\.blwpNet\.load\(/, 'the bridge declares a load and never publishes it');
 
   // THE BUNDLE'S OWN LIST, which is what a page can reach. `setHeat`,

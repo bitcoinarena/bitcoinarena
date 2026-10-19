@@ -36,7 +36,7 @@ public static class SyncCore
         UnityEngine.Debug.Log("[SyncCore] " + bundleOut.Trim());
 
         if (!Node(root, "tools/gen-unity-layout.js", out string layout)) return;
-        string layoutPath = Path.Combine(Application.dataPath, "Scripts/Blwp/BlwpLayout.cs");
+        string layoutPath = Path.Combine(Application.dataPath, "Scripts/Arena/ArenaLayout.cs");
         File.WriteAllText(layoutPath, layout);
         UnityEngine.Debug.Log("[SyncCore] wrote " + layoutPath);
 

@@ -6,7 +6,7 @@ using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE OTHER TRUCK, IN THE PLAYER THAT SHIPS - not in a field a test built.
@@ -71,7 +71,7 @@ public class GhostInThePlayerTests
     /// AND IT FACES WHERE ITS TRANSCRIPT SAYS.
     ///
     /// The heading word is the core's, and the core measures a heading in
-    /// TURNS: `BlwpCore.Degrees` is `(w &amp; 0xFFFF) * 360 / 65536`, which is
+    /// TURNS: `ArenaCore.Degrees` is `(w &amp; 0xFFFF) * 360 / 65536`, which is
     /// why the M1 build reads out "heading 90" at 16384. Dividing that word by
     /// 65536 gives 0.25, so a truck driving east was drawn pointing north -
     /// 360 times too small, on the same word the local truck reads correctly.
@@ -94,7 +94,7 @@ public class GhostInThePlayerTests
         var ghost = field.GetComponentInChildren<GhostTruck>(true);
         for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
         float drawn = ghost.transform.rotation.eulerAngles.y;
-        float wanted = BlwpCore.Degrees(first.Heading);
+        float wanted = ArenaCore.Degrees(first.Heading);
         TestContext.WriteLine($"heading word {first.Heading}: drawn {drawn:F3} deg, "
                               + $"transcript {wanted:F3} deg");
         Assert.AreEqual(0f, Mathf.DeltaAngle(wanted, drawn), 0.01f,
@@ -102,7 +102,7 @@ public class GhostInThePlayerTests
 
         field.Show(later);
         for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
-        Assert.AreEqual(0f, Mathf.DeltaAngle(BlwpCore.Degrees(later.Heading),
+        Assert.AreEqual(0f, Mathf.DeltaAngle(ArenaCore.Degrees(later.Heading),
                                              ghost.transform.rotation.eulerAngles.y), 0.01f,
             "the truck did not turn with its own transcript");
         Assert.AreNotEqual(first.Heading, later.Heading,
@@ -209,12 +209,12 @@ public class GhostInThePlayerTests
         var first = Picture(frames[0]);
         var at = ghost.transform.position;
         float dx = at.x - first.X / ONE, dz = at.z - first.Z / ONE;
-        float dh = Mathf.DeltaAngle(BlwpCore.Degrees(first.Heading),
+        float dh = Mathf.DeltaAngle(ArenaCore.Degrees(first.Heading),
                                     ghost.transform.rotation.eulerAngles.y);
         TestContext.WriteLine($"tick {first.Tick}: drawn ({at.x:F4}, {at.z:F4}) "
             + $"heading {ghost.transform.rotation.eulerAngles.y:F4} | transcript "
             + $"({first.X / ONE:F4}, {first.Z / ONE:F4}) heading "
-            + $"{BlwpCore.Degrees(first.Heading):F4} | delta x {dx:F6} z {dz:F6} "
+            + $"{ArenaCore.Degrees(first.Heading):F4} | delta x {dx:F6} z {dz:F6} "
             + $"heading {dh:F6}");
         Assert.AreEqual(0f, dx, 0.0001f, "the drawn truck is not at the x its transcript reached");
         Assert.AreEqual(0f, dz, 0.0001f);

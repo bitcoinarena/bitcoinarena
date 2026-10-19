@@ -4,7 +4,7 @@
 //
 // Measured at the start of letter 28: a ghost was produced, delivered and
 // decoded, and then nothing. `onGhost` had no consumer outside the tests,
-// `blwp.jslib` had no ghost entry point, `GhostTruck.Show` had no caller, and
+// `arena.jslib` had no ghost entry point, `GhostTruck.Show` had no caller, and
 // the WebGL template shipped a 151,399-byte client that predates `watch` and
 // `takeGhost` entirely. Produced, delivered, decoded - drawn by nobody.
 //
@@ -231,10 +231,10 @@ test('the page ships the client it is written against, and one consumer of onGho
   assert.equal(Buffer.compare(shippedCore, builtCore), 0,
     `the template ships ${shippedCore.length} bytes of core and the build is ${builtCore.length}`);
 
-  // AND THE PAGE ASKS. `blwp.jslib` is the one file these suites cannot load,
+  // AND THE PAGE ASKS. `arena.jslib` is the one file these suites cannot load,
   // so what is checked here is that it calls the module that CAN be measured -
   // not that it reimplements the rule beside it.
-  const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/blwp.jslib', 'utf8');
+  const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/arena.jslib', 'utf8');
   assert.match(jslib, /BLWPCLIENT\.watchGhosts\(net\.client, net\.where\)/,
     'the page never asks to be shown the other trucks');
   assert.equal(/onGhost\s*=/.test(jslib), false,
@@ -253,7 +253,7 @@ test('the page ships the client it is written against, and one consumer of onGho
   const bundle = window.BLWPCLIENT;
   for (const name of new Set([...jslib.matchAll(/BLWPCLIENT\.([A-Za-z0-9_]+)/g)].map((m) => m[1])))
     assert.ok(bundle[name] !== undefined || exported.has(name),
-      `blwp.jslib calls BLWPCLIENT.${name} and neither the bundle nor Tick Tock's ghost page puts it there`);
+      `arena.jslib calls BLWPCLIENT.${name} and neither the bundle nor Tick Tock's ghost page puts it there`);
 
   // ONE CONSUMER OF onGhost IN THE SOURCE, and it is the measured one.
   // the client's source and Tick Tock's page part (packages/nextblock/page, where the field lives since kanban #521)
@@ -271,7 +271,7 @@ test('the page ships the client it is written against, and one consumer of onGho
  * showed one truck. `others` counts trucks in the round whether or not
  * anything is drawing them, so the page could not tell "nobody is here" from
  * "nobody is drawing" - and those are different faults with different fixes.
- * The renderer is `GhostField.Draw(PerFrame)` calling `BlwpNextGhost`, which
+ * The renderer is `GhostField.Draw(PerFrame)` calling `ArenaNextGhost`, which
  * is the one hop `node --test` cannot reach; this is the number that would
  * have named it from the page.
  */

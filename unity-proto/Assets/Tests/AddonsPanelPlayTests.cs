@@ -21,7 +21,7 @@ public class AddonsPanelPlayTests
     [UnitySetUp]
     public IEnumerator SetUp()
     {
-        Blwp.PracticeMode.On = false;
+        Arena.PracticeMode.On = false;
         AddonsPanel.TestState = View(0, false);
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
@@ -49,7 +49,7 @@ public class AddonsPanelPlayTests
         Assert.IsTrue(panel.IsOpen);
         string asked = null; AddonsPanel.Bought = (id) => asked = id;
         // the panel's Buy asks the page (the jslib's stand-in here) for the item
-        var m = typeof(AddonsPanel).GetMethod("BlwpAddonsBuy", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var m = typeof(AddonsPanel).GetMethod("ArenaAddonsBuy", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         m.Invoke(null, new object[] { "large-truck" });
         Assert.AreEqual("large-truck", asked);
         // THE PAGE REPORTS THE PURCHASE: the banner, once

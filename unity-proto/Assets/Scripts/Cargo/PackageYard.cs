@@ -172,7 +172,7 @@ public class PackageYard : MonoBehaviour
     public (int cols, int rows) Grid(int w, int h)
     {
         var area = WorkArea(w, h);
-        float css = Mathf.Max(1f, Blwp.DailyLobby.UiScale());
+        float css = Mathf.Max(1f, Arena.DailyLobby.UiScale());
         int cols = Mathf.Clamp(Mathf.FloorToInt(area.width / css / MinCellCssW), 3, Mathf.Max(3, perRow));
         int rows = Mathf.Clamp(Mathf.FloorToInt(area.height / css / MinCellCssH), 2, 4);
         return (cols, rows);

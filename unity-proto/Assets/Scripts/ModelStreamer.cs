@@ -190,12 +190,12 @@ public class ModelStreamer : MonoBehaviour
             if (army != null) army.SetBombPrefab(go);
             // The same shape the gunships drop, so the one the bomber lets go
             // of is a bomb the player has already seen rather than a capsule.
-            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            var strike = FindFirstObjectByType<Arena.StrikeTheatre>();
             if (strike != null) strike.SetBombModel(go);
         });
         yield return Fetch(BomberKey, go =>
         {
-            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            var strike = FindFirstObjectByType<Arena.StrikeTheatre>();
             if (strike != null) strike.SetAirframe(go);
         });
 
@@ -207,12 +207,12 @@ public class ModelStreamer : MonoBehaviour
         // nothing in the HUD to say why.
         yield return Fetch(BomberBullKey, go =>
         {
-            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            var strike = FindFirstObjectByType<Arena.StrikeTheatre>();
             if (strike != null) strike.SetBullAirframe(go);
         });
         yield return Fetch(MushroomKey, go =>
         {
-            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            var strike = FindFirstObjectByType<Arena.StrikeTheatre>();
             if (strike != null) strike.SetMushroom(go);
         });
 
@@ -243,7 +243,7 @@ public class ModelStreamer : MonoBehaviour
         // airframe rather than holding up the cloud behind it.
         yield return Fetch(BomberBearKey, go =>
         {
-            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            var strike = FindFirstObjectByType<Arena.StrikeTheatre>();
             if (strike != null) strike.SetBearAirframe(go);
         });
 

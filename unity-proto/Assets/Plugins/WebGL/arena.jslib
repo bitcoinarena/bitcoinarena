@@ -2,7 +2,7 @@
 //
 // Unity does NOT simulate. It collects input, hands it over, and renders from
 // whatever the core says the world is. The direction is strict: nothing in
-// Unity may write to the state except through BlwpSubmit.
+// Unity may write to the state except through ArenaSubmit.
 //
 // The core itself is loaded by the page (see the WebGL template), which puts it
 // in the same realm as this glue - so state crosses as a pointer into the Unity
@@ -15,22 +15,22 @@ mergeInto(LibraryManager.library, {
   // here is better than a truck that silently never moves.
   // THE BROWSER'S OFFSET FROM UTC, in minutes: ChartHud's wall clock is UTC plus this - DateTime.Now made
   // IL2CPP load the time-zone database on the first frame (108 ms of Unity's start at 4x CPU, measured in a named profile).
-  BlwpLocalOffsetMinutes: function () {
+  ArenaLocalOffsetMinutes: function () {
     return -new Date().getTimezoneOffset();
   },
 
   // BENCHMARK (2026-10-08: "Add a button to the main lobby next to SPECTATE, call it BENCHMARK ... basically it
   // is spectate with benchmark"): the page's frame-rate test (index.html, arenaBench), once the free camera has settled
-  BlwpBenchmark: function () {
+  ArenaBenchmark: function () {
     setTimeout(function () { if (typeof window.arenaBench === 'function') window.arenaBench(); }, 3000);
   },
 
-  BlwpInit: function (seed) {
+  ArenaInit: function (seed) {
     if (typeof BLWP === 'undefined') {
-      console.error('[blwp] core bundle not loaded - check the WebGL template');
+      console.error('[arena] core bundle not loaded - check the WebGL template');
       return 0;
     }
-    Module.blwp = { st: BLWP.init(blwpWorldSeed(seed)), core: BLWP };
+    Module.arenaCore = { st: BLWP.init(arenaWorldSeed(seed)), core: BLWP };
     return 1;
   },
 
@@ -44,17 +44,17 @@ mergeInto(LibraryManager.library, {
   // The live Binance feed and the simulation clock are two callers of this one
   // function, which is what makes their strikes identical rather than merely
   // similar. Nothing is decided here; the core decides.
-  BlwpLiquidation: function (size) {
-    var b = Module.blwp;
+  ArenaLiquidation: function (size) {
+    var b = Module.arenaCore;
     if (!b || !b.core.submitLiquidation) return 0;
     return b.core.submitLiquidation(b.st, size | 0) ? 1 : 0;
   },
 
   // WHAT WENT ON THE BED, handed over at roll-out - and it goes to the network
-  // in the same breath, from here, for the reason `BlwpStep` publishes from
+  // in the same breath, from here, for the reason `ArenaStep` publishes from
   // here.
   //
-  // This was `BlwpSetHeat` and it carried the ANSWER: Unity worked the wanted
+  // This was `ArenaSetHeat` and it carried the ANSWER: Unity worked the wanted
   // level out in floats and wrote it into the core, a host write in no batch,
   // no mark and no transcript. The page's core carried 57229 and every replay
   // of the same transcript carried 0 - so a committee, and every ghost a
@@ -67,14 +67,14 @@ mergeInto(LibraryManager.library, {
   // AND THE ROOM IT FILLS (2026-10-04 08:54: C is the bed fill): Unity hands the vsizes on the bed, the core's own
   // roomFor (cargo.js) sums them here, and that one integer goes to the core and on the wire with the load - so a replay
   // sets the same C. A core without roomFor (an older bundle) gets the load as before.
-  BlwpSubmitLoad: function (feeSats, btcHundredths, vsizesPtr) {
-    var b = Module.blwp;
+  ArenaSubmitLoad: function (feeSats, btcHundredths, vsizesPtr) {
+    var b = Module.arenaCore;
     if (!b || !b.core.submitLoad) return 0;
-    var room = blwpRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
+    var room = arenaRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
     // ONE LOAD A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
     // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
     // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
-    var net0 = Module.blwpNet;
+    var net0 = Module.arenaNet;
     if (net0 && net0.inWorld && net0.client) {
       var at0 = net0.client.offered | 0; net0.lastAt = net0.lastAt || {};
       if (net0.lastAt.load === at0) return 0;
@@ -82,15 +82,15 @@ mergeInto(LibraryManager.library, {
     }
     var ok = (room === null ? b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0)
       : b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0, room)) ? 1 : 0;
-    if (ok && Module.blwpNet) Module.blwpNet.load(feeSats | 0, btcHundredths | 0, room);
+    if (ok && Module.arenaNet) Module.arenaNet.load(feeSats | 0, btcHundredths | 0, room);
     return ok;
   },
 
   // THE C A BED OF THESE VSIZES WOULD SET, for the cargo panel before ROLL OUT: the core's fill of the summed room, 0..ONE.
-  BlwpBedFill: function (vsizesPtr) {
-    var b = Module.blwp;
+  ArenaBedFill: function (vsizesPtr) {
+    var b = Module.arenaCore;
     if (!b || !b.core.bedFill) return 0;
-    var room = blwpRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
+    var room = arenaRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
     // OF THIS RUN'S BED: the larger truck's, when its item is played, as the core counts the load it is handed
     return room === null ? 0 : b.core.bedFill(room, (b.st && b.st.truck) ? b.st.truck.bedLength : undefined) | 0;
   },
@@ -98,32 +98,32 @@ mergeInto(LibraryManager.library, {
   // A LIVE PRICE SAMPLE (2026-09-17 16:01: the chart was frozen, nothing ever submitted one), in the tape's unit
   // (256 a dollar), handed to the core before the next tick - and to the network in the same breath, like a load, so
   // the signer nodes replay the tape the page fought on.
-  BlwpSubmitSample: function (price) {
-    var b = Module.blwp;
+  ArenaSubmitSample: function (price) {
+    var b = Module.arenaCore;
     if (!b || !b.core.submitSample) return 0;
     // ONE SAMPLE A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
     // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
     // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
-    var net0 = Module.blwpNet;
+    var net0 = Module.arenaNet;
     if (net0 && net0.inWorld && net0.client) {
       var at0 = net0.client.offered | 0; net0.lastAt = net0.lastAt || {};
       if (net0.lastAt.sample === at0) return 0;
       net0.lastAt.sample = at0;
     }
     var ok = b.core.submitSample(b.st, price | 0) ? 1 : 0;
-    if (ok && Module.blwpNet) Module.blwpNet.sample(price | 0);
+    if (ok && Module.arenaNet) Module.arenaNet.sample(price | 0);
     return ok;
   },
 
   // THE LIVE TAPE (2026-09-17 16:44: reload showed the same seeded candles): 64 live prices, oldest first, in the
   // tape's unit, handed to the core before any sample - and to the network beside the tick, like a sample.
-  BlwpSubmitTape: function (ptr, n) {
-    var b = Module.blwp;
+  ArenaSubmitTape: function (ptr, n) {
+    var b = Module.arenaCore;
     if (!b || !b.core.submitTape || (n | 0) !== 64) return 0;
     // ONE TAPE A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
     // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
     // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
-    var net0 = Module.blwpNet;
+    var net0 = Module.arenaNet;
     if (net0 && net0.inWorld && net0.client) {
       var at0 = net0.client.offered | 0; net0.lastAt = net0.lastAt || {};
       if (net0.lastAt.tape === at0) return 0;
@@ -131,12 +131,12 @@ mergeInto(LibraryManager.library, {
     }
     var prices = Array.prototype.slice.call(new Int32Array(Module.HEAP32.buffer, ptr, 64));
     var ok = b.core.submitTape(b.st, prices) ? 1 : 0;
-    if (ok && Module.blwpNet && Module.blwpNet.tape) Module.blwpNet.tape(prices);
+    if (ok && Module.arenaNet && Module.arenaNet.tape) Module.arenaNet.tape(prices);
     return ok;
   },
 
-  BlwpFrontlineZ: function (x) {
-    var b = Module.blwp;
+  ArenaFrontlineZ: function (x) {
+    var b = Module.arenaCore;
     if (!b || !b.core.frontAt) return 0;
     return b.core.frontAt(b.st, x | 0) | 0;
   },
@@ -149,14 +149,14 @@ mergeInto(LibraryManager.library, {
   // a crater - so a truck placed on `SampleSurface` hovered over its own hole by
   // the crater's full depth, up to 6.00 m. The core already answers this for its
   // own physics through one function; this is that same function, read out.
-  BlwpSurfaceAt: function (x, z) {
-    var b = Module.blwp;
+  ArenaSurfaceAt: function (x, z) {
+    var b = Module.arenaCore;
     if (!b || !b.core.groundAt) return 0;
     return b.core.groundAt(b.st, x | 0, z | 0) | 0;
   },
 
-  BlwpStep: function (throttle, steer, brake, handbrake, practice) {
-    var b = Module.blwp;
+  ArenaStep: function (throttle, steer, brake, handbrake, practice) {
+    var b = Module.arenaCore;
     if (!b) return 0;
     b.core.step(b.st, throttle | 0, steer | 0, brake | 0, handbrake | 0, practice | 0);
 
@@ -167,7 +167,7 @@ mergeInto(LibraryManager.library, {
     // a bug in either would be invisible until a verifier replayed the round
     // and landed somewhere else. Taken here, they are the same five words by
     // construction - there is no second copy to drift.
-    if (Module.blwpNet) Module.blwpNet.tick(
+    if (Module.arenaNet) Module.arenaNet.tick(
       [throttle | 0, steer | 0, brake | 0, handbrake | 0, practice | 0]);
     return 1;
   },
@@ -177,8 +177,8 @@ mergeInto(LibraryManager.library, {
   // The whole buffer, every frame, on purpose: it is a few kilobytes, and
   // copying selected fields is how the two sides start disagreeing about which
   // fields exist.
-  BlwpReadState: function (ptr, wordCount) {
-    var b = Module.blwp;
+  ArenaReadState: function (ptr, wordCount) {
+    var b = Module.arenaCore;
     if (!b) return 0;
     var src = b.st.i32;
     var n = Math.min(wordCount | 0, src.length);
@@ -189,8 +189,8 @@ mergeInto(LibraryManager.library, {
 
   // THE HUD'S CHART (WAR_TACTICS.md §0.3), in `range` (0 GROUND, 1 ROUND), as the core lays it out: candles, the seam,
   // the lead, YOU, the gate, the objectives and the assault. The painter reads these words and works none of them out.
-  BlwpChartView: function (range, ptr, cap) {
-    var b = Module.blwp;
+  ArenaChartView: function (range, ptr, cap) {
+    var b = Module.arenaCore;
     if (!b || !b.core.chartView || (cap | 0) < b.core.CH_WORDS) return 0;
     var out = new Int32Array(Module.HEAP32.buffer, ptr, b.core.CH_WORDS);
     return b.core.chartView(b.st, range | 0, out) | 0;
@@ -198,8 +198,8 @@ mergeInto(LibraryManager.library, {
 
   // Where a ground point (Q16.16 metres) sits on that chart: t, price, on the range. A ghost's place, by the same
   // mapping the truck's is.
-  BlwpChartPoint: function (range, x, z, ptr) {
-    var b = Module.blwp;
+  ArenaChartPoint: function (range, x, z, ptr) {
+    var b = Module.arenaCore;
     if (!b || !b.core.chartPoint) return 0;
     var out = new Int32Array(Module.HEAP32.buffer, ptr, 3);
     return b.core.chartPoint(b.st, range | 0, x | 0, z | 0, out) | 0;
@@ -207,16 +207,16 @@ mergeInto(LibraryManager.library, {
 
   // THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15): each body's x and z span and plateau height, as the core stands the
   // truck and the tanks on them. CandleTerrain meshes these words and computes none of them.
-  BlwpCandleView: function (ptr, cap) {
-    var b = Module.blwp;
+  ArenaCandleView: function (ptr, cap) {
+    var b = Module.arenaCore;
     if (!b || !b.core.candleView || (cap | 0) < b.core.CV_TOTAL) return 0;
     var out = new Int32Array(Module.HEAP32.buffer, ptr, b.core.CV_TOTAL);
     return b.core.candleView(b.st, out) | 0;
   },
 
   // The surface without the candle layer: what the terrain mesh draws under the candles' own mesh.
-  BlwpTerrainAt: function (x, z) {
-    var b = Module.blwp;
+  ArenaTerrainAt: function (x, z) {
+    var b = Module.arenaCore;
     if (!b) return 0;
     // A core without the candle layer (the Daily's signer-node core before §4.15) has no terrainAt: its ground IS the
     // surface without candles. Answering 0 there drew the whole map flat.
@@ -228,8 +228,8 @@ mergeInto(LibraryManager.library, {
   // buffer because returning a string from a jslib means allocating in the
   // Unity heap and freeing it on the C# side, which is a leak waiting to be
   // written.
-  BlwpStateHash: function (ptr, cap) {
-    var b = Module.blwp;
+  ArenaStateHash: function (ptr, cap) {
+    var b = Module.arenaCore;
     if (!b) return 0;
     var hex = b.core.hash(b.st);
     var n = Math.min(hex.length, (cap | 0) - 1);
@@ -238,16 +238,16 @@ mergeInto(LibraryManager.library, {
     return n;
   },
 
-  BlwpRunScore: function () {
-    var b = Module.blwp;
+  ArenaRunScore: function () {
+    var b = Module.arenaCore;
     return b ? (b.core.runScore(b.st) | 0) : 0;
   },
 
   // THE COLLISION BOXES THE CORE RESOLVES THE TRUCK AGAINST (2026-09-25 20:56/20:57: visible collisions), as
   // it holds them - st.solids, six words a box (cx, cz, hx, hz, yLow, yHigh) - copied, not rebuilt. Returns the
   // core's count; writes at most cap / 6 boxes.
-  BlwpSolids: function (ptr, cap) {
-    var b = Module.blwp;
+  ArenaSolids: function (ptr, cap) {
+    var b = Module.arenaCore;
     if (!b || !b.st || !b.st.solids) return 0;
     var s = b.st.solids;
     var n = Math.min(s.n | 0, Math.floor((cap | 0) / 6));
@@ -255,7 +255,7 @@ mergeInto(LibraryManager.library, {
     return s.n | 0;
   },
 
-  BlwpStateWords: function () {
+  ArenaStateWords: function () {
     return (typeof BLWP === 'undefined') ? 0 : (BLWP.WORDS | 0);
   },
 
@@ -264,7 +264,7 @@ mergeInto(LibraryManager.library, {
   // Not recomputed inside the core: Unity's ground uses Mathf.PerlinNoise,
   // which has no seed and no specification, so a core generating its own would
   // feel hills the player cannot see.
-  // BlwpSetGround IS GONE, and its absence is the rule.
+  // ArenaSetGround IS GONE, and its absence is the rule.
   //
   // Unity used to upload `MempoolTerrain.HeightGrid` into the core and the core
   // felt those hills; every committee replaying the same drive stepped a flat
@@ -272,7 +272,7 @@ mergeInto(LibraryManager.library, {
   // round's seed now (letter 36), so there is nothing for a page to send and
   // no way for one to put its player in a world nobody else can reproduce.
 
-  // BlwpSetSolids IS GONE, for the reason BlwpSetGround went.
+  // ArenaSetSolids IS GONE, for the reason ArenaSetGround went.
   //
   // Unity gathered every BoxCollider it had built at runtime and pushed them
   // in, re-pushing whenever the count changed - so the collision world the
@@ -292,7 +292,7 @@ mergeInto(LibraryManager.library, {
   // WHICH WORLD THE CORE IS PUT IN, DECIDED IN ONE PLACE.
   //
   // Two callers seed it and NOTHING ORDERS THEM: `CoreDrivenTruck.Start` calls
-  // `BlwpCore.Init(seed)` with its own constant, and this bridge calls
+  // `ArenaCore.Init(seed)` with its own constant, and this bridge calls
   // `core.init(seedWord)` when the join resolves. Whichever ran last won, and
   // both outcomes were photographed in one two-Chrome look - one tab drove the
   // round's world (bay 14, z 17.000 m) and the other drove the harness world
@@ -302,35 +302,35 @@ mergeInto(LibraryManager.library, {
   //
   // So the argument is a DEFAULT and the round is an answer. Once the bridge
   // knows the round's seed, that is the world, whoever asks and whenever.
-  $blwpWorldSeed: function (seed) {
-    var n = Module.blwpNet;
+  $arenaWorldSeed: function (seed) {
+    var n = Module.arenaNet;
     return (n && typeof n.seedWord === 'number') ? (n.seedWord | 0) : (seed | 0);
   },
 
   // THE ROOM A BED TAKES, by the core's own rule: the sum of core.roomFor over the comma-separated vsizes, or null for a core
   // that has no roomFor (a load then crosses without a room, as before). An empty bed is 0.
-  $blwpRoomOf: function (core, list) {
+  $arenaRoomOf: function (core, list) {
     if (!core || typeof core.roomFor !== 'function') return null;
     var room = 0;
     String(list || '').split(',').forEach(function (v) { if (v !== '') room = (room + (core.roomFor(v | 0) | 0)) | 0; });
     return room;
   },
-  // THE UNLOCKS THE RUN PLAYS WITH: the page set them beside the entry it built (index.html BLWP_ITEM_UNLOCKS - the
+  // THE UNLOCKS THE RUN PLAYS WITH: the page set them beside the entry it built (index.html ARENA_ITEM_UNLOCKS - the
   // entry's items as its game's catalogue unlocks them); none, and the core is started exactly as before
-  $blwpWithItems: function (opts) {
-    var u = (typeof window !== 'undefined' && Array.isArray(window.BLWP_ITEM_UNLOCKS)) ? window.BLWP_ITEM_UNLOCKS : [];
+  $arenaWithItems: function (opts) {
+    var u = (typeof window !== 'undefined' && Array.isArray(window.ARENA_ITEM_UNLOCKS)) ? window.ARENA_ITEM_UNLOCKS : [];
     if (u.length) opts.items = u.slice();
     return opts;
   },
-  BlwpSubmitLoad__deps: ['$blwpRoomOf'],
-  BlwpBedFill__deps: ['$blwpRoomOf'],
-  BlwpInit__deps: ['$blwpWorldSeed'],
-  BlwpRestart__deps: ['$blwpWorldSeed'],
+  ArenaSubmitLoad__deps: ['$arenaRoomOf'],
+  ArenaBedFill__deps: ['$arenaRoomOf'],
+  ArenaInit__deps: ['$arenaWorldSeed'],
+  ArenaRestart__deps: ['$arenaWorldSeed'],
 
-  BlwpRestart: function (seed) {
-    var b = Module.blwp;
+  ArenaRestart: function (seed) {
+    var b = Module.arenaCore;
     if (!b) return 0;
-    b.st = b.core.restart(b.st, blwpWorldSeed(seed));
+    b.st = b.core.restart(b.st, arenaWorldSeed(seed));
     return 1;
   },
 
@@ -338,28 +338,28 @@ mergeInto(LibraryManager.library, {
   // C# does not see. Read-only; C# adds its own count of Init and Restart to it.
   // THE RUN LENGTH OF THE RUN IN PLAY (the 82/90 fork, 2026-10-01: the round's own, not a constant): the ticks the
   // core ends this run at - its round's blockTicks, or the core's default for a run with no round. 0 before any run.
-  BlwpRunTicks: function () {
-    var b = Module.blwp;
+  ArenaRunTicks: function () {
+    var b = Module.arenaCore;
     return (b && b.st && typeof b.st.runTicks === 'number') ? (b.st.runTicks | 0) : 0;
   },
 
   // THE TRUCK THIS RUN DRIVES: its bed's length in Q16.16 when the run plays with an item that names one (the
   // larger truck, 255590 = 3.9 m), else 0 - the standard truck. Read off the core, which started the run with the entry's unlocks,
   // so what Unity draws is the truck the signer nodes replay.
-  BlwpTruckBed: function () {
-    var b = Module.blwp;
+  ArenaTruckBed: function () {
+    var b = Module.arenaCore;
     return (b && b.st && b.st.truck && typeof b.st.truck.bedLength === 'number') ? (b.st.truck.bedLength | 0) : 0;
   },
 
-  BlwpReliefEpoch: function () {
-    var b = Module.blwp;
+  ArenaReliefEpoch: function () {
+    var b = Module.arenaCore;
     return b ? (b.reliefEpoch | 0) : 0;
   },
 
   // Put the truck back. A host command: the round ended, or it was written
   // off, and it belongs in the bay.
-  BlwpTeleport: function (x, z, heading) {
-    var b = Module.blwp;
+  ArenaTeleport: function (x, z, heading) {
+    var b = Module.arenaCore;
     if (!b) return 0;
     // NOT INTO A SIGNED RUN (PAID-NIGHT-2155, measured live): SpawnMark re-seats a held truck on Unity's own bay mark at
     // every terrain rebuild (bay 13, z 10.200), and the round's world puts it in its own bay (bay 14, z 17.000). A rebuild
@@ -367,9 +367,9 @@ mergeInto(LibraryManager.library, {
     // transcript carries: the page DELIVERED and all 7 signer nodes replayed FAILED on the same ticks (rounds 552cd565,
     // 10d734af, 235a6646 - sampled: at tick 21 the one differing word was the truck's z, 10.2 against 17.0). While this
     // session's run is live the core's truck moves only by its inputs; before the run and once it is over, as before.
-    var n = Module.blwpNet;
+    var n = Module.arenaNet;
     if (n && n.inWorld && n.client && !n.client.over) {
-      console.log('[blwp] teleport refused: a signed run is live - no transcript would carry it');
+      console.log('[arena] teleport refused: a signed run is live - no transcript would carry it');
       return 0;
     }
     return b.core.teleport(b.st, x | 0, z | 0, heading | 0) ? 1 : 0;
@@ -377,8 +377,8 @@ mergeInto(LibraryManager.library, {
 
   // The hardest armour impact since this was last asked, in Q16.16 m/s.
   // Reading it clears it, so one crash is applied once.
-  BlwpTakeImpact: function () {
-    var b = Module.blwp;
+  ArenaTakeImpact: function () {
+    var b = Module.arenaCore;
     if (!b) return 0;
     var T = 5, T_IMPACT = 12;
     var v = b.st.i32[T + T_IMPACT] | 0;
@@ -390,8 +390,8 @@ mergeInto(LibraryManager.library, {
   // replay of the transcript and the page writes nothing into it; the clear above did, 35 times in
   // one measured run (0.0.1358), moving the state hash off the replay. No rule reads the word - the
   // core prices a crash from that tick's own impact - so Unity reads it and remembers what it felt.
-  BlwpReadImpact: function () {
-    var b = Module.blwp;
+  ArenaReadImpact: function () {
+    var b = Module.arenaCore;
     if (!b) return 0;
     var T = 5, T_IMPACT = 12;
     return b.st.i32[T + T_IMPACT] | 0;
@@ -409,18 +409,18 @@ mergeInto(LibraryManager.library, {
   //
   // Everything below is fire-and-forget with a status to poll, because a jslib
   // function returns an int and the client's work is asynchronous.
-  BlwpNetStart: function (urlPtr, batchEvery, markEvery) {
+  ArenaNetStart: function (urlPtr, batchEvery, markEvery) {
     if (typeof BLWPCLIENT === 'undefined') {
-      console.error('[blwp] client bundle not loaded - check the WebGL template');
+      console.error('[arena] client bundle not loaded - check the WebGL template');
       return 0;
     }
-    var b = Module.blwp;
-    if (!b) { console.error('[blwp] no core, so nothing to commit to'); return 0; }
+    var b = Module.arenaCore;
+    if (!b) { console.error('[arena] no core, so nothing to commit to'); return 0; }
     // ONE SESSION AT A TIME, AND A NEW ONE ONCE THE LAST RUN HAS ENDED (2026-09-15 16:14,
     // hole 1): a second PLAY in the same tab starts a new round without a reload. A run still live
     // is still running; one whose last publish is still on its way (finishing) is not ready yet.
-    if (Module.blwpNet) {
-      var was = Module.blwpNet.client;
+    if (Module.arenaNet) {
+      var was = Module.arenaNet.client;
       // A DIFFERENT ROUND IS A DIFFERENT RUN, AND THE OLD ONE IS CLOSED HERE (2026-09-18 18:00).
       //
       // Measured in two browsers: pressing PLAY again joined the next round at the page's level - both tabs on one
@@ -432,15 +432,15 @@ mergeInto(LibraryManager.library, {
       // So a join of ANOTHER round closes what was open, whatever word that client was on. A client still opening is
       // not a live run. What is NOT torn down is a session on the SAME round that is merely slow - a live round
       // keeps its trucks through a stall, which is the 0.0.1595 rule.
-      var bound = Module.blwpNet.where && Module.blwpNet.where.roundId;
+      var bound = Module.arenaNet.where && Module.arenaNet.where.roundId;
       var joined = null;
-      try { joined = window.BLWP_ROUND ? BLWPCLIENT.roundId(window.BLWP_ROUND) : null; } catch (e) { joined = null; }
+      try { joined = window.ARENA_ROUND ? BLWPCLIENT.roundId(window.ARENA_ROUND) : null; } catch (e) { joined = null; }
       var elsewhere = !!(bound && joined && BLWPCLIENT.toHex(bound) !== BLWPCLIENT.toHex(joined));
       // AND A NEW JOIN IS A NEW RUN, on this round or another (2026-09-26 14:08, reproduced: a run that never rolled
       // out left its session open and not over; the next PLAY joined again, no session could open beside it, and that
-      // run's card copied the session before's link). A session is its page join's (BLWP_ENTRY); another join replaces it.
-      if (!elsewhere && typeof window !== 'undefined' && window.BLWP_ENTRY && Module.blwpNet.pageEntry
-          && window.BLWP_ENTRY !== Module.blwpNet.pageEntry) {
+      // run's card copied the session before's link). A session is its page join's (ARENA_ENTRY); another join replaces it.
+      if (!elsewhere && typeof window !== 'undefined' && window.ARENA_ENTRY && Module.arenaNet.pageEntry
+          && window.ARENA_ENTRY !== Module.arenaNet.pageEntry) {
         elsewhere = true;
         bound = bound || joined;
       }
@@ -450,33 +450,33 @@ mergeInto(LibraryManager.library, {
         // `ended` while the last publish drained. `over` is enough; finishing
         // can drain on the old client in the background.
       } else {
-        console.log('[blwp] another join: closing the session on '
+        console.log('[arena] another join: closing the session on '
           + (bound ? BLWPCLIENT.toHex(bound).slice(0, 8) : '?') + ' before opening ' + (joined ? BLWPCLIENT.toHex(joined).slice(0, 8) : '?'));
         try { if (was && was.close) was.close(); } catch (e) { /* already gone */ }
-        try { Module.blwpNet.ghosts = null; } catch (e) { /* nothing held */ }
-        Module.blwpNet.client = null;
+        try { Module.arenaNet.ghosts = null; } catch (e) { /* nothing held */ }
+        Module.arenaNet.client = null;
       }
     }
 
     var base = UTF8ToString(urlPtr);
     // THE TICK CLOCK THIS BROWSER'S TABS SHARE, for the debug label over a ghost (2026-09-17 19:15): one per
     // page, kept across rounds.
-    if (!Module.blwpTickClock && BLWPCLIENT.tickClock) {
-      try { Module.blwpTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.blwpTickClock = null; }
+    if (!Module.arenaTickClock && BLWPCLIENT.tickClock) {
+      try { Module.arenaTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.arenaTickClock = null; }
     }
-    // THE RUN THAT ENDED, kept when it is this run's session that ended it (see BlwpRunStarts)
+    // THE RUN THAT ENDED, kept when it is this run's session that ended it (see ArenaRunStarts)
     var keepEndedRun = function (n) {
       var run = n && n.winningsRun ? n.winningsRun() : null;
-      var mine = n === Module.blwpRunNet
-        || (!Module.blwpRunNet && n === Module.blwpNet && n.openedAt >= (Module.blwpRolledOutAt || 0));
+      var mine = n === Module.arenaRunNet
+        || (!Module.arenaRunNet && n === Module.arenaNet && n.openedAt >= (Module.arenaRolledOutAt || 0));
       if (run && mine) {
-        Module.blwpEndedRun = run;
-        if (typeof window !== 'undefined') window.BLWP_ENDED_RUN = { roundHex: run.roundHex, entryHex: run.entryHex, at: Date.now() };
+        Module.arenaEndedRun = run;
+        if (typeof window !== 'undefined') window.ARENA_ENDED_RUN = { roundHex: run.roundHex, entryHex: run.entryHex, at: Date.now() };
       }
       return run;
     };
-    var net = Module.blwpNet = {
-      pageEntry: (typeof window !== 'undefined' && window.BLWP_ENTRY) || null,
+    var net = Module.arenaNet = {
+      pageEntry: (typeof window !== 'undefined' && window.ARENA_ENTRY) || null,
       openedAt: Date.now(),
       // `state` here is ONLY the word before a client exists - opening, or
       // error if the session never got off the ground. Once there is a client
@@ -527,12 +527,12 @@ mergeInto(LibraryManager.library, {
     // WHAT THE RUN-OVER HOOK IS HANDED: this run's round and entry, the page core's word and score, the round's
     // min_score and signer nodes, and the address call. The page asks once, only a qualifier (`askForWinnings`).
     net.winningsRun = function () {
-      var b = Module.blwp;
+      var b = Module.arenaCore;
       if (!b || !net.where || !net.contract) return null;
       return {
         roundHex: BLWPCLIENT.toHex(net.where.roundId), entryHex: BLWPCLIENT.toHex(net.where.entryId),
         word: b.st.i32[18 + 5] | 0, score: b.st.i32[18 + 4] | 0, minScore: Number(net.contract.minScore || 0),
-        nodes: (typeof BLWP_NODES !== 'undefined' && BLWP_NODES) ? BLWP_NODES.slice() : [], signAddress: signAddress,
+        nodes: (typeof ARENA_NODES !== 'undefined' && ARENA_NODES) ? ARENA_NODES.slice() : [], signAddress: signAddress,
       };
     };
 
@@ -543,11 +543,12 @@ mergeInto(LibraryManager.library, {
     // round and its private half kept as PKCS#8 in this tab's sessionStorage only; a reload of the tab signs with it again.
     var sessionKeyFor = function () {
       var slot = null, store = null, kept = null;
-      try { slot = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? 'blwp.session.key.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND)) : null; } catch (e) { slot = null; }
-      try { store = window.sessionStorage; kept = slot ? JSON.parse(store.getItem(slot) || 'null') : null; } catch (e) { kept = null; }
+      // arena.session.key.<round> since kanban #524; a key kept under the old blwp.session.key.<round> (a run across the update) is still read
+      try { slot = (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) ? 'arena.session.key.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(ARENA_ROUND)) : null; } catch (e) { slot = null; }
+      try { store = window.sessionStorage; kept = slot ? JSON.parse(store.getItem(slot) || store.getItem(slot.replace(/^arena\./, 'blwp.')) || 'null') : null; } catch (e) { kept = null; }
       if (kept && kept.pkcs8 && kept.raw)
         return crypto.subtle.importKey('pkcs8', BLWPCLIENT.fromHex(kept.pkcs8), { name: 'Ed25519' }, false, ['sign'])
-          .then(function (privateKey) { console.log('[blwp] the session key of this round kept from before the reload'); return { privateKey: privateKey, raw: BLWPCLIENT.fromHex(kept.raw) }; });
+          .then(function (privateKey) { console.log('[arena] the session key of this round kept from before the reload'); return { privateKey: privateKey, raw: BLWPCLIENT.fromHex(kept.raw) }; });
       return crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']).then(function (pair) {
         return Promise.all([crypto.subtle.exportKey('pkcs8', pair.privateKey), crypto.subtle.exportKey('raw', pair.publicKey)])
           .then(function (x) {
@@ -571,16 +572,16 @@ mergeInto(LibraryManager.library, {
         net.client = null;
         net.state = 'error';
         net.error = String(e && e.message ? e.message : e);
-        console.error('[blwp] session: ' + net.error);
+        console.error('[arena] session: ' + net.error);
         // AND ON SCREEN (pick a): a signer node that refuses the entry - "this round mints fee
         // locks: an entry that brings no fee lock is not joined" - is what the chip says,
         // not "stake dealt, unpaid" (measured: the reason reached only the console). The
         // page's own earlier refusal, when there is one, is kept.
-        if (typeof window !== 'undefined' && !window.BLWP_JOIN_REFUSED) window.BLWP_JOIN_REFUSED = net.error;
+        if (typeof window !== 'undefined' && !window.ARENA_JOIN_REFUSED) window.ARENA_JOIN_REFUSED = net.error;
         // AND BACK TO THE LOBBY (2026-09-26, the 21:13 case): a round link reopened after its round closed builds
         // its entry fine and is refused only here, by the node, so the page's join fallback never saw it and the cargo
         // chooser stood over a round nobody can play. The page takes the same fallback from this word.
-        if (typeof window !== 'undefined' && typeof window.BLWP_ENTRY_REFUSED === 'function') window.BLWP_ENTRY_REFUSED(net.error);
+        if (typeof window !== 'undefined' && typeof window.ARENA_ENTRY_REFUSED === 'function') window.ARENA_ENTRY_REFUSED(net.error);
       });
 
     // THE THREE THINGS A SESSION DOES, as closures rather than as helpers on
@@ -592,22 +593,22 @@ mergeInto(LibraryManager.library, {
       // The round and the entry the page was told to play. Both contracts are
       // built HERE and their ids computed here, so the node is never asked what
       // this round is called.
-      var contract = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
-      var signerNode = (typeof BLWP_ENTRY !== 'undefined') ? BLWP_ENTRY : null;
+      var contract = (typeof ARENA_ROUND !== 'undefined') ? ARENA_ROUND : null;
+      var signerNode = (typeof ARENA_ENTRY !== 'undefined') ? ARENA_ENTRY : null;
       if (!contract || !signerNode) throw new Error('the page did not say which round to play');
 
       // THE ROUND THE PLAYER WAS GIVEN, off the address bar and not out of the
       // page's own script. Section 25.1 step 1 is "a link, QR, copied round_id"
       // - it comes from whoever invited the player, and it is the one thing in
       // this whole path that the page did not write. `Client.at` refuses unless
-      // BLWP_ROUND hashes to it, which is what stops a page naming its own
+      // ARENA_ROUND hashes to it, which is what stops a page naming its own
       // nodes as the committee and then satisfying its own choice.
       var given = null;
       try {
-        // THE ROUND THE JOIN READ FROM THE PLAYER'S LINK (index.html BLWP_GIVEN_ROUND), not the address now: a run's end
+        // THE ROUND THE JOIN READ FROM THE PLAYER'S LINK (index.html ARENA_GIVEN_ROUND), not the address now: a run's end
         // puts the lobby's address back, and a chained join's round= was gone by its session open (2026-10-03 13:33Z)
-        var q = (typeof window.BLWP_GIVEN_ROUND === 'string' && /^[0-9a-f]{64}$/.test(window.BLWP_GIVEN_ROUND))
-          ? window.BLWP_GIVEN_ROUND : new URLSearchParams(window.location.search).get('round');
+        var q = (typeof window.ARENA_GIVEN_ROUND === 'string' && /^[0-9a-f]{64}$/.test(window.ARENA_GIVEN_ROUND))
+          ? window.ARENA_GIVEN_ROUND : new URLSearchParams(window.location.search).get('round');
         if (q) given = BLWPCLIENT.fromHex(q);
       } catch (e) { given = null; }
       var entry = Object.assign({}, signerNode, {
@@ -637,7 +638,7 @@ mergeInto(LibraryManager.library, {
       // and photographed at 17:05 as a ghost on the grass while the truck it
       // pictured stood on its bay.
       //
-      // AT THE START OF RECORDING, AND NOT AT ROLL-OUT. Every `BlwpStep` is
+      // AT THE START OF RECORDING, AND NOT AT ROLL-OUT. Every `ArenaStep` is
       // published from the moment `setRound` names the run, loading in the bay
       // included, so a core put in the right world at roll-out would already
       // have published thousands of ticks of the wrong one. The seed is only
@@ -646,7 +647,7 @@ mergeInto(LibraryManager.library, {
       //
       // A ROUND WHOSE NODES NAME TWO WORLDS IS NOT ONE ROUND, and
       // `worldSeedFor` refuses it rather than picking one.
-      var nodes = (typeof BLWP_NODES !== 'undefined') ? BLWP_NODES : null;
+      var nodes = (typeof ARENA_NODES !== 'undefined') ? ARENA_NODES : null;
       if (!nodes || !nodes.length)
         throw new Error('the page did not say which nodes hold this round');
 
@@ -670,9 +671,9 @@ mergeInto(LibraryManager.library, {
         // (Client.at, openRound, join, connect) was simulated and never
         // published: 16, 16, 16 and 24 of them on a tab with 400 ms of
         // latency, measured in two real Chromes on 2026-09-10.
-        console.log('[blwp] world seed 0x' + (net.seedWord >>> 0).toString(16)
+        console.log('[arena] world seed 0x' + (net.seedWord >>> 0).toString(16)
           + ' from ' + world.agreed + ' node(s) agreeing on the round randomness');
-        return C.Client.at(blwpDiscovery(), {
+        return C.Client.at(arenaDiscovery(), {
           core: { hash: function (st) { return b.core.hash(st); } },
           sign: signer, verify: verify, contract: contract, roundIdGiven: given,
         });
@@ -699,9 +700,9 @@ mergeInto(LibraryManager.library, {
       // before that early return, and the word and the reason are the
       // client's: this prints them and picks neither.
       net.client.onEnd = function (word, why) {
-        console.log('[blwp] run ended ' + word + ': ' + why);
+        console.log('[arena] run ended ' + word + ': ' + why);
         var ended = keepEndedRun(net);
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word, ended);
+        if (typeof window !== 'undefined' && window.ARENA_RUN_OVER) window.ARENA_RUN_OVER(word, ended);
       };
       // ONLY FOR ITS OWN CLIENT: a client let go of - refused, or replaced by another join - is never reconnected
       var client = net.client;
@@ -710,7 +711,7 @@ mergeInto(LibraryManager.library, {
         client.reconnect(net.where).then(function (r) {
           if (!r) return;              // the run ended; onEnd has already said so
           net.resumedAt = r.nextTick;
-          console.log('[blwp] resumed at tick ' + r.nextTick + ' after '
+          console.log('[arena] resumed at tick ' + r.nextTick + ' after '
             + client.tries + ' try(s), ' + r.batches + ' batches and '
             + r.receipts + ' behind us');
         });
@@ -735,7 +736,7 @@ mergeInto(LibraryManager.library, {
         .then(function () {
           return new Promise(function (go) {
             (function wait() {
-              var j = (typeof window !== 'undefined') ? window.BLWP_JOIN : null;
+              var j = (typeof window !== 'undefined') ? window.ARENA_JOIN : null;
               if (j && j.held && !j.cancelled) setTimeout(wait, 100); else go();
             })();
           });
@@ -743,15 +744,15 @@ mergeInto(LibraryManager.library, {
         .then(function () {
           // A RUN THAT STARTED BEFORE THIS TAB WAS RELOADED IS TAKEN BACK, NOT BEGUN AGAIN (2026-10-03: "a reload
           // after the round has started ... That run must not be lost"). The page kept the entry and the session key and
-          // named it (index.html BLWP_RESUME); the seats hold its inputs and marks. The client resumes from them (nothing
+          // named it (index.html ARENA_RESUME); the seats hold its inputs and marks. The client resumes from them (nothing
           // recorded meanwhile), the core enters the same world and is stepped through the transcript as a seat replays
           // it, and the run goes on from the tick the seats are owed, its next mark after the one five carried.
-          var R = (typeof window !== 'undefined') ? window.BLWP_RESUME : null;
+          var R = (typeof window !== 'undefined') ? window.ARENA_RESUME : null;
           if (R && R.entryIdHex === BLWPCLIENT.toHex(net.where.entryId)) {
             net.resuming = true;
             return net.client.resumeAfterReload({ roundId: net.where.roundId, entryId: net.where.entryId, blockTicks: contract.blockTicks | 0 })
               .then(function (r) {
-                b.st = b.core.init(net.seedWord, blwpWithItems((net.contract && typeof net.contract.blockTicks === 'number')
+                b.st = b.core.init(net.seedWord, arenaWithItems((net.contract && typeof net.contract.blockTicks === 'number')
                   ? { runTicks: net.contract.blockTicks } : {}));
                 b.reliefEpoch = (b.reliefEpoch | 0) + 1;
                 net.seen = BLWPCLIENT.catchUpCore(b.core, b.st, r.transcript);
@@ -762,10 +763,10 @@ mergeInto(LibraryManager.library, {
                 net.resumedAt = net.seen;
                 net.resuming = false;
                 R.caughtUp = true; R.tick = net.seen;
-                console.log('[blwp] resumed at tick ' + net.seen + ' after the reload: ' + r.batches + ' batches, mark head '
+                console.log('[arena] resumed at tick ' + net.seen + ' after the reload: ' + r.batches + ' batches, mark head '
                   + (r.live ? 'carried by ' + r.witnessed : 'none') + ', ' + r.receipts + ' receipts');
                 try { net.ghosts = BLWPCLIENT.watchGhosts(net.client, net.where); }
-                catch (e) { console.error('[blwp] ghosts unavailable: ' + (e && e.message)); net.ghosts = null; }
+                catch (e) { console.error('[arena] ghosts unavailable: ' + (e && e.message)); net.ghosts = null; }
               }, function (e) { net.resuming = false; throw e; });
           }
           // THE HOLD, THE DRAIN AND THE SKIPPING ALL LIVE IN THE CLIENT.
@@ -780,17 +781,17 @@ mergeInto(LibraryManager.library, {
           // THE CORE ENTERS THE ROUND'S WORLD IN THE SAME STEP THAT STARTS
           // RECORDING, so its tick 0 is the transcript's tick 0 however long
           // the join took. Three statements with no await between them: no
-          // `BlwpStep` can land between the reset and `setRound`. `net.seen`
+          // `ArenaStep` can land between the reset and `setRound`. `net.seen`
           // counts from here too, because a checkpoint is labelled with it and
           // hashes the core as it stands.
           // AT THE ROUND'S OWN RUN LENGTH (the 82/90 fork): its contract's blockTicks, as the signer nodes replay it.
           // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S: the round's run less the ticks before its join tick, and
           // its ticks are counted from that join tick - the HUD's time left is then the round's, and the last tick everybody's.
           var joinTick = (entry && typeof entry.joinTick === 'number' && entry.joinTick > 0) ? (entry.joinTick | 0) : 0;
-          b.st = b.core.init(net.seedWord, blwpWithItems((net.contract && typeof net.contract.blockTicks === 'number')
+          b.st = b.core.init(net.seedWord, arenaWithItems((net.contract && typeof net.contract.blockTicks === 'number')
             ? { runTicks: BLWPCLIENT.runTicksForEntry(joinTick, net.contract.blockTicks) } : {}));
           // A NEW WORLD IS A NEW RELIEF: the seed names the hills. Counted here, where C# never
-          // hears about it, so the drawn terrain knows to rebuild (BlwpCore.ReliefEpoch).
+          // hears about it, so the drawn terrain knows to rebuild (ArenaCore.ReliefEpoch).
           b.reliefEpoch = (b.reliefEpoch | 0) + 1;
           net.seen = joinTick;
           net.client.setRound({
@@ -824,13 +825,13 @@ mergeInto(LibraryManager.library, {
           // the field the renderer drains.
           //
           // A ghost is a picture (0.10). Nothing from it ever reaches
-          // `Module.blwp`: the core is driven by this player's own inputs and
+          // `Module.arenaCore`: the core is driven by this player's own inputs and
           // by nothing else.
           try {
             net.ghosts = BLWPCLIENT.watchGhosts(net.client, net.where);
           } catch (e) {
             // A page that cannot be shown the others still plays its own run.
-            console.error('[blwp] ghosts unavailable: ' + (e && e.message));
+            console.error('[arena] ghosts unavailable: ' + (e && e.message));
             net.ghosts = null;
           }
         });
@@ -896,7 +897,7 @@ mergeInto(LibraryManager.library, {
         // AND THE AGE THE PLAYER IS SHOWN, BESIDE THE LAG ON THE WIRE (2026-09-17 19:15: the truck reads
         // 300-600 ms while the wire says ~100). The label's own number, computed the way the overlay computes it, so
         // the two can be read against each other from one console. Nothing on screen changes.
-        var shown = BLWPCLIENT.ghostLabels ? BLWPCLIENT.ghostLabels(net.ghosts, { clock: Module.blwpTickClock }) : [];
+        var shown = BLWPCLIENT.ghostLabels ? BLWPCLIENT.ghostLabels(net.ghosts, { clock: Module.arenaTickClock }) : [];
         var oldest = shown.reduce(function (a, l) { return a === null || l.ageMs > a.ageMs ? l : a; }, null);
         console.log('[ghost] own tick ' + own + ' newest other picture tick ' + (pose ? pose.tick : '-')
           + (pose ? ' behind ' + (own - pose.tick) + ' ticks' : '')
@@ -918,15 +919,15 @@ mergeInto(LibraryManager.library, {
         net.finishing = done;
         // AND THE PAGE LETS GO OF THE ROUND (hole 2): the address is the lobby's again.
         var endedRun = keepEndedRun(net);
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(net.client.endingLine(), endedRun);
+        if (typeof window !== 'undefined' && window.ARENA_RUN_OVER) window.ARENA_RUN_OVER(net.client.endingLine(), endedRun);
         return;
       }
       if (net.client.state !== 'ready') return;
       if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) {
         // WHEN THIS TICK WAS DRIVEN, told to the other tabs: the newest recorded tick and now.
-        if (Module.blwpTickClock && net.where) {
+        if (Module.arenaTickClock && net.where) {
           if (!net.entryHex) net.entryHex = BLWPCLIENT.toHex(net.where.entryId);
-          Module.blwpTickClock.post(net.entryHex, net.client.offered - 1);
+          Module.arenaTickClock.post(net.entryHex, net.client.offered - 1);
         }
         net.client.drain();
       }
@@ -947,15 +948,15 @@ mergeInto(LibraryManager.library, {
   // Twelve ints: the entry id as eight words, then x, z, heading and the tick
   // those three were taken at. Returns how many were written, 0 when the page
   // is holding nothing.
-  BlwpNextGhost: function (ptr, cap) {
-    var net = Module.blwpNet;
+  ArenaNextGhost: function (ptr, cap) {
+    var net = Module.arenaNet;
     var field = net && net.ghosts;
     if (!field || cap < 12) return 0;
     // A NEW WATCH (the next round, a new PLAY) CLEARS EVERY GHOST FIRST (2026-09-17 17:12: "after the next round
     // suddenly 3 ghosts, no updates"): the field of the last round is gone, and nothing in the new one could retire its
     // trucks. One record, entry all zero and tick -2, before the new field's first picture.
-    if (Module.blwpGhostFieldShown !== field) {
-      Module.blwpGhostFieldShown = field;
+    if (Module.arenaGhostFieldShown !== field) {
+      Module.arenaGhostFieldShown = field;
       for (var z = 0; z < 11; z++) HEAP32[(ptr >> 2) + z] = 0;
       HEAP32[(ptr >> 2) + 11] = -2;
       return 12;
@@ -979,16 +980,16 @@ mergeInto(LibraryManager.library, {
   // THE DEBUG LABEL OVER EACH GHOST (2026-09-17 19:15): one line a truck, `entry TAB name TAB age+arrows`,
   // written as UTF-8 (the arrows are not ASCII). The rule is `ghostLabels` in @blwp/client; the names are the ones the
   // page checked off the nodes. Returns the bytes written, 0 for none.
-  BlwpGhostLabels: function (ptr, cap) {
-    var net = Module.blwpNet;
+  ArenaGhostLabels: function (ptr, cap) {
+    var net = Module.arenaNet;
     if (!net || !net.ghosts || !BLWPCLIENT.ghostLabels) return 0;
-    var names = (typeof window !== 'undefined' && window.BLWP_NAMES_BY_PLAYER) || {};
+    var names = (typeof window !== 'undefined' && window.ARENA_NAMES_BY_PLAYER) || {};
     var text = BLWPCLIENT.ghostLabelText(BLWPCLIENT.ghostLabels(net.ghosts, {
-      nameOf: function (player) { return names[player] || null; }, clock: Module.blwpTickClock }));
+      nameOf: function (player) { return names[player] || null; }, clock: Module.arenaTickClock }));
     // AND THE SAME STRING IS LEFT WHERE A HEADLESS CLIENT CAN READ IT (2026-09-18 09:00, the two-tab gate).
     // C# draws these two lines over each truck through OnGUI, and no browser automation can read a GUI back. This is
     // the very text the renderer is handed - not a second copy built from something else a moment later.
-    Module.blwpGhostLabelText = text || '';
+    Module.arenaGhostLabelText = text || '';
     if (!text) return 0;
     return stringToUTF8(text, ptr, cap | 0);
   },
@@ -996,98 +997,99 @@ mergeInto(LibraryManager.library, {
   // The status line, as ASCII, for the debug panel. A status nobody can read is
   // a status nobody checks.
   // COPY GAME REPLAY (2026-09-25 18:39): this run's round and entry, and the nodes it was played on, handed to
-  // the page's own copy (window.BLWP_COPY_REPLAY builds the https link and writes it to the clipboard).
-  // 1 once the page's clipboard write of this press's link has resolved (BLWP_REPLAY_COPIED is that link), else 0: the
+  // the page's own copy (window.ARENA_COPY_REPLAY builds the https link and writes it to the clipboard).
+  // 1 once the page's clipboard write of this press's link has resolved (ARENA_REPLAY_COPIED is that link), else 0: the
   // card's "copied!" is the clipboard's answer, not the press (2026-09-26 07:12).
   // THE CARGO PANEL IS OPEN (2026-09-26 14:02): the page's node strip is hidden at once and stays hidden
-  // (paintPlayers reads BLWP_LOADOUT_OPEN) until the panel closes.
+  // (paintPlayers reads ARENA_LOADOUT_OPEN) until the panel closes.
   // A RUN RESUMED AFTER A RELOAD HAS CAUGHT UP (2026-10-03, the mid-run reload playthrough: the player saw the cargo
-  // panel over the resumed run and could not drive - the run ended MISSED): 1 while BLWP_RESUME says the core stands at the
+  // panel over the resumed run and could not drive - the run ended MISSED): 1 while ARENA_RESUME says the core stands at the
   // tick the seats hold, else 0. LoadoutPanel then closes and hands the truck back; the run's load is already in its record.
   // MS UNTIL THE JOINED ROUND STARTS, or -1 (playtest 2026-10-04 13:32: two phones in one paid round showed
   // clocks ~15 s apart - measured, before the start the HUD counted the lobby's practice run from each page's load). The
   // round's own start, from its contract, against this device's clock: the same on every device.
-  BlwpRoundStartsInMs: function () {
+  ArenaRoundStartsInMs: function () {
     try {
-      var r = (typeof window !== 'undefined') ? window.BLWP_ROUND : null;
+      var r = (typeof window !== 'undefined') ? window.ARENA_ROUND : null;
       if (!r || r.startTimeMs === undefined) return -1;
       var ms = Number(r.startTimeMs) - Date.now();
       return ms > 0 ? Math.min(ms, 2147483647) : -1;
     } catch (e) { return -1; }
   },
 
-  BlwpResumedRun: function () {
+  ArenaResumedRun: function () {
     if (typeof window === 'undefined') return 0;
-    return window.BLWP_RESUME && window.BLWP_RESUME.caughtUp ? 1 : 0;
+    return window.ARENA_RESUME && window.ARENA_RESUME.caughtUp ? 1 : 0;
   },
   // THE BED OF THIS ROUND'S RUN, KEPT ACROSS A RELOAD (2026-10-03, the redone reload playthrough: the resumed truck
   // drove with an empty bed, "CARGO empty"). The core holds the load as two numbers; the parcels are Unity's, so ROLL OUT
   // keeps them here per round, beside the round's session key, and a resumed run puts them back on the bed.
   // THE RESULT SUMMARY THE PAGE READ (2026-10-04): the round's /api/round-result as index.html projected it
-  // (window.BLWP_RESULT.text, ASCII JSON), or 0 bytes before the first answer. Unity draws it on the end card.
-  BlwpResultSummary: function (outPtr, cap) {
-    var v = (typeof window !== 'undefined' && window.BLWP_RESULT && window.BLWP_RESULT.text) || '';
+  // (window.ARENA_RESULT.text, ASCII JSON), or 0 bytes before the first answer. Unity draws it on the end card.
+  ArenaResultSummary: function (outPtr, cap) {
+    var v = (typeof window !== 'undefined' && window.ARENA_RESULT && window.ARENA_RESULT.text) || '';
     if (!v || v.length >= (cap | 0)) { Module.HEAPU8[outPtr] = 0; return 0; }
     for (var i = 0; i < v.length; i++) Module.HEAPU8[outPtr + i] = v.charCodeAt(i) & 255;
     Module.HEAPU8[outPtr + v.length] = 0;
     return v.length;
   },
-  BlwpKeepCargo: function (textPtr) {
+  ArenaKeepCargo: function (textPtr) {
     var slot = null;
-    try { slot = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? 'blwp.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND)) : null; } catch (e) { slot = null; }
+    try { slot = (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) ? 'arena.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(ARENA_ROUND)) : null; } catch (e) { slot = null; }
     try { if (slot) window.sessionStorage.setItem(slot, UTF8ToString(textPtr)); } catch (e) { slot = null; }
     return slot ? 1 : 0;
   },
-  BlwpKeptCargo: function (outPtr, cap) {
+  ArenaKeptCargo: function (outPtr, cap) {
     var v = null;
-    try { v = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? window.sessionStorage.getItem('blwp.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND))) : null; } catch (e) { v = null; }
+    // arena.cargo.<round> since kanban #524; cargo kept under the old blwp.cargo.<round> (a run across the update) is still read
+    try { if (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) { var id = BLWPCLIENT.toHex(BLWPCLIENT.roundId(ARENA_ROUND)); v = window.sessionStorage.getItem('arena.cargo.' + id) || window.sessionStorage.getItem('blwp.cargo.' + id); } } catch (e) { v = null; }
     if (!v || v.length >= (cap | 0)) { Module.HEAPU8[outPtr] = 0; return 0; }
     for (var i = 0; i < v.length; i++) Module.HEAPU8[outPtr + i] = v.charCodeAt(i) & 255;
     Module.HEAPU8[outPtr + v.length] = 0;
     return v.length;
   },
-  BlwpLoadoutOpen: function (open) {
+  ArenaLoadoutOpen: function (open) {
     if (typeof window === 'undefined') return;
-    window.BLWP_LOADOUT_OPEN = open !== 0;
-    var el = document.getElementById('blwp-players');
+    window.ARENA_LOADOUT_OPEN = open !== 0;
+    var el = document.getElementById('arena-players');
     if (el && open !== 0) el.style.display = 'none';
   },
 
-  BlwpReplayCopied: function () {
+  ArenaReplayCopied: function () {
     if (typeof window === 'undefined') return 0;
-    var c = window.BLWP_REPLAY_COPIED;
-    return (typeof c === 'string' && c.length > 0 && c === window.BLWP_REPLAY_URL) ? 1 : 0;
+    var c = window.ARENA_REPLAY_COPIED;
+    return (typeof c === 'string' && c.length > 0 && c === window.ARENA_REPLAY_URL) ? 1 : 0;
   },
 
   // WHETHER THE SESSION ON HAND IS THE CURRENT JOIN'S (2026-09-26 14:08): 1 or 0. A session opened for an earlier
-  // page join names the run before - its link is not this card's. (The page's join is the run: one BLWP_ENTRY each.)
+  // page join names the run before - its link is not this card's. (The page's join is the run: one ARENA_ENTRY each.)
   // THE RUN THAT JUST ENDED, AND ONLY IT (2026-09-27 13:19: "It copies the run that just ended, not the one
   // before"; round 5b4bae6c entry 6b0a7e8b, a MISSED run, was copied under another run's card). The copy used to ask
-  // the session on hand at the click - `winningsRun()` of whatever `Module.blwpNet` was - and guarded it with
-  // window.BLWP_ENTRY, which a run with no fresh entry does not set: an earlier join's session then answered. Now the
-  // run is taken at the moment it ends, from the session that ROLL OUT found for it (`BlwpRunStarts`), and kept; the
+  // the session on hand at the click - `winningsRun()` of whatever `Module.arenaNet` was - and guarded it with
+  // window.ARENA_ENTRY, which a run with no fresh entry does not set: an earlier join's session then answered. Now the
+  // run is taken at the moment it ends, from the session that ROLL OUT found for it (`ArenaRunStarts`), and kept; the
   // button and the copy read that and nothing else. No such run - nothing to copy, and no button.
-  BlwpRunStarts: function () {
-    var net = Module.blwpNet;
-    Module.blwpRolledOutAt = Date.now();
-    Module.blwpRunNet = (net && !(net.client && net.client.ended)) ? net : null;
-    Module.blwpEndedRun = null;
-    if (typeof window !== 'undefined') window.BLWP_ENDED_RUN = null;
+  ArenaRunStarts: function () {
+    var net = Module.arenaNet;
+    Module.arenaRolledOutAt = Date.now();
+    Module.arenaRunNet = (net && !(net.client && net.client.ended)) ? net : null;
+    Module.arenaEndedRun = null;
+    if (typeof window !== 'undefined') window.ARENA_ENDED_RUN = null;
   },
 
-  BlwpReplayForThisRun: function () {
-    return Module.blwpEndedRun ? 1 : 0;
+  ArenaReplayForThisRun: function () {
+    return Module.arenaEndedRun ? 1 : 0;
   },
 
-  BlwpCopyReplay: function () {
-    var run = Module.blwpEndedRun;
-    if (!run || typeof window === 'undefined' || typeof window.BLWP_COPY_REPLAY !== 'function') return 0;
-    try { window.BLWP_COPY_REPLAY(run.roundHex, run.entryHex, run.nodes); } catch (e) { console.error('[blwp] copy game replay: ' + e); return 0; }
+  ArenaCopyReplay: function () {
+    var run = Module.arenaEndedRun;
+    if (!run || typeof window === 'undefined' || typeof window.ARENA_COPY_REPLAY !== 'function') return 0;
+    try { window.ARENA_COPY_REPLAY(run.roundHex, run.entryHex, run.nodes); } catch (e) { console.error('[arena] copy game replay: ' + e); return 0; }
     return 1;
   },
 
-  BlwpNetStatus: function (ptr, cap) {
-    var net = Module.blwpNet;
+  ArenaNetStatus: function (ptr, cap) {
+    var net = Module.arenaNet;
     var c = net && net.client;
     // ONE WORD, and it is the client's whenever there is a client. Assembling
     // it here is how `ready` came to be printed beside a run's own ENDED VOID.
@@ -1112,12 +1114,12 @@ mergeInto(LibraryManager.library, {
   // Declared on both users because Emscripten includes a `$`-prefixed library
   // helper only when a dependency asks for it; without these the call would be
   // eliminated from the build and fail in the page rather than here.
-  BlwpNetNodeUrl__deps: ['$blwpDiscovery'],
-  BlwpNetStart__deps: ['$blwpDiscovery', '$blwpWithItems'],
-  $blwpDiscovery: function () {
-    var d = (typeof BLWP_ADVERT !== 'undefined') ? BLWP_ADVERT : null;
-    var c = (typeof BLWP_CHAIN !== 'undefined') ? BLWP_CHAIN : null;
-    var round = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
+  ArenaNetNodeUrl__deps: ['$arenaDiscovery'],
+  ArenaNetStart__deps: ['$arenaDiscovery', '$arenaWithItems'],
+  $arenaDiscovery: function () {
+    var d = (typeof ARENA_ADVERT !== 'undefined') ? ARENA_ADVERT : null;
+    var c = (typeof ARENA_CHAIN !== 'undefined') ? ARENA_CHAIN : null;
+    var round = (typeof ARENA_ROUND !== 'undefined') ? ARENA_ROUND : null;
     if (!c) throw new Error('the page carried no chain providers');
 
     // A READY-MADE CHAIN IS REFUSED, NOT VERIFIED. The page used to hand over
@@ -1129,7 +1131,7 @@ mergeInto(LibraryManager.library, {
     for (var i = 0; i < 4; i++) {
       var handed = ['chains', 'chain', 'transaction', 'branch'][i];
       if (d && d[handed] !== undefined)
-        throw new Error('BLWP_ADVERT still carries ' + handed
+        throw new Error('ARENA_ADVERT still carries ' + handed
           + ': the chain and the bond come from providers now');
     }
 
@@ -1173,14 +1175,14 @@ mergeInto(LibraryManager.library, {
   // before a single byte is sent to anybody.
   //
   // An empty answer means no session, which is still the shipping default.
-  BlwpNetNodeUrl: function (ptr, cap) {
+  ArenaNetNodeUrl: function (ptr, cap) {
     var line = '';
     try {
-      blwpDiscovery();
+      arenaDiscovery();
       line = 'the chain';
     } catch (e) {
-      if (typeof BLWP_CHAIN !== 'undefined')
-        console.error('[blwp] ' + (e && e.message ? e.message : e));
+      if (typeof ARENA_CHAIN !== 'undefined')
+        console.error('[arena] ' + (e && e.message ? e.message : e));
       line = '';
     }
     var n = Math.min(line.length, (cap | 0) - 1);
@@ -1204,19 +1206,19 @@ mergeInto(LibraryManager.library, {
   // OVER, NOT ONLY ENDED (2026-09-15 16:14): the run is over for the game the moment the page
   // took the core's word - nothing is recorded from then - not once the last publish has landed.
   // Measured live on 0.0.1334: waiting for `ended` put the lobby 2241 ms after DELIVERED.
-  BlwpNetEnded: function () {
-    var n = Module.blwpNet;
+  ArenaNetEnded: function () {
+    var n = Module.arenaNet;
     // A SESSION ANOTHER JOIN HAS REPLACED IS OVER (2026-09-26 14:08): the page joined again, so this session's run
     // will not be played - the game may open the new join's session (NetSession opens one only when none is live).
-    if (n && n.pageEntry && typeof window !== 'undefined' && window.BLWP_ENTRY && window.BLWP_ENTRY !== n.pageEntry) return 1;
+    if (n && n.pageEntry && typeof window !== 'undefined' && window.ARENA_ENTRY && window.ARENA_ENTRY !== n.pageEntry) return 1;
     // A SESSION THE NODE REFUSED IS OVER (2026-09-26, the 21:13 case, second patch): the open failed, the bridge
     // is in error with no client - nothing is live, so the game's running mark ends here and the lobby can come back.
     if (n && !n.client && n.state === 'error') return 1;
     return (n && n.client && n.client.over) ? 1 : 0;
   },
 
-  BlwpNetEnding: function (ptr, cap) {
-    var n = Module.blwpNet;
+  ArenaNetEnding: function (ptr, cap) {
+    var n = Module.arenaNet;
     var c = n && n.client;
     var line = c ? c.endingLine() : '';
     if (!line) { Module.HEAPU8[ptr] = 0; return 0; }
@@ -1233,31 +1235,31 @@ mergeInto(LibraryManager.library, {
   // world this player was joined in and put them back in the harness one. The
   // daily has no round and keeps the constant, which is what holds the solo
   // apron on bay 13.
-  BlwpRoundSeed: function () {
-    var n = Module.blwpNet;
+  ArenaRoundSeed: function () {
+    var n = Module.arenaNet;
     return (n && typeof n.seedWord === 'number') ? (n.seedWord | 0) : 0;
   },
 
-  BlwpNetMarks: function () {
-    var n = Module.blwpNet;
+  ArenaNetMarks: function () {
+    var n = Module.arenaNet;
     return (n && n.client) ? (n.client.marksSent | 0) : 0;
   },
 
   // THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, 2026-09-12). The page
   // decides it - the signer nodes' signed listings, the 2-of-2 Join, the tab's key and
-  // name (index.html, BLWP_LOBBY_VIEW / BLWP_LOBBY_ACT) - and these only carry
+  // name (index.html, ARENA_LOBBY_VIEW / ARENA_LOBBY_ACT) - and these only carry
   // it across: the lobby as JSON, and the player's presses back.
   // THE CANVAS'S PIXELS PER CSS PIXEL: a phone draws at 2-3x, and a title
   // screen laid out in device pixels is a quarter of the size a player reads
   // (measured on an iPhone at 3x). Unity scales its title screen by this.
-  BlwpUiScale: function () {
+  ArenaUiScale: function () {
     var c = Module.canvas;
     return (c && c.clientWidth > 0) ? c.width / c.clientWidth : 1;
   },
 
-  BlwpLobbyState: function () {
+  ArenaLobbyState: function () {
     var s = '';
-    try { if (typeof window.BLWP_LOBBY_VIEW === 'function') s = JSON.stringify(window.BLWP_LOBBY_VIEW()); } catch (e) { s = ''; }
+    try { if (typeof window.ARENA_LOBBY_VIEW === 'function') s = JSON.stringify(window.ARENA_LOBBY_VIEW()); } catch (e) { s = ''; }
     var n = lengthBytesUTF8(s) + 1;
     var p = _malloc(n);
     stringToUTF8(s, p, n);
@@ -1265,7 +1267,7 @@ mergeInto(LibraryManager.library, {
   },
 
   // ADD-ONS INSIDE UNITY: the page's add-ons view as JSON, a purchase, "Play with it", and a fresh read of what is owned
-  BlwpAddonsState: function () {
+  ArenaAddonsState: function () {
     var s = '';
     try { if (typeof window.ARENA_ADDONS_VIEW === 'function') s = JSON.stringify(window.ARENA_ADDONS_VIEW()); } catch (e) { s = ''; }
     var n = lengthBytesUTF8(s) + 1;
@@ -1274,65 +1276,65 @@ mergeInto(LibraryManager.library, {
     return p;
   },
 
-  BlwpAddonsBuy: function (idPtr) {
+  ArenaAddonsBuy: function (idPtr) {
     try { return typeof window.ARENA_ADDONS_BUY === 'function' ? (window.ARENA_ADDONS_BUY(UTF8ToString(idPtr)) | 0) : 0; } catch (e) { return 0; }
   },
 
-  BlwpAddonsUse: function (idPtr, on) {
+  ArenaAddonsUse: function (idPtr, on) {
     try { return typeof window.ARENA_ADDONS_USE === 'function' ? (window.ARENA_ADDONS_USE(UTF8ToString(idPtr), !!on) | 0) : 0; } catch (e) { return 0; }
   },
 
-  BlwpAddonsOpen: function () {
+  ArenaAddonsOpen: function () {
     try { return typeof window.ARENA_ADDONS_OPEN === 'function' ? (window.ARENA_ADDONS_OPEN() | 0) : 0; } catch (e) { return 0; }
   },
 
-  BlwpLobbyJoin: function (idPtr) {
-    try { return (window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(UTF8ToString(idPtr))) ? 1 : 0; } catch (e) { return 0; }
+  ArenaLobbyJoin: function (idPtr) {
+    try { return (window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.join(UTF8ToString(idPtr))) ? 1 : 0; } catch (e) { return 0; }
   },
 
-  BlwpLobbyEditName: function () {
+  ArenaLobbyEditName: function () {
     var s = '';
-    try { s = window.BLWP_LOBBY_ACT ? String(window.BLWP_LOBBY_ACT.editName() || '') : ''; } catch (e) { s = String((e && e.message) || e); }
+    try { s = window.ARENA_LOBBY_ACT ? String(window.ARENA_LOBBY_ACT.editName() || '') : ''; } catch (e) { s = String((e && e.message) || e); }
     var n = lengthBytesUTF8(s) + 1;
     var p = _malloc(n);
     stringToUTF8(s, p, n);
     return p;
   },
 
-  BlwpLobbyKeyBackup: function () {
-    try { if (window.BLWP_LOBBY_ACT) window.BLWP_LOBBY_ACT.keyBackup(); } catch (e) { /* the prompt was refused */ }
+  ArenaLobbyKeyBackup: function () {
+    try { if (window.ARENA_LOBBY_ACT) window.ARENA_LOBBY_ACT.keyBackup(); } catch (e) { /* the prompt was refused */ }
   },
 
   // WHAT UNITY DREW, for whoever measures the page: rows, buttons, where.
-  BlwpLobbyShown: function (jsonPtr) {
-    try { window.BLWP_UNITY_LOBBY = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
+  ArenaLobbyShown: function (jsonPtr) {
+    try { window.ARENA_UNITY_LOBBY = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },
 
   // AND WHAT THE WAR SAID, for the same reason: the assault banner and the desktop log are the whole of
   // the owner's 16:22/16:26 letter, and "the owner cannot see them" is only answerable by asking the page what it
-  // drew. Same shape as BlwpLobbyShown - a picture of what was on screen, never an input to anything.
+  // drew. Same shape as ArenaLobbyShown - a picture of what was on screen, never an input to anything.
   // CLEAN SCREEN (CleanHud.cs, Shift+H): the page's own overlays go with the Unity HUD.
-  BlwpHudClean: function (on) {
-    window.BLWP_HUD_CLEAN = !!on;
-    try { document.body.classList.toggle('blwp-clean', !!on); } catch (e) { /* no body yet */ }
+  ArenaHudClean: function (on) {
+    window.ARENA_HUD_CLEAN = !!on;
+    try { document.body.classList.toggle('arena-clean', !!on); } catch (e) { /* no body yet */ }
   },
 
   // WHERE THE TOP-RIGHT HUD CORNER ENDS (DriveHud.ConsoleSlot, 2026-10-04): the page's Console button goes under it
-  BlwpHudCorner: function (jsonPtr) {
-    try { window.BLWP_HUD_CORNER = JSON.parse(UTF8ToString(jsonPtr)); if (window.BLWP_PLACE_CONSOLE) window.BLWP_PLACE_CONSOLE(); } catch (e) { /* not JSON */ }
+  ArenaHudCorner: function (jsonPtr) {
+    try { window.ARENA_HUD_CORNER = JSON.parse(UTF8ToString(jsonPtr)); if (window.ARENA_PLACE_CONSOLE) window.ARENA_PLACE_CONSOLE(); } catch (e) { /* not JSON */ }
   },
 
-  BlwpAssaultShown: function (jsonPtr) {
-    try { window.BLWP_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
+  ArenaAssaultShown: function (jsonPtr) {
+    try { window.ARENA_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },
 
   //: the page's word on a round link's play=1 - -1 not decided yet, 0 held to the round's start, 1 drive, 2 no word (an older page)
-  BlwpLinkAutoPlay: function () {
-    var v = window.BLWP_LINK_AUTOPLAY;
+  ArenaLinkAutoPlay: function () {
+    var v = window.ARENA_LINK_AUTOPLAY;
     return v === null ? -1 : v === false ? 0 : v === true ? 1 : 2;
   },
 
-  BlwpQueryParam: function (namePtr, outPtr, cap) {
+  ArenaQueryParam: function (namePtr, outPtr, cap) {
     var name = UTF8ToString(namePtr);
     var v = null;
     try {

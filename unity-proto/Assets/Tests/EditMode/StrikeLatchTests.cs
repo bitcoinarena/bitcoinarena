@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-using Blwp;
+using Arena;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -23,7 +23,7 @@ public class StrikeLatchTests
 
     static StrikeTheatre Rig()
     {
-        BlwpCore.State[Serial] = 0;
+        ArenaCore.State[Serial] = 0;
         var go = new GameObject("theatre");
         go.SetActive(false);                    // no Awake, no shader, no materials
         return go.AddComponent<StrikeTheatre>();
@@ -73,7 +73,7 @@ public class StrikeLatchTests
     {
         var t = Rig();
         t.NoteSubmitter(Bear, 5_000_000);
-        BlwpCore.State[Serial] = 1;             // the core took it, Update has not seen it
+        ArenaCore.State[Serial] = 1;             // the core took it, Update has not seen it
         t.NoteSubmitter(Bull, 1_000_000);
 
         Assert.AreEqual(1_000_000, t.PendingUsd, 1.0,
@@ -90,7 +90,7 @@ public class StrikeLatchTests
     {
         var t = Rig();
         t.NoteSubmitter(Bear, 5_000_000);
-        BlwpCore.State[Serial] = 1;
+        ArenaCore.State[Serial] = 1;
         t.NoteSubmitter(Bull, 1_000_000);
 
         Assert.AreEqual(Bear, t.ArmedSide,
@@ -127,7 +127,7 @@ public class StrikeLatchTests
 
         t.NoteSubmitter(Bull, 1_000_000);       // the smaller, first
         t.NoteSubmitter(Bear, 9_000_000);       // the larger, same frame
-        BlwpCore.State[Serial] = 1;             // the core takes ONE of them
+        ArenaCore.State[Serial] = 1;             // the core takes ONE of them
         t.Spent(1);                             // and the theatre notices
 
         Assert.AreEqual(Bear, t.ArmedSide, "the crater belongs to the 9M bear");
@@ -146,7 +146,7 @@ public class StrikeLatchTests
 
         t.NoteSubmitter(Bear, 9_000_000);
         t.NoteSubmitter(Bull, 1_000_000);
-        BlwpCore.State[Serial] = 1;
+        ArenaCore.State[Serial] = 1;
         t.Spent(1);
 
         Assert.AreEqual(Bear, t.ArmedSide, "the crater still belongs to the 9M bear");
@@ -162,14 +162,14 @@ public class StrikeLatchTests
     [Test]
     public void OneStepIsFifteenDollarsAndAQuarter()
     {
-        Assert.AreEqual(65536, BlwpCore.Scale(1_000_000), "a million is one");
-        Assert.AreEqual(BlwpCore.Scale(5_000_000), BlwpCore.Scale(5_000_005),
+        Assert.AreEqual(65536, ArenaCore.Scale(1_000_000), "a million is one");
+        Assert.AreEqual(ArenaCore.Scale(5_000_000), ArenaCore.Scale(5_000_005),
                         "five dollars apart is one size");
-        Assert.AreNotEqual(BlwpCore.Scale(5_000_000), BlwpCore.Scale(5_000_010),
+        Assert.AreNotEqual(ArenaCore.Scale(5_000_000), ArenaCore.Scale(5_000_010),
                            "sixteen dollars apart is two");
-        Assert.AreEqual(1, BlwpCore.Scale(5), "a five dollar order still lands");
-        Assert.AreEqual(1, BlwpCore.Scale(10), "and ties with a ten dollar one");
-        Assert.AreEqual(0, BlwpCore.Scale(0), "nothing is nothing");
+        Assert.AreEqual(1, ArenaCore.Scale(5), "a five dollar order still lands");
+        Assert.AreEqual(1, ArenaCore.Scale(10), "and ties with a ten dollar one");
+        Assert.AreEqual(0, ArenaCore.Scale(0), "nothing is nothing");
     }
 
     /// <summary>
@@ -232,8 +232,8 @@ public class StrikeLatchTests
         t.NoteSubmitter(Bear, 5_000_000, "okx");
         t.NoteSubmitter(Bull, 2_000_000, "binance");
 
-        BlwpCore.State[Serial] = 1;              // the core consumes one
-        t.Spent(BlwpCore.StrikeCount);
+        ArenaCore.State[Serial] = 1;              // the core consumes one
+        t.Spent(ArenaCore.StrikeCount);
 
         Assert.AreEqual("okx", t.ArmedVenue,
             "the exchange named must be the one the kept liquidation came off");
@@ -252,8 +252,8 @@ public class StrikeLatchTests
         t.NoteSubmitter(Bear, 9_000_000, "binance");
         t.NoteSubmitter(Bull, 3_000_000, "bybit");   // loses, and takes its venue with it
 
-        BlwpCore.State[Serial] = 1;
-        t.Spent(BlwpCore.StrikeCount);
+        ArenaCore.State[Serial] = 1;
+        t.Spent(ArenaCore.StrikeCount);
 
         Assert.AreEqual("binance", t.ArmedVenue);
         Assert.AreEqual(9_000_000, t.ArmedUsd, 1.0);
@@ -267,8 +267,8 @@ public class StrikeLatchTests
         var t = Rig();
         t.NoteSubmitter(null, 40_000_000);        // the clock, not a venue
 
-        BlwpCore.State[Serial] = 1;
-        t.Spent(BlwpCore.StrikeCount);
+        ArenaCore.State[Serial] = 1;
+        t.Spent(ArenaCore.StrikeCount);
 
         Assert.IsNull(t.ArmedVenue, "a strike nobody submitted has no exchange to name");
         Assert.AreEqual(40_000_000, t.ArmedUsd, 1.0);

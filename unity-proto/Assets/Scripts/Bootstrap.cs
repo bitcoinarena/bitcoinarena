@@ -96,7 +96,7 @@ public class Bootstrap : MonoBehaviour
     public SplashScreen Splash { get; private set; }
     public CombatFx Fx { get; private set; }
 
-    Blwp.StrikeTheatre _strike;
+    Arena.StrikeTheatre _strike;
 
     /// <summary>
     /// The simulation clock, for when the feed is quiet.
@@ -112,7 +112,7 @@ public class Bootstrap : MonoBehaviour
     /// the core's own crater rule is defined over, one million to a thousand
     /// million; outside it the rule clamps and the hole stops growing.
     ///
-    /// It goes through the SAME `BlwpCore.Liquidation` the live feed does.
+    /// It goes through the SAME `ArenaCore.Liquidation` the live feed does.
     /// That is the whole reason a simulated strike and a real one cannot look
     /// different: the core is handed one input and cannot tell which sent it.
     /// `Simulated` says which, for the HUD, and nothing else reads it.
@@ -157,13 +157,13 @@ public class Bootstrap : MonoBehaviour
     /// is no second path that could dig a different hole.
     ///
     /// Nothing about the picture is built here. The size goes into
-    /// `BlwpCore.Liquidation` and the core decides the crater, the fallout and
+    /// `ArenaCore.Liquidation` and the core decides the crater, the fallout and
     /// the strike; the theatre is told only which side submitted it, and
     /// nobody did, so it is told none.
     /// </summary>
     public bool FireSimulated(string why)
     {
-        if (!Blwp.BlwpCore.Available) return false;
+        if (!Arena.ArenaCore.Available) return false;
         _nextSim = Time.time + LiquidationSilence;
 
         // NOT IN A SIGNED RUN (2026-09-15): the core this writes is the one the score card
@@ -171,7 +171,7 @@ public class Bootstrap : MonoBehaviour
         // transcript. Measured before on the Daily: one SIM press at tick 192 made the card read
         // DELIVERED 222 at tick 2129 on a run both signer nodes signed FAILED 268. Outside a signed
         // run - practice in the lobby, no node named - it still fires.
-        if (!LiquidationMayWriteCore(Blwp.BlwpNet.Live))
+        if (!LiquidationMayWriteCore(Arena.ArenaNet.Live))
         {
             Debug.Log($"[sim] simulated liquidation not offered: a signed run is live ({why})");
             return false;
@@ -182,7 +182,7 @@ public class Bootstrap : MonoBehaviour
         // No side: nobody submitted this but the clock. The picture flies the
         // default airframe rather than inventing one.
         if (_strike != null) _strike.NoteSubmitter(null, usd);
-        if (!Blwp.BlwpCore.Liquidation(usd)) return false;
+        if (!Arena.ArenaCore.Liquidation(usd)) return false;
         Simulated = true;
         Debug.Log($"[sim] simulated liquidation ${usd:N0} offered to the core ({why})");
         return true;
@@ -190,7 +190,7 @@ public class Bootstrap : MonoBehaviour
 
     void Update()
     {
-        if (Market == null || !Blwp.BlwpCore.Available) return;
+        if (Market == null || !Arena.ArenaCore.Available) return;
         if (Market.Liquidations.Count > 0) { _lastLiquidation = Time.time; Simulated = false; }
         // The switch stands in for the silence. Held on, it does not wait for
         // a quiet market; left off, nothing changes and the old rule runs.
@@ -235,13 +235,13 @@ public class Bootstrap : MonoBehaviour
         // a held one can be told apart.
         Market.OnLiquidation += (l) =>
         {
-            if (!LiquidationMayWriteCore(Blwp.BlwpNet.Live))
+            if (!LiquidationMayWriteCore(Arena.ArenaNet.Live))
             {
                 Debug.Log($"[feed] liquidation {l.Venue} ${l.UsdValue:N0} not offered to the core: a signed run is live");
                 return;
             }
             if (_strike != null) _strike.NoteSubmitter(!l.Long, l.UsdValue, l.Venue);
-            Blwp.BlwpCore.Liquidation(l.UsdValue);
+            Arena.ArenaCore.Liquidation(l.UsdValue);
         };
         Field = gameObject.AddComponent<Battlefield>();
         Field.terrain = _terrain;
@@ -284,7 +284,7 @@ public class Bootstrap : MonoBehaviour
         // FROM THE CORE, not from the terrain's width (2026-09-19 16:0x). `width * 0.44` was a second world length
         // in C#: it happened to give -114.4 on a 260 m map, and the moment the map grew east for the miner it would
         // have walked the post office with it. The core owns where the buildings stand.
-        post.postX = Blwp.Layout.POST_X / 65536f;
+        post.postX = Arena.Layout.POST_X / 65536f;
         post.feed = Object.FindFirstObjectByType<MempoolFeed>();
         post.stats = _stats;
         postGo.SetActive(true);
@@ -308,18 +308,18 @@ public class Bootstrap : MonoBehaviour
         // consumed - and it decides only WHEN a session should exist. With no
         // node named it does nothing at all, which is every build that has
         // shipped so far.
-        gameObject.AddComponent<Blwp.NetSession>();
+        gameObject.AddComponent<Arena.NetSession>();
         // THE COLLISION, VISIBLE (2026-09-25 20:56): the core's own boxes, coloured over the miner and the post office.
-        new GameObject("CollisionBoxes").AddComponent<Blwp.CollisionBoxView>();
+        new GameObject("CollisionBoxes").AddComponent<Arena.CollisionBoxView>();
 
-        var driver = truck.gameObject.AddComponent<Blwp.CoreDrivenTruck>();
+        var driver = truck.gameObject.AddComponent<Arena.CoreDrivenTruck>();
         driver.terrain = _terrain;
         // The deck, not the bare relief: the truck stands on the road.
         driver.roads = FindFirstObjectByType<RoadNetwork>();
 
         // THE OTHER PLAYERS' TRUCKS. Nothing built this before, which is the
         // whole reason the hop was dead in a shipped page: `GhostField` was in
-        // no scene and no script constructed it, so `BlwpNextGhost` was never
+        // no scene and no script constructed it, so `ArenaNextGhost` was never
         // called and the pictures the JS client had already queued were drained
         // by nobody. Every test of the field made its own field, so the set
         // stayed green over a player that drew no ghost at all.
@@ -331,7 +331,7 @@ public class Bootstrap : MonoBehaviour
         // no physics.
         _ghosts = new GameObject("Ghosts");
         _ghosts.transform.SetParent(transform, false);
-        var ghosts = _ghosts.AddComponent<Blwp.GhostField>();
+        var ghosts = _ghosts.AddComponent<Arena.GhostField>();
         ghosts.Model = BuildGhostBody();
         // THE SAME RESTING RULE THE LOCAL TRUCK USES, not a second one. It was
         // `driver.Ground(x, z) + driver.BodyAboveGround` - one sample under the
@@ -344,8 +344,8 @@ public class Bootstrap : MonoBehaviour
         ghosts.Lie = (x, z, headingDegrees) =>
         {
             driver.Contacts(x, z, headingDegrees, out float fl, out float fr, out float rl, out float rr);
-            return Blwp.CoreDrivenTruck.Lie(headingDegrees, fl, fr, rl, rr,
-                                            Blwp.CoreDrivenTruck.HalfWheelbase, Blwp.CoreDrivenTruck.HalfTrack);
+            return Arena.CoreDrivenTruck.Lie(headingDegrees, fl, fr, rl, rr,
+                                            Arena.CoreDrivenTruck.HalfWheelbase, Arena.CoreDrivenTruck.HalfTrack);
         };
 
         // What a liquidation looks like: an aircraft, a bomb, and the ground it
@@ -358,7 +358,7 @@ public class Bootstrap : MonoBehaviour
 
         var strikeGo = new GameObject("StrikeTheatre");
         strikeGo.transform.SetParent(transform, false);
-        var strike = strikeGo.AddComponent<Blwp.StrikeTheatre>();
+        var strike = strikeGo.AddComponent<Arena.StrikeTheatre>();
         strike.terrain = _terrain;
         strike.roads = driver.roads;
         // AND THE FX, HERE. It used to be wired inside BuildArmies, which runs
@@ -373,9 +373,9 @@ public class Bootstrap : MonoBehaviour
         // Practice starts on in this build. The scene's value is the fallback;
         // ?practice=0 in the URL overrides it, so a link can hand somebody the
         // build in the mode it was meant to be seen in.
-        Blwp.PracticeMode.Configure(practiceByDefault);
-        Debug.Log($"[blwp] practice {(Blwp.PracticeMode.On ? "on" : "off")} " +
-                  $"(from {Blwp.PracticeMode.Source})");
+        Arena.PracticeMode.Configure(practiceByDefault);
+        Debug.Log($"[arena] practice {(Arena.PracticeMode.On ? "on" : "off")} " +
+                  $"(from {Arena.PracticeMode.Source})");
         Field.courier = truck.transform;
 
         // Only here: BuildArmies runs before BuildTruck, so wiring this any
@@ -468,7 +468,7 @@ public class Bootstrap : MonoBehaviour
         mark.loadout = loadout;
         gate.terrain = _terrain;
         gate.fx = Fx;
-        gate.gateX = Blwp.Layout.MINER_X / 65536f;        // the core's miner, moved east so the model clears the field
+        gate.gateX = Arena.Layout.MINER_X / 65536f;        // the core's miner, moved east so the model clears the field
         gate.postMaterial = gateMaterial;
         gate.minerModel = minerModel;
         gateGo.SetActive(true);
@@ -708,7 +708,7 @@ public class Bootstrap : MonoBehaviour
         // model behind the network does not exist until the object is active,
         // which is why this is a field on the component and not a property of
         // the model.
-        Roads.pavedTo = Blwp.Layout.POST_X / 65536f + PostOffice.ApronReach;
+        Roads.pavedTo = Arena.Layout.POST_X / 65536f + PostOffice.ApronReach;
         Roads.terrain = _terrain;
         Roads.field = Field;
         Roads.roadMaterial = roadMaterial;
@@ -747,7 +747,7 @@ public class Bootstrap : MonoBehaviour
         // Placed once here, and put back by this whenever the drawn ground
         // moves - a mempool poll, or a crater taking the ground out from under
         // a wall.
-        var keeper = root.AddComponent<Blwp.SettleOnCoreGround>();
+        var keeper = root.AddComponent<Arena.SettleOnCoreGround>();
         keeper.terrain = terrain;
 
         float hw = terrain.width * 0.5f, hd = terrain.depth * 0.5f;
@@ -820,7 +820,7 @@ public class Bootstrap : MonoBehaviour
         // AND THE GHOSTS DRAW THE SAME TRUCK. The model streams in after the
         // scene is built, so a field made at start holds the proxy; without
         // this every other player stays a box for the whole session.
-        var field = _ghosts != null ? _ghosts.GetComponent<Blwp.GhostField>() : null;
+        var field = _ghosts != null ? _ghosts.GetComponent<Arena.GhostField>() : null;
         if (field != null)
         {
             var was = field.Model;
@@ -950,7 +950,7 @@ public class Bootstrap : MonoBehaviour
 
     TruckController BuildTruck(MempoolTerrain terrain)
     {
-        float startX = Blwp.Layout.POST_X / 65536f;      // the core's post office, the same number the building took
+        float startX = Arena.Layout.POST_X / 65536f;      // the core's post office, the same number the building took
         var root = new GameObject("Truck");
 
         // Parked in a loading bay, not on an empty apron. Bay 1 while nobody

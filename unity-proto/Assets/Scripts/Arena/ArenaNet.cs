@@ -4,7 +4,7 @@ using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// THE GAME'S WHOLE REACH INTO THE NETWORK.
@@ -20,33 +20,33 @@ namespace Blwp
     /// a signing key in C# would be a key in the renderer.
     ///
     /// THE INPUTS ARE NOT PUBLISHED FROM HERE EITHER. They are taken inside
-    /// `BlwpStep`, where the core is stepped, so what crosses the wire is the
+    /// `ArenaStep`, where the core is stepped, so what crosses the wire is the
     /// five words the core actually consumed rather than a copy Unity kept.
     /// Two records of one thing is how they start to differ.
     ///
     /// Outside a WebGL player every one of these is a stub that answers
-    /// nothing, exactly as `BlwpCore` is: there is no core in an editor, so
+    /// nothing, exactly as `ArenaCore` is: there is no core in an editor, so
     /// there is nothing to commit to and nobody to tell.
     /// </summary>
-    public static class BlwpNet
+    public static class ArenaNet
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
-        [DllImport("__Internal")] private static extern int BlwpNetStart(IntPtr url, int batchEvery, int markEvery);
-        [DllImport("__Internal")] private static extern int BlwpNetStatus(IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpNetEnded();
-        [DllImport("__Internal")] private static extern int BlwpNetEnding(IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpNetMarks();
-        [DllImport("__Internal")] private static extern int BlwpRoundSeed();
-        [DllImport("__Internal")] private static extern int BlwpNetNodeUrl(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaNetStart(IntPtr url, int batchEvery, int markEvery);
+        [DllImport("__Internal")] private static extern int ArenaNetStatus(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaNetEnded();
+        [DllImport("__Internal")] private static extern int ArenaNetEnding(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaNetMarks();
+        [DllImport("__Internal")] private static extern int ArenaRoundSeed();
+        [DllImport("__Internal")] private static extern int ArenaNetNodeUrl(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
-        private static int BlwpNetStart(IntPtr url, int batchEvery, int markEvery) => 0;
-        private static int BlwpNetStatus(IntPtr ptr, int cap) => 0;
-        private static int BlwpNetEnded() => 0;
-        private static int BlwpNetEnding(IntPtr ptr, int cap) => 0;
-        private static int BlwpNetMarks() => 0;
-        private static int BlwpRoundSeed() => 0;
-        private static int BlwpNetNodeUrl(IntPtr ptr, int cap) => 0;
+        private static int ArenaNetStart(IntPtr url, int batchEvery, int markEvery) => 0;
+        private static int ArenaNetStatus(IntPtr ptr, int cap) => 0;
+        private static int ArenaNetEnded() => 0;
+        private static int ArenaNetEnding(IntPtr ptr, int cap) => 0;
+        private static int ArenaNetMarks() => 0;
+        private static int ArenaRoundSeed() => 0;
+        private static int ArenaNetNodeUrl(IntPtr ptr, int cap) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -78,7 +78,7 @@ namespace Blwp
             var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpNetNodeUrl(handle.AddrOfPinnedObject(), bytes.Length);
+                int n = ArenaNetNodeUrl(handle.AddrOfPinnedObject(), bytes.Length);
                 return n > 0 ? System.Text.Encoding.UTF8.GetString(bytes, 0, n) : "";
             }
             finally { handle.Free(); }
@@ -105,8 +105,8 @@ namespace Blwp
             {
                 // Only a session the page TOOK changes this: a start the page declined while the
                 // last run's final publish is still going out leaves the old state as it was.
-                bool took = BlwpNetStart(handle.AddrOfPinnedObject(), BatchEvery, MarkEvery) == 1;
-                if (took) { Running = true; Debug.Log($"[blwp] session opening against {nodeUrl}"); }
+                bool took = ArenaNetStart(handle.AddrOfPinnedObject(), BatchEvery, MarkEvery) == 1;
+                if (took) { Running = true; Debug.Log($"[arena] session opening against {nodeUrl}"); }
                 return took;
             }
             finally { handle.Free(); }
@@ -136,7 +136,7 @@ namespace Blwp
             var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpNetStatus(handle.AddrOfPinnedObject(), bytes.Length);
+                int n = ArenaNetStatus(handle.AddrOfPinnedObject(), bytes.Length);
                 return n > 0 ? System.Text.Encoding.UTF8.GetString(bytes, 0, n) : "off";
             }
             finally { handle.Free(); }
@@ -162,7 +162,7 @@ namespace Blwp
             var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpNetEnding(handle.AddrOfPinnedObject(), bytes.Length);
+                int n = ArenaNetEnding(handle.AddrOfPinnedObject(), bytes.Length);
                 return n > 0 ? System.Text.Encoding.UTF8.GetString(bytes, 0, n) : "";
             }
             finally { handle.Free(); }
@@ -176,7 +176,7 @@ namespace Blwp
         /// Asked every tick and on every input read, so it is an int across
         /// the boundary: pinning a buffer per frame to be told "no" is a cost
         /// every player would pay for the case that has not happened.
-        public static bool Ended => Running && BlwpNetEnded() != 0;
+        public static bool Ended => Running && ArenaNetEnded() != 0;
 
         /// <summary>
         /// WHETHER THE ROUND'S OWN LINE IS DOWN (2026-09-18 20:04, so the HUD can say what is broken).
@@ -202,7 +202,7 @@ namespace Blwp
         /// merely sent: a mark with no receipt is a commitment nobody has
         /// promised to hold.
         /// </summary>
-        public static int Marks => BlwpNetMarks();
+        public static int Marks => ArenaNetMarks();
 
         /// <summary>
         /// The seed the ROUND puts this player's world at, or 0 for no round.
@@ -214,6 +214,6 @@ namespace Blwp
         /// it was given agrees on. Zero is the daily: no round, no entry, and
         /// the harness constant that holds the solo apron on bay 13.
         /// </summary>
-        public static int RoundSeed => BlwpRoundSeed();
+        public static int RoundSeed => ArenaRoundSeed();
     }
 }

@@ -11,7 +11,7 @@ const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 // the countdown box - its markup, code and CSS - is Tick Tock's page part (kanban #521)
 const UNITY_JS = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 const UNITY_CSS = readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
-const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
 // the add-ons panel Unity draws is Tick Tock's page part (kanban #521)
 const lineOf = (head) => { const at = UNITY_JS.indexOf(head); assert.ok(at > 0, `unity-page.js has no ${head.trim()}`); return UNITY_JS.slice(at, UNITY_JS.indexOf('\n', at)); };
 
@@ -31,16 +31,16 @@ test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a p
   assert.match(buy, /await buyShopItem\(shop, it\)/, 'the same purchase as the shop sheet');
   assert.match(buy, /addons\.seq \+= 1; addons\.bought = \{ seq: addons\.seq, id: it\.id, name: it\.name, txid: String\(got\.txid \|\| ''\), from \}/);
   assert.match(buy, /if \(!it \|\| addons\.busy\) return 0;/, 'one purchase at a time');
-  for (const f of ['BlwpAddonsState', 'BlwpAddonsBuy', 'BlwpAddonsUse', 'BlwpAddonsOpen']) assert.match(JSLIB, new RegExp(`  ${f}: function \\(`), f);
+  for (const f of ['ArenaAddonsState', 'ArenaAddonsBuy', 'ArenaAddonsUse', 'ArenaAddonsOpen']) assert.match(JSLIB, new RegExp(`  ${f}: function \\(`), f);
   assert.match(JSLIB, /window\.ARENA_ADDONS_BUY\(UTF8ToString\(idPtr\)\)/);
 });
 
 test('the countdown box offers Buy add-ons beside exit game, shown when the game sells something, opening Unity\'s panel', () => {
   // the donate button sits between add-ons and exit game
   // never one letter a line (2026-10-18, 390 px: three buttons left the words 0 px): the box wraps, the words keep 10em, a phone gives them a row
-  assert.match(UNITY_CSS, /#blwp-next \{ flex-wrap: wrap; justify-content: center; \} #arena-next-say \{ min-width: min\(10em, 100%\); \}/);
-  assert.match(UNITY_CSS, /@media \(max-width: 520px\) \{ #blwp-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #arena-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
-  assert.match(UNITY_JS, /<div id="blwp-next" role="status"><span id="arena-next-say"><\/span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="arena-next-donate" type="button">[^<]*<\/button>)?<button id="arena-next-exit"/);
+  assert.match(UNITY_CSS, /#arena-next \{ flex-wrap: wrap; justify-content: center; \} #arena-next-say \{ min-width: min\(10em, 100%\); \}/);
+  assert.match(UNITY_CSS, /@media \(max-width: 520px\) \{ #arena-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #arena-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
+  assert.match(UNITY_JS, /<div id="arena-next" role="status"><span id="arena-next-say"><\/span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="arena-next-donate" type="button">[^<]*<\/button>)?<button id="arena-next-exit"/);
   assert.match(UNITY_JS, /ad\.style\.display = window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance \? '' : 'none';/);
   assert.match(UNITY_JS, /getElementById\('arena-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
 });
