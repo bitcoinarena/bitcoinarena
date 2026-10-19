@@ -39,6 +39,7 @@ import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
+import { entrySplit, lockEntry } from './entry-locks.mjs';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { worldIsShared } from '../../arena-protocol/src/seed.js';
@@ -133,8 +134,10 @@ try {
   const lc = await LockClient.join(invite, LockClient.federationIdOf(invite), toHex(rand(32)), memStore);
   const rule = JSON.parse(await lc.feeRule());
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) } });
-  const net = netStakeMsat({ stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n });
-  log({ step: 'joined', feeRule: rule, feeLock: gate.pays, netStakeMsat: net });
+  // WHAT THE ENTRY PAYS, AS THE PAGE'S JOIN (entry-locks.mjs): from protocol 11 a 4 % fee, 4 % to the developers, 2 % to the reserves
+  const split = await entrySplit({ c, roundHex: toHex(rid), nodes });
+  const net = split.netMsat;
+  log({ step: 'joined', feeRule: rule, feeLock: gate.pays, netStakeMsat: net, feeMsat: split.feeMsat, donationMsat: split.donationMsat, reserveKey: split.reserveKey ? toHex(split.reserveKey).slice(0, 16) : null });
 
   // THE DEPOSIT: the stake plus the entry fee and what the federation takes, through whichever gateway the client picks
   const depositMsat = STAKE + entryFeeMsat(STAKE) + 200000n;
@@ -157,17 +160,11 @@ try {
   const s = { p: scalar(), player: evenPlayer() };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
   const t2 = Date.now();
-  const lk = lockFromClient(await lc.lock(toHex(s.point), String(net), toHex(att.claimPk), toHex(refundKeyOf(s.player)), 150),
-    { point: s.point, claimPk: att.claimPk, refundPk: refundKeyOf(s.player) });
-  log({ step: 'locked', outpoint: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, msat: net, ms: Date.now() - t2 });
-  let fee = null, hand = null;
-  if (gate.pays) {
-    const F = rand(32);
-    const got = lockFromClient(await lc.lockHash(toHex(sha256(F)), String(entryFeeMsat(STAKE)), toHex(att.claimPk), toHex(refundKeyOf(s.player)), 150),
-      { hash: sha256(F), claimPk: att.claimPk, refundPk: refundKeyOf(s.player) });
-    fee = { preimage: F, outpoint: got.outpoint }; hand = got.fields;
-    log({ step: 'fee locked', outpoint: `${toHex(got.outpoint.txid)}:${got.outpoint.outIdx}` });
-  }
+  const locks = await lockEntry({ lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand });
+  const lk = locks.stake;
+  log({ step: 'locked', outpoint: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, msat: net, ms: Date.now() - t2, ...(locks.txid ? { tx: locks.txid.slice(0, 16), donationOutputs: (locks.entryFields.donationOutpoints || []).length, reserveOutput: !!locks.entryFields.reserveOutpoint } : {}) });
+  const fee = locks.fee, hand = fee ? fee.fields : null;
+  if (fee) log({ step: 'fee locked', outpoint: `${toHex(fee.outpoint.txid)}:${fee.outpoint.outIdx}` });
   const needed = receiptsNeeded(c.nodes.length);
   const e = rand(32);
   const dealt = await dealHandout({ preimage: s.p, signerNodes: c.nodes, roundId: rid, playerPubkey: s.player,
@@ -175,12 +172,11 @@ try {
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
   const session = ed25519.utils.randomSecretKey();
   const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, joinTick: 0,
+    stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: split.feeMsat, donationMsat: split.donationMsat, joinTick: 0,
     // A SHARED-WORLD ROUND'S ENTRY NAMES NO WORLD SECRET, as the page's join writes it (join.js; found by the regtest run of
     // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
     worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-    feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
-    feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref,
+    ...locks.entryFields, claimKeyAttestationRef: att.ref,
     // THE OPERATOR THIS PLAYER DECLARES (§5A.13, kanban #309): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
     // is conflicted in this round: it neither signs nor earns
     ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}) };
