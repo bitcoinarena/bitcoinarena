@@ -12,6 +12,7 @@
 //   quick       an anonymous trycloudflare.com tunnel as a user service: no account, but a new name at every restart
 import { port } from './instance.js';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
@@ -48,6 +49,11 @@ export const localAddresses = (ifaces = os.networkInterfaces()) => Object.values
  */
 export async function checkDirect({ port = DEFAULT_NODE_PORT, seats, fetcher = fetch, ifaces = os.networkInterfaces(), want = 2, sh = run } = {}) {
   const nonce = randomBytes(18).toString('base64url');
+  // A PORT ANOTHER PROGRAM HOLDS ON 127.0.0.1 IS BUSY TOO: macOS lets the wildcard listen below succeed beside it (measured on the test host,
+  // the installer suite: "unknown", not "port-busy"), so a local connection is tried first - whatever answers there holds the port
+  const held = await new Promise((ok) => { const c = net.connect({ port, host: '127.0.0.1' }); c.setTimeout(1500, () => { c.destroy(); ok(false); });
+    c.once('connect', () => { c.destroy(); ok(true); }); c.once('error', () => ok(false)); });
+  if (held) return { ok: false, reached: false, port, diagnosis: { cause: 'port-busy', advice: `port ${port} is in use on this machine: choose another port, or stop what uses it` } };
   const server = http.createServer((q, s) => { s.writeHead(q.url === '/reach-nonce' ? 200 : 404, { 'content-type': 'text/plain' }); s.end(q.url === '/reach-nonce' ? nonce : ''); });
   const listening = await new Promise((ok) => { server.once('error', (e) => ok(e)); server.listen({ port, host: '::', ipv6Only: false }, () => ok(null)); });
   if (listening) return { ok: false, reached: false, port, diagnosis: { cause: 'port-busy', advice: listening.code === 'EADDRINUSE' ? `port ${port} is in use on this machine: choose another port, or stop what uses it` : `cannot listen on port ${port}: ${listening.message}` } };
