@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SETTLEMENT ASKER - askerFor, askerOrder and eligibleAsker on their own (kanban #146, last surface; plan comment 195,
+// THE SETTLEMENT ASKER - askerFor, askerOrder and eligibleAsker on their own (last surface; plan comment 195,
 // accepted 2026-10-05). settlement.js asks eligibleAsker which signer node may ask for a lock settlement at the chain tip:
 // the round id picks the first, the ring follows from there, and each node gets TAKEOVER_BLOCKS (2) blocks before the next
 // may take over. Until now payout.js lines 120-144 (eligibleAsker) ran in no test. No defect was read from the source.

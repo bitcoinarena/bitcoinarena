@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ORDER BOOK'S LEDGER AND SETTLEMENT (kanban #278, comment 1127, the owner's (a)): pure, so every seat holding the same
+// THE ORDER BOOK'S LEDGER AND SETTLEMENT (comment 1127, the owner's (a)): pure, so every seat holding the same
 // certified batches settles the same - each filled lock claimed whole, every msat of the locks paid out or due as a fee.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,7 +65,7 @@ test('cancels: an unfilled order leaves no position to claim; a partly filled on
   assert.deepEqual(bookSettlement({ positions: L.positions, outcome: null }), { claimed: [], poolMsat: 0n, feesDueMsat: 0n, voided: true });
 });
 
-// A SCALAR MARKET'S BOOK (kanban #362, §0A.7e): a LONG share (0) is worth (V - low) / (high - low) of a sat at the clamped value, a
+// A SCALAR MARKET'S BOOK (§0A.7e): a LONG share (0) is worth (V - low) / (high - low) of a sat at the clamped value, a
 // SHORT share (1) the rest - the pool split by where V lies, each side pro rata by its shares; every msat paid out or due.
 test('a scalar book splits its pool between LONG and SHORT by where the value lies, clamped, to the msat', () => {
   const b1 = { k: 1, cutoffMs: 1000n, orders: [o('a', YES, 60, 10), o('b', NO, 45, 10), o('c', YES, 55, 4), o('d', NO, 50, 6)] };
@@ -91,7 +91,7 @@ test('a scalar book splits its pool between LONG and SHORT by where the value li
   assert.equal(sum(yes.claimed.map((r) => r.outMsat)) + yes.feesDueMsat, locksOf(yes));
 });
 
-test('the ledger names what stands, priced: each resting buy\'s outcome, limit and rest, each resting sell (kanban #448)', () => {
+test('the ledger names what stands, priced: each resting buy\'s outcome, limit and rest, each resting sell', () => {
   // A buys Up 10 sat at 0.40 and B Down 10 sat at 0.50: 0.40 + 0.50 < 1, nothing matches, both stand; C buys Up at 0.30 beside them
   const b1 = { k: 1, cutoffMs: 1000n, orders: [o('a', YES, 40, 10), o('b', NO, 50, 10), o('c', YES, 30, 5, 5000n)] };
   const L = bookLedger({ batches: [b1], feeBps: FEE });

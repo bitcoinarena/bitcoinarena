@@ -55,7 +55,7 @@
 //!   blwp-stake-lock --mode fees --data-dir D
 //!   blwp-stake-lock --mode guardians --data-dir D
 //!
-//! W4 (the owner 2026-09-14): a loser loses the stake - the seats' settlement names
+//! W4 (2026-09-14): a loser loses the stake - the seats' settlement names
 //! every payout exactly with --payouts (their rule, arena-node settlement.js),
 //! and this refuses any set the locks cannot pay for after the guardians' fees.
 //! --mode fees prints that fee rule, which the seats read before sizing them.
@@ -122,7 +122,7 @@ fn outpoint(s: &str) -> anyhow::Result<OutPoint> {
     Ok(OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? })
 }
 
-/// JOIN A FEDERATION (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation"): a signer node finds a
+/// JOIN A FEDERATION (RULED 2026-10-13: "Every node serves every federation"): a signer node finds a
 /// federation in its census and joins it here, with the invite its signed record carries - as fedimint-cli joins it (the
 /// same modules, RocksDB and 12-word secret, stored first), but through the connect overrides this tool reads
 /// (FM_WS_API_CONNECT_OVERRIDES), which the stock fedimint-cli does not. A directory that holds a secret already keeps it.
@@ -267,22 +267,22 @@ async fn main() -> anyhow::Result<()> {
         "fees" => { println!("{}", fees(&client, lnv2).await?); Ok(()) }
         "guardians" => { println!("{}", guardians(&client).await?); Ok(()) }
         "gateways" => { println!("{}", gateways(&client, &api).await?); Ok(()) }
-        // THE SEAT'S READ-ONLY QUESTIONS, ONE CLIENT FOR ALL OF THEM (kanban #293, measured 2026-10-10 on the test host's paid
+        // THE SEAT'S READ-ONLY QUESTIONS, ONE CLIENT FOR ALL OF THEM (measured 2026-10-10 on the test host's paid
         // RPS stack: a process per question opened the client's database and reached the guardians each time - dozens of
         // them at 60-80 % CPU each with 8 s paid rounds, the machine at load 50 and a paid tap past 1.5 s): this process
         // stays, the client open, and answers one JSON request per stdin line - { "id", "mode", "args": { name: value } } ->
         // { "id", "ok", "result" | "error" }. Only status, fees, guardians, gateways and id: nothing that moves money.
         "serve" => serve(&client, lnv2, &api).await,
         "send" => send(&a, &client).await,
-        // THE ARBITER'S PEG-IN (kanban #307, spec §5A.3: "the arbitration set pegs it into the round's federation"): an
+        // THE ARBITER'S PEG-IN (spec §5A.3: "the arbitration set pegs it into the round's federation"): an
         // address the federation controls, and the claim once a payment to it is confirmed - the escrow becomes e-cash in
         // the arbiter's own client, from which each affected entry's share is locked to its player (mode lock)
         "pegin-address" => pegin_address(&client).await,
         "pegin-claim" => pegin_claim(&a, &client).await,
-        // THE SLASH'S PAYOUTS (kanban #307, spec §5A.3B): each wronged player's share, from the arbiter's own e-cash (the escrow
+        // THE SLASH'S PAYOUTS (spec §5A.3B): each wronged player's share, from the arbiter's own e-cash (the escrow
         // it pegged in), as a settlement pays a qualifier - a pre-expired lock only that player's key ever moves
         "pay" => pay(&a, &client, lnv2, &api).await,
-        // THE PROTOCOL RESERVES MOVED BETWEEN FEDERATIONS (kanban #397, the owner 2026-10-17 decision A: "Add the two receive-and-claim
+        // THE PROTOCOL RESERVES MOVED BETWEEN FEDERATIONS (2026-10-17 decision A: "Add the two receive-and-claim
         // modes to the stake-lock tool"): an invoice of a gateway of THIS federation whose incoming contract only the destination's
         // reserve key - a 5-of-7 key nobody holds alone - can claim; and that claim, FROST-signed by the seats, into a reserve output
         "receive-to-key" => receive_to_key(&a, &client, lnv2).await,
@@ -333,7 +333,7 @@ async fn serve(client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi
 }
 
 /// WINNINGS SENT: A GATEWAY IS ASKED TO PAY ONE OUTGOING CONTRACT'S INVOICE (§23.6; "winnings are always sent",
-/// the owner 2026-09-21, ruled for FEDERATION 2026-09-23). The contract is the one the settlement funded, rebuilt from
+/// 2026-09-21, ruled for FEDERATION 2026-09-23). The contract is the one the settlement funded, rebuilt from
 /// its fields; the gateway pays only with a BIP-340 signature by the contract's refund key over the invoice's
 /// consensus hash (gwv2-client: "Invalid auth signature for the invoice data"), and the refund key is the round's
 /// committee claim key - so without --auth this prints the message the committee must sign, and with it, the
@@ -425,7 +425,7 @@ async fn gateways(client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<s
     }))
 }
 
-/// THE FEDERATION'S GUARDIANS, OFF ITS OWN CONFIG (the owner 2026-09-15 07:33: every guardian
+/// THE FEDERATION'S GUARDIANS, OFF ITS OWN CONFIG (2026-09-15 07:33: every guardian
 /// has its own bond; federationIsBonded stays on). Each guardian's broadcast key - the 33-byte
 /// secp256k1 key a census node advertises under guardian_of[] (§5A.1) - and the federation's
 /// own consensus threshold, n - floor((n-1)/3) over its API endpoints (NumPeers::threshold).
@@ -511,7 +511,7 @@ async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &Dyn
     bail!("the lock transaction {txid} was accepted but no outpoint of it holds an outgoing contract")
 }
 
-/// --mode pay --payouts PK:MSAT[,PK:MSAT...] (kanban #307, spec §5A.3B "the arbitration set pegs it into the round's
+/// --mode pay --payouts PK:MSAT[,PK:MSAT...] (spec §5A.3B "the arbitration set pegs it into the round's
 /// federation and locks each share to its player"): ONE transaction from this client's own e-cash, one output per player -
 /// the payout shape of --mode settle: expiration 0 (pre-expired, so Claim is refused for everybody), claim and refund keys
 /// the player's, the image unused - so only that player's key ever moves it, by the refund the page already takes for a
@@ -715,7 +715,7 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
     // stepped down from the top so the figure is the rule's.
     let spendable = input_msats - input_fee_msats;
     // A PAYOUT IS ONE OF TWO SHAPES. `PK:MSAT` is the pre-expired contract only PK can move (the Collect shape).
-    // `invoice:HASH:GATEWAY_PK:REFUND_PK:EXPIRATION:MSAT` is WINNINGS ALWAYS SENT (the owner 2026-09-21, ruled for
+    // `invoice:HASH:GATEWAY_PK:REFUND_PK:EXPIRATION:MSAT` is WINNINGS ALWAYS SENT (2026-09-21, ruled for
     // FEDERATION 2026-09-23): an outgoing contract the named gateway may claim only with the preimage of HASH -
     // that is, only by paying the winner's invoice - and which, unpaid past EXPIRATION, refunds to REFUND_PK, the
     // round's committee claim key, never the winner's. The fields are the signer node's, rebuilt byte for byte.
@@ -866,7 +866,7 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
     Ok(())
 }
 
-// ALL AT ONCE, IN THE ORDER GIVEN (kanban #336, measured 2026-10-11 on the regtest Up/Down market: a book round's settle read
+// ALL AT ONCE, IN THE ORDER GIVEN (measured 2026-10-11 on the regtest Up/Down market: a book round's settle read
 // each of its ~50 locks before and after the submit and each of its ~30 payouts after it ONE AFTER ANOTHER - ~135 consensus
 // reads at 1-2 s each - and was killed at 300 s every time; a two-order round's 8 reads had always fit). One task a read.
 async fn futures_join(api: &DynModuleApi, locks: &[OutPoint]) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -926,7 +926,7 @@ async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
 }
 
 /// --mode receive-to-key --data-dir D --claim-pk HEX --amount-msat N --seed HEX32 --gateway URL [--expiry-secs S] [--description T]
-/// (kanban #397, the drained-federation move): an LNv2 incoming contract of THIS federation, as the stock client's receive builds
+/// (the drained-federation move): an LNv2 incoming contract of THIS federation, as the stock client's receive builds
 /// one (lnv2-client create_contract_and_fetch_invoice), with three differences: its `claim_pk` is the given key - the destination's
 /// 5-of-7 reserve key, not a tweak of this client's own key; its encryption seed is given (the move's own, so every seat rebuilds
 /// the same contract) and its preimage is that seed's hash; its ephemeral key is the claim key (no ECDH: nobody derives a key from
@@ -974,7 +974,7 @@ async fn receive_to_key(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId)
 }
 
 /// --mode claim-incoming --data-dir D --contract HEX --seed HEX32 --payout-pk HEX --nonce HEX8 [--signature HEX] [--wait-s S]
-/// (kanban #397): the incoming contract --mode receive-to-key made, once a gateway funded it (the guardians answer its outpoint),
+///: the incoming contract --mode receive-to-key made, once a gateway funded it (the guardians answer its outpoint),
 /// claimed into ONE pre-expired output to --payout-pk (the destination's reserve key: only its 5-of-7 ever moves it), the largest the
 /// contract pays for after the guardians' fees. The guardians want the decryption key - derived here from the seed, checked against
 /// the contract - and the transaction signed by the contract's claim key. Without --signature this prints the 32 bytes to sign (the

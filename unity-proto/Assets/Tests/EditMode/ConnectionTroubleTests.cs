@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// A BROKEN CONNECTION IS NAMED IN WORDS A PLAYER CAN ACT ON (the owner 2026-09-18 20:04).
+/// A BROKEN CONNECTION IS NAMED IN WORDS A PLAYER CAN ACT ON (2026-09-18 20:04).
 ///
 /// Photographed at 20:00: "connecting … (error)" across the sky over the mempool - the market socket's own
 /// vocabulary, saying nothing about which connection had failed or what it cost the player. Each line here names the

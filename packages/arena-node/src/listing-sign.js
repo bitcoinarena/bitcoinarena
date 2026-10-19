@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LISTING'S ROW SIGNATURES, SIGNED OFF THE SEAT'S THREAD (kanban #197). A listed row is a BIP-340 signature of its
+// THE LISTING'S ROW SIGNATURES, SIGNED OFF THE SEAT'S THREAD. A listed row is a BIP-340 signature of its
 // lobbyListingId (~3.2 ms each on the live testnet4 seats); a listing that names many rows not yet signed in its window
 // would hold the seat's loop for seconds. Here the messages (made on the seat's thread) cross to a worker, which signs
 // them and answers the signatures in the same order.
 //
-// ONE WORKER FOR THE SEAT'S LIFE (kanban #232, the owner 2026-10-08): it was one new Worker per set of signatures - a thread
+// ONE WORKER FOR THE SEAT'S LIFE (2026-10-08): it was one new Worker per set of signatures - a thread
 // spawned, this module and the curve loaded and warmed every ~45 s, on all seven seats. The key crosses as bytes once,
 // when the worker starts, and never leaves the process.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';

@@ -5,7 +5,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE LIVE TAPE (the owner 2026-09-17 16:44 / 16:46): 64 current prices out of Binance's 1 s klines, one at each five-second
+/// THE LIVE TAPE (2026-09-17 16:44 / 16:46): 64 current prices out of Binance's 1 s klines, one at each five-second
 /// mark ending at the newest kline - measured on a real answer (Tests/Fixtures/binance-klines-1s.json, 320 klines).
 /// </summary>
 public class LiveTapeTests

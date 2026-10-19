@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEV CLIENT SIGNS A GAME, A NODE ONLY VERIFIES IT (kanban #202, the owner 2026-10-07 15:40: "the dev client is
+// THE DEV CLIENT SIGNS A GAME, A NODE ONLY VERIFIES IT (2026-10-07 15:40: "the dev client is
 // responsible for game signatures, not the node").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { hostedPlugins } from '../../arena-node/src/plugins.js';
 import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 
-// THE GAME DEV'S DONATION SET (kanban #205): a registration carries the set its manifest names by id
+// THE GAME DEV'S DONATION SET: a registration carries the set its manifest names by id
 const DEV_SET = [{ recipientPk: Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x5d)]), label: 'the dev', shareBps: 10000 }];
 const devKey = () => gameDevKey(generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'der' }));
 const bodyFor = (pubkey) => ({

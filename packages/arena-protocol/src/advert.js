@@ -43,7 +43,7 @@ const guardianBytesOrder = (a, b) => {
 const compareGuardian = (a, b) =>
   guardianBytesOrder(a.federationId, b.federationId) || guardianBytesOrder(a.guardianKey, b.guardianKey);
 
-// A GUARDIAN IS SAID BY ITS NODE (§5A.1 v4.6.4; §23A.2, one node is one guardian - RULED the owner 2026-09-26 22:54): whether
+// A GUARDIAN IS SAID BY ITS NODE (§5A.1 v4.6.4; §23A.2, one node is one guardian - RULED 2026-09-26 22:54): whether
 // this node is willing to hold custody as a guardian, and the fedimintd API endpoint the client and the seats use. Both
 // or neither: capable needs a ws:// or wss:// endpoint, not capable needs the empty string. An advert that says nothing
 // about it (the field left out) is a node that is not a guardian.
@@ -89,7 +89,7 @@ export function encodeAdvert(a) {
   w.bytes32(a.bondTxid);
   w.u32(a.bondVout);
   w.u16(a.bondScriptTemplateVersion);
-  // TEMPLATE 2 CARRIES ITS OWN MATURITY (kanban #295, 5A.3B): the absolute height in its recovery leaf, so a reader can
+  // TEMPLATE 2 CARRIES ITS OWN MATURITY (5A.3B): the absolute height in its recovery leaf, so a reader can
   // rebuild the output key from the body alone. Only template 2 writes it: a template-1 body is byte for byte what it
   // was, so the bonds already on chain keep their ids.
   if (a.bondScriptTemplateVersion === 2) {
@@ -118,7 +118,7 @@ export function encodeAdvert(a) {
   guardianRole(capable, guardianEndpoint);
   w.u8(capable);
   w.str(guardianEndpoint);
-  // THE GAMES THIS NODE HOSTS (§5A.1 hosted_games[], §0A.4; kanban #204), opt-in like its roles: the game ids it plays,
+  // THE GAMES THIS NODE HOSTS (§5A.1 hosted_games[], §0A.4), opt-in like its roles: the game ids it plays,
   // sorted and asserted, inside the signed body the bond commits to - so a change of the list is an advertisement update
   // (advert-update.js), never a new bond. The game/verify committee of a round is drawn only from the nodes whose list
   // holds the round's game. [] hosts none; nothing is implied.
@@ -128,10 +128,10 @@ export function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
-  // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED the owner 2026-09-28; kanban #302): `serving = false`, published as an advertisement
+  // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED 2026-09-28): `serving = false`, published as an advertisement
   // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
   // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
-  // THE NODE'S DECLARED SCALARS (§27A.2, kanban #305): its preferred bond_min and proposal deposit - "declaring it must bind the
+  // THE NODE'S DECLARED SCALARS (§27A.2): its preferred bond_min and proposal deposit - "declaring it must bind the
   // declarer" - over which the census takes the bond-weighted median. 17 bytes after their marker, before serving; none declared is
   // no bytes, so every advertisement before this keeps its bytes.
   if (a.declares !== undefined && a.declares !== null) {
@@ -145,7 +145,7 @@ export function encodeAdvert(a) {
   return w.finish();
 }
 
-/** The byte before a node's declared scalars (§27A.2, kanban #305), before serving. */
+/** The byte before a node's declared scalars (§27A.2), before serving. */
 export const DECLARES_MARKER = 0x5d;
 /** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
 export const NOT_SERVING_MARKER = 0x5f;

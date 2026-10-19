@@ -3,7 +3,7 @@
 using NUnit.Framework;
 using UnityEngine;
 
-// ONE DRAW, THE SAME PIXELS (kanban #266, comment 988, the owner 2026-10-08): PanelSkin.Gradient drew 24 slices, each 1 unit
+// ONE DRAW, THE SAME PIXELS (comment 988, 2026-10-08): PanelSkin.Gradient drew 24 slices, each 1 unit
 // taller than its band; it now draws one texture, a row a screen row, baked from what the slices composited to. This draws
 // the old slices row by row in code - each slice's pixel rows by the rasterizer's rule, blended in draw order over black and
 // over white - and holds every baked row, quantized to the 8 bits it is stored in, to it within 1/255 a channel.

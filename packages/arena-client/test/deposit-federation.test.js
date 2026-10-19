@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FIRST DEPOSIT GOES TO THE LOWEST-LOAD FEDERATION (§23A.3, kanban #324 step 1): depositFederation over verified statuses -
-// the lobby round's federation is not used when another OPEN, known one has a lower load; since the owner 2026-10-13 ("always
+// THE FIRST DEPOSIT GOES TO THE LOWEST-LOAD FEDERATION (§23A.3): depositFederation over verified statuses -
+// the lobby round's federation is not used when another OPEN, known one has a lower load; since 2026-10-13 ("always
 // the federation with less funds") a returning player's deposit goes there too, and a withdraw reads the federation holding the most.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +26,7 @@ test('a first deposit lands on the lowest-load OPEN known federation, not the lo
   assert.equal(depositFederation({ lobbyInvite: inviteOf(A), statuses: [], held: [], sameFederation }).invite, inviteOf(A));
 });
 
-test('every deposit goes to the lowest load, a returning player\'s too (the owner 2026-10-13); the old rule only with always: false', () => {
+test('every deposit goes to the lowest load, a returning player\'s too (2026-10-13); the old rule only with always: false', () => {
   const statuses = [st(A, 4.3333), st(B, 0.0002)];
   assert.equal(depositFederation({ lobbyInvite: inviteOf(A), statuses, held: [A], sameFederation }).invite, inviteOf(B), 'a player holding A deposits into B, the lower load');
   assert.equal(depositFederation({ lobbyInvite: inviteOf(A), statuses, held: [B], sameFederation }).invite, inviteOf(B));
@@ -47,7 +47,7 @@ import { pageFunction } from './page-script.js';
 test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby round\'s A, a player holding A too', () => {
   const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
   const HTML = readFileSync(PAGE, 'utf8');
-  // depositPick (the one pick, kanban #353) and moneyContext, which follows it
+  // depositPick (the one pick) and moneyContext, which follows it
   const a = HTML.indexOf('    function depositPick(lobbyInvite) {');
   const m = HTML.indexOf('    function moneyContext(which = \'deposit\', seatRound = null) {');
   assert.ok(a > 0 && m > a, 'depositPick comes before moneyContext');
@@ -66,10 +66,10 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   assert.equal(first.ctx.ok, true);
   assert.equal(first.ctx.invite, inviteOf(B), 'a first deposit goes to B (0.0002), not the lobby round\'s A (4.33)');
   assert.equal(first.picked.federation, B);
-  // and the wallet is opened under B's own id, not the lobby round's (kanban #353: B's invite beside A's id opened B's wallet under A's key)
+  // and the wallet is opened under B's own id, not the lobby round's (B's invite beside A's id opened B's wallet under A's key)
   assert.equal(Buffer.from(first.ctx.round.federationId).toString('hex'), String(B).toLowerCase());
   assert.equal(run([A]).ctx.invite, inviteOf(B), 'a player already holding A deposits into B, the lower load');
-  // kanban #399: a withdraw with nothing held anywhere reads the federation a deposit would, under its own id - never fromHex("null")
+  //: a withdraw with nothing held anywhere reads the federation a deposit would, under its own id - never fromHex("null")
   const empty = run([], 'withdraw', []).ctx;
   assert.equal(Buffer.from(empty.round.federationId).toString('hex'), String(B).toLowerCase());
   assert.equal(empty.invite, inviteOf(B));

@@ -853,7 +853,7 @@ public class CargoTests
     }
 
     /// <summary>
-    /// LARGEST FIRST, THE BEST PAYING WITHIN A SIZE, AND A SPREAD OF SIZES (kanban #375, the owner 2026-10-16: "it must not be all of
+    /// LARGEST FIRST, THE BEST PAYING WITHIN A SIZE, AND A SPREAD OF SIZES (2026-10-16: "it must not be all of
     /// the same so no 9% 9% 9% etc, be more diverse but largest first"). Before, the ramp was the 21 best paying - nearly all the
     /// small transactions - in fee order.
     /// </summary>
@@ -893,7 +893,7 @@ public class CargoTests
     }
 
     /// <summary>
-    /// THE CAPTIONS ARE EVEN AND INSIDE THE PANEL (kanban #375, the owner 2026-10-16: "The labels for the cargo items must be
+    /// THE CAPTIONS ARE EVEN AND INSIDE THE PANEL (2026-10-16: "The labels for the cargo items must be
     /// gleichmaessig and fit the dialog"): every caption inside the panel, none over another, every caption of a row on one line,
     /// the captions of a row the same width.
     /// </summary>

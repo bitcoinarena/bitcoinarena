@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ROUND ENDS WHEN THE TIMER DOES (the owner 2026-09-20 16:21).
+// THE ROUND ENDS WHEN THE TIMER DOES (2026-09-20 16:21).
 //
 // "When the round timer hits 0, the game must end and return to the lobby by itself. It used to. It no longer
 // does." This is the CORE half of that: whatever the client then chooses to draw, the core must stop calling the
@@ -41,7 +41,7 @@ test('the elapsed clock stops once the run is over, so a finished round cannot c
   assert.equal(s[O_SCORE + S_STATE], RUN_MISSED, 'and the outcome stays MISSED once named');
 });
 
-// THE RUN LENGTH IS THE ROUND'S (the 82/90 hard fork, the owner 2026-10-01): a round naming 4920 ticks (82 s) ends its runs
+// THE RUN LENGTH IS THE ROUND'S (the 82/90 hard fork, 2026-10-01): a round naming 4920 ticks (82 s) ends its runs
 // MISSED there; one naming 10800 runs exactly as the core always did - every tick's state hash the same as a run started
 // with no length - so rounds of the core before the fork replay unchanged; a length outside 1..10800 is refused.
 import { hash } from '../src/state.js';

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PLAYER-NODE SEPARATION AT RUN TIME (§5A.13, kanban #309).
+// PLAYER-NODE SEPARATION AT RUN TIME (§5A.13).
 //
 // "A selected node may not sign anything for a round in which its operator has an Entry Contract." The slash proof
 // (slash.js slashHoldsOnConflict) punishes a node that signed anyway; this file is the rule BEFORE anything is signed, the

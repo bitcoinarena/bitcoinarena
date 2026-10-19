@@ -85,7 +85,7 @@ export function tabIdentity({ storage, random, curve } = {}) {
 }
 
 /**
- * A NOSTR EVENT SIGNED BY THIS TAB'S IDENTITY KEY (kanban #362 item 14): a zap request to another player, or the profile
+ * A NOSTR EVENT SIGNED BY THIS TAB'S IDENTITY KEY: a zap request to another player, or the profile
  * (kind 0) that says where this player takes zaps. The key the season board and the badges name signs it, and its private
  * half still never leaves this module: the page hands a template `{ kind, tags, content }` and gets the signed event.
  */
@@ -101,7 +101,7 @@ export async function identitySignEvent(template, { storage, random, curve, now 
  * empty for none, and the others are then shown the generated one - and now,
  * signed with that round key. The others are shown what this tab shows itself.
  */
-// `order` (kanban #457): an order's own round key is the order-th the seed makes for the round (playerFor) - each order of a market is
+// `order`: an order's own round key is the order-th the seed makes for the round (playerFor) - each order of a market is
 // named under its own key, so the season counts every order under the player's identity
 export function nameRecordFor(round, { storage, random, curve, nowMs = Date.now(), order = 0 } = {}) {
   if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a name is signed with the round key, and no signer was injected');
@@ -190,7 +190,7 @@ export function boardNames(rows, names) {
 }
 
 /**
- * THIS TAB'S IDENTITY ON A HEAD-TO-HEAD ENTRY (kanban #280): its identity key and that key's signature over (round, entry,
+ * THIS TAB'S IDENTITY ON A HEAD-TO-HEAD ENTRY: its identity key and that key's signature over (round, entry,
  * key) - handed to the seats with the reveal, so the rounds this tab plays against the same opponent count one score.
  * Without it a round counts for itself alone.
  */
@@ -203,7 +203,7 @@ export function identityProofFor({ roundIdHex, entryIdHex, storage, random, curv
 }
 
 /**
- * THIS TAB AT A HEAD-TO-HEAD ROUND'S TABLE (kanban #280): its identity key and that key's signature over (round, key) - said
+ * THIS TAB AT A HEAD-TO-HEAD ROUND'S TABLE: its identity key and that key's signature over (round, key) - said
  * to the round's seats while the tab sits at the table, so the other player sees someone is there before any move is in.
  */
 export function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
@@ -214,7 +214,7 @@ export function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
 }
 
 /**
- * THE ZAPS THIS PLAYER WAS SENT, COLLECTED INTO ITS OWN WALLET (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the
+ * THE ZAPS THIS PLAYER WAS SENT, COLLECTED INTO ITS OWN WALLET (2026-10-17: "zaps in the leaderboard go to the
  * federation's account of the user"): every seat asked what was paid to this tab's identity refund key (GET /donations?key=), merged
  * by outpoint; each one in a federation this page holds a wallet client of (`clients`: Map federation id hex -> lock client) is spent
  * by `Refund` under the identity secret - which never leaves this module - into that wallet. A contract the federation no longer

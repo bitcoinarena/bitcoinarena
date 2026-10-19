@@ -179,7 +179,7 @@ namespace Blwp
         public static bool Ended => Running && BlwpNetEnded() != 0;
 
         /// <summary>
-        /// WHETHER THE ROUND'S OWN LINE IS DOWN (the owner 2026-09-18 20:04, so the HUD can say what is broken).
+        /// WHETHER THE ROUND'S OWN LINE IS DOWN (2026-09-18 20:04, so the HUD can say what is broken).
         ///
         /// The page's status begins with the client's own word - opening, ready, ended - and a LIVE session whose
         /// word is not `ready` is a player whose other trucks have stopped arriving. A run that has ended is not a

@@ -269,7 +269,7 @@ public class VehicleTests
     }
 
     /// <summary>
-    /// THE MOUSE, ON THE PAD, ON A DESKTOP (the owner 2026-09-18 20:22, HARD: "on desktop the mobile pads are drawn but
+    /// THE MOUSE, ON THE PAD, ON A DESKTOP (2026-09-18 20:22, HARD: "on desktop the mobile pads are drawn but
     /// do nothing ... Mouse / pointer on a pad = throttle, steer, handbrake").
     ///
     /// The two tests above hand TouchControls a list of points, which skips the part a desktop player uses: whether
@@ -349,7 +349,7 @@ public class VehicleTests
     }
 
     /// <summary>
-    /// RE-STATED FOR RULING 4 (the owner 2026-09-22): "the map edge is a CLAMP, not a wall. The core owes
+    /// RE-STATED FOR RULING 4 (2026-09-22): "the map edge is a CLAMP, not a wall. The core owes
     /// no wall solids, and the client stops drawing walls the core does not build."
     ///
     /// This test was named TheEdgeOfTheWorldIsAWall and it asserted exactly the rule that was
@@ -657,7 +657,7 @@ public class VehicleTests
         var chase = Object.FindFirstObjectByType<ChaseCamera>();
         var cam = chase.GetComponent<Camera>();
         var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
-        // THE DRIVE STAYS FIRST PERSON (the owner 2026-09-29 12:45, PLAYTEST-ROLL-1245): ROLL OUT leaves the camera behind the truck
+        // THE DRIVE STAYS FIRST PERSON (2026-09-29 12:45, PLAYTEST-ROLL-1245): ROLL OUT leaves the camera behind the truck
         Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View, "startet nicht hinter dem Truck");
 
         chase.Toggle();

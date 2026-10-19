@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PEG-IN IS CHECKED AGAINST THE RUNNING FEDERATION BEFORE ITS CONFIRMATIONS ARE WAITED OUT (the owner 2026-09-29 12:25,
+// A PEG-IN IS CHECKED AGAINST THE RUNNING FEDERATION BEFORE ITS CONFIRMATIONS ARE WAITED OUT (2026-09-29 12:25,
 // PEGIN-WATCH-1225).
 //
 // What happened: gateway B's client still held an older config under the same federation id 337ae01a - peer 0 key

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COOPERATIVE KEY PATH OVER THE DOORS (kanban #307, spec 5A.3B key path: MuSig2(node_key, arbitration_aggregate_key)).
+// THE COOPERATIVE KEY PATH OVER THE DOORS (spec 5A.3B key path: MuSig2(node_key, arbitration_aggregate_key)).
 // A seat's owner asks its node for its half (POST /owner/musig/nonce, /owner/musig/partial - signed by the owner), the
 // arbiter's 7 members give theirs (POST /musig/nonce, /musig/partial), and a coordinator aggregates: one BIP-340 signature
 // that verifies under the bond's output key - the key bond-script.js builds from that node and the network's set. A

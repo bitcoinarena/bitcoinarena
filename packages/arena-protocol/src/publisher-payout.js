@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SERIES PUBLISHER IS PAID BACK ITS PUBLICATION FEE (§5A.5 "Who pays the fee", kanban #304; 2026.0.3): "The publisher pays it
+// THE SERIES PUBLISHER IS PAID BACK ITS PUBLICATION FEE (§5A.5 "Who pays the fee"2026.0.3): "The publisher pays it
 // from its own wallet and is reimbursed from the node fee (§22A) of the series' round 0 - or, if round 0 has no entries, the first
 // round of the series that settles with any. The reimbursement is one line in that round's settlement: publisher_payout =
 // min(publication fee, fee_cap) to the publisher's bond key, where the fee is the confirmed publication's own fee, read from the
@@ -9,7 +9,7 @@
 // THE FEE IS PROVEN, NOT SAID: a block holds the publication but not the values it spends, so the publisher hands over the raw
 // transactions its inputs spend. Each proves itself - its txid is the hash of its bytes, and it must be the very txid an input
 // names - and the fee is what they hold at the spent outputs less what the publication pays out. Nothing is asked of a node's RPC.
-// The publisher is the round's creator (contracts.js creator_pubkey, #313), whose key is the contract's and whose signature opened it.
+// The publisher is the round's creator (contracts.js creator_pubkey), whose key is the contract's and whose signature opened it.
 import { parseTransaction } from './tx.js';
 import { toHex } from './hash.js';
 

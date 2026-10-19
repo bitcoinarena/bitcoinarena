@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RISK OF DELETING AN ACCOUNT IS SAID AND SHOWN (kanban #380, the owner 2026-10-16: "this section should highlight the potential
+// THE RISK OF DELETING AN ACCOUNT IS SAID AND SHOWN (2026-10-16: "this section should highlight the potential
 // risk. maybe choosing red as text color in the button instead of white. also for the account section wording"). On the page's own
 // markup and CSS: both delete buttons are danger buttons in red, and the section says in red what is lost.
 import test from 'node:test';
@@ -21,7 +21,7 @@ test('the section says in red, before any click, that the money is lost without 
   const risk = section.match(/<div class="risk" id="arena-acct-risk">([^<]+)<\/div>/);
   assert.ok(risk, 'a risk line');
   assert.match(risk[1], /24 words/); assert.match(risk[1], /Nostr key/); assert.match(risk[1], /lost/);
-  // kanban #401 (the owner 2026-10-17): the warning moved BELOW the button, smaller and centered
+  // (2026-10-17): the warning moved BELOW the button, smaller and centered
   assert.ok(section.indexOf('id="arena-acct-risk"') > section.indexOf('id="arena-acct-delete"'), 'below the button');
   assert.match(HTML, /#arena-set-account #arena-acct-risk \{ margin: 10px auto 0; max-width: 34em; text-align: center; font-size: 12\.5px;/);
   assert.match(HTML, /#arena-set-account \.risk \{ color: #ff8a80;/);

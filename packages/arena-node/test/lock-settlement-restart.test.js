@@ -3,7 +3,7 @@
 // W6 SPLIT OUT OF lock-settlement.test.js (2026-09-23) so each file runs inside the 180 s cap: the restart cases
 // grew a send plan each when a paid winner came to name a Lightning address.
 // W4: THE LOSER'S STAKE LOCK IS CLAIMED INTO THE ROUND'S ONE SETTLEMENT, AND THE
-// WINNER IS PAID FROM IT (the owner 2026-09-14 07:22: "a loser loses the stake. The
+// WINNER IS PAID FROM IT (2026-09-14 07:22: "a loser loses the stake. The
 // lock is claimed into the pool. Winners are paid from that."; FEDERATION.md
 // money flow step 5).
 //
@@ -54,7 +54,7 @@ import { HOSTED } from './plugins/hosted.js';
 
 const REAL_FEES = { ppm: 0n, baseMsat: 1000n };
 
-// PICK (a) (the owner 2026-09-14): REFUSE AT THE DOOR. An entry that brings no fee lock - naming
+// PICK (a) (2026-09-14): REFUSE AT THE DOOR. An entry that brings no fee lock - naming
 // none, or naming one it never hands over - joined as far as the signer nodes let it, and its
 // first batch offered.
 async function joinWithout(w, who, { namesFeeLock }) {
@@ -107,7 +107,7 @@ async function joinWithout(w, who, { namesFeeLock }) {
 const federationChargesItsRealFee = (w) => { w.port.feeRule = REAL_FEES; };
 const key = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
-// W6 (the owner 2026-09-15): A SIGNER NODE KILLED INSIDE A LOCK SETTLEMENT RECOVERS TO THE RIGHT STATE ON
+// W6 (2026-09-15): A SIGNER NODE KILLED INSIDE A LOCK SETTLEMENT RECOVERS TO THE RIGHT STATE ON
 // RESTART. Two signer nodes on store files, each reaching the federation through a port that can die with
 // the signer node: after the guardians took the settlement (a) or before it went (b). The signer nodes are then
 // started again on their files - on the same ports, so the round's signer node addresses still hold - and
@@ -149,7 +149,7 @@ async function lockRoundOnDisk() {
     }
   };
   wire();
-  // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26), as lock-round-fixture's; closeRound skips past final_after in live order
+  // THE ROUND ENDS NOW, NOT IN 1970, as lock-round-fixture's; closeRound skips past final_after in live order
   w.c = presentDay({ ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE }, testNow() + 3000);
   w.c = { ...w.c, censusRoot: bondedChainFor(w.c.nodes, w.c, slot,
@@ -316,13 +316,13 @@ test('W6 mixed: the signer nodes died before sending and the loser\'s lock then 
 });
 
 
-// KANBAN #133 (playtest 2026-10-04 13:41Z: a DELIVERED player's 96 sat read "paying out" for 2 h): what a settlement
+// KANBAN (playtest 2026-10-04 13:41Z: a DELIVERED player's 96 sat read "paying out" for 2 h): what a settlement
 // moved was answered only from this process's memory, so after a restart every round settled before it said
 // "moved": null on /lock-settlement and no payout keys on /settled - and the page, finding no settlement it could read,
 // never asked for the winner's stake back. Measured on testnet4 seat 1: round 3568d136 ACCEPTED with moved null after
 // the 12:30Z and 13:19Z rolls; round ccd932e2, settled after them, answered in full. Now the seat answers it again
 // after a restart, rebuilt from its own store.
-test('a round settled before a restart answers what its settlement moved after it, as it did before (#133)', async () => {
+test('a round settled before a restart answers what its settlement moved after it, as it did before', async () => {
   const w = await lockRoundOnDisk();
   try {
     await lockAndPlay(w, WINNER, { address: true });

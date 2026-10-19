@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A CARRIED BOND AT THE PLAYER'S DOOR (kanban #209, 2026-10-10 05:35Z: a paid testnet4 join was refused at the session,
+// A CARRIED BOND AT THE PLAYER'S DOOR (2026-10-10 05:35Z: a paid testnet4 join was refused at the session,
 // "no proven endpoint: the bond output commits to a different advertisement"). The seven testnet4 seats hold ANCESTOR bonds:
 // re-affirmed for testnet4 and given an Arena endpoint by an advertisement update (§0A.9). Real testnet4 bytes: guardian-1's
 // bond (block 154172), re-affirmation (155609) and update (155729), proved into headers 154000 (the testnet4 anchor)..155729.

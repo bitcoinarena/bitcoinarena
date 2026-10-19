@@ -58,7 +58,7 @@ const contractAt = (committeeTimeMs, extra = {}) => ({
   ...extra,
 });
 
-// A PAYING ROUND IS SEVEN SIGNER NODES, EACH ONE GUARDIAN (PRIORITIES item 5; the owner 2026-09-27 10:04): A and B and five more.
+// A PAYING ROUND IS SEVEN SIGNER NODES, EACH ONE GUARDIAN (PRIORITIES item 5; 2026-09-27 10:04): A and B and five more.
 const SEVEN = [signerNodeA, signerNodeB, ...Array.from({ length: 5 }, () => schnorr.utils.randomSecretKey())];
 const paying = (extra = {}, at = BigInt(NOW) - 1000n) => contractAt(at,
   { stakeMsat: 100000n, gameVerifySlots: 7, settlementSlots: 7, nodes: SEVEN.map(keyOf), ...extra });
@@ -168,10 +168,10 @@ test('2 of 2: Join only where both of the round\'s signer nodes signed it open a
   const line = lobbyLine(byName.freeOpen, NOW);
   console.log(`  ${line}`);
   assert.match(line, /^free - no wallet, no Lightning · entry open, closes in 2:55 · 2 signer nodes agree \(2 needed\) · /);
-  // kanban #43: "N signer nodes agree (M needed)", never "7 of 5"
+  //: "N signer nodes agree (M needed)", never "7 of 5"
   assert.match(lobbyLine(byName.oneSignerNode, NOW), /1 signer node agrees \(2 needed\) - waiting for 1 more/);
   assert.match(lobbyLine(byName.payingOpen, NOW), /stake 100 sat - a federation stake lock .* listed it as free$/);
-  // ITS FEDERATION AND LOAD (§23A.3, kanban #324): named beside the stake; the load once the page holds that federation's status
+  // ITS FEDERATION AND LOAD (§23A.3): named beside the stake; the load once the page holds that federation's status
   const fid = Buffer.from(byName.payingOpen.contract.federationId).toString('hex');
   assert.match(lobbyLine(byName.payingOpen, NOW), new RegExp(`a federation stake lock in federation ${fid.slice(0, 8)} · `));
   assert.match(lobbyLine(byName.payingOpen, NOW, { loads: new Map([[fid, { load: 4.3333 }]]) }), new RegExp(`in federation ${fid.slice(0, 8)} \\(load 4\\.33\\) · `));
@@ -290,7 +290,7 @@ test('the bare root\'s daily.json becomes exactly a lobby link\'s names, or no l
   for (const [what, d] of Object.entries(refused)) assert.equal(dailyLobbySearch(d), null, what);
 });
 
-// ONE OF EACH (the owner 2026-09-15 16:08): the rows the live Daily's signer nodes held at 16:08 - two free
+// ONE OF EACH (2026-09-15 16:08): the rows the live Daily's signer nodes held at 16:08 - two free
 // and two paying, one pair a restart's leftover - and the rollover minute's overlap.
 test('the lobby lists one free round and one paying round, never two of either, and the paying one says its stake', () => {
   const T = 1_000_000;
@@ -307,7 +307,7 @@ test('the lobby lists one free round and one paying round, never two of either, 
   // Only one kind open: only that one listed; nothing open: nothing listed.
   assert.deepEqual(lobbyOnePerKind([row('pay', false, 500)]).map((r) => r.id), ['pay']);
   assert.deepEqual(lobbyOnePerKind([]), []);
-  // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01): the core page lists no one-off paying round; a series one stays
+  // ONLY 90-SECOND PAID ROUNDS (2026-10-01): the core page lists no one-off paying round; a series one stays
   const oneOff = row('one-off', false, 21600);
   const seriesRow = row('series-0', false, 0, { contract: { seriesId: new Uint8Array(32), startTimeMs: BigInt(T), roundIndex: 0n } });
   assert.deepEqual(lobbyOnePerKind([row('free', true, 60), oneOff], T, { paidSeriesOnly: true }).map((r) => r.id), ['free'], 'a 6 h one-off paid row was listed');
@@ -321,7 +321,7 @@ test('the lobby lists one free round and one paying round, never two of either, 
   assert.equal(lobbyStakeSats({ free: false, stakeMsat: 2_100_000_000_000_000_000n }), 2_100_000_000_000_000);
 });
 
-// THE LOBBY HAS ONE PAYING WORD (RULED the owner 2026-09-24, the enum slice's fifth cut): a paying round's stake goes into a
+// THE LOBBY HAS ONE PAYING WORD (RULED 2026-09-24, the enum slice's fifth cut): a paying round's stake goes into a
 // federation lock, as the node's own list says. "a Lightning payment" and the 'lightning' wallet were THRESHOLD_LN's
 // hold invoice - no decodable round reached them, and they are not kept as a name for the withdrawn custody.
 
@@ -377,7 +377,7 @@ test('a paying round on a 2-of-2 committee is not offered: no row, named refused
   assert.ok(seven && !seven.free && seven.signerNodes === 7 && seven.needed === 5, 'the paying 5-of-7 is listed');
 });
 
-// THE NEWEST SERIES FIRST (the owner 2026-09-30): series 8172fffd, 100 sat a round, posted after series 3cfbe516 (10000 sat),
+// THE NEWEST SERIES FIRST (2026-09-30): series 8172fffd, 100 sat a round, posted after series 3cfbe516 (10000 sat),
 // shows its round - listed pending before its committee time - over an open, joinable round of the older series.
 test('the newest series wins once it is active - its rows open - and the older series stands until then', () => {
   const now = 1790780000000;
@@ -398,7 +398,7 @@ test('the newest series wins once it is active - its rows open - and the older s
 });
 
 
-// THE HAND-OVER BETWEEN TWO SERIES OF ONE STAKE (the owner 2026-09-30): at 2026-10-02 22:00Z series k=2's first round (start
+// THE HAND-OVER BETWEEN TWO SERIES OF ONE STAKE (2026-09-30): at 2026-10-02 22:00Z series k=2's first round (start
 // 2026-10-03 00:00Z) is joinable 2 h early; 8172fffd still starts a round every 90 s until 23:58:30Z - its soonest round
 // is the row, not k=2's two hours out. And the newest series still decides the stake: 100 sat over 10000.
 test('two series of one stake: the soonest joinable round wins, not the newer series 2 h out; the newest series sets the stake', () => {
@@ -414,7 +414,7 @@ test('two series of one stake: the soonest joinable round wins, not the newer se
     'before the 100 sat series can be joined, the old series stands');
 });
 
-// BOTH ROWS, ALWAYS (the owner 2026-10-01 15:25): a side whose nodes did not answer one paint keeps the rows it had while
+// BOTH ROWS, ALWAYS (2026-10-01 15:25): a side whose nodes did not answer one paint keeps the rows it had while
 // their entry is open; a side that answered keeps what it answered, rows or none; nothing past its entry close is kept.
 test('a lobby read that got no answer keeps its last open rows; one that answered is taken as it is', () => {
   const now = 1790870000000;
@@ -429,7 +429,7 @@ test('a lobby read that got no answer keeps its last open rows; one that answere
   assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [], refused: [], unanswered: [], pending: true }, now), [free], 'a side still in flight dropped its row');
 });
 
-// A ROUND JUST CLOSED THAT THE SEATS STILL LIST (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and
+// A ROUND JUST CLOSED THAT THE SEATS STILL LIST (2026-10-17: "When I reload the page my open orders are gone and
 // still no closed orders"; "Have the open orders from the nodes"): no row - its entry is closed - but named among `closed` for 2 h,
 // so the page reads a player's orders in it back from its seats and shows their results
 test('a listed round whose entry closed 10 min ago is no row but is named closed; one closed 3 h ago is not', async () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PAID MARKET AS A PUBLISHED SERIES ON REGTEST (kanban #206, the owner 2026-10-07 23:23, decision A): the lobby offers a paid
+// A PAID MARKET AS A PUBLISHED SERIES ON REGTEST (2026-10-07 23:23, decision A): the lobby offers a paid
 // row only for a round of a series (lobby.js paidSeriesOnly), so the harness stands the regtest market up the way the live
 // paid rounds stand: seven bonded seats, one series published with OP_RETURN "ARN SERIES" below its beacon, held by the seats
 // (ARENA_SERIES_FILE). Regtest runs the mainnet series clock (series.js): a series starts on genesis_series_start + k x 24 h,
@@ -47,8 +47,8 @@ if (ports.length !== 7) throw new Error('seven seats');
 const host = '127.0.0.1';
 const storeOf = (i) => `${env.SEAT_DIR}/node-${i + 1}.db`;
 const keyOf = (i) => { const db = openStore(storeOf(i)); try { return nodeIdentity(db); } finally { if (db.close) db.close(); } };
-// THE UP/DOWN MARKET TOO (kanban #236/#237): every seat hosts it, and SERIES_GAME=updown publishes its 15-minute series
-// AND ROCK PAPER SCISSORS (kanban #293): every seat hosts it, and PAID_RPS=1 keeps paid rounds of it on the 8 s grid
+// THE UP/DOWN MARKET TOO: every seat hosts it, and SERIES_GAME=updown publishes its 15-minute series
+// AND ROCK PAPER SCISSORS: every seat hosts it, and PAID_RPS=1 keeps paid rounds of it on the 8 s grid
 const HOSTED = [NEXTBLOCK.gameId, MARKET.registration.gameId, UPDOWN.registration.gameId, ROCK_PAPER_SCISSORS.gameId].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 const rt = regtest(cli, { network: 'regtest', wallet: env.WALLET || 'tn4rt' });
 const lock = stakeLockPort({ bin: env.LOCK_BIN, dataDir: env.CLIENT_DIR });
@@ -58,7 +58,7 @@ async function guardianOfAll() {
   const fed = await lock.guardians();
   if (fed.keys.length !== 7) throw new Error(`the federation has ${fed.keys.length} guardians, not 7`);
   const of = ports.map((_, i) => {
-    // GUARDIAN_BASE (kanban #209 rehearsal): the guardians' own dirs, beside another set of stores than the seats'
+    // GUARDIAN_BASE (rehearsal): the guardians' own dirs, beside another set of stores than the seats'
     const dir = env.GUARDIAN_BASE ? `${env.GUARDIAN_BASE}/node-${i + 1}.db.guardian` : `${storeOf(i)}.guardian`;
     const id = JSON.parse(readFileSync(`${dir}/local.json`, 'utf8')).identity;
     const own = JSON.parse(readFileSync(`${dir}/consensus.json`, 'utf8')).broadcast_public_keys[String(id)];
@@ -89,12 +89,12 @@ if (mode === 'bonds') {
   const nodes = ports.map((_, i) => keyOf(i).pubkey);
   // TODAY'S SERIES: the one whose 24 h holds now (its rounds every 90 s), committee_time 72 h before its start
   const g = genesisSeriesStart(NETWORK_ID_REGTEST);
-  // SERIES_K_AHEAD (kanban #209 rehearsal): a series that many days on, so a chain at the present can publish it below its beacon
+  // SERIES_K_AHEAD (rehearsal): a series that many days on, so a chain at the present can publish it below its beacon
   const k = Number((BigInt(Date.now()) - g) / SERIES_MAX_MS) + Number(env.SERIES_K_AHEAD || 0);
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: new Uint8Array(32), censusConfirmations: 1,
     gameVerifySlots: 7, settlementSlots: 7, gameId: MARKET.registration.gameId, simCoreHash: new Uint8Array(32),
-    // SERIES_GAME=nextblock (kanban #209 rehearsal): nextblock's own series - its current core and config
+    // SERIES_GAME=nextblock (rehearsal): nextblock's own series - its current core and config
     committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
     federationId: fed.federationId, stakeExpiryBlocks: 144,
@@ -104,7 +104,7 @@ if (mode === 'bonds') {
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
     minScore: 0, rankNumerator: 3, rankDenominator: 4, nodes,
     ...(env.SERIES_GAME === 'nextblock' ? { gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, minScore: 1 } : {}),
-    // SERIES_GAME=updown (kanban #236/#237): the Up/Down market's series - its locks outlive a whole window (390 blocks at
+    // SERIES_GAME=updown: the Up/Down market's series - its locks outlive a whole window (390 blocks at
     // the least, lock-expiry.js marketExpiryBlocks), its rounds every 15 minutes
     ...(env.SERIES_GAME === 'updown' ? { gameId: UPDOWN.registration.gameId, stakeExpiryBlocks: 600, donationSetId: donationSetId(TEST_DONATION_SET_KEYS_REGTEST.recipients) } : {}),
   };
@@ -125,7 +125,7 @@ if (mode === 'bonds') {
   const view = rt.blocksFrom(Math.max(0, H - 60), H);
   const byTxid = new Map();
   for (const block of view.blocks) for (const raw of block.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
-  // AS THE SEATS DERIVE IT (roster.js): advertisement updates and re-affirmed ancestor bonds checked with BIP-340 (kanban #209)
+  // AS THE SEATS DERIVE IT (roster.js): advertisement updates and re-affirmed ancestor bonds checked with BIP-340
   const census = deriveCensus(view, { contract: decodeRoundContract(encodeRoundContract(template)), bond: bondSetFor('regtest'),
     verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });

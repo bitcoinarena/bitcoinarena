@@ -1,5 +1,5 @@
 #!/bin/bash
-# ARENA NODE ON macOS: THE APP (kanban #500, the owner 2026-10-19: "a small gui version of the installer that launches the browser"). Arena
+# ARENA NODE ON macOS: THE APP (2026-10-19: "a small gui version of the installer that launches the browser"). Arena
 # Node.app from ArenaNode-<version>-darwin-<arch>.dmg, dragged to Applications:
 #   1. its release is copied out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the
 #      disk image or an app macOS may move (App Translocation) - and its quarantine mark is taken off (the app was opened by the user)

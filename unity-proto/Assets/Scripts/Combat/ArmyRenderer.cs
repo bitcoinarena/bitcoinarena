@@ -762,7 +762,7 @@ public class ArmyRenderer : MonoBehaviour
         int liveArmour = 0, drawnArmour = 0, skipped = 0;
         var resting = new int[7];
         float deepest = float.MaxValue, highest = float.MinValue;
-        // AND THE SAME AGAIN PER TRACK CORNER (the owner 2026-09-16). The census above measures the
+        // AND THE SAME AGAIN PER TRACK CORNER (2026-09-16). The census above measures the
         // hull's lowest point against the ground under its CENTRE, and a centre reading hides tilt:
         // a hull reads as seated while one track is in the dirt, which is the fault the player sees
         // as ground drawn inside the hull. The four corners are `RestOnTerrain`'s own half-length
@@ -1219,7 +1219,7 @@ public class ArmyRenderer : MonoBehaviour
         }
         _attitude[t] = new Vector2(pitch, roll);
 
-        // NO TRACK CORNER UNDER THE GROUND IT STANDS ON (the owner 2026-09-16).
+        // NO TRACK CORNER UNDER THE GROUND IT STANDS ON (2026-09-16).
         //
         // The fit above samples four EDGE MIDPOINTS and the hull rests on four CORNERS, which it
         // never sampled - and the attitude finally applied is not even the one it computed: pitch and

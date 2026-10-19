@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE BOND-WEIGHTED VOTE OF A FUNDING PROPOSAL (§27A.9.3 stage 2, kanban #397 slice 7): #329's on-chain votes, counted on the bonds
+// THE BOND-WEIGHTED VOTE OF A FUNDING PROPOSAL (§27A.9.3 stage 2): #329's on-chain votes, counted on the bonds
 // active at the vote's start, weighted by bond. the owner's edges: YES 19.99 % of everyone who could vote fails and 20 % passes (rule 3,
 // 2026-10-17, replacing the 30 % turnout); YES at 59.99 % of YES + NO fails
 // and 60 % passes; ABSTAIN moves turnout, not approval; votes at signalEnd - 1 and signalEnd + 2016 do not count, at signalEnd and
@@ -46,7 +46,7 @@ test('approval: YES at 59.99 % of YES + NO fails, 60 % passes; ABSTAIN moves tur
   assert.deepEqual([at.approvalPct, at.approved, at.passed], [60, true, true]);
   const withAbstain = count(census, [vote(1, CHOICE.YES, IN), vote(3, CHOICE.YES, IN), vote(2, CHOICE.NO, IN), vote(4, CHOICE.ABSTAIN, IN)]);
   assert.deepEqual([withAbstain.approvalPct, withAbstain.turnoutPct, withAbstain.abstainSats], [60, 100, '5000'], 'approval the same, turnout up');
-  assert.equal(at.turnoutPct, 66.66, 'shown floored to the hundredth, as #329\'s tally');
+  assert.equal(at.turnoutPct, 66.66, 'shown floored to the hundredth, as \'s tally');
 });
 
 test('the window: votes at signalEnd - 1 and signalEnd + 2016 do not count; at signalEnd and signalEnd + 2015 they do', () => {

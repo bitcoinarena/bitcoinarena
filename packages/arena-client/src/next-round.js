@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * THE NEXT ROUND, JOINED BY DEFAULT (the owner 2026-09-28, option 1 of A; multiplayer_p2p.md "Timing - every network,
+ * THE NEXT ROUND, JOINED BY DEFAULT (2026-09-28, option 1 of A; multiplayer_p2p.md "Timing - every network,
  * every round"; NEXT-ROUND-1407 2026-09-29 14:07: implement it).
  *
  * A new round starts every 90 s and every run of a round starts together at its start_time; a run lasts at most
@@ -45,7 +45,7 @@ export function nextRoundAfter(played, rows, nowMs = Date.now()) {
 
 /**
  * WHAT THE PAGE SHOWS AFTER A RUN, at `nowMs`: `runOverMs` when the run ended, `nextStartMs` the next round's start.
- * THE COUNTDOWN IS IMMEDIATE (the owner 2026-09-29 22:09, COUNTDOWN-NOW-2209: "It does not wait 8 seconds"): { show:
+ * THE COUNTDOWN IS IMMEDIATE (2026-09-29 22:09, COUNTDOWN-NOW-2209: "It does not wait 8 seconds"): { show:
  * 'countdown', line, seconds, exit } from the run's end until the start, beside the ending Unity keeps up - the result
  * card, WASTED or the timeout screen; { show: 'start' } once it has come; { show: 'lobby' } after exit game or with no
  * next round. `runOverMs` is kept for the caller's record; the card's own 8 s are Unity's (it can fold, and stays while

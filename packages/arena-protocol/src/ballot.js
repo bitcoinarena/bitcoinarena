@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CONFIG BALLOT (spec §27A.7.2-§27A.7.5, kanban #329), its first slice: the proposal object, the vote a bond key signs into
+// THE CONFIG BALLOT (spec §27A.7.2-§27A.7.5), its first slice: the proposal object, the vote a bond key signs into
 // a Bitcoin OP_RETURN, and the tally - "a pure function of chain state. Every participant computes the same result, and
 // disagreement about the outcome reduces to disagreement about Bitcoin." Reading the chain (finding the proposal's publication
 // and the vote outputs) and activation (§27A.7.5) are the next slices; nothing here reads a chain or signs with a bond.
@@ -9,7 +9,7 @@
 //
 // Two choices the spec leaves open, made here and named:
 //   - the config travels as its bytes with the config_hash it declares, and the two must agree (configHashOf, 27A.7.1)
-//   - the vote's marker is "ARN" 'V' (RULED the owner 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
+//   - the vote's marker is "ARN" 'V' (RULED 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
 //     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
 //     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
 import { Writer, Reader } from './encode.js';
@@ -51,7 +51,7 @@ export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77
  * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
  * the hash every config of the network is named by (nextblock config/game-config.js TAG_GAME_CONFIG; the ballot's genesis
  * 2170f250 is exactly this over its bytes, ballot-genesis.test.js). A proposal carries the FULL config and the hash it names,
- * and the two must be one: otherwise a ballot could make live a hash whose bytes nobody voted on (kanban #329, the hole).
+ * and the two must be one: otherwise a ballot could make live a hash whose bytes nobody voted on (the hole).
  */
 export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
 export const configHashOf = (config) => taggedHash(TAG_GAME_CONFIG, config);

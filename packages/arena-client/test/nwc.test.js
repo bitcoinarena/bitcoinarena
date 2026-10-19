@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NOSTR WALLET CONNECT FOR DEPOSITS (kanban #277): a wallet service answering NIP-47 over the game's relay - one that speaks
+// NOSTR WALLET CONNECT FOR DEPOSITS: a wallet service answering NIP-47 over the game's relay - one that speaks
 // NIP-44 (its info event says so) and one that speaks only NIP-04 - pays the deposit invoice the page hands it; a wallet's
 // error comes back as the error; a link that is not one is refused before anything is sent.
 import test from 'node:test';

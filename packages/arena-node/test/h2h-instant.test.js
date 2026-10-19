@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY MOVE IN: DECIDED NOW (the owner 2026-10-09 playtest: "after the reveal it still takes 10-15 s until the result stands -
+// EVERY MOVE IN: DECIDED NOW (2026-10-09 playtest: "after the reveal it still takes 10-15 s until the result stands -
 // it has to be more instant"). Seats that close their own rounds (closeAtEnd) close a head-to-head round the moment each holds
 // a reveal for every entry - not at its reveal deadline; a round short of a reveal still waits for that deadline.
 import { test } from 'node:test';

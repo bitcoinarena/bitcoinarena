@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE HOLD-INVOICE STORE IS GONE FROM THE NODE (§23.6, RULED the owner 2026-09-22 22:59; cut 2b RULED 2026-09-25: "delete the
+// THE HOLD-INVOICE STORE IS GONE FROM THE NODE (§23.6, RULED 2026-09-22 22:59; cut 2b RULED 2026-09-25: "delete the
 // hold methods, the hold= read on the settle log line, and the holds table from new stores only. Old stores keep their
 // table. Do not rewrite a store.").
 //

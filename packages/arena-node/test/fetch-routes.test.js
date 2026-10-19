@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #348: the seat's own fetches routed to the direct address and capped per origin (measured: 770-910 HTTPS connections per
+//: the seat's own fetches routed to the direct address and capped per origin (measured: 770-910 HTTPS connections per
 // seat to its own host's Tailscale address, 4,589 to the test host through the fed2 forwarder)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +31,7 @@ test('at most N requests in flight per origin; the rest wait; another origin is 
   assert.equal(most, 6, 'two origins, 3 each at once');
 });
 
-// ONE LANE PER SEAT, AND A WAITING CALL KEEPS ITS DEADLINE (kanban #348, measured 2026-10-13 ~20:45Z: seven seats behind one host shared
+// ONE LANE PER SEAT, AND A WAITING CALL KEEPS ITS DEADLINE (measured 2026-10-13 ~20:45Z: seven seats behind one host shared
 // 8 slots, and a 5 s call queued behind 30 s ones without bound - a test host seat's seating agent stopped signing PRESENTs)
 test('seats behind one host have a lane each; a queued call is aborted by its own signal while it waits', async () => {
   const pending = [];

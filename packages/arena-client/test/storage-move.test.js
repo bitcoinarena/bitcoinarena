@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ONE-TIME MOVE FROM blwp.* TO arena.* (kanban #207). The page's keys were renamed from blwp.* to arena.*; a browser
+// THE ONE-TIME MOVE FROM blwp.* TO arena.*. The page's keys were renamed from blwp.* to arena.*; a browser
 // that played before keeps its seed, its kept phrases, its vault and its wallet only if they move before anything reads
 // them. This runs the very script the page ships (index.html, <script id="arena-storage-move">, the first script there)
 // against a browser filled the old way, then reads that browser back through the client's own readers.
@@ -36,7 +36,7 @@ function oldKeys(make) {
 const WALLET = oldKeys((s) => { const w = walletStoreFor(s, FED, SECRET); w.put('notes', '{"n":3}'); w.put('db.7', 'x'); });
 const LOCK = oldKeys((s) => lockStoreFor(s, ROUND, SECRET).put('lock', '{"stake":900000}'));
 
-// A browser as the page before #207 left it.
+// A browser as the page before left it.
 function oldBrowser() {
   const local = mem(), session = mem();
   session.setItem('blwp.player.seed', SEED); session.setItem('blwp.player.seed.from', 'minted'); session.setItem('blwp.tab.id', 'tab-1');
@@ -120,7 +120,7 @@ test('storage the browser refuses does not stop the page', () => {
     get localStorage() { throw new Error('SecurityError'); }, sessionStorage: refused } }));
 });
 
-// THE SEED'S BLWP-ERA WALLET IS STILL FOUND AFTER THE MOVE (kanban #209, pick (a)): the page made it under the BLWP tag
+// THE SEED'S BLWP-ERA WALLET IS STILL FOUND AFTER THE MOVE (pick (a)): the page made it under the BLWP tag
 // (phase0's walletSecretFor: 40638580f186c452... for this seed and federation, measured against e7775f80's own code), its
 // store's keys move to arena.walletdb.* with the same secret hash, and the sweep (index.html combineWallets) counts it.
 test('a seed\'s BLWP-era wallet store moves with the browser and is found under the ancestor secret, not the Arena one', async () => {

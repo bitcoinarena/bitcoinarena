@@ -191,7 +191,7 @@ try {
   const eidC = await joinedEntry(C, cc.outpoint, att);
   await handOver('C, locked to an unattested key', eidC, cc.fields);
 
-  // D (Pick b, the owner 2026-09-14): THE FEE LOCK, ONLY WHEN IT CAN PAY A SIGNER NODE. The
+  // D (Pick b, 2026-09-14): THE FEE LOCK, ONLY WHEN IT CAN PAY A SIGNER NODE. The
   // federation's own fee rule, asked of the wasm client; the gate at this round's
   // 1000 sat and, for contrast, at 100 sat; then at 1000 sat a real hash-image
   // lock of the entry's 20000 msat fee to H(F), handed to both signer nodes' /fee-lock.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CLIENT'S STAKE AND SETTLEMENT WATCHES - client.js watchStake, watchSettlement and stakeSeen (kanban #147, surface 4 of
+// THE CLIENT'S STAKE AND SETTLEMENT WATCHES - client.js watchStake, watchSettlement and stakeSeen (surface 4 of
 // "The player's money lines", plan comment 209; the end rule (a), Go 2026-10-05). Every node is a fake fetcher and the watches
 // poll every few ms; no socket and no seat is reached.
 //

@@ -84,7 +84,7 @@ export function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }
  */
 export function donationPaidState(set, said) {
   if (!said) return null;
-  // PAID WITH THE STAKE, IN THE FEDERATION (the owner 2026-10-03): a set of keys has no Lightning share to report one by one
+  // PAID WITH THE STAKE, IN THE FEDERATION (2026-10-03): a set of keys has no Lightning share to report one by one
   if (said.inLock) return { state: 'paid', inLock: true, paidMsat: said.paidMsat, unpaidMsat: 0n, shares: [], why: said.why };
   const recipients = set && Array.isArray(set.recipients) ? set.recipients : [];
   const noted = new Map();
@@ -181,13 +181,13 @@ export function notedDonationForLink(search, { storage, curve } = {}) {
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
 const toHexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 export function donationRecipientsLine(set) {
-  // A ROUND'S TWO SETS (kanban #205): what the fetched answer carries as `gameSet` beside the network's
+  // A ROUND'S TWO SETS: what the fetched answer carries as `gameSet` beside the network's
   if (set && set.set && Array.isArray(set.gameSet))
     return `Protocol devs (half): ${donationRecipientsLine(set.set).replace(/^Recipients: /, '')}; game dev (half): `
       + donationRecipientsLine({ recipients: set.gameSet }).replace(/^Recipients: /, '');
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';
   return 'Recipients: ' + set.recipients.map((r) => {
-    // A KEY IN THE FEDERATION (the owner 2026-10-03): its label and the key's first characters
+    // A KEY IN THE FEDERATION (2026-10-03): its label and the key's first characters
     if (r.recipientPk instanceof Uint8Array) return `${(r.shareBps / 100).toFixed(2)}% to ${r.label || 'a dev'} (key ${toHexOf(r.recipientPk).slice(0, 12)}…, in the round's federation)`;
     let where;
     try { where = urlOfLnurl(r.lnurl); } catch { where = r.lnurl; }
@@ -219,7 +219,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
   const rid = toHex(round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
-  // ONE FETCH PER DONATION SET, AND NO NODE HOLDS THE JOIN (kanban #353, measured 2026-10-14 04:26Z on testnet4): every round
+  // ONE FETCH PER DONATION SET, AND NO NODE HOLDS THE JOIN (measured 2026-10-14 04:26Z on testnet4): every round
   // of a network names the same set, yet each join asked all 14 seats again and waited for the slowest - 30 s, past an
   // 8 s RPS table. A set fetched and checked is kept by its id when the page asks for that (keepBySet; every check below still runs against each round); a node
   // that does not answer in ANSWER_MS is left out, as long as at least half the nodes answered and every answer agrees.
@@ -246,7 +246,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   const served = toHex(answers[0].bytes);
   if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  // A SET ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): the nodes serve, as JSON, the admin key's set it replaces (signed,
+  // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
   // checked below as any set) and the proposals and approvals since; this page tallies them itself
   let approval = null;
   let bytes = answers[0].bytes;
@@ -301,7 +301,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
   }
 
-  // AND THE GAME DEV'S SET (§0A.8, kanban #205): every signer node serves the one its round's game's manifest names, and it
+  // AND THE GAME DEV'S SET (§0A.8): every signer node serves the one its round's game's manifest names, and it
   // is taken only if it hashes to the game_donation_set this page's own known-games list carries for that game - so a node
   // cannot route the game dev's half anywhere the developer did not sign.
   const wantGame = gameDonationSetIdOf(round.gameId);
@@ -322,7 +322,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (toHex(donationSetId(gameSet)) !== wantGame)
     return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
   if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
-  // A SET THAT VESTS (§27A.4.1, kanban #382) pays its shares at the round's census height, as the seats split it
+  // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
   return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }

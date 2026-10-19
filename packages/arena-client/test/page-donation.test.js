@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DONATION THE PAGE SIZES MONEY BY (kanban #187 item 2, plan comment 298, Go 2026-10-05). index.html's donationBps() is
+// THE DONATION THE PAGE SIZES MONEY BY (plan comment 298, Go 2026-10-05). index.html's donationBps() is
 // lifted out of the page by its text and run as it is, on a fake window and sessionStorage: Settings keeps
-// arena.donation.settings (default 500 bps since kanban #205 - §0A.8's 5%, half protocol devs and half game dev - 0-500 in
+// arena.donation.settings (default 500 bps since - §0A.8's 5%, half protocol devs and half game dev - 0-500 in
 // steps of 100). The settings deposit sizes "1 round" with it
-// (index.html, before kanban #187: ctx.roundStake * BigInt(donationBps()) / 10000n; since: depositDonationMsat); the join asks
+// (index.html, before: ctx.roundStake * BigInt(donationBps()) / 10000n; since: depositDonationMsat); the join asks
 // chooseDonation with the same percent
 // (index.html: ask: () => settingsPct) - and chooseDonation answers a round's KEPT choice (arena.donation.<roundId>) first.
 // Both amounts are computed here for the same round, from the page's own expressions.
@@ -31,7 +31,7 @@ function pageWith(sessionStorage) {
 const ROUND = { stakeMsat: 100000n };
 const RID = 'ab'.repeat(32);
 
-// THE DEFAULT IS THE RULE'S 5% (§0A.8, kanban #205), which the page states itself
+// THE DEFAULT IS THE RULE'S 5% (§0A.8), which the page states itself
 const DEFAULT_BPS = 500;
 test('donationBps: 500 by default; a stored 0-500 in steps of 100 is taken; anything else is 500; read once per page', () => {
   assert.equal(pageWith(storage()).donationBps(), DEFAULT_BPS, 'nothing stored');
@@ -90,7 +90,7 @@ test('the deposit keeps nothing; every kept/Settings pair sizes the deposit as t
   assert.equal(depositDonationMsat({ roundIdHex: null, stake: 100000n, settingsBps: 300, storage: fresh }), 3000n, 'no round id: Settings');
 });
 
-// THE WARM QUOTE (kanban #187 item 2 follow-up, the owner 2026-10-05 on comment 312): the lobby warms lock quotes for the
+// THE WARM QUOTE (follow-up, 2026-10-05 on comment 312): the lobby warms lock quotes for the
 // paying round at a donation; it must be the donation the join will write - the round's kept choice when the tab has one,
 // else Settings - or the warm quote is for another donation and the join quotes itself again. The expression is lifted
 // out of index.html's warmLockQuotes call and evaluated as written.

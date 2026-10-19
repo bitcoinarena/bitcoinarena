@@ -76,7 +76,7 @@ function unkeptLockStore() {
   return { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
 }
 
-/** THE FEDERATION BLOCK FROM WHICH A ROUND'S SAVED LOCK COMES BACK TO THE PLAYER'S KEY (kanban #6), or null when none is kept. */
+/** THE FEDERATION BLOCK FROM WHICH A ROUND'S SAVED LOCK COMES BACK TO THE PLAYER'S KEY, or null when none is kept. */
 export function savedLockExpiration(storage, roundIdHex) {
   const prefix = `arena.lock.saved.${String(roundIdHex || '').toLowerCase()}.`;
   try {
@@ -92,7 +92,7 @@ export function savedLockExpiration(storage, roundIdHex) {
 }
 
 /**
- * THE PENDING LINE'S WORDS (WINDOW-10-SPEC; kanban #6, MF 18: "window closed … · paying out" forever when no payout came): before
+ * THE PENDING LINE'S WORDS (WINDOW-10-SPECMF 18: "window closed … · paying out" forever when no payout came): before
  * the window's close its time; for 10 min after it "paying out"; from then "not paid yet", and when the lock comes back.
  */
 export const PAYOUT_GRACE_MS = 600000;
@@ -129,7 +129,7 @@ export const lockAmountMsat = (round, donationMsat = 0n) => {
 };
 
 /**
- * WHAT ONE ENTRY'S STAKE IS MADE OF (§22A's transparency list; kanban #8, MF 17: "nowhere does the phone page split the 100 sat
+ * WHAT ONE ENTRY'S STAKE IS MADE OF (§22A's transparency listMF 17: "nowhere does the phone page split the 100 sat
  * into stake, fee and donation"): the round's stake, the node fee and the player's donation out of it, and what the lock holds.
  */
 export const entryBreakdown = (round, donationMsat = 0n) => {
@@ -139,7 +139,7 @@ export const entryBreakdown = (round, donationMsat = 0n) => {
 };
 
 /**
- * THE PLAYER WALLET'S SECRET (§24A.1, v4.6.3; RULED the owner 2026-09-25): one e-cash wallet per player seed and
+ * THE PLAYER WALLET'S SECRET (§24A.1, v4.6.3; RULED 2026-09-25): one e-cash wallet per player seed and
  * FEDERATION, kept in the browser, that stakes are spent from. A function of the seed and the federation id only -
  * never of a round: the per-round wallet (`lockSecretFor`) funded each stake with its own Lightning invoice, which is
  * the red of rehearsal item 8 (27e1fbb9).
@@ -156,7 +156,7 @@ export function walletSecretFor(seed, federationId) {
 }
 
 /**
- * THE SAME SEED'S PLAYER WALLET BEFORE THE ARENA/v1 TAGS (kanban #209, the owner 2026-10-08 pick (a); spec 0A.9 "the player
+ * THE SAME SEED'S PLAYER WALLET BEFORE THE ARENA/v1 TAGS (2026-10-08 pick (a); spec 0A.9 "the player
  * wallets' e-cash carries over"): the wallet a seed had on the BLWP network, under the ancestor's tag (ancestor.js). The
  * page opens it only to sweep its e-cash into the Arena wallet (index.html combineWallets); nothing is ever paid into it.
  */
@@ -172,7 +172,7 @@ export function ancestorWalletSecretFor(seed, federationId) {
 }
 
 /**
- * HOW MUCH WALLET A KEPT PHRASE HAS IN THIS BROWSER (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a
+ * HOW MUCH WALLET A KEPT PHRASE HAS IN THIS BROWSER (2026-10-02: "I should have more than 0 sats on my wallet" - a
  * tab took another kept phrase than the one that deposited: the history, kept per federation, showed the deposit and the
  * stake, the balance was the other phrase's empty wallet). For every federation this browser keeps a ledger for, the
  * entries the phrase's player wallet keeps there - 0 for a phrase that never had one. Read off the store's keys only.
@@ -194,7 +194,7 @@ export function phraseWalletEntries(storage, seedHex, federationIdHex = null, { 
 }
 
 /**
- * THIS BROWSER FORGETS ONE PHRASE'S WALLETS (kanban #337, the owner 2026-10-11: "Im settings screen gibt es die Möglichkeit
+ * THIS BROWSER FORGETS ONE PHRASE'S WALLETS (2026-10-11: "Im settings screen gibt es die Möglichkeit
  * seinen Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"): every player wallet database the phrase's
  * secrets name - per federation this browser keeps a history for, and the ancestor's - and its recover mark. Nothing is
  * sent and nothing is spent; the notes are the federation's, and the same 24 words (or the Nostr key that keeps them)
@@ -233,7 +233,7 @@ export function walletStoreFor(storage, federationId, secret) {
 }
 
 /**
- * A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (#27, the owner 2026-10-04: "patch Fedimint's recovery so it runs in
+ * A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (2026-10-04: "patch Fedimint's recovery so it runs in
  * the browser, then measure the second device finding the notes the first device held"). The page marks a seed the player
  * typed in (24 words or 64 hex); a player wallet of that seed that this browser keeps nothing of is then RECOVERED from the
  * federation (LockClient.recover: Fedimint's own mintv2 recovery, the notes this secret's keys made) instead of joined
@@ -256,7 +256,7 @@ export const seedRecovers = (storage, seed) => {
  */
 function paysIntoALock(round, invite, LockClient) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  // A MARKET ROUND'S LOCK SPAN (kanban #236) is checked by its terms - the page set them on the round (its market's); else 144
+  // A MARKET ROUND'S LOCK SPAN is checked by its terms - the page set them on the round (its market's); else 144
   const custody = custodyFieldsAreValid(round, { manifest: round.marketTerms ? { resultType: 2, marketTerms: round.marketTerms } : null });
   if (!custody.ok) throw new Error(`no stake is locked to this round: ${custody.why}`);
   if (!invite)
@@ -270,7 +270,7 @@ function paysIntoALock(round, invite, LockClient) {
  * THE PLAYER WALLET FOR THIS ROUND'S FEDERATION: joined under `walletSecretFor(seed, federationId)`, kept in the tab
  * per federation. Two paying rounds of one federation open the same wallet. Returns the lock client over it.
  */
-// ONE OPEN WALLET PER LOCK CLIENT, TAB STORE AND WALLET SECRET (INSTANT-1527, the owner 2026-09-30 15:23: the slow steps do
+// ONE OPEN WALLET PER LOCK CLIENT, TAB STORE AND WALLET SECRET (INSTANT-1527, 2026-09-30 15:23: the slow steps do
 // not sit in front of the user). The page opens the player wallet in the lobby, before PLAY - joining the federation is
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
@@ -281,7 +281,7 @@ export async function playerWallet({ round, invite, seed, LockClient, storage, o
 }
 
 /**
- * THE SAME PLAYER WALLET, OPENED FROM ITS FEDERATION ALONE (kanban #350, the owner 2026-10-12: the cold first deposit waited
+ * THE SAME PLAYER WALLET, OPENED FROM ITS FEDERATION ALONE (2026-10-12: the cold first deposit waited
  * 41.5 s - the join of the federation began at the Deposit tap). The page opens it before any round is listed, from the
  * invite daily.json names; it is kept under the same key a round's playerWallet asks for, so the deposit and the join find
  * it open. `federationId` is its 32 bytes.
@@ -291,7 +291,7 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
   if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
   if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
   const round = { federationId };
-  // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one (kanban #209)
+  // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one
   const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
   const byStore = storage && (openWallets.get(LockClient) || openWallets.set(LockClient, new WeakMap()).get(LockClient));
@@ -299,7 +299,7 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
   // THE WALLET THE LOBBY OPENED, IF IT DID OPEN (JOIN-TIME-1359, measured 2026-10-02 on testnet4: 2 of 12 paid joins sat at
   // "the player wallet is open" for good - the lobby's join of the federation never settled, and PLAY took that promise
   // as an open wallet; a named step is never cut by time). Given `openWaitMs`; then, unsettled or failed, joined again.
-  // ONE CLIENT PER WALLET, NEVER TWO (kanban #376, measured 2026-10-16 on live UI 147 with one pinned seed: the lobby's open took
+  // ONE CLIENT PER WALLET, NEVER TWO (measured 2026-10-16 on live UI 147 with one pinned seed: the lobby's open took
   // 21-25 s, PLAY gave up on it after openWaitMs, "the player wallet did not open in 15 s - joining the federation again", and a
   // SECOND lock client opened the same store beside the first. Each keeps its own notes and operations in memory: the deposit
   // invoiced by one was "Operation not found" to the other, and a balance read off one (the owner's 400 sat) was quoted on the other,
@@ -341,16 +341,16 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
  */
 export async function locksForRound(round, client, donationMsat, donationRecipients = null) { return locksFor(round, client, donationMsat, donationRecipients); }
 /**
- * THE DONATION, PAID FROM THE PLAYER WALLET TOO (the owner 2026-10-01: "donation is paid by the player as well"): what its
+ * THE DONATION, PAID FROM THE PLAYER WALLET TOO (2026-10-01: "donation is paid by the player as well"): what its
  * shares take from the wallet - each share is its own Lightning payment, so each is rounded up to whole notes. With no
  * set to split by, the donation as one share.
  */
 export function donationCostMsat(donationMsat, recipients = null) {
   const d = BigInt(donationMsat || 0n);
   if (d <= 0n) return 0n;
-  // a version-11 target: the developers' shares and the reserve output, each its own payment (kanban #397)
+  // a version-11 target: the developers' shares and the reserve output, each its own payment
   if (recipients && recipients.reserve) return donationKeyShares(d, recipients).reduce((t, s) => t + (s.amountMsat > 0n ? ceilNote(s.amountMsat) : 0n), 0n);
-  // one set, or a round's two (protocol devs and game dev, §0A.8; kanban #205)
+  // one set, or a round's two (protocol devs and game dev, §0A.8)
   const split = recipients ? splitDonation({ donationMsat: d, recipients }) : null;
   const shares = split && split.owed ? split.shares.map((x) => x.amountMsat) : [d];
   return shares.reduce((t, m) => t + (m > 0n ? ceilNote(m) : 0n), 0n);
@@ -365,10 +365,10 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
   if (feeRule && feeRule.baseMsat > 0n)
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
-  // its fee lock on what this entry stakes: an order's own amount (kanban #237), else the round's
+  // its fee lock on what this entry stakes: an order's own amount, else the round's
   const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
-  // allowance on top (the owner 2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
+  // allowance on top (2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
   return { amount, feeGate, feeMsat: feeGate.pays ? feeGate.lockMsat : 0n, zeroFees,
     donationCostMsat: donationCostMsat(donationMsat, donationRecipients) };
@@ -380,7 +380,7 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
  * the notes the stake lock leaves (measured in a real browser, 0.0.1236: 21504 msat left for a 20000 msat fee lock that
  * then cost more). `null` quotes: the wallet holds too little to be quoted at all (the stock dry run).
  */
-// A LOCK'S QUOTE, KEPT FOR THE WALLET AS IT STANDS (the owner 2026-10-02, the join's 2-3 s): the lock client's quote is a dry
+// A LOCK'S QUOTE, KEPT FOR THE WALLET AS IT STANDS (2026-10-02, the join's 2-3 s): the lock client's quote is a dry
 // run over the notes held, asked once for the deposit check and again for the lock - measured 1.9 s between 'the player
 // wallet is open' and 'locking' in a paid join. Kept per client, amount and balance (a deposit or a spend is another
 // wallet and quotes afresh), for two minutes; the two locks' quotes are asked together.
@@ -417,7 +417,7 @@ async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, 
 }
 
 /**
- * THE LOCK QUOTES ASKED AHEAD (the owner 2026-10-02, PRIORITIES 19:05, the join's 2-3 s): what a join's deposit check and lock
+ * THE LOCK QUOTES ASKED AHEAD (2026-10-02, PRIORITIES 19:05, the join's 2-3 s): what a join's deposit check and lock
  * will ask the lock client, asked by the lobby once its wallet is open, so PLAY finds them kept (quoteLock: per client,
  * amount and balance - a deposit or a spend in between quotes afresh). Measured on 0.0.2474: the first quote was 0.47 s of
  * a funded paid join after the click. Spends nothing; answers what the round's locks would need.
@@ -435,7 +435,7 @@ export async function warmLockQuotes({ round, client, LockClient, donationMsat =
  * creditsMsat })` is told each invoice the player's own Lightning wallet must pay. Returns the deposits made.
  */
 /**
- * THE GATEWAY A DEPOSIT GOES THROUGH (the owner 2026-09-30 14:30: "A deposit goes only to a gateway that holds e-cash ...
+ * THE GATEWAY A DEPOSIT GOES THROUGH (2026-09-30 14:30: "A deposit goes only to a gateway that holds e-cash ...
  * Do not pick a gateway at random"). The lock client's own plan picks among the federation's gateways at random, and a
  * gateway with no e-cash in the federation cannot fund the receive: measured on testnet4, gateway A (0 msat in 337ae01a)
  * was picked for five of eight deposits. Given the operator's list of funded gateways, the deposit goes through the
@@ -449,7 +449,7 @@ export function depositGateway(planned, funded = []) {
   return (funded || []).filter((u) => norm(u))[i >= 0 ? i : 0];
 }
 
-// ANY GATEWAY THE FEDERATION LISTS, AND THE NEXT ONE AFTER A TIMEOUT (kanban #319, spec §23.1: "a deposit invoice, made
+// ANY GATEWAY THE FEDERATION LISTS, AND THE NEXT ONE AFTER A TIMEOUT (spec §23.1: "a deposit invoice, made
 // through any gateway the federation lists ... It can delay: the invoice's CLTV is short, and a client moves to the next
 // gateway after a timeout - a slow gateway costs the round, never the money"). The gateways in turn: the lobby's named
 // first, then the federation's (LockClient.gateways, the guardians' lists); one that makes no invoice in
@@ -522,18 +522,18 @@ export function followWithFailover(client, d, { amountMsat, order = [], unclaime
   client.awaitReceive(d.operation).then((final) => ended(final, `it ended ${final}`),
     (e) => ended('Failure: ' + String((e && e.message) || e), 'its wait failed'));
 }
-// THE DEPOSIT IS THE GROSS ROUND AMOUNT, IN ROUNDS (the owner 2026-09-30 20:53, GROSS-INVOICE-2053: "A 10000 sat round
+// THE DEPOSIT IS THE GROSS ROUND AMOUNT, IN ROUNDS (2026-09-30 20:53, GROSS-INVOICE-2053: "A 10000 sat round
 // invoices 10000 sat, not 9906. Fee and donation are not subtracted from the invoice ... The tabs are '1 round', '2
 // rounds', '5 rounds', '10 rounds', and 'Custom' ... The amount is this round's stake times the count"). The gateway's
 // receive fee and the lock allowance come out of what the wallet is credited: measured on testnet4, a gross 10000 sat
 // invoice credits 9968 sat, more than one round's locks; a gross 100 sat one credits 97.7 sat, 0.6 sat short of one
 // 100 sat round with the 2% donation - the page then says the wallet cannot fund the round, and two rounds cover.
 export const DEPOSIT_ROUNDS = [1, 2, 5, 10];
-// N ROUNDS PLAY N ROUNDS (the owner 2026-10-01: "so rounds can always be played. 10 rounds deposit must be capable of playing
+// N ROUNDS PLAY N ROUNDS (2026-10-01: "so rounds can always be played. 10 rounds deposit must be capable of playing
 // 10 rounds"). Measured: the federation issues e-cash in powers of two from 512 msat, so a deposit credits only its whole
 // 512 msat (100000 -> 99840, 5000 -> 4608), and a lock costs its amount rounded up to 512 msat (98000 -> 98304; the fee
 // rule is 0/0). So a deposit is sized in whole notes, and N rounds is N x one round's locks plus the stake check's margin.
-// 1 SAT = 1 SAT (the owner 2026-10-01: "Fix it instead right now and rebuild rust ... we want 1 sat = 1 sat and round 100
+// 1 SAT = 1 SAT (2026-10-01: "Fix it instead right now and rebuild rust ... we want 1 sat = 1 sat and round 100
 // sat round numbers"): the lock client is rebuilt with the mint client issuing and spending notes from 1 msat
 // (client_denominations 0..41 - the federation signs those already), so a whole note is any msat: nothing is rounded,
 // a 100 sat deposit credits 100 sat, and a 100 sat round takes exactly 100 sat. (512 was the stock client's floor.)
@@ -551,7 +551,7 @@ export function oneRoundNeedMsat(locks, LockClient) {
   return roundCostMsat(locks) + margin;
 }
 /**
- * THE PRICE PER ROUND, IN WHOLE SATS (the owner 2026-10-01: "which amounts are safe, so we show no odd amounts" - "yes"): the
+ * THE PRICE PER ROUND, IN WHOLE SATS (2026-10-01: "which amounts are safe, so we show no odd amounts" - "yes"): the
  * smallest whole sat P such that N x P sat, credited in whole notes, holds N rounds for every tab (1, 2, 5, 10). A 100
  * sat round with a two-recipient donation: 101 sat (101 -> 100864 credited = one round's 100864).
  */
@@ -561,7 +561,7 @@ export function oneRoundDepositMsat(locks, LockClient) {
   while (DEPOSIT_ROUNDS.some((n) => creditedMsat(BigInt(n) * p * 1000n) < BigInt(n) * need)) p += 1n;
   return p * 1000n;
 }
-/** N ROUNDS ARE N x ONE ROUND (the owner 2026-10-01: "1 round" 100.xx sat; then 2 rounds 198.656 beside it read as wrong):
+/** N ROUNDS ARE N x ONE ROUND (2026-10-01: "1 round" 100.xx sat; then 2 rounds 198.656 beside it read as wrong):
  * every round funded as the first is - each with its own margin - so the tabs are 1, 2, 5, 10 x the "1 round" amount. */
 export function roundsDepositMsat(n, locks, LockClient) {
   return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
@@ -574,11 +574,11 @@ export function depositChoices(stakeMsat, sizeOf = null) {
     { key: 'custom', label: 'Custom', rounds: null, msat: null }];
 }
 /**
- * THE WITHDRAWAL TABS (the owner 2026-09-30: "The withdrawal is different: 25% 50% 100% custom - you enter a custom
+ * THE WITHDRAWAL TABS (2026-09-30: "The withdrawal is different: 25% 50% 100% custom - you enter a custom
  * amount"): shares of what the wallet can send after its fees, in whole sat (an invoice names sat), then Custom.
  */
 export const WITHDRAW_SHARES = [25, 50, 100];
-/** THE AMOUNT AN INVOICE ASKS (the owner 2026-10-01: the invoice defines the amount - no withdraw selector): msat, or why not. */
+/** THE AMOUNT AN INVOICE ASKS (2026-10-01: the invoice defines the amount - no withdraw selector): msat, or why not. */
 export function invoiceAmountMsat(invoice) {
   const text = String(invoice || '').trim();
   if (!text) return { ok: false, why: '' };
@@ -608,14 +608,14 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
   storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
   let settle; let fail;
-  // WHAT CAME OF IT (option 2, the owner 2026-10-01): once a paid deposit is claimed, the round is looked at again -
+  // WHAT CAME OF IT (option 2, 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
   let decide;
   const outcome = new Promise((res) => { decide = res; });
   const claimed = new Promise((res, rej) => { settle = res; fail = rej; });
   claimed.catch(() => {});
   const made = [];
-  // THE DEPOSIT'S STATUS (the owner 2026-09-30): each invoice's end - "Claimed", "Expired", "Failure" or the wait's own
+  // THE DEPOSIT'S STATUS (2026-09-30): each invoice's end - "Claimed", "Expired", "Failure" or the wait's own
   // error - to whoever watches the offer (the page's status line and bar under the invoice).
   const watchers = [];
   const said = (d, final) => { for (const w of watchers) { try { w(d, final); } catch { /* a watcher's own fault */ } } };
@@ -623,7 +623,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
     // AS ASKED, IN WHOLE SATS: the tabs are priced so their whole notes hold the rounds (oneRoundDepositMsat)
     const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
-    // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT (kanban #319): the lobby's first, then the federation's
+    // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the lobby's first, then the federation's
     const order = gatewayOrder([depositGateway('', gateways)].filter(Boolean), await federationGateways(client));
     const got = await invoiceThroughGateways(client, amount, order);
     let settled = false;
@@ -688,7 +688,7 @@ function depositRowOnce(storage, federationId, d) {
   return true;
 }
 /**
- * THE DEPOSITS AN EARLIER PAGE LEFT (the owner 2026-09-30: a reload of the deposit page lands on the lobby, and a payment
+ * THE DEPOSITS AN EARLIER PAGE LEFT (2026-09-30: a reload of the deposit page lands on the lobby, and a payment
  * made just before it must still be in the history): the reopened wallet waits on each kept operation; a claimed one
  * gets its row, and every ended one leaves the list. `onClaimed(d)` for each new row. Spends nothing.
  */
@@ -711,7 +711,7 @@ export async function settingsDepositOffer({ round, invite, seed, LockClient, st
 }
 function depositRow(storage, round, d) { depositRowOnce(storage, round.federationId, d); }
 /**
- * A DEPOSIT BEFORE ANY ROUND (kanban #350, the owner 2026-10-12 "Yes" to Deposit on the games screen before a game is picked): no
+ * A DEPOSIT BEFORE ANY ROUND (2026-10-12 "Yes" to Deposit on the games screen before a game is picked): no
  * round to count rounds in, so the tabs are plain amounts - 1,000 / 5,000 / 10,000 / 50,000 sat and Custom - into the same
  * player wallet, opened from its federation alone (openPlayerWallet).
  */
@@ -728,7 +728,7 @@ export async function walletDepositOffer({ federationId, invite, seed, LockClien
 export const DEPOSIT_MARGIN_PPM = 6000n;
 export const DEPOSIT_MARGIN_MSAT = 10000n;
 /**
- * THE REST OF A ROUND'S FEES, AS ONE INVOICE (option 2, the owner 2026-10-01: "This round needs N more sat for fees. Pay the
+ * THE REST OF A ROUND'S FEES, AS ONE INVOICE (option 2, 2026-10-01: "This round needs N more sat for fees. Pay the
  * rest to join." - measured: a 100 sat round's gross 100 sat credited 99840 msat, short of its locks). What the wallet is
  * short, plus 1 sat for the claim of this small deposit itself, in whole sat.
  */
@@ -737,7 +737,7 @@ export const REST_MARGIN_MSAT = 1000n;
  * small to cover fees", 5 sat made). A rest under it is invoiced at it; the extra stays in the player wallet. */
 export const REST_FLOOR_MSAT = 5000n;   // the smallest deposit the federation takes (measured: 2, 3, 4 sat refused)
 export const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST_FLOOR_MSAT : BigInt(restMsat));
-/** A donation the player wallet paid, a history row (every deduction is a row - the owner 2026-09-30 16:15). */
+/** A donation the player wallet paid, a history row (every deduction is a row - 2026-09-30 16:15). */
 export function recordDonation(storage, federationId, { msat, round }) {
   ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null });
 }
@@ -751,7 +751,7 @@ export function restOfFeesMsat(shortMsat) {
 /** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
 export const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
 /**
- * NOTES STILL BEING ISSUED (kanban #376, the join that never started): a wallet's e-cash counts in `balanceMsat` only once the
+ * NOTES STILL BEING ISSUED (the join that never started): a wallet's e-cash counts in `balanceMsat` only once the
  * guardians' blind signatures for it are in - a restored wallet's notes are re-issued by an output state machine AFTER `recover`
  * returns, a deposit's after its claim, a payment's change after the payment. Measured on a page with one pinned seed (6b360bd8,
  * a fresh profile): the balance read 0 sat for more than 6 minutes while the seed held 3000 sat, and a deposit "Claimed" at 78 s
@@ -780,7 +780,7 @@ export async function awaitIssued(client, { untilMs = null, onStep = () => {} } 
   }
 }
 /**
- * A WALLET SHORT OF THE STAKE IS ASKED AT THE PRESS (the owner 2026-10-18, playtest: "I have no money deposited yet it is trying to place
+ * A WALLET SHORT OF THE STAKE IS ASKED AT THE PRESS (2026-10-18, playtest: "I have no money deposited yet it is trying to place
  * the order. It takes a while then the deposit screen comes. It shouldn't take so long" - measured 27.25 s, 24.8 of them in front of the
  * deposit waiting on the round's donation set from a seat that did not answer). Before the round's other steps: the player wallet opened
  * and read; holding less than the stake it surely cannot enter, so the deposit offer is made now - `fundPlayerWallet({ early })` waits
@@ -804,7 +804,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
   for (let tries = 0; ; tries++) {
     let have = BigInt(await client.balanceMsat());
     let n = await needFor(client, LockClient, locks);
-    // A WALLET WHOSE NOTES ARE STILL BEING ISSUED (kanban #376, the owner 2026-10-16 06:25Z, right after buying the larger truck:
+    // A WALLET WHOSE NOTES ARE STILL BEING ISSUED (2026-10-16 06:25Z, right after buying the larger truck:
     // "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - the join asked a deposit and
     // never started): short of the quote, but not once what is being issued has landed - those notes are waited for, then the
     // round is quoted again. Nothing being issued, the quote stands and its own words are said.
@@ -820,13 +820,13 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     if (n.need !== null && have >= n.need) { if (prev) prev.decided({ funded: true }); break; }
     // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the page shows the offer - the tabs, the invoice, a close - and
     // this waits for whichever invoice is paid, then looks again.
-    // STILL SHORT AFTER A PAID DEPOSIT, OR SHORT ONLY BY THE FEES (option 2, the owner 2026-10-01): not the tabs again - the
+    // STILL SHORT AFTER A PAID DEPOSIT, OR SHORT ONLY BY THE FEES (option 2, 2026-10-01): not the tabs again - the
     // rest, as one exact invoice, handed to the paid offer's `outcome` (the modal stays and shows it) or, with no paid
     // deposit before it, asked for at once.
     if (askDeposit) {
       const short = (n.need !== null ? n.need : n.floor) - have;
       const restMsat = prev || shortOnlyByFees(have, short, stakeOf(round)) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
-      // THE OFFER ALREADY SHOWN AT THE PRESS (earlyDepositOffer, the owner 2026-10-18): a wallet short of the stake was asked at once,
+      // THE OFFER ALREADY SHOWN AT THE PRESS (earlyDepositOffer, 2026-10-18): a wallet short of the stake was asked at once,
       // while the round's other steps ran - that offer is this one; it is waited for, not made or asked again
       const adopt = !prev && early && !early.adopted && restMsat === null;
       if (adopt) early.adopted = true;
@@ -834,11 +834,11 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (adopt) { /* already on the screen */ } else if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
-      // NOT PAST THE ROUND'S ENTRY (kanban #6, MF 18: a deposit left open was still waiting 30 s and 151 s past the close, the round's
+      // NOT PAST THE ROUND'S ENTRY (MF 18: a deposit left open was still waiting 30 s and 151 s past the close, the round's
       // clock at 0:00 behind it, no error): at the round's last entry instant the request is closed with the reason - the join is
       // refused by name. Its invoice is still followed: paid later, it lands in the player wallet, for the next round.
       let closeTimer = null;
-      // A DEPOSIT ASKED BECAUSE THE WALLET WAS SHORT IS THE WALLET'S, NOT THE ROUND'S (the owner 2026-10-18 playtest, RPS with 0 sat: "No deposit
+      // A DEPOSIT ASKED BECAUSE THE WALLET WAS SHORT IS THE WALLET'S, NOT THE ROUND'S (2026-10-18 playtest, RPS with 0 sat: "No deposit
       // screen comes" - measured on the test host: an RPS round's entry closed 3 s after the press, which closed the offer before it was ever
       // seen): at the round's entry close the join ends by name, and the early offer stays on the screen - its invoice still followed, paid
       // later it lands in the player wallet for the next round
@@ -863,7 +863,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is refused (measured, 556 msat).
     const least = n.locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
     const asked = shortBy > least ? shortBy : least;
-    // THE INVOICE AT ONCE (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit invoice is a Lightning payment").
+    // THE INVOICE AT ONCE (INSTANT-1527, 2026-09-30 15:23: "PLAY to the deposit invoice is a Lightning payment").
     // Measured in a page on testnet4: the lock client's depositFor took 256.8 s - it searches the invoice amount with a
     // receive-fee quote over the network at every step - against 1.3 s for the receive itself. With `estimateDeposit`
     // the invoice is sized from the fees here: measured, gateway B's receive plus the claim took 31698 msat of 9899474
@@ -873,7 +873,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     const plan = estimateDeposit
       ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
-    // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT (kanban #319): the named first, then the federation's list
+    // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the named first, then the federation's list
     const order = gatewayOrder([depositGateway(plan.gateway, gateways)].filter(Boolean), await federationGateways(client));
     const invoice = await invoiceThroughGateways(client, plan.invoice_msat, order);
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat), gateway: invoice.gateway, tried: invoice.tried };
@@ -896,7 +896,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
 
 /** The shares a donation pays in the federation: for a set of keys, each share above 0 msat, in the set's order; else none. */
 export function donationKeyShares(donationMsat, recipients) {
-  // A VERSION-11 TARGET (§27A.9.2, kanban #397): { network, game, reserve: { recipientPk, amountMsat } } - the developers' part of
+  // A VERSION-11 TARGET (§27A.9.2): { network, game, reserve: { recipientPk, amountMsat } } - the developers' part of
   // the donation over their sets, then one share to the federation's reserve key, marked, last
   if (recipients && recipients.reserve && typeof donationMsat === 'bigint') {
     const r = recipients.reserve;
@@ -956,12 +956,12 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
 
   onStep(`the player wallet holds ${before} msat; locking ${amount} msat (and ${feeMsat} msat of node fee after it) from it`);
   const refundPk = refundKeyOf(playerPubkey);
-  // A LOCK IS MADE FOR EXACTLY stake_expiry_blocks (§23.1 step 4, RULED the owner 2026-09-24: no margin).
+  // A LOCK IS MADE FOR EXACTLY stake_expiry_blocks (§23.1 step 4, RULED 2026-09-24: no margin).
   const delta = Number(round.stakeExpiryBlocks);
-  // THE STAKE AND THE FEE IN ONE TRANSACTION (the owner 2026-10-02, the join's 2-3 s): `lockBoth` when the lock client has it
+  // THE STAKE AND THE FEE IN ONE TRANSACTION (2026-10-02, the join's 2-3 s): `lockBoth` when the lock client has it
   // and a fee is due - one block count, one transaction, one acceptance, both outpoints read together - each half checked
   // exactly as a lone lock is. Measured before: the two locks one after the other, 7.2 s of a paid join (Q4).
-  // THE LOCK ANSWERED ON SUBMISSION, ITS ACCEPTANCE CHECKED AFTER (the owner 2026-10-03, OPEN-LIST-2140 item 3: PLAY to the
+  // THE LOCK ANSWERED ON SUBMISSION, ITS ACCEPTANCE CHECKED AFTER (2026-10-03, OPEN-LIST-2140 item 3: PLAY to the
   // entry committed was 3.5-4.7 s, the lock's federation acceptance 1.9-2.6 s of it). `lockSubmit` hands the guardians the
   // one transaction - stake, fee lock when due, donation outputs - and answers its outpoints at once; the entry names them
   // and goes to the signer nodes while the guardians accept it. `accepted` is the old answer's every check, made when they
@@ -1001,7 +1001,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     accepted.catch(() => { /* the caller is handed it; unobserved, it must not be an unhandled rejection */ });
     return { ...lock, client, feeLock, feeGate, donations, accepted, walletBeforeMsat: before, walletAfterMsat: null };
   }
-  // THE DONATION IN THE SAME TRANSACTION (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a round whose set
+  // THE DONATION IN THE SAME TRANSACTION (2026-10-03, FEDERATION.md "Donations in the federation"): a round whose set
   // pays keys gets one payout contract per share above 0 msat, in the set's order, beside the stake (and the fee lock) -
   // `lockWithDonations`. The entry names the outpoints; the seats check them with the federation before the stake counts.
   const donationShares = donationKeyShares(donationMsat, donationRecipients);
@@ -1076,7 +1076,7 @@ export function feeSecretFor(seed, roundId) {
   return sha256(m);
 }
 
-// THE WALLET'S HISTORY (the owner 2026-09-30 16:15: "Settings, under the balances, shows a transaction history. Every deposit,
+// THE WALLET'S HISTORY (2026-09-30 16:15: "Settings, under the balances, shows a transaction history. Every deposit,
 // every withdrawal, and every deduction for a game stake. A stake row names the round"). APPEND-ONLY, ONE LIST PER
 // FEDERATION, in the tab's vault under arena.ledger.<federation id hex>: a deposit row once its receive is claimed
 // (fundPlayerWallet), a stake row when saveLock keeps the lock (markLockCommitted adds its entry), a withdrawal row when a
@@ -1091,7 +1091,7 @@ export function ledgerRows(storage, federationId) {
   catch { return []; }
 }
 /**
- * WHAT THE WALLET HISTORY DRAWS (kanban #132, the owner 2026-10-04 15:45: "One line: Stake round xxx -100 sat. The 100 is the
+ * WHAT THE WALLET HISTORY DRAWS (2026-10-04 15:45: "One line: Stake round xxx -100 sat. The 100 is the
  * stake plus the donation. No Donation row."): every donation row whose round has a stake row is folded into that stake row
  * - the amounts summed, the stake row's own time, round, entry and player kept. A donation with no stake row of its round
  * stays its own line, so nothing paid disappears. Drawing only: the stored ledger is not rewritten.
@@ -1169,7 +1169,7 @@ export function saveLock(storage, { roundId, playerPubkey, stake, lock, federati
     feeLock: lock.feeLock ? { preimage: toHex(lock.feeLock.preimage),
       outpoint: { txid: toHex(lock.feeLock.outpoint.txid), outIdx: String(lock.feeLock.outpoint.outIdx) },
       fields: lockFieldsToJson(lock.feeLock.fields) } : null,
-    // AND ITS DONATION OUTPUTS (the owner 2026-10-03): the entry names them, so a reload names the same
+    // AND ITS DONATION OUTPUTS (2026-10-03): the entry names them, so a reload names the same
     donations: (lock.donations || []).map((d) => ({ txid: toHex(d.txid), outIdx: String(d.outIdx), recipientPk: toHex(d.recipientPk), amountMsat: String(d.amountMsat) })),
   }));
   // THE DONATION IN THE WALLET'S HISTORY, paid with the stake
@@ -1220,7 +1220,7 @@ export function keptLockUse(kept, { entry = null, beforeStart = false, beforeClo
   // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
   try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
   if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
-  // AND AFTER THE START, UNTIL THE ROUND CLOSES (the owner 2026-10-03: "a reload after the round has started ... That run must
+  // AND AFTER THE START, UNTIL THE ROUND CLOSES (2026-10-03: "a reload after the round has started ... That run must
   // not be lost"): the same entry, lock and session key, and the run is RESUMED from what the seats hold of it (the bridge
   // replays the transcript and goes on from the adopted mark - blwp.jslib BLWP_RESUME). After the close only the collect.
   if (!beforeStart && beforeClose && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: 'running' };
@@ -1256,7 +1256,7 @@ export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
 export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
   const found = new Map();
-  // WHO ANSWERED (kanban #133): the list carries how many signer nodes were asked, answered and named a lock, and each
+  // WHO ANSWERED: the list carries how many signer nodes were asked, answered and named a lock, and each
   // one's reply in short - an empty list nobody answered is not "no lock".
   const asked = [...new Set(nodes || [])];
   const said = [];
@@ -1316,7 +1316,7 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
  * lock client checks it under the contract (and the guardians again) - a signer node
  * that answers with bytes that are not the forfeit gets nothing through.
  */
-// `lock`: 'stake', or 'fee' - a market order's fee lock (kanban #336), which the seats return whole for an order the book
+// `lock`: 'stake', or 'fee' - a market order's fee lock, which the seats return whole for an order the book
 // never filled and claim at resolution for one it did
 export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake' } = {}) {
   const refused = [];
@@ -1353,7 +1353,7 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
     if (!f.ok) throw new Error(f.why);
     forfeits.push({ lock: l, forfeit: f });
   }
-  // AND THE ORDER'S FEE LOCK (kanban #336, measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
+  // AND THE ORDER'S FEE LOCK (measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
   // never filled came back without its 1 % - 54,450 of 55,000 msat, 55,440 of 56,000 - because only stake locks were ever
   // looked up). The tab's own record of it (this order's saved lock, under its own key); the seats give its forfeit only
   // when the order was not filled (or was cancelled, or the market refunded) - a fee they claim at resolution is refused,
@@ -1451,7 +1451,7 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
 const PAYOUT_NOTE = 'arena.payout.';
 
 /**
- * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7, kanban #348): one transaction per federation, listed by the
+ * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7): one transaction per federation, listed by the
  * seats' /lock-settlement as `federations` [{ federation, state, txid, moved: { payouts } }]. The first node that holds them all
  * ACCEPTED answers; else why not.
  */
@@ -1511,7 +1511,7 @@ export async function redeemPayoutsAcross({ round, roundId, seed, curve, storage
 }
 
 /**
- * A SLASH'S PAYOUT (kanban #307, spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share
+ * A SLASH'S PAYOUT (spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share
  * to its player"): when a node of this round was slashed for this player's entry, the arbitration service lists the share it
  * locked to the player's refund key - the key a settlement payout names - at GET /slash-payouts?round=. It is a pre-expired
  * lock, collected by Refund under that key exactly as a settlement payout is (redeemPayout); nobody else's key can move it.
@@ -1562,7 +1562,7 @@ export function slashPayoutMine(listed, { round, roundId, seed, curve, order = 0
 export const slashPayoutKept = (storage, roundId, order = 0) => { try { return !!(storage && storage.getItem(`${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`)); } catch { return false; } };
 
 /**
- * A SLASH PAYOUT INTO THE PLAYER WALLET (kanban #307): collected by Refund (redeemSlashPayout) into the wallet every
+ * A SLASH PAYOUT INTO THE PLAYER WALLET: collected by Refund (redeemSlashPayout) into the wallet every
  * deposit and payout lands in, and written in its history as a slash payout.
  */
 export async function collectSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed = null, fetcher, order = 0 } = {}) {
@@ -1592,7 +1592,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
   } catch { /* an unreadable note is no note */ }
-  // A REFUSED ROUND IS NEVER SETTLED (§23.2 REFUSED, kanban #191): its stake comes back by the forfeit alone
+  // A REFUSED ROUND IS NEVER SETTLED (§23.2 REFUSED): its stake comes back by the forfeit alone
   if (!refused) {
     const s = await settlementOf({ roundId, nodes, fetcher });
     if (!s.ok) return { ok: false, final: false, why: s.why };
@@ -1601,7 +1601,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   try {
     got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep, order });
   } catch (e) {
-    // NOBODY WON (the owner 2026-10-03): a loser's stake comes back at settlement when no winner was paid - a signer node
+    // NOBODY WON (2026-10-03): a loser's stake comes back at settlement when no winner was paid - a signer node
     // whose settlement is not ACCEPTED yet, or whose round has an entry still in its window, says so, and is asked again
     const lost = /that run is \S+ with score/.test(e.message)
       && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(e.message);
@@ -1641,7 +1641,7 @@ const STAKE_NOTE = 'arena.stakeback.';
 // same browser replaced the first's record, the winner's tab looked up the loser's lock, found nothing owed and marked the
 // round done - its pending line went at FINAL and its 96000 msat payout stayed in the federation. The record already
 // carries its tab's seed; the key now names it too, and a tab reads and marks only its own.
-// AND ONE PER ORDER (kanban #336): a tab's orders in one market round are as many entries, each with its own key - each
+// AND ONE PER ORDER: a tab's orders in one market round are as many entries, each with its own key - each
 // its own record (".o<n>" after the seed; order 0, the round's key, keeps the key it always had), and its own notes
 const orderTag = (order) => (order ? `.o${Number(order)}` : '');
 const collectKey = (roundIdHex, seed, order = 0) => `${COLLECT_NOTE}${roundIdHex}.${(seed instanceof Uint8Array ? toHex(seed) : String(seed || '')).slice(0, 16)}${orderTag(order)}`;
@@ -1689,7 +1689,7 @@ export function savedCollects(storage, { seed = null } = {}) {
 }
 
 /**
- * EVERY SAVED PHRASE OF THIS BROWSER, NOT ONLY THE TAB'S (kanban #153, ruled the owner 2026-10-07): a closed tab's round pays
+ * EVERY SAVED PHRASE OF THIS BROWSER, NOT ONLY THE TAB'S (ruled 2026-10-07): a closed tab's round pays
  * into the wallet of the seed that joined it, and a later tab - which may take another kept phrase, the one with the most
  * wallet entries - still collects it. The tab's own phrase first, then the kept list (`arena.seeds`), each once.
  */
@@ -1704,7 +1704,7 @@ export function browserSeedHexes(storage, tabSeed = null) {
 }
 
 /**
- * THE ROUND RECORDS A TAB COLLECTS (kanban #153): every record whose seed is one of the browser's saved phrases, each
+ * THE ROUND RECORDS A TAB COLLECTS: every record whose seed is one of the browser's saved phrases, each
  * collected into its OWN seed's wallet (`seed` on the record, never the tab's), with `own` saying whether it is the tab's
  * phrase; and, apart, the records whose seed no saved phrase holds - no key is left to redeem them, so they are named
  * `uncollectable` and paid into no other wallet.
@@ -1722,7 +1722,7 @@ export function recordsToCollect(storage, { tabSeed = null } = {}) {
 }
 
 /**
- * THE COLLECT'S LINES FOR THE LOBBY (kanban #153, the owner 2026-10-07): at most three, only those that apply, in the words of
+ * THE COLLECT'S LINES FOR THE LOBBY (2026-10-07): at most three, only those that apply, in the words of
  * the collect's records line - another kept seed's records (open / done, collected too; or held by another tab), a failed
  * collect, an uncollectable record. `records` as the page keeps them in BLWP_RECORDS ({ round, seed, own, state });
  * `failed` a Map round -> the error; `held` a Set of rounds another tab holds. Each: { text, kind }.
@@ -1772,7 +1772,7 @@ export function markCollectDone(storage, roundIdHex, done, seed = null, order = 
 const COLLECT_NOTE = 'arena.collect.';
 
 /**
- * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14: alice plays on her
+ * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, 2026-09-14: alice plays on her
  * desktop, forgets to withdraw, and two hours later plays on her iPhone). The iPhone holds only
  * the seed. Each signer node lists the rounds it settled since `sinceMs` (/settled), each with the keys
  * its settlement pays and the refund keys of its verified locks; this seed's key for each round
@@ -1782,7 +1782,7 @@ const COLLECT_NOTE = 'arena.collect.';
  * keeps them and looks at them as its own.
  */
 export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
-  // EVERY SAVED PHRASE AT ONCE (kanban #153, the owner 2026-10-07): each signer node's /settled is read once and matched against
+  // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
   const list = Array.isArray(seeds) ? seeds : [seed];
   if (!list.length || !list.every((s) => s instanceof Uint8Array && s.length === 32))
@@ -1808,13 +1808,13 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   for (const [id, l] of listed) {
     for (let i = 0; i < list.length; i++) {
       if (skips[i].has(id)) continue;
-      // EVERY ORDER'S KEY TOO (kanban #336): a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
+      // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
       const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
-        // A CONTRACT READ ONCE IS KEPT (kanban #378): the id is its hash, so it is the round for good - not read again at every scan
+        // A CONTRACT READ ONCE IS KEPT: the id is its hash, so it is the round for good - not read again at every scan
         let round = OWED_ROUNDS.get(id) || null;
         for (const node of round ? [] : nodes) {
           try {
@@ -1834,7 +1834,7 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   }
   return found;
 }
-const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked once (kanban #378)
+const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked once
 export const forgetOwedRounds = () => OWED_ROUNDS.clear();
 // how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
 export const ORDER_SCAN = 32;
@@ -1887,7 +1887,7 @@ export async function withdrawCollected({ client, invoiceFor, amountMsat = null,
 
 /**
  * THE WITHDRAW FROM THE PLAYER WALLET (§24A.1: the player "withdraws from over a Lightning invoice whenever he likes, in
- * any amount"; RULED the owner 2026-09-25). The one wallet per seed and federation, opened as the stake opens it, handed to
+ * any amount"; RULED 2026-09-25). The one wallet per seed and federation, opened as the stake opens it, handed to
  * the same withdraw the round's wallet uses (`withdrawCollected`): its whole withdrawable balance to an invoice from the
  * player's own Lightning wallet. A spend - called from the Withdraw press alone, never on a timer.
  */
@@ -1953,7 +1953,7 @@ export async function refundKept({ round, roundId, seed, curve, client, storage,
  * settle, after its expiry). `refund` and `redeem` are never called here.
  */
 /**
- * A LOCK FOR A ROUND THE SIGNER NODES REFUSE, HANDED TO THEM FOR ITS RETURN (§23.2 REFUSED; kanban #191): POST
+ * A LOCK FOR A ROUND THE SIGNER NODES REFUSE, HANDED TO THEM FOR ITS RETURN (§23.2 REFUSED): POST
  * /refused-lock to every signer node of the round. Each keeps it only on its own record - it refuses the round, the lock
  * stakes no entry there, its image is A0 of a handout it holds for the round. Answers how many kept it, and each one's word.
  */
@@ -2022,7 +2022,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   else {
     const locks = s.ok ? await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }) : [];
     lockAnswers = locks.said ? { asked: locks.asked, answered: locks.answered, said: locks.said } : null;
-    // NOBODY ANSWERED IS NOT "NO LOCK" (kanban #133, playtest 2026-10-04: a DELIVERED player's 96 sat stake was never
+    // NOBODY ANSWERED IS NOT "NO LOCK" (playtest 2026-10-04: a DELIVERED player's 96 sat stake was never
     // asked back - the page's record of the round ended as if nothing were owed): with no signer node answering where
     // the lock is, the stake is still waiting and the round is looked at again.
     if (!locks.length && s.ok && locks.asked > 0 && locks.answered === 0)
@@ -2035,7 +2035,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
       else {
         const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher });
         if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
-        // NOBODY WON (the owner 2026-10-03): a signer node not yet ACCEPTED, or a round entry still in its window, is waiting
+        // NOBODY WON (2026-10-03): a signer node not yet ACCEPTED, or a round entry still in its window, is waiting
         else if (/that run is \S+ with score/.test(f.why)
           && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(f.why)) stake = { state: 'lost', msat };
         else stake = { state: 'waiting', msat, why: f.why };
@@ -2048,7 +2048,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
       if (!ls.length) stake = { state: s.ok ? 'none' : 'waiting', why: 'this tab keeps no lock for this round' };
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
-        // §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
+        // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
         // still in the federation that no signer node knows is handed to them; if they refuse its round they keep it, and
         // its forfeit is the stake owed back now - not after its expiry.
         // the fee lock from the tab's saved lock when the record handed in carries the stake alone (a collect record does)
@@ -2125,7 +2125,7 @@ export async function collectOwed({ look, client, ...ask } = {}) {
 }
 
 /**
- * WINNINGS-AUTO (RULED the owner 2026-10-01): WHAT IS OWED GOES INTO THE PLAYER WALLET BY ITSELF - the payout contract
+ * WINNINGS-AUTO (RULED 2026-10-01): WHAT IS OWED GOES INTO THE PLAYER WALLET BY ITSELF - the payout contract
  * redeemed, the stake back by the signer nodes' forfeit or by the player's key after expiry - the moment it exists, with
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
  * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
@@ -2137,7 +2137,7 @@ export async function collectIntoPlayerWallet({ look, round, roundId, invite, se
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
   const after = BigInt(await client.balanceMsat());
   const creditedMsat = after > before ? after - before : 0n;
-  // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (the owner 2026-10-03: "the money that comes back must be
+  // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (2026-10-03: "the money that comes back must be
   // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
   const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
   if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) });
@@ -2226,7 +2226,7 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
   // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).
   if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a signer node\'s /lock or /fee-lock');
   const body = JSON.stringify(lockFieldsToJson(fields));
-  // TO EVERY SIGNER NODE AT ONCE (JOIN-TIME-1359, the owner 2026-10-02: "The join takes too long. Cut that time. PLAY to a
+  // TO EVERY SIGNER NODE AT ONCE (JOIN-TIME-1359, 2026-10-02: "The join takes too long. Cut that time. PLAY to a
   // committed entry is the clock"): handed one node after another, each answering only once it had asked the federation
   // (two or three client runs, ~1.8 s), the stake lock took ~13 s across 7 and the fee lock ~9 s more - 19 of the paid
   // join's 38 s from PLAY to the stake SEEN at 5 of 7 (measured on testnet4, round 1a21b8d0). Each node checks on its own;
@@ -2244,7 +2244,7 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
 }
 
 /**
- * THE NOTES FOLLOW THE FEDERATION'S SUCCESSOR, BY THEMSELVES (§23A.6 step 3, kanban #325: "On its next start and at every
+ * THE NOTES FOLLOW THE FEDERATION'S SUCCESSOR, BY THEMSELVES (§23A.6 step 3,: "On its next start and at every
  * settlement it sees, a client whose notes are in a DRAINING federation moves them to the successor: a stock LNv2 send
  * from the old federation paying a stock LNv2 receive invoice in the new one ... In chunks, atomic each, no press; the
  * balance shows moving until it is done, then the new federation's name").
@@ -2261,7 +2261,7 @@ export const MIGRATE_DUST_MSAT = 10000n;
 export async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
   gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
-  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, the owner 2026-10-13)
+  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13)
   if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
@@ -2295,7 +2295,7 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
 }
 
 /**
- * THE PLAYER'S NOTES OUT OF A DRAINING FEDERATION (§23A.6 step 3, kanban #325), as the page runs it: `status` is the round
+ * THE PLAYER'S NOTES OUT OF A DRAINING FEDERATION (§23A.6 step 3), as the page runs it: `status` is the round
  * federation's record as federations.js checked it, `successor` the successor's (its own record, checked the same way).
  * Nothing unless the first is DRAINING and names the second, and the second is OPEN with its invite. The player's wallet
  * in each (one seed, walletSecretFor per federation) is opened as the stake opens it; then migrateFromDraining.
@@ -2310,7 +2310,7 @@ export async function migratePlayerWallet({ round, invite, seed, LockClient, sto
 }
 
 /**
- * THE NOTES OUT OF A DRAINING OR CRITICAL FEDERATION, BY THEMSELVES (the owner 2026-10-13 ~12:00Z: "When a federation is draining
+ * THE NOTES OUT OF A DRAINING OR CRITICAL FEDERATION, BY THEMSELVES (2026-10-13 ~12:00Z: "When a federation is draining
  * the client has automatically to move it to a safe federation"): not only at a join into the successor (migratePlayerWallet)
  * but as soon as the page has checked the federations' records - into `target` (federations.js safeFederation: the named
  * successor, else the lowest-load OPEN one). `from`: the draining federation's checked status with its invite. Both wallets
@@ -2330,7 +2330,7 @@ export async function evacuatePlayerWallet({ from, target, seed, LockClient, sto
  * A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3: "Entering a round in another federation is a swap (§23A.6
  * mechanics: the notes leave the one and arrive in the other through a gateway that serves both, stock LNv2, seconds, the
  * routing fee shown) and the client does it on the press with the fee shown - it is not refused, and it is not the
- * default"; kanban #324 step 3).
+ * default").
  *
  * THE QUOTE, BEFORE THE PRESS: the amount and the fee its two legs cost - the paying wallet's gateway fee rule and the
  * receiving wallet's (each client's feeRule: base msat + ppm, rounded up) - and whether the paying wallet can send it.
@@ -2353,7 +2353,7 @@ export async function swapQuote({ from, to, amountMsat }) {
 /** At most this many gateway pairs per swap: each Refunded try costs seconds of the round's entry window. */
 export const SWAP_PAIRS_MAX = 6;
 /**
- * THE SWAP'S GATEWAY PAIRS (kanban #466): [receive, pay], the named gateways first, then each federation's list, never the same
+ * THE SWAP'S GATEWAY PAIRS: [receive, pay], the named gateways first, then each federation's list, never the same
  * gateway on both legs; none listed on either side - one pair of the lock client's own picks ('').
  */
 export function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP_PAIRS_MAX) {
@@ -2369,7 +2369,7 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
   onState({ state: 'swapping', amountMsat: amount });
   const before = BigInt(await from.balanceMsat());
   // THE INVOICE IS THE RECEIVING WALLET'S OWN, made for exactly the amount, and paid as a withdraw pays; the lock client never
-  // takes the gateway on the invoice's own node. TWO GATEWAYS, PAIR BY PAIR (kanban #466, measured 2026-10-18 on testnet4: left
+  // takes the gateway on the invoice's own node. TWO GATEWAYS, PAIR BY PAIR (measured 2026-10-18 on testnet4: left
   // to the lock client's pick, the legs landed on gateway C's node twice - once paying, its one channel's 775 sat leaving no
   // outbound, "InsufficientBalance"; once receiving, gw-b's node then finding "NoRoute" - and every swap ended Refunded):
   // receive through one listed gateway, pay through another, and a payment that ends Refunded - the money back - tries the next

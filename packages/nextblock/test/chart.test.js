@@ -53,7 +53,7 @@ test('ROUND is the lead: from the open candle, one more staircase candle every t
   for (let k = 0; k < 90; k++) { const p = seededOpen + ((k * 7919) % 4001) - 1500; prices.push(p); submitSample(st, p); }
   o = view(st, C.CHART_ROUND);
   assert.equal(o[C.CH_CANDLES], 1 + 45, '90 samples are 45 candles after the open candle');
-  // THE FIRST LIVE PRICE CONTINUES THE CHART (the owner 2026-09-17 16:42): the seeded tape, the open with it, is moved onto
+  // THE FIRST LIVE PRICE CONTINUES THE CHART (2026-09-17 16:42): the seeded tape, the open with it, is moved onto
   // the first sample's level, so the open candle ends where the first price begins.
   const d = prices[0] - seededOpen, open = seededOpen + d;
   assert.equal(o[C.CH_OPEN], open, 'the open did not move onto the first live price');
@@ -147,7 +147,7 @@ test('GATE is the core gate, the objectives and the assault the core words, and 
     `the gate is ${past.toFixed(4)} of a candle past the last`);
 });
 
-// THE SIX DOTS ARE THE SIX CANDLES ABOVE THEM (the owner 2026-09-19 21:39, hud-sideways-five-red-2139.png: the HUD
+// THE SIX DOTS ARE THE SIX CANDLES ABOVE THEM (2026-09-19 21:39, hud-sideways-five-red-2139.png: the HUD
 // printed SIDEWAYS over five red candles). §4.14 reads "the colour of the last six FINISHED candles" and a candle is
 // what §4.15 draws - two samples, opening on the previous candle's close. The trend read one sample of each body and
 // dropped the other, so it graded half the candle the player was looking at: a body of $2.44 to $4.88 at $81,339 was

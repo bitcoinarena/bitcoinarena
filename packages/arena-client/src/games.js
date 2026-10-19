@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GAMES FIRST, THEN THE GAME'S CLIENT (kanban #208, the owner 2026-10-06: "the lobby lists the games the reachable nodes
+// THE GAMES FIRST, THEN THE GAME'S CLIENT (2026-10-06: "the lobby lists the games the reachable nodes
 // host, then that game's rounds; the page loads the plugin's client by the manifest's hash; one wallet and one seed across
 // games").
 //
@@ -43,14 +43,14 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
           icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),
           known: Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, id), devKey: toHex(manifest.gameDevPubkey),
           manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [],
-          // ITS SIGNED DESCRIPTION, AS HANDED (kanban #338): checked against the developer key by checkedGameInfo, never taken
+          // ITS SIGNED DESCRIPTION, AS HANDED: checked against the developer key by checkedGameInfo, never taken
           info: g.info && typeof g.info === 'object' ? g.info : null,
           // WHO PLAYS IT NOW: the highest any seat says - the seats of a committee hold the same entries, so a sum would count
           // each player once per seat
           live: { rounds: 0, players: 0 } });
       }
       const got = byId.get(id);
-      // ONE NODE, COUNTED ONCE (the owner 2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
+      // ONE NODE, COUNTED ONCE (2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
       // addresses (its Funnel name and its named tunnel) answers both with the same node key; it hosts the game once
       const key = body && /^[0-9a-f]{64}$/i.test(String(body.node)) ? String(body.node).toLowerCase() : node;
       if (!got.nodeKeys) Object.defineProperty(got, 'nodeKeys', { value: new Set(), enumerable: false });
@@ -69,7 +69,7 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
 }
 
 /**
- * ONE TILE PER GAME, NOT PER VERSION (kanban #348, measured on the v2 page: each game showed twice - its 2026.0.1 manifest
+ * ONE TILE PER GAME, NOT PER VERSION (measured on the v2 page: each game showed twice - its 2026.0.1 manifest
  * and its 2026.0.2 update, the second "No signed description."). Versions of one game share its developer key and name (an
  * update is a new manifest under the same key, §5). Of each, the newest that has a live round; with none live, the newest.
  * The others are kept on the tile as `versions` (newest first), so a link naming an older version's id still finds it.
@@ -102,7 +102,7 @@ export const rowsOfGame = (rows, gameIdHex) => (rows || []).filter((r) => String
 export async function gameClientFile({ game, url, digest, fetcher = fetch }) {
   if (!game || !game.manifest) throw new Error('a client is loaded for a game whose manifest is held');
   if (typeof digest !== 'function') throw new Error('a client file is checked against its hash, and no digest was injected');
-  // EVERY VERSION OF THE GAME ON ITS TILE (kanban #388): a version is a new manifest under the same developer key and name
+  // EVERY VERSION OF THE GAME ON ITS TILE: a version is a new manifest under the same developer key and name
   // (oneTilePerGame groups only those), so a client file any of them pins is the developer's; the tile may show version 2
   // while the page holds version 3's newer file
   const pinned = new Set([game, ...(Array.isArray(game.older) ? game.older : [])]
@@ -119,7 +119,7 @@ export async function gameClientFile({ game, url, digest, fetcher = fetch }) {
 }
 
 /**
- * A GAME'S SIGNED DESCRIPTION AND WEBSITE (kanban #338, game-info.js #276): kept only when the manifest's developer key signed
+ * A GAME'S SIGNED DESCRIPTION AND WEBSITE (game-info.js): kept only when the manifest's developer key signed
  * them - `verifyEd25519(sig, msg, pub)` may be async (the browser's). Anything else answers null and is not shown.
  */
 export async function checkedGameInfo(game, verifyEd25519) {
@@ -134,7 +134,7 @@ export async function checkedGameInfo(game, verifyEd25519) {
 }
 
 /**
- * A TILE'S DESCRIPTION (kanban #348): its own version's, else the newest other version's that its developer signed - each
+ * A TILE'S DESCRIPTION: its own version's, else the newest other version's that its developer signed - each
  * checked against that version's own id; a tile groups only one developer key's versions (oneTilePerGame).
  */
 export async function checkedGameInfoOfTile(tile, verifyEd25519) {

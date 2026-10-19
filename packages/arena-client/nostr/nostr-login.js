@@ -1,4 +1,4 @@
-// LOGIN WITH NOSTR (kanban #277, the owner 2026-10-09/10: "Nostr is the account ... the user must save the nsec ... If they
+// LOGIN WITH NOSTR (2026-10-09/10: "Nostr is the account ... the user must save the nsec ... If they
 // already have an nsec, connect a remote signer: Bunker, Amber, Alby"; 2026-10-10: "All is approved ... Figure out how that
 // works properly"). The game's wallet is one 32-byte seed (the 24 words); Nostr gives it back on any device:
 //   - THE SEED LIVES IN ONE EVENT: kind 30078 (NIP-78 app data), d = "bitcoin-arena/seed", its content the seed encrypted
@@ -99,7 +99,7 @@ async function reachable(pool, relays, ms) {
  * 'derived' | 'random'), relays: [those that took it] }.
  */
 // FRESH: a key made on this page a moment ago (newAccount) has no seed event anywhere - the relays are not asked for one (kanban
-// #381: the ask waited up to maxWait for every relay's answer before a new account's seed was made)
+//: the ask waited up to maxWait for every relay's answer before a new account's seed was made)
 export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_RELAYS, random = (n) => crypto.getRandomValues(new Uint8Array(n)), maxWait = 5000, fresh = false } = {}) {
   const up = await reachable(pool, relays, maxWait);
   if (!up.length) throw new Error('no Nostr relay answered: try again in a moment (your wallet is not made offline, so it cannot become a second one)');

@@ -34,7 +34,7 @@ cp "$ROOT/deploy/_headers" "$BUILD/_headers"
 node "$ROOT/unity-proto/tools/fill-template.mjs" "$BUILD"
 node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 
-# THE LOBBY'S SIGNER NODES GO BESIDE THE PAGE ON EVERY DEPLOY (the owner 2026-09-15 12:54: the Daily lobby
+# THE LOBBY'S SIGNER NODES GO BESIDE THE PAGE ON EVERY DEPLOY (2026-09-15 12:54: the Daily lobby
 # must list rounds). The page's bare root shows the lobby only from daily.json (index.html reads
 # it when the address has no query), and no deploy put it here - measured: every deploy from
 # 0.0.1265 to 0.0.1304 answered /daily.json with the page itself, so the bare root was the
@@ -47,7 +47,7 @@ node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 DAILY_DIR="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 DAILY="$DAILY_DIR/daily.json"
 [ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's signerNodes (packages/arena-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
-# THE FREE PAIR MAY BE DOWN; THE PAID LOBBY MAY NOT (the owner 2026-10-07, kanban #29 path 2): a daily.json that names no live
+# THE FREE PAIR MAY BE DOWN; THE PAID LOBBY MAY NOT (2026-10-07, path 2): a daily.json that names no live
 # FREE signerNode is not shipped either - its rows are left out (exit 2 below, FREE_DEAD) and the page names the testnet lobby
 # alone. A malformed file still refuses, and the testnet merge still refuses when no paid node answers.
 FREE_DEAD=0
@@ -76,7 +76,7 @@ rc=$?
 set -e
 if [ $rc -eq 2 ]; then FREE_DEAD=1; elif [ $rc -ne 0 ]; then echo "refusing: $DAILY does not name live signerNodes" >&2; exit 3; fi
 cp "$DAILY" "$BUILD/daily.json"
-# THE TESTNET LOBBY BESIDE IT (the owner 2026-09-30 16:07, DEPLOY-1900: "The page he opens always shows both: a free round and a
+# THE TESTNET LOBBY BESIDE IT (2026-09-30 16:07, DEPLOY-1900: "The page he opens always shows both: a free round and a
 # live paid testnet round of series 3cfbe516"): testnet-lobby.json in the pair's directory - the testnet4 nodes, bond,
 # advert, federation and funded gateway - is merged into daily.json as `testnet`, once one of its nodes answers /rounds.
 TESTNET="$DAILY_DIR/testnet-lobby.json"
@@ -110,7 +110,7 @@ MERGE
 fi
 
 
-# PHONES GET ASTC (kanban #265, 2026-10-08): BLWP_ASTC_BUILD_DIR names the same commit built with
+# PHONES GET ASTC (2026-10-08): BLWP_ASTC_BUILD_DIR names the same commit built with
 # ARENA_WEBGL_SUBTARGET=ASTC. Its data file goes beside the DXT one as <name>-astc.data.unityweb, its StreamingAssets (the
 # Addressables catalog) as StreamingAssets-astc, its streamed bundles into ServerData, and textures.json names them - the page
 # loads them on a GPU with ASTC and no S3TC. The code files must be byte-identical to this build's, or nothing is added.

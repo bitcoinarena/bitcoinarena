@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S BITCOIN WALLET (kanban #471 step C.7; the owner 2026-10-18: "Offers help with bond payment by giving an address on the newly
+// THE NODE'S BITCOIN WALLET (2026-10-18: "Offers help with bond payment by giving an address on the newly
 // created bitcoin wallet where the bond is first transferred to so the node can post the bond").
 //
 // One key from the node's 24 words (seed.js), as a taproot key-path address (BIP86: the key tweaked with no script tree), on testnet4

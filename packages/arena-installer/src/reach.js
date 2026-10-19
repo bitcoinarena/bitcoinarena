@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// HOW THE WORLD REACHES THE NODE (kanban #471 ruling 7, the owner 2026-10-18: "the other is direct connection, the installer automatically
+// HOW THE WORLD REACHES THE NODE (ruling 7, 2026-10-18: "the other is direct connection, the installer automatically
 // detects if outside connections are possible and if firewalls block it. If it succeeds that is the default option. Make up a default
 // port for remote node connections. Other option is permanent tunnel with wrangler / cloud flare with installation help ... Anonymous
 // temporary tunnel is the third option, permanent tunnel is the default option if no outside options are available. At the end that
@@ -150,11 +150,11 @@ export async function cloudflareTunnel({ bin = 'cloudflared', name, hostname, po
   const creds = join(dir, `${id}.json`);
   if (!existsSync(creds)) return { ok: false, why: `no credentials for tunnel ${id} in ${dir} (${readdirSync(dir).join(', ')})` };
   const config = join(home, 'cloudflared.yml');
-  writeFileSync(config, `# the node's permanent tunnel (kanban #471), written by the installer\ntunnel: ${id}\ncredentials-file: ${creds}\ningress:\n  - hostname: ${hostname}\n    service: http://127.0.0.1:${port}\n  - service: http_status:404\n`, { mode: 0o600 });
+  writeFileSync(config, `# the node's permanent tunnel, written by the installer\ntunnel: ${id}\ncredentials-file: ${creds}\ningress:\n  - hostname: ${hostname}\n    service: http://127.0.0.1:${port}\n  - service: http_status:404\n`, { mode: 0o600 });
   return { ok: true, id, config };
 }
 
-// ---- a permanent name through Tailscale Funnel (the owner 2026-10-18: "add Tailscale funnel support so permanent tunnel with Tailscale") ----
+// ---- a permanent name through Tailscale Funnel (2026-10-18: "add Tailscale funnel support so permanent tunnel with Tailscale") ----
 // The machine is on the user's tailnet already (tailscale up). `tailscale funnel --bg` keeps the route in tailscaled's own config, across
 // restarts, so the node needs no tunnel service: https://<machine>.<tailnet>.ts.net (or :8443 / :10000 - the ports Funnel allows) goes
 // to the node's port on 127.0.0.1. A Funnel port this machine already serves for something else is left alone (memory: a plain `serve`
@@ -189,7 +189,7 @@ export const tunnelArgsOf = ({ bin, mode, config, port }) => (mode === 'permanen
 /** The tunnel's systemd unit (its name is read from the journal for a quick tunnel). */
 export function tunnelUnit({ bin, mode, config, port }) {
   const exec = tunnelArgsOf({ bin, mode, config, port }).join(' ');
-  return `# The Arena node's ${mode} Cloudflare tunnel (kanban #471), written by the installer.
+  return `# The Arena node's ${mode} Cloudflare tunnel, written by the installer.
 [Unit]
 Description=Arena node ${mode} tunnel
 After=network-online.target arena-node.service

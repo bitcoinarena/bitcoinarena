@@ -1,4 +1,4 @@
-// BLWP (kanban #376, the join that never started): the e-cash this wallet is being issued right now - the denominations of every
+// BLWP (the join that never started): the e-cash this wallet is being issued right now - the denominations of every
 // output state machine still Pending (waiting for the guardians' blind signatures). A recovered wallet's notes are re-issued by
 // one such machine AFTER `recover` returns, a deposit's notes by another after its claim, a payment's change by a third; until
 // each finishes, the balance does not count them. Measured on a page (pinned seed 6b360bd8, a fresh profile): the balance read

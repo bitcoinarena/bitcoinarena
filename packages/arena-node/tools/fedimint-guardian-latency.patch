@@ -35,7 +35,7 @@ index e377f2b0a2f..3dab9ee0b96 100644
  
  /// Consensus broadcast settings that result in 3 minutes session time
 -const DEFAULT_BROADCAST_ROUND_DELAY_MS: u16 = 50;
-+/// BLWP kanban #178 (the owner 2026-10-05): 5 ms, measured on a 7-guardian regtest federation: a stake lock from submit until
++/// BLWP kanban #178 (2026-10-05): 5 ms, measured on a 7-guardian regtest federation: a stake lock from submit until
 +/// the client knows the federation accepted it p50 78 ms (50 ms: several hundred). With 3600 rounds a session closes
 +/// about every 18 s. Only a new guardian's local config takes this default; a running one keeps its own local.json.
 +const DEFAULT_BROADCAST_ROUND_DELAY_MS: u16 = 5;
@@ -111,7 +111,7 @@ index a82f78317ef..125b2686c95 100644
          //      * ALEPH_BFT_UNIT_BYTE_LIMIT
  
 -        const EXP_SLOWDOWN_ROUNDS: u16 = 1000;
-+        // BLWP kanban #178 (the owner 2026-10-05, Go on consensus speed): the slowdown rounds are the fewest (at least 1000,
++        // BLWP kanban #178 (2026-10-05, Go on consensus speed): the slowdown rounds are the fewest (at least 1000,
 +        // as before) that still make the session's end take at least 10 years at THIS guardian's round delay - the same
 +        // sum aleph_bft checks. At the 50 ms default it stays 1000; at 10 ms it is ~1035. The RAM bound above grows by
 +        // those few rounds; the 10-year guarantee is unchanged.

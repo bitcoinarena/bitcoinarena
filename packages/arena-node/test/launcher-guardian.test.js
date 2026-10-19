@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE'S ADVERT SAYS WHETHER IT IS A GUARDIAN, AND THE LAUNCHER TAKES THAT ONLY FROM THE RUNNING NODE'S HTTP
-// GET /guardian (spec §5A.1 v4.6.4, §23A.2 one node is one guardian - RULED the owner 2026-09-26 22:54; the slice accepted
+// GET /guardian (spec §5A.1 v4.6.4, §23A.2 one node is one guardian - RULED 2026-09-26 22:54; the slice accepted
 // 2026-09-27: "taken only from the running node's HTTP GET /guardian"). Nothing an operator types sets either field.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

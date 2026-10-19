@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET ROUND'S LOCKS OUTLIVE ITS WHOLE LIFE (kanban #236): the lock span sized from its times and terms, at its chain's
+// A MARKET ROUND'S LOCKS OUTLIVE ITS WHOLE LIFE: the lock span sized from its times and terms, at its chain's
 // fastest block time; a game keeps the ruled 144; the market's own clock puts its closes on its period's UTC grid.
 import test from 'node:test';
 import assert from 'node:assert/strict';

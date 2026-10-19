@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESULTS ON NOSTR (kanban #362 feature 2, docs/PLATFORM-RESEARCH.md: "nodes publish what is already signed; the relay accepts the
+// RESULTS ON NOSTR (feature 2, docs/PLATFORM-RESEARCH.md: "nodes publish what is already signed; the relay accepts the
 // event kind"). When a round's settlement is ACCEPTED at this node, the node signs ONE Nostr event with the round's public result -
 // the game, the round, its federation and stake, each entry's display name, player key, outcome, score or pick, rank and the
 // share of the pool its settlement paid, the FINAL time and the settlement txid(s) - so anyone can follow a node's npub, and a

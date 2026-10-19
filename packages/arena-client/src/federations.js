@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT THIS CLIENT BELIEVES ABOUT A FEDERATION (spec §23A.4, kanban #321): its guardians' newest signed record, read from
-// the round's nodes (GET /federations) and checked against the census this client checked itself (committee.js, #296) -
+// WHAT THIS CLIENT BELIEVES ABOUT A FEDERATION (spec §23A.4): its guardians' newest signed record, read from
+// the round's nodes (GET /federations) and checked against the census this client checked itself (committee.js) -
 // at least the threshold of the federation's bonded guardians, the invite naming that federation. Nothing else: "a client
 // trusts nothing about a federation that has no record it can verify".
 //   OPEN      everything as before
@@ -40,7 +40,7 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
 }
 
 /**
- * EVERY FEDERATION THE SEATS LIST, EACH AS federationStatus ANSWERS IT (§23A.3, kanban #324: Move is offered against the
+ * EVERY FEDERATION THE SEATS LIST, EACH AS federationStatus ANSWERS IT (§23A.3,: Move is offered against the
  * others' loads): one read of each seat's /federations, every record checked against the same census. A Map, federation
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
@@ -77,11 +77,11 @@ function statusOfRecord(best) {
   return { status: best.status, allows: refusesDeposit ? { ...FEDERATION_ALLOWS[best.status], deposit: false } : FEDERATION_ALLOWS[best.status],
     loadRefusesDeposit: refusesDeposit, signers: best.signers, height: best.record.height, from: best.from,
     nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats),
-    // THE LOAD (§23A.3, kanban #324): the signed reserve over the signed exposure cap - what the federation holds against what
+    // THE LOAD (§23A.3): the signed reserve over the signed exposure cap - what the federation holds against what
     // its smallest set of leavers' bonds covers; null when the record names no cap
     reserveSats: String(best.record.reserveSats ?? 0n),
     load,
-    // THE SUCCESSION (§23A.6, kanban #325): the successor the guardians named (hex, or null) and this federation's own invite,
+    // THE SUCCESSION (§23A.6): the successor the guardians named (hex, or null) and this federation's own invite,
     // so a page can open the player's wallet in the successor from the successor's record
     successorId: best.record.successorId && best.record.successorId.some((x) => x) ? bytesToHex(best.record.successorId) : null,
     invite: best.record.invite || null };
@@ -89,7 +89,7 @@ function statusOfRecord(best) {
 
 /**
  * A DEPOSIT REFUSED FOR THE LOAD (§23A.3: "A deposit into a federation at load >= 1 is refused by the client") - RULED
- * the owner 2026-10-12 (kanban #324, option A): on mainnet only. A test network (regtest, testnet4) shows the load and warns,
+ * 2026-10-12 (option A): on mainnet only. A test network (regtest, testnet4) shows the load and warns,
  * and refuses nothing: testnet4's one federation holds 4.33x its cover, and its bonds are not raised for it.
  */
 const TEST_NETWORKS = new Set(['regtest', 'testnet4']);
@@ -112,7 +112,7 @@ export function pickFederation(statuses, { known = () => true } = {}) {
 
 /**
  * THE FEDERATION A DEPOSIT GOES INTO (§23A.3 "First deposit. The client takes the OPEN federations of the census, drops those
- * not on its known-good list ..., and picks the one with the lowest load"; kanban #324 step 1). A FIRST deposit - this
+ * not on its known-good list ..., and picks the one with the lowest load"). A FIRST deposit - this
  * browser holds no federation's wallet yet (`held` empty) - goes to pickFederation's answer over the verified statuses whose
  * record names an invite; a returning player stays ("A returning player stays in his federation"; Move is offered apart).
  * Otherwise, or when nothing better is verified, the lobby's federation.
@@ -125,7 +125,7 @@ export function pickFederation(statuses, { known = () => true } = {}) {
  */
 export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
-  // EVERY DEPOSIT TO THE LOWEST LOAD (RULED the owner 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
+  // EVERY DEPOSIT TO THE LOWEST LOAD (RULED 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
   // it's evened out"): a returning player too - the page sums every federation's wallet (BLWP_SUM_BALANCES), so where the money
   // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
   if (!always && held && held.length) {
@@ -141,7 +141,7 @@ export function depositFederation({ lobbyInvite, statuses = [], held = [], known
 }
 
 /**
- * WHERE A STAKE IS LOCKED FOR A ROUND THAT TAKES ANY FEDERATION (2026.0.3 step 7, kanban #348; the owner 2026-10-13: "Es muss möglich
+ * WHERE A STAKE IS LOCKED FOR A ROUND THAT TAKES ANY FEDERATION (2026.0.3 step 72026-10-13: "Es muss möglich
  * sein für alle Spiele über alle Federation zu zahlen", "It should always take the federation with less funds so it's evened out").
  * A lock spends notes of one federation, so only a federation whose wallet here covers the stake can hold it; among those the
  * lowest-load OPEN, known one (pickFederation). `parts` [{ federation, msat }] the wallet per federation (the summed balance's
@@ -176,7 +176,7 @@ export function loadSays(fed) {
 }
 
 /**
- * ALL FEDERATIONS TOGETHER, FOR THE DEPOSIT SCREEN (kanban #347, the owner 2026-10-12: "show the total amount of funds in all
+ * ALL FEDERATIONS TOGETHER, FOR THE DEPOSIT SCREEN (2026-10-12: "show the total amount of funds in all
  * federations, number of federations we have and total health before we will stop accepting deposits ... green/yellow/red
  * ... Show the total possible capacity"). From the verified statuses (federationStatuses), the ones with a signed cap:
  *   reserveSats  every federation's signed reserve, summed (the funds held)
@@ -230,7 +230,7 @@ export function federationSays(status) {
   })[status] || '';
 }
 
-// ---- the known-good list and the player's own confirmation (kanban #318, spec §23.6) ----
+// ---- the known-good list and the player's own confirmation (spec §23.6) ----
 import { federationIsKnown, knownFederation } from '../../arena-protocol/src/known-federations.js';
 export { federationIsKnown, knownFederation };
 
@@ -265,7 +265,7 @@ export function inviteNamesFederation(invite, federationIdHex) {
 }
 
 /**
- * THE FEDERATION A WITHDRAW READS (kanban #348, with every deposit going to the lowest load): the one of `parts` - the summed
+ * THE FEDERATION A WITHDRAW READS (with every deposit going to the lowest load): the one of `parts` - the summed
  * balance's split, [{ federation, sats }] - holding the most, among those whose invite a verified status names; else the lobby's.
  * One federation per withdraw; a withdraw over several federations at once is a later step.
  */
@@ -277,7 +277,7 @@ export function withdrawFederation({ lobbyInvite, parts = [], statuses = [] }) {
 }
 
 /**
- * WHERE A DRAINING FEDERATION'S NOTES GO (the owner 2026-10-13 ~12:00Z: "When a federation is draining the client has automatically
+ * WHERE A DRAINING FEDERATION'S NOTES GO (2026-10-13 ~12:00Z: "When a federation is draining the client has automatically
  * to move it to a safe federation"): `from` is a federation's checked status ({ federation, status, successorId }). DRAINING or
  * CRITICAL only. Its named successor when that one is OPEN with an invite; else the lowest-load OPEN, known federation other
  * than itself (pickFederation). Null when there is nowhere safe - the notes stay and the next status read tries again.

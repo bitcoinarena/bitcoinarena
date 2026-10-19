@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GATEWAY'S ROUTED VOLUME, READ FROM ITS FEDERATION (spec §23A.9, kanban #471): the LNv2 module streams every incoming contract it
+// A GATEWAY'S ROUTED VOLUME, READ FROM ITS FEDERATION (spec §23A.9): the LNv2 module streams every incoming contract it
 // holds (`await_incoming_contracts`, public - the call a client makes for lnurl receives), and each contract's `refund_pk` is the
 // key of the gateway that funded it: that gateway's `module_public_key` in its routing_info (measured 2026-10-18 on federation A:
 // refund_pk 03545b94… = gateway lnd-testnet4-b's module_public_key). So a guardian counts, per gateway, the msat of the incoming

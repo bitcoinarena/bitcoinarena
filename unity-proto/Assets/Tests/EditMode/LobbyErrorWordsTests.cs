@@ -4,7 +4,7 @@ using NUnit.Framework;
 using Blwp;
 
 /// <summary>
-/// THE LOBBY SAYS WHY (kanban #6, MF 18 on 0.0.2520): with every seat unreachable it read "No round is open for entry right now",
+/// THE LOBBY SAYS WHY (MF 18 on 0.0.2520): with every seat unreachable it read "No round is open for entry right now",
 /// and a round link whose committee had not formed left the lobby silent. Now: none reached is said so, with how many were asked,
 /// and a round not open yet says when it opens.
 /// </summary>
@@ -38,7 +38,7 @@ public class LobbyErrorWordsTests
 }
 
 /// <summary>
-/// A ROUND LINK HELD TO ITS START DOES NOT DRIVE (kanban #372, measured on preview UI 137: a reload during a held join came up driving
+/// A ROUND LINK HELD TO ITS START DOES NOT DRIVE (measured on preview UI 137: a reload during a held join came up driving
 /// 29 s before the start, with no stake): the address's play=1 waits for the page's word, "no" when held, and drives on any other word.
 /// </summary>
 public class LinkAutoPlayTests

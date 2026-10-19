@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CUSTODY AGENT (kanban #471 slice 5 part 4; the owner 2026-10-18: "4. It should happen automatically"): on a custody node, what
+// THE CUSTODY AGENT (2026-10-18: "4. It should happen automatically"): on a custody node, what
 // follows a founding without anyone at the keyboard. A user service of its own (the seat does not hold the wallet), every minute:
 //
 //   1. the node's guardian took part in a founding and its federation runs: fedimintd wrote <store>.guardian/invite-code. The node's
@@ -22,7 +22,7 @@ import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClo
 export const RING_SATS = 150000;
 export const RING_RESERVE_SATS = RING_SATS + 3000;
 /**
- * THE OUTSIDE CHANNEL (the owner 2026-10-18: "If the incoming channels are only connected between them with nothing outside it's no good"):
+ * THE OUTSIDE CHANNEL (2026-10-18: "If the incoming channels are only connected between them with nothing outside it's no good"):
  * each gateway also opens one channel to a well-connected node outside its federation, so payers and payees on the wider Lightning
  * network reach it. Per network; testnet4: the the test host's LND C over Tor ("for Testnet you can take one of our test-host nodes"; its IP is
  * dynamic, so its permanent onion address). Mainnet: to be named before mainnet.
@@ -95,7 +95,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     const s = state.read();
     const watched = await gatewayWatch(s);
     if (watched) return watched;
-    // A LIQUIDITY PROVIDER'S DEPOSIT (§23A.10, kanban #494): 5 x L on testnet4 from the node's wallet into LND's, once - the provider
+    // A LIQUIDITY PROVIDER'S DEPOSIT (§23A.10): 5 x L on testnet4 from the node's wallet into LND's, once - the provider
     // service (bin/liquidity-provider.mjs) opens channels from it
     if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.pubkey && !(s.custody || {}).liquidityFund) {
       const f = await lnd.funds(s.lightning);
@@ -207,7 +207,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         return { ok: true, did: 'outside-channel', txid: o.fundingTxid };
       }
     }
-    // 6. THE CHANNEL RING (the owner 2026-10-18, "1 and 2": the installer's LND had no inbound liquidity, so its gateway could take no deposit):
+    // 6. THE CHANNEL RING (2026-10-18, "1 and 2": the installer's LND had no inbound liquidity, so its gateway could take no deposit):
     // the federation's custody nodes in node-key order, each opens one channel of RING_SATS to the next - every gateway then has one
     // channel out (payouts) and one in (deposits), made by the federation's own nodes. The opener dials the next one's announced address;
     // a node nobody can dial (behind a tunnel) dials its previous neighbour instead, and that one opens over the connection it made.
@@ -222,7 +222,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       // to the previous neighbour: dial it (once connected, it stays), so it can open its ring channel to us even when nobody can dial this node
       if (!has(prev.lightningPubkey) && prev.lightningAddr && peers.ok && !peers.peers.includes(prev.lightningPubkey) && prev.lightningPubkey !== next.lightningPubkey)
         await lnd.connect(s.lightning, { pubkey: prev.lightningPubkey, host: prev.lightningAddr });
-      // THE RING REPAIRED WHEN A NODE JOINS OR LEAVES (the owner 2026-10-18: "When a node joins an existing federation it needs incoming
+      // THE RING REPAIRED WHEN A NODE JOINS OR LEAVES (2026-10-18: "When a node joins an existing federation it needs incoming
       // liquidity too"): this node's ring channel goes to a node that is no longer its next. When X joins between A and B, X opens to B
       // with its own coins; once X shows that outbound, A closes its old channel to B and opens to X with the same coins - everyone
       // again has one channel in and one out, and the joiner pays only its own. A channel to a node that left is closed at once.

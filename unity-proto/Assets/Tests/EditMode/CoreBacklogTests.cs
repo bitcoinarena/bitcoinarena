@@ -6,9 +6,9 @@ using Blwp;
 /// <summary>
 /// THE WAR DOES NOT RACE TO CATCH UP, AND IT DOES NOT LIVE IN THE PAST EITHER.
 ///
-/// the owner 2026-09-16 12:26: tanks "suddenly become very fast and race to another place - not instant",
+/// 2026-09-16 12:26: tanks "suddenly become very fast and race to another place - not instant",
 /// immediately on login. That was fast frames paying off an unbounded debt at eight ticks a frame, and
-/// the answer then was to throw the time away. the owner 2026-09-18 10:42: "TANKS are in completely
+/// the answer then was to throw the time away. 2026-09-18 10:42: "TANKS are in completely
 /// different places in the two sessions, as if each tab has its own game" - which is what throwing it
 /// away costs, because a browser throttles the tab it is not showing and that tab then stays behind.
 ///
@@ -57,7 +57,7 @@ public class CoreBacklogTests
     }
 
     /// <summary>
-    /// A TAB THE BROWSER WAS NOT SHOWING REJOINS THE ROUND (the owner 2026-09-18 10:42: "TANKS are in completely
+    /// A TAB THE BROWSER WAS NOT SHOWING REJOINS THE ROUND (2026-09-18 10:42: "TANKS are in completely
     /// different places in the two sessions, as if each tab has its own game").
     ///
     /// A hidden tab is throttled to nothing by the browser, and the time it missed used to be thrown away: his two

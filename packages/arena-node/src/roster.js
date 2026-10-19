@@ -31,7 +31,7 @@ import { findPublication, publicationIsBeforeBeacon } from '../../arena-protocol
 import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
 import { commitmentsOf } from '../../arena-protocol/src/tx.js';
 
-// A BLOCK'S COMMITMENTS, READ ONCE PER BLOCK (the owner 2026-10-15: "Do everything you can to lower the load"; profiled on a testnet4
+// A BLOCK'S COMMITMENTS, READ ONCE PER BLOCK (2026-10-15: "Do everything you can to lower the load"; profiled on a testnet4
 // seat: 22.9 % of its main thread was series.js findSeriesPublication - parse and hash every transaction of a ~2,600-block view -
 // asked again for every round of the 8 s grids, whose chain check is kept per committee time, so per round). The blocks are one
 // shared object each (main.js blockCache), so their commitments - the OP_RETURN payloads, as hex - are kept beside each block
@@ -178,12 +178,12 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null } = {}) {
     this.round = round;
-    // RESERVE SEATS (§5A.7, kanban #301): who a seating certificate seats for a round and role - node keys (hex), or null
+    // RESERVE SEATS (§5A.7): who a seating certificate seats for a round and role - node keys (hex), or null
     // while none stands. Set by the seating agent (seating-agent.js); with none, the committee is the draw's first slots.
     this.seatedFor = seatedFor;
     this.chainFor = chainFor;
     this.randomnessFor = randomnessFor;
-    // A CENSUS DERIVED ONCE, NOT ON EVERY ASK (the owner 2026-09-17 19:15, the ghost lag). Deriving one parses every
+    // A CENSUS DERIVED ONCE, NOT ON EVERY ASK (2026-09-17 19:15, the ghost lag). Deriving one parses every
     // transaction of every block in the round's view, and the payout's `gather` asks for it on the finality cadence:
     // measured live, `payout peersOf` held the event loop that pushes a pictured truck 142-209 ms, every time, for an
     // answer that cannot change. A census is fixed at the round's own `censusHeight` - blocks mined above it are not
@@ -197,7 +197,7 @@ export class Roster {
 
   /** How many derived censuses are kept: a round is asked about while it settles, and then never again. */
   static CENSUS_KEPT = 64;
-  // PER-ROUND ANSWERS (a seed, a committee) FOR A SERIES' WORTH OF ROUNDS (the owner 2026-09-30: ~440 listed rounds of
+  // PER-ROUND ANSWERS (a seed, a committee) FOR A SERIES' WORTH OF ROUNDS (2026-09-30: ~440 listed rounds of
   // series 3cfbe516 missed a 64-entry cache on every listing and were drawn again each time).
   static PER_ROUND_KEPT = 4096;
 
@@ -211,7 +211,7 @@ export class Roster {
    * chosen bytes.
    */
   /**
-   * THE SEED, CHECKED AGAINST THE CHAIN ONCE PER VIEW (the owner 2026-09-17 19:15, the ghost lag).
+   * THE SEED, CHECKED AGAINST THE CHAIN ONCE PER VIEW (2026-09-17 19:15, the ghost lag).
    *
    * A V8 profile of a live signer node named this path: `peersOf -> peersFor -> committeeFor -> seedFor ->
    * beaconFromChain / beaconIsTheChains -> chainWork -> meetsTarget -> blockHashOf -> hash256`, 39.8 s of a 417 s
@@ -248,7 +248,7 @@ export class Roster {
     // committee_time" is the question every node can ask, and a beacon the
     // creator could have held is refused for that before anything else is
     // considered - a node with no chain view still refuses it.
-    // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf): one committee per table
+    // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (pick (c), known-game.js tableAnchorOf): one committee per table
     const anchor = tableAnchorOf(contract);
     const seeded = committeeSeedFromBeacon(contract, {
       roundId: anchor ? anchor.anchorId : roundIdBytes, randomness, height: given && given.height, timeMs: given && given.timeMs,
@@ -275,7 +275,7 @@ export class Roster {
     if (view && view.pending)
       return { ok: false, why: 'this node is still reading its chain view for that round' };
     let checkedAgainstChain = false;
-    // THE CHAIN CHECK ONCE PER SERIES AND VIEW (the owner 2026-09-30, measured on testnet4): the beacon's block, its proof of
+    // THE CHAIN CHECK ONCE PER SERIES AND VIEW (2026-09-30, measured on testnet4): the beacon's block, its proof of
     // work and the series' publication are the same question for every round of a series - one committee_time, one
     // depth, one randomness, one publication - and at ~220 ms a round, past a 64-entry cache, ~484 rounds held GET
     // /rounds past 90 s. Kept by series (or round), randomness and the view's extent; a new header asks again.
@@ -328,7 +328,7 @@ export class Roster {
       // A SERIES ROUND IS PUBLISHED BY ITS SERIES' PUBLICATION ("ARN" SERIES series_id), which must confirm strictly below
       // the beacon block as a round's own must (measured 2026-09-30: every round of series 3cfbe516 was refused here, "there
       // is no publication transaction to read", because only a round's own publication was looked for).
-      // A FREE ROUND IS NOT POSTED ON THE CHAIN IN ADVANCE (the owner 2026-10-01 15:25, HARD): it moves no money, so there is
+      // A FREE ROUND IS NOT POSTED ON THE CHAIN IN ADVANCE (2026-10-01 15:25, HARD): it moves no money, so there is
       // no committee worth grinding for; it is still multiplayer - its players join one round, its committee replays it.
       if (BigInt(contract.stakeMsat) === 0n) {
         // nothing to find: the free round is checked against the chain as every round is above, its census and beacon
@@ -409,11 +409,11 @@ export class Roster {
 
     // THE ONE ALREADY DERIVED, if it was derived from a view that begins where this one does, for this round's own
     // census height. Nothing that arrives later is in it.
-    // A SERIES ROUND'S CENSUS IS ITS SERIES' (the owner 2026-09-30, measured on testnet4): every round of series 3cfbe516 names
+    // A SERIES ROUND'S CENSUS IS ITS SERIES' (2026-09-30, measured on testnet4): every round of series 3cfbe516 names
     // one template - one census height, one network, one bond floor - and ~500 of them derived their census each, from a
     // ~2080-block view, past a 64-entry cache, on every listing: GET /rounds took over 90 s. Keyed by the series id, one
     // derivation serves the series. A round naming no series keeps its own key.
-    // AND A ROUND OF NO SERIES BY WHAT ITS CENSUS IS READ FROM (kanban #345): deriveCensus reads the view, the network, the
+    // AND A ROUND OF NO SERIES BY WHAT ITS CENSUS IS READ FROM: deriveCensus reads the view, the network, the
     // protocol version and the census height - nothing else of the contract - so every round naming those has one census.
     // An RPS grid's 450 rounds name one each, and a derivation per round cost every seat 0.5-1.3 s per posted round
     // (measured on testnet4, 2026-10-11), which is why a grid was posted one round every 4 s. A census kept this way is
@@ -498,7 +498,7 @@ export class Roster {
     if (!census.ok) return census;
     const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
     const fid = toHex(contract.federationId);
-    // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5, kanban #325: "one share per seat across both
+    // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5,: "one share per seat across both
     // federations, so a guardian seated in both ... earns two shares"), until its record is CLOSED - a key listed twice
     // is paid twice by the fee table. `predecessorGuardians(fid)` is the seat's record store (federation-records.js).
     const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid) || []) : [];
@@ -562,7 +562,7 @@ export class Roster {
   }
 
   /**
-   * THE ROUND'S WHOLE CENSUS AS EVIDENCE A CLIENT CHECKS ITSELF (kanban #296, spec 5A.6): each entry's bond transaction
+   * THE ROUND'S WHOLE CENSUS AS EVIDENCE A CLIENT CHECKS ITSELF (spec 5A.6): each entry's bond transaction
    * and the merkle branch that puts it in a block of this node's view, with the update and the re-affirmation the census
    * applied to it. The client proves each into headers it agreed, rebuilds every entry and compares their root with the
    * round's census_root (arena-protocol client-committee.js) - so this node can withhold, never forge, and a withheld or
@@ -593,7 +593,7 @@ export class Roster {
       const reaffirm = e.reaffirmedBy && e.reaffirmedBy.txid ? proof(e.reaffirmedBy.txid) : null;
       entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}) });
     }
-    // THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3): bonded, but speaking no version this round runs - the
+    // THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (scope 3): bonded, but speaking no version this round runs - the
     // page names them ("protocol too old"); what decides the round is the root above, which they are not in
     const tooOld = (census.excluded || []).filter((x) => x.tooOld && x.pubkey)
       .map((x) => ({ node: toHex(x.pubkey), speaks: (x.speaks || []).map(Number) }));
@@ -635,7 +635,7 @@ export class Roster {
 
     const seatedNow = this.signerNodesFor(roundIdBytes);
     if (!seatedNow.ok) return seatedNow;
-    // A V2 ROUND NAMES NO DRAW (2026.0.2, kanban #348, RULED the owner 2026-10-13): nothing is compared against the contract -
+    // A V2 ROUND NAMES NO DRAW (2026.0.2RULED 2026-10-13): nothing is compared against the contract -
     // its signer nodes are the census's answer alone, the one draw's seats (the certified seated set once the seating
     // stands, its first 7 before), written into this seat's stored contract (round.seatDrawFree)
     if (namesNoDraw(contract)) {
@@ -645,7 +645,7 @@ export class Roster {
       this.round.seatDrawFree(roundIdBytes, keys);
       return { ok: true, signerNodes: keys };
     }
-    // THE CONTRACT NAMES THE DRAW (§5A.7, decision A of kanban #301): every node drawn for either role - 9 for 7 seats where
+    // THE CONTRACT NAMES THE DRAW (§5A.7, decision A of): every node drawn for either role - 9 for 7 seats where
     // the census has them, the seats themselves where it has no more (testnet4: 7) - and the seating says who serves
     const drawnUnion = new Map();
     for (const role of ['game', 'settlement']) {
@@ -684,7 +684,7 @@ export class Roster {
    * rule lived, and the two would drift.
    */
   /**
-   * ASSIGNED ONCE PER ROUND, FROM THE CENSUS ROOT AND THE SEED (the owner 2026-09-18 01:30, the ghost lag).
+   * ASSIGNED ONCE PER ROUND, FROM THE CENSUS ROOT AND THE SEED (2026-09-18 01:30, the ghost lag).
    *
    * Keyed on the view's length it was rebuilt on every block - about ten a minute on the Daily - and that rebuild was
    * the 132-165 ms left sitting in the pictured truck's stalls. A committee cannot change when a header arrives: the
@@ -694,7 +694,7 @@ export class Roster {
    * view grows, so nothing is verified less often than before.
    */
   // `posted`: THE CONTRACT OF A ROUND THIS SEAT DOES NOT HOLD, already checked against its id by the caller - a market on a
-  // game's source round fetched from its seats (game-market.js, kanban #362 feature 6). The draw is the same: the census at the
+  // game's source round fetched from its seats (game-market.js, feature 6). The draw is the same: the census at the
   // contract's height (its root checked against the chain), the beacon's seed. A round the seat holds is drawn on its own copy.
   committeeFor(roundIdBytes, role, { posted = null } = {}) {
     const row = this.round.get(roundIdBytes);
@@ -702,7 +702,7 @@ export class Roster {
     const given = row ? null : posted;
     const census = contract ? this.censusFor(roundIdBytes, null, given ? { posted: given } : {}) : null;
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
-    // AND TAKE THE TABLE'S SEATING (kanban #293 pick (c)): the certificate of the table's first round seats every round of it
+    // AND TAKE THE TABLE'S SEATING (pick (c)): the certificate of the table's first round seats every round of it
     const anchor = contract ? tableAnchorOf(contract) : null;
     const seated = this.seatedFor ? this.seatedFor(anchor ? anchor.anchorId : roundIdBytes, role) : null;
     const kept = census && census.ok && seeded && seeded.ok && seeded.seed

@@ -47,7 +47,7 @@ async function holdersRerun(w, eid, ms = 8000) {
   return null;
 }
 
-// EVERY ROUND HERE ENDS A FEW SECONDS AHEAD (WINDOW-10-SPEC, RULED the owner 2026-10-01): its windows run from the round's
+// EVERY ROUND HERE ENDS A FEW SECONDS AHEAD (WINDOW-10-SPEC, RULED 2026-10-01): its windows run from the round's
 // end on the wall clock - the objection window to + 600 s, the re-run window to + 1200 s (decided at + 1205 s), the
 // re-run's own window to + 1800 s (FINAL signed from + 1805 s) - read at named instants or skipped to on the fixtures' clock.
 const seven = (o = {}) => sevenSignerNodes(WINDOW_MS, undefined, { endMs: testNow() + 4000, ...o });
@@ -76,7 +76,7 @@ async function signedFinal(w, name) {
 }
 
 /**
- * THE HOLDER'S STORE READ AT A CLOCK THE TEST NAMES, not a sleep (RULED the owner 2026-09-24, slice C1). The re-run
+ * THE HOLDER'S STORE READ AT A CLOCK THE TEST NAMES, not a sleep (RULED 2026-09-24, slice C1). The re-run
  * window is WINDOW_MS from the filing, and the re-runs land 0.66-0.94 s after it (measured), so the fixture's 800 ms
  * window made whether they counted a matter of luck; every state below is read on the node's own clock, stubbed.
  */
@@ -139,7 +139,7 @@ test('an objected stopped run is re-run under the same rule: FAILED at its last 
   } finally { await w.close(); }
 });
 
-// RULED the owner 2026-09-24 (§13A, ruling C, slice C1): this test said "two windows later the result is still SUSPENDED
+// RULED 2026-09-24 (§13A, ruling C, slice C1): this test said "two windows later the result is still SUSPENDED
 // ... (13C, timed from the parked result window, is not applied)". The re-run window is one objection window from the
 // filing, and no 5 of 7 by its end is §13C's rule - here VOID, no fork proof. Four re-runs two windows later are VOID.
 test('four re-runs are not five: two windows later the result is VOID by §13C and no share leaves', async () => {
@@ -158,7 +158,7 @@ test('four re-runs are not five: two windows later the result is VOID by §13C a
   } finally { await w.close(); }
 });
 
-// THE RE-RUN WINDOW'S EDGE, ON THE NODE'S OWN CLOCK AND NO SLEEP (§13A, §13C, RULED the owner 2026-09-24, slice C1). The
+// THE RE-RUN WINDOW'S EDGE, ON THE NODE'S OWN CLOCK AND NO SLEEP (§13A, §13C, RULED 2026-09-24, slice C1). The
 // objection is filed inside the first window; the re-run window is objection_window_ms from the filing, so its end is
 // never later than the third window. One millisecond before it the entry is SUSPENDED; at it, with four re-runs of
 // five, VOID - and the VOID reaches the money: no share leaves (mayRelease), the lock settlement lists it as VOID
@@ -219,7 +219,7 @@ test('a FORFEIT with a stored no-quorum record is listed once', async () => {
   } finally { await w.close(); }
 });
 
-// THE RE-RUN'S OWN OBJECTION WINDOW (§13A, RULED the owner 2026-09-24, slice C2a). A re-run at 5 of 7 is provisionally
+// THE RE-RUN'S OWN OBJECTION WINDOW (§13A, RULED 2026-09-24, slice C2a). A re-run at 5 of 7 is provisionally
 // final and gets one objection window of its own, opened when this node held it at threshold - the seenMs of the fifth
 // agreeing re-run record - and objection_window_ms long. One millisecond before it closes the entry is
 // PROVISIONALLY_FINAL and no share leaves; at its close, FINAL. Before this slice the agreed re-run was FINAL at once.
@@ -245,7 +245,7 @@ test('an agreed re-run is PROVISIONALLY_FINAL until its own objection window clo
   } finally { await w.close(); }
 });
 
-// A SECOND VALID OBJECTION INSIDE THE RE-RUN'S OWN WINDOW VOIDS THE ENTRY (§13A, RULED the owner 2026-09-24, slice C2b).
+// A SECOND VALID OBJECTION INSIDE THE RE-RUN'S OWN WINDOW VOIDS THE ENTRY (§13A, RULED 2026-09-24, slice C2b).
 // Five of the other six keys re-run the objected result to another score, so the re-run is agreed at 5 of 7 without the
 // holder, whose own re-run keeps the old score: a second objection holds here. Filed inside agreed + W, the entry is VOID
 // at once - no third run - and the VOID goes the suspended entry's way to the money.
@@ -325,7 +325,7 @@ test('while SUSPENDED an objection is the first again, and a missing or foreign 
     assert.equal(again.status, 200);
     assert.equal((await again.text()).trim(), 'already objected');
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'an objection while SUSPENDED was stored as the second');
-    // a real bundle (§13A, kanban #24: an empty body is 400 before anything is looked up), posted where it does not belong
+    // a real bundle (§13A,: an empty body is 400 before anything is looked up), posted where it does not belong
     const { bundle } = await objectionBundleFor(w, s.eid);
     const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}`, { method: 'POST', body: bundle });
     assert.equal(missing.status, 404);
@@ -342,7 +342,7 @@ test('while SUSPENDED an objection is the first again, and a missing or foreign 
   } finally { await w.close(); }
 });
 
-// SLASH PROOFS AGAINST THE AGREEING RE-RUN'S SIGNERS (§13A, §5A.3B, RULED the owner 2026-09-24, slice C2c). When a second
+// SLASH PROOFS AGAINST THE AGREEING RE-RUN'S SIGNERS (§13A, §5A.3B, RULED 2026-09-24, slice C2c). When a second
 // valid objection has made the entry VOID, "the signers of that result are slashed as well": the 201 that takes the
 // second objection starts the filing, one REPLAY_CONTRADICTS proof per agreeing re-run signer - the accused's own signed
 // re-run result as evidence, checked by slashHoldsOnRerun - and none against the holder, whose re-run dissented, or the
@@ -383,7 +383,7 @@ test('the second objection\'s 201 files one slash proof per agreeing re-run sign
       relayKeepsEach: relayed.length === 5 && relayed.every(Boolean),
     };
     console.log('  FACTS (C2c proofs):', JSON.stringify(facts));
-    // RULED the owner 2026-09-24 (the first-result slash cut): the same 201 now files the first result's five signers too -
+    // RULED 2026-09-24 (the first-result slash cut): the same 201 now files the first result's five signers too -
     // this said 0 while that was the next cut.
     assert.deepEqual(facts, { accusedAreTheAgreeing: true, holderAccused: false, eachSlashes: true, firstResultProofs: 5, relayKeepsEach: true });
   } finally { await w.close(); }
@@ -452,7 +452,7 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
   } finally { await w.close(); }
 });
 
-// THE FIRST RESULT'S SIGNERS ARE SLASHED WHEN THE ENTRY ENDS VOID - OR FORFEIT BY §13C (§13A, RULED the owner 2026-09-24,
+// THE FIRST RESULT'S SIGNERS ARE SLASHED WHEN THE ENTRY ENDS VOID - OR FORFEIT BY §13C (§13A, RULED 2026-09-24,
 // ruling C steps 2 and 3: "the slashing of the first result's signers stands, because the objection that proved them wrong
 // already exists"). The evidence is the existing one - the proof and the signer's own signed player result, slashHolds -
 // in the existing slash_proofs table; the verdict is this node's own replay differing from the contradicted run. Filed by
@@ -601,7 +601,7 @@ test('§13C VOID on the real clock: the re-run watch, on its default budget, fil
   } finally { await w.close(); }
 });
 
-// THE ROUND SETTLES WITHOUT AN ENTRY STILL IN ITS RE-RUN WINDOW (§13A, RULED the owner 2026-09-24, slice C3a). Today the
+// THE ROUND SETTLES WITHOUT AN ENTRY STILL IN ITS RE-RUN WINDOW (§13A, RULED 2026-09-24, slice C3a). Today the
 // settle gate (server.js) waits while any entry is SUSPENDED or PROVISIONALLY_FINAL, and entriesOnRecord refuses the
 // whole round. Now: an entry still SUSPENDED, or PROVISIONALLY_FINAL on a re-run, is left out of the payout table and
 // its lock is neither claimed nor forfeited; the rest settle as today. What its lock does after the round settled is

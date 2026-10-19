@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE TEST FAULT IS OFF BY DEFAULT AND NAMES ONE ENTRY (ORDER-2116, RULED the owner 2026-10-02, invalidation case 1). A seat
+// THE TEST FAULT IS OFF BY DEFAULT AND NAMES ONE ENTRY (ORDER-2116, RULED 2026-10-02, invalidation case 1). A seat
 // reads ARENA_TEST_DISSENT_ENTRY once, at start: unset, nothing dissents; set, that one entry and no other.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +48,7 @@ test('the switch reaches exactly two places: an objection\'s replay check and th
   assert.match(verify, /dissentsOn\(entryIdBytes\) \? \{ \.\.\.built\.result, score: \(built\.result\.score \+ 1\) >>> 0 \} : built\.result/);
 });
 
-// AND THE OBJECTION DOOR READS IT TOO (kanban #146, the owner 2026-10-05): since #24 the door replays the bundle and refused an
+// AND THE OBJECTION DOOR READS IT TOO (2026-10-05): since the door replays the bundle and refused an
 // honest one - "the replay agrees with the signed result" - before finality could see the fault. For the named entry only.
 test('the objection door counts the named entry\'s replay as differing, and only that entry', () => {
   const src = readFileSync(new URL('../src/objection-check.js', import.meta.url), 'utf8');

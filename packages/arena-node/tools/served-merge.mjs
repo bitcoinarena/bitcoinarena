@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// served-merge.mjs <to ms> <seat url>...: kanban #365 - who served a round in the 24 h before <to>, from EVERY seat's FINALs: each seat
+// served-merge.mjs <to ms> <seat url>...: - who served a round in the 24 h before <to>, from EVERY seat's FINALs: each seat
 // holds only the rounds it sat on (GET /served?finals=1), so they are merged by round (protocol mergeServedRounds) and counted once,
 // every FINAL checked here against its committee and its BIP340 signature
 import { schnorr } from '@noble/curves/secp256k1.js';

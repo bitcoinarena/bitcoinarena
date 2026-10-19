@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE LONG-LIVED STAKE-LOCK TOOL FOR THE READ-ONLY QUESTIONS (kanban #293: a process per question put the test host's paid RPS
+// ONE LONG-LIVED STAKE-LOCK TOOL FOR THE READ-ONLY QUESTIONS (a process per question put the test host's paid RPS
 // stack at load 50). A tool that speaks `--mode serve` answers status, id, guardians, gateways and fees from one process,
 // questions in flight at once matched by id; a tool without it (an older binary) answers every question the old way; send
 // and settle never go through the server.
@@ -67,7 +67,7 @@ test('an older tool with no serve mode: every question is asked the old way, one
   } finally { port.close(); }
 });
 
-test('a tool killed at its timeout says so, by mode and time (kanban #336: "Command failed: <the whole command>" hid why a round never settled)', async () => {
+test('a tool killed at its timeout says so, by mode and time ("Command failed: <the whole command>" hid why a round never settled)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'slow-'));
   const bin = join(dir, 'tool');
   writeFileSync(bin, `#!${process.execPath}\nsetTimeout(() => {}, 5000);\n`);
@@ -78,7 +78,7 @@ test('a tool killed at its timeout says so, by mode and time (kanban #336: "Comm
   } finally { port.close(); }
 });
 
-test('a port with no read directory of its own never serves (kanban #336): a server would hold the shared database every settle needs', async () => {
+test('a port with no read directory of its own never serves: a server would hold the shared database every settle needs', async () => {
   const t = serveTool(mkdtempSync(join(tmpdir(), 'noserve-')));
   const port = stakeLockPort({ bin: t.bin, dataDir: '/shared' });
   try {

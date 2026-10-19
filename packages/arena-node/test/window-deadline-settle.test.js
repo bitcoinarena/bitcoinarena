@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SPLIT ENTRY IS VOID AND LEFT OUT OF THE ROUND'S SETTLEMENT, AND THE OTHERS SETTLE (§13A/§13C, kanban #26, RULED the owner
+// A SPLIT ENTRY IS VOID AND LEFT OUT OF THE ROUND'S SETTLEMENT, AND THE OTHERS SETTLE (§13A/§13CRULED the owner
 // 2026-10-04: "Node, 2-of-2 lockRound: the split entry is VOID, left out of settlement and payout ... the other entry
 // settles"). Two running signer nodes (their own DKG), a winner, a loser and a third player whose run the two seats sign
 // differently - seat B's own result one score higher, both seats up, all inside the window. Past final_after: that entry

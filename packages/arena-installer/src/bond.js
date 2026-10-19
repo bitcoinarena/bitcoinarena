@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S BOND, FROM ITS OWN WALLET (kanban #471 step C.7 and slice 2; the owner 2026-10-18: "giving an address on the newly created
+// THE NODE'S BOND, FROM ITS OWN WALLET (and slice 2; 2026-10-18: "giving an address on the newly created
 // bitcoin wallet where the bond is first transferred to so the node can post the bond", and the owner section: "verifying that the bond
 // has been posted, withdrawing the bond after the lock (communicating the lock time clearly) and also increasing the bond size").
 //
@@ -56,7 +56,7 @@ export function lockOf(tip, { nowMs = Date.now(), maturity = maturityAfter(tip) 
 
 /** The node's roles as its advertisement names them: the wizard's verify is game + verify (§5A.1 roles). Custody is said by the guardian
  *  endpoint, liquidity by the provider's own signed claim (GET /liquidity-claim, §23A.10) - neither is an advertisement role (measured on
- *  macOS node A, kanban #471: a liquidity node's bond was refused, "unknown role: liquidity"). */
+ *  macOS node A,: a liquidity node's bond was refused, "unknown role: liquidity"). */
 export const advertRoles = (roles) => [...new Set(roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])))].filter((r) => r !== 'custody' && r !== 'liquidity');
 
 /** The bond output key of a node key at a maturity height (template 2). */
@@ -112,7 +112,7 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
  */
 export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
   softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null }) {
-  // A LARGER BOND, IN ONE STEP (kanban #471 part D, "increasing the bond size"; a template-2 bond cannot be topped up in place):
+  // A LARGER BOND, IN ONE STEP ("increasing the bond size"; a template-2 bond cannot be topped up in place):
   // `oldBond` { txid, vout, sats, maturity } - from its maturity on - is the funding's first input, spent on its recovery leaf by the
   // node's key (the transaction's locktime is that maturity), and the wallet's coins add the rest; the new bond is built as any
   // other, with a new maturity. One step: the old bond is never back in the wallet in between.
@@ -178,7 +178,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
 }
 
 /**
- * AN ADVERTISEMENT UPDATE OF THE NODE'S BOND (§5A.2; kanban #471 slice 5 part 4: a custody node's guardian_of[] once its federation is
+ * AN ADVERTISEMENT UPDATE OF THE NODE'S BOND (§5A.2;: a custody node's guardian_of[] once its federation is
  * founded, published by itself): two transactions as the bond's - the wallet's coins to a carrier, then the carrier to the bond marker,
  * OP_RETURN "ARN" 'A' bond outpoint H(advertisement) and the change back to the wallet, the advertisement signed by the node's key in
  * the carrier's witness. It spends no bond and starts no maturity clock. `bond` { txid (hex as Bitcoin Core shows it), vout }.

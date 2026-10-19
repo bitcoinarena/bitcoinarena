@@ -1,4 +1,4 @@
-# ARENA NODE ON WINDOWS: THE SMALL WINDOW (kanban #500, the owner 2026-10-19: "for windows we want an exe ... That also includes a small gui
+# ARENA NODE ON WINDOWS: THE SMALL WINDOW (2026-10-19: "for windows we want an exe ... That also includes a small gui
 # version of the installer that launches the browser etc"). The Start menu's "Arena Node" and the end of ArenaNodeSetup.exe open it:
 #   no node yet      the installer runs (hidden), its one-time link opens in the browser, its lines show here; Stop ends it
 #   a node installed `arenanode status` here, with Owner page / Restart / Doctor / Refresh

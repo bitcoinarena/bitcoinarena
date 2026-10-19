@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ARENA.CONF: EVERY SETTING OF AN INSTALLED NODE IN ONE FILE (kanban #499, the owner 2026-10-19: "Every setting must be in a config file
+// ARENA.CONF: EVERY SETTING OF AN INSTALLED NODE IN ONE FILE (2026-10-19: "Every setting must be in a config file
 // arena.conf not in some PARAMETER env vars. the installer writes that config file"). The file is `key=value` lines, `#` comments, as
 // bitcoin.conf; the node's services start from it alone (src/run.js <home>/arena.conf) - no environment file, no command line to edit.
 //
@@ -71,7 +71,7 @@ export function confToRun(values, { home = '.' } = {}) {
   return { port, database, env };
 }
 
-/** An older node's node.env (ARENA_*=value) as arena.conf values, with the seat's port and store (kanban #499 migration). */
+/** An older node's node.env (ARENA_*=value) as arena.conf values, with the seat's port and store (migration). */
 export function envToConfValues(envText, { port, database }) {
   const values = { port: String(port), database };
   for (const raw of String(envText || '').split(/\r?\n/)) {

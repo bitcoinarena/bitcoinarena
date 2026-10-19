@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// TWO GATEWAYS THAT CAN ACTUALLY RECEIVE (M3, RULED the owner 2026-09-20 11:09 named pick A, and 19:xx pick (i)).
+// TWO GATEWAYS THAT CAN ACTUALLY RECEIVE (M3, RULED 2026-09-20 11:09 named pick A, and 19:xx pick (i)).
 //
 // The numbers in `LIVE` are not invented and are not a fixture anybody typed: they are what the two testnet4
 // LND nodes reported after a real invoice was paid each way over channel dce6199b..., recorded in TASKBOOK.

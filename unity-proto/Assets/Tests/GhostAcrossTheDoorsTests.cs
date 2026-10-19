@@ -9,7 +9,7 @@ using Blwp;
 /// <summary>
 /// CAN THE PLAYER SEE THE OTHER TRUCK AT ALL - FROM THEIR OWN CAMERA, AT THE DOORS THE PROTOCOL PARKS THEM AT.
 ///
-/// the owner 2026-09-17 19:15 and again 05:45: two tabs should see each other. Every number measured on that letter so
+/// 2026-09-17 19:15 and again 05:45: two tabs should see each other. Every number measured on that letter so
 /// far says WHEN a picture is drawn - the pose at the land frame is 38 ms old at the median on the Daily, and the
 /// facing with it. None of them says the two trucks are in ONE FRAME, and an empty apron is what the 19:15 screenshot
 /// shows.
@@ -72,7 +72,7 @@ public class GhostAcrossTheDoorsTests
         // (0.01, -0.88, 0.47) - and an overview frames all 24 doors, which is why the first run of this said 24 of 24
         // and meant nothing. `Toggle` is the same call the camera key makes.
         if (chase.View == ChaseCamera.Mode.God) chase.Toggle();
-        // AND THE DRIVE VIEW ROLL OUT PUTS UP, BEHIND THE TRUCK (the owner 2026-09-29 12:45): the same call LoadoutPanel makes
+        // AND THE DRIVE VIEW ROLL OUT PUTS UP, BEHIND THE TRUCK (2026-09-29 12:45): the same call LoadoutPanel makes
         var gateForView = Object.FindFirstObjectByType<DeliveryGate>();
         chase.destination = gateForView != null ? gateForView.Mouth : (Vector3?)null;
         chase.EndFlyIn();
@@ -96,7 +96,7 @@ public class GhostAcrossTheDoorsTests
         var fromTruck = Vector3.Distance(eye.transform.position, driver.transform.position);
         TestContext.WriteLine($"camera {fromTruck:F1} m from the truck, forward {eye.transform.forward}, "
                               + $"fov {eye.fieldOfView:F0}");
-        // THE VIEW A PLAYER DRIVES IN IS BEHIND THE TRUCK (the owner 2026-09-29 12:45, first person), not the overview and not
+        // THE VIEW A PLAYER DRIVES IN IS BEHIND THE TRUCK (2026-09-29 12:45, first person), not the overview and not
         // a top-down: the drive view's mode, looking at this truck - not at the middle of the field
         Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View, "this is not the view a player drives from");
         var truckInView = eye.WorldToViewportPoint(driver.transform.position);
@@ -138,7 +138,7 @@ public class GhostAcrossTheDoorsTests
             var p = eye.WorldToScreenPoint(ghost.transform.position + Vector3.up * 3.8f);
             var onScreen = p.z > 0f && p.x > 0f && p.x < Screen.width && p.y > 0f && p.y < Screen.height;
 
-            // AND THE CUE THE PLAYER GETS EITHER WAY (the owner 2026-09-18 06:45, the named pick). The two lines are
+            // AND THE CUE THE PLAYER GETS EITHER WAY (2026-09-18 06:45, the named pick). The two lines are
             // over the hull when the hull is on screen and pinned to the rim of the screen when it is not - the same
             // rule `OnGUI` draws with, asked here as a function so it can be counted.
             var size = Mathf.Max(13, Screen.height / 48);
@@ -181,7 +181,7 @@ public class GhostAcrossTheDoorsTests
     /// `GhostField.OnGUI` returned on a null `Camera.main`, and `Camera.main` is the first camera tagged MainCamera -
     /// which nothing in this build is: `Bootstrap` makes the chase camera in code and never sets the tag.
     /// `StrikeTheatre` had already found and written this down twice for its own distances. So the debug overlay - the
-    /// name and the age over each truck, the one number a player has for the lag (the owner 2026-09-17 19:15) - drew
+    /// name and the age over each truck, the one number a player has for the lag (2026-09-17 19:15) - drew
     /// nothing in a player, while every Editor test that makes its own camera saw it.
     ///
     /// This measures the world `Bootstrap` actually builds: no tagged camera, and a label eye all the same.

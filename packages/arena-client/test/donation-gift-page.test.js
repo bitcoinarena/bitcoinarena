@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// DONATE TO THE DEVELOPERS FROM THE PAGE (kanban #431, the owner 2026-10-17): the amounts the popup takes, the split paid in ONE
+// DONATE TO THE DEVELOPERS FROM THE PAGE (2026-10-17): the amounts the popup takes, the split paid in ONE
 // transaction to the set's keys with the donor's key as their image, the record the seats read, handed to the first seat that keeps it.
 import test from 'node:test';
 import assert from 'node:assert/strict';

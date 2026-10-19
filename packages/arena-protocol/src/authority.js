@@ -365,7 +365,7 @@ export function donationSetInForce({
     }
     accepted.push(set);
   }
-  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): checked by donation-vote.js approvedDonationSets against the
+  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1): checked by donation-vote.js approvedDonationSets against the
   // set each replaces - the recipients' signatures stand in for the admin key's - and ordered by serial with the rest
   for (const set of approved || []) {
     if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) continue;

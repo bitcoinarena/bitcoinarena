@@ -379,7 +379,7 @@ test('an all-lower set keeps exactly the id it already had', () => {
                  { lnurl: 'lnurl2def', shareBps: 3333 },
                  { lnurl: 'lnurl3ghi', shareBps: 3334 }];
   // Measured against the pre-fold code itself, not reasoned about: both gave
-  // 44022895c61f07fd under the BLWP/v1 tags (d68d411b447f3e17 under ARENA/v1, kanban #207),
+  // 44022895c61f07fd under the BLWP/v1 tags (d68d411b447f3e17 under ARENA/v1),
   // because lowercase was already what the fold outputs, so the bytes never moved for anything
   // published in lower.
   assert.equal(toHex(donationSetId(lower)).slice(0, 16), 'd68d411b447f3e17');

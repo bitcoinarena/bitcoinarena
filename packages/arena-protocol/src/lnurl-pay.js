@@ -11,7 +11,7 @@
  * metadata string" (LUD-06, MUST). These are the decisions; the fetching and
  * the paying are the client's.
  *
- * The comment is the player's public key as hex (§22A, the owner 2026-09-08), and
+ * The comment is the player's public key as hex (§22A, 2026-09-08), and
  * it is left out when the endpoint takes fewer than 64 characters (LUD-12).
  */
 import { decodeBolt11 } from './bolt11.js';

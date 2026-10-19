@@ -93,7 +93,7 @@ export async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = 
         }),
       ]);
       const seen = provenBond({ chain, ...offer });
-      // A CARRIED BOND'S OTHER TWO PROOFS travel with it (kanban #209): its re-affirmation and its advertisement update,
+      // A CARRIED BOND'S OTHER TWO PROOFS travel with it: its re-affirmation and its advertisement update,
       // proved where the endpoint is read (directory.js reach), not here
       if (seen.ok) return { ...seen, update: offer.update || null, reaffirm: offer.reaffirm || null, from: at, refused };
       refused.push(`provider ${at}: ${seen.why}`);

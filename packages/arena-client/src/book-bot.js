@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A BOT THAT BUILDS ORDER DEPTH ON AN UP/DOWN MARKET (kanban #236, the owner 2026-10-08: "A few bots simulate real bot behavior
+// A BOT THAT BUILDS ORDER DEPTH ON AN UP/DOWN MARKET (2026-10-08: "A few bots simulate real bot behavior
 // and build order depth"). It quotes the way a market maker on Polymarket's btc-updown-15m does: a fair chance for Up from
 // the last BTC/USD price, the price to beat and the time left; then a ladder of buys on BOTH sides below that fair value -
 // Up at fair - edge - i x step, Down at (1 - fair) - edge - i x step - so an Up bid and a Down bid of one bot together cost

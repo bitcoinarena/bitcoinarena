@@ -40,7 +40,7 @@ export function encodeRoundContract(c) {
   if (!named.ok) throw new Error(named.why);
   const w = new Writer();
   w.u8(TYPE_ROUND_CONTRACT);
-  // THE ROUND'S VERSION (2026.0.2, kanban #348): a contract that names one is written at it - a v2 round's rules differ -
+  // THE ROUND'S VERSION (2026.0.2): a contract that names one is written at it - a v2 round's rules differ -
   // and one that names none at this build's PROTOCOL_VERSION, as before
   const version = c.protocolVersion === undefined || c.protocolVersion === null ? PROTOCOL_VERSION : c.protocolVersion;
   if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`);
@@ -67,7 +67,7 @@ export function encodeRoundContract(c) {
   // then which build - a decoder can refuse a foreign contract before parsing
   // anything else about it.
   w.bytes32(c.networkId);
-  // WHICH GAME (§0A.3, §6 game_id; kanban #202): the exact GameManifest this round plays, by its id. After the network
+  // WHICH GAME (§0A.3, §6 game_id): the exact GameManifest this round plays, by its id. After the network
   // and before the rules: the manifest says which cores and configs the round may name (manifest.js roundFitsManifest),
   // and a node that does not host this game refuses the round by it before reading anything the game decides.
   if (!(c.gameId instanceof Uint8Array) || c.gameId.length !== 32) throw new Error('a round names the 32-byte id of the game it plays (game_id, §0A.3)');
@@ -223,7 +223,7 @@ export function encodeRoundContract(c) {
     w.bytes32(c.seriesId);
     w.u32(c.roundIndex);
   } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
-  // THE RULES IT IS SETTLED UNDER (§6 equivocation_rule_hash ... bond_min per role, kanban #313's sibling #314; 2026.0.3): after their
+  // THE RULES IT IS SETTLED UNDER (§6 equivocation_rule_hash ... bond_min per role, 's sibling; 2026.0.3): after their
   // own marker, before the creator's key, only when named - 148 bytes: four rule hashes, disconnect_rule, claim_window_days, and the
   // bond floor of each role (rules.js). Every tail length that can follow stays distinct, so a contract naming none keeps its id.
   if (c.rules !== undefined && c.rules !== null) {
@@ -238,7 +238,7 @@ export function encodeRoundContract(c) {
     for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) w.bytes32(r[k]);
     w.u8(r.disconnect); w.u16(r.claimWindowDays); w.u64(r.bondMinGameVerifySats); w.u64(r.bondMinSettlementSats);
   }
-  // THE CREATOR'S KEY (§6 `creator_pubkey`, kanban #313; 2026.0.3): the x-only key whose BIP-340 signature over the round id rides
+  // THE CREATOR'S KEY (§6 `creator_pubkey`2026.0.3): the x-only key whose BIP-340 signature over the round id rides
   // beside the contract (creator.js), as the id does. Last, after its own marker, and only when named: 33 bytes, so a tail of
   // 33/37/69/73 bytes is never one of the 0/4/36/40 above, and every contract that names none keeps its bytes and its id.
   if (c.creatorPubkey !== undefined && c.creatorPubkey !== null) {
@@ -248,7 +248,7 @@ export function encodeRoundContract(c) {
     w.u8(CREATOR_MARKER);
     w.bytes32(c.creatorPubkey);
   }
-  // THE ROUND A MARKET ON A GAME IS ON (kanban #362 feature 6; 2026.0.6): on a round of a game market (manifest.js `gameSource`)
+  // THE ROUND A MARKET ON A GAME IS ON (feature 6; 2026.0.6): on a round of a game market (manifest.js `gameSource`)
   // the id of the one round of the source game whose signed result decides it. After the creator's key and before a question,
   // only when named, and only from version 6: so every contract below 6, and every one that names none, keeps its bytes and its
   // id. 34 bytes - its marker, the id, its marker again - so with it a contract's tail is one of the 16 lengths above plus 34,
@@ -265,7 +265,7 @@ export function encodeRoundContract(c) {
     w.bytes32(c.sourceRoundId);
     w.u8(SOURCE_ROUND_MARKER);
   }
-  // THE ROUND'S OWN QUESTION (kanban #362 feature 5): on a round of an event-market template (manifest.js `template`) the
+  // THE ROUND'S OWN QUESTION (feature 5): on a round of an event-market template (manifest.js `template`) the
   // question, its 2 to 16 outcome labels and its resolution time - the market's terms a round, not its manifest, names, so
   // anyone opens a question by publishing one round of the template. LAST OF ALL, after its own marker, and only when named,
   // so every contract without it keeps its bytes and its id. Its length is variable, so it also ENDS with its own length
@@ -299,7 +299,7 @@ export function encodeRoundContract(c) {
 }
 
 /**
- * A ROUND'S OWN QUESTION (kanban #362 feature 5): the byte before it and after it, its limits, and the version it is read
+ * A ROUND'S OWN QUESTION (feature 5): the byte before it and after it, its limits, and the version it is read
  * from - 2026.0.4, the first version whose builds read it (a template requires it: manifest.js TEMPLATE_MIN_PROTOCOL_VERSION, so
  * only seats that read it are seated for its rounds).
  * A question of 1 to 280 UTF-8 bytes (a tweet), 2 to 16 outcome labels of 1 to 64 UTF-8 bytes each, each named once, and
@@ -373,21 +373,21 @@ export function contractEventTail(bytes, left) {
 }
 
 /**
- * THE BYTE AROUND A MARKET ROUND'S SOURCE ROUND (kanban #362 feature 6): marker, 32-byte round id, marker - 34 bytes, after the
+ * THE BYTE AROUND A MARKET ROUND'S SOURCE ROUND (feature 6): marker, 32-byte round id, marker - 34 bytes, after the
  * creator's key. Read from protocol version 2026.0.6 (constants.js GAME_MARKET_VERSION) on, and only there.
  */
 export const SOURCE_ROUND_MARKER = 0xc4;
 const SOURCE_ROUND_BYTES = 34;
-/** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
+/** The byte before a round's named rules (§6), before the creator's key; their tail is 148 bytes. */
 export const RULES_MARKER = 0xc2;
 const RULES_BYTES = 148;
-/** The byte before a round's creator key (§6, kanban #313), last of the contract. */
+/** The byte before a round's creator key (§6), last of the contract. */
 export const CREATOR_MARKER = 0xc1;
 /** The protocol version a round may name its creator from (2026.0.3). */
 export const CREATOR_VERSION = 3;
 
 /**
- * A CUSTODY BYTE THIS NETWORK HAS, OR THE RECORD DOES NOT PARSE (RULED, the owner 2026-09-22 22:59).
+ * A CUSTODY BYTE THIS NETWORK HAS, OR THE RECORD DOES NOT PARSE (RULED 2026-09-22 22:59).
  *
  * §23.6: "a record from before this ruling that carries the old value is not a round of this network
  * and is neither decoded, replayed, settled, listed nor counted; a node that holds such a record treats
@@ -456,18 +456,18 @@ export function decodeRoundContract(bytes) {
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
   let left = r.b.length - r.at;
-  // THE ROUND'S OWN QUESTION, last of all when named (kanban #362 feature 5): read from the end by its closing marker and length
+  // THE ROUND'S OWN QUESTION, last of all when named (feature 5): read from the end by its closing marker and length
   const asked = contractEventTail(r.b, left);
   const tailEnd = asked ? r.b.length - asked.size : r.b.length;
   if (asked) left -= asked.size;
-  // THE SOURCE ROUND OF A MARKET ON A GAME (kanban #362 feature 6), before the question: 34 bytes between two markers, looked for
+  // THE SOURCE ROUND OF A MARKET ON A GAME (feature 6), before the question: 34 bytes between two markers, looked for
   // ONLY on a contract of version 6 or later - a contract below 6 is read exactly as before - and only when what stands before
   // it is one of the tails a contract may end with (no tail of those 16 lengths is another one plus 34)
   const sourceAt = c.protocolVersion >= GAME_MARKET_VERSION && left >= SOURCE_ROUND_BYTES && contractTailFits(left - SOURCE_ROUND_BYTES)
     && r.b[tailEnd - 1] === SOURCE_ROUND_MARKER && r.b[tailEnd - SOURCE_ROUND_BYTES] === SOURCE_ROUND_MARKER ? tailEnd - SOURCE_ROUND_BYTES : -1;
   if (sourceAt >= 0) left -= SOURCE_ROUND_BYTES;
   const beforeSource = sourceAt >= 0 ? sourceAt : tailEnd;
-  // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
+  // THE CREATOR'S KEY, last when named: 33 more bytes, its marker first; and before it the rules, 148
   const base = [0, 4, 36, 40];
   const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? beforeSource - 33 : -1;
   if (creatorAt >= 0) {
@@ -536,14 +536,14 @@ export const roundId = (c) => {
   }
   return taggedHash(TAG.roundContract, encodeRoundContract(idBodyOf(c)));
 };
-/** Round i of a series' id, H(series_id || i), from the two alone (a seat looking at a series' earlier rounds, #304). */
+/** Round i of a series' id, H(series_id || i), from the two alone (a seat looking at a series' earlier rounds). */
 export function seriesRoundIdOf(seriesIdBytes, index) {
   const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, index, false);
   const body = new Uint8Array(36); body.set(seriesIdBytes, 0); body.set(i, 32);
   return taggedHash(TAG.seriesRound, body);
 }
 /**
- * THE BYTES A ROUND'S ID HASHES (2026.0.2, kanban #348): a v2 contract's with `nodes` emptied - the seated nodes are the
+ * THE BYTES A ROUND'S ID HASHES (2026.0.2): a v2 contract's with `nodes` emptied - the seated nodes are the
  * draw's answer, written in by each seat after it, and never an input to the draw - and a v1 contract's whole, as before.
  */
 export const idBodyOf = (c) => (namesNoDraw(c) ? { ...c, nodes: [] } : c);
@@ -605,7 +605,7 @@ export function encodeEntryContract(e) {
   w.u64(e.feeMsat);
   w.u64(e.donationMsat);
   w.u32(e.joinTick);
-  // the owner 2026-09-08: the world secret is on the entry so a node can replay.
+  // 2026-09-08: the world secret is on the entry so a node can replay.
   w.bytes32(e.worldSecret);
   // 23.1's `vss_shares_ref`: the id of the handout this entry's stake preimage
   // was split into. IN THE SIGNED BYTES, because that is the whole of what it
@@ -639,14 +639,14 @@ export function encodeEntryContract(e) {
   writeOutpoint(w, e.stakeLockOutpoint, 'stakeLockOutpoint');
   writeOutpoint(w, e.feeLockOutpoint, 'feeLockOutpoint');
   w.bytes32(e.claimKeyAttestationRef);
-  // THE DONATION OUTPOINTS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): where the player's lock
+  // THE DONATION OUTPOINTS (2026-10-03, FEDERATION.md "Donations in the federation"): where the player's lock
   // transaction paid each recipient key of a set of keys its share - in the set's order, one per share above 0 msat
   // (donationOutputsExpected). WRITTEN ONLY WHEN THERE ARE ANY: an entry that pays no key - every entry before this, every
   // LNURL round - keeps exactly its bytes and its id. An empty list is never written, so an entry has one encoding.
   const donations = e.donationOutpoints || [];
   if (!Array.isArray(donations)) throw new Error('donationOutpoints is a list of federation outpoints');
   if (donations.length) w.vec(donations, (o, ww) => writeOutpoint(ww, o, 'a donation outpoint'));
-  // THE PICK (§0A.7a, kanban #206): on a round of an attested game the entry backs one outcome by its index, in place of a
+  // THE PICK (§0A.7a): on a round of an attested game the entry backs one outcome by its index, in place of a
   // run. WRITTEN ONLY WHEN THERE IS ONE, after a marker no donation list can start with (its u16 count's first byte is 0
   // below 256 outpoints): every entry before this keeps exactly its bytes and its id.
   if (e.pick !== undefined && e.pick !== null) {
@@ -654,7 +654,7 @@ export function encodeEntryContract(e) {
     w.u8(PICK_MARKER);
     w.u8(e.pick);
   }
-  // A MARKET ORDER (kanban #278, comment 1127): an entry whose pick is bought at a LIMIT PRICE (order-book.js, a fraction of
+  // A MARKET ORDER (comment 1127): an entry whose pick is bought at a LIMIT PRICE (order-book.js, a fraction of
   // PRICE_SCALE in whole cents) and that stands until its EXPIRY (ms, 0: until it fills or is cancelled). Its stake lock is
   // its budget less its fee, its fee lock the fee - the locks every entry has. WRITTEN ONLY WHEN IT IS ONE, after the pick
   // and its own marker: every other entry keeps exactly its bytes and its id.
@@ -666,7 +666,7 @@ export function encodeEntryContract(e) {
     w.u32(e.limitPrice);
     w.u64(e.orderExpiryMs ?? 0n);
   }
-  // THE HIDDEN MOVE (kanban #233): on a round of a head-to-head game the entry names H(round_id || session key || move ||
+  // THE HIDDEN MOVE: on a round of a head-to-head game the entry names H(round_id || session key || move ||
   // salt) (head-to-head.js), revealed after entry close. WRITTEN ONLY WHEN THERE IS ONE, after its own marker: every
   // other entry keeps exactly its bytes and its id. An entry backs a pick or hides a move, never both.
   if (e.commit !== undefined && e.commit !== null) {
@@ -675,7 +675,7 @@ export function encodeEntryContract(e) {
     w.u8(COMMIT_MARKER);
     w.bytes32(e.commit);
   }
-  // THE FEDERATION ITS LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the entry
+  // THE FEDERATION ITS LOCKS ARE IN (2026.0.3): on a round that takes any federation (takesAnyFederation) the entry
   // names where its stake and fee locks are. WRITTEN ONLY WHEN THERE IS ONE, last, after its own marker: every other entry keeps
   // exactly its bytes and its id.
   if (e.federationId !== undefined && e.federationId !== null) {
@@ -684,7 +684,7 @@ export function encodeEntryContract(e) {
     w.u8(FEDERATION_MARKER);
     w.bytes32(e.federationId);
   }
-  // THE OPERATOR THIS PLAYER IS (§7 `operator_id_declaration`, §5A.13, kanban #309): "none" or the operator's key. WRITTEN ONLY
+  // THE OPERATOR THIS PLAYER IS (§7 `operator_id_declaration`, §5A.13): "none" or the operator's key. WRITTEN ONLY
   // WHEN IT NAMES ONE, last, after its own marker: "none" is no bytes, so every other entry keeps exactly its bytes and its id.
   if (e.operatorId !== undefined && e.operatorId !== null) {
     if (!(e.operatorId instanceof Uint8Array) || e.operatorId.length !== 32 || e.operatorId.every((b) => b === 0))
@@ -692,7 +692,7 @@ export function encodeEntryContract(e) {
     w.u8(OPERATOR_MARKER);
     w.bytes32(e.operatorId);
   }
-  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9, kanban #362 item 7): its 33-byte payout key, paid 20% of the nodes' fee on this
+  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): its 33-byte payout key, paid 20% of the nodes' fee on this
   // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
   // of all, after its own marker: every other entry keeps exactly its bytes and its id.
   if (e.frontendPk !== undefined && e.frontendPk !== null) {
@@ -701,8 +701,8 @@ export function encodeEntryContract(e) {
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
   }
-  // THE ITEMS THIS ENTRY PLAYS WITH (protocol 10, kanban #365): each an item of the round's game by its id, the purchase that made its
-  // owner, and the owner's proof (kanban #369) - the BIP340 signature, by the key the purchase names (player-key.js itemsSecretFor),
+  // THE ITEMS THIS ENTRY PLAYS WITH (protocol 10): each an item of the round's game by its id, the purchase that made its
+  // owner, and the owner's proof - the BIP340 signature, by the key the purchase names (player-key.js itemsSecretFor),
   // over entryItemDigest(round, this entry's player key, purchase): the entry's key is fresh per round, the owner's is not, so the
   // seats check the purchase is kept and that its buyer signed for this entry. WRITTEN ONLY WHEN IT NAMES ANY, last of all, after its
   // own marker: every other entry keeps exactly its bytes and its id. Sorted by item id, each once.
@@ -719,7 +719,7 @@ export function encodeEntryContract(e) {
     w.u8(ITEMS_ENTRY_MARKER);
     w.vec(e.items, (it, ww) => { ww.str(it.itemId); ww.bytes32(it.purchaseId); ww.bytes(it.ownerSig, 64); });
   }
-  // THE RESERVE LOCK (protocol 11, §27A.9.2, kanban #397): where the entry's lock transaction locked the round's 2 % to the
+  // THE RESERVE LOCK (protocol 11, §27A.9.2): where the entry's lock transaction locked the round's 2 % to the
   // federation's reserve key. WRITTEN ONLY WHEN THERE IS ONE, last of all, after its own marker: every other entry keeps exactly
   // its bytes and its id.
   if (e.reserveOutpoint !== undefined && e.reserveOutpoint !== null) {
@@ -730,7 +730,7 @@ export function encodeEntryContract(e) {
 }
 
 /**
- * WHAT AN ITEM'S OWNER SIGNS FOR AN ENTRY (kanban #369): taggedHash("ARENA/v1/EntryItem", round id || the entry's player key ||
+ * WHAT AN ITEM'S OWNER SIGNS FOR AN ENTRY: taggedHash("ARENA/v1/EntryItem", round id || the entry's player key ||
  * purchase id). Bound to the round and to this entry's key, so the proof is no good on any other entry.
  */
 export function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
@@ -740,9 +740,9 @@ export function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
   return taggedHash(TAG.entryItem, m);
 }
 
-/** The byte before the items an entry plays with (protocol 10, kanban #365), last of all. */
+/** The byte before the items an entry plays with (protocol 10), last of all. */
 export const ITEMS_ENTRY_MARKER = 0xad;
-/** An entry's reserve lock outpoint follows (protocol 11, kanban #397). */
+/** An entry's reserve lock outpoint follows (protocol 11). */
 export const RESERVE_ENTRY_MARKER = 0xae;
 export const ENTRY_ITEMS_MAX = 8;
 
@@ -750,13 +750,13 @@ export const ENTRY_ITEMS_MAX = 8;
 export const PICK_MARKER = 0xa7;
 /** The byte before an entry's move commitment (head-to-head), likewise never a donation list's first byte. */
 export const COMMIT_MARKER = 0xa8;
-/** The byte before a market order's limit price and expiry (kanban #278), after its pick. */
+/** The byte before a market order's limit price and expiry, after its pick. */
 export const ORDER_MARKER = 0xa9;
-/** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
+/** The byte before the federation an entry's locks are in (2026.0.3), last. */
 export const FEDERATION_MARKER = 0xaa;
-/** The byte before the payout key of the website that brought the entry (2026.0.9, kanban #362 item 7), last of all. */
+/** The byte before the payout key of the website that brought the entry (2026.0.9), last of all. */
 export const FRONTEND_MARKER = 0xac;
-/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), before the website's key. */
+/** The byte before the operator an entry's player declares it is (§7, §5A.13), before the website's key. */
 export const OPERATOR_MARKER = 0xab;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
@@ -886,7 +886,7 @@ export function stakePointIsTheHandouts(entry, handout) {
  * letter 21 put the tick in the core to prevent.
  */
 //
-// AND SINCE M3 R1 R3 (the owner 2026-09-15 08:07: several cores at once) "the core" is the ROUND'S core
+// AND SINCE M3 R1 R3 (2026-09-15 08:07: several cores at once) "the core" is the ROUND'S core
 // under the round's config - handed in as `coreTicks` by whoever resolved it (the signer node's plugins.js) -
 // and no longer the truck's BLOCK_TICKS read from its rules: the protocol names no game.
 export function runLengthIsTheCores(contract, coreTicks) {
@@ -907,7 +907,7 @@ export function runLengthIsTheCores(contract, coreTicks) {
 /**
  * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`: THE ROUND'S LAST TICK, for every entry.
  *
- * EVERY RUN OF A ROUND ENDS AT THE ROUND'S 82 s (kanban #130, the owner 2026-10-04 14:30: "They always end at the 82/90
+ * EVERY RUN OF A ROUND ENDS AT THE ROUND'S 82 s (2026-10-04 14:30: "They always end at the 82/90
  * boundary: the run ends at 82 s, the slot at 90 s. A later join does not extend the round. The late joiner has less
  * time"). Ticks are counted from the round's start; an entry joined at tick J carries ticks J .. blockTicks - 1, and its
  * run is blockTicks - J (runTicksForEntry). Before, the last tick was joinTick + blockTicks - 1 - a whole run from the
@@ -922,7 +922,7 @@ export function lastTickOfRun(joinTick, blockTicks) {
   return blockTicks - 1;
 }
 
-// THE LAST ENTRY OF A LATE-JOIN ROUND (kanban #130, the owner 2026-10-04 14:30: "Join closes when 45 s remain. A player who
+// THE LAST ENTRY OF A LATE-JOIN ROUND (2026-10-04 14:30: "Join closes when 45 s remain. A player who
 // would have 45 s or less left must not enter"): remaining is the round clock to its run's end at start + 82 s, so an entry
 // is taken only before start + 37 s; at that instant 45 s remain and it is refused. Stricter than the bytes (entry_close
 // start + 45 s), which stay as posted: no new series.
@@ -930,7 +930,7 @@ export const LATE_JOIN_RUN_MS = 82000n;
 export const LATE_JOIN_LEFT_MS = 45000n;
 export const LATE_JOIN_LAST_ENTRY_MS = LATE_JOIN_RUN_MS - LATE_JOIN_LEFT_MS;   // 37 000 ms after the start
 
-/** THE RUN AN ENTRY GETS (kanban #130): from its join tick to the round's last tick - blockTicks - joinTick ticks. */
+/** THE RUN AN ENTRY GETS: from its join tick to the round's last tick - blockTicks - joinTick ticks. */
 export function runTicksForEntry(joinTick, blockTicks) {
   return lastTickOfRun(joinTick, blockTicks) - joinTick + 1;
 }
@@ -993,7 +993,7 @@ export function roundWindowsAreValid(c) {
       why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
     };
 
-  // AND ITS OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): "A Round
+  // AND ITS OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01 09:40): "A Round
   // Contract whose objection_window_W is not exactly 600000 ms is invalid: a node refuses to open it, list it or take an
   // entry for it." The field was contract-defined with a 10-minute reference and a 6-hour cap; neither stands.
   if (typeof c.objectionWindowMs !== 'bigint')
@@ -1021,7 +1021,7 @@ export function roundWindowsAreValid(c) {
 const RELAY_SCHEMES = ['http:', 'https:', 'ws:', 'wss:'];
 
 // `manifest`: the round's game's, where the checker knows it - a market's round names its own lock span (lock-expiry.js,
-// kanban #236), every other round the ruled 144
+//), every other round the ruled 144
 export function custodyFieldsAreValid(c, { manifest = null } = {}) {
   if (!c) return { ok: false, why: 'no contract' };
   const span = stakeExpiryFits(c, { manifest });
@@ -1086,7 +1086,7 @@ export function sittingSeatsFitTheSlots(c) {
   const gv = Number.isInteger(c.gameVerifySlots) ? c.gameVerifySlots : 0;
   const st = Number.isInteger(c.settlementSlots) ? c.settlementSlots : 0;
   const slots = Math.max(gv, st);
-  // RESERVE SEATS (§5A.7, kanban #301; decision A: the contract names the draw): a round may name its draw - two reserves
+  // RESERVE SEATS (§5A.7decision A: the contract names the draw): a round may name its draw - two reserves
   // over the seats, 9 for 7 and 3 for 2 (sortition.js drawnForRole) - and its seating certificate says who sits
   const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
   const drawn = slots < 1 ? 0 : Math.min(slots + 2, 2 * t - 1);
@@ -1121,7 +1121,7 @@ export function publicationRelaysAreValid(c) {
 
 /**
  * WHAT A CLIENT WARNS ABOUT BEFORE ANYONE STAKES. The engine's own: a flat rank curve (§18A.7) and a min_score that is a
- * danger rule. THE GAME'S FIELDS ARE THE GAME'S TO JUDGE (kanban #203): `gameWarnings` is the round's game's own check of
+ * danger rule. THE GAME'S FIELDS ARE THE GAME'S TO JUDGE: `gameWarnings` is the round's game's own check of
  * the fields only it reads - nextblock's `roundWarnings` (exposure ignored, a degenerate time factor) - appended here.
  */
 export function contractWarnings(c, gameWarnings = null) {
@@ -1130,7 +1130,7 @@ export function contractWarnings(c, gameWarnings = null) {
   // float here would change nothing - which is exactly why it is worth not
   // writing: a division on a money-shaped number is a habit, and the next one
   // will be somewhere it matters.
-  // A ROUND WITH NO RANK CURVE (an attested market, §0A.7a: rank 0 of 0) is not flat - it has none (kanban #316)
+  // A ROUND WITH NO RANK CURVE (an attested market, §0A.7a: rank 0 of 0) is not flat - it has none
   if (c.rankDenominator > 0 && Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
     out.push('flat_rank_curve');
   // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
@@ -1140,7 +1140,7 @@ export function contractWarnings(c, gameWarnings = null) {
 }
 
 /**
- * THE FEDERATION AN ENTRY'S LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the
+ * THE FEDERATION AN ENTRY'S LOCKS ARE IN (2026.0.3): on a round that takes any federation (takesAnyFederation) the
  * one the entry names - an entry naming none is refused; on any other round the round's own - an entry naming another is
  * refused. Answers { ok, federationId } or { ok: false, why }. Which federations a seat takes is the seat's (OPEN, bonded).
  */

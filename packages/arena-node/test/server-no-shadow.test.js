@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NO NAME server.js IMPORTS IS DECLARED AGAIN INSIDE IT (kanban #326 step 2, 2026-10-15 11:38Z): a `const endpointsOf` added inside
+// NO NAME server.js IMPORTS IS DECLARED AGAIN INSIDE IT (2026-10-15 11:38Z): a `const endpointsOf` added inside
 // serve() shadowed roster.js's endpointsOf (a committee -> the seats' URLs) for the whole function, so every verifier's peersFor
 // answered with the new function's object and each head-to-head close threw "this.peersOf is not a function or its return value is
 // not iterable" - five testnet4 seats restarted in a loop. The suite's server tests never close a head-to-head round; this reads

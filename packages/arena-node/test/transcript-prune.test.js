@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§34, kanban #33; the owner 2026-10-17: "Transcripts are deleted when the claim window ends,
+// TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§342026-10-17: "Transcripts are deleted when the claim window ends,
 // as §34 reads - not kept longer"): kept through W and the contract's claim_window_days, deleted after; a contract naming no claim
 // window keeps them; the round, its entries and receipts stay.
 import { test } from 'node:test';
@@ -41,7 +41,7 @@ test('the prune deletes only the rounds whose window ended, from ticks, batches 
   assert.deepEqual([later.pruned, later.kept], [[id(2).toString('hex')], 1], 'round 2 once its window ends; round 3 never');
 });
 
-// ROUNDS NOBODY USED LEAVE TOO (kanban #468, "make it lean"; a copy of second-host seat 2: 154,244 of 206,582 rounds unused and past their
+// ROUNDS NOBODY USED LEAVE TOO ("make it lean"; a copy of second-host seat 2: 154,244 of 206,582 rounds unused and past their
 // windows, 675 -> 199 MB): an unused round past its end + W + claim window goes with its committee and seating rows; a used one -
 // any row in a table outside that set, an entry or an equivocation proof alike - and a future one stay; passes go in batches.
 test('unused rounds past their time go with every committee and seating row; used and future rounds stay; batches resume', async () => {

@@ -61,7 +61,7 @@ test('an entry with no stake point matches no stake lock', () => {
     /names no stake point/);
 });
 
-// THE LOCK'S OWN HEIGHT, NOT THE VERIFIER'S CLOCK (§23.1 step 5, RULED the owner 2026-09-24, option (a)). Step 4 builds a
+// THE LOCK'S OWN HEIGHT, NOT THE VERIFIER'S CLOCK (§23.1 step 5, RULED 2026-09-24, option (a)). Step 4 builds a
 // lock at "height + stake_expiry_blocks"; the old check wanted "current height + stake_expiry_blocks" at verification,
 // so a lock built exactly as step 4 says was refused one block later (measured: 450 against 316 + 144). The federation
 // holds no creation height, so lock_height is the federation-held expiration less 144, and what bites is freshness:

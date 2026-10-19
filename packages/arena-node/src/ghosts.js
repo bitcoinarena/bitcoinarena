@@ -74,7 +74,7 @@ export function ghostFor({
 }) {
   if (!Number.isInteger(tick) || tick < 0)
     return { ok: false, why: 'a ghost is at a whole tick' };
-  // A GAME WHOSE CORE DRAWS NO PICTURE HAS NO GHOST (kanban #202: `picture` is a plugin's optional extra) - said for that
+  // A GAME WHOSE CORE DRAWS NO PICTURE HAS NO GHOST (`picture` is a plugin's optional extra) - said for that
   // reason, before any replay, and never as a run that did not reach its tick.
   if (core && drawsPicture(core) === false)
     return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
@@ -154,7 +154,7 @@ export const STEP_BUDGET = 150;
 export class Ghosts {
   constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, plugins = [] } = {}) {
     this.round = round;
-    // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1): a round's picture is drawn by the core its game installed, or not at
+    // THE GAMES THIS NODE HOSTS (M3 R1): a round's picture is drawn by the core its game installed, or not at
     // all - and only by a core whose adapter draws one (`picture` is a game's optional extra).
     this.plugins = hostedPlugins(plugins);
     this.randomnessFor = randomnessFor;
@@ -215,7 +215,7 @@ export class Ghosts {
     const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
     const had = this.runs.get(key);
     if (had) return had;
-    // THE LIVE PATH REFUSES AS THE SLOW ONE DOES (kanban #202): a game that draws no picture keeps no run warm for one
+    // THE LIVE PATH REFUSES AS THE SLOW ONE DOES: a game that draws no picture keeps no run warm for one
     const core = this.#coreOf(roundIdBytes);
     if (core && drawsPicture(core) === false)
       return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
@@ -240,7 +240,7 @@ export class Ghosts {
     const found = pluginForRound(contract, this.plugins);
     // AN ATTESTED ROUND (§0A.7a) HAS NO CORE: nothing of it is pictured
     if (found.ok && found.attested) return null;
-    // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
+    // AND THE ROUND'S WORLD RULE: its config hash, census root and id, so the replay derives the world the page did
     return found.ok ? { ...found.core, game: found.plugin.name, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin),
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes),
         sharedWorld: [...found.plugin.sharedWorld] } } : null;
@@ -322,7 +322,7 @@ export class Ghosts {
     const published = this.playedThrough(roundIdBytes, entryIdBytes);
     if (published === null)
       return { ok: false, why: 'that entry has published no inputs, so there is nothing to be a picture of' };
-    // NEVER A WHOLE RUN IN ONE CALL (the owner 2026-09-17 17:05 / 17:12: ghosts a minute late and stuttering). The first
+    // NEVER A WHOLE RUN IN ONE CALL (2026-09-17 17:05 / 17:12: ghosts a minute late and stuttering). The first
     // picture of a truck replayed its whole run here, on the event loop both signer nodes share: 3.55 s a run at 395 us a
     // tick, so a watcher arriving with two or three trucks mid-run stopped the Daily for 14-21 s (measured 18.7 s and
     // 20.0 s within one minute) - every batch and every picture waited. A call steps at most STEP_BUDGET ticks; a cold

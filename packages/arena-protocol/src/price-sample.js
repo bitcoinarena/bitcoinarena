@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PRICE A RUN PLAYS AGAINST, SIGNED BY THE COMMITTEE (§11, kanban #311). "PriceSample { tick, price_cents, attestation }
+// THE PRICE A RUN PLAYS AGAINST, SIGNED BY THE COMMITTEE (§11). "PriceSample { tick, price_cents, attestation }
 // ... `attestation` is the game/verify committee's signature over (round_id, tick, price_cents): the committee nodes publish
 // one attested sample every 5 s of round time from the contract's named feed - and, with the first, the 64 samples before
 // start_time from the feed's history ... The player never chooses the price."
@@ -76,7 +76,7 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// PROTOCOL 5: THE MEDIAN OF SIGNED READINGS (kanban #312, RULED the owner 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
+// PROTOCOL 5: THE MEDIAN OF SIGNED READINGS (RULED 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
 // signs the price it read, and the sample is the median of five signed readings. Nobody proposes a price, so nobody chooses
 // BULLS, BEARS, or FLAT."). Measured before it: rounds 6b51be20 / a45f2ae5 were signed FLAT by 7 seats with both ends at
 // $81,766.45 while the run traded $81,713-81,838 - the proposing seat's price, which the others signed within a tolerance.
@@ -188,12 +188,12 @@ export const sampleTick = (k) => Number(ticksForMs(BigInt(k) * BigInt(PRICE_SAMP
 export const centsToTapeUnits = (c) => Math.floor((c * 256 + 50) / 100);
 
 /**
- * THE PRICES A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (§11, kanban #311): every attestation the batch
+ * THE PRICES A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (§11): every attestation the batch
  * carries must stand (`priceAttestationStands`) for this round, and the sample (or the tape) at its tick must be its price in
  * the tape's unit. `require`: also refuse a sample or a tape that carries no attestation (a round whose contract names a
  * feed - slice 3). Answers { ok, attested: n } or { ok: false, why }.
  *
- * `median` (protocol 5, kanban #312 - the ROUND's version says it, constants.js mediansPrices): the batch's prices are kind 2
+ * `median` (protocol 5, - the ROUND's version says it, constants.js mediansPrices): the batch's prices are kind 2
  * samples [tick, 2, cents, [[key, cents, sig]]] and a kind 3 tape [tick, 3, prices, [[key, prices, sig]]] - the seats' own
  * signed readings - and each stands by priceSampleStands5 / priceTapeStands5, its stated price only when it IS the median of
  * them. A round of protocol 5 refuses a proposed-and-countersigned price (kinds 0 and 1), and a round below it refuses the

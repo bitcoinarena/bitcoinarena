@@ -1,4 +1,4 @@
-// THE NODES, FROM BITCOIN (kanban #272, the owner 2026-10-09: "The overview is dynamic. It asks the nodes. The site learns the
+// THE NODES, FROM BITCOIN (2026-10-09: "The overview is dynamic. It asks the nodes. The site learns the
 // nodes from bond announcements, for example through mempool.space ... No static links to nodes"; §25.1: "A client finds
 // nodes by reading Bitcoin").
 //

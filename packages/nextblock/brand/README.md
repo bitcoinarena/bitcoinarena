@@ -1,4 +1,4 @@
-# Tick Tock, Next Block - the game's mark (kanban #228)
+# Tick Tock, Next Block - the game's mark
 
 The source of the game's name and mark everywhere a player sees them. Served beside the page (the WebGL template
 `unity-proto/Assets/WebGLTemplates/NextBlock` carries byte-equal copies; `test/brand.test.js` holds them equal), pinned

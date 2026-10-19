@@ -2,12 +2,12 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 0.12 DISPLAY NAME. Identity is the player key. The name is presentation.
 //
-// the owner 2026-09-08 18:55 (M3): default name is derived from the key so every
+// 2026-09-08 18:55 (M3): default name is derived from the key so every
 // client shows the same string for the same player. A player may override it.
 // The override lives next to the secret in the browser, not on the signed
 // final, so the board still cannot be injected with a name (letter 20).
 // Donation LNURL comments carry the player public key as hex, not the name
-// (the owner 2026-09-08 18:59).
+// (2026-09-08 18:59).
 //
 //   default = adjective-animal-NNNN
 //   digest  = taggedHash('ARENA/v1/DISPLAY_NAME', playerPubkey)

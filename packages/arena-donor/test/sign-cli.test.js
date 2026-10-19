@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVELOPER'S TWO COMMANDS (kanban #208, the page's guide): `arena-donor game-key <dir>` makes the Ed25519 key and never
+// THE DEVELOPER'S TWO COMMANDS (the page's guide): `arena-donor game-key <dir>` makes the Ed25519 key and never
 // replaces it; `arena-donor sign <dir> <body.mjs>` signs the body a module exports as BODY, checks it as a node does, and
 // writes the manifest whose id it prints.
 import { test } from 'node:test';

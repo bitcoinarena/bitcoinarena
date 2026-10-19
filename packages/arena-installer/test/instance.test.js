@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// SEVERAL NODES ON ONE MACHINE (kanban #495): ARENA_INSTANCE names a second node's services apart, ARENA_PORT_OFFSET moves its fixed
+// SEVERAL NODES ON ONE MACHINE: ARENA_INSTANCE names a second node's services apart, ARENA_PORT_OFFSET moves its fixed
 // ports; neither set, everything as before. The values are read when the installer starts, so each case runs in its own process.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

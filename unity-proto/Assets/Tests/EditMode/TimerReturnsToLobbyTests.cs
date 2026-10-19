@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// WHEN THE ROUND TIMER HITS 0 THE GAME ENDS BY ITSELF (the owner 2026-09-20 16:21).
+/// WHEN THE ROUND TIMER HITS 0 THE GAME ENDS BY ITSELF (2026-09-20 16:21).
 ///
 /// "It used to. It no longer does." The core half is fine and is pinned in JS by round-ends.test.js: a truck
 /// braked from the first tick reaches RUN_MISSED at elapsed 10800, because gate.js returns RUN_MISSED once

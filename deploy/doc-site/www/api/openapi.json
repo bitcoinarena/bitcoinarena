@@ -1656,7 +1656,7 @@
      "Players"
     ],
     "summary": "Developers' ballots",
-    "description": "Every proposal and approval of the protocol developers' donation set this seat holds, with its tally, and the sets approved (\u00a727A.4.1, kanban #382).\n\nAccess: none\n\nReturns: 200 JSON {ballots[], approved[{serial, validFrom, setId, approvedBy}]}\n\nSource: `packages/arena-node/src/server.js` line 6913.",
+    "description": "Every proposal and approval of the protocol developers' donation set this seat holds, with its tally, and the sets approved (\u00a727A.4.1).\n\nAccess: none\n\nReturns: 200 JSON {ballots[], approved[{serial, validFrom, setId, approvedBy}]}\n\nSource: `packages/arena-node/src/server.js` line 6913.",
     "operationId": "get_donation_ballots",
     "responses": {
      "200": {
@@ -1720,7 +1720,7 @@
      "Players"
     ],
     "summary": "A donor's gifts",
-    "description": "The donations a donor made outside any round (to a game's set, the protocol developers, or a player as a zap), as this seat keeps them (kanban #431, #463).\n\nAccess: none\n\nReturns: 200 JSON {donor, gifts[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 5290.",
+    "description": "The donations a donor made outside any round (to a game's set, the protocol developers, or a player as a zap), as this seat keeps them.\n\nAccess: none\n\nReturns: 200 JSON {donor, gifts[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 5290.",
     "operationId": "get_donation_gifts",
     "parameters": [
      {
@@ -2398,7 +2398,7 @@
      "Players"
     ],
     "summary": "Fees in force and fee proposals",
-    "description": "The protocol fees in force at this seat's tip (and at a named height), each fee's limits and the sums, and every fee proposal with its signal, vote, the protocol developers' answers and its decision (kanban #462).\n\nAccess: none\n\nReturns: 200 JSON {tip, inForce, today, height?, atHeight?, schedule, limits{fee:{min,max,today,donation}}, sums{roundMaxBps,itemPct,marketMaxBps}, proposals[]}\n\nSource: `packages/arena-node/src/server.js` line 6948.",
+    "description": "The protocol fees in force at this seat's tip (and at a named height), each fee's limits and the sums, and every fee proposal with its signal, vote, the protocol developers' answers and its decision.\n\nAccess: none\n\nReturns: 200 JSON {tip, inForce, today, height?, atHeight?, schedule, limits{fee:{min,max,today,donation}}, sums{roundMaxBps,itemPct,marketMaxBps}, proposals[]}\n\nSource: `packages/arena-node/src/server.js` line 6948.",
     "operationId": "get_fees",
     "parameters": [
      {
@@ -2954,7 +2954,7 @@
      "Players"
     ],
     "summary": "Funding proposals and leaderboard payouts",
-    "description": "Every project funding proposal with its signal, comments and vote, every leaderboard payout request and its 25 % vote (kanban #460), and every player's newest name.\n\nAccess: none\n\nReturns: 200 JSON {tip, schedule, signalPct, proposals[], leaderboards[], names[]}\n\nSource: `packages/arena-node/src/server.js` line 6920.",
+    "description": "Every project funding proposal with its signal, comments and vote, every leaderboard payout request and its 25 % vote, and every player's newest name.\n\nAccess: none\n\nReturns: 200 JSON {tip, schedule, signalPct, proposals[], leaderboards[], names[]}\n\nSource: `packages/arena-node/src/server.js` line 6920.",
     "operationId": "get_funding",
     "responses": {
      "200": {
@@ -3813,7 +3813,7 @@
      "Players"
     ],
     "summary": "[signed] Record an item purchase",
-    "description": "Keeps a buyer's signed item purchase record after checking it against the hosted game's terms, the donation sets and the federation output by output; hands a new one on to every seat (kanban #365).\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the buyer's signature over the record\n\nReturns: 200 JSON {id, kept}; 400/404/422\n\nSource: `packages/arena-node/src/server.js` line 5206.",
+    "description": "Keeps a buyer's signed item purchase record after checking it against the hosted game's terms, the donation sets and the federation output by output; hands a new one on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the buyer's signature over the record\n\nReturns: 200 JSON {id, kept}; 400/404/422\n\nSource: `packages/arena-node/src/server.js` line 5206.",
     "operationId": "post_item_purchase",
     "requestBody": {
      "required": true,
@@ -3859,7 +3859,7 @@
      "Players"
     ],
     "summary": "Items a player owns",
-    "description": "The in-game items a player bought (e.g. the larger truck), from the purchase records this seat keeps (kanban #365, #374).\n\nAccess: none\n\nReturns: 200 JSON {node, items[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 5296.",
+    "description": "The in-game items a player bought (e.g. the larger truck), from the purchase records this seat keeps.\n\nAccess: none\n\nReturns: 200 JSON {node, items[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 5296.",
     "operationId": "get_items",
     "parameters": [
      {
@@ -4190,7 +4190,7 @@
      "Players"
     ],
     "summary": "Rounds that took orders",
-    "description": "The market rounds that took orders on this seat since a time, so a page reads a player's own orders back from the nodes after a reload, closed ones too (kanban #452).\n\nAccess: none\n\nReturns: 200 JSON {rounds[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 6176.",
+    "description": "The market rounds that took orders on this seat since a time, so a page reads a player's own orders back from the nodes after a reload, closed ones too.\n\nAccess: none\n\nReturns: 200 JSON {rounds[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 6176.",
     "operationId": "get_market_rounds",
     "parameters": [
      {
@@ -4854,7 +4854,7 @@
      "Operators"
     ],
     "summary": "This node's bond and its lock",
-    "description": "This node's bond as the newest census this seat holds names it (outpoint, amount, confirmation height, maturity, template) and its lock at the tip: the maturity block, the blocks to it, an estimated date and whether it can be withdrawn now (kanban #471 part D). Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, bond, network, tip, lock, says}\n\nSource: `packages/arena-node/src/server.js` line 4246.",
+    "description": "This node's bond as the newest census this seat holds names it (outpoint, amount, confirmation height, maturity, template) and its lock at the tip: the maturity block, the blocks to it, an estimated date and whether it can be withdrawn now. Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, bond, network, tip, lock, says}\n\nSource: `packages/arena-node/src/server.js` line 4246.",
     "operationId": "get_owner_bond",
     "responses": {
      "200": {
@@ -4872,7 +4872,7 @@
      "Operators"
     ],
     "summary": "[signed] Withdraw the bond after its lock",
-    "description": "From its maturity block on, the whole bond to the owner's address on its template-2 recovery leaf, signed by this node's key, checked by testmempoolaccept and broadcast. Refused before maturity with the height, the blocks left and the date. The node leaves the census from the next census height (kanban #471 part D).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON {ok, txid, value, fee}; 400; 401/403; 409; 503\n\nSource: `packages/arena-node/src/server.js` line 4524.",
+    "description": "From its maturity block on, the whole bond to the owner's address on its template-2 recovery leaf, signed by this node's key, checked by testmempoolaccept and broadcast. Refused before maturity with the height, the blocks left and the date. The node leaves the census from the next census height.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON {ok, txid, value, fee}; 400; 401/403; 409; 503\n\nSource: `packages/arena-node/src/server.js` line 4524.",
     "operationId": "post_owner_bond_withdraw",
     "requestBody": {
      "required": true,
@@ -5030,7 +5030,7 @@
      "Operators"
     ],
     "summary": "[signed] A developer's answer to a fee proposal",
-    "description": "From the owner page: a dev client of this node approves or denies a fee proposal, signed with that client's key, kept and handed on (kanban #462).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 400/401/404/501\n\nSource: `packages/arena-node/src/server.js` line 4460.",
+    "description": "From the owner page: a dev client of this node approves or denies a fee proposal, signed with that client's key, kept and handed on.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 400/401/404/501\n\nSource: `packages/arena-node/src/server.js` line 4460.",
     "operationId": "post_owner_dev_fee_answer",
     "requestBody": {
      "required": true,
@@ -5076,7 +5076,7 @@
      "Operators"
     ],
     "summary": "[signed] Propose a developers' set",
-    "description": "From the owner page: a dev client of this node proposes a new split of the protocol developers' donation set (with optional vesting), signed with its recipient key, kept and handed on (\u00a727A.4.1, kanban #382).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 401/404/409/501\n\nSource: `packages/arena-node/src/server.js` line 4419.",
+    "description": "From the owner page: a dev client of this node proposes a new split of the protocol developers' donation set (with optional vesting), signed with its recipient key, kept and handed on (\u00a727A.4.1).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 401/404/409/501\n\nSource: `packages/arena-node/src/server.js` line 4419.",
     "operationId": "post_owner_dev_propose",
     "requestBody": {
      "required": true,
@@ -5384,7 +5384,7 @@
      "Operators"
     ],
     "summary": "[signed] Owner: comment (funding)",
-    "description": "From the owner page: a comment by this node on a funding proposal, written and signed with the node's own key, kept and handed on (\u00a727A.9.3, kanban #397).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
+    "description": "From the owner page: a comment by this node on a funding proposal, written and signed with the node's own key, kept and handed on (\u00a727A.9.3).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
     "operationId": "post_owner_funding_comment",
     "requestBody": {
      "required": true,
@@ -5430,7 +5430,7 @@
      "Operators"
     ],
     "summary": "[signed] Owner: propose (funding)",
-    "description": "From the owner page: a funding proposal authored by this node (amount, LNURL, purpose), written and signed with the node's own key, kept and handed on (\u00a727A.9.3, kanban #397).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
+    "description": "From the owner page: a funding proposal authored by this node (amount, LNURL, purpose), written and signed with the node's own key, kept and handed on (\u00a727A.9.3).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
     "operationId": "post_owner_funding_propose",
     "requestBody": {
      "required": true,
@@ -5476,7 +5476,7 @@
      "Operators"
     ],
     "summary": "[signed] Owner: signal (funding)",
-    "description": "From the owner page: this node's signal for a funding proposal, written and signed with the node's own key, kept and handed on (\u00a727A.9.3, kanban #397).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
+    "description": "From the owner page: this node's signal for a funding proposal, written and signed with the node's own key, kept and handed on (\u00a727A.9.3).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
     "operationId": "post_owner_funding_signal",
     "requestBody": {
      "required": true,
@@ -6623,7 +6623,7 @@
      "Operators"
     ],
     "summary": "The release this node runs",
-    "description": "The release this node runs: its VERSION and COMMIT (the release root's files, null when run from a source checkout), the protocol versions it speaks, and how it is updated (kanban #471 part D). Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, version, commit, latest, protocols, update}\n\nSource: `packages/arena-node/src/server.js` line 4248.",
+    "description": "The release this node runs: its VERSION and COMMIT (the release root's files, null when run from a source checkout), the protocol versions it speaks, and how it is updated. Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, version, commit, latest, protocols, update}\n\nSource: `packages/arena-node/src/server.js` line 4248.",
     "operationId": "get_owner_version",
     "responses": {
      "200": {
@@ -6968,7 +6968,7 @@
      "Nodes"
     ],
     "summary": "[signed] A committee seat's price reading",
-    "description": "A committee seat's own signed price reading for a price round; a sample is the median of the readings, nobody proposes a price (protocol 5, kanban #312).\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the committee seat's signature\n\nReturns: 200 JSON; 400/409\n\nSource: `packages/arena-node/src/server.js` line 6167.",
+    "description": "A committee seat's own signed price reading for a price round; a sample is the median of the readings, nobody proposes a price (protocol 5).\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the committee seat's signature\n\nReturns: 200 JSON; 400/409\n\nSource: `packages/arena-node/src/server.js` line 6167.",
     "operationId": "post_price_reading",
     "requestBody": {
      "required": true,
@@ -7288,7 +7288,7 @@
      "Nodes"
     ],
     "summary": "Connect back to the asker (installer reach test)",
-    "description": "Can the internet reach a new node? The seat connects back to the asking address only (a public one), on the port named, asks GET /reach-nonce and answers whether the nonce came back - never what it read, never whether the port refused or stayed silent. 6 checks a minute per address, 60 in all. Used by the node installer's direct-connection test (kanban #471 ruling 7).\n\nAccess: none\n\nReturns: 200 JSON {ok, reached, address, port, ms?}; 400; 429\n\nSource: `packages/arena-node/src/server.js` line 5317.",
+    "description": "Can the internet reach a new node? The seat connects back to the asking address only (a public one), on the port named, asks GET /reach-nonce and answers whether the nonce came back - never what it read, never whether the port refused or stayed silent. 6 checks a minute per address, 60 in all. Used by the node installer's direct-connection test (ruling 7).\n\nAccess: none\n\nReturns: 200 JSON {ok, reached, address, port, ms?}; 400; 429\n\nSource: `packages/arena-node/src/server.js` line 5317.",
     "operationId": "post_reach_check",
     "requestBody": {
      "required": true,
@@ -7518,7 +7518,7 @@
      "Operators"
     ],
     "summary": "Measured replay speed and capacity",
-    "description": "This seat's measured replay speed and the players a round can hold in the result window. Also how this seat keeps its storage lean: transcripts are deleted once the claim window ends (lastPrune), and rounds nobody used go with their committee and seating records after their windows (unusedRounds) (kanban #33, #468).\n\nAccess: none\n\nReturns: 200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}\n\nSource: `packages/arena-node/src/server.js` line 5670.",
+    "description": "This seat's measured replay speed and the players a round can hold in the result window. Also how this seat keeps its storage lean: transcripts are deleted once the claim window ends (lastPrune), and rounds nobody used go with their committee and seating records after their windows (unusedRounds).\n\nAccess: none\n\nReturns: 200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}\n\nSource: `packages/arena-node/src/server.js` line 5670.",
     "operationId": "get_replay_budget",
     "parameters": [
      {
@@ -7801,7 +7801,7 @@
      "Nodes"
     ],
     "summary": "Reserve payout: commit",
-    "description": "The reserve payout ceremony between guardian seats: a guardian seat's FROST commitment for a payout plan it rebuilt itself (kanban #397 slice 8).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
+    "description": "The reserve payout ceremony between guardian seats: a guardian seat's FROST commitment for a payout plan it rebuilt itself.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
     "operationId": "post_reserve_payout_commit",
     "requestBody": {
      "required": true,
@@ -7841,7 +7841,7 @@
      "Nodes"
     ],
     "summary": "Reserve payout: record",
-    "description": "The reserve payout ceremony between guardian seats: a payout record any seat keeps (a PAID one only with the invoice's preimage) (kanban #397 slice 8).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
+    "description": "The reserve payout ceremony between guardian seats: a payout record any seat keeps (a PAID one only with the invoice's preimage).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
     "operationId": "post_reserve_payout_record",
     "requestBody": {
      "required": true,
@@ -7881,7 +7881,7 @@
      "Nodes"
     ],
     "summary": "Reserve payout: share",
-    "description": "The reserve payout ceremony between guardian seats: a guardian seat's FROST signature share for that plan, given the commitments (kanban #397 slice 8).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
+    "description": "The reserve payout ceremony between guardian seats: a guardian seat's FROST signature share for that plan, given the commitments.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
     "operationId": "post_reserve_payout_share",
     "requestBody": {
      "required": true,
@@ -7921,7 +7921,7 @@
      "Players"
     ],
     "summary": "Reserve payouts",
-    "description": "Every payout from the protocol reserves this seat knows: funding proposals and leaderboard payouts, with plan, state and txid (kanban #397, #460).\n\nAccess: none\n\nReturns: 200 JSON {payouts[]}\n\nSource: `packages/arena-node/src/server.js` line 6942.",
+    "description": "Every payout from the protocol reserves this seat knows: funding proposals and leaderboard payouts, with plan, state and txid.\n\nAccess: none\n\nReturns: 200 JSON {payouts[]}\n\nSource: `packages/arena-node/src/server.js` line 6942.",
     "operationId": "get_reserve_payouts",
     "responses": {
      "200": {
@@ -7939,7 +7939,7 @@
      "Players"
     ],
     "summary": "Protocol reserves per federation",
-    "description": "Per federation this node knows guardians of: its reserve key (guardian seats, threshold, group key, public shares), what the reserves hold and what came in, and the reserve payouts (\u00a727A.9.2, kanban #397).\n\nAccess: none\n\nReturns: 200 JSON {node, totalMsat, entries, federations[{federationId, members, needed, key, heldMsat, paidIn, ...}], paidIn[], payouts[]}\n\nSource: `packages/arena-node/src/server.js` line 6875.",
+    "description": "Per federation this node knows guardians of: its reserve key (guardian seats, threshold, group key, public shares), what the reserves hold and what came in, and the reserve payouts (\u00a727A.9.2).\n\nAccess: none\n\nReturns: 200 JSON {node, totalMsat, entries, federations[{federationId, members, needed, key, heldMsat, paidIn, ...}], paidIn[], payouts[]}\n\nSource: `packages/arena-node/src/server.js` line 6875.",
     "operationId": "get_reserves",
     "parameters": [
      {
@@ -9134,7 +9134,7 @@
      "Builders"
     ],
     "summary": "A series template",
-    "description": "A series' template as its text line, for a page checking a series round it was handed; the reader believes it only once it hashes to the id it asked for (kanban #362).\n\nAccess: none\n\nReturns: 200 text/plain the template line (cache 1 h); 400; 404\n\nSource: `packages/arena-node/src/server.js` line 5335.",
+    "description": "A series' template as its text line, for a page checking a series round it was handed; the reader believes it only once it hashes to the id it asked for.\n\nAccess: none\n\nReturns: 200 text/plain the template line (cache 1 h); 400; 404\n\nSource: `packages/arena-node/src/server.js` line 5335.",
     "operationId": "get_series_template",
     "parameters": [
      {
@@ -9175,7 +9175,7 @@
      "Players"
     ],
     "summary": "Who served rounds in a window",
-    "description": "The nodes that served rounds in a time window, from the FINAL signatures this seat holds, each checked against its committee; the root lets seats compare (kanban #365).\n\nAccess: none\n\nReturns: 200 JSON {node, fromMs, toMs, rounds, root, nodes, refused, held?}; 400\n\nSource: `packages/arena-node/src/server.js` line 5302.",
+    "description": "The nodes that served rounds in a time window, from the FINAL signatures this seat holds, each checked against its committee; the root lets seats compare.\n\nAccess: none\n\nReturns: 200 JSON {node, fromMs, toMs, rounds, root, nodes, refused, held?}; 400\n\nSource: `packages/arena-node/src/server.js` line 5302.",
     "operationId": "get_served",
     "parameters": [
      {

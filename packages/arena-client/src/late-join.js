@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * A LATE JOIN ENDS WITH ITS ROUND (kanban #130, the owner 2026-10-04 14:30): "Rounds are 90 s. They always end at the 82/90
+ * A LATE JOIN ENDS WITH ITS ROUND (2026-10-04 14:30): "Rounds are 90 s. They always end at the 82/90
  * boundary: the run ends at 82 s, the slot at 90 s. A later join does not extend the round. The late joiner has less time.
  * Join closes when 45 s remain. A player who would have 45 s or less left must not enter and waits for the next round."
  *
@@ -21,7 +21,7 @@ export const LATE_JOIN_JOIN_MS = 5000;
 
 /**
  * A LATE-JOIN ROUND, AS THE SEATS TELL IT (round.js): a series round whose entry closes exactly LATE_JOIN_MS (45 s) after its
- * start. Any other window is the round's own (the owner 2026-10-14 ~09:15Z, Tick Tock's lobby: "join until 0:00" and PLAY never
+ * start. Any other window is the round's own (2026-10-14 ~09:15Z, Tick Tock's lobby: "join until 0:00" and PLAY never
  * enabled): testnet4's Tick Tock grid rounds take entries for six hours after their start, the seats take an entry until that
  * close, and the page - calling every series round closing after its start a late join - cut them at start + 32 s.
  */

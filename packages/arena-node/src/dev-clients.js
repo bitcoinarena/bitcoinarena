@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S OWN DEV CLIENTS (kanban #358, the owner 2026-10-14: "It needs to show the donations for the protocol and game dev. The node
+// THE NODE'S OWN DEV CLIENTS (2026-10-14: "It needs to show the donations for the protocol and game dev. The node
 // operator may set up the dev client for all of that, via the ui. It shows the stats then and there's a withdrawal feature that
 // withdraws it to lightning").
 //
@@ -48,7 +48,7 @@ export function attributeDonations(rows, { protocolBps = 0, gameOf = () => null 
 }
 
 /**
- * WHAT A DEV KEY EARNED, BY PERIOD (kanban #382, the owner 2026-10-16: "Shows the dev protocol and dev game earnings (grouped by game)
+ * WHAT A DEV KEY EARNED, BY PERIOD (2026-10-16: "Shows the dev protocol and dev game earnings (grouped by game)
  * with daily, weekly, monthly : yearly earnings, also shows your stake of the total dev earnings (protocol / game)"). The same
  * split as attributeDonations, each donation counted in the UTC day, the ISO week (from Monday), the month and the year it was
  * verified in, measured from `nowMs`; `days` the last N UTC days one by one. Amounts are msat strings; unknown rounds are kept apart.
@@ -181,14 +181,14 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
       return { ok: true, kept };
     },
 
-    /** THE CLIENT'S KEY, FOR ITS OWN BALLOT SIGNATURES (§27A.4.1, kanban #382): { recipientPkHex, secretHex } - never answered to a page. */
+    /** THE CLIENT'S KEY, FOR ITS OWN BALLOT SIGNATURES (§27A.4.1): { recipientPkHex, secretHex } - never answered to a page. */
     keyOf(slug) {
       if (!isClient(String(slug))) return null;
       const k = readJson(join(dirOf(slug), 'key.json'));
       return k && /^[0-9a-f]{64}$/.test(k.secretHex || '') ? { recipientPkHex: k.recipientPkHex, secretHex: k.secretHex } : null;
     },
 
-    /** Every client's record rows and the seats its donor.json names (kanban #382: the rounds whose game the node must look up). */
+    /** Every client's record rows and the seats its donor.json names (the rounds whose game the node must look up). */
     rowsAndSeats() {
       const rows = []; const seats = new Set();
       for (const slug of readdirSync(root).filter(isClient)) {

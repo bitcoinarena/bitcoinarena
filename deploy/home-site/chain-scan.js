@@ -1,4 +1,4 @@
-// THE WORKER'S READ OF BITCOIN (kanban #272): every testnet4 transaction paying a bond marker, through mempool.space, with
+// THE WORKER'S READ OF BITCOIN: every testnet4 transaction paying a bond marker, through mempool.space, with
 // what a page needs to check each one itself - the raw transaction, its merkle branch and position, its block's header -
 // and which outputs of each are spent. Run every 2 minutes; a transaction already read keeps its bytes and proof, only the
 // spent outputs are asked again. The page (www/js/chain-nodes.js) believes none of it without checking.

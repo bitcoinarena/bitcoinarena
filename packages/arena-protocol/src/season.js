@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEASON: ONE GAME'S FINAL ROUNDS OVER A TIME WINDOW, PER PLAYER (kanban #362, feature 1 of docs/PLATFORM-RESEARCH.md).
+// A SEASON: ONE GAME'S FINAL ROUNDS OVER A TIME WINDOW, PER PLAYER (feature 1 of docs/PLATFORM-RESEARCH.md).
 //
 // A round's board (leaderboard.js) is forgotten when the round ends; status over weeks is what brings a player back. So
 // this adds the rounds of one game up - rounds played, wins, net msat, best score, last played - and it does so under the
@@ -219,7 +219,7 @@ export function season(rounds, { games, fromMs, toMs } = {}) {
   return { ok: true, fromMs: Number(from), toMs: Number(to), rows, rounds: counted, excluded, unchecked: SEASON_UNCHECKED };
 }
 
-// A NETWORK-WIDE SEASON (kanban #362 feature 1, scope=network). A round is held only by the seats of its committee - 7 of
+// A NETWORK-WIDE SEASON (feature 1, scope=network). A round is held only by the seats of its committee - 7 of
 // the 14 testnet4 seats - so one seat's own season misses about half the rounds. The network season asks every seat it
 // knows for its rounds of that season (GET /season-rounds) and adds them up. That makes it a board built partly from
 // OTHER seats' word, which this seat did not verify: it holds neither their results nor their settlements. So a round

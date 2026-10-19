@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# THE LICENSE IN EVERY SOURCE FILE WHERE IT FITS (kanban #519, the owner 2026-10-19: "Die Lizenz muss auch in jedes source file, oder nicht?
+# THE LICENSE IN EVERY SOURCE FILE WHERE IT FITS (2026-10-19: "Die Lizenz muss auch in jedes source file, oder nicht?
 # Da wo es Sinn macht"): an SPDX line and the copyright at the top of each of our own source files (after a shebang or a BOM), and in the
 # files LICENSE section 2 protects a third line saying so. Left out, because their bytes are hashed into ids or pins: the game plugins,
 # Tick Tock's core sources and built cores, the Rust lock client (its wasm is pinned), the Nostr bundle's source, built bundles and the

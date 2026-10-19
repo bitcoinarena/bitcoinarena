@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6, kanban #314; 2026.0.3): four rule hashes, the disconnect rule, the claim
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§62026.0.3): four rule hashes, the disconnect rule, the claim
 // window and each role's bond floor, in a 148-byte tail before the creator's key; a contract naming none keeps its bytes and id. A seat
 // runs only the rules its build has; the draw weighs and admits by the role's own floor.
 import { test } from 'node:test';

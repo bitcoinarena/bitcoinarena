@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #329, spec §27A.7.3-§27A.7.6: the ballot counted on a seat's own chain (ballot-tally.js), the config it makes live
+//, spec §27A.7.3-§27A.7.6: the ballot counted on a seat's own chain (ballot-tally.js), the config it makes live
 // (GET /config), the rounds a seat serves under it (POST /round), and a repeal on its short schedule - all on fake chains.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,7 +84,7 @@ test('the tally from blocks: votes outside the phase ignored, the last vote per 
   assert.equal(t.live(toHex(H(0x4e))).since, 108);
 });
 
-// A REORG (kanban #329, the hole of comment 2255): a count is held to the hashes of the blocks it read. A chain that can fork:
+// A REORG (the hole of comment 2255): a count is held to the hashes of the blocks it read. A chain that can fork:
 // each height a block with its own hash and votes; fork(at, votes) replaces every block from `at` up with new ones.
 function forkable(votesByHeight, top = 120) {
   const c = { tip: 0, reads: [], hashCalls: 0, censusReads: 0, blocks: new Map(), byHash: new Map(), branch: 0 };

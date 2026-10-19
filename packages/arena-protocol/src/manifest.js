@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GAME IS A MANIFEST (§0A.3, kanban #202, the owner 2026-10-06/07). The engine never imports a game's code: what it needs
+// A GAME IS A MANIFEST (§0A.32026-10-06/07). The engine never imports a game's code: what it needs
 // from a game - which cores, which configs, how long a run may be, which of the engine's payout rules and with which
 // numbers - it reads from the game's manifest, and from the game's core only through the adapter a node installed.
 //
@@ -11,17 +11,17 @@
 //       clients[], game_donation_set,
 //       [ATTESTED only] outcomes[], attestors[], attest_threshold,
 //         [optional, marker 0x01] market terms: node_fee_bps, donation_bps, question, resolve_after_close,
-//           deadline_after_resolve, source_rule (kanban #235),
-//         [optional, marker 0x04] template: category, max_outcomes, resolve_within (kanban #362 feature 5: each ROUND
+//           deadline_after_resolve, source_rule,
+//         [optional, marker 0x04] template: category, max_outcomes, resolve_within (feature 5: each ROUND
 //           asks its own question - contracts.js `event`),
-//         [optional, marker 0x05] game source: source_game_id, source_kind, mapping[] (kanban #362 feature 6: a market on a
+//         [optional, marker 0x05] game source: source_game_id, source_kind, mapping[] (feature 6: a market on a
 //           game - each ROUND names the source round whose signed result decides it, contracts.js `sourceRoundId`; no attestors),
-//         [optional, marker 0x06] scalar: low, high (i64 each), unit (kanban #362 feature 8: a numeric outcome paid linearly
+//         [optional, marker 0x06] scalar: low, high (i64 each), unit (feature 8: a numeric outcome paid linearly
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
-//       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (kanban #362 feature 3),
-//       [optional, marker 0x07] items[]: id, name, price_sat, unlock (kanban #365: a game's in-game items; protocol 10 - items.js),
-//       [optional, marker 0x02] required_protocol_version (kanban #349),
+//       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (feature 3),
+//       [optional, marker 0x07] items[]: id, name, price_sat, unlock (a game's in-game items; protocol 10 - items.js),
+//       [optional, marker 0x02] required_protocol_version,
 //       signature by game_dev_pubkey
 //     }
 //
@@ -40,7 +40,7 @@
 // An update is a new manifest: the same key, the old id as its parent, the next version. A round names the exact
 // manifest it plays (contracts.js gameId), so an update never changes a round already written.
 //
-// WHO SIGNS (the owner 2026-10-07 15:40): the game developer's dev client (arena-donor/src/manifest-sign.js), never a node -
+// WHO SIGNS (2026-10-07 15:40): the game developer's dev client (arena-donor/src/manifest-sign.js), never a node -
 // a node only verifies, through `manifestStands`.
 //
 // NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected (Ed25519, the scheme the
@@ -54,14 +54,14 @@ import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
 
 /**
- * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
+ * What a game's result is (§0A.7, §0A.7a): a replayed run, or an outcome its attestors sign (a price, an
  * event - a prediction market), with no core and no run.
  */
 export const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2, HEAD_TO_HEAD: 3 });
 /**
  * The engine's payout rules a manifest may pick (§0A.5): §18A's rank curve for a replayed run; pari-mutuel for an attested
- * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks); and, for a
- * replayed run, a TOP-N PRIZE SPLIT (kanban #362 feature 3: "tournament-style games need fixed splits; the rank curve is
+ * outcome (2026-10-07,: no counterparty - the losing picks' net stakes pay the winning picks); and, for a
+ * replayed run, a TOP-N PRIZE SPLIT (feature 3: "tournament-style games need fixed splits; the rank curve is
  * one shape only") - fixed shares of the pot over the top places, named in the manifest's `payoutShares` (payout.js
  * payoutSharesFit, computePayoutTable).
  */
@@ -71,7 +71,7 @@ export const OUTCOMES_MAX = 16;
 export const ATTESTORS_MAX = 16;
 
 /**
- * A MARKET'S OWN TERMS (kanban #235, the owner 2026-10-09: the market's fee "per market in manifest"; "refund at deadline"):
+ * A MARKET'S OWN TERMS (2026-10-09: the market's fee "per market in manifest"; "refund at deadline"):
  * its fee - the node share and the donation, each in basis points of the stake, within the network's (NODE_FEE_BPS 500,
  * donations up to 500) - its question, when its outcome is decided (`resolveAfterCloseMs` after a round's entry close),
  * the deadline its attestors have after that, and the rule its attestors read the outcome by (sources and aggregation, as
@@ -80,7 +80,7 @@ export const ATTESTORS_MAX = 16;
 export const MARKET_TERMS_MARKER = 0x01;
 
 /**
- * THE PROTOCOL VERSION A GAME REQUIRES (kanban #349, the owner 2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
+ * THE PROTOCOL VERSION A GAME REQUIRES (2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
  * Versionen required können. Alte nodes die da nicht updaten fliegen raus."): optional, written last after its own marker,
  * so every manifest without it keeps its bytes and its game id. A round of the game names that version or a later one
  * (roundFitsManifest, gameIsKnownGood), and the census seats only nodes whose advert lists the round's version - a node
@@ -89,7 +89,7 @@ export const MARKET_TERMS_MARKER = 0x01;
  */
 export const REQUIRED_VERSION_MARKER = 0x02;
 /**
- * AN EVENT-MARKET TEMPLATE (kanban #362 feature 5, docs/PLATFORM-RESEARCH.md: "a manifest is a template (attestors, terms,
+ * AN EVENT-MARKET TEMPLATE (feature 5, docs/PLATFORM-RESEARCH.md: "a manifest is a template (attestors, terms,
  * category); each round carries its own question, outcome labels and resolve time"): without it every new question - "Will X
  * happen by Y?" - needed a newly signed manifest and a game hosted by nodes; with it anyone opens a question by publishing
  * ONE ROUND of the template. The manifest keeps what the market's trust and money are made of - its attestor set and
@@ -101,7 +101,7 @@ export const REQUIRED_VERSION_MARKER = 0x02;
  *
  * After its own marker, behind the market terms and before the required version: optional, so every manifest without it
  * keeps its bytes and its game id. Its marker is 0x04 (0x03 is a top split's shares, feature 3). A template REQUIRES
- * protocol version 2026.0.4 or later (#349), as a top split does: its rounds carry their question in a contract tail the
+ * protocol version 2026.0.4 or later, as a top split does: its rounds carry their question in a contract tail the
  * builds of 2026.0.4 read (contracts.js EVENT_MARKER, EVENT_VERSION), the census seats for a round only nodes whose advert
  * lists its version, so a seat without the code is never seated for a template's round - and a node too old to know the
  * field cannot read the manifest at all (trailing bytes), so it cannot host the template. A template runs on no grid
@@ -127,11 +127,11 @@ export function marketTemplateFits(t, m) {
   if (m.roundPeriodMs !== 0n) return { ok: false, why: 'a market template runs on no grid (round_period 0): each round names its own times' };
   return { ok: true };
 }
-/** Is this manifest an event-market template (kanban #362 feature 5): an attested game whose rounds ask their own question? */
+/** Is this manifest an event-market template (feature 5): an attested game whose rounds ask their own question? */
 export const isTemplate = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.template;
 
 /**
- * A MARKET ON A GAME (kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6: "an attested market whose outcome is a game
+ * A MARKET ON A GAME (feature 6, docs/PLATFORM-RESEARCH.md item 6: "an attested market whose outcome is a game
  * round's signed result (e.g. BULLS vs BEARS of a Tick Tock round, the winner of an RPS table). It turns every game into a
  * spectator sport with no external oracle: the committee's 5-of-7 RoundResult resolves it"). An ATTESTED manifest may name,
  * after its own marker 0x05 (behind the market terms, never beside a template, before the required version):
@@ -157,7 +157,7 @@ export const isTemplate = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED &&
  * and times are its market terms, which it must name: its fees, its question, `resolve_after_close_ms` - the latest its source
  * round may END after its entry close (the market resolves once its source's result is signed) - and the deadline after that,
  * when a market with no standing result is VOID. It runs on no grid (round_period 0): each round names its source and its
- * times. It REQUIRES protocol version 2026.0.6 or later (#349): its rounds carry the source in a contract tail only builds of
+ * times. It REQUIRES protocol version 2026.0.6 or later: its rounds carry the source in a contract tail only builds of
  * 2026.0.6 read, so a seat without the code is never seated for them, and a node too old to know the field cannot read the
  * manifest at all (trailing bytes). Optional: every manifest without it keeps its bytes and its game id.
  */
@@ -189,11 +189,11 @@ export function gameSourceFits(g, m) {
   if (m.roundPeriodMs !== 0n) return { ok: false, why: 'a market on a game runs on no grid (round_period 0): each round names its source round and its own times' };
   return { ok: true };
 }
-/** Is this manifest a market on a game (kanban #362 feature 6): an attested market decided by a source round's signed result? */
+/** Is this manifest a market on a game (feature 6): an attested market decided by a source round's signed result? */
 export const isGameMarket = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.gameSource;
 
 /**
- * A SCALAR MARKET (kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8: "a numeric outcome (a price, a count) paid linearly
+ * A SCALAR MARKET (feature 8, docs/PLATFORM-RESEARCH.md item 8: "a numeric outcome (a price, a count) paid linearly
  * between bounds. Richer questions than buckets; one market instead of many"). An ATTESTED manifest may name, after its own
  * marker 0x06 (behind the market terms, never beside a template or a game source, before the required version):
  *
@@ -211,7 +211,7 @@ export const isGameMarket = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED 
  * (V - low) / (high - low), the SHORT side's the rest, each side's share split pari-mutuel over its own net stakes
  * (scalar.js scalarPayoutTable - integer msat, every remainder named). Its money and times are its market terms, which it must
  * name: its fees, its question, when V is read (`resolve_after_close_ms`) and the deadline after that, when a market with no
- * standing value is VOID - every stake back. It REQUIRES protocol version 2026.0.7 or later (#349): a node that cannot pay it is
+ * standing value is VOID - every stake back. It REQUIRES protocol version 2026.0.7 or later: a node that cannot pay it is
  * never seated for its rounds, and a node too old to know the field cannot read the manifest at all (trailing bytes).
  * Optional: every manifest without it keeps its bytes and its game id.
  */
@@ -248,21 +248,21 @@ export function scalarFits(sc, m) {
     return { ok: false, why: `a scalar market requires protocol version ${protocolVersionName(SCALAR_MIN_PROTOCOL_VERSION)} or later (#349): its attestors sign a value` };
   return { ok: true };
 }
-/** Is this manifest a scalar market (kanban #362 feature 8): an attested market paid linearly by a signed value between bounds? */
+/** Is this manifest a scalar market (feature 8): an attested market paid linearly by a signed value between bounds? */
 export const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.scalar;
 
 
 /**
- * A TOP SPLIT'S SHARES (kanban #362 feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
+ * A TOP SPLIT'S SHARES (feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
  * marker, right after the game's donation set and before the required version - so every manifest that pays by the curve
  * or pari-mutuel keeps its bytes and its game id. Then a u16 count and each share as a u16 of basis points, places in
- * order (1st first). A TOP_SPLIT manifest must require protocol version TOP_SPLIT_VERSION or later (#349): a node that
+ * order (1st first). A TOP_SPLIT manifest must require protocol version TOP_SPLIT_VERSION or later: a node that
  * cannot compute the split does not speak that version, is never seated for the game's rounds, and - too old to know
  * payout rule 3 - cannot even read the manifest to host it.
  */
 export const PAYOUT_SHARES_MARKER = 0x03;
 /**
- * A MARKET'S PROTOCOL RESERVE (kanban #454, the owner 2026-10-17: "Prediction markers brauchen auch eine protocol reserve fee: 0.4%
+ * A MARKET'S PROTOCOL RESERVE (2026-10-17: "Prediction markers brauchen auch eine protocol reserve fee: 0.4%
  * donation (50/50 protocol / market dev), 0.4% node, 0.2% protocol reserve fee"): `marketTerms.reserveBps`, the part of the
  * market's donation rate that goes to the protocol reserves of the federation each lock is in - written after its own marker,
  * after a scalar's, and only when a market names it: every manifest before keeps its bytes and its game id. It is
@@ -282,7 +282,7 @@ export function marketTermsFit(t) {
   if (!t || typeof t !== 'object') return { ok: false, why: 'a market\'s terms are an object' };
   if (!Number.isInteger(t.nodeFeeBps) || t.nodeFeeBps < 0 || t.nodeFeeBps > MARKET_FEE_BPS_MAX) return { ok: false, why: `a market's node fee is 0 to ${MARKET_FEE_BPS_MAX} bps` };
   if (!Number.isInteger(t.donationBps) || t.donationBps < 0 || t.donationBps > MARKET_DONATION_BPS_MAX) return { ok: false, why: `a market's donation is 0 to ${MARKET_DONATION_BPS_MAX} bps` };
-  // AT MOST 10 % IN ALL (the owner 2026-10-09: "fees per market can't be more than ... to prevent malicious markets" - "I mean 10
+  // AT MOST 10 % IN ALL (2026-10-09: "fees per market can't be more than ... to prevent malicious markets" - "I mean 10
   // in total"): the node fee and the donation together, each at most 5 % - a market takes no more of a stake than the
   // network's own games can (5 % node fee + up to 5 % donation)
   if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (10 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
@@ -300,7 +300,7 @@ export function marketTermsFit(t) {
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 export const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
 /**
- * IS THIS A HEAD-TO-HEAD GAME (kanban #233, the owner 2026-10-09)? Each player commits a hidden move at entry and reveals
+ * IS THIS A HEAD-TO-HEAD GAME (2026-10-09)? Each player commits a hidden move at entry and reveals
  * it after entry close; the round's nodes decide every entry's result from all the reveals together, with the game's
  * decide adapter - named in cores[] by its hash like a replay core, so a node installs and checks it the same way. No
  * run (run_ticks_max 0); paid by the rank curve with the game's min_score (head-to-head.js maps win/draw/loss onto it).
@@ -345,7 +345,7 @@ export function encodeManifestBody(m) {
         || !m.outcomes.every((o) => typeof o === 'string' && o.length >= 1 && o.length <= 64))
       throw new Error(`an attested game names 2 to ${OUTCOMES_MAX} outcomes, each 1 to 64 characters`);
     if (new Set(m.outcomes).size !== m.outcomes.length) throw new Error('an attested game names each outcome once');
-    // A MARKET ON A GAME (kanban #362 feature 6) NAMES NO ATTESTOR: its outcome is its source round's signed result, so the
+    // A MARKET ON A GAME (feature 6) NAMES NO ATTESTOR: its outcome is its source round's signed result, so the
     // fields are written empty and nothing an attestor signs can decide it; every other attested game names 1 to 16, as before
     const onGame = m.gameSource !== undefined && m.gameSource !== null;
     if (onGame) {
@@ -386,7 +386,7 @@ export function encodeManifestBody(m) {
     if (!Number.isInteger(m.runTicksMax) || m.runTicksMax < 1 || m.runTicksMax > 65535) throw new Error('run_ticks_max is 1 to 65535 ticks (a contract\'s blockTicks is a u16)');
     if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE && m.payoutRule !== PAYOUT_RULE.TOP_SPLIT)
       throw new Error(`a replayed game pays by the rank curve or a top split; payout rule ${m.payoutRule} is not one of the engine's for it (§0A.5)`);
-    // A TOP SPLIT (kanban #362) STILL NAMES A CURVE: the round contract carries numerator and denominator and a round must
+    // A TOP SPLIT STILL NAMES A CURVE: the round contract carries numerator and denominator and a round must
     // match its game's (roundFitsManifest), so the fields keep their rule - the table ignores them under a split
     if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
         || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
@@ -403,7 +403,7 @@ export function encodeManifestBody(m) {
   if (m.requiredProtocolVersion !== undefined && m.requiredProtocolVersion !== null
       && (!Number.isInteger(m.requiredProtocolVersion) || m.requiredProtocolVersion < 1 || m.requiredProtocolVersion > 65535))
     throw new Error('a required protocol version is 1 to 65535');
-  // A TOP SPLIT'S SHARES, ITS VERSION, AND NOTHING OF EITHER ON ANY OTHER RULE (kanban #362)
+  // A TOP SPLIT'S SHARES, ITS VERSION, AND NOTHING OF EITHER ON ANY OTHER RULE
   if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT) {
     const fit = payoutSharesFit(m.payoutShares);
     if (!fit.ok) throw new Error(fit.why);
@@ -412,7 +412,7 @@ export function encodeManifestBody(m) {
   } else if (m.payoutShares !== undefined && m.payoutShares !== null) {
     throw new Error('only a game paid by a top split (payout rule TOP_SPLIT) names payout shares');
   }
-  // ITS ITEMS (kanban #365): any game may sell items, from version 10 - checked, never sorted here (the order is in the hash)
+  // ITS ITEMS: any game may sell items, from version 10 - checked, never sorted here (the order is in the hash)
   if (m.items !== undefined && m.items !== null) { const f = itemsFit(m.items, m); if (!f.ok) throw new Error(f.why); }
 
   const w = new Writer();
@@ -438,29 +438,29 @@ export function encodeManifestBody(m) {
     w.vec(m.outcomes, (o, ww) => ww.str(o));
     w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
     w.u8(m.attestThreshold);
-    // ITS MARKET TERMS (kanban #235), after a marker and only when it names them: every attested manifest before keeps its bytes
+    // ITS MARKET TERMS, after a marker and only when it names them: every attested manifest before keeps its bytes
     if (m.marketTerms) {
       const t = m.marketTerms;
       w.u8(MARKET_TERMS_MARKER); w.u16(t.nodeFeeBps); w.u16(t.donationBps); w.str(t.question);
       w.u64(t.resolveAfterCloseMs); w.u64(t.deadlineAfterResolveMs); w.str(t.sourceRule);
     }
-    // ITS TEMPLATE (kanban #362 feature 5), after its own marker and only when it is one: every attested manifest before keeps its bytes
+    // ITS TEMPLATE (feature 5), after its own marker and only when it is one: every attested manifest before keeps its bytes
     if (m.template) {
       const t = m.template;
       w.u8(TEMPLATE_MARKER); w.str(t.category); w.u8(t.maxOutcomes); w.u64(t.resolveWithinMs);
     }
-    // ITS GAME SOURCE (kanban #362 feature 6), after its own marker and only when it is a market on a game: every attested
+    // ITS GAME SOURCE (feature 6), after its own marker and only when it is a market on a game: every attested
     // manifest before keeps its bytes
     if (m.gameSource) {
       const g = m.gameSource;
       w.u8(GAME_SOURCE_MARKER); w.bytes32(g.sourceGameId); w.u8(g.sourceKind); w.vec(g.mapping, (x, ww) => ww.u8(x));
     }
-    // ITS SCALAR (kanban #362 feature 8), after its own marker and only when it is one: every attested manifest before keeps its bytes
+    // ITS SCALAR (feature 8), after its own marker and only when it is one: every attested manifest before keeps its bytes
     if (m.scalar) {
       const sc = m.scalar;
       w.u8(SCALAR_MARKER); w.i64(sc.low); w.i64(sc.high); w.str(sc.unit);
     }
-    // ITS PROTOCOL RESERVE (kanban #454), after its own marker and only when its terms name one: every manifest before keeps its bytes
+    // ITS PROTOCOL RESERVE, after its own marker and only when its terms name one: every manifest before keeps its bytes
     if (m.marketTerms && m.marketTerms.reserveBps) { w.u8(MARKET_RESERVE_MARKER); w.u16(m.marketTerms.reserveBps); }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
@@ -469,9 +469,9 @@ export function encodeManifestBody(m) {
     w.u8(m.moveCount);
     w.u64(m.revealWindowMs);
   }
-  // A TOP SPLIT'S SHARES (kanban #362), after their marker and only under that rule: no manifest before it moves
+  // A TOP SPLIT'S SHARES, after their marker and only under that rule: no manifest before it moves
   if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT) { w.u8(PAYOUT_SHARES_MARKER); w.vec(m.payoutShares, (x, ww) => ww.u16(x)); }
-  // ITS ITEMS (kanban #365), after their marker and only when it sells some: no manifest before it moves
+  // ITS ITEMS, after their marker and only when it sells some: no manifest before it moves
   if (m.items) writeItems(w, m.items);
   // THE REQUIRED PROTOCOL VERSION, LAST AND ONLY WHEN NAMED: no manifest before it moves
   if (m.requiredProtocolVersion) { w.u8(REQUIRED_VERSION_MARKER); w.u16(m.requiredProtocolVersion); }
@@ -530,7 +530,7 @@ function readBody(r) {
     body.moveCount = r.u8();
     body.revealWindowMs = r.u64();
   }
-  // a top split's shares (kanban #362): its payout rule says they follow, so their marker is required, not looked for
+  // a top split's shares: its payout rule says they follow, so their marker is required, not looked for
   if (body.resultType === RESULT_TYPE.REPLAY && body.payoutRule === PAYOUT_RULE.TOP_SPLIT) {
     if (!(r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.u8() === PAYOUT_SHARES_MARKER))
       throw new Error('a game paid by a top split carries its shares after their marker');
@@ -588,20 +588,20 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
   let signed = false;
   try { signed = verify(m.signature, digest, m.gameDevPubkey) === true; } catch { signed = false; }
   if (!signed) return { ok: false, why: `${name}: its signature is not its developer key ${toHex(m.gameDevPubkey).slice(0, 16)}'s` };
-  // A TOP SPLIT THIS BUILD CANNOT PAY IS NOT A GAME IT HOSTS (kanban #362, #349): the version the game requires is one this
+  // A TOP SPLIT THIS BUILD CANNOT PAY IS NOT A GAME IT HOSTS: the version the game requires is one this
   // build speaks, or none of its rounds could be read here, let alone settled by the split
   if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it pays by a top split under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
-  // AND A TEMPLATE WHOSE ROUNDS THIS BUILD CANNOT READ (kanban #362 feature 5): likewise
+  // AND A TEMPLATE WHOSE ROUNDS THIS BUILD CANNOT READ (feature 5): likewise
   if (isTemplate(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a market template under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
-  // AND A MARKET ON A GAME WHOSE ROUNDS THIS BUILD CANNOT READ (kanban #362 feature 6): likewise
+  // AND A MARKET ON A GAME WHOSE ROUNDS THIS BUILD CANNOT READ (feature 6): likewise
   if (isGameMarket(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a market on a game under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
-  // AND A SCALAR MARKET WHOSE VALUE THIS BUILD CANNOT PAY (kanban #362 feature 8): likewise
+  // AND A SCALAR MARKET WHOSE VALUE THIS BUILD CANNOT PAY (feature 8): likewise
   if (isScalar(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a scalar market under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
-  // AND ITEMS THIS BUILD CANNOT SELL OR CHECK (kanban #365): likewise - until version 10 is spoken, no node hosts a game with items
+  // AND ITEMS THIS BUILD CANNOT SELL OR CHECK: likewise - until version 10 is spoken, no node hosts a game with items
   if (Array.isArray(m.items) && m.items.length && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it sells items under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
   if (m.version === 1) {
@@ -619,7 +619,7 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
 }
 
 /**
- * MAY THIS ROUND BE PLAYED UNDER THIS MANIFEST (§0A.3, §0A.5; #202): it names the manifest's game, a core the manifest
+ * MAY THIS ROUND BE PLAYED UNDER THIS MANIFEST (§0A.3, §0A.5): it names the manifest's game, a core the manifest
  * lists, a config the manifest lists for that core, a run no longer than run_ticks_max, the manifest's rank curve, and a
  * min_score no lower than the manifest's (the game's floor; a round may ask more of its runs, never less).
  */
@@ -629,11 +629,11 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
   if (m.requiredProtocolVersion && !(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= m.requiredProtocolVersion))
     return { ok: false, why: `${name} requires protocol version ${protocolVersionName(m.requiredProtocolVersion)}; that round runs ${Number.isInteger(contract.protocolVersion) ? protocolVersionName(contract.protocolVersion) : 'none'}` };
-  // A ROUND ASKS ITS OWN QUESTION ONLY UNDER A TEMPLATE (kanban #362 feature 5): every other game's question - and its outcomes,
+  // A ROUND ASKS ITS OWN QUESTION ONLY UNDER A TEMPLATE (feature 5): every other game's question - and its outcomes,
   // and when it resolves - is its manifest's, and a round naming its own there would show players a market nobody signed
   const asks = contract.event !== undefined && contract.event !== null;
   if (asks && !isTemplate(m)) return { ok: false, why: `${name} is not a market template: its question is its manifest's, and a round of it carries none of its own` };
-  // A ROUND NAMES A SOURCE ROUND ONLY UNDER A MARKET ON A GAME (kanban #362 feature 6): on any other game it would be a claim
+  // A ROUND NAMES A SOURCE ROUND ONLY UNDER A MARKET ON A GAME (feature 6): on any other game it would be a claim
   // about an outcome nobody reads
   const onRound = contract.sourceRoundId !== undefined && contract.sourceRoundId !== null;
   if (onRound && !isGameMarket(m)) return { ok: false, why: `${name} is no market on a game: a round of it names no source round` };
@@ -646,7 +646,7 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
       if (!fits.ok) return fits;
       return { ok: true, attested: true, template: true };
     }
-    // A MARKET ON A GAME'S ROUND NAMES ITS SOURCE ROUND (kanban #362 feature 6), and is no round of a series. Whether that source
+    // A MARKET ON A GAME'S ROUND NAMES ITS SOURCE ROUND (feature 6), and is no round of a series. Whether that source
     // fits - its game, and its start no earlier than this round's entry close - needs the source's contract: game-market.js
     // gameMarketFitsSource, asked by a seat that holds it and again by every resolution
     if (isGameMarket(m)) {
@@ -655,7 +655,7 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
         return { ok: false, why: `${name}: a market on a game is published on its own, never as a round of a series (a series round's id does not hash its source)` };
       return { ok: true, attested: true, gameMarket: true };
     }
-    // A SCALAR MARKET'S ROUND (kanban #362 feature 8) is an attested round like any other: its entries pick a side (LONG 0, SHORT 1)
+    // A SCALAR MARKET'S ROUND (feature 8) is an attested round like any other: its entries pick a side (LONG 0, SHORT 1)
     // as an index into the manifest's outcomes, and its version is held to the manifest's required one above
     if (isScalar(m)) return { ok: true, attested: true, scalar: true };
     return { ok: true, attested: true };
@@ -690,7 +690,7 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
 }
 
 /**
- * DOES THIS ROUND'S QUESTION FIT ITS TEMPLATE (kanban #362 feature 5)? A round of a template MUST carry its own question
+ * DOES THIS ROUND'S QUESTION FIT ITS TEMPLATE (feature 5)? A round of a template MUST carry its own question
  * (contracts.js `event`, whose shape the contract's encoding already holds: a question of 1 to 280 UTF-8 bytes, 2 to 16
  * unique labels of 1 to 64 bytes); here, what only the template can say: no more outcomes than its `maxOutcomes`, and a
  * resolution time from its market terms' `resolveAfterCloseMs` to its `resolveWithinMs` after the round's entry close - a
@@ -724,7 +724,7 @@ export function eventFitsTemplate(contract, m) {
 }
 
 /**
- * THE MARKET A ROUND PLAYS (kanban #362 feature 5): a round of a template reads its outcomes, its question and its resolution
+ * THE MARKET A ROUND PLAYS (feature 5): a round of a template reads its outcomes, its question and its resolution
  * time from its own contract (`event`), everything else - attestors, threshold, fees, deadline, source rule - from the
  * template; any other round reads the manifest as before (the manifest itself is answered). What is answered is a VIEW for
  * the market's checks (attestationStands, marketTimes, marketVoided, stakeExpiryFits, the pick's range, the lobby's labels):
@@ -741,12 +741,12 @@ export function marketOfRound(m, contract) {
 }
 
 /**
- * MAY THIS GAME RUN ON A SERIES OF `periodMs` (§0A.3 round_period; kanban #202)? Every series of this network runs on
+ * MAY THIS GAME RUN ON A SERIES OF `periodMs` (§0A.3 round_period)? Every series of this network runs on
  * the one 90 s grid (series.js ROUND_PERIOD_MS), so a game whose manifest names another period has no series here; one
  * naming 0 asks no period and runs on any.
  */
 export function seriesPeriodFits(m, periodMs = ROUND_PERIOD_MS) {
-  // A MARKET'S SERIES RUNS ON ITS OWN round_period (kanban #236/#237, §0A.7b.4: "Market rounds on their own 15 min period
+  // A MARKET'S SERIES RUNS ON ITS OWN round_period (§0A.7b.4: "Market rounds on their own 15 min period
   // instead of the 90 s grid"), if a day holds a whole number of its rounds; the answer names it. Every other game is on
   // the network's 90 s grid, as before: a round_period of 0 or 90 s.
   if (m.resultType === RESULT_TYPE.ATTESTED && m.roundPeriodMs > 0n) {
@@ -758,13 +758,13 @@ export function seriesPeriodFits(m, periodMs = ROUND_PERIOD_MS) {
 }
 
 /**
- * THE TOP SPLIT A GAME PAYS BY (kanban #362), as `computePayoutTable`'s `payoutShares`: a copy of its manifest's shares, or
+ * THE TOP SPLIT A GAME PAYS BY, as `computePayoutTable`'s `payoutShares`: a copy of its manifest's shares, or
  * null for every other rule (§18A's curve - the table's default).
  */
 export const payoutSharesOf = (m) => (m && m.payoutRule === PAYOUT_RULE.TOP_SPLIT && Array.isArray(m.payoutShares) ? [...m.payoutShares] : null);
 
 /**
- * THE PAYOUT RULE A ROUND'S TABLE IS COMPUTED BY, from the manifest of the game it names (kanban #362): one answer for the
+ * THE PAYOUT RULE A ROUND'S TABLE IS COMPUTED BY, from the manifest of the game it names: one answer for the
  * node's settlement, its standing line, its signed table and a slash proof's recomputation of F, so a TOP_SPLIT round's
  * table is the same everywhere. `manifest`: the game's, as the caller holds it (a node: its hosted plugin) - it must be
  * the game the round names, by id, or nothing is computed. With none: a round from TOP_SPLIT_VERSION on may be a split

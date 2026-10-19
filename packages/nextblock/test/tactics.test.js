@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WAR_TACTICS.md §7 (the owner 2026-09-16 18:20): the tests that must fail if the doctrine is wrong.
+// WAR_TACTICS.md §7 (2026-09-16 18:20): the tests that must fail if the doctrine is wrong.
 //
 // Touch truck-tank = WRECKED is pinned in rules.test.js ("a truck that touches a tank is written off"), and WASTED
 // before the lobby in Unity's RunEndsAtDeliveredTests.AWreckShowsWastedBeforeTheLobby.
@@ -324,13 +324,13 @@ test('with nobody fighting and no assault running, a team rests at +8 m on an ob
 });
 
 test('the objective words are the same with the truck parked and driven through HIGH, until the fight itself differs', () => {
-  // Seeds 83 and 63. RE-PICKED with the army deployed at spawn (the owner 2026-09-19): a tank is now put on its post
+  // Seeds 83 and 63. RE-PICKED with the army deployed at spawn (2026-09-19): a tank is now put on its post
   // when it spawns, so the opening world is a different world and seeds 21 and 109 - picked against the walk-in -
   // now part after 35 ticks and compare nothing. The same search as before over seeds 1-120 (the worlds identical
   // past 300 ticks with a holder written inside that stretch) leaves 14 qualifying; these two hold the most of both,
   // splitting at 606 and 352 ticks with 1169 and 838 holder-ticks. The assertion, its thresholds and what it holds
   // are unchanged: the objective words must not read the truck.
-  // RE-PICKED AGAIN when §4.11's objectives became the chart's (kanban #29): HIGH, LOW and OPEN sit on other lanes than
+  // RE-PICKED AGAIN when §4.11's objectives became the chart's: HIGH, LOW and OPEN sit on other lanes than
   // the relief's three did, so the fight around them is another fight and seed 83 parted after 93 ticks. The same
   // search over seeds 1-120 leaves 36 qualifying; these two hold the most of both - identical for 1232 and 998 ticks,
   // with 2841 and 2804 holder-ticks.
@@ -434,7 +434,7 @@ test('a pair swaps roles only with both tanks on post: the post is held until th
 });
 
 test('passability: nothing the core adds in the band stands over 1 m or climbs over 25%, at any scroll (§4.15, 14:40)', () => {
-  // the owner 2026-09-17 14:40 "make it so trucks and tanks get through". The 2.4 m hull-down berms (e0f4ed7) are withdrawn;
+  // 2026-09-17 14:40 "make it so trucks and tanks get through". The 2.4 m hull-down berms (e0f4ed7) are withdrawn;
   // what the core adds on the levelled relief is the candle ribbon alone. Read as surface less the levelled relief (no
   // craters on a fresh round), on five seeds, at the open and after four samples and 900 ticks of glide.
   for (const seedWord of [1, 2, 3, 4, 5]) {
@@ -538,10 +538,10 @@ test('an assault starts only on an objective the side does not hold, never while
   // man on a diagonal no longer reads STAND - he reads COVER or PRONE, which is what he is doing. Fewer
   // men are counted standing, fewer are exposed, more live, and survivors are what an assault clock
   // reads - the same chain the 64.6% -> 91.7% cover move ran down when it took this number to 10.
-  // 12 once 087b707f raised fight difficulty (the owner 2026-09-23: FIRE_DAMAGE 11/13 -> 12/14, RIFLE_DAMAGE
+  // 12 once 087b707f raised fight difficulty (2026-09-23: FIRE_DAMAGE 11/13 -> 12/14, RIFLE_DAMAGE
   // 10 -> 11): harder hits kill more of the men an assault needs, fewer survive to hold, and the clock reads
   // the holders. Measured on this seed with every §4.12 clause above still passing; only the count moved.
-  // 10 once §4.11's objectives became the chart's HIGH, LOW and OPEN (kanban #29): the assaults go for other lanes, and
+  // 10 once §4.11's objectives became the chart's HIGH, LOW and OPEN: the assaults go for other lanes, and
   // where they go decides who holds, which is what the clock reads. Every §4.12 clause above passed on the run that moved
   // it (the only red was this line: "10 assaults, not the measured 12").
   assert.equal(starts, 10, `${starts} assaults, not the measured 10`);
@@ -599,7 +599,7 @@ test('the trend is the colour of the last six finished candles: six green is UP 
   assert.ok(bearStarts > 0, 'the bears mounted no assault under their own trend - nothing checked');
 });
 
-test('a tank posted in a crater goes around it: the post slides along its line, and no hull works the lip (§4.1, the owner 15:57)', async () => {
+test('a tank posted in a crater goes around it: the post slides along its line, and no hull works the lip (§4.1, Alice 15:57)', async () => {
   const { submitLiquidation } = await import('../src/sim.js');
   const { clearOfCraters, CRATER_CLEAR } = await import('../src/rules/army.js');
   const L2 = await import('../src/state.js');

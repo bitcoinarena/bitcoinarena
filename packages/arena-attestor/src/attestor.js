@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ATTESTOR OF A PERIOD MARKET (kanban #236; spec §0A.7b.1). Every 10 s it reads its sources and keeps the median, in whole
+// AN ATTESTOR OF A PERIOD MARKET (spec §0A.7b.1). Every 10 s it reads its sources and keeps the median, in whole
 // cents. At the end of each round's window - the period before the round's entry close (attested.js marketWindowOf) - it
 // applies the market's rule (up-down.js upDownOutcome: Up when the 60 s average at the window's end is at or above the 60 s
 // average at its start, a tie Up), and signs the attestation body {round, outcome, observed_at = the window's end}. Honest attestors that saw the same
@@ -9,7 +9,7 @@
 // signature (GET /attestation?round=), pulls the others', and once the threshold of signatures over one body is held, posts
 // that attestation to every seat - with retry. No reading a minute before the window's start: it signs nothing for that window.
 //
-// THE VALUE MODE (kanban #362 feature 8, scalar markets, protocol 7): for a scalar market the attestor signs the VALUE it observed
+// THE VALUE MODE (feature 8, scalar markets, protocol 7): for a scalar market the attestor signs the VALUE it observed
 // instead of an outcome - a ValueAttestation (arena-protocol scalar.js: its own type byte and tag, never an outcome's) of the
 // 60 s average at the window's end in whole cents, the same END PRICE the Up/Down rule reads (up-down.js upDownPrices). Honest
 // attestors whose readings agree to the cent sign the same bytes and combine exactly as outcomes do; attestors that saw

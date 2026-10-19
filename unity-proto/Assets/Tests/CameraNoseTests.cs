@@ -218,7 +218,7 @@ public class CameraNoseTests
     // `MeasureTheRoadOnAPhoneShapedFrame` and `MeasureHowFarBackFramesBoth`
     // existed to pick a pull-back and a lift for the view to take while a
     // mushroom stands. The view does not move for a mushroom any more
-    // (the owner 2026-09-07 07:39), so there is no rung to choose.
+    // (2026-09-07 07:39), so there is no rung to choose.
 
     /// <summary>
     /// THE CAP MUST BE FORGOTTEN WHEN THE THEATRE GOES.
@@ -462,7 +462,7 @@ public class CameraNoseTests
         // it, and the bullet says "unless the owner explicitly looks around". The
         // case is about whether it comes back, so the assert is on the return.
 
-        // IN THE TOP-DOWN THE SWIPE HOLDS (the owner 2026-09-27, the 11:31 letter over the look-return ruling): after the
+        // IN THE TOP-DOWN THE SWIPE HOLDS (2026-09-27, the 11:31 letter over the look-return ruling): after the
         // finger lifts, the dragged angle stays and the miner's mouth is not pulled back - here well past the 2.5 s the
         // look behind the truck waits. Behind the truck the look comes back to the nose, as before. Either way the road
         // stays on screen (below).
@@ -491,7 +491,7 @@ public class CameraNoseTests
     /// A STRIKE DOES NOT TOUCH THE VIEW.
     ///
     /// The camera used to tilt up at the mushroom and stand further off to fit
-    /// it in, and it was measured doing so. the owner 2026-09-07 07:39: "when the
+    /// it in, and it was measured doing so. 2026-09-07 07:39: "when the
     /// atom bomb comes the camera is still ripped from his hands. That must
     /// not happen. View stays unchanged." So the rule is reversed and this is
     /// the test of the new one.

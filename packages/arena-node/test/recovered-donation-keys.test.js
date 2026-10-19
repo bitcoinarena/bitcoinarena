@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SETTLEMENT RECOVERED AFTER A RESTART INDEXES ITS DONATION-KEY OUTPUTS (kanban #152, the owner 2026-10-07). A seat restarted
+// A SETTLEMENT RECOVERED AFTER A RESTART INDEXES ITS DONATION-KEY OUTPUTS (2026-10-07). A seat restarted
 // between submitting a walk-away's settlement and finding it in the federation marked it ACCEPTED ("found in the federation
 // after this signer node was inside it") but indexed its donation-key payouts only from the plan kept in memory - gone with
 // the restart - so the donors never saw them. LockSettlement's own settle() and indexDonationKeys over a store fake that keeps
@@ -89,7 +89,7 @@ test('backfill: recovered settlements without donation outputs, the same match; 
   assert.equal(out.length, 1);
 });
 
-// A ROUND WHOSE PLAN COULD NOT BE REBUILT IS NOT MARKED (kanban #231, the #152 completeness check, comment 717): the backfill
+// A ROUND WHOSE PLAN COULD NOT BE REBUILT IS NOT MARKED (the completeness check, comment 717): the backfill
 // marked every round it checked, so one whose run was still PROVISIONALLY_FINAL on this seat was never checked again. Only a
 // definitive outcome is marked; a later pass - the next start, or the backfill's slow clock - tries the round again.
 test('backfill: a recovered round not rebuildable now stays unmarked and is indexed on a later pass once it rebuilds', async () => {

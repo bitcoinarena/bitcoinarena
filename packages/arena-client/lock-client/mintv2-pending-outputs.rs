@@ -1,5 +1,5 @@
 
-// BLWP (kanban #323, spec 23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): every output the consensus issued to
+// BLWP (spec 23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): every output the consensus issued to
 // this wallet's seed - the recovery items of ONE answering guardian, scanned as `recover` scans them - that is neither held as a
 // note nor spent, each with its consensus-encoded issuance request: the secret of a pending-output claim. Appended to
 // fedimint-mintv2-client/src/lib.rs by blwp-lock-client's build-wasm.sh; the fork's CLI `mintv2 pending-outputs` is the same scan.

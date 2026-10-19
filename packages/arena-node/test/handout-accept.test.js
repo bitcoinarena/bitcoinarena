@@ -16,7 +16,7 @@
 // catches a crooked dealer: a node sees only its own share, so it refuses when
 // IT is the one cheated, and a dealer who cheated somebody else gets past this
 // door and is stopped at that signer node's. Both are measured below.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): each daemon here gets the
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): each daemon here gets the
 // lock fixture's port, and each entry arrives with its stake and fee locked in it (lockedEntry). Contracts unchanged.
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';

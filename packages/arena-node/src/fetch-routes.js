@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEAT'S OWN FETCHES, ROUTED AND CAPPED (kanban #348, measured 2026-10-13 ~13:2xZ on the test host: each of the 7 testnet4 seats
+// THE SEAT'S OWN FETCHES, ROUTED AND CAPPED (measured 2026-10-13 ~13:2xZ on the test host: each of the 7 testnet4 seats
 // held 770-910 established HTTPS connections to its own host's Tailscale address - its peers' public URLs, test-host.tail...ts.net
 // /guardian-N and /fed2-N, reached through tailscaled for every call, and Node's fetch opens a new connection for every request in
 // flight to an origin, with no cap. With the test host's B nodes slow behind a satellite link the pools grew without end and, through
@@ -29,7 +29,7 @@ export function routed(url, routes) {
 /** A fetch that routes, caps the requests in flight per origin, and times out a request that brings no signal. */
 export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000 } = {}) {
   const lanes = new Map();   // lane -> { busy, waiting: [{ go, abort }] }
-  // ONE LANE PER SEAT, NOT PER HOST (kanban #348, measured 2026-10-13 ~20:45Z: the 7 test host seats answer behind one host,
+  // ONE LANE PER SEAT, NOT PER HOST (measured 2026-10-13 ~20:45Z: the 7 test host seats answer behind one host,
   // tn4.bitcoin-arena.io/guardian-N, so a test host seat had 8 requests in flight to all seven together; over the ship's link the queue
   // grew and its seating agent stopped signing PRESENTs - 4 present of 9 drawn, no certificate): the host and the first path segment
   // - read off the address as CALLED (before routing), and only for a public https host, where seats sit behind one host by path

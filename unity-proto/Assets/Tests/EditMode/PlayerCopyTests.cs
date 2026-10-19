@@ -8,7 +8,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE PLAYER IS NEVER TOLD "SEAT" (the owner 2026-09-15 16:22 and 19:56): the machines that sign a
+/// THE PLAYER IS NEVER TOLD "SEAT" (2026-09-15 16:22 and 19:56): the machines that sign a
 /// round are signer nodes, the player's own place is "joined", a round that asks no stake is a
 /// "free round". Every string literal in the game's scripts is scanned - interpolated and verbatim
 /// strings included, the code inside their braces left out - so no GUI label, HUD line or card can

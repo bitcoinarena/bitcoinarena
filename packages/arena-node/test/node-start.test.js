@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE RUNS A GUARDIAN ONLY IF IT HOLDS A GUARDIAN KEY (spec §23A.2; the owner 2026-09-27: "Starting a node is not
+// A NODE RUNS A GUARDIAN ONLY IF IT HOLDS A GUARDIAN KEY (spec §23A.2; 2026-09-27: "Starting a node is not
 // enough. Holding that node's guardian key is the test"). The key is <store>.guardian/private.json and consensus.json,
 // what a completed ceremony leaves. A launcher starts nodes only; a node that holds a key starts its own guardian and
 // says so on GET /guardian, and a node that does not starts none, makes no directory, and is advertised as none.
@@ -14,7 +14,7 @@ import { openStore } from '../src/store.js';
 import { startNode, holdsGuardianKey } from '../src/node-start.js';
 import { standUpRound } from '../tools/round-2of2.mjs';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
-// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202, §0A.4): nextblock, as src/main.js does.
+// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (§0A.4): nextblock, as src/main.js does.
 const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
 
 
@@ -90,7 +90,7 @@ test('a node with no key, or a guardian directory without private.json, starts n
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-// KANBAN #326: WHICH GUARDIANS A NODE STARTS. With ARENA_FOUNDING=1 a node with no ceremony files starts its guardian in SETUP MODE (so it
+// KANBAN: WHICH GUARDIANS A NODE STARTS. With ARENA_FOUNDING=1 a node with no ceremony files starts its guardian in SETUP MODE (so it
 // can be drawn); a keyed guardian seated first in a successor runs a second, the guardian-next, with ARENA_FOUNDING_NEXT=1 - or whenever
 // the guardian-next's own files are held. Neither flag: as before.
 import { readFileSync } from 'node:fs';
@@ -174,7 +174,7 @@ test('a keyed guardian with ARENA_FOUNDING=1 and ARENA_FOUNDING_NEXT=1 runs a gu
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-// THE GUARDIAN WIRINGS (kanban #326, the owner 2026-10-15 "allow it"): a seat with a keyed guardian hands serve its dataDir - the absence
+// THE GUARDIAN WIRINGS (2026-10-15 "allow it"): a seat with a keyed guardian hands serve its dataDir - the absence
 // producer starts (and the spent-set producer where ARENA_SPENT_SET_CLIENT_DIR names a client); the founding runs only with ARENA_FOUNDING=1.
 test('a keyed guardian\'s seat starts the absence and spent-set producers; the founding only with ARENA_FOUNDING=1', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'node-start-wiring-'));

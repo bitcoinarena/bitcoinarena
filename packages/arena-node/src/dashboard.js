@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// /Dashboard: WHAT THIS NODE EARNED, SPENT AND DID (the owner 2026-10-01 15:44/15:45, open list item 2 of 21:16).
+// /Dashboard: WHAT THIS NODE EARNED, SPENT AND DID (2026-10-01 15:44/15:45, open list item 2 of 21:16).
 //
 // "Every node serves /Dashboard. An interactive page with charts. A node earns from the 5% node fee ... Each category has
 // its own earnings, and totals for the day, the month, and the year. Categories: game/verify fee, settlement fee,
@@ -15,7 +15,7 @@
 //     the round is ACCEPTED (the fee locks were claimed), OWED before;
 //   - the guardian/custody third, Lightning and gateway costs: the fee table pays two pools and this node holds no
 //     Lightning channel and pays no gateway, so they are 0 - and said so, not hidden;
-//   - A NODE THAT HOSTS AN LND AND A GATEWAY (the owner 2026-10-03 22:50: node 1 gateway A + LND 1, node 2 gateway B + LND 2;
+//   - A NODE THAT HOSTS AN LND AND A GATEWAY (2026-10-03 22:50: node 1 gateway A + LND 1, node 2 gateway B + LND 2;
 //     plan accepted 2026-10-04) shows them in `hosts`, read by hosts.js on this machine: the LND's own figures, the fees its
 //     own payments paid as the Lightning costs of the day / month / year, and the gateway's figures. Gateway costs stay 0
 //     with the reason: the gateway is what charges; the node pays it nothing. `hosts` is null on a node that hosts neither.
@@ -28,10 +28,10 @@ const DAY = 86400000;
 const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
-// `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js, kanban #280) - its score shown with the round
+// `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js) - its score shown with the round
 export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null, devClient = null, devClients = null, reserveKeys = [] } = {}) {
   const db = round.db;
-  // WHAT EACH ROUND PAID THE PROTOCOL RESERVES (kanban #397 slice 4): its rows under a federation's reserve key, as kept here
+  // WHAT EACH ROUND PAID THE PROTOCOL RESERVES: its rows under a federation's reserve key, as kept here
   const reserveKeyHexes = (reserveKeys || []).map((k) => String(k).toLowerCase());
   const reserveRowsOf = reserveKeyHexes.length ? db.prepare(`SELECT amount_msat FROM donation_outputs WHERE round_id = ? AND recipient_pk IN (${reserveKeyHexes.map(() => '?').join(', ')})`) : null;
   const me = hex(round.pubkey);
@@ -77,10 +77,10 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
       } catch { /* a round the table refuses earns nothing here */ }
     }
     const s = settlementOf.get(r.round_id);
-    // THE ROUND'S GAME (kanban #204): its id, and the name this node hosts it under (none for a game it no longer hosts)
+    // THE ROUND'S GAME: its id, and the name this node hosts it under (none for a game it no longer hosts)
     const gameId = contract.gameId instanceof Uint8Array ? hex(contract.gameId) : null;
     const hostedAs = gameId && games instanceof Map && games.get(gameId);
-    // ITS KIND (kanban #280: "which kind of game was played, and the score if that game supports it"): the manifest's result
+    // ITS KIND ("which kind of game was played, and the score if that game supports it"): the manifest's result
     // type - a replayed game, a market (attested), a head-to-head game - and a head-to-head round's match score
     const rt = hostedAs && hostedAs.manifest ? hostedAs.manifest.resultType : null;
     const kind = rt === 1 ? 'game' : rt === 2 ? 'market' : rt === 3 ? 'head-to-head' : null;
@@ -129,7 +129,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     const key = new Date(dayStart - d * DAY).toISOString().slice(0, 10);
     days.push({ day: key, ...out(daily.get(key) || zero()) });
   }
-  // EARNINGS PER GAME (kanban #204): every checked round's shares under its game - earned (settled ACCEPTED) and owed
+  // EARNINGS PER GAME: every checked round's shares under its game - earned (settled ACCEPTED) and owed
   const perGame = new Map();
   for (const r of checked) {
     const g = perGame.get(r.game) || { game: r.game, name: r.gameName, rounds: 0, earned: zero(), owed: zero() };
@@ -159,7 +159,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
         return { ...rest, paymentsWithFee: (paymentFees || []).length, paidFeesMsat: String((paymentFees || []).reduce((t, x) => t + BigInt(x.feeMsat), 0n)) }; })() : null,
       gateway: hosts.gateway || null,
     } : null,
-    // A DEV CLIENT BESIDE THIS NODE (kanban #357, dev-client.js): what the donation recipient's client received, holds and withdrew
+    // A DEV CLIENT BESIDE THIS NODE (dev-client.js): what the donation recipient's client received, holds and withdrew
     devClient: devClient || null,
     devClients: devClients || null,
   };
@@ -194,13 +194,13 @@ const sat=(m)=>{const n=Number(m)/1000;return (n<10?n.toFixed(3):n.toFixed(n<100
 const t=(ms)=>ms?new Date(ms).toISOString().replace('T',' ').slice(0,19)+' UTC':'-';
 const el=(id)=>document.getElementById(id);
 let D=null,period='day';
-// THE ROUNDS ARE CLICKABLE (the owner 2026-10-03 22:25, plan accepted 2026-10-04): a row opens to its players, read from this
+// THE ROUNDS ARE CLICKABLE (2026-10-03 22:25, plan accepted 2026-10-04): a row opens to its players, read from this
 // node's own api/round-result when it is first opened and kept for this page view; an open row stays open across the
 // 60 s refresh. Every value is the endpoint's own - outcome, score, signers, stake, result and netMsat; nothing worked out.
 const open=new Set(),players=new Map();
 const esc=(v)=>String(v).replace(/[<>&"]/g,(c)=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const score=(v)=>v===null||v===undefined?'-':Math.trunc(v/100000)+'.'+String(Math.abs(v)%100000).padStart(5,'0');
-// A NOTE'S HYPHENS DO NOT BREAK (kanban #125, measured at 1280 px: "test-host- / testnet4"): a name in a note stays one word.
+// A NOTE'S HYPHENS DO NOT BREAK (measured at 1280 px: "test-host- / testnet4"): a name in a note stays one word.
 const keep=(t)=>String(t).replace(/-/g,'\\u2011');
 const signedSat=(m)=>m===null||m===undefined||m===''?'':(Number(m)>0?'+':'')+sat(m);
 function playersOf(id){const a=players.get(id);
@@ -215,7 +215,7 @@ el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month'
  +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard()+devCard()+gamesCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
-// THE DEV CLIENT CARDS (kanban #357, #358): the client beside the node (ARENA_DEV_CLIENT_DIR) and every one its owner set up on the
+// THE DEV CLIENT CARDS: the client beside the node (ARENA_DEV_CLIENT_DIR) and every one its owner set up on the
 // owner page, each with what it was given for the protocol developers and for each game
 function devCard(){return (D.devClient?oneDevCard(D.devClient):'')+(D.devClients||[]).map(oneDevCard).join('')}
 function splitRows(S){if(!S)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';return r('For the protocol developers',sat(S.protocolMsat))+(S.games||[]).map(g=>r('For '+esc(g.title||g.game),sat(g.msat)+' · '+g.donations+' donation'+(g.donations===1?'':'s'))).join('')+(S.unknownMsat&&S.unknownMsat!=='0'?r('Rounds this node no longer holds',sat(S.unknownMsat)):'')}
@@ -239,7 +239,7 @@ let s='<svg viewBox="0 0 '+W+' '+(H+24)+'" role="img" aria-label="fee per day">'
 days.forEach((d,i)=>{const g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),gd=Number(d.guardianMsat),hg=(H-10)*g/max,hs=(H-10)*st/max,hd=(H-10)*gd/max,x=P+i*bw+2;
 s+='<g><title>'+d.day+': game/verify '+g+' msat, settlement '+st+' msat, guardian '+gd+' msat</title><rect x="'+x+'" y="'+(H-hg)+'" width="'+(bw-4)+'" height="'+hg+'" fill="var(--gv)"/><rect x="'+x+'" y="'+(H-hg-hs)+'" width="'+(bw-4)+'" height="'+hs+'" fill="var(--st)"/><rect x="'+x+'" y="'+(H-hg-hs-hd)+'" width="'+(bw-4)+'" height="'+hd+'" fill="var(--gd)"/></g>';
 if(i%5===0)s+='<text x="'+x+'" y="'+(H+16)+'" fill="var(--dim)" font-size="11">'+d.day.slice(5)+'</text>'});el('chart').innerHTML=s+'</svg>';
-// THE DAY UNDER THE POINTER OR A TAP (kanban #125): its date and its three amounts, in a box beside it - the SVG title stays.
+// THE DAY UNDER THE POINTER OR A TAP: its date and its three amounts, in a box beside it - the SVG title stays.
 const svg=el('chart').querySelector('svg'),tip=el('tip'),box=el('chartbox');const show=(ev)=>{const r=svg.getBoundingClientRect();const vx=(ev.clientX-r.left)*W/r.width;const i=Math.floor((vx-P)/bw);
 if(i<0||i>=days.length){tip.style.display='none';return}const d=days[i],g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),gd=Number(d.guardianMsat);
 tip.textContent=d.day+': game/verify '+g+' msat · settlement '+st+' msat · guardian '+gd+' msat';tip.style.display='block';const b=box.getBoundingClientRect();
@@ -250,7 +250,7 @@ el('rounds').onclick=(ev)=>{const tr=ev.target.closest('tr.rr');if(!tr)return;co
 el('sstate').textContent=Object.entries(D.settlementsByState).map(([k,v])=>k+' '+v).join(' · ')||'none yet';
 el('settle').innerHTML='<tr><th>Round</th><th>Made</th><th>State</th><th>What</th></tr>'+D.settlements.map(s=>'<tr><td>'+s.round.slice(0,12)+'</td><td>'+t(s.madeMs)+'</td><td class="'+(s.state==='ACCEPTED'?'ok':s.state==='REFUSED'?'bad':'')+'">'+s.state+'</td><td>'+s.why.replace(/[<>&]/g,'')+'</td></tr>').join('');
 el('feds').innerHTML='<tr><th>Federation</th><th class="n">Paid rounds</th><th>First</th><th>Last</th></tr>'+D.federations.map(f=>'<tr><td>'+f.federation.slice(0,16)+'…</td><td class="n">'+f.rounds+'</td><td>'+t(f.firstMs)+'</td><td>'+t(f.lastMs)+'</td></tr>').join('')}
-// THE LIQUIDITY CARD (kanban #494, §23A.10): a provider's free coins against the deposit minimum, the channels it gave, the top-up address
+// THE LIQUIDITY CARD (§23A.10): a provider's free coins against the deposit minimum, the channels it gave, the top-up address
 async function liquidity(){let c=null;try{const r=await fetch('liquidity-claim',{cache:'no-store'});c=r.ok?await r.json():null}catch{c=null}if(!c){el('liqbox').innerHTML='';return}const min=500000,free=Number(c.freeSats),g=c.channels||[],held=free+g.reduce((a,x)=>a+Number(x.capacitySats),0);const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';el('liqbox').innerHTML='<h2>Liquidity provider</h2><div class="card">'+r('Free for new channels',free.toLocaleString('en')+' sat')+r('Deposit minimum (free + channels given)',min.toLocaleString('en')+' sat')+(held<min?'<p class="bad">Below the deposit minimum: no share of the liquidity pool until topped up.</p>':'<p class="ok">Above the deposit minimum: earning its share of the liquidity pool.</p>')+r('Channels given',g.length+' ('+g.reduce((a,x)=>a+Number(x.capacitySats),0).toLocaleString('en')+' sat)')+r('Top up (LND wallet)','<code>'+String(c.depositAddress||'-').replace(/[&<>"]/g,'')+'</code>')+'</div>'}
 async function load(){liquidity();D=await (await fetch('dashboard.json',{cache:'no-store'})).json();
 el('who').textContent='node '+D.node+' · active since '+t(D.sinceMs)+' · '+D.roundsChecked+' rounds checked · as of '+t(D.nowMs);totals();chart();tables()}

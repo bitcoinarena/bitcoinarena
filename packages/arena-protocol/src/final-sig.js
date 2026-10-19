@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, RULED 2026-10-01).
 //
 // "A result is FINAL only when five settlement seats have each signed FINAL for it, and a seat signs only once its own
 // clock reads final_after and it holds no valid objection." "Signed times are checked on arrival. A seat counts a result

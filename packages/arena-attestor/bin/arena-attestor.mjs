@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ATTESTOR DAEMON (kanban #236): one attestor of one period market, run as a unit.
+// THE ATTESTOR DAEMON: one attestor of one period market, run as a unit.
 //
 //   node packages/arena-attestor/bin/arena-attestor.mjs --name A --key <pkcs8 or 32-byte seed file> \
 //     --sources coinbase,kraken,bitstamp --game btc-updown-15m --seats <url,url> --peers <url,url> \
@@ -11,7 +11,7 @@
 // whose window ended (the period before its entry close) gets this attestor's word once - signed or "signs nothing" -
 // served at GET /attestation?round=; the other attestors' words are pulled, and with the threshold of signatures over one
 // body the attestation goes to every seat (POST /outcome), again until each seat holds it. One line per event in the log.
-//   --mode value: a SCALAR market's attestor (kanban #362 feature 8): it signs the value it observed - the 60 s average at the
+//   --mode value: a SCALAR market's attestor (feature 8): it signs the value it observed - the 60 s average at the
 //   window's end, whole cents (the market's unit must be cents) - as a value attestation, and POST /outcome takes that kind too.
 import http from 'node:http';
 import { readFileSync, appendFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
@@ -25,7 +25,7 @@ const attestor = attestorKey(readFileSync(arg('key')));
 const SOURCES = String(arg('sources', 'coinbase,kraken,bitstamp')).split(',');
 const GAME = arg('game', 'btc-updown-15m');
 // the market by its id (hex) - its name alone also matches an older manifest of the same name
-// --game-id: one id, or several comma-separated - the v1 and v2 markets of one game side by side (2026.0.2, kanban #348)
+// --game-id: one id, or several comma-separated - the v1 and v2 markets of one game side by side (2026.0.2)
 const GAME_IDS = String(arg('game-id') || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
 const PERIOD_MS = BigInt(arg('period-ms', '900000'));
 const SEATS = String(arg('seats', '')).split(',').filter(Boolean);
@@ -38,7 +38,7 @@ const PORT = Number(arg('port', '21661'));
 const LOG = arg('log');
 const SAMPLE_MS = Number(arg('sample-ms', '10000'));
 const KEEP_MS = 2 * 3600 * 1000;
-// THE READINGS ON DISK (kanban #293, measured 2026-10-13: a restart at 10:02:58Z signed nothing for the window that began at 10:00Z -
+// THE READINGS ON DISK (measured 2026-10-13: a restart at 10:02:58Z signed nothing for the window that began at 10:00Z -
 // "no reading a minute before the window's start" - its start reading lived only in the old process's memory): every median is
 // kept in --samples-file (default: the log beside it, .samples), and read back at start, so a restart loses no window
 const SAMPLES_FILE = arg('samples-file', LOG ? `${LOG}.samples` : null);
@@ -79,7 +79,7 @@ const sample = async () => {
 const roundsOfGame = async () => {
   for (const seat of SEATS) {
     try {
-      // THE NEXT 16 OF EACH SERIES, NOT EVERY ROUND (kanban #350, the owner 2026-10-12 "Bring down test-host CPU usage back to 12"):
+      // THE NEXT 16 OF EACH SERIES, NOT EVERY ROUND (2026-10-12 "Bring down test-host CPU usage back to 12"):
       // the full listing every 5 s made a seat sign all its ~2,400 rows each 45 s window - 4,800 signatures a window, its
       // listing-sign worker at ~42 % (measured 16:02Z on seat 3). A market's rounds whose window ended within the hour are a
       // handful, kept in the listing's closed tally.

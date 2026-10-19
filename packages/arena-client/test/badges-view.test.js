@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PLAYER'S BADGES ON THE SEASON BOARD (kanban #362, PLATFORM-RESEARCH items 13 + 1; badges-view.js): the badge seats'
+// A PLAYER'S BADGES ON THE SEASON BOARD (PLATFORM-RESEARCH items 13 + 1; badges-view.js): the badge seats'
 // answers merged by (d, scope) - one award shown once whichever seat issued it - the shown game's only, an `on: false` seat
 // and an answer for somebody else read as nothing, the first seat's definition winning, the icon (the seat's image or the
 // built-in glyph), the words, and the book that asks each player once per badge seat and nothing once closed.

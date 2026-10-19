@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER AREA'S SERVICES CARD (kanban #499, the owner 2026-10-19: "Also have a service overview in the owners area with the status of all
+// THE OWNER AREA'S SERVICES CARD (2026-10-19: "Also have a service overview in the owners area with the status of all
 // services"): the owner signs it, the seat answers its installed node's services from the node's home (ARENA_HOME, set by src/run.js
 // from arena.conf) without a local path in it; another key is refused; a seat not started from arena.conf says so.
 import test from 'node:test';

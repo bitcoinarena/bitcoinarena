@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE WEBSITE'S SHARE IN A PAYING LOCK ROUND, END TO END (kanban #362 roadmap item 7; RULED the owner 2026-10-15, path (a): "Take it
+// THE WEBSITE'S SHARE IN A PAYING LOCK ROUND, END TO END (roadmap item 7; RULED 2026-10-15, path (a): "Take it
 // out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased by this fee"). The same
 // tally round twice on the same two seats: once with no website, once at 2026.0.9 with both entries naming one. The settlement's
 // lines are compared to the msat.
@@ -72,7 +72,7 @@ test('the website is paid 20% of the nodes\' 5% from the fee locks; the nodes ea
   } finally { await w.close(); }
 });
 
-// THE SAME ON AN ORDER BOOK (kanban #362 comment 2295): the test Up/Down market (node 0.5% + donation 0.5%), two 10,000 sat orders,
+// THE SAME ON AN ORDER BOOK (comment 2295): the test Up/Down market (node 0.5% + donation 0.5%), two 10,000 sat orders,
 // YES and NO at 0.50, both filled, Up wins - once with no website, once at 2026.0.9 with both orders naming one.
 test('an order book pays the website 20% of the nodes\' part of its fees; the nodes 20% less; donation and players unchanged', { timeout: 170000 }, async () => {
   const { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } = await import('./plugins/updown/index.js');

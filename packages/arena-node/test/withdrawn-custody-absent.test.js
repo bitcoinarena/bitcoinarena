@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND UNDER THE WITHDRAWN CUSTODY IS NO ROUND HERE, PAST ROUNDS INCLUDED (RULED, the owner 2026-09-22 22:59).
+// A ROUND UNDER THE WITHDRAWN CUSTODY IS NO ROUND HERE, PAST ROUNDS INCLUDED (RULED 2026-09-22 22:59).
 //
 // §23.6: "a record from before this ruling that carries the old value is not a round of this network and
 // is neither decoded, replayed, settled, listed nor counted; a node that holds such a record treats it as
@@ -8,7 +8,7 @@
 // as bytes that do not parse - not a custody-specific 409 - and nothing of it is stored; and a store that
 // already holds byte-0 rows, from before the ruling, answers them as absent after a restart, while the
 // bytes stay where they are (absent, not deleted).
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { test } from 'node:test';
@@ -155,7 +155,7 @@ test('a stored byte-0 round is never replayed, settled or counted: not in the lo
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-// BYTE 0 IS BYTE 2 (RULED the owner 2026-09-24, the enum slice's second cut): no door answers the withdrawn custody's byte any
+// BYTE 0 IS BYTE 2 (RULED 2026-09-24, the enum slice's second cut): no door answers the withdrawn custody's byte any
 // differently from a byte this network never had. The same contract posted under each is one refusal with only the
 // digit changed, naming nothing.
 test('a byte-0 and a byte-2 post of the same contract are one refusal, only the digit changed; nothing stored, nothing named', async () => {

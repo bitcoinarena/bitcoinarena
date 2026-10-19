@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S SERVICES, ONE VIEW (kanban #499, the owner 2026-10-19: "Make a command arenanode that can stop start the service, status and
+// THE NODE'S SERVICES, ONE VIEW (2026-10-19: "Make a command arenanode that can stop start the service, status and
 // diagnosis commands to detect problems", "arenanode must also control all of its subservices ie gateway lnd Guardian etc", "Also have
 // a service overview in the owners area with the status of all services"). The arenanode command and the seat's /owner/services read
 // the same answers from here:

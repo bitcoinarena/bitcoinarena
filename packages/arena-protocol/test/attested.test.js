@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A RESULT THAT IS NOT A REPLAY (kanban #206 slice 1, §0A.7a; the owner 2026-10-07: attestors named in the manifest, k of n,
+// A RESULT THAT IS NOT A REPLAY (§0A.7a; 2026-10-07: attestors named in the manifest, k of n,
 // chosen by the game dev; the pari-mutuel rule): an attested game's manifest, the entry's pick, the outcome attestation and
 // its refusals, the standing of a round on its attestations, and the pari-mutuel table to the msat.
 import { test } from 'node:test';
@@ -137,7 +137,7 @@ function expected(entries, outcome) {
 const entry = (n, stakeMsat, pick, donationBps = 500) => ({ entryId: n.toString(16).padStart(64, '0'), stakeMsat, feeMsat: entryFeeMsat(stakeMsat),
   donationMsat: (stakeMsat * BigInt(donationBps)) / 10000n, pick });
 
-test('the pari-mutuel table balances to the msat: losers\' net stakes to the winners pro rata, everyone\'s net back when nobody is right, fee and donation as #205', () => {
+test('the pari-mutuel table balances to the msat: losers\' net stakes to the winners pro rata, everyone\'s net back when nobody is right, fee and donation as ', () => {
   const runs = [];
   // A THREE-OUTCOME MARKET: 6 entries, odd stakes, donations 0-5%
   const six = [entry(1, 1000000n, 0), entry(2, 3000000n, 1), entry(3, 2000000n, 0, 0), entry(4, 1333333n, 2, 300), entry(5, 777777n, 1, 100), entry(6, 5000000n, 2)];
@@ -153,7 +153,7 @@ test('the pari-mutuel table balances to the msat: losers\' net stakes to the win
     const want = expected(r.entries, r.outcome);
     for (const row of t.rows) assert.equal(row.payoutMsat, want[row.entryId], `${r.name}: entry ${row.entryId.slice(-1)}`);
     assert.equal(t.feesMsat + t.donationsMsat + t.payoutsMsat, t.grossMsat, `${r.name}: a msat of the gross went to nobody`);
-    for (const row of t.rows) assert.equal(row.feeMsat, row.stakeMsat * 500n / 10000n, `${r.name}: the fee is #205's 5%`);
+    for (const row of t.rows) assert.equal(row.feeMsat, row.stakeMsat * 500n / 10000n, `${r.name}: the fee is 's 5%`);
     rows.push(`| ${r.name} | ${t.grossMsat} | ${t.feesMsat} | ${t.donationsMsat} | ${t.losingPoolMsat} | ${t.winningNetMsat} | ${t.refunded} | ${t.rows.map((x) => `${x.pick}:${x.payoutMsat}`).join(' ')} |`);
   }
   console.log(['  TABLES:', '| case | gross | fees | donations | losing pool | winning net | refunded | pick:payout |', ...rows].join('\n'));

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CHART'S OBJECTIVE WORDS, AS THE CORE WRITES THEM (kanban #29): chartView's GROUND view on the core this tree builds, for
+// THE CHART'S OBJECTIVE WORDS, AS THE CORE WRITES THEM: chartView's GROUND view on the core this tree builds, for
 // the EditMode check ChartHudObjectivesTests - the C# draws its markers from exactly these words, never from numbers typed
 // into a test. Three windows: HIGH, LOW and OPEN on three candles; a window wholly above the open (OPEN absent); and one
 // candle that is both the window's HIGH and its LOW (§4.11: "one marker, HIGH/LOW").

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// 2026.0.3 STEP 7 - A PLAYER JOINS A ROUND THAT TAKES ANY FEDERATION (kanban #348; the owner 2026-10-13: "Es muss möglich sein für alle
+// 2026.0.3 STEP 7 - A PLAYER JOINS A ROUND THAT TAKES ANY FEDERATION (2026-10-13: "Es muss möglich sein für alle
 // Spiele über alle Federation zu zahlen"). The page locks where its wallet covers the stake, the lowest-load such federation
 // (lockFederation); the round is resolved to it (inFederation) with its own id kept; the entry names that federation.
 import { test } from 'node:test';
@@ -52,7 +52,7 @@ test('the round resolved to that federation keeps its id, locks, and its entry n
   assert.equal(entryFor(one, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor() }).federationId, undefined);
 });
 
-test('a declared operator rides as the entry\'s tail; none declared leaves the entry\'s bytes and id as they were (kanban #309)', () => {
+test('a declared operator rides as the entry\'s tail; none declared leaves the entry\'s bytes and id as they were', () => {
   const r = { ...ANY, protocolVersion: 2, federationId: fromHex(A) };
   const make = (more) => ({ sessionPubkey: new Uint8Array(32).fill(3), roundId: ANY.id, ...entryFor(r, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor(), ...more }) });
   const plain = make({});
@@ -65,7 +65,7 @@ test('a declared operator rides as the entry\'s tail; none declared leaves the e
   assert.equal(toHex(encodeEntryContract(declared)).startsWith(toHex(encodeEntryContract(plain))), true, 'the declaration is a tail');
 });
 
-test('the page\'s website key rides on an entry only into a round of 2026.0.9 or later (kanban #362 item 7)', () => {
+test('the page\'s website key rides on an entry only into a round of 2026.0.9 or later', () => {
   const site = new Uint8Array(33).fill(0x5e); site[0] = 3;
   const make = (version, more) => ({ sessionPubkey: new Uint8Array(32).fill(3), roundId: ANY.id,
     ...entryFor({ ...ANY, protocolVersion: version, federationId: fromHex(A) }, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor(), ...more }) });

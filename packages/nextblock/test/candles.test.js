@@ -153,7 +153,7 @@ test('a truck driven straight east at full throttle over the chart never drops b
 });
 
 test('trucks get through north to south: full throttle from z -54 to +54 at x 20 and back, at least 85% of flat speed, no stop', () => {
-  // §4.15 passability (the owner 2026-09-17 14:40 "make it so trucks and tanks get through") and its §0 row: across the front,
+  // §4.15 passability (2026-09-17 14:40 "make it so trucks and tanks get through") and its §0 row: across the front,
   // over the ribbon, the seam and wherever the berms stood, against the same drive on flat ground with no candle field.
   const X = 20 * Q, Z = 54 * Q;
   const run = (world) => {
@@ -256,7 +256,7 @@ test('tanks cross the ribbon: up onto the plateaus and down, nothing pushes them
 });
 
 
-test('the first live price continues the chart: no sideways shove at the start of a round (the owner 16:42, from the cab)', () => {
+test('the first live price continues the chart: no sideways shove at the start of a round (Alice 16:42, from the cab)', () => {
   // Measured before: a first sample of $76,737 on the Daily's $78,515 seeded tape swung the rescale - the seam at x 0 went
   // 2.05 -> 21.39 m in the 300 ticks after the sample and stayed there. The first sample now moves the seeded tape onto the
   // live level, so the chart is where it would be had the first price equalled the seeded newest.
@@ -279,7 +279,7 @@ test('the first live price continues the chart: no sideways shove at the start o
   assert.ok(Math.abs(live.newest - 76738.65) < 1, 'the tape does not read the live price');
 });
 
-test('the live tape replaces the seeded one before any sample, keeps the scroll, and is refused after a sample (the owner 16:44)', async () => {
+test('the live tape replaces the seeded one before any sample, keeps the scroll, and is refused after a sample (Alice 16:44)', async () => {
   const { submitTape } = await import('../src/sim.js');
   const st = init(0x5eed1234), s = st.i32;
   const seeded = Array.from(st.tape);

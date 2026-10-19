@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WARNINGS BEFORE ENTRY (spec §18A.7 / §22A, kanban #316): "Clients SHOULD warn before entry when r >= 0.95, when K > 0.5 ·
+// WARNINGS BEFORE ENTRY (spec §18A.7 / §22A): "Clients SHOULD warn before entry when r >= 0.95, when K > 0.5 ·
 // qualifier_count, or when the declared score function is not exposure-multiplicative" - and "rather than leaving the
 // player to read a hash". The engine's own (contracts.js contractWarnings: a flat rank curve, a danger-level min_score) are
 // read here from the contract the lobby checked; the game's own (its plugin's roundWarnings - nextblock's "exposure

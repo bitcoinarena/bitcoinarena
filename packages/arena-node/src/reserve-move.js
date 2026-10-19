@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RESERVES OF A DRAINED FEDERATION, MOVED TO A HEALTHY ONE (§27A.9.2, kanban #397, the owner 2026-10-17: "Decision: A" - the move is a
+// THE RESERVES OF A DRAINED FEDERATION, MOVED TO A HEALTHY ONE (§27A.9.22026-10-17: "Decision: A" - the move is a
 // Lightning payment out of the drained federation's 5-of-7 reserve key into an incoming contract only the destination's 5-of-7 reserve
 // key can claim; the accepted sequence:
 //   1. Trigger: every seat sees from its own records that federation X is draining and still holds reserves. A halted federation has its

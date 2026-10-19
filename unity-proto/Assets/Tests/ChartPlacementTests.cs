@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// THE CHART UNDER SIM ON/OFF, OFF THE STEERING ARROWS, 20% LARGER (the owner 2026-09-17 08:31 playtest). The SIM switch is
+/// THE CHART UNDER SIM ON/OFF, OFF THE STEERING ARROWS, 20% LARGER (2026-09-17 08:31 playtest). The SIM switch is
 /// the rect the HUD draws it in (DriveHud.SimBox), the pads are TouchPad's; nothing here recomputes either.
 /// </summary>
 public class ChartPlacementTests
@@ -60,7 +60,7 @@ public class ChartPlacementTests
     [Test]
     public void TheChartIsTopRightAboveTheButtonsOnEveryScreenWithPadsOrWithout()
     {
-        // the owner 2026-09-17 12:35 HARD FAIL: his screen (pads shown, about 3072x1515) had the chart in the middle over the
+        // 2026-09-17 12:35 HARD FAIL: his screen (pads shown, about 3072x1515) had the chart in the middle over the
         // truck. Top right, above the buttons, not center, not over the steering arrows - with the pads and without.
         var shapes = new[] { (3072, 1515), (2048, 1010), (1920, 1080), (1366, 768), (1280, 800), (1280, 657), (1024, 768), (1024, 505) };
         try
@@ -119,7 +119,7 @@ public class ChartPlacementTests
     [Test]
     public void OnMobileTheChartStandsDirectlyAboveTheLeftAndRightControls()
     {
-        // the owner 2026-09-17 12:40: "MOBILE: HUD further down, directly ABOVE the left/right controls. Not mid-screen over the
+        // 2026-09-17 12:40: "MOBILE: HUD further down, directly ABOVE the left/right controls. Not mid-screen over the
         // truck." His phone's Unity screen is about 1170x2532 (PRACTICE's fixed 300 px drawn 230 px of a 919 px shot).
         // held upright; a phone on its side takes the desktop corner (L1) - OnALandscapePhoneTheChartIsTheDesktopCornerScaled...
         var shapes = new[] { (1170, 2532), (390, 844), (430, 932), (1290, 2796), (768, 1024) };
@@ -155,7 +155,7 @@ public class ChartPlacementTests
     [Test]
     public void OnALandscapePhoneTheChartIsTheDesktopCornerScaledAndHighLowIsCentral()
     {
-        // L1 (the owner 2026-09-17): a phone on its side takes the desktop top-right corner above the buttons, scaled to the
+        // L1 (2026-09-17): a phone on its side takes the desktop top-right corner above the buttons, scaled to the
         // shorter height. And HIGH / LOW central on the screen, off the chart (12:55), on every layout.
         try
         {

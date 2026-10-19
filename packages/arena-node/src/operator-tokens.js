@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OPERATOR UI'S TOKENS (spec §27A.7.7, kanban #332). "Pairing is a blwp-operator: URI - endpoint plus a 32-byte token the
+// THE OPERATOR UI'S TOKENS (spec §27A.7.7). "Pairing is a blwp-operator: URI - endpoint plus a 32-byte token the
 // node prints on first start - pasted or scanned. The UI asks for an action; the node performs it. No key ever leaves the
 // node." Tokens are scoped:
 //   read    dashboards, income, bracket status          - stolen: information disclosure

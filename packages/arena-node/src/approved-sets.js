@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVELOPERS' APPROVED DONATION SETS, AS A PUBLISHER READS THEM (§27A.4.1, kanban #382): a round must name the set in force at
+// THE DEVELOPERS' APPROVED DONATION SETS, AS A PUBLISHER READS THEM (§27A.4.1): a round must name the set in force at
 // its census height, and since the developers' own ballot that may be a set no admin key signed. A publisher (the duty runners,
 // the RPS grid runner) reads the ballots from a seat - GET /donation-ballots, every proposal and approval as signed bytes - and
 // tallies them itself against the admin key's sets it holds, exactly as the seats and the page do. A seat that does not

@@ -8,7 +8,7 @@
 // way in, and it is the same family as `?practice=0`: the URL NAMES things -
 // a round id, the daemons holding it, where headers and the bond are asked
 // for - and nothing here mints any of them.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../arena-node/test/lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
@@ -206,7 +206,7 @@ test('two tabs are two players, and one tab is one player twice', () => {
  * round - and a stake dealt under any key. A payout and a refund go to that
  * key, and the player had nothing to check it against.
  */
-// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut): the
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut): the
 // three paying fixtures below used to be hold-shaped - a stake and no federation - and entryFor now refuses that shape.
 // They keep measuring what they measured, on a real FEDERATION entry: page-lock.test's lock inputs, an attested claim key
 // and a stake lock with a non-zero outpoint, paying to the dealt stake's point where one is dealt.
@@ -309,8 +309,8 @@ test('the page joins a named round and still invents none', () => {
   // AND IT WRITES NO CONTRACT. A page that carried its own fields could name
   // its own committee and then satisfy its own choice, which is the exact
   // substitution the round id exists to stop.
-  // THE FIELDS ONLY A ROUND'S BUILDER WRITES never appear, and nothing encodes a contract (kanban #465): `stakeMsat` is an order's own
-  // amount since kanban #237 (a pick record, an order message) and `committeeTimeMs` is read off fetched rounds to sort them - the
+  // THE FIELDS ONLY A ROUND'S BUILDER WRITES never appear, and nothing encodes a contract: `stakeMsat` is an order's own
+  // amount since (a pick record, an order message) and `committeeTimeMs` is read off fetched rounds to sort them - the
   // words alone no longer say a round is invented, so those two are checked as the page uses them: never encoded into a contract
   for (const field of ['censusRoot', 'simCoreHash', 'gameVerifySlots', 'blockTicks'])
     assert.ok(!page.includes(field),
@@ -323,15 +323,15 @@ test('the page joins a named round and still invents none', () => {
   // and a player's own ghost is dropped - so the two tabs would show each
   // other nothing.
   assert.ok(page.includes('sessionStorage'), 'the page has no per-tab identity');
-  // localStorage FOR A KEPT ROUND'S MONEY (the owner 2026-09-14, spec §24), in vault(), AND FOR THE KEPT PHRASES (the owner
+  // localStorage FOR A KEPT ROUND'S MONEY (2026-09-14, spec §24), in vault(), AND FOR THE KEPT PHRASES (the owner
   // 2026-10-01: "safe even if the user closes the browser and loads it again"), in blwpSeedKeeper - which hands a tab
   // only a phrase no open tab holds, so two tabs stay two players (seed-keeper.test.js). Named twice, nowhere else.
   // AND THE BROWSER'S OWN STORE (PAID-NIGHT-2155): the client log, the console's verbose switch and the one-paid-run
   // heartbeat - named once, in BLWP_BROWSER_STORE, holding no player and no money.
-  // (The one-time blwp.* to arena.* move, kanban #207, names it once more before all of these: storage-move.test.js.)
+  // (The one-time blwp.* to arena.* movenames it once more before all of these: storage-move.test.js.)
   const pageAfterMove = page.replace(/<script id="arena-storage-move">[\s\S]*?<\/script>/, '');
-  assert.equal((pageAfterMove.match(/localStorage/g) || []).length, 3, 'the page names localStorage outside vault(), the seed keeper and BLWP_BROWSER_STORE (every preference, cache and connection goes through that door, kanban #465)');
-  // THE ONE DOOR, FROM THE FIRST PAINT ON (kanban #465): defined in the first-paint script, so even the splash's game-name lookup uses it
+  assert.equal((pageAfterMove.match(/localStorage/g) || []).length, 3, 'the page names localStorage outside vault(), the seed keeper and BLWP_BROWSER_STORE (every preference, cache and connection goes through that door)');
+  // THE ONE DOOR, FROM THE FIRST PAINT ON: defined in the first-paint script, so even the splash's game-name lookup uses it
   assert.match(page, /window\.BLWP_BROWSER_STORE = function \(\) \{ try \{ return window\.localStorage; \}/, 'the browser\'s own store is not the one named helper');
   assert.match(page, /const browserStore = window\.BLWP_BROWSER_STORE;/, 'the console\'s store is not that helper');
   assert.match(page, /window\.BLWP_SEED_KEEPER = blwpSeedKeeper\(\{ L: window\.localStorage, T: window\.sessionStorage,/, 'the phrases are not kept by blwpSeedKeeper');
@@ -521,7 +521,7 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
     /that is not one/);
 });
 
-// THE FEE LOCK AN ENTRY NAMES (kanban #187 item 4, plan comment 298, Go 2026-10-05): join.js feeLockOf, through entryFor. A
+// THE FEE LOCK AN ENTRY NAMES (plan comment 298, Go 2026-10-05): join.js feeLockOf, through entryFor. A
 // stake lock's fee lock must hand over its F (32 bytes, not zeros), be locked to H(F), and hold exactly the entry's fee -
 // else the entry is not built (a fee lock the signer node would refuse, or a fee nobody can claim). A good one is named in
 // the entry by its F and outpoint; no fee lock writes zeros.

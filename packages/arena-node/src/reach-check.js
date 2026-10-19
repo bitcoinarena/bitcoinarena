@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// CAN THE INTERNET REACH A NEW NODE? (kanban #471 ruling 7, the owner 2026-10-18: "the installer automatically detects if outside
+// CAN THE INTERNET REACH A NEW NODE? (ruling 7, 2026-10-18: "the installer automatically detects if outside
 // connections are possible and if firewalls block it"). Only someone outside can say, so a seat says it: POST /reach-check { port,
 // nonce } and the seat connects back to the ASKING ADDRESS on that port, asks GET /reach-nonce, and answers whether the nonce came
 // back - and the address it saw, which is the asker's public IP.

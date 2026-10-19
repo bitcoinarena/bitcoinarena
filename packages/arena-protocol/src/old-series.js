@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PICK B (RULED the owner 2026-09-30 08:55, OLD-BEACON-0850): ONE NAMED EXCEPTION TO THE NETWORK IDENTITY AND TO THE SERIES
+// PICK B (RULED 2026-09-30 08:55, OLD-BEACON-0850): ONE NAMED EXCEPTION TO THE NETWORK IDENTITY AND TO THE SERIES
 // LEAD AND GRID RULES, FOR ONE SERIES.
 //
 // Series 3cfbe516d93ddf4b was published on testnet4 (3029fc6f, block 154237; beacon 154268; committee_time 2026-09-28

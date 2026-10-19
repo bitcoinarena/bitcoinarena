@@ -46,11 +46,11 @@ public class BlockClock : MonoBehaviour
     /// IT WAS WRITTEN HERE, AND IT DRIFTED. This was a hand-typed 9000 while `packages/nextblock/src/rules/gate.js`
     /// had moved to 10800 (c01cc655, "a round is three minutes"). Nothing threw: the HUD clock simply counted
     /// down to 0:00 at elapsed 9000 and the run went on for another 1800 ticks - thirty seconds of a round with
-    /// a timer showing nothing left. That is the owner's 2026-09-20 16:21 report, and it is the SECOND time this
+    /// a timer showing nothing left. That is 2026-09-20 16:21 report, and it is the SECOND time this
     /// clock has told him the round should be over when it was not (2026-09-16 15:36, the comment below).
     /// A number both engines need is not a number either of them may type.
     /// </summary>
-    /// SINCE THE 82/90 FORK (the owner 2026-10-01) the run's own length, from the core running it - its round's blockTicks -
+    /// SINCE THE 82/90 FORK (2026-10-01) the run's own length, from the core running it - its round's blockTicks -
     /// not the generated constant, which is now only the default a run with no round gets.
     public static int RunTicks => Blwp.BlwpCore.RunTicks;
 
@@ -63,7 +63,7 @@ public class BlockClock : MonoBehaviour
     /// <summary>Seconds left in this round.</summary>
     public float Remaining { get; private set; }
 
-    /// <summary>True while the joined round has not started: Remaining is then the time until its start (#64).</summary>
+    /// <summary>True while the joined round has not started: Remaining is then the time until its start.</summary>
     public bool StartsIn { get; private set; }
 
     public float Fraction => blockSeconds > 0f ? Mathf.Clamp01(Remaining / blockSeconds) : 0f;
@@ -124,12 +124,12 @@ public class BlockClock : MonoBehaviour
             if (mining > Height) Height = mining;
         }
 
-        // A CORE'S RUN IS TIMED BY THE CORE (the owner 2026-09-16 15:36: "when time hits zero the round does not
+        // A CORE'S RUN IS TIMED BY THE CORE (2026-09-16 15:36: "when time hits zero the round does not
         // end"). This clock was a Unity stopwatch from scene load, looping every 150 s through the lobby too,
         // while the core ends a run at MISSED after `RunTicks` of its own ticks from roll-out - and drops ticks
         // on a slow page. So the HUD read 0:00 while the core still had seconds, or minutes, left, and the run
         // went on. With a core, "left" is the core's own count, and 0:00 is the tick the run ends on.
-        // BEFORE A JOINED ROUND STARTS, THE ROUND'S OWN COUNTDOWN (kanban #64, measured 2026-10-04 11:36Z: two devices in one
+        // BEFORE A JOINED ROUND STARTS, THE ROUND'S OWN COUNTDOWN (measured 2026-10-04 11:36Z: two devices in one
         // paid round read 107 s and 119 s left at the same instant - the core then is the lobby's practice run, counted from
         // each page's load). The start is the contract's, so every device shows the same.
         int startsIn = Blwp.BlwpCore.RoundStartsInMs();

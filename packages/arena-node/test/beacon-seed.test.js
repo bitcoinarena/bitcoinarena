@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEED SLICE (IMPLEMENTATION.md §12.1, RULED the owner 2026-09-25): the node and the fixtures read the round's beacon
+// THE SEED SLICE (IMPLEMENTATION.md §12.1, RULED 2026-09-25): the node and the fixtures read the round's beacon
 // from the bonded chain, and players and the node seed the world from that same hash. Measured here only what does not
 // depend on who delivers:
 //   1. every holder names the same beacon - the bonded chain's own block, and another round's chain names another;

@@ -24,12 +24,12 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const STAKE = 100000n;
-// THE NET OF A STAKE WITH NO DONATION: the stake less the node fee (5%, §0A.8; kanban #205) - every net below is this, less
+// THE NET OF A STAKE WITH NO DONATION: the stake less the node fee (5%, §0A.8) - every net below is this, less
 // the donation
 const NET0 = STAKE - entryFeeMsat(STAKE);
 const paying = { id: b32(0x21), stakeMsat: STAKE, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const free = { id: b32(0x22), stakeMsat: 0n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1) };
-// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
 // that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
 // a non-zero outpoint, paying to the dealt stake's point where one is dealt.

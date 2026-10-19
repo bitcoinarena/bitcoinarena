@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET IN THE PAGE (kanban #206 slice 2, §0A.7a; the owner 2026-10-07, decisions A and B of plan 777): the pick sheet's
+// A MARKET IN THE PAGE (§0A.7a; 2026-10-07, decisions A and B of plan 777): the pick sheet's
 // model, the pick handed to the seats, the outcome checked by the page itself, and the lines the lobby draws.
 //
 // - The sheet (#blwp-pick in index.html) is drawn from `pickSheet`: one button per outcome, the stake, the 5% fee line and
@@ -37,8 +37,8 @@ const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { m
 export function marketForRound(round, { manifestBytes = null } = {}) {
   if (!round || !(round.gameId instanceof Uint8Array)) return null;
   const pinned = marketOf(round.gameId);
-  // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
-  // AND ITS TERMS (kanban #236): resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
+  // ITS FEE: a market's own, from its manifest, or the market default 0.5 % + 0.5 %
+  // AND ITS TERMS: resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
   if (pinned) return marketAsRoundAsks({ ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) }, round);
   if (!manifestBytes) return null;
   let m;
@@ -47,7 +47,7 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
   return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
     fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null,
-    // A SCALAR MARKET'S BOUNDS (protocol 7) and A MARKET ON A GAME'S SOURCE (protocol 6), kanban #362: what its lines say and
+    // A SCALAR MARKET'S BOUNDS (protocol 7) and A MARKET ON A GAME'S SOURCE (protocol 6),: what its lines say and
     // what its outcome is checked by - the decoded manifest kept beside them for that check
     ...(isScalar(m) ? { scalar: { low: m.scalar.low, high: m.scalar.high, unit: m.scalar.unit } } : {}),
     ...(isGameMarket(m) ? { gameSource: { sourceGameId: toHex(m.gameSource.sourceGameId), mapping: [...m.gameSource.mapping] } } : {}),
@@ -55,7 +55,7 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
 }
 
 /**
- * A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): its labels, its question and its resolution time
+ * A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (feature 5): its labels, its question and its resolution time
  * are the round's signed contract's (`event`), the attestors, threshold and fees the template's - so the pick sheet, the
  * attestation check and the lock span read the round's. Any other round: the market as it is.
  */
@@ -77,8 +77,8 @@ function marketAsRoundAsks(market, round) {
 // contract at hand.
 export function pickSheet({ market, contract = null, stakeMsat = contract ? contract.stakeMsat : 0n }) {
   const stake = BigInt(stakeMsat);
-  // THE MARKET'S OWN RATES (kanban #235): its node fee and its donation (0.5 % + 0.5 % by default), DUE WHEN THE PICK FILLS -
-  // at entry close (the owner 2026-10-09): they sit in the fee lock beside the stake, are paid out when the market resolves from
+  // THE MARKET'S OWN RATES: its node fee and its donation (0.5 % + 0.5 % by default), DUE WHEN THE PICK FILLS -
+  // at entry close (2026-10-09): they sit in the fee lock beside the stake, are paid out when the market resolves from
   // winners and losers alike, and come back whole on a cancel before entry close, a VOID or a market nobody picked right
   const rates = market.fee || { nodeBps: 50, donationBps: 50 };
   const fee = entryFeeMsat(stake, rates.nodeBps + rates.donationBps);
@@ -107,7 +107,7 @@ export function pickSheet({ market, contract = null, stakeMsat = contract ? cont
  * HAND A PICK TO THE ROUND'S SEATS (no session, no run): the entry to every seat, then its stake lock and fee lock as the
  * client hands them (`handLock`). Answers each seat's word and the entry id.
  */
-// `onEntries` (kanban #293, measured on the paid regtest stack: a paid head-to-head tap was counted only after the guardians
+// `onEntries` (measured on the paid regtest stack: a paid head-to-head tap was counted only after the guardians
 // accepted its lock and the 7 seats had each checked it - 6.5 s median at load 30-47; the seats had taken the entry at ~2.8 s):
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null }) {
@@ -123,7 +123,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
   if (onEntries) { try { onEntries({ entryId: toHex(eid), entries }); } catch { /* the caller's own fault */ } }
   if (!took.length) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
   if (!stakeLock) return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: null, feeLock: null };
-  // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (kanban #237, measured on the regtest market
+  // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (measured on the regtest market
   // stack): handed once, at once, while the federation was still accepting the lock, every seat that looked first refused it
   // and none was asked again - so the order was tradable nowhere (a batch needs 5 seats holding its locks). The first pass
   // after acceptance is awaited; the seats still refusing are asked again in the background until the round's entry closes
@@ -162,7 +162,7 @@ const LOCK_HAND_MS_PICK = 120000;
  */
 export function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = false }) {
   return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
-    // a market on a game's round names its source round (kanban #362 feature 6): its outcome is that round's signed result
+    // a market on a game's round names its source round (feature 6): its outcome is that round's signed result
     ...(round.sourceRoundId instanceof Uint8Array ? { sourceRoundIdHex: toHex(round.sourceRoundId) } : {}),
     // a template's round asks its own question - and a scalar template's names its own bounds (2026.0.8): kept with the pick, so its
     // lines say the round's, not the template's
@@ -212,7 +212,7 @@ export async function checkAttestation({ attestationHex, market, roundIdHex, ver
 }
 
 /**
- * A MARKET OUTCOME, CHECKED BY THIS PAGE (kanban #362: the market lines of protocols 6 and 7), whatever its kind - the seats'
+ * A MARKET OUTCOME, CHECKED BY THIS PAGE (the market lines of protocols 6 and 7), whatever its kind - the seats'
  * GET /outcome answer `o`, the pick's `market` (marketForRound's), its round id:
  * - an outcome attestation: checkAttestation, against the attestors the page pinned or the player confirmed;
  * - a VALUE attestation (a scalar market, type 0x2a): its attestors' signatures (Ed25519, `verify`) and threshold, for this
@@ -272,7 +272,7 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
 }
 
 /**
- * A SERIES' TEMPLATE FROM THE SEATS (kanban #362): each of `nodes` asked GET /series-template?id= in turn; a line is believed only
+ * A SERIES' TEMPLATE FROM THE SEATS: each of `nodes` asked GET /series-template?id= in turn; a line is believed only
  * once the template it carries hashes to `seriesIdHex` (series.js seriesId over the template, its period and its count) - so no
  * seat can hand another series. `{ ok, template, from }` or `{ ok: false, why }`.
  */
@@ -318,11 +318,11 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     const label = p.market.outcomes[p.pick];
     const head = `${p.market.name} ${p.roundIdHex.slice(0, 8)}`;
     const o = outcomes.get(p.roundIdHex);
-    // EACH LINE ALSO SAID AS DATA (kanban #443, the owner 2026-10-17: "This looks pretty bad, make it prettier and more structured"): its
+    // EACH LINE ALSO SAID AS DATA (2026-10-17: "This looks pretty bad, make it prettier and more structured"): its
     // round and entry, the pick, the stake, the window's close and a state - a client draws its own row from these; the text stays
     const at = (state, more = {}) => ({ kind: 'market', round: p.roundIdHex, entry: p.entryIdHex || null, pick: p.pick, label, stakeMsat: String(p.stakeMsat),
       entryCloseMs: Number(p.entryCloseMs), state,
-      // WHEN THE RESULT IS FINAL (kanban #447, the owner 2026-10-17: "show there if it's still pending (10 minute delay)"): the seats'
+      // WHEN THE RESULT IS FINAL (2026-10-17: "show there if it's still pending (10 minute delay)"): the seats'
       // finality of an attested outcome and its time, so a client counts the objection window down on every result, won or lost
       ...(o && o.state === 'ATTESTED' ? { final: !!o.final, finalAtMs: Number(o.finalAtMs) || null } : {}), ...more });
     if (nowMs < Number(p.entryCloseMs)) {
@@ -355,7 +355,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     const signed = p.market.scalar ? `value ${scalarValueLine(check.value, p.market.scalar.unit)}${check.clamped !== undefined && check.clamped !== check.value ? ` (paid as ${scalarValueLine(check.clamped, p.market.scalar.unit)})` : ''} between ${scalarValueLine(p.market.scalar.low, p.market.scalar.unit)} and ${scalarValueLine(p.market.scalar.high, p.market.scalar.unit)} (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`
       : p.market.gameSource ? `'${check.label}' (source round ${String(p.sourceRoundIdHex || '').slice(0, 8)} ended ${check.value}, signed by its committee, verified)`
         : `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
-    // AN ORDER THAT MATCHED NOBODY (kanban #452, measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
+    // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
@@ -365,7 +365,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ ...at(row.won ? 'right' : 'wrong'), text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
     else if (o.table.refunded) lines.push({ ...at('refunded', { backMsat: String(net) }), text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
-    // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
+    // NOBODY ON THE OTHER SIDE (measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
     else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ ...at('refunded', { backMsat: String(row.stakeMsat || p.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
@@ -376,7 +376,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
   return lines;
 }
 
-// AN ORDER'S OWN MESSAGES (kanban #237): what its session key signs to cancel it, or to sell its shares back, before the
+// AN ORDER'S OWN MESSAGES: what its session key signs to cancel it, or to sell its shares back, before the
 // market resolves (protocol order-book.js) - here so the page's bundle carries them (the bundle takes no import aliases)
 export function orderCancelId({ roundId, entryId }) { return cancelId({ roundId, entryId }); }
 export function orderSellId({ roundId, entryId, outcome, price, sharesMsat, nonce }) { return sellId({ roundId, entryId, outcome, price, sharesMsat, nonce }); }
@@ -384,7 +384,7 @@ export function orderSellId({ roundId, entryId, outcome, price, sharesMsat, nonc
 export const ORDER_PRICE_SCALE = Number(PRICE_SCALE);
 
 /**
- * MY ORDERS, FROM THE SEATS (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and still no closed
+ * MY ORDERS, FROM THE SEATS (2026-10-17: "When I reload the page my open orders are gone and still no closed
  * orders"; "Have the open orders from the nodes not from local storage"): of a round's entries as its signer seats hold them
  * (`entries`: [{ idHex, bytes }], from GET /book's positions and resting buys, each fetched by GET /entry), the ones whose player key
  * is one this wallet makes for that round - `keys`: Map(player key hex -> order index), playerFor(round, seed, order) - read back

@@ -358,7 +358,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
 
 /**
  * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE, AND A WITHDRAW CUT OFF AFTER ITS COLLECT (spec §24,
- * the owner 2026-09-14). alice's desktop looks and is closed with no withdraw; her "iPhone" - another
+ * 2026-09-14). alice's desktop looks and is closed with no withdraw; her "iPhone" - another
  * browser profile - holds only her seed (the page's importSeed) and runs the page's own scan over
  * the signer nodes (BLWP_FIND_OWED: /settled, its key matched locally); its Withdraw collects and is cut
  * off before the pay-out (the wallet never answers the invoice ask) and the browser is closed; the
@@ -547,7 +547,7 @@ async function round(stakeMsat) {
       players.push({ want, seed, playerPubkey, stake, fee, eid });
     }
 
-    // PICK (a) (the owner 2026-09-14): A THIRD PLAYER WHO LOCKS A STAKE AND BRINGS NO FEE LOCK. Where
+    // PICK (a) (2026-09-14): A THIRD PLAYER WHO LOCKS A STAKE AND BRINGS NO FEE LOCK. Where
     // the gate mints, each signer node must refuse the entry at the door - not joined, its stake not
     // counted, its lock still its own - and the two who brought theirs settle as before.
     let bare = null;

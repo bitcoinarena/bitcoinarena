@@ -48,7 +48,7 @@ namespace Blwp
         float _nextPoll;
 
         /// <summary>
-        /// WHY A TAB IS NOT IN A ROUND, IN ITS OWN WORDS (the owner 2026-09-18 09:00, the two-tab gate).
+        /// WHY A TAB IS NOT IN A ROUND, IN ITS OWN WORDS (2026-09-18 09:00, the two-tab gate).
         ///
         /// Two headless players on this host drove for nine minutes with the page's line reading "play - not started"
         /// and no session, and nothing on the screen or in the console said which of the three conditions was unmet.
@@ -95,7 +95,7 @@ namespace Blwp
 
         void Update()
         {
-            // AND ASKED AGAIN WHILE THERE IS NONE (M3.3-34, the owner 2026-09-13 07:11):
+            // AND ASKED AGAIN WHILE THERE IS NONE (M3.3-34, 2026-09-13 07:11):
             // PLAY in the lobby joins in this page, after Start - the page
             // is no longer reloaded, so a round named later has to be seen here.
             // AND ONCE A RUN IS OVER THE ROUND IS NOT ASKED FOR AGAIN (hole 1): the page lets go of the

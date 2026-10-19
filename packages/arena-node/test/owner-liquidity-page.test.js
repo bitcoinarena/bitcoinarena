@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S LIQUIDITY CARD (kanban #494, §23A.10): the free coins against the deposit minimum - below it, no share - the channels
+// THE OWNER PAGE'S LIQUIDITY CARD (§23A.10): the free coins against the deposit minimum - below it, no share - the channels
 // given, and the top-up address; a node that is no provider is told how to become one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +28,7 @@ test('a provider: free vs the deposit minimum, the channels it gave, the top-up 
   assert.ok(/liquidityPanel\(\);/.test(HTML) && HTML.includes('<div class="card" id="liquidity">'));
 });
 
-test('"New address": the owner\'s signed ask, then the card shows the provider\'s new top-up address (the owner: "a button generate a new address for the lp wallet")', async () => {
+test('"New address": the owner\'s signed ask, then the card shows the provider\'s new top-up address (Alice: "a button generate a new address for the lp wallet")', async () => {
   const els = new Map(); const $ = (id) => { if (!els.has(id)) els.set(id, { innerHTML: '', textContent: '', disabled: false }); return els.get(id); };
   let claim = { freeSats: '600000', depositAddress: 'tb1pold', channels: [] };
   const posted = [];

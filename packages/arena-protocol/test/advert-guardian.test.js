@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CENSUS ADVERT SAYS A NODE IS A GUARDIAN (spec §5A.1 v4.6.4: `guardian_capable`, `guardian_endpoint`; §23A.2: one
-// node is one guardian, drawn by sortition over the guardian-capable census - RULED the owner 2026-09-26 22:54).
+// node is one guardian, drawn by sortition over the guardian-capable census - RULED 2026-09-26 22:54).
 //
 // RED BY DESIGN at the commit that adds it (2026-09-27): advert.js encodes neither field, so an advert cannot say its
 // node is a guardian or where a phone opens it, and §23A.2's sortition has nothing to draw from. Making it pass moves

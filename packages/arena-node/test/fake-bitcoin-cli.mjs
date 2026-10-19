@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FAKE bitcoin-cli FOR THE TESTNET4 TOOLS' TESTS (kanban #148): no node, no wallet, no network. Every call is appended to
+// A FAKE bitcoin-cli FOR THE TESTNET4 TOOLS' TESTS: no node, no wallet, no network. Every call is appended to
 // $FAKE_CLI_LOG as one JSON line { args }; each method answers from the JSON spec at $FAKE_CLI_SPEC:
 //   { mtp: { "<height>": <seconds> }, tip: { blocks, mediantime }, utxos: [...], input: { txid, vout }, mempool: { allowed, reason },
 //     send: "<txid>" | true (the sent transaction's own txid) | null (sendrawtransaction fails), fail: { "<method>": "<message>" },

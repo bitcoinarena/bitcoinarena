@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT A PLAYER WON OR LOST IN A PAYING ROUND, AS THIS NODE'S SETTLEMENT SAYS (kanban #187 item 1, plan comment 298, Go
+// WHAT A PLAYER WON OR LOST IN A PAYING ROUND, AS THIS NODE'S SETTLEMENT SAYS (plan comment 298, Go
 // 2026-10-05). server.js playerBalance: a qualifier's net is its payout less the node fee and its donation; when the
 // settlement paid nobody, every stake but a walk-away's comes back, so only the fee and the donation are gone; a loser or
 // a walk-away loses the stake; until this node's settlement is ACCEPTED the net is pending. Only the free branch was

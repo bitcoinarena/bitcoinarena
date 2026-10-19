@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE AS A SERVICE (kanban #471 step C.9; Linux in slice 1 - launchd and Windows in slice 4): a systemd user unit that starts the
+// THE NODE AS A SERVICE (Linux in slice 1 - launchd and Windows in slice 4): a systemd user unit that starts the
 // seat from the installed release with the settings the wizard wrote, restarts it when it falls over, and is checked healthy by the
 // installer before the wizard goes on. The user needs no root: `loginctl enable-linger` keeps a user unit running with nobody logged
 // in, and the wizard says so when linger is off.
@@ -21,7 +21,7 @@ export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(h
 
 /** The seat's unit text. `node` is the runtime the release ships (process.execPath when run from it). */
 export function seatUnit({ node, release, home, port }) {
-  return `# The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${join(home, 'arena.conf')} (arenanode config).
+  return `# The Arena node, written by the installer. An update rewrites this file; the settings live in ${join(home, 'arena.conf')} (arenanode config).
 [Unit]
 Description=Arena node (testnet4) on port ${port}
 After=network-online.target ${BRIDGE_UNIT}
@@ -42,7 +42,7 @@ WantedBy=default.target
 
 /** The chain bridge's unit (Electrum mode only): answers the seat's bitcoind calls on 127.0.0.1:bridgePort. */
 export function bridgeUnit({ node, release, home, bridgePort }) {
-  return `# The Arena node's chain bridge (kanban #471, Electrum mode), written by the installer.
+  return `# The Arena node's chain bridge (Electrum mode), written by the installer.
 [Unit]
 Description=Arena chain bridge (Electrum + Esplora, testnet4) on 127.0.0.1:${bridgePort}
 After=network-online.target
@@ -98,14 +98,14 @@ export async function installService({ node = process.execPath, release, home, p
   return { ...health, ms: Date.now() - t0, boot, linger: linger.ok ? linger.out.trim() === 'yes' : null };
 }
 
-// MACOS: A LAUNCHD AGENT (kanban #471 slice 4) - ~/Library/LaunchAgents/io.bitcoin-arena.node.plist, the seat from the release with
-// its settings file (src/run.js <home>/arena.conf, kanban #499), kept alive, logged beside the node's home.
+// MACOS: A LAUNCHD AGENT - ~/Library/LaunchAgents/io.bitcoin-arena.node.plist, the seat from the release with
+// its settings file (src/run.js <home>/arena.conf), kept alive, logged beside the node's home.
 export const LAUNCHD_LABEL = named('io.bitcoin-arena.node');
 const xml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function launchdPlist({ node, release, home, port, boot = true }) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The Arena node (kanban #471), written by the installer. An update rewrites this file; the settings live in ${xml(home)}/arena.conf (arenanode config). -->
+<!-- The Arena node, written by the installer. An update rewrites this file; the settings live in ${xml(home)}/arena.conf (arenanode config). -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
@@ -121,11 +121,11 @@ export function launchdPlist({ node, release, home, port, boot = true }) {
 `;
 }
 
-// WINDOWS: A SCHEDULED TASK (kanban #471 slice 4; ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
+// WINDOWS: A SCHEDULED TASK (ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
 // at logon (or at start-up with the user's password), restarted on failure, running a .cmd that starts the seat from arena.conf.
 export const WINDOWS_TASK = named('Arena node', ' ');
 export function windowsLauncher({ node, release, home, port }) {
-  return ['@echo off', 'rem The Arena node (kanban #471), written by the installer: the seat started from its settings, arena.conf (arenanode config).',
+  return ['@echo off', 'rem The Arena node, written by the installer: the seat started from its settings, arena.conf (arenanode config).',
     `cd /d "${release}\\packages\\arena-node"`,
     `"${node}" src\\run.js "${home}\\arena.conf" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
 }
@@ -136,7 +136,7 @@ export function windowsLauncher({ node, release, home, port }) {
  * Answers { ok, mode: 'task' | 'startup', startup?, why }.
  */
 export const startupDir = (env = process.env) => join(env.APPDATA || join(env.USERPROFILE || homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
-export const startupScript = (name, file) => `' ${name} (kanban #471), written by the installer: the launcher in a hidden window, at every logon\r\n`
+export const startupScript = (name, file) => `' ${name}, written by the installer: the launcher in a hidden window, at every logon\r\n`
   + `CreateObject("WScript.Shell").Run """${file.replace(/"/g, '""')}""", 0, False\r\n`;
 export async function windowsAutostart({ name, file, sh, env = process.env }) {
   const c = await sh('schtasks', windowsTaskArgs({ launcher: file }).map((x) => (x === WINDOWS_TASK ? name : x)));
@@ -179,7 +179,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
   const t0 = Date.now();
   const tasks = [{ name: WINDOWS_TASK, file: join(home, 'arena-node.cmd'), text: windowsLauncher({ node, release, home, port }) }];
   if (tunnelArgs) tasks.push({ name: `${WINDOWS_TASK} tunnel`, file: join(home, 'arena-tunnel.cmd'),
-    text: ['@echo off', 'rem The Arena node tunnel (kanban #471), written by the installer.', `${tunnelArgs.map((a) => `"${a}"`).join(' ')} >> "${home}\\tunnel.log" 2>&1`].join('\r\n') + '\r\n' });
+    text: ['@echo off', 'rem The Arena node tunnel, written by the installer.', `${tunnelArgs.map((a) => `"${a}"`).join(' ')} >> "${home}\\tunnel.log" 2>&1`].join('\r\n') + '\r\n' });
   for (const t of tasks) {
     writeFileSync(t.file, t.text);
     if (boot) {
@@ -194,7 +194,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
 }
 
 /**
- * ANY OTHER PROGRAM OF THE NODE AS A SERVICE (kanban #471 ruling 8: the node's own Bitcoin Core): `id` names it (arena-<id>.service,
+ * ANY OTHER PROGRAM OF THE NODE AS A SERVICE (ruling 8: the node's own Bitcoin Core): `id` names it (arena-<id>.service,
  * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
  * when `boot`. `vars`: environment the program needs (secrets too - kept only in files of this user, 0600). Answers { ok, why }.
  */
@@ -207,7 +207,7 @@ export async function installProgram({ id, description, args, home, boot = true,
     const file = join(dir, `${label}.plist`);
     writeFileSync(file, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- ${xml(description)} (kanban #471), written by the installer. -->
+<!-- ${xml(description)}, written by the installer. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${label}</string>
@@ -230,8 +230,8 @@ export async function installProgram({ id, description, args, home, boot = true,
   if (platform === 'win32') {
     const file = join(home, `arena-${id}.cmd`);
     // `againOn`: an exit code on which the program is started again (no service manager restarts a launcher on Windows; the auto update
-    // ends with 75 to come back from the new release, kanban #505)
-    writeFileSync(file, ['@echo off', `rem ${description} (kanban #471), written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
+    // ends with 75 to come back from the new release)
+    writeFileSync(file, ['@echo off', `rem ${description}, written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
       ...(againOn ? [':again'] : []),
       `${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`,
       ...(againOn ? [`if %errorlevel%==${againOn} goto again`] : [])].join('\r\n') + '\r\n', { mode: 0o600 });
@@ -247,7 +247,7 @@ export async function installProgram({ id, description, args, home, boot = true,
   const unit = unitName(id);
   const envFile = join(home, `${id}.env`);
   if (varLines.length) writeFileSync(envFile, varLines.map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
-  writeFileSync(join(dir, unit), `# ${description} (kanban #471), written by the installer.
+  writeFileSync(join(dir, unit), `# ${description}, written by the installer.
 [Unit]
 Description=${description}
 After=network-online.target${partOf ? ` ${unitName(partOf)}` : ''}

@@ -199,7 +199,7 @@ export const TYPE_DKG_CONTRIBUTION = 0x13;
  */
 export const TYPE_SIGNED_DONATION_SET = 0x14;
 /**
- * A DONATION SET OF KEYS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): each recipient is a 33-byte
+ * A DONATION SET OF KEYS (2026-10-03, FEDERATION.md "Donations in the federation"): each recipient is a 33-byte
  * secp256k1 key the player's lock transaction pays a payout contract to, in the round's federation - no LNURL. Its own
  * byte, so a set of keys and a set of LNURLs are never the same bytes, and every set already published keeps its id.
  */
@@ -221,15 +221,15 @@ export const TYPE_TRANSCRIPT_POSTING = 0x18;
 // its replay of the canonical transcript produces, tied to the contradicted run.
 // The spec names no wire object for it; this is that object.
 export const TYPE_RERUN_RESULT = 0x19;
-// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, the owner 2026-10-01): one settlement seat's word that a run is FINAL,
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, 2026-10-01): one settlement seat's word that a run is FINAL,
 // signed once its own clock read the window's close + the tolerance and it held no valid objection in time. Five of
 // seven (the round's threshold) make the run FINAL.
 export const TYPE_FINAL_SIGNATURE = 0x1a;
-// A GAME'S MANIFEST (§0A.3, kanban #202): a game is a plugin the engine reads through this, never through its code.
+// A GAME'S MANIFEST (§0A.3): a game is a plugin the engine reads through this, never through its code.
 /** EVERY SERIES RUNS ON ONE 90 s GRID (series.js; §5A.5): a round of a series starts every ROUND_PERIOD_MS. */
 export const ROUND_PERIOD_MS = 90000n;
 export const TYPE_GAME_MANIFEST = 0x1c;
-// AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
+// AN ATTESTED OUTCOME (§0A.7a): the attestors' word on a non-replay round's result - which outcome, when seen.
 export const TYPE_OUTCOME_ATTESTATION = 0x1d;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
@@ -327,7 +327,7 @@ export const TAG = {
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',
-  // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9; kanban #209): what the bond's
+  // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9): what the bond's
   // node key signs to say "this bond serves network_id too". Its own tag, so a re-affirmation is never a vote or an update.
   reaffirmation: 'ARENA/v1/Reaffirmation',
   // A JOINED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
@@ -348,19 +348,19 @@ export const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
-  // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.
+  // A head-to-head player's hidden move: H(round_id || entry key || move || salt), revealed after entry close.
   headToHeadCommit: 'ARENA/v1/HeadToHeadCommit',
-  // a market order's id, the bytes its player signs (kanban #278, order-book.js)
+  // a market order's id, the bytes its player signs (order-book.js)
   marketOrder: 'ARENA/v1/MarketOrder',
-  // a player's cancel of a market entry before its entry close (kanban #278)
+  // a player's cancel of a market entry before its entry close
   marketCancel: 'ARENA/v1/MarketCancel',
-  // one batch of a market's order book, the set its seats agreed and signed (kanban #278 step 4, order-book.js)
+  // one batch of a market's order book, the set its seats agreed and signed (order-book.js)
   marketBatch: 'ARENA/v1/MarketBatch',
-  // a player's sell of shares its market entry holds (kanban #278, comment 1127)
+  // a player's sell of shares its market entry holds (comment 1127)
   marketSell: 'ARENA/v1/MarketSell',
-  // a seat's word that it did not sign a batch and never will (kanban #278: a batch is void once 5 can no longer be reached)
+  // a seat's word that it did not sign a batch and never will (a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
-  // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities (kanban #280)
+  // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',
@@ -377,7 +377,7 @@ export const TAG = {
  * minus the round's own seats (the witnesses) and 25% to the donation set of
  * §22A - the developers."
  *
- * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED, the owner 2026-09-21). "Nothing is
+ * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED 2026-09-21). "Nothing is
  * ever burned, here or anywhere in this protocol: a slash that destroys value
  * pays nobody for the harm and makes the slashing itself worthless to prove, so
  * every remainder in this document has a recipient." The other half of a round's
@@ -434,7 +434,7 @@ export const roleByte = (role) => {
  * appears in the compact filters and any light client can find every bond that
  * has ever existed without asking anyone. It costs one dust output, once.
  *
- * the owner 2026-09-08: set for regtest and testnet. Mainnet stays unchosen.
+ * 2026-09-08: set for regtest and testnet. Mainnet stays unchosen.
  * Each program is taggedHash(ARENA/v1/BOND_MARKER, network-name) - 32 bytes,
  * not a wallet key. Compact filters match the P2TR script. Changing a value
  * makes every bond posted against the old one unfindable.
@@ -475,7 +475,7 @@ export function bondMarker(network) {
  * built-in `network_id`, NEVER A VALUE FROM THE CONTRACT." So it is a build
  * constant, not a field a round can talk this software into.
  *
- * the owner 2026-09-08: regtest and testnet4 are set. Mainnet is not. This build's
+ * 2026-09-08: regtest and testnet4 are set. Mainnet is not. This build's
  * default anchor is testnet4 (the live LND chain). Recovery keys are test keys
  * on disk, not cold-storage mainnet keys.
  */
@@ -541,7 +541,7 @@ export function genesisConfigHash() {
 export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 
 /**
- * THE OBJECTION WINDOW, FIXED (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): exactly 600 seconds of wall time from
+ * THE OBJECTION WINDOW, FIXED (§13A, WINDOW-10-SPEC, RULED 2026-10-01 09:40): exactly 600 seconds of wall time from
  * the round's end as its contract fixes it. Not a contract choice, not blocks, not a range: a Round Contract whose
  * objection_window_W is anything else is invalid. It replaces the six-hour cap (MAX_OBJECTION_WINDOW_MS, withdrawn).
  */
@@ -597,7 +597,7 @@ export const splitNodesDevelopers = (amount) => {
 };
 
 /**
- * THE CUSTODY FIELD HAS ONE VALUE (RULED, the owner 2026-09-22 22:59, §23.6):
+ * THE CUSTODY FIELD HAS ONE VALUE (RULED 2026-09-22 22:59, §23.6):
  * "[the threshold-signed Lightning custody] does not exist, past rounds included, no decode-only value ... the custody field has
  * ONE value, FEDERATION, and no other value is defined, reserved, or kept for decoding. A round that
  * names anything else is invalid, PAST ROUNDS INCLUDED: a record from before this ruling that carries
@@ -633,14 +633,14 @@ export const STAKE_EXPIRY_BLOCKS = 144;
 
 /**
  * HOW FAR BELOW THE VERIFYING HEIGHT A LOCK'S OWN HEIGHT MAY BE, in the federation's blocks: 12
- * (§23.1 step 5, `stake_lock_freshness_blocks`, RULED the owner 2026-09-24). A lock verified within 12
+ * (§23.1 step 5, `stake_lock_freshness_blocks`, RULED 2026-09-24). A lock verified within 12
  * blocks of its creation still has at least 132 blocks - 22 hours on mainnet - to cover the round, the
  * objection window and the settlement transaction.
  */
 export const STAKE_LOCK_FRESHNESS_BLOCKS = 12;
 
 /**
- * THE SCORE'S UNIT: an integer count of 1e-5 points (the owner 2026-09-25: "Their product is the score, so the core's score
+ * THE SCORE'S UNIT: an integer count of 1e-5 points (2026-09-25: "Their product is the score, so the core's score
  * is that product"). The core's score is 1000 · E · T · C with each factor on a 1e-5 grid (core/src/rules/score.js,
  * SCORE_SCALE there is this number and core/test/score-scale.test.js pins the two together); a PlayerResult's u32 score
  * carries it as-is. A round contract's min_score is compared with it directly - multiplayer_p2p.md §18A.5, "score >=

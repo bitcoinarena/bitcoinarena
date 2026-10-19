@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE STRIP'S NODE PROBE ASKS ONLY A AND B, EVERY 30 S, ONE PROBE AT A TIME (the owner 2026-10-16: "Lower the amount of concurrent
+// THE STRIP'S NODE PROBE ASKS ONLY A AND B, EVERY 30 S, ONE PROBE AT A TIME (2026-10-16: "Lower the amount of concurrent
 // connections and network load"; measured on preview UI 156 during one run: 1036 of 1050 GET /identity came from probeNodes - every
 // node= of the page's address, 14 seats in a round, every 2 s, for a line that names A and B only). The page's own probeNodes.
 import { test } from 'node:test';
@@ -29,7 +29,7 @@ test('the probe runs every 30 s, not every 2 s', () => {
   assert.match(html, /\n    probeNodes\(\);\n    setInterval\(probeNodes, 30000\);/);
 });
 
-// THE LOBBY READS EVERY 30 S WHILE A RUN HIDES IT (kanban #378; measured on live UI 160: every seat's /rounds about every 10 s - 238
+// THE LOBBY READS EVERY 30 S WHILE A RUN HIDES IT (measured on live UI 160: every seat's /rounds about every 10 s - 238
 // in 3 min - while the player drove): the paint loop skips while joined with Unity's lobby down, until LOBBY_IN_RUN_MS since the last
 test('the lobby paint waits 30 s while the player is in a run', () => {
   assert.match(html, /const LOBBY_IN_RUN_MS = 30000;/);

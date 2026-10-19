@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COIN STACKS ARE SOLID, AND THE FINISH IS STILL DRIVEABLE (the owner 2026-09-20 18:56).
+// THE COIN STACKS ARE SOLID, AND THE FINISH IS STILL DRIVEABLE (2026-09-20 18:56).
 //
 // Photographed twice: the truck nose-deep inside a gold coin stack at the miner, the camera inside the coins.
 // "The gold coin construct at the miner blocks the finish. the owner cannot drive through to DELIVERED ... the
@@ -12,7 +12,7 @@
 //   2. a truck driving east into a stack stops west of it
 //   3. a truck driving west into the same stack stops east of it
 //
-// THE STACKS STAND WHERE THEY ARE DRAWN (the owner 2026-09-26 07:18: "The box is where that drawn stack stands, not where
+// THE STACKS STAND WHERE THEY ARE DRAWN (2026-09-26 07:18: "The box is where that drawn stack stands, not where
 // an old measurement put coin_stack. A truck driven into the stack stops and does not pass through it. Do not put that
 // box in the driving lane"). Measured in a real Bootstrap world: x 145.6 .. 164.4, |z| 40.6 .. 59.4 - against the
 // facade (x 163), outside the passage (|z| 32.8) and 30 m off the lane at z 10.2. The 2026-09-20 boxes at x 173.6 ..
@@ -93,7 +93,7 @@ test('the coin boxes stand out of the driving lane and the passage (§do not put
 
 // ---------------------------------------------------------------- THE MEMPOOL FACADE
 //
-// THE BAY MOUTHS WERE HOLES RIGHT THROUGH THE POST OFFICE (the owner 2026-09-20 18:59, photographed: the truck
+// THE BAY MOUTHS WERE HOLES RIGHT THROUGH THE POST OFFICE (2026-09-20 18:59, photographed: the truck
 // among the facade pillars). The shell was pillars BETWEEN the mouths and a lintel OVER them, so each mouth
 // stood open from the ground to 9.2 m. The truck spawns at START_X -100.40, z 10.20 - bay 13's own centre - so
 // driving WEST it went straight out of the back of the building and across the map to x -180.22, the west edge.

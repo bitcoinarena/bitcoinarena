@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NO PLAYER-NODE CONFLICT GATE AT THE SEAT (§5A.13, RULED the owner 2026-10-14, kanban #360): a player declares no operator, so a
+// NO PLAYER-NODE CONFLICT GATE AT THE SEAT (§5A.13, RULED 2026-10-14): a player declares no operator, so a
 // signer node is never kept out of a settlement, and no round is voided, by what a conflict lookup would say.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

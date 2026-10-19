@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FOUNDING CEREMONY, AS A SEAT RUNS IT (spec §23A.2, kanban #320): the draw is guardian-founding.js (arena-protocol); this is
+// A FOUNDING CEREMONY, AS A SEAT RUNS IT (spec §23A.2): the draw is guardian-founding.js (arena-protocol); this is
 // what the drawn nodes do with it. Every seat computes the same draw from the census and the beacon after trigger_height, so no
 // message decides who sits - the messages only carry what the guardians need to find each other:
 //
@@ -9,7 +9,7 @@
 //               (founding id, node key, code). A code from a node neither drawn nor an alternate, from a no-show, or not signed
 //               by its node, is refused; an alternate's code is kept before it is seated and counts once it is.
 //   THE WINDOW  "within founding_window blocks of the beacon": from the beacon (the block after trigger_height) to beacon +
-//               founding_window, ONE window for the founding - a replacement never opens a new one (kanban #320, the gap of
+//               founding_window, ONE window for the founding - a replacement never opens a new one (the gap of
 //               comment 2258: it opened at trigger_height and again at each replacement).
 //   NO-SHOW     "a drawn node that has not joined the ceremony within a fifth of the window is replaced by the next alternate":
 //               a seated node with no code ceil(founding_window / 5) blocks after it was seated (the beacon for the drawn, the
@@ -18,7 +18,7 @@
 //   VOID        "if the window passes without a federation, the founding is void and the next trigger draws again": at beacon +
 //               founding_window with no federation running (the seated guardian's consensus, `setup.done()`, or a peer that says
 //               so), the founding is void - and so is one whose alternates ran out.
-//   SEATED FIRST a succession (§23A.6 step 1, kanban #326) seats the old federation's seated, non-departing guardians first, in
+//   SEATED FIRST a succession (§23A.6 step 1) seats the old federation's seated, non-departing guardians first, in
 //               the order given (`seatedFirst`, census entries), and draws only the missing seats (drawGuardians). A seated-first
 //               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
 //               takes its position.

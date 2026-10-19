@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #369: flat-out top speed and 0 -> 12 m/s, the standard truck and a large one ({ topSpeed, driveAccel } given), on this core.
+//: flat-out top speed and 0 -> 12 m/s, the standard truck and a large one ({ topSpeed, driveAccel } given), on this core.
 // node tools/measure-large-truck.mjs [topSpeed driveAccel ...]  - the same run as large-truck.test.js: seed 0x5eed1234, full throttle
 import { init, step } from '../frozen/f0cc7b7b/sim.js';
 import { O_TRUCK, T_WHEEL } from '../frozen/f0cc7b7b/state.js';

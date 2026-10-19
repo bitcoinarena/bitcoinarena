@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * ZAPS (NIP-57) BETWEEN PLAYERS AND TIPS TO DEVELOPERS, AS RULES (kanban #362 item 14).
+ * ZAPS (NIP-57) BETWEEN PLAYERS AND TIPS TO DEVELOPERS, AS RULES.
  *
  * A zap is an LNURL-pay (LUD-06) payment that carries a signed Nostr event: the payer signs a ZAP REQUEST (kind 9734) naming
  * the recipient's key and the amount, hands it to the recipient's LNURL callback as `nostr`, and gets an invoice whose

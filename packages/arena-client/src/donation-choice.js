@@ -32,7 +32,7 @@ import { entryFeeMsat, feeMatchesEntry } from '../../arena-protocol/src/fee.js';
 /** Above this many basis points of the stake (5%) the page asks a second time (§22A). */
 export const DONATION_CONFIRM_BPS = 500;
 /**
- * THE DONATION A PLAYER IS OFFERED (§0A.8, RULED the owner 2026-10-06; kanban #205): one choice of 0 1 2 3 4 5 %, DEFAULT 5% -
+ * THE DONATION A PLAYER IS OFFERED (§0A.8, RULED 2026-10-06): one choice of 0 1 2 3 4 5 %, DEFAULT 5% -
  * half to the protocol devs, half to the game dev (donation.js splitTwoSets). More than 5% only past §22A's second
  * confirmation (DONATION_CONFIRM_BPS).
  */
@@ -93,7 +93,7 @@ export function keptDonation({ roundIdHex, stakeMsat, storage } = {}) {
 }
 
 /**
- * THE DONATION A DEPOSIT FOR A ROUND IS SIZED BY (kanban #187 item 2, the owner 2026-10-05): the one the join will write - the
+ * THE DONATION A DEPOSIT FOR A ROUND IS SIZED BY (2026-10-05): the one the join will write - the
  * round's kept choice when this tab has one, else the Settings percent. Before, the settings deposit always took Settings,
  * so a round joined at 2% with Settings since moved to 3% was quoted 1% of its stake too much (1% to 3%: 2% short). Reads
  * only; it keeps nothing.

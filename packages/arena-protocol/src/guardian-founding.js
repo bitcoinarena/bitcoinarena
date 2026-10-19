@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHO THE GUARDIANS ARE: FOUNDING BY SORTITION (§23A.2, kanban #320). "Bond-weighted stateless sortition, §5A.6 unchanged, with the beacon
+// WHO THE GUARDIANS ARE: FOUNDING BY SORTITION (§23A.2). "Bond-weighted stateless sortition, §5A.6 unchanged, with the beacon
 // block after trigger_height and the tag 'BLWP/v1/GUARDIAN', over the guardian-capable census minus operators already guarding an OPEN
 // federation, one ticket per operator. federation_nominal are drawn, then three alternates in order. Nobody hand-picks." A drawn guardian
 // that does not take part within founding_window is a no-show, replaced by the next alternate in order.
@@ -27,7 +27,7 @@ export function guardianTicket(seed, entry) {
  * `seed` the beacon block hash after trigger_height (32 bytes); `nominal` federation_nominal; `bondMinGuardian`; `guardingOpen` the
  * operator ids already guarding an OPEN federation. Answers { ok, drawn: [entry], alternates: [entry], eligible, seatedFirst, why }.
  *
- * SEATED FIRST (§23A.6 step 1, kanban #326): `seatedFirst` - census entries, in order - are the old federation's seated, non-departing
+ * SEATED FIRST (§23A.6 step 1): `seatedFirst` - census entries, in order - are the old federation's seated, non-departing
  * guardians: "seated first in the new one - same operators, new key shares ... and only the missing seats up to federation_nominal
  * are drawn. If they are fewer than f + 1, everything is drawn." They take positions 0.. in their order (position 0 leads the
  * ceremony), as they are: no capability, bond or guardingOpen test (they guard the federation being succeeded) and no one-ticket
@@ -87,7 +87,7 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
 }
 
 /**
- * WHAT STARTS A FOUNDING (§23A.2, kanban #320): one of three events, each at a Bitcoin height that becomes the founding's
+ * WHAT STARTS A FOUNDING (§23A.2): one of three events, each at a Bitcoin height that becomes the founding's
  * `trigger_height`; the earliest that has happened wins. Pure: the caller reads the facts off the chain and the records.
  *
  *   genesis     `capable`: [{ height, operators }] - guardian-capable census nodes of distinct operators at each height, ascending;
@@ -96,7 +96,7 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
  *   succession  `records`: [{ federation, status, height, replace }] - a federation that entered DRAINING, or whose guardians decided
  *               by threshold signature to be replaced (`replace: true`), at that record's height; `notices`: [{ federation, height,
  *               wouldBe }] - a standing departure notice of a guardian of an OPEN federation that would make it DRAINING (or CRITICAL,
- *               at four: §23A.1), at the height it was posted (§23A.6 "or a departure notice that would make it DRAINING", kanban #326).
+ *               at four: §23A.1), at the height it was posted (§23A.6 "or a departure notice that would make it DRAINING").
  *               A row's `federation`, `nominal`, `seatedFirst` (node keys hex, in order) and `departing` (node keys hex) are passed through
  *   load        `loads`: [{ height, federations: [{ federation, status, load }] }], ascending - every OPEN federation at or above 80 %
  *               of its exposure cap (load >= 0.8) at every height for `abandonBlocks`; the trigger is the height that completes it
@@ -104,7 +104,7 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
  */
 export const LOAD_TRIGGER = 0.8;
 /**
- * THE COHORT (kanban #471 ruling 3, the owner 2026-10-18: "10 new nodes find each other on the network automatically and create a new
+ * THE COHORT (ruling 3, 2026-10-18: "10 new nodes find each other on the network automatically and create a new
  * federation"; protocol 2026.0.14): `capable` rows may carry `free` - the guardian-capable operators with an endpoint and at least
  * bond_min_guardian that guard no OPEN federation. While a federation exists, COHORT_NOMINAL of them found one of their own, of that
  * size: the trigger is the first height of the current run at or above it (after a founding their adverts name it in guardian_of[],

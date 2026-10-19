@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEV'S DONATION CLIENT, ITS DECISIONS (the owner 2026-10-03): the key, where the funds are, what is redeemed, when it
+// THE DEV'S DONATION CLIENT, ITS DECISIONS (2026-10-03): the key, where the funds are, what is redeemed, when it
 // withdraws - with the seats, the federation and the LND faked; the live pass is measured on testnet4.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -69,7 +69,7 @@ test('withdraw: below the minimum nothing is asked of the LND; above it, the lar
   assert.equal(high.withdrawn, true); assert.deepEqual(made, [25000n]);
 });
 
-// ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (kanban #230, the owner 2026-10-07 11:50): every pass joined the federation
+// ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (2026-10-07 11:50): every pass joined the federation
 // again and never closed the client - after 29 h each donor held ~720 sockets, 680 MB and 54-57% CPU between its 300 s passes,
 // and every client wrote the same wallet file. walletClients joins once per federation and hands that client back.
 test('walletClients: one join per federation across passes; a failed join is tried again next pass', async () => {
@@ -89,7 +89,7 @@ test('walletClients: one join per federation across passes; a failed join is tri
   assert.equal(b.fed, 'bad', 'a failed join is not kept: the next pass joins again');
 });
 
-test('a withdrawal tries the gateways the network names first, and the next after a refund (kanban #357)', async () => {
+test('a withdrawal tries the gateways the network names first, and the next after a refund', async () => {
   const lnd = { invoice: async () => 'lnbc1' };
   const asked = [];
   let held = 19937n;
@@ -102,14 +102,14 @@ test('a withdrawal tries the gateways the network names first, and the next afte
   assert.deepEqual([none.withdrawn, asked], [false, ['https://stale/', 'pick']], 'every named one, then the client\'s own pick');
 });
 
-test('an empty wallet is nothing to withdraw, not a failed pass (kanban #357, 2026-10-14 15:02Z)', async () => {
+test('an empty wallet is nothing to withdraw, not a failed pass (2026-10-14 15:02Z)', async () => {
   const lnd = { invoice: async () => { throw new Error('no invoice is made for nothing'); } };
   const w = await withdrawToLnd({ client: { withdrawableMsat: async () => { throw new Error('Balance is too low to send any amount after fees'); } }, lnd, minMsat: 10000n });
   assert.deepEqual([w.withdrawn, w.withdrawableMsat], [false, 0n]);
   await assert.rejects(withdrawToLnd({ client: { withdrawableMsat: async () => { throw new Error('socket closed'); } }, lnd }), /socket closed/, 'any other error still stops the pass');
 });
 
-// UNCLAIMED E-CASH RECOVERED ON ITS OWN (kanban #357, plan agreed by the owner 2026-10-14)
+// UNCLAIMED E-CASH RECOVERED ON ITS OWN (plan agreed by 2026-10-14)
 test('unclaimed e-cash: noted on the pass that first sees it, recovered only if the same outputs are still unclaimed a pass later', async () => {
   const { claimUnclaimed } = await import('../src/donor.js');
   const state = {};

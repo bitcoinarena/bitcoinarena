@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE 10% ON A REAL FEDERATION (kanban #205): federation-hold-probe's setup with the patched fork's binaries (4 guardians,
+# THE 10% ON A REAL FEDERATION: federation-hold-probe's setup with the patched fork's binaries (4 guardians,
 # 3 of 4, disable_base_fees as FEDERATION.md runs it - a signer node refuses a round on a federation with a base fee - and two
 # gateways, §23.6, on bob's and carol's lnds; regtest), then fee-split-regtest.mjs: a paid round of nextblock and
 # one of a game with its own dev key, settled by two signer nodes, and that dev's donor client collecting its share.

@@ -21,7 +21,7 @@ export const OPEN = 0, CLOSED = 1;
 
 /**
  * A STORE MADE WHILE A SIGNING MACHINE WAS CALLED A SEAT keeps its rows under the new names
- * (the owner 2026-09-15 20:32: seat migrates in code too). The table and the six columns are renamed
+ * (2026-09-15 20:32: seat migrates in code too). The table and the six columns are renamed
  * in place before anything is created, so the tables below find their rows under the names they
  * use - and a store that already has the new names, or none at all, is left as it is. The old names
  * appear here and nowhere else in the node: they are what an old store on disk still says.
@@ -49,11 +49,11 @@ export function renameToSignerNodes(db) {
 
 export function openStore(path = ':memory:') {
   const db = new DatabaseSync(path);
-  // WHERE THIS STORE IS, kept on the handle (the owner 2026-09-17 19:15, the ghost lag): a replay worker opens the same
+  // WHERE THIS STORE IS, kept on the handle (2026-09-17 19:15, the ghost lag): a replay worker opens the same
   // file read-only and reads a run's rows itself, instead of the thread that answers /play reading them and handing
   // them across. ':memory:' names no file, and those rows are handed across as before.
   db.blwpPath = path === ':memory:' ? null : path;
-  // EVERY STATEMENT COMPILED ONCE (NODE-OPT-1648, the owner 2026-10-02: "Optimize the node software for CPU, memory, and
+  // EVERY STATEMENT COMPILED ONCE (NODE-OPT-1648, 2026-10-02: "Optimize the node software for CPU, memory, and
   // performance"): node:sqlite keeps no statement cache, and the store is asked through db.prepare(sql) inline - a tick
   // batch alone compiled seven statements per call; profiled on a testnet4 seat during a live round, prepare and exec were
   // ~11 % of its loop. A statement is kept per SQL text and reused (nothing here iterates a statement while running it).
@@ -67,7 +67,7 @@ export function openStore(path = ':memory:') {
     -- and the store consistent across a power loss, which can lose only the last commits; FULL synced on every commit -
     -- one per tick batch from every player.
     PRAGMA synchronous = NORMAL;
-    -- FEWER CHECKPOINTS (the owner 2026-10-13: "Fixe die 15% platte"; measured 10:3xZ on the test host: the system disk 78 % busy at
+    -- FEWER CHECKPOINTS (2026-10-13: "Fixe die 15% platte"; measured 10:3xZ on the test host: the system disk 78 % busy at
     -- 1,136 writes/s, each seat inserting ~1,840 seating rows a minute for grid rounds keyed by random round ids): the WAL is
     -- written back every 10 000 pages (40 MB) instead of 1 000, so a page changed many times between two checkpoints is
     -- written to the database once, with one pair of syncs; the WAL file is cut back to 64 MB after each.
@@ -190,7 +190,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, first_a, first_b)
     );
 
-    -- AND TWO MARKS AT ANY LATER TICK, PULLED FROM A PEER (§13B, kanban #25, RULED the owner 2026-10-04): a pair
+    -- AND TWO MARKS AT ANY LATER TICK, PULLED FROM A PEER (§13BRULED 2026-10-04): a pair
     -- provesEquivocation accepts - one entry, both signed by its session key, different ids, the same tick or the same
     -- parent - that this node did not hold as a checkpoint and a refused mark of its own. Kept so it serves it too.
     CREATE TABLE IF NOT EXISTS fork_pairs (
@@ -262,7 +262,7 @@ export function openStore(path = ':memory:') {
     -- (round, entry, tick), which cannot answer that question.
     CREATE INDEX IF NOT EXISTS checkpoints_by_id ON checkpoints (checkpoint_id);
 
-    -- THE OPEN ROUNDS IN THE ORDER THEY OPENED, AND THE CLOSED ONES LATEST FIRST, READ FROM AN INDEX (the owner 2026-10-02,
+    -- THE OPEN ROUNDS IN THE ORDER THEY OPENED, AND THE CLOSED ONES LATEST FIRST, READ FROM AN INDEX (2026-10-02,
     -- the the test host's load): openRounds and finishedRounds sorted every round's contract in a temporary B-tree, and with
     -- ~2,950 rounds held (a series 72 h ahead) the sort spilled to temporary files on every door sweep, close sweep and
     -- lobby listing - 2,276 page writes in 5 s, ~1.6 MB/s from every idle testnet4 seat, while no row changed.
@@ -375,7 +375,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, attempt)
     );
 
-    -- A WALK-AWAY'S DONATION SENDS (RULED the owner 2026-09-30, destination 1): the 25% of a walk-away's claimed lock sent to
+    -- A WALK-AWAY'S DONATION SENDS (RULED 2026-09-30, destination 1): the 25% of a walk-away's claimed lock sent to
     -- the round's donation set, one send per recipient, by the same Lightning-address send a winner is paid by. The
     -- winnings_sends columns, kept apart only because a recipient is no entry: entry_id here is the send's id,
     -- donationSendId(round, recipient index) (protocol/lock-settlement.js).
@@ -680,7 +680,7 @@ export function openStore(path = ':memory:') {
       kept_ms  INTEGER NOT NULL
     );
 
-    -- A DONATION OUTPUT THIS SIGNER NODE VERIFIED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a
+    -- A DONATION OUTPUT THIS SIGNER NODE VERIFIED (2026-10-03, FEDERATION.md "Donations in the federation"): a
     -- payout contract in the player's lock transaction paying one recipient key its share. One output is one entry's.
     -- Indexed by key: what a dev's client asks for (GET /donations?key=).
     CREATE TABLE IF NOT EXISTS donation_outputs (
@@ -695,21 +695,21 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS donation_outputs_by_key ON donation_outputs (recipient_pk, verified_ms);
 
-    -- THE #152 BACKFILL (2026-10-07): a settlement recovered from the federation, passed over once for its donation-key outputs
+    -- THE BACKFILL (2026-10-07): a settlement recovered from the federation, passed over once for its donation-key outputs
     CREATE TABLE IF NOT EXISTS donation_backfill (
       round_id  BLOB PRIMARY KEY,
       indexed   INTEGER NOT NULL,
       why       TEXT,
       made_ms   INTEGER NOT NULL
     );
-    -- AND HOW OFTEN IT COULD NOT REBUILD ONE (#231): marked checked after BACKFILL_TRIES such passes
+    -- AND HOW OFTEN IT COULD NOT REBUILD ONE: marked checked after BACKFILL_TRIES such passes
     CREATE TABLE IF NOT EXISTS donation_backfill_tries (
       round_id  BLOB PRIMARY KEY,
       tries     INTEGER NOT NULL,
       last_ms   INTEGER NOT NULL
     );
 
-    -- AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): every attestation that stood for the round when it came, by the
+    -- AN ATTESTED ROUND'S OUTCOME (§0A.7a): every attestation that stood for the round when it came, by the
     -- id of what its attestors signed. One outcome is the round's result; two of different outcomes are the proof the
     -- attestors contradicted themselves (the round settles on neither). Never deleted.
     CREATE TABLE IF NOT EXISTS outcome_attestations (
@@ -722,7 +722,7 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS outcome_attestations_round ON outcome_attestations (round_id);
 
-    -- A MARKET ON A GAME'S OUTCOME (kanban #362 feature 6, §0A.7d): what stands where an attestation would - the source round's
+    -- A MARKET ON A GAME'S OUTCOME (feature 6, §0A.7d): what stands where an attestation would - the source round's
     -- RoundResult (its encoded bytes) with the source committee's BIP-340 signatures that made it stand (JSON [{ key,
     -- signature }] in hex) and the source round's contract as this seat verified it against its id, so any seat re-verifies
     -- the settlement from these bytes and the census. The outcome is the market outcome the result maps to, or 255 (0xff,
@@ -744,10 +744,10 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, result_id)
     );
 
-    -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE (kanban #233): the (move, salt) that hashed to the commitment its entry named,
+    -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE: the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.
-    -- THE MARKET ORDER BOOK (kanban #278, comment 1127). An ORDER is an entry with a limit price whose stake lock and fee lock
+    -- THE MARKET ORDER BOOK (comment 1127). An ORDER is an entry with a limit price whose stake lock and fee lock
     -- this seat verified; received_ms is when it became tradable here (both locks verified), batch the batch it is in
     -- (NULL while it waits). Kept once by its entry id.
     CREATE TABLE IF NOT EXISTS market_orders (
@@ -789,7 +789,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, k)
     );
 
-    -- A MARKET ENTRY ITS PLAYER CANCELLED (kanban #278): signed with the entry's session key before the round's entry close,
+    -- A MARKET ENTRY ITS PLAYER CANCELLED: signed with the entry's session key before the round's entry close,
     -- taken at this seat's door or pulled from a peer before settlement. One per entry; the entry is out of the round's table
     -- from then on, and its stake and fee locks come back at once by the return door.
     CREATE TABLE IF NOT EXISTS market_cancels (
@@ -800,7 +800,7 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS market_cancels_round ON market_cancels (round_id);
 
-    -- A HEAD-TO-HEAD ENTRY'S IDENTITY (kanban #280): the player's identity key, signed by it over (round, entry, key) -
+    -- A HEAD-TO-HEAD ENTRY'S IDENTITY: the player's identity key, signed by it over (round, entry, key) -
     -- what a score across rounds links its rounds by. Kept once per entry. And each round's match record as this seat
     -- counted and signed it: the two identities, their score, the round it continued.
     CREATE TABLE IF NOT EXISTS h2h_identities (
@@ -827,7 +827,7 @@ export function openStore(path = ':memory:') {
 
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
-    -- A STAKE LOCKED FOR A ROUND THIS SIGNER NODE REFUSES, AND NEVER ENTERED (§23.2 row REFUSED; kanban #191, the owner
+    -- A STAKE LOCKED FOR A ROUND THIS SIGNER NODE REFUSES, AND NEVER ENTERED (§23.2 row REFUSEDAlice
     -- 2026-10-06): kept under the id of this node's own accepted handout for the round that the lock's image is A0 of, so
     -- the forfeit (asked by round and that id) returns it to the player at once.
     CREATE TABLE IF NOT EXISTS refused_locks (
@@ -877,7 +877,7 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
-    -- A SERIES' PUBLICATION FEE, PROVEN (§5A.5, kanban #304; publisher-payout.js): the first confirmed publication's txid and the
+    -- A SERIES' PUBLICATION FEE, PROVEN (§5A.5publisher-payout.js): the first confirmed publication's txid and the
     -- fee its parents prove - paid back to the series' creator in the first of its rounds with entries.
     CREATE TABLE IF NOT EXISTS series_publications (
       series_id BLOB PRIMARY KEY,
@@ -885,14 +885,14 @@ export function openStore(path = ':memory:') {
       fee_sats  TEXT NOT NULL
     );
 
-    -- A ROUND'S CREATOR SIGNATURE (§6, kanban #313): the BIP-340 signature by the key the contract names over its id, kept
+    -- A ROUND'S CREATOR SIGNATURE (§6): the BIP-340 signature by the key the contract names over its id, kept
     -- beside the round as the id is (a signature is never inside the bytes it signs), and served at GET /round-creator.
     CREATE TABLE IF NOT EXISTS round_creators (
       round_id  BLOB PRIMARY KEY,
       signature BLOB NOT NULL
     );
 
-    -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3, kanban #348) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
+    -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
     -- one row per (round, federation), with the same intent and state as a round's own settlement row.
     CREATE TABLE IF NOT EXISTS fed_lock_settlements (
       round_id      BLOB NOT NULL,
@@ -1100,7 +1100,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id)
     );
 
-    -- §13C'S EVIDENCE NAMES ITS BLOCK (RULED the owner 2026-09-24): for each player mark this node holds as evidence - a
+    -- §13C'S EVIDENCE NAMES ITS BLOCK (RULED 2026-09-24): for each player mark this node holds as evidence - a
     -- checkpoint, a refused or offered mark, a pair's mark, a late start, the Void's first mark, a refused first mark -
     -- the block of each record of it: this node's tip when it recorded it, or the block a peer named for its own record.
     -- The mark is placed at the earliest of them; it counts when that is strictly before the window's end block.
@@ -1120,7 +1120,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id)
     );
 
-    -- THE SEATS' FINAL SIGNATURES (§13A, WINDOW-10-SPEC, the owner 2026-10-01): one per seat per run, the latest that counted
+    -- THE SEATS' FINAL SIGNATURES (§13A, WINDOW-10-SPEC, 2026-10-01): one per seat per run, the latest that counted
     -- on arrival (signed within 5 s of this seat's clock when it came), with when it came. The run is FINAL at the
     -- round's threshold of them.
     CREATE TABLE IF NOT EXISTS final_sigs (
@@ -1148,40 +1148,40 @@ export function openStore(path = ':memory:') {
   // every row it already holds was attempt 0.
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
-  // AN OBJECTION NAMES ITS BLOCK (§13A, RULED the owner 2026-09-24): the window places it by that block, not by when it came.
+  // AN OBJECTION NAMES ITS BLOCK (§13A, RULED 2026-09-24): the window places it by that block, not by when it came.
   // A store made before the ruling gets the column; a row there names none, and counts nowhere.
-  // THE ROOM A LOAD FILLS (the owner 2026-10-04 08:54: the cargo factor C is the bed fill, crossing with the load): a store
+  // THE ROOM A LOAD FILLS (2026-10-04 08:54: the cargo factor C is the bed fill, crossing with the load): a store
   // made before it gets the column; a row there carries none, and replays at the 0.7 every run had.
   if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'room'))
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);
-  // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24, RULED the owner 2026-10-04): the bundle a seat checked
+  // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13ARULED 2026-10-04): the bundle a seat checked
   // at its door is kept with the row. A row from before carries none, and holds only on this seat's own replay, as it did.
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'bundle'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN bundle BLOB`);
-  // A FORK PAIR SAYS WHETHER BOTH ITS MARKS WERE RECEIPTED BY A SEAT (§13B, kanban #25, RULED the owner 2026-10-05 (b)): a
+  // A FORK PAIR SAYS WHETHER BOTH ITS MARKS WERE RECEIPTED BY A SEAT (§13BRULED 2026-10-05 (b)): a
   // same-parent pair forfeits only then. A row from before counts as not receipted.
   if (!db.prepare('PRAGMA table_info(fork_pairs)').all().some((c) => c.name === 'receipted'))
     db.exec('ALTER TABLE fork_pairs ADD COLUMN receipted INTEGER NOT NULL DEFAULT 0');
-  // A DONATION OUTPUT SAYS WHETHER THE SENDER'S KEY IS ON ITS CONTRACT (kanban #156, the owner 2026-10-05): 1 when its payment
+  // A DONATION OUTPUT SAYS WHETHER THE SENDER'S KEY IS ON ITS CONTRACT (2026-10-05): 1 when its payment
   // image is the entry's player key. A row from before carries the zero image.
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'sender_on_contract'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN sender_on_contract INTEGER NOT NULL DEFAULT 0');
-  // AND THAT KEY ITSELF FOR A ROW TAKEN FROM ANOTHER SEAT (kanban #397 slice 4): a reserve row learned from a peer has no entry
+  // AND THAT KEY ITSELF FOR A ROW TAKEN FROM ANOTHER SEAT: a reserve row learned from a peer has no entry
   // stored here to read the player key from, so the image the federation's contract carries is kept beside it
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'image'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN image TEXT');
-  // AND WHAT IT PAID FOR WHEN IT IS NO ROUND'S ENTRY (kanban #397 slice 5): an item purchase's reserve output, "game · item id"
+  // AND WHAT IT PAID FOR WHEN IT IS NO ROUND'S ENTRY: an item purchase's reserve output, "game · item id"
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'item'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN item TEXT');
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))
     db.exec('ALTER TABLE first_mark_offers ADD COLUMN block_hash BLOB');
-  // §13C'S EVIDENCE COUNTS BY WHEN THIS SEAT HELD IT (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): a record of a mark
+  // §13C'S EVIDENCE COUNTS BY WHEN THIS SEAT HELD IT (§13A, WINDOW-10-SPEC, RULED 2026-10-01): a record of a mark
   // keeps the moment it was made here, and counts in a decision only if it was held before the decision's instant. A row
   // from before the column counts as held from the start.
   if (!db.prepare('PRAGMA table_info(evidence_blocks)').all().some((c) => c.name === 'seen_ms'))

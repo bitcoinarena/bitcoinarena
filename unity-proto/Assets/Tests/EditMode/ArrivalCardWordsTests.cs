@@ -85,7 +85,7 @@ public class ArrivalCardWordsTests
     // the cargo word the core still holds from init, 45875 (0.70).
     const int ShotExposureWord = 4842601, ShotTicks = 4596, ShotCargoWord = 45875;
 
-    // THE CORE'S SCORE IS THE PRODUCT OF ITS FACTORS (the owner 2026-09-25): 1000 x C x E x T of the factors as printed, in
+    // THE CORE'S SCORE IS THE PRODUCT OF ITS FACTORS (2026-09-25): 1000 x C x E x T of the factors as printed, in
     // exact decimal arithmetic, rounded to five decimals half up - score.js's divRoundInt - is the score.
     static decimal Product5(string c, string e, string t) =>
         decimal.Round(1000m * decimal.Parse(c, CultureInfo.InvariantCulture) * decimal.Parse(e, CultureInfo.InvariantCulture)
@@ -98,7 +98,7 @@ public class ArrivalCardWordsTests
         // ON THE CORE THAT RUN WAS PLAYED ON (par 3900): speed 0.84856, and the score 137.15869 is the product of the
         // three factors - history, kept as the product it was.
         Assert.AreEqual(137.15869m, Product5("0.70000", "0.23091", "0.84856"));
-        // AND THE SAME WORDS ON TODAY'S CARD (par 1800, the owner 2026-10-04 09:17): speed 0.39164, and the core's score of
+        // AND THE SAME WORDS ON TODAY'S CARD (par 1800, 2026-10-04 09:17): speed 0.39164, and the core's score of
         // those words (score.js scoreOf: 6330351 in 1e-5 points) is again the product of the factors the card prints.
         string line = DriveHud.ArrivalWorkLine(false, c, e, t, 6330351);
         Debug.Log($"the 18:29 words on today's card: {line}");
@@ -169,7 +169,7 @@ public class ArrivalCardWordsTests
     }
 
     /// <summary>
-    /// ON A PHONE HELD UPRIGHT THE CARD HAS THE WIDTH (the owner 2026-09-29 21:01, CARD-NARROW-2101: on his phone the card was
+    /// ON A PHONE HELD UPRIGHT THE CARD HAS THE WIDTH (2026-09-29 21:01, CARD-NARROW-2101: on his phone the card was
     /// the centre strip, 150 of 924 px in his shot, and broke RUN STOPPED and DELIVERED mid-word). At the phone's own size -
     /// 390x844 points and its 1170x2532 pixels - the card is at least 88% of the width, starts under the left column
     /// (SIM, its last box) and ends on the screen; a landscape screen keeps the gap between the columns.
@@ -195,7 +195,7 @@ public class ArrivalCardWordsTests
     }
 
     /// <summary>
-    /// THE CARD FOLDS (the owner 2026-09-29 22:00, PRIORITIES item 2): "fold" under the card collapses it so the game and
+    /// THE CARD FOLDS (2026-09-29 22:00, PRIORITIES item 2): "fold" under the card collapses it so the game and
     /// spectating are seen; "show result" brings it back. The control sits under the card's bottom edge - over none of its
     /// lines - and on the screen, at a phone's size and a desktop's.
     /// </summary>
@@ -232,7 +232,7 @@ public class ArrivalCardWordsTests
         Assert.AreEqual("copy game replay", DriveHud.CopyReplayLabel);
     }
 
-    // THE CARD'S PRODUCT IS THE CORE'S SCORE (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). The 72
+    // THE CARD'S PRODUCT IS THE CORE'S SCORE (2026-09-25: "load C x danger E x speed T x 1000 = S"). The 72
     // DELIVERED runs of packages/nextblock/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
     // core/test/arrival-card-runs.test.js - go through the real formatter; the four decimals are read back off the
     // printed row and their product must round to the printed S, which must be the core's S_DELIVERED and the SCORE line's.
@@ -281,8 +281,8 @@ public class ArrivalCardWordsTests
     }
 
     // THE LOADOUT PANEL'S LOAD IS THE CORE'S C (RULED 2026-09-26, A): the same C the card prints, never Unity's float bed
-    // fill. Since C is the bed fill (the owner 2026-10-04 08:54) the load is declared to the core whenever the bed changes
-    // (#63), so the core's C is the bed's from the first parcel on, and the panel prints that C, on the card's grid.
+    // fill. Since C is the bed fill (2026-10-04 08:54) the load is declared to the core whenever the bed changes
+    //, so the core's C is the bed's from the first parcel on, and the panel prints that C, on the card's grid.
     [Test]
     public void TheLoadoutsLoadIsTheCoresCargoFactorNotTheBedFill()
     {
@@ -290,7 +290,7 @@ public class ArrivalCardWordsTests
         Assert.AreEqual("0.70000", CoreScoreFactors.Cargo(45875).ToString("0.00000", CultureInfo.InvariantCulture),
             "the panel and the card print C to the same decimals");
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
-        // #63 (playtest 2026-10-04 13:30: LOAD x0.00000 after AUTO): the panel prints the core's own C, and the load is
+        // (playtest 2026-10-04 13:30: LOAD x0.00000 after AUTO): the panel prints the core's own C, and the load is
         // declared to the core whenever the bed changes, so the two move together before ROLL OUT
         StringAssert.Contains("string load = LoadLabel(Blwp.BlwpCore.CargoWord);", src);
         StringAssert.Contains("if (bed != _bedDeclared && Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))", src,
@@ -301,7 +301,7 @@ public class ArrivalCardWordsTests
     }
 
     /// <summary>
-    /// BTC TO THE MINERS, AND A TRUCK CARRIES AT MOST 20 BTC (the owner 2026-09-29, CARGO-BTC-2148: measured 15.92 - ten
+    /// BTC TO THE MINERS, AND A TRUCK CARRIES AT MOST 20 BTC (2026-09-29, CARGO-BTC-2148: measured 15.92 - ten
     /// parcels of an average real block's transactions - and set to 20 by the owner). A
     /// parcel bigger than the limit does not fit an empty truck; the words say BTC, never sat fees.
     /// </summary>
@@ -329,7 +329,7 @@ public class ArrivalCardWordsTests
         Assert.AreEqual("321 BTC", LoadoutPanel.BtcShort(321.2299));
     }
 
-    // "copied!" ON THE CARD (the owner 2026-09-26 07:12): shown once the page's clipboard write resolved - not on the press,
+    // "copied!" ON THE CARD (2026-09-26 07:12): shown once the page's clipboard write resolved - not on the press,
     // and not as a log line - and only while it is fresh.
     [Test]
     public void CopiedShowsOnlyOnceTheClipboardAnswered()
@@ -368,13 +368,13 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
     }
 
-    // THE COPIED REPLAY IS THE CARD'S RUN (the owner 2026-09-26 14:08): a session is its page join's (BLWP_ENTRY); another
+    // THE COPIED REPLAY IS THE CARD'S RUN (2026-09-26 14:08): a session is its page join's (BLWP_ENTRY); another
     // join replaces it, and the card offers and makes the copy only from the current join's session.
     [Test]
     public void TheCopiedReplayIsTheRunOnScreen()
     {
         string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        // THE RUN THAT ENDED, kept at its end from the session ROLL OUT found for it (the owner 2026-09-27 13:19); the
+        // THE RUN THAT ENDED, kept at its end from the session ROLL OUT found for it (2026-09-27 13:19); the
         // button and the copy read that run and nothing the page has on hand at the click
         StringAssert.Contains("Module.blwpRunNet = (net && !(net.client && net.client.ended)) ? net : null;", lib);
         StringAssert.Contains("var mine = n === Module.blwpRunNet", lib);

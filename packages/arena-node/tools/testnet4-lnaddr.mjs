@@ -3,7 +3,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * A TESTNET4 LIGHTNING ADDRESS FOR WINNINGS (LUD-16 over LUD-06), invoices from one of our own testnet4 lnds - what the
- * page's winnings prompt is answered with in the paid testnet4 run (the owner 2026-09-27 17:24: "finish one paid run that
+ * page's winnings prompt is answered with in the paid testnet4 run (2026-09-27 17:24: "finish one paid run that
  * settles and pays out"). `name@host` is https://host/.well-known/lnurlp/name, so this is served at the ROOT of its own
  * public host (a quick tunnel), and its invoices carry sha256 of the metadata it answers as their description hash -
  * the check a signer node's send plan makes (winnings-send.js, `sendPlanStands`).

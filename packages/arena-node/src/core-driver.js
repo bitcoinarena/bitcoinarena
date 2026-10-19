@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DRIVER INSIDE THE SANDBOX (spec §0A.6, kanban #328). This file is never imported by the node: core-sandbox.js reads
+// THE DRIVER INSIDE THE SANDBOX (spec §0A.6). This file is never imported by the node: core-sandbox.js reads
 // its text and evaluates it INSIDE a core's sandbox, as the one module that imports the core ('arena:core'). It is the loop
 // replay.js and the warm ghost ran on the core's adapter before, moved to where the core is: the node hands it a JSON
 // string and reads a JSON string back, so no object of the node's is ever within the core's reach, and the core's own
@@ -34,7 +34,7 @@ function meta() {
   };
 }
 
-/** A RUN'S START OPTIONS: its length, and the unlocks of the items its entry plays with only when it names some (kanban #369) - so a
+/** A RUN'S START OPTIONS: its length, and the unlocks of the items its entry plays with only when it names some - so a
  * core that sells nothing is started exactly as before. */
 const startOptions = (runTicks, items) => (Array.isArray(items) && items.length ? { runTicks, items } : { runTicks });
 

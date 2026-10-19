@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// "IN ITS BAY" IS A TWO-DIMENSIONAL QUESTION, BECAUSE THE CORE'S IS (the owner 2026-09-16).
+/// "IN ITS BAY" IS A TWO-DIMENSIONAL QUESTION, BECAUSE THE CORE'S IS (2026-09-16).
 ///
 /// `SpawnMark` re-asks the post office where the bay is whenever `MempoolTerrain` rebuilds, and puts a
 /// still-held truck back on it. It used to decide "still in its bay" on a THREE-dimensional distance

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
-// kanban #202).
+//).
 //
 // Section 5 (v4.6): "The sim_wasm_hash is chosen by the round creator, so the client must not accept it blindly. For
 // real-money rounds the client MUST verify the hash against its known-good list of reproducibly built core versions,
 // and MUST refuse ... for unknown hashes." Since games are plugins the list is per game: a round names its game
 // (game_id, §0A.3), and a core is known only as a core of the game the round names, under a config that game lists for
 // it. This client refuses. There is no override: no flag, no query parameter, nothing that lets an unknown game through.
-// (§0A.6's confirmed stake on an unlisted game, shown with its developer key and manifest id, is the lobby's, #208.)
+// (§0A.6's confirmed stake on an unlisted game, shown with its developer key and manifest id, is the lobby's,.)
 //
 // F2's second clause rests on it (FEDERATION.md): the player's key is theirs only if the code that decides the round is
 // code they can know.
@@ -25,14 +25,14 @@ export function sharedWorldOf(gameId) {
   return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
 }
 
-/** The id of the game dev's donation set its manifest names (§0A.8, kanban #205), as this client knows the game - or null. */
+/** The id of the game dev's donation set its manifest names (§0A.8), as this client knows the game - or null. */
 export function gameDonationSetIdOf(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
 }
 
 /**
- * THE MARKET THIS CLIENT PINS FOR A GAME (§0A.7a, kanban #206 slice 2): an attested game's outcomes, attestor keys (hex),
+ * THE MARKET THIS CLIENT PINS FOR A GAME (§0A.7a): an attested game's outcomes, attestor keys (hex),
  * threshold, developer key and the networks it is pinned for - or null for a game it does not pin, or one that is not attested.
  */
 export function marketOf(gameId) {
@@ -48,7 +48,7 @@ const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
 export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null, protocolVersion } = {}) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];
-  // THE VERSION THE GAME REQUIRES (kanban #349, manifest.js REQUIRED_VERSION_MARKER): this build must speak it, and the
+  // THE VERSION THE GAME REQUIRES (manifest.js REQUIRED_VERSION_MARKER): this build must speak it, and the
   // round must run it or a later one. A pinned game that requires none passes as before.
   if (game && game.requiredProtocolVersion) {
     if (!speaksVersion(game.requiredProtocolVersion))
@@ -87,19 +87,19 @@ export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = n
 }
 
 /**
- * THE NODE FEE AND DONATION A PINNED GAME CHARGES (kanban #235): a market's own (its manifest's terms), else the market default
- * 0.5 % + 0.5 % (the owner 2026-10-09), else a game's network 5 % and the player's donation choice (null). null for a game this
+ * THE NODE FEE AND DONATION A PINNED GAME CHARGES: a market's own (its manifest's terms), else the market default
+ * 0.5 % + 0.5 % (2026-10-09), else a game's network 5 % and the player's donation choice (null). null for a game this
  * client does not pin - the caller then knows its rate another way (an unpinned market the player confirmed: its manifest).
  */
 export function feeOfKnownGame(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   if (!game) return null;
-  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps, reserveBps: game.fee.reserveBps || 0 };   // the reserve inside the donation (#454)
+  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps, reserveBps: game.fee.reserveBps || 0 };   // the reserve inside the donation
   return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
 }
 
 /**
- * A PINNED MARKET'S TERMS (kanban #236): its resolution delay and void deadline as the generator wrote them (decimal ms), the
+ * A PINNED MARKET'S TERMS: its resolution delay and void deadline as the generator wrote them (decimal ms), the
  * ones its rounds' lock span is checked by on the page (lock-expiry.js); null for a game, or a market pinned without terms.
  */
 export function termsOfKnownGame(gameId) {
@@ -109,7 +109,7 @@ export function termsOfKnownGame(gameId) {
 }
 
 /**
- * A TABLE'S ANCHOR (kanban #293, the owner 2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
+ * A TABLE'S ANCHOR (2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
  * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
  * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the
  * table draws its committee on that round's id (beacon.js committeeSeedFromBeacon) and takes that round's seating certificate, so

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DONATION SET A ROUND NAMES, SERVED BY ITS SIGNER NODES (M3.2 6e; §22A, §27A.4;
-// the owner 2026-09-13: the donation authority signs with Ed25519).
+// 2026-09-13: the donation authority signs with Ed25519).
 //
 // Measured before this: every signer node answered /donation-set 404, and every
 // launcher named the placeholder donationSetId b32(0xd0) - no set's id - so no
 // round named a set anybody could pay.
-// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// A FREE ROUND (RULED 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -128,7 +128,7 @@ test('a signer node serves the authority rotations it holds for the round\'s net
   } finally { await w.close(); }
 });
 
-// THE SET IN FORCE, A SOFT FORK (27A.4; LNURL-0822, the owner 2026-10-02): a newer serial signed by the network's authority,
+// THE SET IN FORCE, A SOFT FORK (27A.4; LNURL-0822, 2026-10-02): a newer serial signed by the network's authority,
 // valid from a height, is the set every round with its census at or past that height must name; a round below it keeps the
 // set it named (22A). A regtest serial-2 set valid from 900100, public bytes signed by the regtest authority.
 const SET2 = { ...decodeDonationSetBody(Uint8Array.from(Buffer.from('1400019855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b380000000000000002000dbc040099100001000200466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a68736170647679306e387265381a0b00466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a687361706476673764706667710d05', 'hex'))),

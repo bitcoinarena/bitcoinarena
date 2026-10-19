@@ -13,13 +13,13 @@ mergeInto(LibraryManager.library, {
 
   // Returns 1 on success, 0 if the page never loaded the core. Failing loudly
   // here is better than a truck that silently never moves.
-  // THE BROWSER'S OFFSET FROM UTC, in minutes (kanban #266): ChartHud's wall clock is UTC plus this - DateTime.Now made
+  // THE BROWSER'S OFFSET FROM UTC, in minutes: ChartHud's wall clock is UTC plus this - DateTime.Now made
   // IL2CPP load the time-zone database on the first frame (108 ms of Unity's start at 4x CPU, measured in a named profile).
   BlwpLocalOffsetMinutes: function () {
     return -new Date().getTimezoneOffset();
   },
 
-  // BENCHMARK (kanban #266, the owner 2026-10-08: "Add a button to the main lobby next to SPECTATE, call it BENCHMARK ... basically it
+  // BENCHMARK (2026-10-08: "Add a button to the main lobby next to SPECTATE, call it BENCHMARK ... basically it
   // is spectate with benchmark"): the page's frame-rate test (index.html, arenaBench), once the free camera has settled
   BlwpBenchmark: function () {
     setTimeout(function () { if (typeof window.arenaBench === 'function') window.arenaBench(); }, 3000);
@@ -64,7 +64,7 @@ mergeInto(LibraryManager.library, {
   //
   // Sats aboard and hundredths of a BTC. The core decides what that costs;
   // nothing here does arithmetic on it, and there is no second copy to drift.
-  // AND THE ROOM IT FILLS (the owner 2026-10-04 08:54: C is the bed fill): Unity hands the vsizes on the bed, the core's own
+  // AND THE ROOM IT FILLS (2026-10-04 08:54: C is the bed fill): Unity hands the vsizes on the bed, the core's own
   // roomFor (cargo.js) sums them here, and that one integer goes to the core and on the wire with the load - so a replay
   // sets the same C. A core without roomFor (an older bundle) gets the load as before.
   BlwpSubmitLoad: function (feeSats, btcHundredths, vsizesPtr) {
@@ -91,11 +91,11 @@ mergeInto(LibraryManager.library, {
     var b = Module.blwp;
     if (!b || !b.core.bedFill) return 0;
     var room = blwpRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
-    // OF THIS RUN'S BED (kanban #369): the larger truck's, when its item is played, as the core counts the load it is handed
+    // OF THIS RUN'S BED: the larger truck's, when its item is played, as the core counts the load it is handed
     return room === null ? 0 : b.core.bedFill(room, (b.st && b.st.truck) ? b.st.truck.bedLength : undefined) | 0;
   },
 
-  // A LIVE PRICE SAMPLE (the owner 2026-09-17 16:01: the chart was frozen, nothing ever submitted one), in the tape's unit
+  // A LIVE PRICE SAMPLE (2026-09-17 16:01: the chart was frozen, nothing ever submitted one), in the tape's unit
   // (256 a dollar), handed to the core before the next tick - and to the network in the same breath, like a load, so
   // the signer nodes replay the tape the page fought on.
   BlwpSubmitSample: function (price) {
@@ -115,7 +115,7 @@ mergeInto(LibraryManager.library, {
     return ok;
   },
 
-  // THE LIVE TAPE (the owner 2026-09-17 16:44: reload showed the same seeded candles): 64 live prices, oldest first, in the
+  // THE LIVE TAPE (2026-09-17 16:44: reload showed the same seeded candles): 64 live prices, oldest first, in the
   // tape's unit, handed to the core before any sample - and to the network beside the tick, like a sample.
   BlwpSubmitTape: function (ptr, n) {
     var b = Module.blwp;
@@ -243,7 +243,7 @@ mergeInto(LibraryManager.library, {
     return b ? (b.core.runScore(b.st) | 0) : 0;
   },
 
-  // THE COLLISION BOXES THE CORE RESOLVES THE TRUCK AGAINST (the owner 2026-09-25 20:56/20:57: visible collisions), as
+  // THE COLLISION BOXES THE CORE RESOLVES THE TRUCK AGAINST (2026-09-25 20:56/20:57: visible collisions), as
   // it holds them - st.solids, six words a box (cx, cz, hx, hz, yLow, yHigh) - copied, not rebuilt. Returns the
   // core's count; writes at most cap / 6 boxes.
   BlwpSolids: function (ptr, cap) {
@@ -315,7 +315,7 @@ mergeInto(LibraryManager.library, {
     String(list || '').split(',').forEach(function (v) { if (v !== '') room = (room + (core.roomFor(v | 0) | 0)) | 0; });
     return room;
   },
-  // THE UNLOCKS THE RUN PLAYS WITH (kanban #369): the page set them beside the entry it built (index.html BLWP_ITEM_UNLOCKS - the
+  // THE UNLOCKS THE RUN PLAYS WITH: the page set them beside the entry it built (index.html BLWP_ITEM_UNLOCKS - the
   // entry's items as its game's catalogue unlocks them); none, and the core is started exactly as before
   $blwpWithItems: function (opts) {
     var u = (typeof window !== 'undefined' && Array.isArray(window.BLWP_ITEM_UNLOCKS)) ? window.BLWP_ITEM_UNLOCKS : [];
@@ -336,14 +336,14 @@ mergeInto(LibraryManager.library, {
 
   // HOW MANY TIMES THE PAGE ITSELF PUT THE CORE IN A NEW WORLD (the session start's init), which
   // C# does not see. Read-only; C# adds its own count of Init and Restart to it.
-  // THE RUN LENGTH OF THE RUN IN PLAY (the 82/90 fork, the owner 2026-10-01: the round's own, not a constant): the ticks the
+  // THE RUN LENGTH OF THE RUN IN PLAY (the 82/90 fork, 2026-10-01: the round's own, not a constant): the ticks the
   // core ends this run at - its round's blockTicks, or the core's default for a run with no round. 0 before any run.
   BlwpRunTicks: function () {
     var b = Module.blwp;
     return (b && b.st && typeof b.st.runTicks === 'number') ? (b.st.runTicks | 0) : 0;
   },
 
-  // THE TRUCK THIS RUN DRIVES (kanban #369): its bed's length in Q16.16 when the run plays with an item that names one (the
+  // THE TRUCK THIS RUN DRIVES: its bed's length in Q16.16 when the run plays with an item that names one (the
   // larger truck, 255590 = 3.9 m), else 0 - the standard truck. Read off the core, which started the run with the entry's unlocks,
   // so what Unity draws is the truck the signer nodes replay.
   BlwpTruckBed: function () {
@@ -386,7 +386,7 @@ mergeInto(LibraryManager.library, {
     return v;
   },
 
-  // The same word, READ ONLY (the owner 2026-09-16). In a signed run the core is the signer nodes'
+  // The same word, READ ONLY (2026-09-16). In a signed run the core is the signer nodes'
   // replay of the transcript and the page writes nothing into it; the clear above did, 35 times in
   // one measured run (0.0.1358), moving the state hash off the replay. No rule reads the word - the
   // core prices a crash from that tick's own impact - so Unity reads it and remembers what it felt.
@@ -416,12 +416,12 @@ mergeInto(LibraryManager.library, {
     }
     var b = Module.blwp;
     if (!b) { console.error('[blwp] no core, so nothing to commit to'); return 0; }
-    // ONE SESSION AT A TIME, AND A NEW ONE ONCE THE LAST RUN HAS ENDED (the owner 2026-09-15 16:14,
+    // ONE SESSION AT A TIME, AND A NEW ONE ONCE THE LAST RUN HAS ENDED (2026-09-15 16:14,
     // hole 1): a second PLAY in the same tab starts a new round without a reload. A run still live
     // is still running; one whose last publish is still on its way (finishing) is not ready yet.
     if (Module.blwpNet) {
       var was = Module.blwpNet.client;
-      // A DIFFERENT ROUND IS A DIFFERENT RUN, AND THE OLD ONE IS CLOSED HERE (the owner 2026-09-18 18:00).
+      // A DIFFERENT ROUND IS A DIFFERENT RUN, AND THE OLD ONE IS CLOSED HERE (2026-09-18 18:00).
       //
       // Measured in two browsers: pressing PLAY again joined the next round at the page's level - both tabs on one
       // round id, each with a client and a ghost field - while this guard kept the session of the round before,
@@ -436,7 +436,7 @@ mergeInto(LibraryManager.library, {
       var joined = null;
       try { joined = window.BLWP_ROUND ? BLWPCLIENT.roundId(window.BLWP_ROUND) : null; } catch (e) { joined = null; }
       var elsewhere = !!(bound && joined && BLWPCLIENT.toHex(bound) !== BLWPCLIENT.toHex(joined));
-      // AND A NEW JOIN IS A NEW RUN, on this round or another (the owner 2026-09-26 14:08, reproduced: a run that never rolled
+      // AND A NEW JOIN IS A NEW RUN, on this round or another (2026-09-26 14:08, reproduced: a run that never rolled
       // out left its session open and not over; the next PLAY joined again, no session could open beside it, and that
       // run's card copied the session before's link). A session is its page join's (BLWP_ENTRY); another join replaces it.
       if (!elsewhere && typeof window !== 'undefined' && window.BLWP_ENTRY && Module.blwpNet.pageEntry
@@ -446,7 +446,7 @@ mergeInto(LibraryManager.library, {
       }
       if (!elsewhere) {
         if (!was || !was.over) return 1;               // already running, on this same round
-        // the owner 2026-09-16: hang after DELIVERED wasted seconds waiting for
+        // 2026-09-16: hang after DELIVERED wasted seconds waiting for
         // `ended` while the last publish drained. `over` is enough; finishing
         // can drain on the old client in the background.
       } else {
@@ -459,7 +459,7 @@ mergeInto(LibraryManager.library, {
     }
 
     var base = UTF8ToString(urlPtr);
-    // THE TICK CLOCK THIS BROWSER'S TABS SHARE, for the debug label over a ghost (the owner 2026-09-17 19:15): one per
+    // THE TICK CLOCK THIS BROWSER'S TABS SHARE, for the debug label over a ghost (2026-09-17 19:15): one per
     // page, kept across rounds.
     if (!Module.blwpTickClock && BLWPCLIENT.tickClock) {
       try { Module.blwpTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.blwpTickClock = null; }
@@ -536,7 +536,7 @@ mergeInto(LibraryManager.library, {
       };
     };
 
-    // THE SESSION KEY KEPT ACROSS A RELOAD, PER ROUND, IN THE TAB'S SESSION STORAGE (the owner 2026-10-03, PAID-NIGHT-2155:
+    // THE SESSION KEY KEPT ACROSS A RELOAD, PER ROUND, IN THE TAB'S SESSION STORAGE (2026-10-03, PAID-NIGHT-2155:
     // "Page. Keep the run's signing key across a reload, in the tab's session storage, so the re-sent entry is the same
     // entry"). Measured before (round 241f32fa): a reload while the page sent its entry left that entry at one seat with no
     // stake, signed FORFEIT there, and the reloaded page made another entry under a new key. The key is made once for the
@@ -565,7 +565,7 @@ mergeInto(LibraryManager.library, {
       })
       .catch(function (e) {
         // No client, so the page's own word is the only one there is.
-        // CLOSED BEFORE IT IS LET GO (kanban #191, measured live 11:32:15Z): its socket - opened beside the entry - stayed
+        // CLOSED BEFORE IT IS LET GO (measured live 11:32:15Z): its socket - opened beside the entry - stayed
         // up, dropped ~2 min later, and its onDrop reached net.client.reconnect with net.client null; Unity alerted, the tab held
         try { if (net.client && net.client.close) net.client.close(); } catch (closeErr) { /* already gone */ }
         net.client = null;
@@ -577,7 +577,7 @@ mergeInto(LibraryManager.library, {
         // not "stake dealt, unpaid" (measured: the reason reached only the console). The
         // page's own earlier refusal, when there is one, is kept.
         if (typeof window !== 'undefined' && !window.BLWP_JOIN_REFUSED) window.BLWP_JOIN_REFUSED = net.error;
-        // AND BACK TO THE LOBBY (the owner 2026-09-26, the 21:13 case): a round link reopened after its round closed builds
+        // AND BACK TO THE LOBBY (2026-09-26, the 21:13 case): a round link reopened after its round closed builds
         // its entry fine and is refused only here, by the node, so the page's join fallback never saw it and the cargo
         // chooser stood over a round nobody can play. The page takes the same fallback from this word.
         if (typeof window !== 'undefined' && typeof window.BLWP_ENTRY_REFUSED === 'function') window.BLWP_ENTRY_REFUSED(net.error);
@@ -658,7 +658,7 @@ mergeInto(LibraryManager.library, {
       // reach those nodes: a bonded stranger with a real proof would otherwise
       // be handed the entry and the whole section 11 transcript, and the first
       // receipt refusing it is a round trip too late to take any of it back.
-      // AND THE ROUND'S CONTRACT (#23): its config hash chooses the world rule - one world per round, or per player
+      // AND THE ROUND'S CONTRACT: its config hash chooses the world rule - one world per round, or per player
       return C.worldSeedFor({
         entry: entry, round: net.where.roundId, nodes: nodes, contract: net.contract,
       }).then(function (world) {
@@ -703,7 +703,7 @@ mergeInto(LibraryManager.library, {
         var ended = keepEndedRun(net);
         if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word, ended);
       };
-      // ONLY FOR ITS OWN CLIENT (kanban #191): a client let go of - refused, or replaced by another join - is never reconnected
+      // ONLY FOR ITS OWN CLIENT: a client let go of - refused, or replaced by another join - is never reconnected
       var client = net.client;
       net.client.onDrop = function () {
         if (net.client !== client) return;
@@ -716,7 +716,7 @@ mergeInto(LibraryManager.library, {
         });
       };
 
-      // THE SOCKET OPENS BESIDE THE ROUND AND THE ENTRY, not after them (JOIN-TIME, the owner 2026-10-02: "Join click to the
+      // THE SOCKET OPENS BESIDE THE ROUND AND THE ENTRY, not after them (JOIN-TIME, 2026-10-02: "Join click to the
       // round actually loaded: 2 to 3 seconds at most"): it depends on neither, and opened last it added its whole
       // handshake - measured 1.3 s - after POST /round and POST /entry. Tried until it opens, up to the round's start
       // + 10 s (client.connectFirst).
@@ -741,7 +741,7 @@ mergeInto(LibraryManager.library, {
           });
         })
         .then(function () {
-          // A RUN THAT STARTED BEFORE THIS TAB WAS RELOADED IS TAKEN BACK, NOT BEGUN AGAIN (the owner 2026-10-03: "a reload
+          // A RUN THAT STARTED BEFORE THIS TAB WAS RELOADED IS TAKEN BACK, NOT BEGUN AGAIN (2026-10-03: "a reload
           // after the round has started ... That run must not be lost"). The page kept the entry and the session key and
           // named it (index.html BLWP_RESUME); the seats hold its inputs and marks. The client resumes from them (nothing
           // recorded meanwhile), the core enters the same world and is stepped through the transcript as a seat replays
@@ -784,7 +784,7 @@ mergeInto(LibraryManager.library, {
           // counts from here too, because a checkpoint is labelled with it and
           // hashes the core as it stands.
           // AT THE ROUND'S OWN RUN LENGTH (the 82/90 fork): its contract's blockTicks, as the signer nodes replay it.
-          // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban #130): the round's run less the ticks before its join tick, and
+          // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S: the round's run less the ticks before its join tick, and
           // its ticks are counted from that join tick - the HUD's time left is then the round's, and the last tick everybody's.
           var joinTick = (entry && typeof entry.joinTick === 'number' && entry.joinTick > 0) ? (entry.joinTick | 0) : 0;
           b.st = b.core.init(net.seedWord, blwpWithItems((net.contract && typeof net.contract.blockTicks === 'number')
@@ -889,11 +889,11 @@ mergeInto(LibraryManager.library, {
       }
       net.client.record(words);
       net.seen++;
-      // HOW FAR BEHIND THE OTHER TRUCKS ARE, measured on the page (the owner 2026-09-17 17:12: "the ghost must be realtime"):
+      // HOW FAR BEHIND THE OTHER TRUCKS ARE, measured on the page (2026-09-17 17:12: "the ghost must be realtime"):
       // every 300 ticks, this run's own round tick against the newest picture of another truck - the same round clock.
       if (net.ghosts && net.seen % 300 === 0) {
         var pose = BLWPCLIENT.newestPose(net.ghosts), own = net.client.offered | 0;
-        // AND THE AGE THE PLAYER IS SHOWN, BESIDE THE LAG ON THE WIRE (the owner 2026-09-17 19:15: the truck reads
+        // AND THE AGE THE PLAYER IS SHOWN, BESIDE THE LAG ON THE WIRE (2026-09-17 19:15: the truck reads
         // 300-600 ms while the wire says ~100). The label's own number, computed the way the overlay computes it, so
         // the two can be read against each other from one console. Nothing on screen changes.
         var shown = BLWPCLIENT.ghostLabels ? BLWPCLIENT.ghostLabels(net.ghosts, { clock: Module.blwpTickClock }) : [];
@@ -904,7 +904,7 @@ mergeInto(LibraryManager.library, {
           + ' others ' + net.ghosts.others
           + ' collapsed ' + (net.ghosts.collapsed | 0) + ' silenced ' + (net.ghosts.silenced | 0) + ' drawn ' + (net.ghosts.drawn | 0));
       }
-      // THE CORE SAID DELIVERED, SO THE RUN ENDS HERE (the owner 2026-09-15 16:14). Measured before:
+      // THE CORE SAID DELIVERED, SO THE RUN ENDS HERE (2026-09-15 16:14). Measured before:
       // every truck that drove into the mouth was DELIVERED in the core and signed so, and its page
       // recorded 10-89 s more, the truck parked at the tunnel's back wall. The word is the core's own
       // (O_SCORE 18 + S_STATE 5, RUN_DELIVERED 1), read, not worked out: this tick is already
@@ -951,7 +951,7 @@ mergeInto(LibraryManager.library, {
     var net = Module.blwpNet;
     var field = net && net.ghosts;
     if (!field || cap < 12) return 0;
-    // A NEW WATCH (the next round, a new PLAY) CLEARS EVERY GHOST FIRST (the owner 2026-09-17 17:12: "after the next round
+    // A NEW WATCH (the next round, a new PLAY) CLEARS EVERY GHOST FIRST (2026-09-17 17:12: "after the next round
     // suddenly 3 ghosts, no updates"): the field of the last round is gone, and nothing in the new one could retire its
     // trucks. One record, entry all zero and tick -2, before the new field's first picture.
     if (Module.blwpGhostFieldShown !== field) {
@@ -976,7 +976,7 @@ mergeInto(LibraryManager.library, {
     return 12;
   },
 
-  // THE DEBUG LABEL OVER EACH GHOST (the owner 2026-09-17 19:15): one line a truck, `entry TAB name TAB age+arrows`,
+  // THE DEBUG LABEL OVER EACH GHOST (2026-09-17 19:15): one line a truck, `entry TAB name TAB age+arrows`,
   // written as UTF-8 (the arrows are not ASCII). The rule is `ghostLabels` in @blwp/client; the names are the ones the
   // page checked off the nodes. Returns the bytes written, 0 for none.
   BlwpGhostLabels: function (ptr, cap) {
@@ -985,7 +985,7 @@ mergeInto(LibraryManager.library, {
     var names = (typeof window !== 'undefined' && window.BLWP_NAMES_BY_PLAYER) || {};
     var text = BLWPCLIENT.ghostLabelText(BLWPCLIENT.ghostLabels(net.ghosts, {
       nameOf: function (player) { return names[player] || null; }, clock: Module.blwpTickClock }));
-    // AND THE SAME STRING IS LEFT WHERE A HEADLESS CLIENT CAN READ IT (the owner 2026-09-18 09:00, the two-tab gate).
+    // AND THE SAME STRING IS LEFT WHERE A HEADLESS CLIENT CAN READ IT (2026-09-18 09:00, the two-tab gate).
     // C# draws these two lines over each truck through OnGUI, and no browser automation can read a GUI back. This is
     // the very text the renderer is handed - not a second copy built from something else a moment later.
     Module.blwpGhostLabelText = text || '';
@@ -995,16 +995,16 @@ mergeInto(LibraryManager.library, {
 
   // The status line, as ASCII, for the debug panel. A status nobody can read is
   // a status nobody checks.
-  // COPY GAME REPLAY (the owner 2026-09-25 18:39): this run's round and entry, and the nodes it was played on, handed to
+  // COPY GAME REPLAY (2026-09-25 18:39): this run's round and entry, and the nodes it was played on, handed to
   // the page's own copy (window.BLWP_COPY_REPLAY builds the https link and writes it to the clipboard).
   // 1 once the page's clipboard write of this press's link has resolved (BLWP_REPLAY_COPIED is that link), else 0: the
-  // card's "copied!" is the clipboard's answer, not the press (the owner 2026-09-26 07:12).
-  // THE CARGO PANEL IS OPEN (the owner 2026-09-26 14:02): the page's node strip is hidden at once and stays hidden
+  // card's "copied!" is the clipboard's answer, not the press (2026-09-26 07:12).
+  // THE CARGO PANEL IS OPEN (2026-09-26 14:02): the page's node strip is hidden at once and stays hidden
   // (paintPlayers reads BLWP_LOADOUT_OPEN) until the panel closes.
-  // A RUN RESUMED AFTER A RELOAD HAS CAUGHT UP (the owner 2026-10-03, the mid-run reload playthrough: the player saw the cargo
+  // A RUN RESUMED AFTER A RELOAD HAS CAUGHT UP (2026-10-03, the mid-run reload playthrough: the player saw the cargo
   // panel over the resumed run and could not drive - the run ended MISSED): 1 while BLWP_RESUME says the core stands at the
   // tick the seats hold, else 0. LoadoutPanel then closes and hands the truck back; the run's load is already in its record.
-  // MS UNTIL THE JOINED ROUND STARTS, or -1 (kanban #64, playtest 2026-10-04 13:32: two phones in one paid round showed
+  // MS UNTIL THE JOINED ROUND STARTS, or -1 (playtest 2026-10-04 13:32: two phones in one paid round showed
   // clocks ~15 s apart - measured, before the start the HUD counted the lobby's practice run from each page's load). The
   // round's own start, from its contract, against this device's clock: the same on every device.
   BlwpRoundStartsInMs: function () {
@@ -1020,10 +1020,10 @@ mergeInto(LibraryManager.library, {
     if (typeof window === 'undefined') return 0;
     return window.BLWP_RESUME && window.BLWP_RESUME.caughtUp ? 1 : 0;
   },
-  // THE BED OF THIS ROUND'S RUN, KEPT ACROSS A RELOAD (the owner 2026-10-03, the redone reload playthrough: the resumed truck
+  // THE BED OF THIS ROUND'S RUN, KEPT ACROSS A RELOAD (2026-10-03, the redone reload playthrough: the resumed truck
   // drove with an empty bed, "CARGO empty"). The core holds the load as two numbers; the parcels are Unity's, so ROLL OUT
   // keeps them here per round, beside the round's session key, and a resumed run puts them back on the bed.
-  // THE RESULT SUMMARY THE PAGE READ (the owner 2026-10-04): the round's /api/round-result as index.html projected it
+  // THE RESULT SUMMARY THE PAGE READ (2026-10-04): the round's /api/round-result as index.html projected it
   // (window.BLWP_RESULT.text, ASCII JSON), or 0 bytes before the first answer. Unity draws it on the end card.
   BlwpResultSummary: function (outPtr, cap) {
     var v = (typeof window !== 'undefined' && window.BLWP_RESULT && window.BLWP_RESULT.text) || '';
@@ -1059,9 +1059,9 @@ mergeInto(LibraryManager.library, {
     return (typeof c === 'string' && c.length > 0 && c === window.BLWP_REPLAY_URL) ? 1 : 0;
   },
 
-  // WHETHER THE SESSION ON HAND IS THE CURRENT JOIN'S (the owner 2026-09-26 14:08): 1 or 0. A session opened for an earlier
+  // WHETHER THE SESSION ON HAND IS THE CURRENT JOIN'S (2026-09-26 14:08): 1 or 0. A session opened for an earlier
   // page join names the run before - its link is not this card's. (The page's join is the run: one BLWP_ENTRY each.)
-  // THE RUN THAT JUST ENDED, AND ONLY IT (the owner 2026-09-27 13:19: "It copies the run that just ended, not the one
+  // THE RUN THAT JUST ENDED, AND ONLY IT (2026-09-27 13:19: "It copies the run that just ended, not the one
   // before"; round 5b4bae6c entry 6b0a7e8b, a MISSED run, was copied under another run's card). The copy used to ask
   // the session on hand at the click - `winningsRun()` of whatever `Module.blwpNet` was - and guarded it with
   // window.BLWP_ENTRY, which a run with no fresh entry does not set: an earlier join's session then answered. Now the
@@ -1201,15 +1201,15 @@ mergeInto(LibraryManager.library, {
   // The same question as a number, because it is asked every tick and every
   // input read: a pinned buffer per frame to learn "no" would be a cost paid
   // by every player for the case that has not happened.
-  // OVER, NOT ONLY ENDED (the owner 2026-09-15 16:14): the run is over for the game the moment the page
+  // OVER, NOT ONLY ENDED (2026-09-15 16:14): the run is over for the game the moment the page
   // took the core's word - nothing is recorded from then - not once the last publish has landed.
   // Measured live on 0.0.1334: waiting for `ended` put the lobby 2241 ms after DELIVERED.
   BlwpNetEnded: function () {
     var n = Module.blwpNet;
-    // A SESSION ANOTHER JOIN HAS REPLACED IS OVER (the owner 2026-09-26 14:08): the page joined again, so this session's run
+    // A SESSION ANOTHER JOIN HAS REPLACED IS OVER (2026-09-26 14:08): the page joined again, so this session's run
     // will not be played - the game may open the new join's session (NetSession opens one only when none is live).
     if (n && n.pageEntry && typeof window !== 'undefined' && window.BLWP_ENTRY && window.BLWP_ENTRY !== n.pageEntry) return 1;
-    // A SESSION THE NODE REFUSED IS OVER (the owner 2026-09-26, the 21:13 case, second patch): the open failed, the bridge
+    // A SESSION THE NODE REFUSED IS OVER (2026-09-26, the 21:13 case, second patch): the open failed, the bridge
     // is in error with no client - nothing is live, so the game's running mark ends here and the lobby can come back.
     if (n && !n.client && n.state === 'error') return 1;
     return (n && n.client && n.client.over) ? 1 : 0;
@@ -1243,7 +1243,7 @@ mergeInto(LibraryManager.library, {
     return (n && n.client) ? (n.client.marksSent | 0) : 0;
   },
 
-  // THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, the owner 2026-09-12). The page
+  // THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, 2026-09-12). The page
   // decides it - the signer nodes' signed listings, the 2-of-2 Join, the tab's key and
   // name (index.html, BLWP_LOBBY_VIEW / BLWP_LOBBY_ACT) - and these only carry
   // it across: the lobby as JSON, and the player's presses back.
@@ -1264,7 +1264,7 @@ mergeInto(LibraryManager.library, {
     return p;
   },
 
-  // ADD-ONS INSIDE UNITY (kanban #374): the page's add-ons view as JSON, a purchase, "Play with it", and a fresh read of what is owned
+  // ADD-ONS INSIDE UNITY: the page's add-ons view as JSON, a purchase, "Play with it", and a fresh read of what is owned
   BlwpAddonsState: function () {
     var s = '';
     try { if (typeof window.ARENA_ADDONS_VIEW === 'function') s = JSON.stringify(window.ARENA_ADDONS_VIEW()); } catch (e) { s = ''; }
@@ -1317,7 +1317,7 @@ mergeInto(LibraryManager.library, {
     try { document.body.classList.toggle('blwp-clean', !!on); } catch (e) { /* no body yet */ }
   },
 
-  // WHERE THE TOP-RIGHT HUD CORNER ENDS (DriveHud.ConsoleSlot, the owner 2026-10-04): the page's Console button goes under it
+  // WHERE THE TOP-RIGHT HUD CORNER ENDS (DriveHud.ConsoleSlot, 2026-10-04): the page's Console button goes under it
   BlwpHudCorner: function (jsonPtr) {
     try { window.BLWP_HUD_CORNER = JSON.parse(UTF8ToString(jsonPtr)); if (window.BLWP_PLACE_CONSOLE) window.BLWP_PLACE_CONSOLE(); } catch (e) { /* not JSON */ }
   },
@@ -1326,7 +1326,7 @@ mergeInto(LibraryManager.library, {
     try { window.BLWP_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },
 
-  // kanban #372: the page's word on a round link's play=1 - -1 not decided yet, 0 held to the round's start, 1 drive, 2 no word (an older page)
+  //: the page's word on a round link's play=1 - -1 not decided yet, 0 held to the round's start, 1 drive, 2 no word (an older page)
   BlwpLinkAutoPlay: function () {
     var v = window.BLWP_LINK_AUTOPLAY;
     return v === null ? -1 : v === false ? 0 : v === true ? 1 : 2;

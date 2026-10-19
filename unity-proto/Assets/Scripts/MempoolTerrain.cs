@@ -137,7 +137,7 @@ public class MempoolTerrain : MonoBehaviour
     void Update()
     {
         if (!Blwp.BlwpCore.HasSurface) return;
-        // THE CORE'S RELIEF CHANGED, SO THE PICTURE OF IT IS WRONG NOW (the owner 2026-09-16 12:38: "truck
+        // THE CORE'S RELIEF CHANGED, SO THE PICTURE OF IT IS WRONG NOW (2026-09-16 12:38: "truck
         // buried in dirt, only the cab roof showing" at 2:14 of a 2:30 block). A new round restarts the
         // core into its own seed, and the seed moves the hills. Before this nothing rebuilt the mesh on
         // that: only a crater change or the mempool poll every `refreshSeconds` did - and the poll skips
@@ -419,7 +419,7 @@ public class MempoolTerrain : MonoBehaviour
         _mesh.RecalculateNormals();
         _mesh.RecalculateTangents();
         _mesh.RecalculateBounds();
-        // the truck drives on this, so the collider has to follow every rebuild - ONCE A FRAME (kanban #266, measured
+        // the truck drives on this, so the collider has to follow every rebuild - ONCE A FRAME (measured
         // 2026-10-08 in a named profile at 10x CPU as an Android phone: the start built the ground twice in its first frames -
         // the flat placeholder in Awake, then the core's relief - and cooked the 43,000-triangle collider both times inside
         // Unity's start). The newest mesh is cooked in LateUpdate, before the next physics step.

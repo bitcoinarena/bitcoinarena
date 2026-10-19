@@ -4,7 +4,7 @@ using NUnit.Framework;
 using Blwp;
 
 /// <summary>
-/// THE LOBBY'S LINES ON A PHONE (kanban #8, measured on UI 133 at 390 px: the header cut to "ROUNDS · JOIN NEEDS 5 OF 7 SIGNER NC"
+/// THE LOBBY'S LINES ON A PHONE (measured on UI 133 at 390 px: the header cut to "ROUNDS · JOIN NEEDS 5 OF 7 SIGNER NC"
 /// and the round row to "... · join until 1:00 · 7 signer node"): the header and each row offer shorter wordings after the full
 /// one, the drawer takes the longest that fits, and the full one stays first so a wide screen reads exactly as before.
 /// </summary>

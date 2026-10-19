@@ -46,13 +46,13 @@ public class RoadNetwork : MonoBehaviour
     /// crossed the line.
     /// </summary>
     /// <summary>
-    /// ROADS ARE WHOLE AGAIN (the owner 2026-09-17 17:38, roads-incomplete-1737.jpg: "roads are incomplete - fragments only,
+    /// ROADS ARE WHOLE AGAIN (2026-09-17 17:38, roads-incomplete-1737.jpg: "roads are incomplete - fragments only,
     /// the candle ribbon ate the roads"). The 13:42 rule cut every road out of the chart band because the candles were 2 m
     /// walls then; the ribbon is ground now (1 m, 25% ramps, 0.5 m wick ridges), so the roads run through the band
     /// again - on the ground under it, so the bodies cover the road rather than the road the bodies (13:09, below).
     /// </summary>
     /// <summary>
-    /// AND THE ROAD IS NOT DRAWN OVER THE CHART (the owner 2026-09-19 13:09, roads-cover-candles-1309.jpg: "roads cover
+    /// AND THE ROAD IS NOT DRAWN OVER THE CHART (2026-09-19 13:09, roads-cover-candles-1309.jpg: "roads cover
     /// the candles - don't draw roads where candles are"). Laid ON the live candle layer, as it was from 17:38, the
     /// ribbon rode up onto every body it crossed and painted asphalt over the one thing the game is about. It lies on
     /// the ground UNDER the candles now: the bodies stand up through it, so the chart covers the road where they meet
@@ -290,7 +290,7 @@ public class RoadNetwork : MonoBehaviour
         // doors, so a lane that begins at the plaza mark begins inside the
         // loading bays.
         float x0 = Mathf.Max(Model.PlazaX + 4f, Model.PlazaPavedTo);
-        // AND NOT INSIDE THE MINER EITHER (the owner 2026-09-19 13:09, miner-entrance-covered-1309.jpg). DepotX - 4 is
+        // AND NOT INSIDE THE MINER EITHER (2026-09-19 13:09, miner-entrance-covered-1309.jpg). DepotX - 4 is
         // x 114, which is the facade - the model's origin - and the building stands on the ground from x 53.8 m, so
         // the last 24 m of ribbon was drawn inside it. The end is the core's own door now (Blwp.Layout
         // MINER_DOOR_X, 90.4 m), the same number the candle field is refitted to: Unity draws what the core says and
@@ -357,7 +357,7 @@ public class RoadNetwork : MonoBehaviour
             for (int k = 0; k + 1 < Across; k++)
             {
                 int v = i * Across + k, w = v + Across;
-                // NO ASPHALT WHERE A CANDLE STANDS (the owner 2026-09-19 13:09 and 15:56: "roads still cover the
+                // NO ASPHALT WHERE A CANDLE STANDS (2026-09-19 13:09 and 15:56: "roads still cover the
                 // candles"). Laying the ribbon on the ground under the chart was not enough: the deck stands 0.45 m
                 // over the bare ground and a candle's ramp needs 1.80 m of its 2.59 m half to climb that high, so
                 // 69% of every ramp the road crossed was buried under asphalt. A quad with a candle under any of

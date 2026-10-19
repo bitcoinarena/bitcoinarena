@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// SHA-256 in integer-only JavaScript - THE ENGINE'S OWN (kanban #203: the engine imports no game). The same code as
+// SHA-256 in integer-only JavaScript - THE ENGINE'S OWN (the engine imports no game). The same code as
 // nextblock/src/sha256.js, which stays inside the core's hash; nextblock/test/engine-shared.test.js holds the two to the
 // same digests.
 //

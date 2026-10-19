@@ -48,26 +48,26 @@ test('one type carries no authority, and it is the ghost', () => {
   // check, so that object gates play and carries authority. Saying so here is
   // the whole point of this guard - the count is not a number to keep green,
   // it is the question "what does the new one decide" asked out loud.
-  // 28 since the game manifest (kanban #202, §0A.3): its developer's signature decides which cores, configs, run length,
+  // 28 since the game manifest (§0A.3): its developer's signature decides which cores, configs, run length,
   // rank curve and min_score a round of that game may name - so it carries authority.
-  // 29 since the outcome attestation (kanban #206, §0A.7a): k of an attested game's attestors decide which picks win, so
+  // 29 since the outcome attestation (§0A.7a): k of an attested game's attestors decide which picks win, so
   // which entries the pari-mutuel table pays - it carries authority.
-  // 31 since the price sample and tape (kanban #311, §11): the committee's word on the price a market run plays decides
-  // its outcome. 32 since the federation record (kanban #321, §23A.4): its guardians' signed status decides whether a
+  // 31 since the price sample and tape (§11): the committee's word on the price a market run plays decides
+  // its outcome. 32 since the federation record (§23A.4): its guardians' signed status decides whether a
   // client may deposit into a federation and whether a new round may name it.
-  // 34 since reserve seats (kanban #301, §5A.7): a node's PRESENT and the seated nodes' SEATING decide which nodes serve a
+  // 34 since reserve seats (§5A.7): a node's PRESENT and the seated nodes' SEATING decide which nodes serve a
   // round - a seating its certificate's signers did not all sign seats nobody.
-  // 35 since the config proposal (kanban #329, §27A.7.2): tallied, it decides the configuration rounds run under. 37 since the
-  // absence attestation and the departure notice (kanban #322, §23A.4-5): they make a guardian ABANDONED or DEPARTED. 38 since the
-  // spent-note set (kanban #323, §23A.5): it decides which notes a halted federation's liquidation pays.
-  // 39 since the round result (kanban #312, §13): it decides who won a price round's war - bulls or bears - and moves no money.
-  // 40 since the player result with its front (kanban #312, §13): the result of a price round's run, and the lead it ended on.
-  // 41 since a seat's halt observation (kanban #323, §23A.5 "How a halt is proven"): which federation the liquidation takes.
-  // 42 since a scalar market's value attestation (kanban #362 feature 8): the number that decides how its pool is split.
-  // 44 since the developers' own ballot (kanban #382, §27A.4.1): a proposed split and a recipient's approval - who the donations pay.
-  // 45 since a donation set of keys that vests (kanban #382, §27A.4.1): who the donations pay, day by day.
-  // 52 since the fee proposals and approvals (#462), the funding proposal, comment and signal (#397), the player name and the
-  // leaderboard payout (#460) were entered (2026-10-19): declared without an entry, bearsAuthority refused them as unknown
+  // 35 since the config proposal (§27A.7.2): tallied, it decides the configuration rounds run under. 37 since the
+  // absence attestation and the departure notice (§23A.4-5): they make a guardian ABANDONED or DEPARTED. 38 since the
+  // spent-note set (§23A.5): it decides which notes a halted federation's liquidation pays.
+  // 39 since the round result (§13): it decides who won a price round's war - bulls or bears - and moves no money.
+  // 40 since the player result with its front (§13): the result of a price round's run, and the lead it ended on.
+  // 41 since a seat's halt observation (§23A.5 "How a halt is proven"): which federation the liquidation takes.
+  // 42 since a scalar market's value attestation (feature 8): the number that decides how its pool is split.
+  // 44 since the developers' own ballot (§27A.4.1): a proposed split and a recipient's approval - who the donations pay.
+  // 45 since a donation set of keys that vests (§27A.4.1): who the donations pay, day by day.
+  // 52 since the fee proposals and approvals, the funding proposal, comment and signal, the player name and the
+  // leaderboard payout were entered (2026-10-19): declared without an entry, bearsAuthority refused them as unknown
   assert.equal(FRAMES.size, 52, 'a type was added without saying what it decides');
 });
 

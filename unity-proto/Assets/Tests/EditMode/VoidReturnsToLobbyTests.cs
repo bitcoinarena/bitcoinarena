@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// A RUN THAT ENDS VOID GIVES THE SCREEN BACK (the owner 2026-09-20, the parked ghosts bug).
+/// A RUN THAT ENDS VOID GIVES THE SCREEN BACK (2026-09-20, the parked ghosts bug).
 ///
 /// MEASURED, two reproductions on Daily 0.0.1812 with two real browser tabs, cache cleared, Network on: zero
 /// loadingFailed and zero "Failed to fetch" on either tab across 1151/940 requests. Nothing was refused outright.

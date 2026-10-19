@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * A NODE-SIDE TOOL'S LOCK CLIENT REACHES THE GUARDIANS ON THIS MACHINE, NOT THROUGH THE FUNNEL (kanban #293, the owner
+ * A NODE-SIDE TOOL'S LOCK CLIENT REACHES THE GUARDIANS ON THIS MACHINE, NOT THROUGH THE FUNNEL (the owner
  * 2026-10-12 "Fix the issues so our markets and games can have a paid round"). Measured 13:45-14:20Z on the test host: one
  * wasm lock client holds 21 guardian websockets (3 per guardian) and closes none, not even on free(); through the Tailscale
  * Funnel a third client on the same machine fails "Failed to download client config" after ~65 s (2 of 10 joins in one

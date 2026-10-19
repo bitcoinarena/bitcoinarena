@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// #23 AT THE SEATS (the owner 2026-10-04: "the player chooses nothing about the world"): a shared-world round (config v4 of
+// AT THE SEATS (2026-10-04: "the player chooses nothing about the world"): a shared-world round (config v4 of
 // core 7e2123d1) takes an entry only with a world secret of 32 zero bytes, and the seats' replay derives the round's one
 // world - the same seed word the page's join computes (seed.js worldSeedWord) - for every player, whatever key he brings;
 // a per-player round (v3, f51759b6) keeps each player's own. Fixtures from run-length.test.js.
@@ -83,7 +83,7 @@ test('the seats\' replay of a shared-world round derives the page\'s seed word, 
     assert.equal(r.ok, true, r.why);
     return JSON.stringify(r.pictures);
   };
-  // AS GHOSTS.JS AND VERIFY.JS RESOLVE IT: with the round's game's shared-world configs (kanban #203: the game says)
+  // AS GHOSTS.JS AND VERIFY.JS RESOLVE IT: with the round's game's shared-world configs (the game says)
   const game = hostedPlugins(HOSTED).get(toHex(NEXTBLOCK_GAME_ID));
   const world = (contract) => ({ configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: roundIdOf(contract),
     sharedWorld: [...game.sharedWorld] });

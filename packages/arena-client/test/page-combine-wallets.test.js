@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY WALLET THIS BROWSER KEEPS, COMBINED INTO THE ONE THIS TAB PLAYS WITH (kanban #187 item 3, plan comment 298, Go
+// EVERY WALLET THIS BROWSER KEEPS, COMBINED INTO THE ONE THIS TAB PLAYS WITH (plan comment 298, Go
 // 2026-10-05). index.html's combineWallets is lifted out of the page by its text and run as it is, against fake wallets: the
 // browser's kept phrases (arena.seeds), each with its own e-cash; the current phrase's wallet `main`. Each other wallet with
 // e-cash sends it all once, the e-cash is kept in the browser BEFORE it is received, received once into `main`, and the kept
@@ -36,7 +36,7 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     w.sendAllEcash = async () => { log.push(`send ${name} ${w.msat}`); if (w.msat === 0n) return JSON.stringify({ ecash: '' }); const msat = w.msat; w.msat = 0n; return JSON.stringify({ ecash: `ecash:${name}:${msat}`, msat: String(msat) }); };
     wallets.set(h, w);
   }
-  // EACH PHRASE'S BLWP-ERA WALLET (kanban #209): its own e-cash, its own store entries (none unless `blwp` names a balance)
+  // EACH PHRASE'S BLWP-ERA WALLET: its own e-cash, its own store entries (none unless `blwp` names a balance)
   const ancestors = new Map();
   for (const [name, h] of Object.entries(SEEDS)) {
     const w = { name: name + ' (BLWP)', msat: BigInt(blwp[name] ?? 0), entries: name in blwp ? 2 : 0 };
@@ -142,7 +142,7 @@ test('a second call while one runs is the same run - nothing swept twice; a phra
   assert.equal(held.main.msat, 1000n);
 });
 
-test('every phrase\'s BLWP-era wallet is swept once into this tab\'s Arena wallet - this tab\'s own phrase\'s too, without its lock (kanban #209 (a))', async () => {
+test('every phrase\'s BLWP-era wallet is swept once into this tab\'s Arena wallet - this tab\'s own phrase\'s too, without its lock ((a))', async () => {
   const b = browser({ balances: { rich: 1000 }, blwp: { cur: 250000, rich: 40000, poor: 0, held: 9000 }, heldLocks: [SEEDS.held] });
   const before = b.total();
   await b.run();

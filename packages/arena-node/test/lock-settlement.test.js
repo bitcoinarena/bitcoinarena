@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W4: THE LOSER'S STAKE LOCK IS CLAIMED INTO THE ROUND'S ONE SETTLEMENT, AND THE
-// WINNER IS PAID FROM IT (the owner 2026-09-14 07:22: "a loser loses the stake. The
+// WINNER IS PAID FROM IT (2026-09-14 07:22: "a loser loses the stake. The
 // lock is claimed into the pool. Winners are paid from that."; FEDERATION.md
 // money flow step 5).
 //
@@ -48,7 +48,7 @@ import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
 const REAL_FEES = { ppm: 0n, baseMsat: 1000n };
 
-// PICK (a) (the owner 2026-09-14): REFUSE AT THE DOOR. An entry that brings no fee lock - naming
+// PICK (a) (2026-09-14): REFUSE AT THE DOOR. An entry that brings no fee lock - naming
 // none, or naming one it never hands over - joined as far as the signer nodes let it, and its
 // first batch offered.
 async function joinWithout(w, who, { namesFeeLock }) {
@@ -101,7 +101,7 @@ async function joinWithout(w, who, { namesFeeLock }) {
 const federationChargesItsRealFee = (w) => { w.port.feeRule = REAL_FEES; };
 const key = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
-// THE RULE'S FIGURES (§22A, §0A.8; kanban #205): the entry fee is 5% of the stake (entryFeeMsat), the net what is left,
+// THE RULE'S FIGURES (§22A, §0A.8): the entry fee is 5% of the stake (entryFeeMsat), the net what is left,
 // and the guardians' measured rule takes 1000 msat on every input and every output. Every amount below is computed.
 const IO = 1000n;
 const netOf = (stake) => stake - entryFeeMsat(stake);
@@ -129,7 +129,7 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     const seatKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k)));
     assert.equal(paid.length, 1 + seatKeys.length, 'one payout contract to the one qualifier and one to each seat');
     assert.equal(winnerPaid.length, 1);
-    // WINNINGS-AUTO (RULED the owner 2026-10-01): the winner named an address, and is paid all the same by its payout
+    // WINNINGS-AUTO (RULED 2026-10-01): the winner named an address, and is paid all the same by its payout
     // contract to its own key - redeemed into its federation wallet - never by a send refunding to the committee.
     assert.ok(!winnerPaid[0].sent, 'the qualifier was paid by a Lightning send');
     assert.equal(netStakeMsat(lost.entry), netOf(lost.entry.stakeMsat));
@@ -146,7 +146,7 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
   } finally { await w.close(); }
 });
 
-// A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14): alice plays on her desktop,
+// A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, 2026-09-14): alice plays on her desktop,
 // forgets to withdraw, and two hours later plays on her iPhone holding only her seed. The signer nodes list
 // the rounds they settled since a time, each with the keys its settlement pays and its locks' refund
 // keys; the device derives its own key per round and matches it there, asking nothing per round.
@@ -183,7 +183,7 @@ test('the signer nodes list the rounds they settled since a time with the keys e
   } finally { await w.close(); }
 });
 
-// PICK (a) (the owner 2026-09-14): REFUSE AT THE DOOR - where the round's gate mints.
+// PICK (a) (2026-09-14): REFUSE AT THE DOOR - where the round's gate mints.
 test('where the round mints fee locks (1000 sat, the federation\'s own rule) a signer node refuses at the door an entry that brings none - not joined, no stake counted - and the round of those who brought theirs settles as before', async () => {
   const w = await lockRound({ stakeMsat: 1000000n });
   try {
@@ -257,7 +257,7 @@ test('where the round mints, a fee lock handed before its stake lock counts the 
   } finally { await w.close(); }
 });
 
-// PICK A (the owner 2026-09-14): THE FEE LOCKS INTO THE SAME SETTLEMENT, FOR THE SITTING SIGNER NODES.
+// PICK A (2026-09-14): THE FEE LOCKS INTO THE SAME SETTLEMENT, FOR THE SITTING SIGNER NODES.
 test('each player\'s fee lock is verified by both signer nodes and claimed in the round\'s one settlement: the winner paid its net stake, each sitting signer node half of 5% of the gross to its own key', async () => {
   const w = await lockRound();
   w.port.feeRule = { ppm: 0n, baseMsat: 0n };
@@ -350,7 +350,7 @@ test('a round with a loser and no qualifier pays no stake and still pays the sea
       + ` payouts ${paidNQ.map((x) => `${x.msat} to ${toHex(x.payoutPk).slice(0, 10)}`).join(', ')};`
       + ` seats ${w.c.nodes.map((k) => toHex(refundKeyOf(k)).slice(0, 10)).join(',')};`
       + ` winner key ${toHex(refundKeyOf(WINNER.key)).slice(0, 10)} loser key ${toHex(refundKeyOf(LOSER.key)).slice(0, 10)}`);
-    // THE RULING (the owner 2026-09-21): §22A's 2% is SEAT COMPENSATION FOR A ROUND THAT ACTUALLY RAN. It is not
+    // THE RULING (2026-09-21): §22A's 2% is SEAT COMPENSATION FOR A ROUND THAT ACTUALLY RAN. It is not
     // a qualifier's prize and it is not operator profit. So a finished round with a loser and no qualifier
     // settles: the stakes go back to their players and the seats are paid for the work. Only a VOID round -
     // a technical failure - claims nothing at all, and the operator must not profit from that; that is the

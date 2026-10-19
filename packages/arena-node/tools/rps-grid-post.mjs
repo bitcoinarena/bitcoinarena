@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * POST A PUBLISHED GRID'S ROUNDS FROM ITS FILE (kanban #344): the contracts the keeper saved at publication
+ * POST A PUBLISHED GRID'S ROUNDS FROM ITS FILE: the contracts the keeper saved at publication
  * (paid/rps-grid-<txid>.json), each round still at least LEAD_MS from its start, to every seat - a few at a time, a
  * dropped connection or a seat still reading its chain view asked again (measured 19:57Z: one "fetch failed" from a seat
  * under load stopped the keeper's own posting of grid aac10bf8 after its beacon came 6 deep). Each round is named in the

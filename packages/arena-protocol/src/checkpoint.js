@@ -164,7 +164,7 @@ export function joinSigned(bytes, signature) {
  * It may answer a promise, so this does too.
  */
 export async function provesEquivocation(a, b, sessionPubkey, verify) {
-  // THE DECODE IS INSIDE THE SAME TRY (kanban #146): measured before, two records of the right length whose body was not
+  // THE DECODE IS INSIDE THE SAME TRY: measured before, two records of the right length whose body was not
   // a checkpoint made this reject ("not a checkpoint: type N") - and one of them is a peer's bytes.
   let one; let two; let x; let y;
   try {

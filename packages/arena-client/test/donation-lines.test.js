@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DONATION LINES THE PLAYER READS - donation-pay.js on its own (kanban #147, surface 1 of "The player's money lines",
+// THE DONATION LINES THE PLAYER READS - donation-pay.js on its own (surface 1 of "The player's money lines",
 // plan comment 202, accepted 2026-10-05): every state of a donation as the page paints it (index.html: the wallet panel's
 // #blwp-donation, and the line read back from the tab's notes after a reload), by its exact words.
 //

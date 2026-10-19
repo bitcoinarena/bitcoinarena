@@ -40,15 +40,15 @@ import { paysReserves, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/re
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 
 /**
- * THE ENTRY FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
+ * THE ENTRY FEE A ROUND CHARGES, as this page knows it: the rate the page set on the round (an unpinned market the
  * player confirmed - its manifest's), else the pinned game's, else the network's 5 %. A MARKET'S IS ITS NODE FEE AND ITS
- * DONATION TOGETHER (1 % by default): both sit in its fee lock and are due only when it resolves (the owner 2026-10-09).
+ * DONATION TOGETHER (1 % by default): both sit in its fee lock and are due only when it resolves (2026-10-09).
  */
 const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ? k.nodeBps + (k.donationBps ?? 0) : NODE_FEE_BPS; };
-// A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397); a market keeps its own (its fee lock holds its donation too)
+// A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1); a market keeps its own (its fee lock holds its donation too)
 const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
 export const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
-// `round.feeSet` (kanban #462): the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
+// `round.feeSet`: the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -151,7 +151,7 @@ export function joinQuery(search) {
  * answered with something else" do not look alike.
  */
 /**
- * A ROUND'S CONTRACT IS READ ONCE (kanban #378; the owner 2026-10-16: "Lower the amount of concurrent connections and network load";
+ * A ROUND'S CONTRACT IS READ ONCE (2026-10-16: "Lower the amount of concurrent connections and network load";
  * measured on live UI 158, one run, 60 s window: GET /round 208). The id is the contract's own hash, so a contract that matched its
  * id and passed the checks below is the round for good; kept per id, at most ROUNDS_KEPT_MAX, the oldest dropped first.
  */
@@ -174,7 +174,7 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
         refused.push(`${node}: answered with round ${got}`);
         continue;
       }
-      // §13A, WINDOW-10-SPEC (RULED the owner 2026-10-01): a round whose objection window is not exactly 600 000 ms is
+      // §13A, WINDOW-10-SPEC (RULED 2026-10-01): a round whose objection window is not exactly 600 000 ms is
       // invalid - the page lists it nowhere and joins it never, whatever a node answers.
       if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
         throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
@@ -210,7 +210,7 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * the height from the chain is letter 32's work and the page does not do it;
  * what the page can do is refuse to be told two different things, and say so.
  */
-// A ROUND'S RANDOMNESS, ONCE AGREED, IS KEPT FOR THE PAGE (the owner 2026-10-02, the join's 2-3 s): the beacon of a round never
+// A ROUND'S RANDOMNESS, ONCE AGREED, IS KEPT FOR THE PAGE (2026-10-02, the join's 2-3 s): the beacon of a round never
 // changes, and the session asked all its nodes again after the page had - kept per round and node list, the promise
 // itself, so a second asker shares the first's reads; a refusal is not kept.
 const RANDOMNESS = new Map();
@@ -287,7 +287,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
     throw new Error('this stake does not say how many signer nodes open it');
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
-  // EVERY NODE AT ONCE (the owner 2026-10-02, the join's 2-3 s): posted one after another, the handout was ~0.8 s of a funded
+  // EVERY NODE AT ONCE (2026-10-02, the join's 2-3 s): posted one after another, the handout was ~0.8 s of a funded
   // paid join before its lock (0.0.2476). Still all of them before the lock is made, read in the nodes' order.
   const answers = await Promise.all(nodes.map(async (node) => {
     const at = node.replace(/\/+$/, '') + '/handout';
@@ -322,7 +322,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
  */
 export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
 /**
- * WHAT THIS ENTRY STAKES (kanban #237): an order in a paid market round brings its own amount - the page sets it on its
+ * WHAT THIS ENTRY STAKES: an order in a paid market round brings its own amount - the page sets it on its
  * round object as `orderStakeMsat`, beside the contract's fields, so the round's id and bytes are untouched - and every
  * other entry stakes the round's stake_msat.
  */
@@ -337,7 +337,7 @@ export const roundLocks = (round) => roundPays(round)
   && round.federationId instanceof Uint8Array && (round.federationId.some((b) => b !== 0) || takesAnyFederation(round));
 
 /**
- * A ROUND THAT TAKES ANY FEDERATION, RESOLVED TO THE ONE THIS PLAYER LOCKS IN (2026.0.3 step 7, kanban #348): the same round - its
+ * A ROUND THAT TAKES ANY FEDERATION, RESOLVED TO THE ONE THIS PLAYER LOCKS IN (2026.0.3 step 7): the same round - its
  * id kept, since the id is its contract's and the contract names no federation - with `federationId` the chosen one, so the
  * wallet, the lock and the entry below need nothing else; `anyFederation` tells entryFor to name it on the entry. Any other
  * round is answered as it is.
@@ -371,7 +371,7 @@ export async function attestedClaimKey({ round, signerNodes, nodes, curve, fetch
   const id = toHex(round.id);
   const byKey = new Map();
   const refused = [];
-  // EVERY NODE AT ONCE (kanban #353, measured 2026-10-14 03:26Z on testnet4): asked one after another, the 14 seats a v2 round
+  // EVERY NODE AT ONCE (measured 2026-10-14 03:26Z on testnet4): asked one after another, the 14 seats a v2 round
   // draws from took 27 s here - a round whose key all 7 signer nodes had attested since 03:24Z - and a market order's 60 s
   // expiry and an 8 s RPS table both ran out before the pick. Read together, kept in the nodes' order as before.
   const answers = await Promise.all((nodes || []).map(async (node) => {
@@ -452,7 +452,7 @@ export function stakeSeenNeeded(contract) {
  * refuses its own receipt until it has seen the stake.
  */
 /**
- * WHO ANSWERS AT A URL, ASKED ONCE A FEW MINUTES (the owner 2026-10-16: "Lower the amount of concurrent connections and network
+ * WHO ANSWERS AT A URL, ASKED ONCE A FEW MINUTES (2026-10-16: "Lower the amount of concurrent connections and network
  * load"; measured on live UI 154: GET /identity 434 times in a 60 s window of one run - every settlement and stake look asked
  * every node who it is, each time). A node's key does not change behind its URL; a kept answer is used for IDENTITY_KEEP_MS,
  * and only an answer is kept - a node that failed is asked again the next time.
@@ -496,7 +496,7 @@ export async function stakeSeenBy({ entryId, signerNodes, nodes, contract, fetch
 /** The hold states a stake does not leave. */
 
 /**
- * IS THIS RUN DECIDED AT THE SIGNER NODES THAT ANSWERED? (kanban #147, rule (a), the owner 2026-10-05): every answer FINAL or a
+ * IS THIS RUN DECIDED AT THE SIGNER NODES THAT ANSWERED? (rule (a), 2026-10-05): every answer FINAL or a
  * decided outcome (VOID, FORFEIT), or every answer says the stake is FREE. What ends the settlement watch now that no node
  * answers a hold (§23.6) - measured before, the watch ended on `hold` only and so never ended, polling every 5 s until the tab
  * closed.
@@ -637,7 +637,7 @@ export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fe
   const id = typeof round === 'string' ? round : toHex(round);
   const beacon = await fetchRandomness(id, nodes, { fetcher });
   return {
-    // THE ONE FUNCTION (seed.js worldSeedWord, #23): the round's contract chooses the rule - one world per round, or per player
+    // THE ONE FUNCTION (seed.js worldSeedWord): the round's contract chooses the rule - one world per round, or per player
     seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
     randomness: beacon.randomness,
     height: beacon.height,
@@ -655,7 +655,7 @@ export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fe
  * serves into them is deliberately outside everything that decides.
  */
 /**
- * THE BOND OF A SEAT ON THIS ROUND'S COMMITTEE (kanban #376, measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint: the
+ * THE BOND OF A SEAT ON THIS ROUND'S COMMITTEE (measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint: the
  * advertisement is for 2fca1090..., which is not on this round's committee"). daily.json names ONE bond - seat 1's - and a round's
  * committee is 7 of 14 seats, so about half the rounds could not be joined at all. The bond named first if its node is on the
  * committee, else the first of the round's seats whose own /bond names a committee member; the named one when none answers.
@@ -665,7 +665,7 @@ export async function committeeBond(o = {}) {
   return found.length ? found[0].where : o.bond;
 }
 /**
- * EVERY COMMITTEE SEAT'S BOND, WITH THE ANSWER ALREADY READ (kanban #376, measured 2026-10-16 11:20:47Z on preview UI 151 after
+ * EVERY COMMITTEE SEAT'S BOND, WITH THE ANSWER ALREADY READ (measured 2026-10-16 11:20:47Z on preview UI 151 after
  * Unity's PLAY: the entry made, then "no proven endpoint: no bond: no provider proved that bond into the chain (provider 0: no
  * answer in 10000 ms)" two seconds before the round's start - one provider, and it read again the /bond this search had just
  * read). In the candidates' order, each { where, body }: the bond prover takes the body as it is, and the next seat when one
@@ -698,7 +698,7 @@ export function bondProvider(where, { fetcher = fetch, body = null } = {}) {
       o = await r.json();
     }
     const proof = (x) => ({ transaction: fromHex(x.hex), branch: (x.merkle || []).map(fromHex), position: x.pos | 0 });
-    // A CARRIED BOND (kanban #209): the ancestor bond, and beside it its re-affirmation and its advertisement update
+    // A CARRIED BOND: the ancestor bond, and beside it its re-affirmation and its advertisement update
     return {
       ...proof(o),
       ...(o.update && o.update.hex ? { update: proof(o.update) } : {}),
@@ -706,7 +706,7 @@ export function bondProvider(where, { fetcher = fetch, body = null } = {}) {
     };
   };
   // ITS SOURCE AS THE HEADER PROVIDERS NAME ONE (sourceKey): the seats behind one public host differ by path, and tagged by origin
-  // alone two of them were "one server listed twice" (kanban #376, measured on preview UI 152: every join refused so)
+  // alone two of them were "one server listed twice" (measured on preview UI 152: every join refused so)
   get.tag = sourceKey(where);
   return get;
 }
@@ -827,7 +827,7 @@ export function importSeed(text, { storage, key = 'arena.player.seed' } = {}) {
 }
 
 /**
- * RESTORE THE SEED IN SETTINGS, OVERWRITING THE CURRENT ONE (kanban #154, the owner 2026-10-04 23:48; plan accepted
+ * RESTORE THE SEED IN SETTINGS, OVERWRITING THE CURRENT ONE (2026-10-04 23:48; plan accepted
  * 2026-10-05). `text` is what the player typed - the 24 words or the 64 hex (seedHexFromInput). On success it REPLACES the
  * tab's one current seed (`session` 'arena.player.seed', origin 'imported') - never a second active seed - and keeps the
  * restored phrase in the browser's kept list (`kept` 'arena.seeds'); the OLD phrase stays in that list, inactive, since its
@@ -870,7 +870,7 @@ const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length 
  * refund go to, and the fingerprint the page shows for the player to compare
  * outside it (`arena-node/tools/refund-key.mjs <seed> <round id>`).
  */
-// `order`: an order this tab places in a market round (kanban #336) - its own key, so its own lock, payout and return;
+// `order`: an order this tab places in a market round - its own key, so its own lock, payout and return;
 // 0 (a game's entry, a single pick) is the round's key as it always was
 export function playerFor(round, { seed, curve, order = 0 } = {}) {
   if (!round) throw new Error('there is no round to join');
@@ -918,9 +918,9 @@ function feeLockOf(stakeLock, round) {
   return f;
 }
 
-// `pick`: the outcome an entry into a market round backs (§0A.7a, kanban #206 slice 2) - written only when given.
+// `pick`: the outcome an entry into a market round backs (§0A.7a) - written only when given.
 // `confirmedGames`: game ids (hex) of markets the player confirmed a second time on this page (§0A.6).
-// `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
+// `limitPrice` / `orderExpiryMs`: an ORDER on a market's book - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
   donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null, items = null } = {}) {
@@ -937,7 +937,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBps), donationMsat }, { feeBps });
     if (!fee.ok) throw new Error(fee.why);
   }
-  // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
+  // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6): no override,
   // no flag. A free round risks nothing and is joined as before.
   if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames, protocolVersion: round.protocolVersion }); if (!core.ok) throw new Error(core.why); }
   // A PICK IS AN OUTCOME INDEX (§0A.7a): the seats check it against the game's outcomes; here only its shape
@@ -951,7 +951,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   // under any other key - a bug, or a host that lies - would send the money
   // where the player's own check (`refund-key.mjs`) cannot find it. So the key
   // is derived here, and a key or a dealt stake naming another is refused.
-  // `playerOrder`: an order's own key (kanban #336) - the seed's key for this round and that order number, checked the same way
+  // `playerOrder`: an order's own key - the seed's key for this round and that order number, checked the same way
   const player = playerFor(round, { seed, curve, order: playerOrder });
   if (playerPubkey !== undefined && toHex(playerPubkey) !== toHex(player.pubkey))
     throw new Error('that player key is not the one this seed makes for this round: a payout or '
@@ -988,7 +988,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   return {
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
-    // NONE ON A SHARED-WORLD ROUND (#23): 32 zero bytes, kept so the entry's encoding and id stay the same shape
+    // NONE ON A SHARED-WORLD ROUND: 32 zero bytes, kept so the entry's encoding and id stay the same shape
     worldSecret: worldIsShared(round, sharedWorldOf(round.gameId)) ? new Uint8Array(32) : random(32),
     // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
     // committee accepted; without one it is 32 zero bytes, and the field is in
@@ -1016,22 +1016,22 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
       ? { txid: stakeLock.feeLock.outpoint.txid, outIdx: BigInt(stakeLock.feeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
-    // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
+    // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (2026-10-03): named only when there are any
     ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.filter((d) => !d.reserve).length
       ? { donationOutpoints: stakeLock.donations.filter((d) => !d.reserve).map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
-    // THE RESERVE LOCK (protocol 11, §27A.9.2, kanban #397): the output the lock transaction paid the federation's reserve key
+    // THE RESERVE LOCK (protocol 11, §27A.9.2): the output the lock transaction paid the federation's reserve key
     ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.some((d) => d.reserve)
       ? { reserveOutpoint: (({ txid, outIdx }) => ({ txid, outIdx: BigInt(outIdx) }))(stakeLock.donations.find((d) => d.reserve)) } : {}),
     // THE FEDERATION ITS LOCKS ARE IN, on a round that takes any (inFederation; contracts.js FEDERATION_MARKER)
     ...(round.anyFederation ? { federationId: round.federationId } : {}),
-    // THE OPERATOR THIS PLAYER IS (§7 operator_id_declaration, kanban #309): only when the player declared one (a player who runs nodes)
+    // THE OPERATOR THIS PLAYER IS (§7 operator_id_declaration): only when the player declared one (a player who runs nodes)
     ...(operatorId instanceof Uint8Array && operatorId.length === 32 && operatorId.some((b) => b !== 0) ? { operatorId } : {}),
-    // THE WEBSITE THAT BROUGHT THIS ENTRY (kanban #362 item 7, 2026.0.9): the page's own payout key, paid 20% of the nodes' fee on this
+    // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): the page's own payout key, paid 20% of the nodes' fee on this
     // stake out of the nodes' 5% - never more for the player. Only on a round of version 9 or later (a seat refuses it below), and
     // only a 33-byte compressed key
     ...(frontendPk instanceof Uint8Array && frontendPk.length === 33 && (frontendPk[0] === 2 || frontendPk[0] === 3)
       && Number(round.protocolVersion) >= FRONTEND_FEE_VERSION ? { frontendPk } : {}),
-    // THE ITEMS IT PLAYS WITH (protocol 10, kanban #365/#369): each with its owner's proof for this entry (item-buy.js entryItemsFor) -
+    // THE ITEMS IT PLAYS WITH (protocol 10): each with its owner's proof for this entry (item-buy.js entryItemsFor) -
     // only on a round of version 10 or later, and only when there are any, so every other entry keeps its bytes
     ...(Array.isArray(items) && items.length && Number(round.protocolVersion) >= ITEMS_VERSION ? { items } : {}),
     // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes

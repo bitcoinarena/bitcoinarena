@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W4: A LOSER'S STAKE LOCK IS CLAIMED INTO THE ROUND'S ONE SETTLEMENT, AND THE
-// QUALIFIERS ARE PAID FROM IT (the owner 2026-09-14 07:22; FEDERATION.md step 5).
+// QUALIFIERS ARE PAID FROM IT (2026-09-14 07:22; FEDERATION.md step 5).
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -19,7 +19,7 @@ const refund = (n) => { const k = new Uint8Array(33); k[0] = 0x02; k[1] = n; k[3
 const RID = b32(0x5f);
 const NO_FEES = { ppm: 0n, baseMsat: 0n };
 
-// THE RULE'S FIGURES (§22A, §0A.8; kanban #205): an entry at 100 sat pays the node fee entryFeeMsat (5%) beside the donation;
+// THE RULE'S FIGURES (§22A, §0A.8): an entry at 100 sat pays the node fee entryFeeMsat (5%) beside the donation;
 // what it locks is the rest. Every amount below is one of these, or computed from them.
 const STAKE = 100000n;
 const FEE = entryFeeMsat(STAKE);
@@ -122,7 +122,7 @@ test('every signer node rebuilds the same transaction: the order of the entries 
   assert.notEqual(toHex(settlementNonce(RID)), toHex(settlementNonce(b32(0x60))));
 });
 
-// PICK A (the owner 2026-09-14): THE FEE LOCKS PAY THE SITTING SIGNER NODES, by §22A's weights.
+// PICK A (2026-09-14): THE FEE LOCKS PAY THE SITTING SIGNER NODES, by §22A's weights.
 const SIGNER_NODE = (n) => { const k = new Uint8Array(32); k[0] = 0xa0 + n; k[31] = n; return k; };
 const contractOf = (nodes) => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1),
@@ -157,7 +157,7 @@ test('every counted entry\'s fee lock (5% of its stake) is claimed in the same s
 
 // MEASURED: UNDER THE REAL GUARDIANS' RULE (1000 msat per input and output, stake-lock-step3.sh)
 // A 2000 msat fee lock cannot reach a signer node - so it is not claimed, and the hole is named. Under the 5% fee (§0A.8,
-// kanban #205) that is the fee lock of a 40 sat stake: two such locks put 4000 msat in, and two inputs and two outputs at
+//) that is the fee lock of a 40 sat stake: two such locks put 4000 msat in, and two inputs and two outputs at
 // 1000 msat each take all of it. (100 sat rounds' 5000 msat locks pay: the gate below.)
 const SMALL = 40000n;
 const small = (n, outcome, score) => ({ ...entry(n, outcome, score), stakeMsat: SMALL, feeMsat: entryFeeMsat(SMALL) });
@@ -224,7 +224,7 @@ test('a counted entry with no verified fee lock, a fee lock of another amount, o
   assert.match(noSignerNodes.why, /no contract or signer nodes were named/);
 });
 
-// PICK (b) (the owner 2026-09-14): THE GATE - A FEE LOCK IS MINTED ONLY WHEN IT CAN PAY A SIGNER NODE.
+// PICK (b) (2026-09-14): THE GATE - A FEE LOCK IS MINTED ONLY WHEN IT CAN PAY A SIGNER NODE.
 const REAL_RULE = { ppm: 0n, baseMsat: 1000n };   // measured on fedimintd 0.12.0 (stake-lock-step3.sh)
 const at = (stakeMsat) => ({ ...contractOf([SIGNER_NODE(1), SIGNER_NODE(2)]), stakeMsat });
 const show = (g) => `stake ${g.stakeMsat} msat, lock ${g.lockMsat}, ${g.players} players, ${g.signerNodes} signer nodes, input fees ${g.inputFeesMsat}, `
@@ -245,7 +245,7 @@ test('the gate: a 1000 sat round mints its 50000 msat fee lock (5%), and every s
   console.log(`  1000 sat: ${show(g)}`);
   assert.equal(g.pays, true, g.why);
   assert.equal(g.lockMsat, entryFeeMsat(1000000n));
-  // THE ROUND'S SITTING SIGNER NODES (the owner 2026-09-15 07:42): a 2-of-2 pays its two signer nodes, each both pools' shares.
+  // THE ROUND'S SITTING SIGNER NODES (2026-09-15 07:42): a 2-of-2 pays its two signer nodes, each both pools' shares.
   assert.equal(g.signerNodes, 2, 'the round\'s two sitting signer nodes, not one signer node per slot');
   assert.equal(g.perSignerNodeNetMsat.length, 2, 'one payout per sitting signer node - a signer node in both pools is paid both shares together');
   for (const net of g.perSignerNodeNetMsat) assert.ok(net > 0n, `a signer node nets ${net}`);
@@ -320,7 +320,7 @@ const nineAndThree = () => {
   return { qualifiers, losers, all: [...qualifiers, ...losers] };
 };
 
-test('WINNINGS-AUTO A (RULED the owner 2026-10-01): no qualifier named anything - every qualifier of a paying rank is paid once, by a payout contract to its own key; payouts and fees are the whole claimed pot', () => {
+test('WINNINGS-AUTO A (RULED 2026-10-01): no qualifier named anything - every qualifier of a paying rank is paid once, by a payout contract to its own key; payouts and fees are the whole claimed pot', () => {
   const { qualifiers, all } = nineAndThree();
   const locks = new Map(all.map((e, i) => lockFor(e, i + 1)));
   const s = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: POOL_FEES });
@@ -368,7 +368,7 @@ test('WINNINGS-AUTO C: an address or a planned send changes nothing - never a se
   assert.deepEqual(s.payouts.map((p) => [toHex(p.pubkey), p.msat]).sort(), base.payouts.map((p) => [toHex(p.pubkey), p.msat]).sort(), 'an address changed an amount');
 });
 
-// THE SECOND SETTLEMENT OF A LATE LOSER (§13A, RULED the owner 2026-09-24, slice C3b-1). An entry left out of the round's
+// THE SECOND SETTLEMENT OF A LATE LOSER (§13A, RULED 2026-09-24, slice C3b-1). An entry left out of the round's
 // settlement while still in its re-run window, which then ends FINAL and FAILED, or FORFEIT, is claimed in its own
 // transaction. Its lock's net stake, less that transaction's own guardian fees, goes to the winners the first
 // transaction paid, each by its first payout's fraction of the first pool, integer msat, the dust to the first row in
@@ -428,7 +428,7 @@ test('a late VOID or qualifier is never claimed, a first table that paid nobody 
   assert.deepEqual(withFee.signerNodePayouts.map((p) => p.msat), [FEE / 2n, FEE - FEE / 2n]);
 });
 
-// WINNINGS-AUTO (RULED the owner 2026-10-01; C3b-2a withdrawn): a late share is never sent. Send plans handed in - even with
+// WINNINGS-AUTO (RULED 2026-10-01; C3b-2a withdrawn): a late share is never sent. Send plans handed in - even with
 // requireSends, even for another amount - change nothing: each winner's late share is the payout contract to its own lock
 // refund key, exactly the plan built without them.
 test('WINNINGS-AUTO: with send plans handed in, a late payout is still the contract to the winner\'s own key - the same plan as without', async () => {
@@ -454,7 +454,7 @@ test('WINNINGS-AUTO: with send plans handed in, a late payout is still the contr
   }
 });
 
-// A GUARDIAN IS PAID AT ITS ADVERT'S PAYOUT KEY (2026.0.13, kanban #33 gap 2; §22A v4.6.4): the seat names it per guardian
+// A GUARDIAN IS PAID AT ITS ADVERT'S PAYOUT KEY (2026.0.13, gap 2; §22A v4.6.4): the seat names it per guardian
 // (signerNodes.guardianPayout); a guardian with none - a placeholder key, or out of the census - is paid at its node key as before.
 test('a 2026.0.13 guardian share goes to the guardian\'s payout key, its own output; one without a key at its node key', async () => {
   const { guardianPayoutKeyOf, onCurveX, isPlaceholderKey } = await import('../src/guardian-payout.js');

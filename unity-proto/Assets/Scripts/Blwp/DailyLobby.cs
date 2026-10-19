@@ -20,9 +20,9 @@ namespace Blwp
         public int needed;
         public bool joinable;
         public int leftS = -1;
-        /// <summary>Whole seconds until the round starts, 0 once it has started; -1 when the page did not say (an older page) - kanban #43.</summary>
+        /// <summary>Whole seconds until the round starts, 0 once it has started; -1 when the page did not say (an older page) -.</summary>
         public int startS = -1;
-        /// <summary>The round's committee size - its signer nodes, from its verified contract (7 paid, 2 free); -1 when the page did not say (#43 follow-up).</summary>
+        /// <summary>The round's committee size - its signer nodes, from its verified contract (7 paid, 2 free); -1 when the page did not say (follow-up).</summary>
         public int total = -1;
         public int joined;
         /// <summary>What a paying round costs to enter, in whole sats; 0 for a free round.</summary>
@@ -51,12 +51,12 @@ namespace Blwp
         public bool kindKnown;
         public bool free;
         public long stakeSats;
-        /// <summary>The page entered this round itself, as the next one after a run (continuing is the default, the owner 2026-09-28).</summary>
+        /// <summary>The page entered this round itself, as the next one after a run (continuing is the default, 2026-09-28).</summary>
         public bool next;
     }
 
     /// <summary>What the page hands Unity to draw: the lobby, or nothing.</summary>
-    /// <summary>What a kept round still owes this browser's player (the owner 2026-09-14): looked at by the page, never collected by looking.</summary>
+    /// <summary>What a kept round still owes this browser's player (2026-09-14): looked at by the page, never collected by looking.</summary>
     [Serializable]
     public class LobbyWithdraw
     {
@@ -66,7 +66,7 @@ namespace Blwp
     }
 
     /// <summary>
-    /// ONE COLLECT LINE THE PAGE WROTE (kanban #153, the owner 2026-10-07): the page owns the words - another kept seed's record,
+    /// ONE COLLECT LINE THE PAGE WROTE (2026-10-07): the page owns the words - another kept seed's record,
     /// a failed collect, an uncollectable record - and their kind (other, failed, uncollectable); Unity only draws them.
     /// </summary>
     [Serializable]
@@ -90,22 +90,22 @@ namespace Blwp
         /// <summary>The signer nodes, by address, that did not answer the page's last lobby read within `answerS` seconds.</summary>
         public string[] unanswered = new string[0];
         public int answerS = 10;
-        /// <summary>The seats the lobby read asked, and those whose read failed outright (kanban #6): all failed is "none reached".</summary>
+        /// <summary>The seats the lobby read asked, and those whose read failed outright: all failed is "none reached".</summary>
         public int asked;
         public int failed;
         /// <summary>The page is taking the player to the next round (SPECTATE-2158): no lobby until exit game or its start.</summary>
         public bool continuing;
         /// <summary>
         /// The top of the page's "joining next round · exit game" box while it is up, a fraction of the game canvas from its
-        /// top, else 0 (kanban #9): the result card, its fold control and a wreck's summary end above it.
+        /// top, else 0: the result card, its fold control and a wreck's summary end above it.
         /// </summary>
         public float nextBoxTop;
-        /// <summary>The collect's own lines (kanban #153): at most three, drawn under the round rows; none when empty.</summary>
+        /// <summary>The collect's own lines: at most three, drawn under the round rows; none when empty.</summary>
         public LobbyCollectLine[] collect = new LobbyCollectLine[0];
     }
 
     /// <summary>
-    /// THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, the owner 2026-09-12 22:11-22:16).
+    /// THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, 2026-09-12 22:11-22:16).
     ///
     /// The lobby is the title screen: the rounds, who you are, PLAY and
     /// SPECTATE. What it shows is decided in the page and nowhere else - every
@@ -169,13 +169,13 @@ namespace Blwp
         }
 
         /// <summary>
-        /// A WITHDRAWAL AVAILABLE (the owner 2026-09-14): after start the page looks at every kept
+        /// A WITHDRAWAL AVAILABLE (2026-09-14): after start the page looks at every kept
         /// round, and while one still owes the player money the lobby says so, with the amount,
         /// until it is withdrawn. Nothing is collected by looking; the Withdraw is the page's.
         /// "" when there is none.
         /// </summary>
         /// <summary>
-        /// THE COLLECT LINES TO DRAW (kanban #153): the page's strings as it wrote them, empty ones dropped, at most three.
+        /// THE COLLECT LINES TO DRAW: the page's strings as it wrote them, empty ones dropped, at most three.
         /// </summary>
         public static LobbyCollectLine[] CollectLines(LobbyState s)
         {
@@ -209,7 +209,7 @@ namespace Blwp
         /// "" when every signer node answered.
         /// </summary>
         /// <summary>
-        /// THE EMPTY LIST'S LINE (kanban #6, MF 18: with every seat unreachable the lobby said "No round is open for entry right now"):
+        /// THE EMPTY LIST'S LINE (MF 18: with every seat unreachable the lobby said "No round is open for entry right now"):
         /// when every seat the lobby asked failed, that it reached none; else that no round is open.
         /// </summary>
         public static string EmptyListLine(LobbyState s)
@@ -241,7 +241,7 @@ namespace Blwp
         }
 
         /// <summary>
-        /// A REFUSED JOIN NAMES ITS ROUND (the owner 2026-09-26 16:56, phone: "Not joined: the node refused the entry: the round is
+        /// A REFUSED JOIN NAMES ITS ROUND (2026-09-26 16:56, phone: "Not joined: the node refused the entry: the round is
         /// closed" lay on the next paid round's row, which read exactly as the closed one had - "Say which round is closed, by the
         /// name the lobby already has for it, not 'the round'"). The name is the one a row and the PLAY line give a round: its kind
         /// and "round" and the first 8 of its id.
@@ -252,7 +252,7 @@ namespace Blwp
             if (string.IsNullOrEmpty(id)) return $"Not joined: {why}.";
             string name = (join.kindKnown ? Kind(join.free, join.stakeSats) + " " : "") + $"round {ShortId(id)}";
             if (Closed(why)) return $"Not joined: {name} is closed - the node refused its entry.";
-            // A ROUND WHOSE ENTRY IS NOT OPEN YET says when it opens, as the page words it (kanban #6) - the round is named in it
+            // A ROUND WHOSE ENTRY IS NOT OPEN YET says when it opens, as the page words it - the round is named in it
             if (why != null && why.StartsWith("Round ") && why.Contains("opens for entry")) return why;
             return $"Not joined {name}: {why}.";
         }
@@ -262,14 +262,14 @@ namespace Blwp
 
         /// <summary>A round's name in the lobby: the first 8 of its id.</summary>
         /// <summary>
-        /// THE HEADER ABOVE THE ROUNDS (kanban #43 follow-up, the owner 2026-10-06, plan comment 430): one shared line naming each
+        /// THE HEADER ABOVE THE ROUNDS (follow-up, 2026-10-06, plan comment 430): one shared line naming each
         /// kind listed with that kind's OWN signer numbers, from its rows - the same source as the row. Paid and free together:
         /// "ROUNDS · PAID: 5 OF 7 SIGNER NODES · FREE: 2 OF 2"; one kind: "ROUNDS · JOIN NEEDS 5 OF 7 SIGNER NODES". A kind whose
         /// rows differ says "PER ROUND" (each row keeps its "(N needed)"); a row without the committee size (an older page)
         /// says "N NEEDED" with no "OF"; nothing listed: "ROUNDS". No fixed number: every count is a row's.
         /// </summary>
         /// <summary>
-        /// THE HEADER, LONGEST FIRST, FOR THE NARROW SCREEN (kanban #8, measured on UI 133 at 390 px: "ROUNDS · JOIN NEEDS 5 OF 7
+        /// THE HEADER, LONGEST FIRST, FOR THE NARROW SCREEN (measured on UI 133 at 390 px: "ROUNDS · JOIN NEEDS 5 OF 7
         /// SIGNER NC" - the line was cut, even at the smallest font): the full line, then the same numbers in fewer words, then
         /// "ROUNDS". The drawer takes the longest that fits (SplashScreen FitWords).
         /// </summary>
@@ -314,7 +314,7 @@ namespace Blwp
         }
 
         /// <summary>
-        /// THE LINE UNDER THE ROUNDS (#43 follow-up): only the round PLAY joins, in its row's words - "PLAY joins round c71ee776 -
+        /// THE LINE UNDER THE ROUNDS (follow-up): only the round PLAY joins, in its row's words - "PLAY joins round c71ee776 -
         /// 7 signer nodes agree (5 needed)". Without a round to join: "PLAY waits for a round whose signer nodes agree" (never
         /// "both"), or "PLAY waits for an open round" when nothing is listed.
         /// </summary>
@@ -323,7 +323,7 @@ namespace Blwp
             : listed > 0 ? "PLAY waits for a round whose signer nodes agree" : "PLAY waits for an open round";
 
         /// <summary>
-        /// THE SAME LINE, LONGEST FIRST, FOR A PHONE (kanban #8, measured on UI 134 at 360 px: "ʼLAY joins round 9efb418b - 6 signer
+        /// THE SAME LINE, LONGEST FIRST, FOR A PHONE (measured on UI 134 at 360 px: "ʼLAY joins round 9efb418b - 6 signer
         /// nodes agree (5 needed" - cut at both ends): the full line, then the numbers in fewer words, then the round alone.
         /// </summary>
         public static string[] HintWordings(LobbyRow r, int listed) => r != null
@@ -332,7 +332,7 @@ namespace Blwp
 
         public static string ShortId(string id) => string.IsNullOrEmpty(id) ? "" : (id.Length > 8 ? id.Substring(0, 8) : id);
 
-        /// <summary>What a round is: FREE, or PAID and what it costs (the owner 2026-09-15 16:08: "PAID · 100 sats").</summary>
+        /// <summary>What a round is: FREE, or PAID and what it costs (2026-09-15 16:08: "PAID · 100 sats").</summary>
         public static string Kind(bool free, long stakeSats) => free ? "FREE" : $"PAID · {stakeSats} {(stakeSats == 1 ? "sat" : "sats")}";
 
         /// <summary>An address as the player reads it: no scheme, no trailing slash.</summary>
@@ -348,7 +348,7 @@ namespace Blwp
         public const float SessionPatienceS = 5f;
 
         /// <summary>
-        /// WHAT PLAY DOES ONCE THE PAGE HAS JOINED (M3.3-34, the owner 2026-09-13
+        /// WHAT PLAY DOES ONCE THE PAGE HAS JOINED (M3.3-34, 2026-09-13
         /// 07:11: "after PLAY the loading screen must not come again. PLAY starts
         /// the round"). The round is joined in THIS page - PLAY used to navigate to
         /// the round's link, the page reloaded and Unity loaded a second time. The
@@ -366,7 +366,7 @@ namespace Blwp
 
         /// <summary>
         /// The round PLAY joins when the player has picked none: a joinable FREE
-        /// round first (the owner 2026-09-15: a player with no sats who presses PLAY
+        /// round first (2026-09-15: a player with no sats who presses PLAY
         /// must not land on a paying round while a free one is listed - measured
         /// on the Daily, the paying round had the most entry left after every
         /// rollover and was PLAY's pick), and within the same kind the one with
@@ -429,11 +429,11 @@ namespace Blwp
         /// <summary>True when the page was sent here by PLAY in the lobby: the round starts without a second PLAY.</summary>
         public static bool AutoPlay() => Query("play") == "1";
 
-        /// <summary>The page's word on the address's play=1 (kanban #372): -1 not decided, 0 held to the round's start, 1 drive, 2 none.</summary>
+        /// <summary>The page's word on the address's play=1: -1 not decided, 0 held to the round's start, 1 drive, 2 none.</summary>
         public static int LinkAutoPlay() => BlwpLinkAutoPlay();
 
         /// <summary>
-        /// WHAT THE ADDRESS'S play=1 DOES NOW (kanban #372, measured on preview UI 137: a reload during a join held to its start drove
+        /// WHAT THE ADDRESS'S play=1 DOES NOW (measured on preview UI 137: a reload during a join held to its start drove
         /// 29 s before the start with no stake): "wait" while the page has not decided (at most LinkWaitS), "no" when it holds the join
         /// to the round's start (the lobby shows it, the start begins the run), "play" otherwise - an older page that says nothing too.
         /// </summary>
@@ -465,7 +465,7 @@ namespace Blwp
             public Rect you, name, key, head, more, list, howTo;
             public Rect[] howToCells;
             public bool howToGrid;
-            /// <summary>A phone upright (the owner 2026-09-15 11:57, option B): four pages in one box - panel
+            /// <summary>A phone upright (2026-09-15 11:57, option B): four pages in one box - panel
             /// 1, 2, 3, 4, one each (howToCells[i] is page i) - and the arrows beside them that turn them.</summary>
             public bool howToCarousel;
             public Rect howToPrev, howToNext;
@@ -491,7 +491,7 @@ namespace Blwp
             float gap = Mathf.Max(4f, font * 0.4f);
             float btnW = Mathf.Max(font * 5.2f, 72f);
 
-            // THE OWNER'S HOW-TO, FOUR PANELS (the owner 2026-09-14 07:55): load, cross
+            // THE OWNER'S HOW-TO, FOUR PANELS (2026-09-14 07:55): load, cross
             // the front, deliver, stake and win - each panel whole, never
             // stretched. A desktop or any landscape copy area gets them as one
             // row, 1-2-3-4; a portrait one (a phone upright, a tablet) as two
@@ -549,7 +549,7 @@ namespace Blwp
                 float hw = WidthFor(hh);
                 if (hw > copy.width) { hw = copy.width; hh = HeightFor(hw); }
                 howTo = new Rect(copy.x + (copy.width - hw) * 0.5f, copy.y, hw, hh);
-                // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57, option B): the four panels as
+                // A PHONE UPRIGHT TURNS PAGES (2026-09-15 11:57, option B): the four panels as
                 // 1-2 over 3-4 were hard to read and took too much of a phone. One panel per page, the
                 // arrows beside it; its room is the grid's, so the rounds still come first.
                 // `carousel: false` is that grid, kept as the measure.
@@ -612,14 +612,14 @@ namespace Blwp
         /// <summary>How much taller panels 1 and 2 are on their pages than the grid's top row, at least (the letter's number).</summary>
         public const float CarouselTaller = 1.15f;
 
-        /// <summary>The page panel `i` is on: one panel per page, 1 to 4 (the owner 2026-09-15, option B).</summary>
+        /// <summary>The page panel `i` is on: one panel per page, 1 to 4 (2026-09-15, option B).</summary>
         public static int HowToPageOf(int panel) => panel;
 
         /// <summary>How many pages the how-to has on a phone upright.</summary>
         public const int HowToPages = 4;
 
         /// <summary>
-        /// ONE PANEL PER PAGE, FOUR PAGES (the owner 2026-09-15, option B): 1, then 2, then 3, then 4,
+        /// ONE PANEL PER PAGE, FOUR PAGES (2026-09-15, option B): 1, then 2, then 3, then 4,
         /// the arrows beside them. In CSS pixels, as the page lays the title screen out (UiScale):
         /// a phone upright's copy area is 266-318 px wide, and 1 and 2 side by side cannot be
         /// taller there than the grid drew them (measured: 375x667, a 277 px copy area, the grid's
@@ -735,28 +735,28 @@ namespace Blwp
 
         /// <summary>
         /// One row's words, shortest first to go: the round id, then the joined count. A paying
-        /// row says what it costs in every form (the owner 2026-09-15 16:08: "Paid must read like
+        /// row says what it costs in every form (2026-09-15 16:08: "Paid must read like
         /// 'PAID · 100 sats'") - measured before, it said PAID and never how much.
         /// </summary>
         public static string[] RowWords(LobbyRow r) => RowWords(r, false);
 
         /// <summary>
         /// And with `named`, while a refusal names a round, every row says its own name right after its kind, so the round
-        /// the lobby still offers is told apart from the one that was refused (the owner 2026-09-26 16:56); the joined count and
+        /// the lobby still offers is told apart from the one that was refused (2026-09-26 16:56); the joined count and
         /// then the signer nodes go first to fit.
         /// </summary>
         public static string[] RowWords(LobbyRow r, bool named)
         {
             string kind = Kind(r.free, r.stakeSats);
-            // NEVER A ROUND LENGTH (kanban #43, the owner 2026-10-04 11:25Z: "closes 1:57" on a 90 s round). The countdown is the ENTRY's,
+            // NEVER A ROUND LENGTH (2026-10-04 11:25Z: "closes 1:57" on a 90 s round). The countdown is the ENTRY's,
             // so the row says when the round starts and until when it can be joined, from the page's startS and leftS; an older
             // page sends no startS (-1) and the row then says only "join until".
             string join = r.leftS >= 0 ? $"join until {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
             string left = r.startS > 0 ? $"starts in {r.startS / 60}:{r.startS % 60:00} · {join}"
                 : r.startS == 0 ? $"started · {join}"
                 : join;
-            // THE PLAYER IS NEVER TOLD "SIGNER NODE" (the owner 2026-09-15 16:22): the nodes that sign the
-            // round are signer nodes, and the players in it have joined. "7 signer nodes (5 needed)", not "7 of 5" (#43).
+            // THE PLAYER IS NEVER TOLD "SIGNER NODE" (2026-09-15 16:22): the nodes that sign the
+            // round are signer nodes, and the players in it have joined. "7 signer nodes (5 needed)", not "7 of 5".
             // A ROUND WHOSE ENTRY HAS CLOSED SAYS SO rather than "waiting" (the page no longer offers it: measured, "closes 0:00"
             // with PLAY enabled for 237 s behind a silent signer node).
             string nodes = $"{r.agree} signer {(r.agree == 1 ? "node" : "nodes")} ({r.needed} needed)";
@@ -771,7 +771,7 @@ namespace Blwp
                     $"{kind} · round {id} · {left} · {signers}",
                     $"{kind} · round {id} · {left}",
                 };
-            // AND SHORTER, FOR A PHONE (kanban #8, measured on UI 133 at 390 px: "PAID · 100 sats · starts in 0:28 · join until
+            // AND SHORTER, FOR A PHONE (measured on UI 133 at 390 px: "PAID · 100 sats · starts in 0:28 · join until
             // 1:00 · 7 signer node" - the last wording still too wide, cut): the nodes as a count, then the times alone
             string few = r.joinable ? $"{r.agree} {(r.agree == 1 ? "node" : "nodes")}" : r.leftS == 0 ? "entry closed" : "waiting";
             return new[]

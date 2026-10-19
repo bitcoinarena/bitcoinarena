@@ -2,11 +2,11 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SERIES A LINE (ARENA_SERIES_FILE, the body of POST /series, and GET /series-template): its template, hex; then `count=N` for
 // a tail (the 82/90 fork: fewer than a day's 960 rounds - its id is taken over that count) and `cut=N` for a series replaced from
-// round N by its tail; and for a grid series (kanban #293, the owner 2026-10-12: an RPS grid published as a short series) `grid`,
-// `period=N` (ms) and `count=N` - all three in its id. A series whose template names its creator (kanban #313) carries
+// round N by its tail; and for a grid series (2026-10-12: an RPS grid published as a short series) `grid`,
+// `period=N` (ms) and `count=N` - all three in its id. A series whose template names its creator carries
 // `creator=<128 hex>`: the creator's signature over the series id (creator.js seriesCreatorStands) - beside the id, not in it.
 //
-// IN THE PROTOCOL, NOT THE NODE (kanban #362): a page reads a line too - the template of a market on a game's series source round,
+// IN THE PROTOCOL, NOT THE NODE: a page reads a line too - the template of a market on a game's series source round,
 // taken from any seat and believed only once it hashes to the series id the round names (series.js seriesId). No Buffer here.
 import { decodeRoundContract, encodeRoundContract } from './contracts.js';
 import { toHex, fromHex } from './hash.js';

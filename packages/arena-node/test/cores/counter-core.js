@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COUNTER'S CORE (test/cores/counter.js registers it): a file of its own and nothing else, as a node runs a core - in
-// its sandbox, importing no module of the node's (kanban #328, spec §0A.6).
+// its sandbox, importing no module of the node's (spec §0A.6).
 // sha256 of a string's UTF-8 bytes, as hex, in the language alone: a core runs in a sandbox with no node:crypto (§0A.6)
 const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01,
   0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,

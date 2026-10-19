@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// THE RUN ENDS WHEN THE CORE SAYS DELIVERED (the owner 2026-09-15 16:14). Measured before, replaying
+/// THE RUN ENDS WHEN THE CORE SAYS DELIVERED (2026-09-15 16:14). Measured before, replaying
 /// every run a signer node held: each truck that drove into the miner's mouth was DELIVERED in the
 /// core, then drove on 10-89 s to the tunnel's back wall, the HUD reading 11-30 m to the drop-off;
 /// and a live round's delivery teleported the truck to the bay in a core that still said DELIVERED,
@@ -29,7 +29,7 @@ public class RunEndsAtDeliveredTests
     }
 
     /// <summary>
-    /// A SECOND PLAY IN THE SAME TAB STARTS A NEW ROUND (the owner 2026-09-15 16:14, hole 1). Measured
+    /// A SECOND PLAY IN THE SAME TAB STARTS A NEW ROUND (2026-09-15 16:14, hole 1). Measured
     /// before: `BlwpNet.Running` never went false and the page refused a second session, so after a
     /// run ended the lobby's next PLAY could never open one; and the truck, handed back at the end,
     /// was never driven by the core again.
@@ -56,16 +56,16 @@ public class RunEndsAtDeliveredTests
     }
 
     /// <summary>
-    /// A run the ADDRESS started is a lobby run too (the owner 2026-09-16 14:24). PLAY leaves the round's link with
+    /// A run the ADDRESS started is a lobby run too (2026-09-16 14:24). PLAY leaves the round's link with
     /// `play=1`; opened again, auto-play starts the run on the fourth frame, before the first lobby poll, and on
     /// 0.0.1386 that run ended on "RUN STOPPED - the core said DELIVERED" with no lobby ever coming back.
     /// </summary>
     /// <summary>
-    /// EXIT from SPECTATE is the way back to the lobby (the owner 2026-09-16 14:45). Measured on 0.0.1391: EXIT closed
+    /// EXIT from SPECTATE is the way back to the lobby (2026-09-16 14:45). Measured on 0.0.1391: EXIT closed
     /// the free camera and the lobby stayed hidden 15 s later, over a locked truck.
     /// </summary>
     /// <summary>
-    /// "0:00 LEFT" IS THE TICK THE CORE ENDS THE RUN ON (the owner 2026-09-16 15:36: "when time hits zero the round does
+    /// "0:00 LEFT" IS THE TICK THE CORE ENDS THE RUN ON (2026-09-16 15:36: "when time hits zero the round does
     /// not end"). The HUD read a Unity stopwatch from scene load; the core ends a run MISSED after its block's own
     /// ticks from roll-out. With a core the clock is the core's count.
     ///
@@ -87,7 +87,7 @@ public class RunEndsAtDeliveredTests
     }
 
     /// <summary>
-    /// WASTED, THEN THE LOBBY (the owner 2026-09-16 17:00). A wreck ends the run in its own tick; the lobby waits for the
+    /// WASTED, THEN THE LOBBY (2026-09-16 17:00). A wreck ends the run in its own tick; the lobby waits for the
     /// burn.
     /// </summary>
     [Test]

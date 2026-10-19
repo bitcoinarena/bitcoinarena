@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// CHECK AN OBJECTION BUNDLE AS A STRANGER (§13A, kanban #24: "Anyone can check this; there is no judgement involved, only
+// CHECK AN OBJECTION BUNDLE AS A STRANGER (§13A,: "Anyone can check this; there is no judgement involved, only
 // replay"). Everything is read off a signer node's public doors - the round's contract (GET /round), the entry (GET
 // /entry), the signed results (GET /results), the beacon (GET /randomness) - and the replay runs HERE, under the core the
 // round names from this checkout's own cores. Nothing the seat says about the objection is asked; the seat only hands over
@@ -39,7 +39,7 @@ export async function checkObjectionAt({ base, roundId, entryId, bundle, fetcher
   const signedResultId = seen.ok && seen.final ? bytesOf(seen.runId) : null;
   const beacon = await get(`/randomness?round=${hex(rid)}`);
   const roundRandomness = beacon.bytes.length === 32 ? beacon.bytes : bytesOf(JSON.parse(Buffer.from(beacon.bytes).toString()).hash);
-  // THE ROUND'S GAME, as a node hosts it (kanban #203): its core and config, and the configs it plays as one world per round
+  // THE ROUND'S GAME, as a node hosts it: its core and config, and the configs it plays as one world per round
   const game = hostedPlugins([NEXTBLOCK]).get(hex(contract.gameId));
   if (!game) return { holds: false, step: 'replay', why: `this tool replays nextblock only, and that round plays game ${hex(contract.gameId).slice(0, 16)}` };
   const found = coreOfGame(contract, game);

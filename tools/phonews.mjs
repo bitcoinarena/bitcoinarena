@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// #326 item 16: a phone opens every guardian wss:// endpoint (A and B), from the live page's origin, and asks each for its session count
+// item 16: a phone opens every guardian wss:// endpoint (A and B), from the live page's origin, and asks each for its session count
 import WebSocket from 'ws'; import { spawn } from 'node:child_process'; import fs from 'node:fs';
 const [shot = 'phonews.png'] = process.argv.slice(2); const port = 9454;
 const dir = fs.mkdtempSync('/tmp/claude-1000/pw-');

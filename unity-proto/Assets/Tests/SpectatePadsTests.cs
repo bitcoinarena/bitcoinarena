@@ -8,7 +8,7 @@ using UnityEngine.InputSystem.LowLevel;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// SPECTATE, FLOWN WITH A MOUSE (the owner 2026-09-18 21:52, photographed: "I can press it with the mouse but it won't do
+/// SPECTATE, FLOWN WITH A MOUSE (2026-09-18 21:52, photographed: "I can press it with the mouse but it won't do
 /// anything ... and only on spectate").
 ///
 /// The pad under his pointer was drawn HELD - TouchControls reads the mouse - while the camera stood still, because

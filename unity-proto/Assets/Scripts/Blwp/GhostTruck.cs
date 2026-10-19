@@ -118,13 +118,13 @@ namespace Blwp
         ///
         /// `lie` is `CoreDrivenTruck.Lie` at this pose - the pitch and roll of the four contact points, which is how
         /// the LOCAL truck is drawn and carries no physics: there is no rigidbody here, no collider, and nothing is
-        /// simulated. Without it a ghost stood dead level on a hillside (the owner 2026-09-18 10:42, "ghosts have no
+        /// simulated. Without it a ghost stood dead level on a hillside (2026-09-18 10:42, "ghosts have no
         /// physics, they must climb hills the same as his own truck"). Null keeps the flat heading, which is what a
         /// page with no ground of its own can say.
         /// </summary>
         public void Show(int x, int z, int heading, float? y, Quaternion? lie)
         {
-            // THE WHOLE POSE IS THE PICTURE THAT JUST LANDED, IN THIS FRAME (the owner 2026-09-18 05:45).
+            // THE WHOLE POSE IS THE PICTURE THAT JUST LANDED, IN THIS FRAME (2026-09-18 05:45).
             //
             // The place bound here first and the FACING was still walked from the pose before it over one ease - which
             // left the facing carrying exactly the whole-interval lag the place had just lost: in the frame a picture

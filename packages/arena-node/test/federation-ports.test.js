@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY NODE SERVES EVERY FEDERATION (kanban #348, RULED the owner 2026-10-13): the lock port is a router - its home federation
+// EVERY NODE SERVES EVERY FEDERATION (RULED 2026-10-13): the lock port is a router - its home federation
 // as before, and another federation's own port, joined on first need with the invite its signed record carries.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

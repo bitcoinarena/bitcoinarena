@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEATS AGREE BEFORE A WINNER IS PAID, AS A THRESHOLD OF SIGNATURES (the owner 2026-09-29 17:33, PRIORITIES item 2:
+// THE SEATS AGREE BEFORE A WINNER IS PAID, AS A THRESHOLD OF SIGNATURES (2026-09-29 17:33, PRIORITIES item 2:
 // "Seats agree before a winner payout as a threshold, not over HTTP. Prove it on regtest." §20: nodes sign what the
 // round owes and a threshold of matching signatures makes it final; §23.2: every settlement node signs only what it
 // rebuilt itself).

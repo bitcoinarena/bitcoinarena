@@ -25,7 +25,7 @@ import { PROTOCOL_VERSION, speaksVersion, TYPE_RERUN_RESULT, TAG } from './const
 import { encodePlayerResult, decodePlayerResult, resultId, RESULT_BYTES, resultBytesOf } from './result.js';
 import { receiptsNeeded } from './threshold.js';
 
-/** 1 type + 2 version + 32 contradicted run + 8 signed at + the PlayerResult (168 bytes; 178 with a price round's front, #312). */
+/** 1 type + 2 version + 32 contradicted run + 8 signed at + the PlayerResult (168 bytes; 178 with a price round's front). */
 export const RERUN_HEAD_BYTES = 1 + 2 + 32 + 8;
 export const RERUN_BYTES = RERUN_HEAD_BYTES + RESULT_BYTES;
 export const RERUN_SIGNATURE_BYTES = 64;
@@ -54,7 +54,7 @@ export function encodeRerunResult({ contradictedRunId, signedAtMs, result }) {
   w.u8(TYPE_RERUN_RESULT);
   w.u16(PROTOCOL_VERSION);
   w.bytes32(contradictedRunId);
-  // WHEN ITS SIGNER SIGNED IT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01; it named a block until
+  // WHEN ITS SIGNER SIGNED IT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01; it named a block until
   // then): a holder counts the re-run only if this time is within the 5 s tolerance of its own clock when it arrived.
   w.u64(BigInt(signedAtMs));
   const res = encodePlayerResult(result);
@@ -112,7 +112,7 @@ export function rerunIsAgreed({
   try { needed = receiptsNeeded(slots); } catch (e) { return { ok: false, agreed: 0, why: e.message }; }
 
   const joined = new Set(signerNodes.map(toHex));
-  // ONE SET OF RECORDS, ONE ANSWER, WHATEVER THEIR ORDER (kanban #146): each signer node's valid records are gathered
+  // ONE SET OF RECORDS, ONE ANSWER, WHATEVER THEIR ORDER: each signer node's valid records are gathered
   // first, and a node that signed two DIFFERENT outcomes for this contradicted run is counted for neither. Measured before:
   // it was counted for whichever record came first, so 4 honest re-runs plus its two read "agreed" in one order and
   // "4 of 5" in the other - two seats holding the same records decided two ways.

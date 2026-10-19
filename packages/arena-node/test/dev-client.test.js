@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEV CLIENT BESIDE A NODE, ON ITS DASHBOARD (kanban #357, the owner 2026-10-14: "make sure node 1 and node 2 show it in their dashboard,
+// A DEV CLIENT BESIDE A NODE, ON ITS DASHBOARD (2026-10-14: "make sure node 1 and node 2 show it in their dashboard,
 // each node can set up a dev client and it would show there"): read from the client's own files, never its key.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CORE'S SANDBOX, ATTACKED (spec §0A.6, kanban #328): "no network, no file system, no clock, no randomness but the
+// THE CORE'S SANDBOX, ATTACKED (spec §0A.6): "no network, no file system, no clock, no randomness but the
 // round's seed". One hostile core per attack, each a file of its own read and hashed by the node as any core is: refused
 // when it is loaded (an import outside its files) or thrown inside the sandbox when it runs - the replay answers not ok,
 // with the reason - and the node keeps answering after every one. And the census: what a core finds on its global object.
@@ -87,7 +87,7 @@ const RUN = [
   ['escape: Error.prepareStackTrace for the node\'s frames', 'escape', { step: 'Error.prepareStackTrace = (e, s) => s' }, /read only|Cannot assign/],
   ['escape: the global\'s console / Buffer / structuredClone', 'escape', { step: 'console.log(Buffer, structuredClone)' }, /console is not defined/],
   ['endless loop in a step', 'endless loop', { step: 'for (;;) {}' }, /did not stop within 400 ms \(replay\): its thread was ended/],
-  // the chain allocates a promise per turn: it runs out of its heap first, and the node hears that at once (kanban #343)
+  // the chain allocates a promise per turn: it runs out of its heap first, and the node hears that at once
   ['endless microtask chain', 'endless loop', { step: 'const go = () => Promise.resolve().then(go); go()' }, /did not stop within 400 ms \(replay\): its thread was ended|thread died in replay \(out of its heap\)/],
 ];
 
@@ -150,7 +150,7 @@ test('a good core still replays after every attack, and the report', async () =>
   for (const row of rows) console.log('ROW ' + JSON.stringify(row));
 });
 
-// ITS MEMORY (kanban #343): time alone did not bound it - a core that allocated in a loop took the node to 2.9 GB before a
+// ITS MEMORY: time alone did not bound it - a core that allocated in a loop took the node to 2.9 GB before a
 // 20 s deadline. Each attack must end the core at its limit, the node must keep answering, and the memory must come back.
 const MB = 1048576;
 const MEMORY = [

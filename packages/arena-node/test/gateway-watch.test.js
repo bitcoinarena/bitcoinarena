@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GUARDIAN WATCHES ITS FEDERATION'S GATEWAYS (spec §23A.9, kanban #471): only signed claims of seated guardians, for this federation,
+// A GUARDIAN WATCHES ITS FEDERATION'S GATEWAYS (spec §23A.9): only signed claims of seated guardians, for this federation,
 // stand; a gateway that serves the federation (routing_info not null) counts as up; the ranking follows the probes; a forged or
 // foreign claim is ignored.
 import { test } from 'node:test';

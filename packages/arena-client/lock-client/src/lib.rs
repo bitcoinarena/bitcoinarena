@@ -58,7 +58,7 @@ use fedimint_lnv2_common::{
 };
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
-/// A DONATION'S PAYMENT IMAGE (kanban #156, the owner 2026-10-05): the sender's 32-byte x-only player key when the page names
+/// A DONATION'S PAYMENT IMAGE (2026-10-05): the sender's 32-byte x-only player key when the page names
 /// it ("image", 64 hex), else the zero hash as before. Nobody can make a preimage of either, so the claim path stays dead and
 /// the recipient's Refund is the only spend; the key is then part of the contract the guardians store, and of its id.
 fn donation_image(d: &serde_json::Value) -> Result<PaymentImage, JsError> {
@@ -72,7 +72,7 @@ fn donation_image(d: &serde_json::Value) -> Result<PaymentImage, JsError> {
 
 fn js(e: impl std::fmt::Display) -> JsError { JsError::new(&e.to_string()) }
 
-/// A deposit invoice's life in seconds (kanban #319): short, so a stalled payment returns to its payer within minutes.
+/// A deposit invoice's life in seconds: short, so a stalled payment returns to its payer within minutes.
 const DEPOSIT_INVOICE_SECS: u32 = 600;
 
 #[wasm_bindgen]
@@ -81,18 +81,18 @@ extern "C" {
     fn console_error(s: &str);
     #[wasm_bindgen(js_namespace = console, js_name = trace)]
     fn console_trace(s: &str);
-    /// performance.now(): a sub-millisecond clock in the page and in node (kanban #178 step 1 timing)
+    /// performance.now(): a sub-millisecond clock in the page and in node (timing)
     #[wasm_bindgen(js_namespace = performance, js_name = now)]
     pub(crate) fn perf_now() -> f64;
-    /// Date.now(): the wall clock, to set against the harness's and the guardians' clocks (kanban #178 step 1)
+    /// Date.now(): the wall clock, to set against the harness's and the guardians' clocks
     #[wasm_bindgen(js_namespace = Date, js_name = now)]
     fn js_sys_date_now() -> f64;
-    /// #178 step 1 probe: globalThis.__blwp178(ms) if the harness set it (absent in the page: a no-op there)
+    /// step 1 probe: globalThis.__blwp178(ms) if the harness set it (absent in the page: a no-op there)
     #[wasm_bindgen(js_namespace = globalThis, js_name = __blwp178, catch)]
     fn probe_178(ms: f64) -> Result<(), wasm_bindgen::JsValue>;
 }
 
-/// KANBAN #178 STEP 1 (the owner 2026-10-05, comment 348): timing only, no behaviour change. The client store's commits
+/// KANBAN STEP 1 (2026-10-05, comment 348): timing only, no behaviour change. The client store's commits
 /// (count, ms) since the last take, and every round of the faster 5-of-7 read in `lockAccepted`.
 pub(crate) static STORE_COMMITS: std::sync::Mutex<(u64, f64)> = std::sync::Mutex::new((0, 0.0));
 static READ_ROUNDS: std::sync::Mutex<Vec<serde_json::Value>> = std::sync::Mutex::new(Vec::new());
@@ -133,7 +133,7 @@ async fn credited(ln: &LightningClientModule, fee: &PaymentFee, invoice: u64) ->
     Ok(contract.msats.saturating_sub(claim.msats))
 }
 
-/// A CONSENSUS REQUEST ASKED AGAIN WHEN THE GUARDIANS' SOCKETS FAIL (the owner 2026-10-02, playtest: "Not joined PAID ...
+/// A CONSENSUS REQUEST ASKED AGAIN WHEN THE GUARDIANS' SOCKETS FAIL (2026-10-02, playtest: "Not joined PAID ...
 /// Federation rpc error { method => consensus_block_count, 2 => Transport error: WebSocket connection failed, 3 => ..., 5 =>
 /// ... }"): a consensus answer needs the threshold of guardians, and from some networks a guardian's first socket fails
 /// (measured: error, error, open on retry) - one try made it no answer and the join failed. Up to 8 tries, 300 ms doubling
@@ -164,7 +164,7 @@ async fn block_count(api: &DynModuleApi) -> anyhow::Result<u64> {
 }
 
 /// What the guardians hold at an outpoint: the contract id and the blocks LEFT.
-/// A THRESHOLD OF GUARDIANS AGREEING ON THE CONTRACT STORED AT AN OUTPUT (kanban #178). The endpoint answers
+/// A THRESHOLD OF GUARDIANS AGREEING ON THE CONTRACT STORED AT AN OUTPUT. The endpoint answers
 /// (contract id, blocks left), and each guardian counts blocks left from its own consensus block count - measured on the
 /// 7-guardian regtest federation, those differ for up to ~1 s around a block-count change, and a threshold of IDENTICAL
 /// answers (request_current_consensus) waits that out. The contract id is what the lock is; so this asks for a threshold
@@ -191,7 +191,7 @@ impl fedimint_api_client::query::QueryStrategy<Option<(ContractId, u64)>, Option
     }
 }
 
-/// #178 step 1: the same read, with each guardian's answer and when (ms after `t0`): "<peer>S" / "<peer>N" @ms, in
+/// step 1: the same read, with each guardian's answer and when (ms after `t0`): "<peer>S" / "<peer>N" @ms, in
 /// answer order, or the call's error. Behaves as `stored_now`.
 async fn stored_now_traced(api: &DynModuleApi, outpoint: OutPoint, t0: f64) -> (Option<(ContractId, u64)>, serde_json::Value) {
     let peers = api.all_peers().to_num_peers();
@@ -263,7 +263,7 @@ pub struct LockClient {
 }
 
 /// A LOCK'S CONTRACT FROM ITS FIELDS (JSON: paymentImage {kind, bytes}, amountMsat, claimPk, refundPk, expiration) - a stake
-/// lock's image is a point, a node-fee lock's (and a payout contract's) a hash. Kanban #191 (measured live 2026-10-06 07:58Z,
+/// lock's image is a point, a node-fee lock's (and a payout contract's) a hash. (measured live 2026-10-06 07:58Z,
 /// round 422ecd2e): the redeem built only point images, so a refused round's node-fee lock - forfeited by the seats like its
 /// stake - was refused here ("only a stake lock, whose image is a point, is redeemed here") and stayed to its expiry.
 fn contract_from_fields(fields: &str) -> Result<OutgoingContract, JsError> {
@@ -320,7 +320,7 @@ impl LockClient {
         Self::start(invite, federation_id, secret, store, false).await
     }
 
-    /// THE WALLET ON A NEW DEVICE (#27, the owner 2026-10-04: "patch Fedimint's recovery so it runs in the browser"): as
+    /// THE WALLET ON A NEW DEVICE (2026-10-04: "patch Fedimint's recovery so it runs in the browser"): as
     /// `join`, but a store that holds no wallet yet is RECOVERED from the federation instead of joined empty - Fedimint's
     /// own recovery (mintv2 scans the federation's issuance history for the notes this secret's keys made) runs, and
     /// this waits for it. A secret that never held notes recovers an empty wallet; a kept store opens as with `join`.
@@ -451,7 +451,7 @@ impl LockClient {
         forfeit: String,
         player_secret: String,
     ) -> Result<String, JsError> {
-        // THE STAKE (image a point) AND A REFUSED ROUND'S NODE-FEE LOCK (image a hash) alike (kanban #191)
+        // THE STAKE (image a point) AND A REFUSED ROUND'S NODE-FEE LOCK (image a hash) alike
         let contract = contract_from_fields(&fields)?;
         let refund_pk = contract.refund_pk;
         let expiration = contract.expiration;
@@ -559,7 +559,7 @@ impl LockClient {
         let invoice: lightning_invoice::Bolt11Invoice = invoice.trim().parse().map_err(|e| js(format!("{e:?}")))?;
         let invoice_msat = invoice.amount_milli_satoshis();
         let balance_before = self.client.get_balance_for_btc().await.map_err(js)?;
-        // NEVER THE GATEWAY ON THE INVOICE'S OWN NODE (the owner 2026-10-01 08:34, measured: a withdrawal to an invoice
+        // NEVER THE GATEWAY ON THE INVOICE'S OWN NODE (2026-10-01 08:34, measured: a withdrawal to an invoice
         // made on LND-a went to gateway A - the stock pick for a payee that is a gateway's node - which took it for a
         // federation receive and cancelled it, "No corresponding decryption contract available"; refunded). The
         // preferred gateway first (the page's funded one), then the federation's list: the first whose Lightning
@@ -634,7 +634,7 @@ impl LockClient {
         Ok(self.client.get_balance_for_btc().await.map_err(js)?.msats.to_string())
     }
 
-    /// THE E-CASH STILL BEING ISSUED to this wallet, in msat, as a decimal string (kanban #376): every pending mintv2 output
+    /// THE E-CASH STILL BEING ISSUED to this wallet, in msat, as a decimal string: every pending mintv2 output
     /// state machine's denominations - a recovery's re-issue, a deposit's notes, a payment's change. `balanceMsat` counts
     /// none of it until its machine finishes; held + issuing is what the wallet will hold.
     #[wasm_bindgen(js_name = issuingMsat)]
@@ -704,7 +704,7 @@ impl LockClient {
         let description = Bolt11InvoiceDescription::Direct(String::new());
         let gateway = if gateway.is_empty() { None } else { Some(SafeUrl::parse(&gateway).map_err(js)?) };
         let (invoice, op) = ln
-            // 600 s (kanban #319, spec §23.1: "the invoice's CLTV is short, and a client moves to the next gateway after a
+            // 600 s (spec §23.1: "the invoice's CLTV is short, and a client moves to the next gateway after a
             // timeout"): a payment a gateway takes and stalls on returns to the payer within minutes, not an hour
             .receive(amount, DEPOSIT_INVOICE_SECS, description, gateway, serde_json::Value::Null)
             .await
@@ -712,7 +712,7 @@ impl LockClient {
         Ok(serde_json::json!({ "invoice": invoice.to_string(), "operation": op.fmt_full().to_string() }).to_string())
     }
 
-    /// THE GATEWAYS THE FEDERATION LISTS (kanban #319, spec §23.1: "made through any gateway the federation lists"): the
+    /// THE GATEWAYS THE FEDERATION LISTS (spec §23.1: "made through any gateway the federation lists"): the
     /// union of every guardian's registered list, most-listed first - JSON ["https://...", ...]. The page tries them in
     /// turn and moves to the next after a timeout.
     pub async fn gateways(&self) -> Result<String, JsError> {
@@ -753,7 +753,7 @@ impl LockClient {
     }
 
     /// THE FEDERATION'S GUARDIANS, off the config this client downloaded and
-    /// checked on join (the owner 2026-09-15 07:33: every guardian has its own
+    /// checked on join (2026-09-15 07:33: every guardian has its own
     /// bond) - as JSON { federation_id, guardians, threshold, keys: [{ peer, key }] }.
     /// Each key is the guardian's 33-byte broadcast key, the one a census node
     /// advertises under guardian_of[] (§5A.1); the threshold is the federation's
@@ -782,7 +782,7 @@ impl LockClient {
         .to_string())
     }
 
-    /// THE WHOLE BALANCE AS E-CASH (the owner 2026-10-02: "Can't we show all wallets we have and combine all of them when
+    /// THE WHOLE BALANCE AS E-CASH (2026-10-02: "Can't we show all wallets we have and combine all of them when
     /// playing a round?"): the stock mint module's send of everything this wallet holds, as the prefixed base32 string
     /// another wallet of the same federation receives. Answers {"msat", "ecash"}; ecash null when the wallet is empty.
     /// The caller keeps the string until it is received - spent here, it exists nowhere else.
@@ -801,7 +801,7 @@ impl LockClient {
         .to_string())
     }
 
-    /// THE OUTPUTS STILL IN ISSUANCE (kanban #323, spec 23A.5 "Notes still in issuance at the halt"): everything issued to this
+    /// THE OUTPUTS STILL IN ISSUANCE (spec 23A.5 "Notes still in issuance at the halt"): everything issued to this
     /// wallet's seed that it neither holds as a note nor has spent - read from one answering guardian, so it works while the
     /// federation is halted. Answers [{"nonce", "amount_msat", "request"}]; `request` is what a pending-output claim presents.
     #[wasm_bindgen(js_name = pendingOutputs)]
@@ -860,7 +860,7 @@ impl LockClient {
         self.lock_to(image, amount_msat, claim_pk, refund_pk, expiry_delta).await
     }
 
-    /// THE STAKE LOCK AND THE FEE LOCK IN ONE TRANSACTION (the owner 2026-10-02, the join's 2-3 s: "Cut whatever is between the
+    /// THE STAKE LOCK AND THE FEE LOCK IN ONE TRANSACTION (2026-10-02, the join's 2-3 s: "Cut whatever is between the
     /// click and the loaded round"). Measured on testnet4 the two locks were two transactions one after the other - each a
     /// block count, a submit, the wait for the guardians to accept it, a search of its outputs and a second block count:
     /// 'locking the stake' to 'fee lock: minted' 7.2 s in a paid join (Q4, 22:29:17-25Z). Here: one block count, one
@@ -973,7 +973,7 @@ impl LockClient {
         Ok(serde_json::json!({ "stake": describe(&stake, found[0])?, "fee": describe(&fee, found[1])? }).to_string())
     }
 
-    /// THE STAKE, ITS FEE LOCK AND THE PLAYER'S DONATION IN ONE TRANSACTION (the owner 2026-10-03, FEDERATION.md "Donations in
+    /// THE STAKE, ITS FEE LOCK AND THE PLAYER'S DONATION IN ONE TRANSACTION (2026-10-03, FEDERATION.md "Donations in
     /// the federation"): the stake lock and - when `fee_hash` is not empty - the fee lock as `lockBoth` builds them, and one
     /// payout contract per entry of `donations` (JSON `[{"pk": 33-byte hex, "msat": "n"}, ...]` in the set's order): the zero
     /// hash image, expired from the start, claim, refund and ephemeral key all the recipient's - only that key can spend it,
@@ -1104,7 +1104,7 @@ impl LockClient {
         .to_string())
     }
 
-    /// THE LOCK SUBMITTED, NOT YET ACCEPTED (the owner 2026-10-03, OPEN-LIST-2140 item 3: "A funded paid join of an already-open
+    /// THE LOCK SUBMITTED, NOT YET ACCEPTED (2026-10-03, OPEN-LIST-2140 item 3: "A funded paid join of an already-open
     /// round is still 3.5-4.7 s from PLAY to the entry committed ... The leftover is the lock's acceptance"). The same
     /// transaction as `lockWithDonations` - the stake lock, the fee lock when `fee_hash` is not empty, one payout contract per
     /// donation - answered the moment the guardians are handed it: its txid, the operation to await it by, and each output
@@ -1112,7 +1112,7 @@ impl LockClient {
     /// 0, donations 1 and 2), so the entry can name them now; `lockAccepted` checks every one against what the guardians
     /// store once they accept it. JSON: { operation, txid, block_count_at_lock, expiry_delta, with_fee, outputs: [{ out_idx,
     /// role, computed_contract_id, computed_expiration, amount_msat, recipient_pk }] }.
-    /// HOW MANY TWEAKS ARE GROUND AND WAITING (kanban #178): a lock takes one per change note; the lobby keeps the queue
+    /// HOW MANY TWEAKS ARE GROUND AND WAITING: a lock takes one per change note; the lobby keeps the queue
     /// (200) full before a join, so lockSubmit does not wait for grinding.
     #[wasm_bindgen(js_name = tweaksReady)]
     pub fn tweaks_ready(&self) -> Result<u32, JsError> {
@@ -1134,7 +1134,7 @@ impl LockClient {
         donations: String,
     ) -> Result<String, JsError> {
         let api = self.client.api().with_module(self.lnv2);
-        // #178 step 1: (a) the count - kept or read; (b) building; (c) finalize and submit, the mint's tweaks, the store
+        // step 1: (a) the count - kept or read; (b) building; (c) finalize and submit, the mint's tweaks, the store
         let t_a = perf_now();
         let _ = take_store();
         let _ = fedimint_mintv2_client::BLWP_OUTPUT_TIMING.lock().map(|mut g| g.clear());
@@ -1223,7 +1223,7 @@ impl LockClient {
         .to_string())
     }
 
-    /// A PAYMENT TO KEYS AND NOTHING ELSE (kanban #365, an in-game item's purchase): one transaction from this wallet's e-cash whose
+    /// A PAYMENT TO KEYS AND NOTHING ELSE (an in-game item's purchase): one transaction from this wallet's e-cash whose
     /// outputs are only pre-expired payout contracts - each `payouts` entry (JSON `[{"pk": 33-byte hex, "msat": "n", "image": 64
     /// hex}]`, in the order given) one contract its payee alone can Refund, built exactly as `lockSubmit` builds a donation's. No
     /// stake, no fee lock, no block count (a payout's expiration is 0). Answered on submission in `lockSubmit`'s shape (every output
@@ -1288,7 +1288,7 @@ impl LockClient {
     /// not at all, is an error: the entry named that outpoint.
     #[wasm_bindgen(js_name = lockAccepted)]
     pub async fn lock_accepted(&self, submitted: String) -> Result<String, JsError> {
-        // #178 step 1: the inner body returns with every local dropped; "returned" is marked after that
+        // step 1: the inner body returns with every local dropped; "returned" is marked after that
         let out = self.lock_accepted_inner(submitted).await?;
         let returned = js_sys_date_now();
         let _ = probe_178(returned);
@@ -1298,7 +1298,7 @@ impl LockClient {
     }
 
     async fn lock_accepted_inner(&self, submitted: String) -> Result<String, JsError> {
-        // #178 step 1: wall clock (ms since the epoch) at entry, at the race's start and end, and at the answer
+        // step 1: wall clock (ms since the epoch) at entry, at the race's start and end, and at the answer
         let w_entry = js_sys_date_now();
         let s: serde_json::Value = serde_json::from_str(&submitted).map_err(js)?;
         let operation = OperationId::from_str(s.get("operation").and_then(|v| v.as_str()).ok_or_else(|| js("no operation"))?).map_err(js)?;
@@ -1307,7 +1307,7 @@ impl LockClient {
         let expiry_delta = s.get("expiry_delta").and_then(|v| v.as_u64()).ok_or_else(|| js("no expiry delta"))?;
         let outputs = s.get("outputs").and_then(|v| v.as_array()).ok_or_else(|| js("no outputs"))?.clone();
         let api = self.client.api().with_module(self.lnv2);
-        // THE ACCEPTANCE, LEARNED AT ONCE (kanban #178, the owner 2026-10-05, option A): measured on the 7-guardian regtest
+        // THE ACCEPTANCE, LEARNED AT ONCE (2026-10-05, option A): measured on the 7-guardian regtest
         // federation, the client's transaction state machine reported an acceptance ~1.1 s (median) after the fifth guardian
         // had recorded it. So beside it, the stake output is read every 50 ms with one threshold read: an output the guardians'
         // consensus holds exists only once the transaction was accepted, and the read counts only when a threshold of them
@@ -1404,7 +1404,7 @@ impl LockClient {
 }
 
 impl LockClient {
-    /// THE BLOCK COUNT A LOCK IS BUILT ON (the owner 2026-10-02, the join's 2-3 s): a count read in the last 60 s, else a fresh
+    /// THE BLOCK COUNT A LOCK IS BUILT ON (2026-10-02, the join's 2-3 s): a count read in the last 60 s, else a fresh
     /// consensus read. The seats accept a lock whose lock_height (its expiration less stake_expiry_blocks) is up to 12
     /// blocks below the height they verify at (stake-lock-signer-node.js, RULED 2026-09-24 option a); a count a minute old
     /// is at most a block behind on any chain this runs on.
@@ -1511,7 +1511,7 @@ impl LockClient {
         let db: Database = tab.into();
         let client = if Client::is_initialized(&db).await {
             let client = builder.open(connectors, db, root).await.map_err(js)?;
-            // A RECOVERY A TAB LEFT HALF DONE (#27): the store is initialized as soon as recovery starts, so a tab closed,
+            // A RECOVERY A TAB LEFT HALF DONE: the store is initialized as soon as recovery starts, so a tab closed,
             // reloaded or timed out mid-recovery reopens here - Fedimint resumes the recovery on open, and this waits for it
             // (at once when none is pending) instead of handing over a wallet whose notes are still being found
             client.wait_for_all_recoveries().await.map_err(js)?;

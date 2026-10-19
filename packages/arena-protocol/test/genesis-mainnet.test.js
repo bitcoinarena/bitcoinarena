@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// MAINNET'S GENESIS AND THE COMMITTEES IT BINDS (§27A.6, §5A.7; kanban #297 / #298, RULED the owner 2026-10-14 ~13:20Z: "Fix it but no
+// MAINNET'S GENESIS AND THE COMMITTEES IT BINDS (§27A.6, §5A.7RULED 2026-10-14 ~13:20Z: "Fix it but no
 // new series or delays because of it"): the rest of §27A.6 is hashed from mainnet's genesis on, the test networks keep their ids.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,7 +55,7 @@ test('mainnet binds every contract to committees of 7, threshold 5', () => {
   assert.equal(committeesStand({ gameVerifySlots: 7, settlementSlots: 9 }, genesis).ok, false);
 });
 
-// KANBAN #32 SLICE 3 (the owner 2026-10-16: "On a test genesis that binds, a deviating contract is refused by the seat and by the client, by
+// KANBAN SLICE 3 (2026-10-16: "On a test genesis that binds, a deviating contract is refused by the seat and by the client, by
 // parameter name"): every bound parameter named - a contract naming mainnet's committees but another confirmation depth is refused for that
 test('a binding genesis names each mismatched parameter: slots per role, and census confirmations', () => {
   const { genesis } = mainnetGenesis(parts());

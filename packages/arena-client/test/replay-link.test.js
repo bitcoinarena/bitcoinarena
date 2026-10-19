@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// COPY GAME REPLAY (the owner 2026-09-25 18:39): one https link, a random committee node of the round from its
+// COPY GAME REPLAY (2026-09-25 18:39): one https link, a random committee node of the round from its
 // advertisement endpoints (ws becomes https), the same path on every node: /replay?round=<hex>&entry=<hex>.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

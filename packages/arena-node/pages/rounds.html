@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bitcoin Arena · Rounds</title>
-<!-- THE ROUNDS PAGE (the owner 2026-09-28 16:17, ROUNDS-HTML-1617), served by every node at /rounds. Upcoming rounds with
+<!-- THE ROUNDS PAGE (2026-09-28 16:17, ROUNDS-HTML-1617), served by every node at /rounds. Upcoming rounds with
      their start, end and the committees drawn for them; finished rounds open an accordion with who played and who won
      how much. Its data is this node's /api/rounds and /api/round-result. -->
 <style>
@@ -78,7 +78,7 @@
   const committee = (c) => (c && c.drawn
     ? `<span class="role">game/verify</span>${keys(c.game)}<br><span class="role">settlement</span>${keys(c.settlement)}`
     : `<span class="nodrawn">committee not drawn</span>${c && c.why ? ` <span class="muted">- ${esc(c.why)}</span>` : ''}`);
-  // THE ROUND'S GAME BY THE NAME A PLAYER KNOWS IT AND ITS MARK (kanban #228), when this node hosts it
+  // THE ROUND'S GAME BY THE NAME A PLAYER KNOWS IT AND ITS MARK, when this node hosts it
   const gameTag = (r) => (r.game ? `<span class="game">${r.game.icon ? `<img src="${esc(r.game.icon)}" alt="">` : ''}${esc(r.game.title || r.game.name)}</span><br>` : '');
   const times = (r) => `<div class="t"><span class="muted">start</span><br>${when(r.startTime)}</div>`
     + `<div class="t"><span class="muted">end</span><br>${when(r.endTime)}</div>`;

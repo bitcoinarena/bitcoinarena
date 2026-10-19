@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ADVERTISEMENT UPDATE, NOT A NEW BOND - advert-update.js on its own (kanban #145, fifth surface; plan comment 183,
+// AN ADVERTISEMENT UPDATE, NOT A NEW BOND - advert-update.js on its own (fifth surface; plan comment 183,
 // accepted 2026-10-05). Until now it ran only inside arena-node's advert-update test (43.8% of its lines from protocol's own
 // suite). Here: the payload pinned, every refusal the file gives by its exact words, one update accepted field by field,
 // proved into a block, and the census's newest-update rule (height, then position) over a chain view.

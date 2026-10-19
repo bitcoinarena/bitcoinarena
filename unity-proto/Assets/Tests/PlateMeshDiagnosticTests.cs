@@ -7,7 +7,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// WHAT EVERY LETTERED PLATE IS ACTUALLY HOLDING (the owner 2026-09-18 22:16 close-out).
+/// WHAT EVERY LETTERED PLATE IS ACTUALLY HOLDING (2026-09-18 22:16 close-out).
 ///
 /// The whitepaper was fitted to the wrong box twice - once because static batching had swapped the plate's mesh for
 /// the whole building, once because the face was read as a world-axis box and a portrait plate came back landscape.

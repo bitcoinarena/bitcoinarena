@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RUN'S INPUTS, READ OUT OF A STORE, IN ONE PLACE - so the daemon's own thread and a replay worker read them the
-// same way (the owner 2026-09-17 19:15, the ghost lag: the close held the event loop that feeds pictured trucks).
+// same way (2026-09-17 19:15, the ghost lag: the close held the event loop that feeds pictured trucks).
 //
 // Measured on the Daily with the daemon's own timing: a close held the loop 554-1511 ms before it waited, and none of
 // its named steps was over 100 ms on its own - it is the per-entry work repeated, up to seven entries a round, and a

@@ -1,6 +1,6 @@
 name: node release
 
-# THE ARENA NODE ON GITHUB RELEASES (kanban #471 part A: Linux, macOS, Windows). A tag v<version> builds every asset with the same script
+# THE ARENA NODE ON GITHUB RELEASES (Linux, macOS, Windows). A tag v<version> builds every asset with the same script
 # (tools/release/build-linux.sh), tests the installer and the seat doors it uses, installs each asset fresh and checks it runs,
 # and drafts the release with the assets and SHA256SUMS. The draft is signed outside CI with the Arena release key
 # (tools/release/sign.sh, ruling 6: the key never sits in CI) and then published; the installer refuses unsigned assets.
@@ -100,7 +100,7 @@ jobs:
           cookie=$(curl -s -o /dev/null -D - "$link" | grep -i set-cookie | grep -oE 'arena_wizard=[^;]+')
           curl -sf -H "cookie: $cookie" http://127.0.0.1:31918/api/state | grep -q '"step":"chain"'
           "$R/runtime/cloudflared" --version
-          # the custody gateway (#471 slice 5), built on the test host for this system: it runs here (glibc, architecture, signing)
+          # the custody gateway (slice 5), built on the test host for this system: it runs here (glibc, architecture, signing)
           if [ -e "$R/runtime/custody/gatewayd" ]; then "$R/runtime/custody/gatewayd" --version; else echo "no custody binaries in this asset"; fi
           echo "fresh install of $(cat "$R/VERSION") ($(cat "$R/COMMIT")) on ${{ matrix.asset }}: seat and installer run"
       - name: fresh install (Windows)
@@ -117,7 +117,7 @@ jobs:
           & "$R\runtime\cloudflared.exe" --version
           if (Test-Path "$R\runtime\custody\gatewayd.exe") { & "$R\runtime\custody\gatewayd.exe" --version; if ($LASTEXITCODE -ne 0) { exit 1 } } else { "no custody binaries in this asset" }
           if (Test-Path "$R\runtime\tor\tor.exe") { & "$R\runtime\tor\tor.exe" --version; if ($LASTEXITCODE -ne 0) { exit 1 } }
-          # THE INSTALLER STARTS (kanban #471: rc.10 shipped a Windows zip whose installer stopped at "Cannot find package '@noble/curves'")
+          # THE INSTALLER STARTS (rc.10 shipped a Windows zip whose installer stopped at "Cannot find package '@noble/curves'")
           Start-Process -FilePath "$R\runtime\node.exe" -ArgumentList "$R\packages\arena-installer\bin\arena-install.mjs",'--port','31918','--seat-port','31919','--home',"$PWD\home" -RedirectStandardOutput inst.log -RedirectStandardError inst.err
           $link = $null; for ($i = 0; $i -lt 30; $i++) { $m = Select-String -Path inst.log -Pattern 'http://127.0.0.1:31918/\?t=[A-Za-z0-9_-]+' -ErrorAction SilentlyContinue; if ($m) { $link = $m.Matches[0].Value; break }; Start-Sleep 1 }
           if (-not $link) { Get-Content inst.log, inst.err; exit 1 }
@@ -125,7 +125,7 @@ jobs:
           if (-not ((Invoke-WebRequest -UseBasicParsing -WebSession $s http://127.0.0.1:31918/api/state).Content -match '"step":"chain"')) { exit 1 }
           "fresh install of $(Get-Content $R\VERSION) on windows-x64: seat and installer run"
 
-  # THE INSTALLER PACKAGES (kanban #500, the owner 2026-10-19: "for windows we want an exe, for macOS OS we want a deb ... a small gui version
+  # THE INSTALLER PACKAGES (2026-10-19: "for windows we want an exe, for macOS OS we want a deb ... a small gui version
   # of the installer that launches the browser"): the Windows setup .exe (NSIS) and the Linux .debs made on Linux, the macOS .dmg on a macOS
   # (hdiutil), each from the assets above (tools/release/package.sh, package-mac.sh); their lines join SHA256SUMS, which the release key signs
   packages:

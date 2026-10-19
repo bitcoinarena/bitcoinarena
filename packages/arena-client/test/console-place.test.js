@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CONSOLE BUTTON AND ITS PANEL, PLACED FROM THE HUD'S OWN SLOT: index.html's BLWP_PLACE_CONSOLE run on fake slots - the
-// measured screens and an upright phone. The button stays under the HUD corner (the owner 2026-10-04). THE OPEN PANEL (kanban
-// #198, the owner 2026-10-06 17:11: it covered the truck) is bottom right at its fixed 260 px: its right edge at the HUD's
+// measured screens and an upright phone. The button stays under the HUD corner (2026-10-04). THE OPEN PANEL (kanban
+//, 2026-10-06 17:11: it covered the truck) is bottom right at its fixed 260 px: its right edge at the HUD's
 // corner margin, its bottom one HUD margin above the throttle pad (the screen's bottom margin where no pads are drawn) and
 // above the cargo bay, right of the screen's middle (the truck's lane), at most 280 px wide. Where 260 px do not fit
 // between the button and that bottom, it keeps its height and steps aside (held). The function is the page's own text.
@@ -120,7 +120,7 @@ test('closed, the panel is left alone; the button is still placed', () => {
   assert.ok(btn.top > 0);
 });
 
-// THE LOBBY (kanban #198, the owner 2026-10-06: "Stepped aside while the lobby is up. Not drawn over the lobby content"): Unity's
+// THE LOBBY (2026-10-06: "Stepped aside while the lobby is up. Not drawn over the lobby content"): Unity's
 // own lobby rectangles as read off the live page 0.0.2821 at 430x932 - the balance boxes and the two round rows
 const LOBBY = { showing: true, balance: [56, 468, 318, 34], rows: [{ rect: [56, 538, 318, 30] }, { rect: [56, 572, 318, 30] }] };
 const clearOf = (p, [x, y, ww, hh]) => p.rightX <= x || p.left >= x + ww || p.bottom <= y || p.top >= y + hh;

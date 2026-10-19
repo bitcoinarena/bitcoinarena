@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE NEXT ROUND'S BOX COVERS NO RESULT (kanban #9, MF 19 - measured unattended on 0.0.2523: "joining next round · exit
+/// THE NEXT ROUND'S BOX COVERS NO RESULT (MF 19 - measured unattended on 0.0.2523: "joining next round · exit
 /// game" stood over the result summary's lines, "1 still driving" and "YOU PENDING").
 ///
 /// The box is the page's (index.html #blwp-next), drawn from the run's end until the next start; the card, its fold

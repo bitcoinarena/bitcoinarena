@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION ROUND'S STAKE FROM THE PAGE: THE INVOICE FIRST (the owner 2026-09-11).
+// A FEDERATION ROUND'S STAKE FROM THE PAGE: THE INVOICE FIRST (2026-09-11).
 //
 // The page asks a node for the round's federation invoice and builds its
 // entry on that invoice's hash - no preimage chosen, no shares dealt - and it
@@ -18,7 +18,7 @@ import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
-// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
 // that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
 // a non-zero outpoint, paying to the dealt stake's point where one is dealt.

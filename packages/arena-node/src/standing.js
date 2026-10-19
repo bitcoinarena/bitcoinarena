@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHERE ONE ENTRY'S MONEY STANDS, FOR THE PLAYER'S PENDING LINE (WINDOW-10-SPEC, the owner 2026-10-01, §24): "The winnings,
+// WHERE ONE ENTRY'S MONEY STANDS, FOR THE PLAYER'S PENDING LINE (WINDOW-10-SPEC, 2026-10-01, §24): "The winnings,
 // or the stake coming back, show as pending the moment the player's result is PROVISIONALLY_FINAL - not when the
 // objection window closes and not when the payout table is final - with the amount and what they wait on: the window's
 // close in UTC ... While other players' results are still arriving the amount is the payout table computed over the
@@ -76,7 +76,7 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
     const e = all.find(({ entryId }) => toHex(entryId) === toHex(entryIdBytes));
     try { pendingMsat = String(netStakeMsat(e.entry)); kind = 'refund'; } catch { pendingMsat = null; }
   }
-  // SETTLED WITHOUT FINAL (the owner 2026-10-01, WINDOW-10-SPEC follow-up): "The line appears at once when money is owed. It
+  // SETTLED WITHOUT FINAL (2026-10-01, WINDOW-10-SPEC follow-up): "The line appears at once when money is owed. It
   // disappears when the payment is no longer owed." A result still PROVISIONALLY_FINAL past this seat's end + 605 s, in a
   // round whose settlement this seat holds ACCEPTED by the federation, and that settlement pays this entry's share - its
   // player among the paid shares, or its stake lock among the claimed - owes nothing more: no pending amount. The record
@@ -91,7 +91,7 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
         why: `the round's settlement ${settled.txid} is ACCEPTED by the federation and pays this entry's share: nothing is pending` };
   }
   if (standsOn) {
-    // by the game's own payout rule (kanban #362), as the settlement pays: a split game's line is its split's row
+    // by the game's own payout rule, as the settlement pays: a split game's line is its split's row
     const rule = payoutRuleOfRound(contract, round.plugins);
     if (!rule.ok) return { ...base, state: mine.state, outcome: mine.outcome, pendingMsat: null, kind: null,
       provisional: entries.length < counted, signedSoFar: entries.length, entries: counted, why: rule.why };

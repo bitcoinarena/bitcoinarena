@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S OWNER (kanban #276): the owner is a key from 24 words; the claim code binds the first one; every owner
+// THE NODE'S OWNER: the owner is a key from 24 words; the claim code binds the first one; every owner
 // request is signed for this node, in time, once.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,7 +94,7 @@ test('the owner page bundle is what its source builds', { skip: !existsSync(ESBU
   execFileSync(process.execPath, [new URL('../tools/bundle-owner.mjs', import.meta.url).pathname, '--check']);
 });
 
-// ---- LOGIN WITH NOSTR (kanban #277): an extension or remote signer signs a kind 27235 event per owner request ----
+// ---- LOGIN WITH NOSTR: an extension or remote signer signs a kind 27235 event per owner request ----
 import { createHash } from 'node:crypto';
 import { signOwnerEvent, ownerEventTemplate, OWNER_EVENT_KIND } from '../src/owner.js';
 const nostrSigner = (sk) => async (t) => {

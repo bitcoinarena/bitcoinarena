@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BEFORE APPROVAL (spec §22A Transparency, §5A.13; kanban #317): the selected node identities (or pending), the committee
+// BEFORE APPROVAL (spec §22A Transparency, §5A.13): the selected node identities (or pending), the committee
 // overlap and whether a selected operator is playing - on the paying row's lobby line, from its seating, the checked census
 // (operator_id per node) and the round's checked players.
 import { test } from 'node:test';
@@ -29,7 +29,7 @@ test('the facts: identities with their operators, the overlap, an operator playi
 });
 
 test('the paying row\'s lobby line says them; a free row does not', () => {
-  // and, since kanban #306, the stake ceiling the page computes from that census, last
+  // and, since, the stake ceiling the page computes from that census, last
   assert.match(lobbyLine(row(), 0, { census: () => census }), /· 2 operators \(aaaaaaaa, bbbbbbbb\) · in both committees: 7 of 7 · no selected operator is playing · stake ceiling: [^·]+$/);
   assert.doesNotMatch(lobbyLine(row({ free: true }), 0, { census: () => census }), /operator/);
 });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GAME LINK STILL READS THE SEATS FROM daily.json (kanban #293 step 6: "?game=<name> still reads the seat list (today any
+// A GAME LINK STILL READS THE SEATS FROM daily.json ("?game=<name> still reads the seat list (today any
 // parameter skips daily.json)"). index.html's dailySearch is lifted out of the page by its text and run as it is.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

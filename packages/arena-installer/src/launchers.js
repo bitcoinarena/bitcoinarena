@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// STARTING THE NODE AFTER THE INSTALLER (the owner 2026-10-18: "When the installer is done it should be easy to start the node by providing info
+// STARTING THE NODE AFTER THE INSTALLER (2026-10-18: "When the installer is done it should be easy to start the node by providing info
 // And help in the ui but also manual scripts, on windows a start menu item, on mac a /Application link"). Written when the node is installed,
 // for exactly the services this node has (the node, its tunnel, its chain bridge, its Bitcoin Core, LND, the gateway, the custody agent):
 //
@@ -45,7 +45,7 @@ const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
  * what was written, for the Done page and the installer's last lines.
  */
 export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform = process.platform, env = process.env, applicationsDir = null, run = null, release = null, node = process.execPath, pathDirs = null }) {
-  // the arenanode command first (kanban #499): what the scripts below are the clickable form of
+  // the arenanode command first: what the scripts below are the clickable form of
   let command = null;
   if (release) { try { command = writeCommand({ home, release, node, platform, env, run, pathDirs }); } catch (e) { command = { why: e.message }; } }
   const svc = servicesOf(s)[platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux'];
@@ -110,7 +110,7 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
   return { files, menu, app: null, start, command };
 }
 
-// THE ARENANODE COMMAND ON THE PATH (kanban #499, the owner 2026-10-19: "Make a command arenanode that can stop start the service, status
+// THE ARENANODE COMMAND ON THE PATH (2026-10-19: "Make a command arenanode that can stop start the service, status
 // and diagnosis commands"): <home>/bin/arenanode runs this release's bin/arenanode.mjs with the node's home in it, so the user types no
 // flags; a second node on the machine (instance.js) has arenanode-<instance>. Put on the PATH:
 //   Linux    a link in ~/.local/bin (Ubuntu's ~/.profile puts it on the PATH once it exists; else a line is added there)
@@ -123,7 +123,7 @@ export function writeCommand({ home, release, node, platform = process.platform,
   const bin = join(home, 'bin');
   mkdirSync(bin, { recursive: true });
   const script = join(release, 'packages', 'arena-installer', 'bin', 'arenanode.mjs');
-  const what = `The ${name} command (kanban #499), written by the installer: ${name} status, ${name} restart lnd, ${name} doctor, ${name} help`;
+  const what = `The ${name} command, written by the installer: ${name} status, ${name} restart lnd, ${name} doctor, ${name} help`;
   if (platform === 'win32') {
     const file = join(bin, `${name}.cmd`);
     writeFileSync(file, ['@echo off', `rem ${what}`, `"${node}" "${script}" --home "${home}" --name ${name} %*`].join('\r\n') + '\r\n');
@@ -165,7 +165,7 @@ export function writeCommand({ home, release, node, platform = process.platform,
 }
 
 /**
- * THE AUTO UPDATE SERVICE (kanban #505): `<home>/bin/arenanode auto-update` as a service of this node - its command names the node's own
+ * THE AUTO UPDATE SERVICE: `<home>/bin/arenanode auto-update` as a service of this node - its command names the node's own
  * arenanode, not a release, so an update moves everything else and never stops it mid-way; it ends with 75 after an update and comes
  * back from the new release (systemd Restart=on-failure, launchd KeepAlive, the Windows launcher's loop). Answers installProgram's answer.
  */

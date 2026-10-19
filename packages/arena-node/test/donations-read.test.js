@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEAT HANDS THE DEV THE SENDER AND THE ROUND, AND FORGETS BOTH ONCE THE DEV HAS THEM (kanban #156 measure 3; the owner
+// THE SEAT HANDS THE DEV THE SENDER AND THE ROUND, AND FORGETS BOTH ONCE THE DEV HAS THEM (measure 3; the owner
 // 2026-10-05 08:15-08:17): GET /donations answers each donation's player key (the entry's) and its round id; the dev client,
 // after it has written its own permanent record, sends a read receipt signed with its recipient key; the seat then DELETES
 // those rows entirely. A wrong key, a forged signature, a stale receipt or another recipient's outpoint deletes nothing.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WINNINGS STORE A PAYOUT DEPENDS ON: putWinnings, putSendPlan and markSend, the three round.js methods winnings-send.js
-// writes with (kanban #149 step 6, plan comment 249, Go 2026-10-05). Each row written, read back through the store's own
+// writes with (plan comment 249, Go 2026-10-05). Each row written, read back through the store's own
 // readers (winnings, sendAttemptsOf, sendPlansOf), the attempt count, and markSend's state change. The six unused store
 // methods (putPayout, payoutsInState, putHoldExpiry, holdExpiry, putInvoiceExpiry, invoiceExpiry) stay and are not tested here.
 import { test } from 'node:test';

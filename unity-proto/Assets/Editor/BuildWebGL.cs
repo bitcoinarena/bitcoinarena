@@ -172,11 +172,11 @@ public static class BuildWebGL
         PlayerSettings.WebGL.dataCaching = false;
         PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
         PlayerSettings.runInBackground = true;
-        // FUNCTION NAMES IN THE WASM, FOR A PROFILE ONLY (kanban #265): ARENA_WEBGL_SYMBOLS=1 embeds the name section, so a CPU
+        // FUNCTION NAMES IN THE WASM, FOR A PROFILE ONLY: ARENA_WEBGL_SYMBOLS=1 embeds the name section, so a CPU
         // profile names Unity's hot functions instead of wasm-function[643]. Off by default: a shipped build stays as it was.
         PlayerSettings.WebGL.debugSymbolMode = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_SYMBOLS") == "1"
             ? WebGLDebugSymbolMode.Embedded : WebGLDebugSymbolMode.Off;
-        // TEXTURES A PHONE CAN USE (kanban #265, measured 2026-10-08): left at Unity's default the WebGL textures are DXT, which
+        // TEXTURES A PHONE CAN USE (measured 2026-10-08): left at Unity's default the WebGL textures are DXT, which
         // most Android GPUs and iPhones lack - Unity then decompresses all 33 on the CPU ("DXT5|BC3 UNorm format is not supported,
         // decompressing texture"), 20 of them before 100 %. ARENA_WEBGL_SUBTARGET (DXT, ASTC, ETC2) builds the textures - the data
         // file and the streamed bundles - in that format; one format per build. Unset: the editor's own setting, as before.
@@ -244,7 +244,7 @@ public static class BuildWebGL
         ReportContents(report);
         CopyStreamedContent(output);
         StampDownloadSize(output);
-        // THE NUMBER TRAVELS WITH THE BUILD (the owner 2026-09-29: "It's 17xx now but was 2200ish before"): the loading screen's
+        // THE NUMBER TRAVELS WITH THE BUILD (2026-09-29: "It's 17xx now but was 2200ish before"): the loading screen's
         // version is filled by tools/fill-template.mjs at every deploy, and it read the committed ProjectSettings - 0.0.1791,
         // since the builds bump bundleVersion only locally - so a page-only redeploy showed 17xx under a 22xx lobby. The
         // build's own number is left beside it, and fill-template takes it from here.

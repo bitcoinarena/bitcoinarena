@@ -341,7 +341,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
   assert.deepEqual(contractWarnings(c), []);
   assert.ok(contractWarnings({ ...c, rankNumerator: 99, rankDenominator: 100 })
     .includes('flat_rank_curve'));
-  // the truck's fields are nextblock's to judge (kanban #203): nextblock/test/engine-shared.test.js
+  // the truck's fields are nextblock's to judge: nextblock/test/engine-shared.test.js
   assert.deepEqual(contractWarnings({ ...c, exposureReference: 0 }), [], 'the engine judged a field only the game reads');
 });
 
@@ -421,7 +421,7 @@ test('a round fixes where a slashed bond\'s other half goes, and it is in the id
   const c = sampleContract();
   const back = decodeRoundContract(encodeRoundContract(c));
   assert.equal(back.slashRemainder, c.slashRemainder);
-  // ONE VALID VALUE (RULED, the owner 2026-09-21): nothing is ever burned, so the remainder has one
+  // ONE VALID VALUE (RULED 2026-09-21): nothing is ever burned, so the remainder has one
   // destination - the 75/25 split - and BURN and COMMITTEE are both withdrawn.
   assert.deepEqual(SLASH_REMAINDERS, ['SPLIT']);
   assert.equal(c.slashRemainder, 'SPLIT');

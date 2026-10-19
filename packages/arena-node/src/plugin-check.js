@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PLUGIN STORE'S CHECKS, IN THE PAGE AND ON THE SEAT ALIKE (kanban #276 step 5, the owner 2026-10-10: "Everything with
+// THE PLUGIN STORE'S CHECKS, IN THE PAGE AND ON THE SEAT ALIKE (2026-10-10: "Everything with
 // loading plugins must happen in the browser including updating games and networks like an AppStore. Malicious code checks
 // are very important"). Isomorphic - no Node API: the owner page bundles it and shows its report before Install; the seat
 // runs the same checks again, and its own sandboxed trial run (plugin-trial.js), before anything is written or activated.
@@ -92,7 +92,7 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
       return out(`client ${String(k.hash).slice(0, 16)}: it is not a client its manifest names`, who);
   }
   if (findings.length) return out(`the scan refuses it: ${findings.map((f) => `${f.rule} (line ${f.line})`).join('; ')}`, who);
-  // ITS DESCRIPTION AND WEBSITE (kanban #276): shown when its developer key signed them for this game id; never a reason to
+  // ITS DESCRIPTION AND WEBSITE: shown when its developer key signed them for this game id; never a reason to
   // refuse the game - a package with none, or with an unsigned one, installs the same game (the id is the manifest's)
   const info = pkg.info ? gameInfoStands(pkg.info, { gameId: gameIdOf(manifest), manifest, verify }) : null;
   if (pkg.info) add('its description and website are signed by its developer', info.ok, info.ok ? '' : info.why);

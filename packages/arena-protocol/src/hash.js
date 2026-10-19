@@ -49,7 +49,7 @@ export function taggedHash(tag, bytes) {
   return sha256bytes(buf);
 }
 
-// ONE FLAT STRING, NOT A ROPE (the owner 2026-10-15: "Do everything you can to lower the load"). `s +=` two characters a byte
+// ONE FLAT STRING, NOT A ROPE (2026-10-15: "Do everything you can to lower the load"). `s +=` two characters a byte
 // built a V8 cons string - a tree of up to 79 string objects for a 32-byte id - and every id kept as a Map key, a Set entry or
 // in a list kept the whole tree: a testnet4 seat's heap held 722,473 such trees in lists and 121,912 in maps and sets,
 // 1,096 MB of its 1,260 MB (heap snapshot of seat 3, measured). The pieces joined once make one sequential string of the

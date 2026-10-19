@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WSS FROM THE NODE ITSELF (spec §25.3, kanban #335): serve({ tls }) answers its doors over https and takes the players'
+// WSS FROM THE NODE ITSELF (spec §25.3): serve({ tls }) answers its doors over https and takes the players'
 // socket (/play) as wss on the same port; a renewed certificate is taken by setSecureContext without a restart.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
