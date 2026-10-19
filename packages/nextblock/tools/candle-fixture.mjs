@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The core's own candle words (src/rules/candles.js, `candleView`) and the candle layer's height at sample points, for
 // CandleTerrain's EditMode tests: the mesh is tested against what the core stands the truck on (WAR_TACTICS.md §4.15,
 // "the client's drawn height differs from candleHeight by more than 0.1 m" is a failure).

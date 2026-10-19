@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 14, SIGNED BY ITS DEVELOPER (kanban #461, the owner 2026-10-17: "Also include the full market view
 // for prediction markers for mobile but have a switch that has compact/advanced for mobile"): version 13 in every term, with its new
 // client - a phone's Compact / Advanced switch, Advanced showing the exchange - beside the older ones. Parent: version 13.

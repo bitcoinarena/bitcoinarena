@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DRIVER INSIDE THE SANDBOX (spec §0A.6, kanban #328). This file is never imported by the node: core-sandbox.js reads
 // its text and evaluates it INSIDE a core's sandbox, as the one module that imports the core ('arena:core'). It is the loop
 // replay.js and the warm ghost ran on the core's adapter before, moved to where the core is: the node hands it a JSON

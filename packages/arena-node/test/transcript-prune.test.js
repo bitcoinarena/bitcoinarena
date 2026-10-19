@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§34, kanban #33; the owner 2026-10-17: "Transcripts are deleted when the claim window ends,
 // as §34 reads - not kept longer"): kept through W and the contract's claim_window_days, deleted after; a contract naming no claim
 // window keeps them; the round, its entries and receipts stay.

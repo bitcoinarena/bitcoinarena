@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE STAKE PREIMAGE DEALT TO A COMMITTEE - handout.js on its own (kanban #145; plan comment 175, Go 2026-10-05).
 // Until now handout.js ran only inside arena-node's integration tests (41.7% of its lines from protocol's own suite). Here:
 // a fixed deal pinned by id, the encoding and what the id binds, every refusal of acceptHandout and openMyShare by name,

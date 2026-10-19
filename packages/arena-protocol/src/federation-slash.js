@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A FEDERATION'S BONDS COVER, AND WHERE A SLASHED ONE GOES.
 //
 // §23A.3 and §23A.5, as rules a caller can run rather than paragraphs somebody has to remember. Three

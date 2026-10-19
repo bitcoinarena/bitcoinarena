@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE CHECKS AN ENTRY'S DONATION OUTPUTS WITH THE FEDERATION AND INDEXES THEM BY KEY (the owner 2026-10-03,
 // FEDERATION.md "Donations in the federation"): each output is the payout contract to its recipient key for exactly its
 // share, held by the federation at the outpoint the entry names, and one output pays for one entry; GET /donations?key=

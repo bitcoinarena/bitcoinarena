@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOAD TEST (M4; PRIORITIES 2026-09-29 item 4, in the repo only; IMPLEMENTATION.md "Synthetic clients driving 100
 // and 1,000 concurrent runs against a seven-node local committee: receipt latency, replay lag, WebSocket buffer
 // growth, SQLite write throughput").

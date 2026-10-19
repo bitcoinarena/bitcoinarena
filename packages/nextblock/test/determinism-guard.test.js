@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DETERMINISM GUARD IN THE SUITE (kanban #28; spec audit #15). tools/check-determinism.js refuses, in a core's source,
 // float literals, '* / %' outside the arithmetic files, Math members off its whitelist, Date and performance, and imports
 // from outside the package - and until now it ran on core/src only, by hand, and reported 49 hits nobody had pinned.

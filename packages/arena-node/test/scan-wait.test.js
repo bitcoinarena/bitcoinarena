@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #348: a UTXO scan another process runs on the same bitcoind is waited out, not died on (measured 2026-10-13: the second
 // runner started on one bitcoind died on "Scan already in progress", error -8)
 import { test } from 'node:test';

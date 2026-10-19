@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE MIGRATION ON THE SEVEN-SEAT STACK (kanban #209 step 2, the two scenarios step 2's first rehearsal did not cover):
 // run by rehearse209b-after.sh, which phase0's own stack harness (tn4-tools-regtest.sh) sources after its six readings -
 // the BLWP world is up: seven phase0 seats with their guardians, their BLWP bonds, a BLWP paid round with a stake locked.

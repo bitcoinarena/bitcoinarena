@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OBJECTION WINDOW IS EXACTLY 600 s OF WALL TIME FROM THE ROUND'S END (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
 //
 // Measured on one daemon of a seven-seat round (sevenSignerNodes: the holder, and six keys this test signs with), its

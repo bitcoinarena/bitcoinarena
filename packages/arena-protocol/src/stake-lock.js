@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE CHECKS EVERY FIELD OF A LOCK BEFORE IT COUNTS A STAKE.
 //
 // Section 23.1 step 5 (v4.6.2, F4): "STAKE_COMMITTED is recorded once >=5

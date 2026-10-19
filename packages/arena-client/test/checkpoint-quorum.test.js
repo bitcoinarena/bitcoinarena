@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RUN'S CHECKPOINT CHAIN GROWS ON EVERY NODE OF THE COMMITTEE - AND ONLY
 // OVER INPUTS EACH OF THEM HOLDS.
 //

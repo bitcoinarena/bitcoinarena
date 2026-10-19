@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S IDENTITY IS THE BOND KEY.
 //
 // It was ed25519, and that made a node's identity a different ANIMAL from its

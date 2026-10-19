@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND OF A CREATOR-SIGNED SERIES OPENS AT ITS SEAT WITHOUT A SIGNATURE OF ITS OWN (kanban #376, measured 2026-10-16 06:45Z on
 // the live page: PLAY opened a duty grid's round at its node - the page's Client.openRound, POST /round - and was refused "that round
 // names its creator, and comes without the creator's 64-byte signature over its id"; the creator signs the SERIES, once for all its

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S OWNER (kanban #276): the owner is a key from 24 words; the claim code binds the first one; every owner
 // request is signed for this node, in time, once.
 import test from 'node:test';

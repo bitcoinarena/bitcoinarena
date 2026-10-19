@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * ONE LIVE TESTNET4 ROUND, PLAYED WITHOUT A BROWSER (kanban #328: "one live round replayed and settled sandboxed on a seat").
  * The lock is testnet4-lock.mjs's - the page's own wasm lock client, the deposit paid from a testnet4 lnd - and then the run:

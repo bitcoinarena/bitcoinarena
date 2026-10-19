@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT PRESENTS ITS NOTES TO A LIQUIDATION (spec §23A.5 step 2, kanban #323): "The client does the rest on its own: on
 // every start it presents each unspent note it holds for that federation, as it would present them to the federation itself."
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE WHOSE PEER IS DOWN AT THE CLOSE HOLDS AND TRIES AGAIN (M3.3-34, the Daily's close).
 //
 // Signer node A closes a free 2-of-2 round while signer node B is down: A cannot pull B's

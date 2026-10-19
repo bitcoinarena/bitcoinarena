@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SELF-BINDING SCALARS, A BOND-WEIGHTED MEDIAN (§27A.2, kanban #305): a node declares its bond_min and proposal deposit in its
 // advertisement (17 bytes before serving; none declared keeps the bytes); the value in force is the median weighted by bond.
 import { test } from 'node:test';

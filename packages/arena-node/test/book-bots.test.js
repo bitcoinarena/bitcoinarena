@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BOTS BUILD ORDER DEPTH (kanban #236, the owner 2026-10-08: "A few bots simulate real bot behavior and build order depth").
 // Seven seats of one Up/Down market round, every order an entry whose stake and fee locks the seats verified (the
 // order-batch fixture). Two bots read the same window from slightly different last prices, so their fair chances differ:

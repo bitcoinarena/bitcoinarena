@@ -1,4 +1,6 @@
-// TALLY: THE SECOND, MINIMAL TEST GAME (kanban #202, the owner 2026-10-07: "a round of a second, minimal test plugin opens,
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// TALLY: THE SECOND, MINIMAL TEST GAME (kanban #202, Daniel 2026-10-07: "a round of a second, minimal test plugin opens,
 // replays and settles on the same nodes as nextblock").
 //
 // Nothing like the truck: each tick takes one input number (the first of the five words a batch carries per tick), the

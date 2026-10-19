@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
 // purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
 // 15 % or more of the nodes that served a round in the last 432 blocks, after 1008 blocks"; signals are "signed messages kept and

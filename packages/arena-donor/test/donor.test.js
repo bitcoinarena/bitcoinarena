@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEV'S DONATION CLIENT, ITS DECISIONS (the owner 2026-10-03): the key, where the funds are, what is redeemed, when it
 // withdraws - with the seats, the federation and the LND faked; the live pass is measured on testnet4.
 import { test } from 'node:test';

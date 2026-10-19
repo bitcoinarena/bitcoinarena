@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FEDERATION PORT A SIGNER NODE ASKS (23.1 step 5): the arguments it hands
 // blwp-stake-lock and how it reads the answers. A stand-in tool records its
 // argv and prints what the real one prints; the real tool is measured against

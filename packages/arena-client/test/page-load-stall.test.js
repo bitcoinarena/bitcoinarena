@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SCREEN THAT WAITS ON THE PLAYER IS NOT A STALL (kanban #379). The page's loading watch runs under the page's name
 // (page-script.js) with a fake clock and screen. Measured on live UI 166 before: the watch failed with "Nothing has loaded
 // for 90 seconds" behind the wallet start screen and behind the games list; a loading screen the player looks at still fails.

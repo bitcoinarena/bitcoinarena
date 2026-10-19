@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TEST GAME'S MANIFEST, SIGNED AS ITS DEVELOPER WOULD (kanban #202): with the dev client's signer
-// (arena-donor/src/manifest-sign.js, the owner 2026-10-07 15:40: the dev client signs games, never a node), giving a
+// (arena-donor/src/manifest-sign.js, Daniel 2026-10-07 15:40: the dev client signs games, never a node), giving a
 // registration { name, manifest, gameId, cores } as a launcher hands serve() one, for a game that exists only in the
 // tests. Its developer key is derived from a fixed seed - a test key, never a real game's - so every run gives the game
 // the same id.

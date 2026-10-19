@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ACHIEVEMENTS AND BADGES (kanban #362, docs/PLATFORM-RESEARCH.md item 13: "awarded from signed results: collectible status
 // on the player's own Nostr identity"). A badge is a line of status a seat hands a player for what the player already did -
 // a first win, five rounds played, a perfect run, a place on a closed week's board - and it is published as NIP-58 events

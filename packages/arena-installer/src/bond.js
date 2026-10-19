@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S BOND, FROM ITS OWN WALLET (kanban #471 step C.7 and slice 2; the owner 2026-10-18: "giving an address on the newly created
 // bitcoin wallet where the bond is first transferred to so the node can post the bond", and the owner section: "verifying that the bond
 // has been posted, withdrawing the bond after the lock (communicating the lock time clearly) and also increasing the bond size").

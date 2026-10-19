@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SMALLEST BUNDLER'S WALK AND TRANSFORM, IN ONE PLACE: topologically sorted imports, import and export lines
 // stripped, concatenated. Used by tools/bundle.js (the page's core, dist/blwp-core.js) and tools/bundle-replay.js (the
 // replay page's core, dist/blwp-replay-core.js) - one transform, so the two bundles cannot be two different bundlers.

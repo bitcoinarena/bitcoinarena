@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODES, FOUND ON THE FLY (kanban #351, the owner 2026-10-13: "The client may not have a hard coded node list it must be found on
 // the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
 // bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's

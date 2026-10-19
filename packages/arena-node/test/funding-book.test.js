@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FUNDING PROPOSALS A SEAT KEEPS (§27A.9.3 stage 1, kanban #397 slice 6): a proposal by anyone (the owner 2026-10-17), not dated ahead of
 // the chain; comments and signals only on a proposal held; a signal only by a bonded node; each signal decided ONCE when its 1008 blocks
 // are over, on the nodes active in the 432 blocks before its end - 14 of 100 fails, 15 passes - and not moved by a later reading.

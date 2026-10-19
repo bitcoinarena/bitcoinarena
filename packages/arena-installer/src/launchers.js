@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // STARTING THE NODE AFTER THE INSTALLER (the owner 2026-10-18: "When the installer is done it should be easy to start the node by providing info
 // And help in the ui but also manual scripts, on windows a start menu item, on mac a /Application link"). Written when the node is installed,
 // for exactly the services this node has (the node, its tunnel, its chain bridge, its Bitcoin Core, LND, the gateway, the custody agent):

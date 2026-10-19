@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3, kanban #324 step 3): the shortfall quoted with the fee of both
 // gateway legs, moved on the player's confirmation - an invoice of the round federation's wallet paid from the other -, the
 // fee measured off the paying balance and both sides in the history; declined, nothing moves.

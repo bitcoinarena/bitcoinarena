@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CORE'S SANDBOX, ATTACKED (spec §0A.6, kanban #328): "no network, no file system, no clock, no randomness but the
 // round's seed". One hostile core per attack, each a file of its own read and hashed by the node as any core is: refused
 // when it is loaded (an import outside its files) or thrown inside the sandbox when it runs - the replay answers not ok,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The cross-engine harness: the acceptance criterion for stage 0.
 //
 // Runs a fixed input sequence and prints a state hash every thousand ticks.

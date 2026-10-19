@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL ITEM 9 (c): "then one withdrawal of the whole balance through B while A is down" - from the
 // §24A.1 player wallet, after the green 9 (b) shape (RULED the owner 2026-09-25). Run by rehearsal-9c-regtest.sh after the
 // federation is up (stock fedimintd 0.12.0, 4 guardians 3 of 4, two gateways, seven bonded signer nodes).

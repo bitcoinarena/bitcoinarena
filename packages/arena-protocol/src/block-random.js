@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RANDOM NUMBER FROM A RECENT BITCOIN BLOCK, THAT EVERY NODE CAN REPRODUCE (kanban #366, the owner 2026-10-15: "eine Funktion basierend
 // auf einem recent bitcoin block eine random Zahl zu generieren, so dass es jede node nachvollziehen kann").
 //

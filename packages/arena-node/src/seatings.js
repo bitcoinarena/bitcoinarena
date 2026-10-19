@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE THAT KEEPS MISSING ITS SEATS (§5A.3, kanban #302): "A node that stops answering without stepping out is not punished for the
 // absence itself - it earns no fee share (§22A) and yields its seat to the reserve (§5A.7) - but it wastes the reserve, so the
 // reference node warns its operator when it has missed three seatings in a row and offers the serving = false update."

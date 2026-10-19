@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ONE-TIME MOVE FROM blwp.* TO arena.* (kanban #207). The page's keys were renamed from blwp.* to arena.*; a browser
 // that played before keeps its seed, its kept phrases, its vault and its wallet only if they move before anything reads
 // them. This runs the very script the page ships (index.html, <script id="arena-storage-move">, the first script there)

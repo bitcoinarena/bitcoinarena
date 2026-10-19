@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # W5b ON A REAL FEDERATION: the signer nodes forfeit a qualifier's stake lock after
 # the objection window, a loser's is refused and stays held, one signer node's
 # signature is refused by the guardians, and the player redeems the forfeit

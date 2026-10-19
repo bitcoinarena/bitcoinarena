@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Bundles the BLWP client into one file for the browser.
 //
 // The same smallest-possible bundler `@blwp/core` uses, and for the same

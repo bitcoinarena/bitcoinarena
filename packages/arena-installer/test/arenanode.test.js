@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARENANODE COMMAND (kanban #499): the services of an installed node found from the files the installer wrote, their states, the
 // guardian inside the seat, start/stop/restart in order (one or all), a restarted quick tunnel's name followed into every file of the
 // node (macOS node B's gateway still announced a name two restarts old), the doctor's checks with their fixes, `config set`, and the

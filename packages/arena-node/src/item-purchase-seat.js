@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ITEM PURCHASE, AS A SEAT KEEPS IT (kanban #365 step 3): the buyer's signed record (protocol purchase.js) checked twice - by
 // its own terms against this seat's manifest, donation sets and merged served list (purchaseStands), and against the federation,
 // output by output, as a round's donation outputs are (stake-lock-signer-node.js verifyDonationOutputs): at each outpoint the

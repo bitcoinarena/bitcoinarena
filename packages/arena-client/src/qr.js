@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEPOSIT INVOICE AS A QR CODE (the owner 2026-09-30: the deposit needs a QR code).
 // A phone's Lightning wallet scans it instead of the player copying the invoice. Encoded here, in the pinned bundle, with
 // qrcode-generator (MIT, no dependencies): a QR picture is what a player pays, so it is built by the same audited script

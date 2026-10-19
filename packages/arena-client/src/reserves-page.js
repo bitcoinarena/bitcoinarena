@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL RESERVES ON THE PAGE (§27A.9, kanban #397 slice 3): a version-11 round's entry pays the developers' 4 % and the
 // reserves' 2 % - mandatory, not the player's donation choice - and locks the reserves' part to its federation's 5-of-7 reserve
 // key. The key is read from the round's signer nodes (GET /reserves), and taken only when at least `needed` of them name the

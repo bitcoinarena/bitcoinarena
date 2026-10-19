@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OTHER PLAYERS' NAMES, AS A PAGE MAKES AND CHECKS THEM (M3.3-34).
 //
 // A joined tab hands its signer nodes one record, signed with the round key it is

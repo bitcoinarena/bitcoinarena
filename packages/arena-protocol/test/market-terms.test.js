@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET'S OWN TERMS (kanban #235, the owner 2026-10-09): its fee in its manifest ("per market in manifest"), its question,
 // resolution time, attestation deadline and source rule - and "refund at the deadline". The protocol half: the manifest's
 // optional terms, the fee as the manifest's rate, the resolution time on attestations, and the deadline's VOID.

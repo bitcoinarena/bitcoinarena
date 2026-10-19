@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SIGNER NODE REFUSED: §13C'S VOID AFTER THE RESULT WINDOW (M3.3-34, ruled 2026-09-12).
 //
 // A joined entry's on-time first mark reaches signer node A; signer node B is UP and refuses

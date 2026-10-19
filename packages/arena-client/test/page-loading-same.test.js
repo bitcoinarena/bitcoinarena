@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY LOADING SCREEN THE SAME (kanban #385, the owner 2026-10-16: the platform link "is on the loading screen of tic toc next block
 // and should also be on the other games. actually, make sure all loading screens look consistent"). On the page's own CSS and
 // code: another game's loading screen keeps Tick Tock's bar, step, platform link and build line, and its title is the game's

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION SET SIGNS PATH B (kanban #307, spec 5A.3B steps 1-5). On the re-run fixture (seven signer nodes, five
 // sign a rewritten score, an objection holds, the run is FINAL on the re-run and the holder files five REPLAY_CONTRADICTS
 // proofs): the arbiter takes a filed proof from the seat's doors (GET /slashes, /slash-proofs, /objection-bundle), REPLAYS

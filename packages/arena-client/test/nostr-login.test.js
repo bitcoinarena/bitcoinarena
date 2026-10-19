@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LOGIN WITH NOSTR (kanban #277): the game seed of a Nostr account, against the game's own relay (arena-node nostr-relay.js).
 //   - an nsec: first login derives the seed and publishes it encrypted (NIP-78 + NIP-44); a second login - another device -
 //     reads the same seed back; the event's content is not the seed in clear;

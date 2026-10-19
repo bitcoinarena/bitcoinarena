@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PATHS WITH SIGNER NODES DOWN THROUGH THE LOCK'S EXPIRY, split from five-of-seven.test.js (2026-09-24) so each file
 // stays inside the suite's 180 s: every round now waits for its result window's end block on the chain.
 // TWO FIRST MARKS ON A FIVE-OF-SEVEN COMMITTEE (M3.3-34, ruled 2026-09-13).

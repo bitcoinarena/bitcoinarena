@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SCALAR MARKETS (kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8; protocol 2026.0.7): "a numeric outcome (a price, a
 // count) paid linearly between bounds. Richer questions than buckets; one market instead of many."
 //

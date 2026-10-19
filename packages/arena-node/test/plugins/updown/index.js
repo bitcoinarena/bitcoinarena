@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TEST UP/DOWN MARKET (kanban #236, the owner 2026-10-09): Polymarket's BTC Up or Down 15m as a Bitcoin Arena market - one
 // round per UTC quarter hour (its manifest's period, 900 000 ms), Up when the 60 s average at the window's end is at or above
 // the 60 s average at its start (a tie Up; Chainlink's TWAP 60 s stream read at both ends, kanban #236 comment 1154), outcome by 2 of its 3 attestors, refused before the window's end, VOID 10 minutes after it with no

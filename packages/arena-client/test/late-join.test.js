@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LATE JOINER RESUMES WHERE THEIR ENTRY SAYS THEY JOINED, NOT AT TICK ZERO.
 //
 // 0.8: "Late join is a normal feature, not merely reconnect." Section 7: "Late

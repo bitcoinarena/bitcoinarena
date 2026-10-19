@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DRAWN MINER AGAINST THE SOLID ONE, PART BY PART (2026-09-20).
 //
 // PRIORITIES: "The drawn miner is bigger than either engine's collision. A tank can stand in a drawn cable; the

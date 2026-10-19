@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH SOCKET A FAILED FETCH RODE, AND WHETHER THE SERVER HAD ALREADY CLOSED IT (M3.3-27).
 //
 // The rehearsal's flake is `fetch failed: ECONNRESET` on the first provider of

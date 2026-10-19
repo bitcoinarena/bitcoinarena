@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W4: A LOSER'S STAKE LOCK IS CLAIMED INTO THE ROUND'S ONE SETTLEMENT, AND THE
 // QUALIFIERS ARE PAID FROM IT (the owner 2026-09-14 07:22; FEDERATION.md step 5).
 import { test } from 'node:test';

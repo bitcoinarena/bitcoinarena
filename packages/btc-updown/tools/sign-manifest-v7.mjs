@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 7, SIGNED BY ITS DEVELOPER (kanban #447, the owner 2026-10-17: "also show closed orders with the
 // history with how much you won or lost, and also show there if it's still pending (10 minute delay)"): version 6 in every term, with
 // its new client - the history - beside version 6's and the older ones, so any of them runs a round of it. Parent: version 6.

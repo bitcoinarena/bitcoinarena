@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # ONE RELEASE ASSET OF THE ARENA NODE (kanban #471 part A): the seat, its protocol, the installer and nextblock from a commit, their
 # npm dependencies at pinned versions, a pinned Node runtime and cloudflared for the OS - each download checked against its published
 # SHA-256 - and the launcher (`arena-install`, `arena-install.cmd` on Windows). Run by CI for every tag (release.yml), the same way

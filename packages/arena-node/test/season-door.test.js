@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GET /season (kanban #362 feature 1): one game's board across its rounds, from what this node holds - a result counts once
 // FINAL here (the committee's threshold of verified results AND of FINAL signatures), an amount once the round's settlement
 // is ACCEPTED (the lock it did not claim back, plus the share it paid), a player under its identity, not its round key.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Run ONCE, by a human, and commit the output.
 //
 // Generating src/tables.js at startup with Math.sin would reintroduce exactly

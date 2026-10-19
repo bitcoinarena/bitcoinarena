@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LARGER TRUCK'S CORE ON THE PAGE (kanban #369): the template carries blwp-core-f0cc7b7b.js and loads it only for a round
 // that names f0cc7b7b - fetched, checked against the pinned sha256, run in its own function (the page's BLWP untouched), kept by
 // its core hash; a file that is not the pinned bytes is refused. And the shop and the run's items are wired into the page.

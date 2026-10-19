@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
 //
 // The name decides nothing (§0.12): it is in no entry, no mark and no result,

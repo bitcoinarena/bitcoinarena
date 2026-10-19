@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FUNDING PROPOSALS A SEAT KEEPS (§27A.9.3 stage 1, kanban #397 slice 6): every proposal, comment and signal it was handed - by its
 // owner's own node, by a writer, or forwarded by another seat - checked, kept in its store and listed with the signal's state. Signals
 // are signed messages the seats keep and pass on (the owner 2026-10-16), never on chain; they weigh one per node and move no money.

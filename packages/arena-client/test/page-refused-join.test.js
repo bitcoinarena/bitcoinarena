@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A REFUSED JOIN NEVER BECOMES "JOINED" (kanban #191, measured live 2026-10-06 05:31Z on core 0.0.2805): PLAY on round
 // 49a50535, its hold to the round's start already set; the session refusal then marked the join refused
 // (BLWP_REFUSED_JOIN) but did not cancel it, and at the start the hold's release set it 'joined' with the refusal still as

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A READ AFTER THE EVENT LOOP WAS HELD PAST THE SERVER'S KEEP-ALIVE (M3.3-27).
 //
 // Measured on the regtest rehearsal: `Client.at` refused in 9-12 ms, "only 1 of

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C), MEASURED: can one signer node's word void an
 // entry at the other signer node? Two in-process signer nodes of a lock round (deadline 900).
 //   (1a) A's closed claim + A's own receipt, no mark        (1b) an invented first mark,

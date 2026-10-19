@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TESTNET FEDERATION FOUNDED, 5 OF 7, ON SEVEN NODES THAT ARE EACH ONE GUARDIAN (spec §23A.2; the owner 2026-09-27
 // 10:04: "Testnet is 7 nodes and 7 guardians, one each ... Stock threshold is 5 of 7" - the seven Funnel paths
 // /guardian-1..7 on 127.0.0.1:31221..31281; labelled testnet4).

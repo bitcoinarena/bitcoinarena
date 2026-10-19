@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // MARKETS ON GAMES (kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6; protocol 2026.0.6): "an attested market whose
 // outcome is a game round's signed result (e.g. BULLS vs BEARS of a Tick Tock round ...). It turns every game into a spectator
 // sport with no external oracle: the committee's 5-of-7 RoundResult resolves it."

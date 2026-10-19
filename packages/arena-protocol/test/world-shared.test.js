@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // #23 WORLD GRINDING (the owner 2026-10-04: "the player chooses nothing about the world"; §5A.5 round_seed(i) =
 // H(committee_seed(i) || "world")). Under config v4 of core 7e2123d1 every player of a round drives one world, made from the
 // round alone; under every older config (f51759b6 included) the player's own secret, key and join tick still make it, byte

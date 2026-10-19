@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DONATION TO THE DEVELOPERS FROM THE PAGE (kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to choose
 // from 100, 500, 1000, 5000 satoshis or custom"; "B e cash"): the player's wallet pays the amount split over a donation set's keys in
 // one federation transaction (paySubmit, the item shop's payment), the donor signs the record (protocol donation-gift.js) and the

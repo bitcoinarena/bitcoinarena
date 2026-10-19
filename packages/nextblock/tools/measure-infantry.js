@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The core's infantry line, laid beside test/vectors/csharp-infantry.json.
 //
 // Written for item (h). The armour has been measured against a recording for

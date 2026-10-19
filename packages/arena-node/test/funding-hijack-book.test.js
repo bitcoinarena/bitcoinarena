@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HIJACK DEFENCES AS A SEAT KEEPS THEM (§27A.9.5, kanban #397, the owner 2026-10-17 "Take D1-D6 as proposed"): a passed vote pays only
 // after its 2-week delay (6 blocks on the short schedule), and a NO in that window - or a YES turned NO - cancels the payment (D5); a
 // large payment goes in 4 tranches, each re-counted and cancellable; the signal counts only active nodes with a seasoned bond (D6).

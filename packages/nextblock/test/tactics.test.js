@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §7 (the owner 2026-09-16 18:20): the tests that must fail if the doctrine is wrong.
 //
 // Touch truck-tank = WRECKED is pinned in rules.test.js ("a truck that touches a tank is written off"), and WASTED

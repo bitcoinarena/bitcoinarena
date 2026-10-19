@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Poison tests: make the banned functions explode, then run the corpus.
 //
 // The AST guard catches a call it can see. This catches one it cannot - a

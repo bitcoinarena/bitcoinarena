@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S FIRST MARK AGAINST THE ROUND'S START DEADLINE (§15, §16, §13C).
 //
 // A round names a start deadline in ticks after a player's join tick (or gets

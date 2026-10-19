@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GEAR AS LARGE AS EVERYWHERE ELSE (kanban #384, the owner 2026-10-16: the gear over the games and over Up/Down "super tiny").
 // Measured on live UI 169: the wallet bar's gear 34x29 at 13 px, the strip's over Unity 40x34 at 20 px. On the page's own CSS:
 // the wallet bar's gear has the strip gear's font size, line height and padding.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STRIP'S NODE PROBE ASKS ONLY A AND B, EVERY 30 S, ONE PROBE AT A TIME (the owner 2026-10-16: "Lower the amount of concurrent
 // connections and network load"; measured on preview UI 156 during one run: 1036 of 1050 GET /identity came from probeNodes - every
 // node= of the page's address, 14 seats in a round, every 2 s, for a line that names A and B only). The page's own probeNodes.

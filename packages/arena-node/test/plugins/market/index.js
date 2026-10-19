@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET AS A PLUGIN (kanban #206, §0A.7a): "btc-close" - three outcomes, three attestor keys derived from public test
 // words, two of them to sign; no core, no run, the pari-mutuel rule. A TEST market: its attestors' keys are anybody's, so it
 // is pinned in the client's known-games list for REGTEST only (known.js), never for testnet4 or mainnet.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEED THE PLAYER ALREADY HOLDS GOES BACK INTO THE PAGE (§24, v4.6.2, F2).
 //
 // Measured before this: `tabSeed` read the tab's own sessionStorage or minted a

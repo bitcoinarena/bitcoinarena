@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PROPOSAL THAT CHANGES FEES, ANY OF THEM IN ANY COMBINATION (kanban #462, the owner 2026-10-17: "Proposal type change fees. Any of the
 // fees, all combinations can be changed with a proposal. Same things apply as usual"; ruled the same day: "Introduce hard limits where
 // any parameter could be maliciously used to brick or exploit the game. Approval remains high at current levels. Exclude donation

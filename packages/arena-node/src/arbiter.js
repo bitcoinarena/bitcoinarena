@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION SET, AS A SERVICE (kanban #307, spec 5A.3B "From proof to transaction" steps 1-5). Disjoint from every
 // round committee and from settlement: it touches bonds only, never a player stake, a round or a result.
 //

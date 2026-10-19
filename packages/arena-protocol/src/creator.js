@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND'S CREATOR (§6 `creator_pubkey` / `creator_signature`, kanban #313; 2026.0.3). A contract may name the x-only key of whoever
 // created it (contracts.js CREATOR_MARKER); the creator's BIP-340 signature over the round's id rides beside the contract, as the id
 // itself does - a signature cannot be inside the bytes it signs. "The creator gains no administrative power after publication - and

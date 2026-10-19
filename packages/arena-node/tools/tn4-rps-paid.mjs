@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * TWO PAID PLAYERS AT ONE ROCK PAPER SCISSORS TABLE ON TESTNET4, WITHOUT A BROWSER (kanban #344, the owner 2026-10-11: "first
  * player joins, second player joins the same round"). Each player is its own wallet (the page's wasm lock client): a

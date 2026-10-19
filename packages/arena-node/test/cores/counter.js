@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SECOND TITLE ON THE SAME SIGNER NODES - THE ACCEPTANCE FOR M3 R1 (the owner 2026-09-15 08:07: "several
 // games at once, and several rule sets at once ... two titles and two configs can run on the same
 // nodes in the same window").

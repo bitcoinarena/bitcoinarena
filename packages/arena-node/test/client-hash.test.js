@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE A PLAYER IS SERVED IS CHECKED AGAINST A LIST THE PAGE NEVER SUPPLIES
 // (§24, v4.6.2; F2's second clause). The list lives outside the bundle it
 // pins, and the check runs outside the page, over what is actually served.

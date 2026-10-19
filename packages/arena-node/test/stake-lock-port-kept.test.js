@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PORT'S KEPT READS (the join's 2-3 s): the first read waits; a fresh answer is served from memory; an answer past its
 // minute is given at once and read again behind it; a failed re-read keeps the held answer.
 import { test } from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The census: which bonds exist at a height, canonicalised and Merkle-rooted.
 //
 // Two decisions here are load-bearing and both look like details.

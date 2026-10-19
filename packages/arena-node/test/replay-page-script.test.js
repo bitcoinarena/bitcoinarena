@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY PAGE'S OWN SCRIPT, RUN (kanban #150: pages/replay.html, nextblock's own since #202, was outside coverage - no test ran a line of it). The
 // script runs as it is, under the page's own name (page-script.js), on a small fake page (no jsdom, as rounds-page rules):
 // a status element, fetch faked per path. Measured: what the page tells the player when the link names no run, when no

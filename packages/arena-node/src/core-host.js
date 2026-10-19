@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE THREAD A CORE RUNS IN (spec §0A.6, kanban #328). Started only by core-sandbox.js, one per core, with the core's files
 // already read and checked by the node: it builds the sandbox - an empty vm context, code generation off, the clocks, the
 // randomness and the generated code taken out of its own realm, its modules linked to its own files only - and answers

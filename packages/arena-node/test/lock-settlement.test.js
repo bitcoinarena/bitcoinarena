@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W4: THE LOSER'S STAKE LOCK IS CLAIMED INTO THE ROUND'S ONE SETTLEMENT, AND THE
 // WINNER IS PAID FROM IT (the owner 2026-09-14 07:22: "a loser loses the stake. The
 // lock is claimed into the pool. Winners are paid from that."; FEDERATION.md

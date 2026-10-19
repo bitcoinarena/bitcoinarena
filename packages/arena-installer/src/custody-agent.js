@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CUSTODY AGENT (kanban #471 slice 5 part 4; the owner 2026-10-18: "4. It should happen automatically"): on a custody node, what
 // follows a founding without anyone at the keyboard. A user service of its own (the seat does not hold the wallet), every minute:
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL TICK IS THE CORE'S TICK, AND IT IS NOT A SIXTIETH OF A SECOND.
 //
 // The spec requires a "fixed protocol tick" (section 5) and names no number,

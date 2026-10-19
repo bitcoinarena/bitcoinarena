@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * REGTEST'S DONATION SET OF KEYS (kanban #205): the protocol devs' set a regtest round pays its donation half to when the
  * test hands its nodes a set of keys - the same two dev keys and shares as testnet4's key set (dev a 6667, dev b 3333), on

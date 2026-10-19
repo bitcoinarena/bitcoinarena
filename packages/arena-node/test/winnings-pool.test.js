@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WINNINGS-AUTO (RULED the owner 2026-10-01) replaces THE POOL (RULED 2026-09-23: (ii), with (iii); never (i)). A qualifier who names no Lightning
 // address is not paid: its share is split over the qualifiers who named one, by the payout table's own weights
 // renormalised over them; with nobody addressed no stake lock is claimed. Split out of winnings-sent.test.js so each

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A LAUNCHED DAEMON COUNTS AS FUNDED (M3.3-31).
 //
 // `serve` refuses a round or an entry nobody funded - the disk is spent only on

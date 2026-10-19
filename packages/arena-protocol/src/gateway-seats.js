@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO HOSTS A FEDERATION'S LIGHTNING: THE TWO GATEWAY SEATS (spec §23A.9, kanban #471; the owner 2026-10-18: "If more than 2 nodes in the
 // federation want to host a guardian a clear process must choose the best guardians possible, make the rules and requirements clear").
 // Pure: every guardian ranks the same candidates the same way from the same measurements, and the federation record (signed at

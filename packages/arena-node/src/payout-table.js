@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FIVE OF SEVEN AGREEING ON WHAT THE ROUND OWES, BEFORE A SATOSHI MOVES.
 //
 // §20: "Nodes sign the payout-table hash; 5-of-7 matching signatures make it

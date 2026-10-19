@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WINNINGS ARE ALWAYS SENT ON A FEDERATION ROUND (the owner 2026-09-21: "winnings are always sent. There is no
 // Collect"; ruled for FEDERATION 2026-09-23 - refund key the committee's, gateway the lowest live key, invoice taken
 // only if its amount and its LUD-06 description hash stand).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TABLES A SLOT (kanban #293): the keeper opens as many rounds a slot as the tables in play now, plus a spare - read off a
 // seat's own listing (its rows' `joined`), only this game's rounds, only the slots taking picks now and next.
 import test from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 2026.0.2 - THE ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1). With 14 bonded nodes
 // the testnet4 census could open no round: the draw is seeded by the round id, which hashed the `nodes` it had to name. A v2
 // round's id hashes its contract with `nodes` emptied, both roles take one draw, and the seats write the seated 7 in.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S OWN JOIN OF A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK (W1b),
 // in a real browser, on a real federation. A TOOL, not a test: it wants a built
 // page on disk, a headless Chrome, and the federation page-lock-regtest.sh

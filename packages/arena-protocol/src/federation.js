@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CREATOR DOES NOT GET TO PICK THE CUSTODIAN.
 //
 // Section 23.6 (v4.6.2, P3): "The Round Contract names `federation_id`, and a

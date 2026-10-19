@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PROTOCOL VERSION'S NAME (kanban #349, the owner 2026-10-12 ~15:05Z): "the version template is YYYY.x.y" - YYYY the year it was
 // released, y the build number, and x starts at 0 for now ("0.0.1 is the newest version").
 //

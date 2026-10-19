@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DISHONEST 2-OF-2 SIGNER NODE CAN NO LONGER MAKE THE COMMITTEE'S KEY ONE IT OWNS.
 //
 // Measured at 734a2ec, before round 1 carried a proof of knowledge: all four

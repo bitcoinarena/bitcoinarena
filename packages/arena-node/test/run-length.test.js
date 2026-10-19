@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RUN ENDS, AND IT ENDS WHERE THE CORE SAYS.
 //
 // Section 6 names `player_run_duration` and this Round Contract does not carry

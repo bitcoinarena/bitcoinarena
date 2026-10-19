@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A WALK-AWAY'S LOCK WITH NOBODY QUALIFYING (RULED the owner 2026-09-30, destination 1), as `lockSettlement` builds it:
 // claimed, 75% to the sitting signer nodes, 25% to the donation set by share_bps - and refused, never built on a guess,
 // where the donation set or a donation send is missing. A FORFEIT not at the door keeps the no-qualifier expiry.

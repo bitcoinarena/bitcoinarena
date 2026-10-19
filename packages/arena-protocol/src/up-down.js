@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // "BITCOIN UP OR DOWN - 15 MINUTES" (kanban #235/#278; the owner 2026-10-09: "match this polymarket market" -
 // polymarket.com/event/btc-updown-15m-1791598500, series "BTC Up or Down 15m", recurrence 15m). Its rule, verbatim:
 //

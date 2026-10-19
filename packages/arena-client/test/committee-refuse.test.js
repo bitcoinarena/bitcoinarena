@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT COMPUTES THE COMMITTEE ITSELF, AND A SEAT THAT SAYS OTHERWISE REFUSES THE ROUND (multiplayer_p2p.md, "The client computes
 // the committee itself", RULED the owner 2026-09-28: "a node's committee answer, a contract's node list or a seating certificate that
 // differs from the client's own computation -> the round is refused, the lobby says which node answered what, and no share is sealed,

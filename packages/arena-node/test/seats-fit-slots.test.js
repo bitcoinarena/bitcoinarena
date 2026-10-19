@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND MAY NOT SEAT MORE SIGNER NODES THAN IT HAS SLOTS (§22A).
 //
 // The spec pays the node fee to "the round's sitting seats - the seats the census seated for this round, its

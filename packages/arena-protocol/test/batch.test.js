@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The input batch, and the two properties a transcript is worth having for.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

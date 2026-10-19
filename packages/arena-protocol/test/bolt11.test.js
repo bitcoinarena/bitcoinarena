@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A BOLT11 INVOICE, READ - against the examples BOLT11 itself publishes
 // (M3.2 6e). Their own bech32 checksums guard the strings: a copy that is off by
 // a character does not decode.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN OBJECTION DOES NOT WAIT BEHIND A RUN NOBODY DISPUTED.
 //
 // Section 13A gives an objection a window. A pool that served whatever arrived

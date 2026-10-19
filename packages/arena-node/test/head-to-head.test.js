@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HEAD-TO-HEAD ROUND ON TWO SIGNER NODES (kanban #233, the owner 2026-10-09: "Head-to-head in engine"): two players enter a
 // paying round of Rock Paper Scissors (test/plugins/rps - the game's own decide adapter under a test developer key), each
 // hiding its move behind a commitment; after entry close each reveals to both nodes; at the round's end every node pulls

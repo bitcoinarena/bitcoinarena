@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // /Dashboard: WHAT THIS NODE EARNED, SPENT AND DID (the owner 2026-10-01 15:44/15:45, open list item 2 of 21:16).
 //
 // "Every node serves /Dashboard. An interactive page with charts. A node earns from the 5% node fee ... Each category has

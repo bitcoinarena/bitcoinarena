@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 22A: THE FEE TABLE, WHICH NOBODY COMPUTED UNTIL NOW.
 //
 // 5A.3 row 6 decides WHETHER a node qualifies for a share; until this file

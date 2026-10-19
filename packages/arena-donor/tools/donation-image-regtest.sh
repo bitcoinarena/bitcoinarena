@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # KANBAN #156 MEASURE 1: a local regtest federation (federation-hold-probe.sh's setup: 4 guardians, 3 of 4, one gateway,
 # regtest), then donation-image-regtest.mjs. No testnet, no bond. Stops everything it started on exit.
 #   FEDIMINT_BIN=<dir with fedimintd gatewayd fedimint-cli gateway-cli> WASM_DIR=<built web-target lock client> bash donation-image-regtest.sh

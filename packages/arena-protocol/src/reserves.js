@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL RESERVES' SPLIT (§27A.9.1, kanban #397 slice 1, the owner 2026-10-16: "4% developer fees (game, protocol), 4% node
 // fees, 2% protocol reserves. For ingame items 40% developer donations (game,protocol), 40% node, 20% protocol reserves"; the
 // locks: the round split is mandatory; an item's developers' share is the player's choice of "40 30 20 10 0").

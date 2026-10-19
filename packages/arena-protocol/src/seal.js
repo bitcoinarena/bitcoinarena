@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SHARE, SEALED TO ONE SIGNER NODE.
 //
 // 23.1 step 2 in full: the player "splits P with verifiable secret sharing

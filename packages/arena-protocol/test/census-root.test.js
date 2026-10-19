@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.4: A CONTRACT'S CENSUS ROOT MUST BE THE ONE ITS CENSUS DERIVES TO.
 //
 // "The Round Contract names `census_height` and both roots. Any participant

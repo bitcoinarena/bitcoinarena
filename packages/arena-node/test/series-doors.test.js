@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE TAKES A SERIES ROUND ONLY AS THE SERIES DERIVES IT (ALL-BUT-MIN-1727): at the round door, the entry door and
 // the settlement door, a round naming a series this node does not hold as derived is refused by name; a round naming
 // no series is not touched.

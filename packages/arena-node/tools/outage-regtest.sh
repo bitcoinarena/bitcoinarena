@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # ENTRY_VOID (§16) ON A REAL FEDERATION: an on-time first mark that missed a
 # down signer node is ENTRY_VOID at both signer nodes, and the stake lock is forfeited to the
 # player at once (§23.2) - redeemed from the seed before its expiry and

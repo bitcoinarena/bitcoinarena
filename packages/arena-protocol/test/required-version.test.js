@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #349 (the owner 2026-10-12): a game can require a protocol version; a node that did not update drops out.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Generates the C# view of the state layout FROM state.js.
 //
 // This exists because of the failure it prevents. C# and JavaScript both index

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RESTORE THE SEED IN SETTINGS, OVERWRITING THE CURRENT ONE (kanban #154, the owner 2026-10-04 23:48; plan accepted 2026-10-05).
 // restoreSeed takes what the player typed - the 24 words or the 64 hex - and REPLACES the tab's one current seed
 // (sessionStorage 'arena.player.seed', origin 'imported'). There is never a second active seed. The old phrase stays in the

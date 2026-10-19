@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A round's transcript: the object a node hands over and a verifier replays.
 //
 // §11 chains the batches and §13C says the canonical transcript is what every

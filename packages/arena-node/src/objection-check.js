@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN OBJECTION, CHECKED ON ITS OWN EVIDENCE (§13A, kanban #24, RULED the owner 2026-10-04: "An objection must carry the
 // transcript and the receipts").
 //

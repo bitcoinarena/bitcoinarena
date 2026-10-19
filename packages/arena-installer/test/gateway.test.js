@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GATEWAY FOR CUSTODY (kanban #471 slice 5 part 2, gateway.js): gatewayd from the release only; its command line on this node's
 // LND with an Esplora chain and setup skipped; the admin password kept and only its bcrypt hash on the command line; the mnemonic from
 // the seed (its own words); info read; a federation joined by invite. Measured for real in gateway.js's run (see the commit).

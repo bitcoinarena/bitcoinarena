@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOND-WEIGHTED VOTE OF A FUNDING PROPOSAL (§27A.9.3 stage 2, kanban #397 slice 7): #329's on-chain votes, counted on the bonds
 // active at the vote's start, weighted by bond. the owner's edges: YES 19.99 % of everyone who could vote fails and 20 % passes (rule 3,
 // 2026-10-17, replacing the 30 % turnout); YES at 59.99 % of YES + NO fails

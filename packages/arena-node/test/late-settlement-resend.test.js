@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LATE SETTLEMENT THROUGH A RESTART (§13A; slice C3b-1, and WINNINGS-AUTO, RULED the owner 2026-10-01). Since
 // WINNINGS-AUTO a late share is a payout contract to the first winner's own lock key, never a send, so the late send's
 // restart and its re-send after expiry (slice C3b-2b) are gone with it; what stands is the late transaction itself

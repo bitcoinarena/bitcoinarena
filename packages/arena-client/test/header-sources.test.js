@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CHAIN FROM A FEW SOURCES, NOT FROM EVERY SEAT (kanban #376, the owner 2026-10-16: "Lower the amount of concurrent connections
 // and network load"; measured on preview UI 153: every PLAY read /headers (218800 bytes) from all 14 seats at once, and a busy tab
 // had none of the 14 inside 10 s - "no chain: only 0 of 14 providers gave a chain")

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // reserve-bad-entries.mjs (kanban #397 slice 1, the fail measurement): three entries a version-11 round must refuse, sent to its seats
 // on testnet4 - the protocol reserves' rules as the seats hold them live.
 //   v10way       an entry that pays the old way on a v11 round: fee 4,000 msat, donation 4,000 (the developers' part only), no

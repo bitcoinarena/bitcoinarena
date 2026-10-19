@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FOUNDING CEREMONY AS THE SEATS RUN IT (spec §23A.2, kanban #320): eight guardian-capable nodes of eight operators; four drawn, three
 // alternates. Every seat computes the same draw; the seated post signed setup codes, a code from anyone else is refused; with all
 // four codes in, each seated guardian adds the other three and starts the DKG (position 0 leads). THE WINDOW (kanban #320, comment

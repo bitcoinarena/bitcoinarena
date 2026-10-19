@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 0.12 DISPLAY NAME. Identity is the player key. The name is presentation.
 //
 // the owner 2026-09-08 18:55 (M3): default name is derived from the key so every

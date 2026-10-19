@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PICK B (RULED the owner 2026-09-30 08:55): series 3cfbe516 of testnet4's id before genesis_series_start is taken - its
 // 24 h lead is enough, no grid - and nothing else of that id is: another series under it is still held to the rules.
 import { test } from 'node:test';

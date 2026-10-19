@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUND'S CLAIM KEY, AND WHY ONE SIGNER NODE'S WORD FOR IT IS NOT ENOUGH.
 //
 // Section 23.1 step 0 (v4.6.2): "Once selected, the settlement signer nodes run a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BALLOT READ OFF THE CHAIN, ACTIVATION AND REPEAL (spec §27A.7.3, §27A.7.5-6, kanban #329).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

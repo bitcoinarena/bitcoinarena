@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TESTNET4 STACK TOOLS' REFUSALS AND THEIR NETWORK SETTING, OFF ANY CHAIN (kanban #148 step 6, plan comment 235, Go
 // 2026-10-05). Each tool runs as a child process, as it is run live, against fakes: a JSON-RPC bitcoind, lncli, gateway-cli
 // and gatewayd that log their arguments. The stack itself is measured by tools/tn4-tools-regtest.sh; this is the fast half:

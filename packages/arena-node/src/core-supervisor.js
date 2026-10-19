@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE THREAD THAT WATCHES THE CORE THREADS (kanban #343, spec §0A.6). The node waits for a core's answer blocked in
 // Atomics.wait, so it hears no event from the core's thread: a core killed by its heap limit left the node waiting until
 // the call's deadline (measured 8 s of 8 s; up to 120 s for a replay), and memory read between 50 ms slices let a core

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CENSUS ON BLOCKS BITCOIN ACTUALLY PRODUCED.
 //
 // Every census test before this one ran on composed blocks: a fixture chose

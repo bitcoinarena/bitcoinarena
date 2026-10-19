@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER'S WITHDRAWAL (kanban #358): an invoice's amount read from its human-readable part, a Lightning address resolved through
 // LNURL-pay, and one invoice paid from the wallet through the named gateways - with the federation and the address faked.
 import { test } from 'node:test';

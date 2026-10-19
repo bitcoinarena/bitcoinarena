@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # A CHROME THAT CAN KEEP THE ROUND'S CLOCK (2026-09-20).
 #
 # WHY THIS EXISTS. Every headless browser in `tools/` asks for `--use-gl=swiftshader`, which is right for a

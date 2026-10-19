@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOND OUTPUT KEY IS THE TAPROOT TWEAK OF THE KEYS AND THE MATURITY.
 //
 // A taproot output shows nothing until it is spent, which is why 5A.3B chose

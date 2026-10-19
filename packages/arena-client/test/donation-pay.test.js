@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S DONATION, PAID OVER LNURL TO THE DONATION SET THE SIGNER NODES SERVE
 // (M3.2 item 6e; §22A, §24A.2; ruled 2026-09-13).
 //

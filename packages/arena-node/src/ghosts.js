@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PICTURE OF SOMEBODY ELSE'S TRUCK, BUILT FROM WHAT THEY PUBLISHED.
 //
 // 0.9 lets a player watch competitors "drive, struggle, fail and arrive", and

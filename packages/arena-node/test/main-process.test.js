@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE STARTED FROM ITS ENV AND A SERIES FILE, AS THE UNITS START IT (kanban #149 step 4, plan comment 249, Go 2026-10-05).
 // `node src/main.js 0 <store>` runs as a child process on port 0 (the bound port read from its first line), with
 // ARENA_SERIES_FILE, ARENA_ATTACH_PROOF_DIR and ARENA_DONATION_NETWORK=regtest; the chain half gives it a fake bitcoind (JSON-RPC

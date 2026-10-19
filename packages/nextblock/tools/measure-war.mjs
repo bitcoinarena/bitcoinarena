@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §0 - "If a probe on this table fails, the doctrine is not live, whatever the code says."
 //
 //     node tools/measure-war.mjs [--core=DIR] [--seeds=1,2,3,4,5] [--ticks=3600]

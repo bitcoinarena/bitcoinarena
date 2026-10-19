@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH CHAIN THE CENSUS WAS READ FROM.
 //
 // 5A.2: "The eligible set is therefore a pure function of THE CHAIN up to

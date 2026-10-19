@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE POOL'S PAYOUT SPEND - payout-spend.js on its own (kanban #146, third surface; plan comment 191, Go 2026-10-05). What a
 // round owes each winner (winnings: the table row less the net stake that came back) and the outputs of the one transaction
 // that pays them (payoutOutputs: P2TR outputs at or above the relay floor, the rest owed, the remainder the fee). Until now

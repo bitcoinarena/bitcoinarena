@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIVE PRICE REACHES THE NODE ON THE TICK IT WAS HANDED TO THE CORE (the owner 2026-09-17 16:01: the chart was frozen -
 // nothing ever submitted a price sample). `submitSample` holds the price against the tick the run has reached and
 // publishes it with the batch that covers that tick, as a load is; a real node, so what is measured is what it stored.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CONFIG BALLOT (spec §27A.7.2-§27A.7.5, kanban #329), its first slice: the proposal object, the vote a bond key signs into
 // a Bitcoin OP_RETURN, and the tally - "a pure function of chain state. Every participant computes the same result, and
 // disagreement about the outcome reduces to disagreement about Bitcoin." Reading the chain (finding the proposal's publication

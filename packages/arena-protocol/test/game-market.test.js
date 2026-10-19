@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // MARKETS ON GAMES (kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6; protocol 2026.0.6): a market whose outcome is a
 // game round's own signed result - Tick Tock's §13 RoundResult, BULLS or BEARS, signed by 5 of the source round's 7 seats - and
 // no attestor's. The manifest names its source game, the result kind and a mapping onto its outcomes (marker 0x05); each round

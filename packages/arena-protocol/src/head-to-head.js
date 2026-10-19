@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HEAD-TO-HEAD ROUNDS (kanban #233, the owner 2026-10-09: "Head-to-head in engine"). A replayed round runs each entry alone, so
 // no entry's result can depend on another player's move; a head-to-head round is decided over all of them at once.
 //

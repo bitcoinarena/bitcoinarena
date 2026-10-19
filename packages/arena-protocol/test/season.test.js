@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEASON: ONE GAME'S FINAL ROUNDS OVER A WINDOW, PER PLAYER (kanban #362 feature 1). The same law as the round's board
 // (leaderboard.test.js): presentation, not authority - it adds up amounts the settlements signed and computes none - and
 // every node handed the same rounds, in any order, shows the same rows.

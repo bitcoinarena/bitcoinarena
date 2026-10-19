@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // POSTING A REAL BOND ON A REAL REGTEST, as one thing two tools can use.
 //
 // Lifted out of `census-regtest.mjs`, which has done this since letter 15 and

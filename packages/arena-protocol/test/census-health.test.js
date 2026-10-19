@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STAKE CEILING FROM CENSUS HEALTH (§5A.10, kanban #306): nodes and bonded capital per role against the gross pool (stake x 64
 // players); under 10 nodes play money only; the lower role binds; a free round has no ceiling; test networks are told apart.
 import { test } from 'node:test';

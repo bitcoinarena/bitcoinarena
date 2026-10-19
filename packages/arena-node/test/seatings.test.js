@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE THAT KEEPS MISSING ITS SEATS IS WARNED (§5A.3, kanban #302): drawn and not seated, three times in a row, newest first - and the
 // serving = false update is offered. A round it was not drawn for is no seating it missed; one it sat ends the count.
 import { test } from 'node:test';

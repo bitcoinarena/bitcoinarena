@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // POST /series (kanban #293, the owner 2026-10-12: "Replace the 450 round posts with one post per table"): a seat takes a grid
 // series line - funded by its series id, held to the grid rule - writes its rounds as any series', keeps the line beside its
 // store and holds it again after a restart. Not a day series, not a grid short of its 45 min lead.

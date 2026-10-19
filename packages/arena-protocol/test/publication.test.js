@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND EXISTS ONLY ONCE ITS HASH IS ON BITCOIN, BELOW ITS BEACON BLOCK
 // (5A.5, v4.6.2, P1). The transaction is built and parsed the way a node reads
 // a block, so what is checked is bytes a chain would carry, not an object.

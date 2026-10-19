@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THE LOCK CLIENT'S ANSWER MEANS FOR THE ENTRY AND THE SIGNER NODES (W1a).
 //
 // The lock client (lock-client/, the stock fedimint client crates built to

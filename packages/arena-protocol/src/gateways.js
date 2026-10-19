@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND THAT PAYS OUT NEEDS SOMEWHERE FOR THE MONEY TO COME IN.
 //
 // M3 (RULED the owner 2026-09-20 11:09, named pick A): a paying round needs "inbound liquidity and >= 2

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // M3 W7: THE SIGNER NODE DOOR OPENS NO PAYING FEDERATION ROUND THAT DOES NOT NAME ITS FEDERATION.
 //
 // A round becomes real on a signer node at POST /round and nowhere else. Measured before: the door

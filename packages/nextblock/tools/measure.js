@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Drives the core with the SAME protocol PhysxReferenceTests uses, so the two
 // tables can be laid side by side. Feel is not a formula; it is whatever the
 // PhysX truck did, and this is how we find out whether we have it.

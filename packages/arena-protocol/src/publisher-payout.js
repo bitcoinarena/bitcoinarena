@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SERIES PUBLISHER IS PAID BACK ITS PUBLICATION FEE (§5A.5 "Who pays the fee", kanban #304; 2026.0.3): "The publisher pays it
 // from its own wallet and is reimbursed from the node fee (§22A) of the series' round 0 - or, if round 0 has no entries, the first
 // round of the series that settles with any. The reimbursement is one line in that round's settlement: publisher_payout =

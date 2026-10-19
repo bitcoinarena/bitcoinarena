@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HUB'S RETURN CHANNEL (kanban #471, the owner 2026-10-18: "On testnet4, LND C opens one channel back to each new gateway that has
 // just opened its channel to LND C" - "Add a small watcher"): a gateway's outside channel to the hub gives it outbound only; the
 // hub's channel back is its inbound from outside, the part a gateway seat's deposit minimum counts. Testnet bootstrap for the

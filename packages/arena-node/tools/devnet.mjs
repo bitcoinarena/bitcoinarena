@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DEVELOPER DEVNET IN ONE COMMAND (kanban #362, docs/PLATFORM-RESEARCH.md item 15: "one command starts a local chain, a
 // federation and seven nodes, with a game template and a replay simulator. The first hour decides whether a developer
 // stays"). Regtest only: no testnet4, no mainnet, no bond or stake anywhere but the devnet's own chain.

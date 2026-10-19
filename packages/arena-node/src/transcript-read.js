@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RUN'S INPUTS, READ OUT OF A STORE, IN ONE PLACE - so the daemon's own thread and a replay worker read them the
 // same way (the owner 2026-09-17 19:15, the ghost lag: the close held the event loop that feeds pictured trucks).
 //

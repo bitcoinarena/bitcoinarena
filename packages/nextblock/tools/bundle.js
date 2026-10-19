@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Bundles the core into one file for the browser.
 //
 // Unity WebGL cannot import ES modules from a .jslib, and a bundler in the

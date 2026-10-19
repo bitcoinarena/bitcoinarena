@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // CAN THE INTERNET REACH A NEW NODE (kanban #471 ruling 7, reach-check.js): the seat connects back to the asker only, to a public
 // address only, says only whether the nonce came back, and at most 6 times a minute per address.
 import { test } from 'node:test';

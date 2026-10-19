@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TEST FEDERATION (M3 W7, 2026-09-15): the one federation id the fixtures and the protocol
 // vectors name for a stake-lock round that runs against a stand-in federation - the test lock port,
 // never a federation that holds money. A round that takes a stake into a FEDERATION must name

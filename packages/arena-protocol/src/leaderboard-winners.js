@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WINNERS, THE WINDOW AND THE CAP OF A LEADERBOARD PAYOUT (kanban #460) - the seats' part of leaderboard-payout.js: it reads seasons
 // (season.js), which the page's bundle does not carry, so it stands apart from the record the page signs.
 import { toHex, fromHex } from './hash.js';

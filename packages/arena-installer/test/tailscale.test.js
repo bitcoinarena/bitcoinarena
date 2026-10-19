@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PERMANENT NAME THROUGH TAILSCALE FUNNEL (kanban #471, the owner 2026-10-18: "add Tailscale funnel support so permanent tunnel with
 // Tailscale"): the machine's tailnet name, the first Funnel port not serving something else, `tailscale funnel --bg` to the node's
 // port - kept by tailscaled, so the node runs no tunnel service of its own.

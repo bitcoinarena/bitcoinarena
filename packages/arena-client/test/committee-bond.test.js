@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SESSION PROVES A SEAT ON THE ROUND'S COMMITTEE (kanban #376, measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint:
 // the advertisement is for 2fca1090..., which is not on this round's committee"). daily.json names one bond - seat 1's - and a
 // committee is 7 of 14 seats, so about half the rounds could not be joined. committeeBond keeps the named bond when its node is on

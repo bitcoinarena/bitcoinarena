@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #365): each item by id with the purchase that made it the player's and its owner's
 // proof for this entry (kanban #369), last of all.
 import { test } from 'node:test';

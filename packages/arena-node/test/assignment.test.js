@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO SITS, AND WHERE THAT ANSWER CAME FROM.
 //
 // `POST /round` assigns a round from the chain census (letter 26) using the

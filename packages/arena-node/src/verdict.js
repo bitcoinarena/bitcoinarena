@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A NODE SIGNS AFTER IT HAS REPLAYED, AND IT IS THE SPEC'S OWN OBJECT.
 //
 // Section 13: "Each committee node independently replays the player's

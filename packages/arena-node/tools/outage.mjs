@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ENTRY_VOID (§16) ON A REAL FEDERATION, AND THE REFUND AT ONCE (§23.2).
 // Run by outage-regtest.sh after the federation is up.
 //

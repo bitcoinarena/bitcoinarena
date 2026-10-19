@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEVEN TESTNET4 BONDS CARRIED ONTO BITCOIN ARENA (kanban #209 step 4; spec 0A.9, §27A.8.3): for each seat, one
 // RE-AFFIRMATION of its BLWP bond for testnet4's Arena network id and one ADVERTISEMENT UPDATE naming hosted_games
 // [nextblock] - the bond never spent, its maturity never restarted, no new bond. Rehearsed first on regtest

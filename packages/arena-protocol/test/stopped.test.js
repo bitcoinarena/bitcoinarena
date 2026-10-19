@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §15 AT THE ROUND'S CLOSE (ruled 2026-09-12): a transcript that stops becomes a
 // deterministic result, never a refund. No receipted first mark by the start
 // deadline is FORFEIT; a run LIVE at its last receipted checkpoint is FAILED.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SCALAR MARKETS (kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8; protocol 2026.0.7): an attested market whose outcome is
 // a NUMBER, paid linearly between bounds to two sides. The manifest names low < high in a unit (marker 0x06) and the outcomes
 // LONG, SHORT; its attestors sign the value in a message of its own (TYPE_VALUE_ATTESTATION 0x2a, tag ARENA/v1/ValueAttestation,

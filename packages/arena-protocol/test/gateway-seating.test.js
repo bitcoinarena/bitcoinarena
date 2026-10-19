@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GATEWAY SEATING SIGNED BY THE GUARDIANS (spec §23A.9): it stands with the threshold of seated guardians on the same seats for the
 // same epoch; a guardian that ranked differently only fails to add its signature; strangers and forgeries count for nothing.
 import { test } from 'node:test';

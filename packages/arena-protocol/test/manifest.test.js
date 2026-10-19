@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GAME IS A SIGNED MANIFEST, AND A ROUND IS PLAYED ONLY ON WHAT ITS MANIFEST LISTS (kanban #202, §0A.3, §0A.5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

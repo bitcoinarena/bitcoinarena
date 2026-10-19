@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ATTESTED ROUND'S DOOR AND ITS SETTLEMENT, ON TWO SIGNER NODES AND THE FAKE FEDERATION (kanban #206 slice 2, §0A.7a;
 // the owner 2026-10-07, plan 777):
 //   - the door: an attestation before the round's entries close, or one observed before they closed, refused by name;

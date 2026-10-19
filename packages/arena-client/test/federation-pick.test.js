@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH FEDERATION, BY LOAD (§23A.3, kanban #324): a first deposit goes where least sits against the most cover; a
 // returning player is offered Move above 90 % when another OPEN federation is below 50 %.
 import { test } from 'node:test';

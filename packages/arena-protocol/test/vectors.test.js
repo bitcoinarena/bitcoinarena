@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Replaying the protocol vectors.
 //
 // This is the test that gives the stage-2 criterion teeth: if the vectors say

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // DONATIONS IN THE FEDERATION, THE FORMATS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a donation
 // set of recipient keys and shares, and an Entry Contract that names where its lock transaction paid each key. Every set
 // and every entry already published keeps its bytes and its id.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * A BOLT11 INVOICE, READ (M3.2 item 6e): the network, the amount, the payment
  * hash, the description and the description hash - what a donor's page must

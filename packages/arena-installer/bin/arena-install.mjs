@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER (kanban #471): start it, open the link it prints, finish in the browser.
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]

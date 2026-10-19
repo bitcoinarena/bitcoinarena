@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // READING BITCOIN WITHOUT TRUSTING WHOEVER HANDED IT OVER.
 //
 // Real mainnet data, fetched once and written down here, so the test needs no

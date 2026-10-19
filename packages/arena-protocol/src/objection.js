@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN OBJECTION, AND WHEN A RESULT IS ACTUALLY FINAL. Section 13A.
 //
 // "After a result is PROVISIONALLY_FINAL, the window W (reference: 10 minutes,

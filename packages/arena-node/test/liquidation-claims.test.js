@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLAIMS ON A HALTED FEDERATION'S ESCROW (§23A.5 steps 2-4, kanban #323): the arbitration set's book, its doors, the
 // offline note check's parsing, and the client that presents its notes - the federation's validation stubbed.
 import { test } from 'node:test';

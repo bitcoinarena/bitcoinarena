@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE'S OWN CHAIN, OVER RPC - and what it does when there is not one.
 //
 // The committee seed is a block hash the chain names (5A.5, and letter 32's

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOBBY AND FREE PLAY, IN A REAL BROWSER, WITH NO WALLET (M3.3-34).
 // A TOOL, not a test: it wants a built page, a headless Chrome and the regtest
 // bitcoind lobby-regtest.sh stands up. Nothing here reaches Lightning.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TIME, IN THE ONLY UNIT THE SIMULATION HAS.
 //
 // The round contract measures a round in TIME - `startTimeMs`, `entryCloseMs`,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FIRST MARK AGAINST THE START DEADLINE, AS A PREDICATE (§15, §16, §13C):
 // a first mark in time decides nothing; one signed after join tick + deadline
 // is FORFEIT (the player's own act - never a refund); no mark decides nothing

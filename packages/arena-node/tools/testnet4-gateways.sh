@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE TWO GATEWAYS' PUBLIC ROOTS, REGISTERED AT ALL SEVEN GUARDIANS (the owner 2026-09-27: "Register both root URLs at all
 # seven guardians. No 127.0.0.1 registration may remain.")
 #

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * A TESTNET4 TAIL SERIES THAT PAYS ITS DONATION IN THE FEDERATION (the owner 2026-10-03: "migrate to the new donation system by
  * tomorrow. It overwrites all the other rounds. It's ok if it starts later in the day"): testnet4-late-tail.mjs, except the

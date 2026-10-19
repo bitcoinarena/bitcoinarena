@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT EACH OUTCOME DOES TO ITS STAKE LOCK, AND WHAT IT TAKES TO DO IT (§23.1, §23.2 - the federation's custody, the one
 // this network has: §23.6, RULED the owner 2026-09-22 22:59).
 //

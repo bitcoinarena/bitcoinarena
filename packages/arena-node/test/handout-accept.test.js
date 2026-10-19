@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DOOR LETTER 29 EXISTS FOR.
 //
 // `shares.js` proves the rule and `handout.js` puts it on the wire. Neither is

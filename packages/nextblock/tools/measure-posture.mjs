@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §11.4's POSTURE MIX. Written 2026-09-19 as step one of the letter, when the core held no posture and the mix
 // had to be DERIVED from state. Since 7bc7c1f6 the core WRITES posture into TAC_COVER's high bits, so this tool
 // now derives the mix AND reads the written word, and prints how often the two agree - the gap being the rifle's

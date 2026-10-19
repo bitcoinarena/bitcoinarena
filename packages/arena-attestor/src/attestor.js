@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ATTESTOR OF A PERIOD MARKET (kanban #236; spec §0A.7b.1). Every 10 s it reads its sources and keeps the median, in whole
 // cents. At the end of each round's window - the period before the round's entry close (attested.js marketWindowOf) - it
 // applies the market's rule (up-down.js upDownOutcome: Up when the 60 s average at the window's end is at or above the 60 s

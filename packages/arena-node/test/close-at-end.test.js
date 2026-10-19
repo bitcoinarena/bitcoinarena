@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE CLOSES A ROUND THAT IS OVER, BY ITS OWN CLOCK (M3.3-34, the Daily's close).
 //
 // With `closeAtEnd` a signer node closes every round it holds once protocol

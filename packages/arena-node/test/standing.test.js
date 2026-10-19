@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PENDING LINE'S FIGURE (WINDOW-10-SPEC, the owner 2026-10-01, §24): GET /standing?entry= - this entry's state, its row
 // of the payout table over the results signed so far, and the window (the round's end, and 600 s after). Measured on two
 // signer nodes and the fake lock port: a winner and a loser.

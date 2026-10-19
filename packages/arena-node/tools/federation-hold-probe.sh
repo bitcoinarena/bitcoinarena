@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # DOES A STAKE PAID INTO A FEDIMINT FEDERATION STAY HELD, OR SETTLE AT ONCE?
 #
 # The pool is a FEDERATION (the owner 2026-09-11 09:26): Fedimint-class, with a

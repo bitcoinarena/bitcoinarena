@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CUSTODY AGENT'S SERVICE (kanban #471 slice 5 part 4, custody-agent.js): one tick a minute, its lines in <home>/custody.log.
 //
 //     custody-agent --home ~/.arena-node

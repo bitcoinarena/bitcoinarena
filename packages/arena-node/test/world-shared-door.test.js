@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // #23 AT THE SEATS (the owner 2026-10-04: "the player chooses nothing about the world"): a shared-world round (config v4 of
 // core 7e2123d1) takes an entry only with a world secret of 32 zero bytes, and the seats' replay derives the round's one
 // world - the same seed word the page's join computes (seed.js worldSeedWord) - for every player, whatever key he brings;

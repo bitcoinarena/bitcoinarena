@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BUILT PAGE, A REAL NODE, AND A REAL BROWSER.
 //
 // Run it with: node tools/screen.mjs  (after a WebGL build). It is a TOOL and

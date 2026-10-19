@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL RESERVES' BOOK (§27A.9.2, kanban #397 slice 4): GET /reserves' figures come from the seat's own rows under a
 // federation's reserve key - the held total, the entries and the last payments in, newest first - and a row another seat
 // listed is kept only once this seat's own federation port holds that payout contract to the reserve key for that amount.

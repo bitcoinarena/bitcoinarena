@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SCRIPTS A PAGE SERVES THAT DECIDE MONEY ARE THE BUILD OF THIS SOURCE.
 //
 // Measured (TASKBOOK, e625085): src/nwc.js was fixed at 967cf30 and the page

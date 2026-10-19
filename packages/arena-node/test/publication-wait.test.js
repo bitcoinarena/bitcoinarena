@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PUBLISHED ROUND FIRST, ITS BEACON AFTER (kanban #149 step 3, plan comment 249, Go 2026-10-05). awaitPublishedBeacon and
 // beaconBlockIn on chain views built here: mined, linked headers 600 s apart (a block's median time past is then the time
 // of the block five below it), the round's publication transaction from protocol's own output. bumpfee and the sleeps are

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE PLAYERS' ESCROW INTO THE FEDERATION, ON A REGTEST CHAIN (kanban #307, §5A.3B): a players' escrow output of the
  * arbitration set (escrowOutput: its one k-of-m leaf) is funded from the stack's wallet - as a slash's path B pays it -,

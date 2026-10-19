@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE 10% IN A PAYING LOCK ROUND, END TO END (kanban #205, §0A.8 and §22A): two players stake 100 000 000 msat each and
 // donate the default 5%. The NODES' 5% is taken from the settlement transaction - its payouts to the round's seats (and
 // guardians) - and the DEVELOPERS' 5% from what the federation holds at the outputs each entry's lock named: half to the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE ASKS NO ROUND WHICH CUSTODY IT HAS (RULED the owner 2026-09-24, the enum slice's third cut).
 //
 // Every contract a signer node reads has come through decodeRoundContract, which answers FEDERATION or throws: a

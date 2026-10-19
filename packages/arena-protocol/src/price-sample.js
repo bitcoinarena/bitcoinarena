@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PRICE A RUN PLAYS AGAINST, SIGNED BY THE COMMITTEE (§11, kanban #311). "PriceSample { tick, price_cents, attestation }
 // ... `attestation` is the game/verify committee's signature over (round_id, tick, price_cents): the committee nodes publish
 // one attested sample every 5 s of round time from the contract's named feed - and, with the first, the 64 samples before

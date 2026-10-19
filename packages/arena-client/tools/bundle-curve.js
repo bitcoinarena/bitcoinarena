@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Bundles the page curve into one file the template can load as a script.
 //
 // The client bundle itself still carries no crypto. This file is the

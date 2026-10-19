@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDIMINT INVITE THAT NAMES EVERY GUARDIAN (item 5, 2026-09-28: the testnet invite named guardian 1 alone, and while
 // guardian 1 was down every player join failed "Failed to download client config" though six of seven were up).
 //

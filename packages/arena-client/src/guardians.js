@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE COUNTS THE FEDERATION'S BONDED GUARDIANS ITSELF (§23.6, P3; the owner
 // 2026-09-15 07:33: "every guardian / node must have its own bond or it may not
 // take part. federationIsBonded stays on").

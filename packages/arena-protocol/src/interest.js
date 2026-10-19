@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH TWENTY OTHER TRUCKS YOU SEE, AND WHY EVERY NODE PICKS THE SAME TWENTY.
 //
 // IMPLEMENTATION section 7: "Ghost fan-out uses interest management: each

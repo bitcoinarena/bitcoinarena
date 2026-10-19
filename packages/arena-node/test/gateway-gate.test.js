@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING FEDERATION ROUND OPENS ONLY ON A FEDERATION WITH TWO DISTINCT LIVE GATEWAYS (§23.6: "deposits and
 // withdrawals through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
 //

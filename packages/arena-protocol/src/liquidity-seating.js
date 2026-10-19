@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIQUIDITY SEATING OF AN EPOCH, SIGNED BY THE GUARDIANS (spec §23A.10, kanban #494): each guardian lists the liquidity providers
 // of its federation - a channel of at least L to one of its custody nodes, free balance at or above the deposit minimum - with their
 // weights, and signs it; a seating stands when at least the federation's threshold of its seated guardians signed the same list for

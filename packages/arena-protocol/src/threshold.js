@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE COMMITTEE THRESHOLD, the one rule the door, the settle, the verdict and
  * the page all read: 2 slots -> 2-of-2 (this build), 7 slots -> 5-of-7.

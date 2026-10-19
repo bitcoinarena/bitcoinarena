@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S OWN DEV CLIENTS (kanban #358): set up from the owner page with a new or an imported key, run as children, a withdrawal
 // left for the client, removal that keeps the key - and each donation split into the protocol developers' part and its game's part.
 import { test } from 'node:test';

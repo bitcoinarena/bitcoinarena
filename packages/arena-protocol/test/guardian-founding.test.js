@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GUARDIAN FOUNDING BY SORTITION (§23A.2, kanban #320): over the guardian-capable census, one ticket per operator, operators guarding an
 // OPEN federation left out, bond_min_guardian held; nominal drawn and three alternates in order; a no-show replaced by the next.
 import { test } from 'node:test';

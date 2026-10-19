@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // OBJECTIONS AND EQUIVOCATION PROOFS GO TO THE ROUND'S PUBLICATION RELAYS TOO (spec §25.2, kanban #327).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

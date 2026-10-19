@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE THE THREE NUMBERS COME FROM.
 //
 // Piece 1 of this letter put the GHOSTS frame on the wire and piece 3 decided

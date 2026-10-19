@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE VERIFIES A REAL STAKE LOCK ON A REAL FEDERATION (v4.6.2 §23.1 step 5).
 // Driven by signer-node-lock-regtest.sh, which stands up stock fedimintd 0.12.0 (4
 // guardians, 3 of 4) on regtest, deposits through a gateway, and makes the

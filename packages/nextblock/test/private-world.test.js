@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 0.10: A PRIVATE FINANCIAL WORLD PER PLAYER, AND THE GUARANTEE IS A MISSING
 // PARAMETER.
 //

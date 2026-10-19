@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE ARBITER'S PAYOUT STEP, END TO END ON A REGTEST CHAIN (kanban #307, §5A.3B) - the service's own code (arbiter.js
  * payOutSlash) on a slash it recorded: a players' escrow output funded from the stack's wallet as path B pays it (its txid

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO THE GUARDIANS ARE: FOUNDING BY SORTITION (§23A.2, kanban #320). "Bond-weighted stateless sortition, §5A.6 unchanged, with the beacon
 // block after trigger_height and the tag 'BLWP/v1/GUARDIAN', over the guardian-capable census minus operators already guarding an OPEN
 // federation, one ticket per operator. federation_nominal are drawn, then three alternates in order. Nobody hand-picks." A drawn guardian

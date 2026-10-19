@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #503: a remote session (ssh, or Linux without a display) gets the tunnelled setup link by itself; --local and --tunnel decide first.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

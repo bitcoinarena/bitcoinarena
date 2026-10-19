@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LATE FIRST MARK IS FORFEIT AT BOTH SIGNER NODES (§15, §13C), AND IS FORWARDED.
 //
 // The rule (protocol first-mark.js): a first mark signed at a tick after

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE LOCK CLIENT (W1a) ON A REAL FEDERATION: rehearsal step 1's setup (stock
 # fedimintd 0.12.0, 4 guardians, 3 of 4, one gateway, regtest), the committee's
 # DKG claim key, then lock-client-regtest.mjs.

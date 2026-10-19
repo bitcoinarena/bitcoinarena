@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Everything a second implementation has to agree on before anything else can
 // be compared: the version, the type bytes, and the hash tags.
 //

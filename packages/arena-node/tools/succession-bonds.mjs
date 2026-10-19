@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OLD FEDERATION'S GUARDIANS' BONDS, SPENT AT MATURITY (kanban #276 custody succession, §23A.6 step 4: "after CLOSED they
 // may stop, and their bonds mature as any node's"). Driven by succession-regtest.sh once the old federation is empty: one bond
 // per old guardian on the run's own regtest, each recovery spend (path A, the node's own key) refused one block before

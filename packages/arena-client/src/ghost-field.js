@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THE PAGE DOES WITH A PICTURE OF SOMEBODY ELSE'S TRUCK.
 //
 // Letter 18 got a ghost produced, delivered and decoded: the daemon replays

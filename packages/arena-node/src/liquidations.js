@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HALTED FEDERATION'S LIQUIDATION, AS EVERY SEAT MIRRORS IT (spec §23A.5 steps 1-2, RULED the owner 2026-09-21, kanban #323):
 // "every seat mirrors them at GET /liquidations". For each federation whose record this seat holds HALTED: the halt height and
 // the signed HALTED record it is read from, the liquidation clocks from it (liquidates after abandon_blocks, the claim window,

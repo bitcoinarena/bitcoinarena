@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5d / 27A.4: THE FIELDS A SIGNED CONTRACT MUST CARRY BEFORE ANYTHING USES
 // THEM.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BECH32 (BIP-173) AND LNURL (LUD-01), against their own published strings
 // (M3.2 6e). Before this nothing in the repo could turn an LNURL into the URL a
 // wallet asks; donation.js only folded their case.

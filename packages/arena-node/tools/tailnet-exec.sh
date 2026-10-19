@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # RUN A COMMAND WITH THIS HOST'S FUNNEL NAME RESOLVED TO ITS OWN TAILNET ADDRESS. The public Funnel relay drops a TLS
 # handshake that starts on this same host (measured 2026-09-27 08:25: "unexpected eof", 0 bytes read, on every path,
 # the Daily's /blwp-a too), while the tailnet serve on 100.x answers the same name with the same certificate. So a

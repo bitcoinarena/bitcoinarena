@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEASON BOARD IN THE PAGE (kanban #362, docs/PLATFORM-RESEARCH.md item 1). The page's own code runs under the page's
 // name (page-script.js) on a small fake page, with the bundle the template carries: opened from a game's tile, it asks the
 // game's seats for GET /season?game=<name>&days=7&scope=network, the first that answers; draws one row per player with the

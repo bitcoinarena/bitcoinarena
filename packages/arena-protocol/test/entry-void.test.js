@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ENTRY_VOID (§16, THE OUTAGE REFUND) AS A PREDICATE, before any signer node wiring.
 //
 // An on-time first mark that, when the start deadline passed, had fewer than

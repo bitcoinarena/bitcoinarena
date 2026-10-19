@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYERS' ESCROW INTO THE FEDERATION (kanban #307, §5A.3B): the arbitration set spends its escrow output whole, less
 // the fee, to the federation's peg-in script, signed as path B is - k of m on its own, fewer posts nothing.
 import { test } from 'node:test';

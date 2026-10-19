@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SIGNER NODE'S WORD THAT IT POSTED A RUN'S TRANSCRIPT, AND THE COUNT THAT MAKES A RESULT REPLAYABLE (P2).
 //
 // v4.6.2 §13A: FINAL needs the round's threshold of settlement signer nodes to have

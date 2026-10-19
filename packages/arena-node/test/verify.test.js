@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CLOSED ROUND REPLAYS ITSELF, AND NOTHING IN THIS FILE ASKS IT TO.
 //
 // The pool, the replay and the signing were all reachable only from tests,

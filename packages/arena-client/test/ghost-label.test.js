@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEBUG LABEL OVER ANOTHER PLAYER'S TRUCK, AND THE DRAIN THAT KEEPS ITS PICTURES COMING (the owner 2026-09-17 19:15:
 // "updates only every 300-600 ms"; a label with the name, the age in ms and arrows for how it moved).
 import { test } from 'node:test';

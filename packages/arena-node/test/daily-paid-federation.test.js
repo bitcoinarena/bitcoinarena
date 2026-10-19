@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DAILY'S PAYING ROUND IS A FEDERATION ROUND, ON ITS OWN SEVEN (HARD, the owner 2026-09-23 10:19: "New paying
 // rounds are FEDERATION now"; ruled 2026-09-21: the committee is the 5-of-7 already in the protocol).
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LATE LOSER'S SECOND SETTLEMENT (§13A; RULED the owner 2026-09-24, slice C3b-1).
 //
 // The round's one settlement leaves out an entry still in its re-run window (C3a). When that entry then ends FINAL and

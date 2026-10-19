@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE EXCHANGE VIEW OF A MARKET (kanban #448, the owner 2026-10-17: "complete order book bids ask, chart, depth (switchable) like an
 // exchange"; "For all prediction markets"): the ladder, the chart's points and the volume, from a seat's GET /book as it serves it
 // (BigInts as strings).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GHOST IS A PICTURE FROM A TRANSCRIPT, NOT A POSITION A NODE ANNOUNCES.
 //
 // 0.9: "Other trucks are visible ghosts with no collision." 0.10: "Ghost

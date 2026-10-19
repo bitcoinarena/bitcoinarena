@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FINISH STRAIGHT IS FREE (the owner 2026-09-25 21:19: "The finish-straight passage must be completely free. A truck at
 // speed crosses it with no hit and no slowdown from a collider").
 //

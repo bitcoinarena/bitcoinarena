@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SAME THRESHOLD, IN THE SIGNATURE BITCOIN ACTUALLY CHECKS.
 //
 // `frost.js` reproduces RFC 9591 byte for byte, which proves the algebra -

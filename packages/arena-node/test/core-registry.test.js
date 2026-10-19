@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SIGNER NODE OPENS ONLY A ROUND ON A CORE AND CONFIG IT RUNS, AND A RESULT NAMES THE CORE THAT REPLAYED
 // (M3 R1 step B; the owner 2026-09-15 08:07: "each round names its sim_wasm_hash and its game_config/
 // config_hash. Signer nodes replay what that round names").

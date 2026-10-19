@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RESERVE SEATS (multiplayer_p2p.md §5A.7, RULED the owner 2026-09-28; kanban #301).
 //
 // A node drawn up to 72 h ahead may be offline when its round comes, so each role draws more nodes than it seats

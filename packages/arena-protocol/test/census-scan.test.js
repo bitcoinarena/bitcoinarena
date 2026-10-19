@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.4 STEP 1, SCAN: the chain says where an output was and whether it is
 // still there - not the party handing the census over.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE REFUSES WHAT A SERIES DOES NOT DERIVE, AS A PROCESS: tools/series-regtest.mjs run as it is run (kanban #148 hole A,
 // plan comment 238, Go 2026-10-05). No chain (CHAIN=0), a temp dir, its two `node src/main.js` seats on 23421/23431. Every
 // line it prints is checked: both seats start with the series; the genuine round is stored at both; a moved window,

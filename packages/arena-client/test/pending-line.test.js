@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PENDING LINE (WINDOW-10-SPEC, RULED the owner 2026-10-01, §24): the page's own lookThePending, run on fake signer
 // node answers - pending the moment a result is signed, the window's close in UTC, "provisional" while results still
 // arrive, gone when the result becomes invalid, gone when the money is collected.

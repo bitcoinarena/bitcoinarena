@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOBBY'S "build 0.0.xxxx" IS UNITY'S Resources/build.txt, baked into the brotli .data.unityweb at the last Unity build
 // (0.0.2433). The page moves on without a Unity build, so the stamp is rewritten here at each deploy: decompress, replace the
 // 8-byte stamp with the page's version (same length), recompress with the original window, and keep Unity's marker

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE WHOLE SETTLEMENT ON A REAL FEDERATION (W4): rehearsal step 1's setup (stock
 # fedimintd 0.12.0, 4 guardians, 3 of 4, one gateway, regtest), then
 # settle-live-regtest.mjs - two signer nodes, a winner and a loser, a 100 sat round and a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION IS A ROUND'S CUSTODIAN ONLY IF ITS THRESHOLD OF GUARDIANS ARE
 // BONDED CENSUS NODES (§23.6, v4.6.2, P3) - the census the client derived, the
 // advertisements the bonds committed to.

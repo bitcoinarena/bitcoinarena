@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND UNDER THE WITHDRAWN CUSTODY IS NO ROUND HERE, PAST ROUNDS INCLUDED (RULED, the owner 2026-09-22 22:59).
 //
 // §23.6: "a record from before this ruling that carries the old value is not a round of this network and

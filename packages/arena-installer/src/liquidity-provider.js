@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIQUIDITY PROVIDER SERVICE (spec §23A.10, kanban #494; the owner 2026-10-18: "This service alone listens to new nodes and creates
 // incoming liquidity for them ... at least one connection to each node, maximum 2 ... needs to communicate with other nodes who opens
 // liquidity to a new node"). Every tick:

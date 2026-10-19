@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE DEPOSIT AND ONE WITHDRAW FOR EVERY GAME (kanban #294, the owner 2026-10-10: "Align the deposit process of nextblock, Rock
 // Paper Scissors, and the prediction UI. It must be the same everywhere. A game must not implement deposit itself. It imports
 // it from the protocol"). The page's own code (page-script.js) on a small fake page. Measured: Settings' buttons, the wallet

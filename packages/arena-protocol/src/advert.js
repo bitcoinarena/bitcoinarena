@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A node advertisement: who a node is, and where to reach it.
 //
 // WHY IT IS ON THE CHAIN AT ALL. Section 25.1 is blunt about the difference

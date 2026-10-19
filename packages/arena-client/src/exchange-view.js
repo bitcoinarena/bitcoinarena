@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET AS AN EXCHANGE SHOWS IT (kanban #448, the owner 2026-10-17: "build a real desktop view with complete order book bids ask,
 // chart, depth (switchable) like an exchange. Like Polymarket is doing"; "For all prediction markets"): the page draws it for any
 // market's own client (ARENA_GAME.market.exchange), from the seats' GET /book - its priced resting levels (book-ledger.js `levels`)

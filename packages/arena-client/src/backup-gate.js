@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BACKUP WARNING (§24B, as ruled 2026-09-21 20:01): nothing is refused, and the player is told.
 //
 // An earlier cut of this file GATED the first deposit and the first paid join on the phrase being typed

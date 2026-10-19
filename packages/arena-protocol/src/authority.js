@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 27A.4: WHICH DONATION SET IS THE NETWORK'S, FROM WHEN, AND WHO SAID SO.
 //
 // `donation.js` answers a different question and answers it well: given a list

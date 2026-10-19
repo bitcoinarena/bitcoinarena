@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY WALLET THIS BROWSER KEEPS, COMBINED INTO THE ONE THIS TAB PLAYS WITH (kanban #187 item 3, plan comment 298, Go
 // 2026-10-05). index.html's combineWallets is lifted out of the page by its text and run as it is, against fake wallets: the
 // browser's kept phrases (arena.seeds), each with its own e-cash; the current phrase's wallet `main`. Each other wallet with

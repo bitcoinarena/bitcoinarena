@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT NEXTBLOCK SHARES WITH THE ENGINE IT RUNS ON, HELD BY THE GAME (kanban #203: the engine imports no game, so the
 // checks that were imports are tests on the game's side). The engine's sha256 and the core's give the same digests; the
 // core runs at the tick rate the engine states; nextblock's founding config still hashes to the GENESIS_CONFIG_HASH the

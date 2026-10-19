@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GAME'S OWN NOSTR RELAY (kanban #277): what the page's Nostr login writes to first - a profile, an encrypted game seed
 // (NIP-78, kind 30078), NIP-46 signing messages. Signatures are checked, a newer replaceable event replaces the older, the
 // filters select, a live subscription is told at once, and anything outside the game's kinds is refused.

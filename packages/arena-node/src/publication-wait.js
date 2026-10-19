@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PUBLISHED ROUND FIRST, ITS BEACON AFTER (the owner 2026-09-30, the fcb15cca refusal, pick (b)).
 //
 // Measured on testnet4: the paying runner broadcast round fcb15cca's publication (37af92a0, 2 sat/vB) at 21:48:57Z;

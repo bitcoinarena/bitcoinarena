@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BADGES ON THE SEASON BOARD IN THE PAGE (kanban #362, PLATFORM-RESEARCH items 13 + 1). The page's season view (lifted by
 // its text and run under the page's name, page-script.js) on a small fake page, with the bundle the template carries, over
 // three fake seats: seat-1 answers `on: false` (it awards no badges), seat-2 `on: true`, seat-3 is down for badges. The rows

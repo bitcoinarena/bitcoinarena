@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * A TESTNET4 LIGHTNING ADDRESS FOR WINNINGS (LUD-16 over LUD-06), invoices from one of our own testnet4 lnds - what the
  * page's winnings prompt is answered with in the paid testnet4 run (the owner 2026-09-27 17:24: "finish one paid run that

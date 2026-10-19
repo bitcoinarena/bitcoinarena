@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PHRASE IS KEPT IN THE BROWSER (the owner 2026-10-01: "safe even if the user closes the browser and loads it again"):
 // the page's own blwpSeedKeeper, run on fake storages and a fake clock - a browser opened again gets its phrase back,
 // a second open tab is still a second player, a reload keeps its own, an imported phrase is kept too.

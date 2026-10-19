@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FIVE OF SEVEN PUT THE STAKE PREIMAGE BACK; FOUR PUT NOTHING BACK.
 //
 // 23.1: "The player splits P with verifiable secret sharing (Shamir, threshold

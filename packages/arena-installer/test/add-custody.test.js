@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // CUSTODY ADDED LATER (the owner 2026-10-18: "No slashing for leaving if you have no custody, so that will only come then. But if custody is
 // setup later in the UI we need the same screens"): a node installed without custody skips the bond's rules; `--add-custody` reopens the
 // wizard at the roles step with custody chosen, the custody steps follow (Lightning, federation, I UNDERSTAND), and the bond step updates

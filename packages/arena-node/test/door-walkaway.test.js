@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §15 AT THE DOOR (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27): "A seated player whose stake was committed and who sent
 // no first mark is FORFEIT, score 0, at the door, not left undecided until the close. Never ENTRY_VOID. Never a refund.
 // A first mark after the start deadline is the same FORFEIT."

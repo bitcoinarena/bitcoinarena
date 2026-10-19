@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SCHNORR CHECK, KEPT (ORDER-2116, measured on the free series pair 2026-10-01): a finality watch asks where each run
 // stands several times a tick - and every ask verified every result and every FINAL signature of the run again, the
 // same bytes against the same key. A CPU profile of a node watching 43 rounds past their window: 50 % of its loop in

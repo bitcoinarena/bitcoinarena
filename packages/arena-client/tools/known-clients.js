@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WRITES arena-client/known-good-clients.json: the known-good list of the
 // scripts a page serves that decide money (§24, v4.6.2; F2's second clause: "a
 // client whose hash is not on the known-good list cannot enter a paying

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md REHEARSAL 13, SUCCESSION ON REGTEST (§23A.6, kanban #326): "a 4-guardian federation with notes in three wallets
 # and one open lock; one guardian abandons (attested); a successor of 4 is founded with the three seated first; every wallet's
 # notes move on their own through a gateway that serves both, with no press; the lock settles in the old federation and its

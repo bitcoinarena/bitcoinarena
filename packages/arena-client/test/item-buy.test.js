@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN IN-GAME ITEM BOUGHT FROM THE PAGE (kanban #365): served list, split, payment, signed record, handed to a seat - with seats and a wallet
 // standing in, the record a seat receives is one purchaseStands takes.
 import { test } from 'node:test';

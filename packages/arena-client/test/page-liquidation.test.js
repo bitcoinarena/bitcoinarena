@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S LIQUIDATION HOOK (kanban #323, §23A.5 step 2): the template's own claimLiquidations, run on stubs - a seat lists a
 // liquidation of a federation this browser holds, the page presents that wallet and collects the payouts naming its key;
 // nothing happens when no seat lists one.

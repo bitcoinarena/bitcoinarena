@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE WAITS A LITTLE FOR THE ROUND'S CLAIM KEY, AND ACCEPTS NOTHING SHORT OF ITS THRESHOLD.
 //
 // Measured on a Daily 2-of-2 paying round (TASKBOOK, W5 step 1): the signer nodes make

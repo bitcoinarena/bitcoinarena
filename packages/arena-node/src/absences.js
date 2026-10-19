@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ABSENCE ATTESTATIONS A SEAT HOLDS (spec §23A.4, kanban #322): each guardian signs, once a day while it lasts, that it has not
 // seen a peer in consensus since a height (absence.js). A seat takes them (POST /absence), keeps per federation, peer and
 // attester the newest one, and answers whether they make an abandonment proof against a record - 2f + 1 distinct guardians,

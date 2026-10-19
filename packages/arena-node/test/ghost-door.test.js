@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GHOST SENT TO A NODE IS TOLD WHAT IT IS, not what it is not.
 //
 // 0.10: "Ghost snapshots are never inputs to this calculation."

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // "BITCOIN UP OR DOWN - 15 MINUTES", the Polymarket rule (kanban #278, #236): Up if the 60 s average at the window's end is
 // at or above the 60 s average at its start (Chainlink's "TWAP 60 s" stream, read at both ends).
 import test from 'node:test';

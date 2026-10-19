@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TRIAL RUN (kanban #276 step 5, the owner 2026-10-10: "Malicious code checks are very important"): after the scan, a decide
 // adapter is RUN before it is installed - in a context of its own (node:vm) with no process, no require, no network objects,
 // a time limit per call - on every combination of moves for every player count its manifest allows (capped). It must not

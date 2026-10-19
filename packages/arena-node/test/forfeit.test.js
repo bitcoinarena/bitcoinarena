@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SIGNER NODES FORFEIT A QUALIFIER'S STAKE LOCK, AND ONLY A QUALIFIER'S (v4.6.2 §23.2 row 1, W5b).
 //
 // Two signer nodes of a lock round, each with a share of the round's claim key; a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ATTESTOR'S CORE (kanban #236): one window's word from its readings, nothing signed without a price at the start, and
 // the words combining into an attestation a seat takes - the market's threshold of its attestors over one body.
 import test from 'node:test';

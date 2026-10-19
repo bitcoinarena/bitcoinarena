@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WIZARD FROM ANOTHER MACHINE (kanban #471 step B.2; the owner 2026-10-18: "No tunnelling account is needed", ruling 5: Cloudflare).
 // A Cloudflare quick tunnel - `cloudflared tunnel --url`, no account, a random *.trycloudflare.com name - opened only when the user
 // asks for it (--tunnel), closed when the wizard ends. The setup token still guards every page: the tunnel only makes the wizard

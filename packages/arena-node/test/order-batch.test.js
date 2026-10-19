@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEATS AGREE EACH BATCH'S SET IN TIME FOR 0.5 S (kanban #278 step 4, re-measured with the certificate of comment 1127).
 // Seven seats of one Up/Down market round; every order an entry whose stake and fee locks the seats verified; each batch led
 // by the round's seat k mod 7 at its cutoff - the proposals, the set signed by every seat, and its certificate handed to every

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT (kanban #319, spec §23.1): the order (the lobby's first, then the
 // federation's, each once), a gateway that makes no invoice passed over, an invoice that ends Expired or stays unclaimed
 // followed by the next gateway's - the first still payable - and the deposit offer doing it end to end.

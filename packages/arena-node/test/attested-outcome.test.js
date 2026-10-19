@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND WHOSE RESULT IS NOT A REPLAY, ON TWO SIGNER NODES AND THE FAKE FEDERATION (kanban #206 slice 1, §0A.7a; the owner
 // 2026-10-07): an attested market's round - entries that back an outcome (`pick`) and play no run, the attestors' outcome
 // in through POST /outcome, the pari-mutuel table out of GET /outcome, built by the seats from the picks and the outcome

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OBJECTION WINDOW'S DAEMONS AND PLAYERS, shared by objection-window.test.js
 // (M3.3-32) and publication-finality.test.js (P2): one daemon on a seven-signer node
 // round whose other six keys the test holds. Its rounds are FEDERATION, the one custody

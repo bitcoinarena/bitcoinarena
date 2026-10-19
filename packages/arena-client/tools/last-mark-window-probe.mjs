@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * §10'S REQUIRED WINDOW FOR THE RUN'S LAST MARK, ON A TWO-OF-TWO (ruled 2026-09-23), measured on the code as it stands.
  *

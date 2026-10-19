@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The round, on disk, in `node:sqlite`.
 //
 // IDEMPOTENCE IS IN THE SCHEMA, not in the code that writes to it. A batch is

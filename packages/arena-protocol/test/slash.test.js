@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3B: A FRAUD PROOF, AND THE BOND IT NAMES.
 //
 // 13C's fourth clause and the last of them: "nodes whose signature contradicts

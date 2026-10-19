@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COMMITTEE SEED IS THE BEACON'S, NOT THE AUTHOR'S BYTES.
 //
 // 5A.5: `committee_seed = H(census_root_gv || census_root_settle || round_id

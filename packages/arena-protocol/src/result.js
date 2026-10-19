@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PLAYER RESULT: one committee node saying how a round ended for one player.
 //
 // Section 13, in full: "Each committee node independently replays the player's

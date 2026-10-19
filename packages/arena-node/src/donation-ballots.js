@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEVELOPERS' BALLOTS A SEAT KEEPS (§27A.4.1, kanban #382): every DonationProposal and DonationApproval it was handed - by a
 // developer's node, by the owner page, or forwarded by another seat - kept in its store, checked, and tallied against the sets
 // it holds (the admin key's, and those approved before). What it answers:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUND ENDS WHEN THE TIMER DOES (the owner 2026-09-20 16:21).
 //
 // "When the round timer hits 0, the game must end and return to the lobby by itself. It used to. It no longer

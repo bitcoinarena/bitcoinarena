@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HOW LONG A LIVE ROUND ACTUALLY LASTS, on the Daily, from the cab.
 //
 // Joins the round the lobby's PLAY is armed for, takes AUTO and ROLL OUT, and then SITS: what is measured is the

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NEWEST RELEASE, FOR THE OWNER PAGE (kanban #471: "a new release is available"). Writes <out>/latest.json from a release's
 // SHA256SUMS: its version, tag, commit, release page and assets; tools/release/sign.sh <out> <key> latest.json signs it with the
 // release key, and both are published at https://testnet.bitcoin-arena.io/release/. A seat reads them (/owner/version) and offers

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S OWN CONNECTION DROPPING IS A DISCONNECT, NOT A REFUSAL.
 //
 // Measured 2026-09-10 on one real daemon, the page's reconnect wired as the

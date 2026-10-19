@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ATTACH MODE, PROVED ON REGTEST BEFORE ANY LIVE MOVE (the owner 2026-09-29: "Prove that on regtest with seven separate
 // node processes. No shared store. No port clash."). A private regtest (RT, RPCPORT), never testnet4, never a bond there.
 //

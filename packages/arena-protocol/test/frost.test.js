@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RFC 9591, THE HALF THAT NEEDS NO CURVE.
 //
 // `packages/protocol` carries no curve on purpose, so everything here is

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RUN'S FINAL MARK, AND A SIGNER NODE THAT MISSED ITS LAST INPUTS (ruled 2026-09-23).
 //
 // Measured before (last-mark-window-probe.mjs, the page's own bridge on the Daily's 2-of-2): signer node B down for 7 s

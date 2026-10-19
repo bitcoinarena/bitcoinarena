@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # A SIGNER NODE VERIFIES A REAL STAKE LOCK (v4.6.2 §23.1 step 5), on stock fedimintd
 # 0.12.0: 4 guardians, 3 of 4, one gateway, regtest - rehearsal step 1's setup.
 #   deposit 3000000 msat; lock A at +144 and B at +150 blocks, each a POINT

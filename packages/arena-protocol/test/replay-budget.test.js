@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY BUDGET (§34, kanban #303): max_players_per_round = measured speed x 600 s window / T_run; the speed is a median of measured
 // replays, never assumed.
 import { test } from 'node:test';

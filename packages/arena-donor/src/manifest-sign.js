@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEV CLIENT SIGNS A GAME'S MANIFEST (kanban #202, the owner 2026-10-07 15:40: "the dev client is responsible for game
 // signatures, not the node"). The game developer's Ed25519 key is held here, by the developer's own client, and signs the
 // manifest body's id (arena-protocol/src/manifest.js manifestBodyId); what leaves is the public key, already in the body, and

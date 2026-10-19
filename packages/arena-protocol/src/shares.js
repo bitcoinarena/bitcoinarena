@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STAKE PREIMAGE, SPLIT SEVEN WAYS SO FIVE CAN PUT IT BACK.
 //
 // Section 23.1: "The player splits P with verifiable secret sharing (Shamir,

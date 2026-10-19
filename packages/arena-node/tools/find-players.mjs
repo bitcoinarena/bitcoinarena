@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * PLAYERS WHOSE RUNS THE CORE ITSELF SAYS DELIVER (or wreck), for probes that need several distinct qualifiers.
  *

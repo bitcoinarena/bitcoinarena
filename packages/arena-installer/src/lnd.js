@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LIGHTNING FOR CUSTODY: LND, SET UP BY THE WIZARD (kanban #471 slice 5, "Custody help: set up LND (create or connect), its wallet and
 // the gateway, test it; or connect an existing LND"). Ruling 2: LND publishes a Windows build itself, so this part runs on all three.
 //

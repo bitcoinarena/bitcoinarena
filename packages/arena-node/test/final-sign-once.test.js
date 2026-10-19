@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT SIGNS ITS OWN FINAL ONCE, AND ASKS ITS PEERS LESS OFTEN WHILE NOTHING NEW ARRIVES (kanban #187 item 7, plan comment
 // 298, Go 2026-10-05). server.js gatherFinal on the sevenSignerNodes fixture: a run made signable (five postings, its
 // window passed), the finality tick every 250 ms, and the holder's peers a counting fake. Its own FINAL signature is

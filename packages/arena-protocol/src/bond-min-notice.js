@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BOND_MIN CHANGES WITH NOTICE, AND WITH ESCALATION (§27A.3, kanban #300). "A rise in bond_min takes effect notice_period after the median
 // first crosses it - reference 30 days, and never less than bond_maturity minus the confirmation depth. A fall takes effect immediately:
 // nobody is harmed by a floor dropping." And a node the rise will pass "SHOULD escalate to its operator rather than warn once":

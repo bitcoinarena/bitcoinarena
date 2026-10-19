@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WALLS A REPLAY RESOLVES AGAINST ARE THE WALLS THE PLAYER DROVE INTO.
 //
 // The ground was the first host-supplied world and this was the second.

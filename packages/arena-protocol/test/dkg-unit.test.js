@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEALERLESS GROUP KEY - dkg.js on its own (kanban #145; plan comment 177, Go 2026-10-05). dkg.test.js beside this one
 // measures the wire shapes with no curve; until now the rest ran only inside arena-node's integration tests (57.9% of dkg.js
 // from protocol's own suite). Here, on the daemons' curve (arena-node/src/curve.js): fixed vectors, the proof of knowledge,

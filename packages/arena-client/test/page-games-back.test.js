@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BACK TO THE GAMES FROM UNITY'S GAME (kanban #383, the owner 2026-10-16: "there is no link/button to get back to the game selection
 // like in the other games"). On the page's own code: the strip holds "← Games", shown once a game is chosen and never over a
 // game's own client (that client has its own), and a click opens the address without the game, its round and play.

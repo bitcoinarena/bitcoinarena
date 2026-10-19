@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER'S WEB WIZARD (kanban #471 part B; the owner 2026-10-18: "The installer should be web based, so the user does the wizard on
 // his browser. Either the connection is on localhost ... or the server is remote and the installer needs to use tunnelling").
 //

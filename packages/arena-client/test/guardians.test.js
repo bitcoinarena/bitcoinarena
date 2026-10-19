@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE COUNTS THE FEDERATION'S BONDED GUARDIANS ON ITS OWN EVIDENCE (§23.6;
 // the owner 2026-09-15 07:33): the keys off its lock client's config, the bonds
 // proven into a mined chain, each advertisement signed by the node it names.

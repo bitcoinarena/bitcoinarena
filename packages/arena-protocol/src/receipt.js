@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A checkpoint receipt: a node saying it held this mark at this time.
 //
 // WHAT THE SPEC GIVES. Section 10, in full: "A checkpoint is accepted when

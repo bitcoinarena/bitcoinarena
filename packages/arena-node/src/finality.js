@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHEN A RESULT THIS NODE HOLDS MAY MOVE MONEY (M3.3-32; §13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
 //
 // A run the committee's threshold signed is PROVISIONALLY_FINAL. The objection window is exactly 600 s of wall time from

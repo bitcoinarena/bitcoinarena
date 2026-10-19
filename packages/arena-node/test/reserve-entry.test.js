@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A VERSION-11 ENTRY PAYS THE RESERVES (§27A.9.2, kanban #397 slice 3): a 100 sat entry's lock transaction pays the nodes' 4 % in
 // its fee lock, the developers' 4 % as donation outputs and 2,000 msat to its federation's reserve key - and every signer node
 // checks the reserve output with the federation like a donation output, refusing one msat short, a missing one, or another key.

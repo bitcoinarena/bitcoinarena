@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md, THE REHEARSAL, STEP 1: "deposit into a lock with claim_pk =
 # the FROST key; the guardians accept it".
 #

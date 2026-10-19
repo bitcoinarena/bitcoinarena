@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md, THE REHEARSAL, STEP 3 (3a): "one settlement transaction:
 # losers' locks ... in, payout contracts out; accepted; a 1-of-2 signature
 # refused" - without fee locks (their claim hash and the §22A node slots are

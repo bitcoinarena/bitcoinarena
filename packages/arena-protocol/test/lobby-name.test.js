@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A JOINED PLAYER'S NAME RECORD (M3.3-34): one canonical encoding, every field
 // in the signed id, a name signed only as it is kept, and nothing else decodes.
 import { test } from 'node:test';

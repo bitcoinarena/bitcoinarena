@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL 14, ABANDONMENT TO SLASH (§23A.4-5, kanban #326), on a private regtest - never testnet4, never a
 // live bond. Two federations of 4 guardians (3 of 4), no guardian in both (#320), in a census of 8 bonded nodes:
 //

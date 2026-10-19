@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAGE OPENS ITS NEXT ROUND FROM THE CHAIN IT ALREADY PROVED (the owner 2026-09-18 16:45).
 //
 // Measured in two real browsers on the Daily: on PLAY again both tabs joined the second round and neither got a

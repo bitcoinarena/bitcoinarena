@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GAMES FIRST, THEN THE GAME'S CLIENT (kanban #208): the games the named nodes host, each kept only when the manifest a
 // node served hashes to the id it named; and a game's client file run only when its SHA-256 is one of that manifest's
 // clients[].

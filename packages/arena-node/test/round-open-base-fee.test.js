@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING ROUND DOES NOT OPEN ON A FEDERATION THAT CHARGES A BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
 // fees are 0: the federation runs with disable_base_fees"; RULED the owner 2026-09-25: "POST /round must refuse a paying round
 // whose federation charges a base fee, the same rule entry already enforces. Do not open it, do not store it, do not list

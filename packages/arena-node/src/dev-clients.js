@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S OWN DEV CLIENTS (kanban #358, the owner 2026-10-14: "It needs to show the donations for the protocol and game dev. The node
 // operator may set up the dev client for all of that, via the ui. It shows the stats then and there's a withdrawal feature that
 // withdraws it to lightning").

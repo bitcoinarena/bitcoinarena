@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY DOOR IS IN THE API REFERENCE (kanban #496, the owner 2026-10-18: "update docs and api with all changes"): six routes of 10-17/18
 // (/gateway/*, /gateway-claim, /liquidity-claim, /liquidity-seating, /gateway-seating, /gateway-seats, /owner/liquidity/new-address)
 // were served but missing from deploy/doc-site/endpoints.json, so docs.bitcoin-arena.io/api did not list them. A route server.js

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CHAIN BRIDGE (kanban #471, Electrum mode): answers the node's bitcoind calls on 127.0.0.1:<port> from the Electrum server the
 // wizard saved (state.json chain) and Esplora, every block checked against its header. Started by the arena-chain-bridge user unit.
 //

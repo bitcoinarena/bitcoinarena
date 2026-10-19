@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ENTRY_VOID (§16), THE OUTAGE REFUND, AT THE SIGNER NODES - AND THE LOCK BACK AT ONCE.
 //
 // "After commitment, before the first financial tick: if fewer than 5

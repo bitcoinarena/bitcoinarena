@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3 ROW 1: A NODE THAT SIGNED TWO DIFFERENT RESULTS FOR ONE PLAYER.
 //
 // "Signing two different results for the same (round, player) | The two signed

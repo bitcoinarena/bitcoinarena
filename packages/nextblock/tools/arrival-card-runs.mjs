@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARRIVAL CARD'S RUNS (the owner 2026-09-25: the card prints the core's E, T and C, and their product is the score).
 //
 // 72 DELIVERED runs - nine lanes, eight seeds, from x 96 heading east - each with the four words the card reads at

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md REHEARSAL ITEM 9 (c) ON A REAL FEDERATION: the 9 (b) shape, then the Withdraw press's spend of the player
 # wallet through gateway B while gateway A is down (rehearsal-9c.mjs). Rehearsal step 1's setup: stock fedimintd 0.12.0, 4 guardians,
 # 3 of 4, two gateways (SECOND_GATEWAY=1: B on carol's lnd), regtest.

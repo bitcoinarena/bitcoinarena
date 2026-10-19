@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // DELETE THIS ACCOUNT FROM THIS BROWSER (kanban #337, the owner 2026-10-11: "Im settings screen gibt es die Möglichkeit seinen
 // Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"). Measured on the page's own code and the client's:
 // this tab's phrase leaves the tab and the browser's kept list, the wallet data of that phrase goes and no other phrase's,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE /settled READ OF EACH SIGNER NODE PER OWED SCAN, MATCHED AGAINST EVERY SAVED PHRASE (kanban #153, the owner 2026-10-07):
 // measured on 0.0.2842 (comment 695), the scan asked 7 x the kept phrases - 14 for 2, 21 for 3, 49 for a 7-phrase browser.
 // index.html's own findTheRoundsOwed, lifted, with the real findOwedRounds and a counting fetch: 7 signer nodes, 3 phrases.

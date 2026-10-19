@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH ROUNDS AND ENTRIES A NODE PROCESS HOLDS MONEY FOR, FROM ITS OWN SETTINGS (kanban #149 step 1, plan comment 249,
 // Go 2026-10-05). fundingFromEnv is what main.js hands the server: ARENA_FUNDED_ROUNDS and ARENA_FUNDED_ROUNDS_FILE name the
 // paying rounds this operator funds, ARENA_FUND_FREE_ROUNDS=1 adds free rounds and their entries. The file is read at every

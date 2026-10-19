@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND OF A SERIES IS DERIVED, NEVER AUTHORED (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27): it carries its series id
 // and its index, its id is round_id(i) = H(series_id || i), and a round the series does not derive is refused by name.
 // A series starts at its network's genesis_series_start + k * 24 h and never where it names.

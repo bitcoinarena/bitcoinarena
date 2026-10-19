@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ROCK PAPER SCISSORS AS A TEST PLUGIN (kanban #233): the game's own decide adapter (packages/rock-paper-scissors), registered
 // under a test developer key, as a node's launcher would hand it.
 import { createHash } from 'node:crypto';

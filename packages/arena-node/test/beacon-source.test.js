@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEED A NODE SIGNER NODES WITH IS THE CHAIN'S, OR THERE IS NONE.
 //
 // The 2-of-2 tool used to answer every beacon question with 32 bytes of 0xbe

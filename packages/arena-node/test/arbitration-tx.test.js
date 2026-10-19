@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION TRANSACTION, BUILT (§5A.3B; M4 in the repo only). Offline: the builder's arithmetic, the commitment
 // and the refusals. The consensus answers are tools/arbitration-regtest.mjs's, against bitcoind on a private regtest
 // (2026-09-29): 5 of 7 allowed; 4 of 7 "false/empty top stack element"; slash_height above the tip "non-final"; an

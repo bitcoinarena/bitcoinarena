@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GHOSTS ARE REALTIME THROUGH THE NODE (the owner 2026-09-17 17:05 / 17:12: "60 s+ delay"). Measured end to end on a real
 // daemon at the page's cadence - six ticks every 100 ms from the driver, a watcher subscribed - every picture is the newest
 // tick the driver had published when it arrived.

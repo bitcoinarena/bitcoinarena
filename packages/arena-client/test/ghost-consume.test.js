@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PICTURE IS NOT AN ANSWER.
 //
 // The node pushes GHOSTS frames when somebody else's truck moves (letter 18,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CURVE THE PAGE BRINGS TO A SIGNER NODE.
 //
 // `@blwp/client` carries no crypto: signing, verifying and this key are

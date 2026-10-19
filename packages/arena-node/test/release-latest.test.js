@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NEW RELEASE IS AVAILABLE (kanban #471, release-latest.js): the newest release the Arena site names is offered only when the
 // release key signed it and it is newer than this node's; versions compare as releases do (0.1.0-rc.2 < 0.1.0-rc.10 < 0.1.0 < 0.1.1).
 import { test } from 'node:test';

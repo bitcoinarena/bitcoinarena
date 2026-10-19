@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # Cross-ARCHITECTURE acceptance, the third of the three questions.
 #
 #   cross-engine   run-engines.sh    do V8, SpiderMonkey and JSC agree?

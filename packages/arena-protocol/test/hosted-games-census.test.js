@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EACH NODE CHOOSES WHICH GAMES IT HOSTS - THE CENSUS HALF (kanban #204, §0A.4, comment 756): the game/verify committee of
 // a round is drawn only from census nodes whose advertisement hosts the round's game; settlement is drawn from the whole
 // census; the census minimum for game/verify counts only hosting nodes; and a change of the hosted list is an

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE LOBBY AND FREE PLAY, IN A REAL BROWSER (M3.3-34). A fresh regtest
 # bitcoind and nothing else: no Lightning, no federation, no wallet. The
 # Daily's 2-of-2 is stood up on it with its bonds, census and published round,

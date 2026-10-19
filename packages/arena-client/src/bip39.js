@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S 32 BYTES AS 24 WORDS HE CAN WRITE DOWN, AND BACK AGAIN (BIP-39).
 //
 // This is real Bitcoin: the phrase has to restore the same wallet in any other tool, so the encoding is

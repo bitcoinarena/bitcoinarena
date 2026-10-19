@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PROJECT PROPOSALS FROM BITCOIN-ARENA.IO (kanban #397, the owner 2026-10-17: "Add a Project Proposals section to the website where people
 // can comment and review"): what the homepage signs is what the seats read - a proposal and a comment verify with the seats' own
 // reader; an nsec and its npub go both ways; a proposal is shown only when five nodes hold it, with every comment any of them holds.

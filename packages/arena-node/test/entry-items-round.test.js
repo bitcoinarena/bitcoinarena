@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ENTRY PLAYS ONLY WITH ITEMS ITS PLAYER BOUGHT (protocol 10, kanban #365): round.enter checks each against the purchases this
 // seat keeps - of this round's game, of an item its manifest sells, signed for this entry by its buyer (kanban #369: the owner's key is
 // the same in every round, the entry's is fresh per round) - and only on a round of version 10 or later.

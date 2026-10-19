@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SHARE, ONE SIGNER NODE, AND NOBODY ELSE.
 //
 // Measured before this existed, against a running daemon: a stranger holding

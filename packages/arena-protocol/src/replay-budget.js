@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY BUDGET (§34, kanban #303): "Every committee member replays every run of its round ... a hard capacity relation rather than
 // an assumption: max_players_per_round = (measured_replay_speed x result_window) / T_run". "Do not hard-code unsupported assumptions
 // such as 20x realtime until the simulation core is benchmarked": the speed is what a seat measured on its own replays.

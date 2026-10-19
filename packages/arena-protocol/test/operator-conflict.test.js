@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PLAYER-NODE SEPARATION AT RUN TIME (§5A.13, kanban #309). An entry may declare the operator its player is (§7
 // `operator_id_declaration`), after its own marker so every older entry keeps its bytes; a committee node whose advertised
 // operator plays the round is conflicted: it signs nothing, earns no fee share, and a committee left under its threshold voids.

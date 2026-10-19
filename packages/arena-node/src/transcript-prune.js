@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§34, kanban #33 step 4; the owner 2026-10-17: "Transcripts are deleted when the claim window
 // ends, as §34 reads - not kept longer"). §34: "transcripts must be retained through the objection and claim windows by all seven
 // nodes". Measured 2026-10-18 on seat 1: 447,137 tick rows (43.7 MB), 66,501 batches (25.0 MB) and 4,498 checkpoints (1.7 MB) over

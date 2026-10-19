@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A NODE HOSTS, READ (hosts.js): one LND over its REST API and one gateway over loopback HTTP, both stubbed here - the
 // figures come through, the password never leaves the reader, a part that fails is named, and the environment is parsed.
 import test from 'node:test';

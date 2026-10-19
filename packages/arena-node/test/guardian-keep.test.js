@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GUARDIAN THAT OUTLIVES ITS NODE (the owner 2026-10-03, "2. Separate guardian and node"): with ARENA_GUARDIAN_KEEP=1 the
 // node starts its own guardian - nothing typed - as a systemd user unit of its own, adopts that unit when it already
 // runs, and leaves it running when the node closes. Without the setting nothing changes (guardian.test.js).

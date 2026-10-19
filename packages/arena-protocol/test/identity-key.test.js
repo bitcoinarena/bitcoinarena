@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOBBY IDENTITY KEY (M3.3-34): from the tab's seed, under its own tag, and
 // never any round's player key - so a name shown in a lobby can never be the
 // key a stake refunds to or a payout is sent to.

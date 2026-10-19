@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT BUILDS THE COMMITTEE ITSELF (kanban #296, spec 5A.6: "a client MUST NOT take a census, a committee or an
 // endpoint on the word of any API"). Until this the page asked every node GET /committee and took the set when they
 // agreed - so a set of colluding seats could name any committee and be dealt a player's stake.

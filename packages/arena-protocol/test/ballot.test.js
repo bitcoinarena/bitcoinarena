@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CONFIG BALLOT'S FIRST SLICE (spec §27A.7.2-4, kanban #329): the proposal on its face, the 77-byte vote, the tally.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

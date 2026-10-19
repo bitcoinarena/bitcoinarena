@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER IS NEVER TOLD "SEAT" (the owner 2026-09-15 16:22 and 19:56). The machines that sign a
 // round are signer nodes; the player's own place is "joined"; a round that asks no stake is a
 // "free round". Measured before this pass: the status chip read "1 player · waiting · free seat"

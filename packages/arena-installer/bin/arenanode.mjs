@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The arenanode command (kanban #499): the installer writes a small script that runs this with the node's home, so the user types only
 // `arenanode status`, `arenanode restart lnd`, `arenanode doctor` (src/arenanode.js).
 const args = process.argv.slice(2);

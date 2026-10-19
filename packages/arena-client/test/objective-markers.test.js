@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §0 row O4: "the client draws HIGH, LOW and OPEN at the core's points in the holder's colour,
 // within 1 tick of the core's words (client test)".
 //

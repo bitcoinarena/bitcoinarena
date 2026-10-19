@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SEVEN DAEMONS ON SEVEN SOCKETS MAKE A KEY NOBODY DEALT.
 //
 // M3.3 item 14. `dkg.test.js` proves the round's arithmetic with the signer nodes in

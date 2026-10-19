@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FIVE SIGNER NODES, AND ONLY FIVE SIGNER NODES, CAN OPEN A STAKE.
 //
 // 23.4: a loser's stake lock is claimed with its stake secret, reconstructed "from at

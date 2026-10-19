@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // NEXTBLOCK'S MANIFEST VERSION 3, SIGNED BY ITS DEVELOPER (kanban #369, the first in-game item of #365): the game as version 2 has it,
 // with every core the node installs for it now (the truck that knows the larger truck among them), and its item catalogue - the larger
 // truck for 500 sat - which requires protocol version 10. Its parent is version 2 (plugin/nextblock-v2.js), so a node keeps both.

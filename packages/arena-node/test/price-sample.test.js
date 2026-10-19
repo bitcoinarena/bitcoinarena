@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §11 / kanban #311: the committee's signed price sample - its bytes, its id, and when an attestation stands.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LAST LINE OF 5A.1, CHECKED AT LAST.
 //
 // The advertisement ends with "signature - by node_pubkey over all of the

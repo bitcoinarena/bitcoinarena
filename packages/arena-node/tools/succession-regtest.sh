@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # CUSTODY SUCCESSION, MEASURED ON REGTEST (kanban #276, §23A.6; the owner 2026-10-10: "Build guardian departure as the
 # succession ... a new federation is formed with the remaining guardians ... the old federation ... every note paid out,
 # then the bonds released"; "Fedimint cannot change a federation's guardians; do not add an in-place removal").

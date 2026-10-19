@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LEAVES ACTUALLY RUN.
 //
 // A leaf is not documentation: it is the program that moves the money, and its

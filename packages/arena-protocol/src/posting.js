@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RESULT NOBODY CAN REPLAY DOES NOT SETTLE (v4.6.2 §13A, P2).
 //
 // "A PROVISIONALLY_FINAL result is not FINAL until the canonical transcript it

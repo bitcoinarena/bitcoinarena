@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * TWO GUARDIANS LEAVE, AND THE FEDERATION IS CRITICAL (kanban #321, §23A.1 / 23A.4) - on a regtest stack whose seats were
  * started with ARENA_TEST_OWNER_PUBKEY (round-2of2's test owner): each named seat's owner signs a leave as the owner page

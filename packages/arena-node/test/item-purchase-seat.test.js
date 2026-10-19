@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ITEM PURCHASE, AS A SEAT KEEPS IT (kanban #365): its own terms, then every output with the federation; one payment, one purchase.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

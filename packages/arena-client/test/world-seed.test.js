@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WORLD THE PLAYER DRIVES AND THE WORLD THE COMMITTEE REPLAYS ARE ONE
 // WORLD, OR THE GHOST IS A PICTURE OF SOMEBODY ELSE.
 //

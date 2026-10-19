@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN IN-GAME ITEM, BOUGHT FROM THE PAGE (kanban #365 step 5; #369's larger truck the first): the player's wallet pays the item's split
 // in one federation transaction, the player signs the record, and the seats keep it as the player's for good.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOND, IN A BLOCK THAT WAS ACTUALLY MINED.
 //
 // Section 25.1 gives a browser three lines of work: headers from several

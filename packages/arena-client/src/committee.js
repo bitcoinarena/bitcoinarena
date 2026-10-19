@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COMMITTEE THIS CLIENT DEALS TO, BUILT BY THE CLIENT (kanban #296, spec 5A.6). It used to be asked of every node
 // (`fetchSettlementSignerNodes`, GET /committee) and taken when they agreed - seats that agree can name anybody. Now:
 //   1. the headers, agreed from the round's nodes' GET /headers (at least two sources, most work, from the network's

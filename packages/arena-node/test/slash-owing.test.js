@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A FILED SLASH OWES, before anything can pay it.
 //
 // The gap print of 2026-09-22 listed eight things between a filed proof and a paid one. Three were

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// Protected by LICENSE section 2: no copy or fork may change the network id or the protocol developers' donation set here.
 /**
  * THE DONATION AUTHORITY AND RECOVERY KEYS, BY THE NETWORK ID A ROUND CONTRACT
  * CARRIES (M3.2 6e, §27A.4). A signer node and a page know a round's network by its

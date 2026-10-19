@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # SIGN A RELEASE'S CHECKSUMS (kanban #471 ruling 6: the release key is Claude's, its public key published on the Arena site and in
 # deploy/release/arena-release-key.pub.pem). Ed25519 over the SHA256SUMS file's bytes; the signature, base64, beside it. The
 # installer and the updater refuse an asset whose line is missing or whose SHA256SUMS does not verify (release-verify.js).

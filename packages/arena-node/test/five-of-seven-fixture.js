@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FIVE-OF-SEVEN FIXTURE: seven live signer nodes on one stake-lock round and the helpers that drive them, shared
 // by five-of-seven.test.js and five-of-seven-receipts-lost.test.js. Moved here unchanged when the file was split to fit
 // the 180 s per-file cap (measured 2026-09-23: ten tests, 18-40 s each, ~220 s in one file).

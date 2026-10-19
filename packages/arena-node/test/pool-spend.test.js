@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FIVE SIGNER NODES MOVE THE POOL AND FOUR CANNOT.
 //
 // Item 10 built a threshold signature with zero callers; item 13 is the thing

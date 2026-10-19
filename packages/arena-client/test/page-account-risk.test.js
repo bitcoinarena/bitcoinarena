@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RISK OF DELETING AN ACCOUNT IS SAID AND SHOWN (kanban #380, the owner 2026-10-16: "this section should highlight the potential
 // risk. maybe choosing red as text color in the button instead of white. also for the account section wording"). On the page's own
 // markup and CSS: both delete buttons are danger buttons in red, and the section says in red what is lost.

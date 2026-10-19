@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DEV CLIENT IN THE OWNER AREA (kanban #276 step 3, the owner 2026-10-09: "The dev client is fully integrated. Show
 // donations for his games and as protocol dev"): what this seat verified for each recipient key it deals with - the
 // protocol developers' sets it holds (signed by the network's donation authority) and the developer set of every game it

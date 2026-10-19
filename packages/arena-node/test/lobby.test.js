@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOBBY, AS A NODE SERVES IT (M3.3-34, §25).
 //
 // "Find a round: link, QR, copied round_id, a lobby - carries nothing." So the

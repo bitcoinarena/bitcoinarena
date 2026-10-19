@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GEAR FROM THE FIRST PAINT (kanban #200: Settings waited 2.6-5.1 s for Unity's lobby). The page's own code runs
 // under the page's name (page-script.js) on a small fake page. Measured: the strip with the gear is up over the loading
 // screen, Unity's title and the lobby, and gone over a round's own screens and while driving; the backup warning and the

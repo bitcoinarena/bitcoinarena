@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE NEXT ROUND, JOINED BY DEFAULT (the owner 2026-09-28, option 1 of A; multiplayer_p2p.md "Timing - every network,
  * every round"; NEXT-ROUND-1407 2026-09-29 14:07: implement it).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TESTNET4 LATE-JOIN TAIL, DRY AND OFF THE CHAIN (kanban #148, plan comment 222): tools/testnet4-late-tail.mjs as it is
 // run, against the fake bitcoin-cli and a fake signer node listing one paid round. A dry run writes late-tail-<id>-dry.json -
 // the tail's template from that round, rounds every 90 s from its start to its day's end, entry closing 45 s after each start,

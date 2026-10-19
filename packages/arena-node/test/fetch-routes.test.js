@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #348: the seat's own fetches routed to the direct address and capped per origin (measured: 770-910 HTTPS connections per
 // seat to its own host's Tailscale address, 4,589 to the test host through the fed2 forwarder)
 import { test } from 'node:test';

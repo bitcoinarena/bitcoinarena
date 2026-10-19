@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE A WINNER'S WINNINGS ARE SENT, THE PAGE'S HALF (ruled 2026-09-23), with stubs: a prompt that answers what it is
 // told, a session key, a storage like the tab's, and signer nodes that answer 201 or are down. The same three cases the
 // harness measures on real signer nodes (tools/winnings-page-probe.mjs):

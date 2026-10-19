@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET IN THE LIVE PAGE (kanban #206 slice 2): round-2of2's bonded 2-of-2 on a fresh regtest chain, its seats hosting
 // nextblock and the regtest market "btc-close" (the one the page pins), a FREE market round opened and kept open, and the
 // built page served beside it. After the first market round's entries close, two of its three attestors' outcome is posted

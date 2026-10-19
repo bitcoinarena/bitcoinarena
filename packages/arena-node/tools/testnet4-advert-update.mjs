@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ADVERTISEMENT UPDATES FOR THE SEVEN TESTNET4 BONDS, NOT NEW BONDS (spec §5A.2; the owner 2026-09-28, the
 // advertisement-update letter: "Bond 0c82db59 stays the bond. Do not post a new bond. Do not spend the bond. Do not
 // start a maturity clock ... one small transaction per node, seven in all, paid from the bond wallet. Each names that

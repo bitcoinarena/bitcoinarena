@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # A PAID MARKET AS A PUBLISHED SERIES, ON A PRIVATE REGTEST, FOR THE PAGE (kanban #206, the owner 2026-10-07 23:23, decision A):
 # the lobby offers a paid row only for a round of a series, so the regtest market is stood up as the live paid rounds are -
 # seven seats with their guardians (the federation), their bonds, one series published with OP_RETURN "ARN SERIES" below its

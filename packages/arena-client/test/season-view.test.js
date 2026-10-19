@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEASON BOARD'S LINES (kanban #362, docs/PLATFORM-RESEARCH.md item 1): what the page draws from a seat's
 // GET /season?scope=network answer. The net in whole sats from msat strings - signed, never a float, the magnitude rounded
 // down; the best score in the game's own unit; the header line; the viewer's own row marked (and drawn below the top when

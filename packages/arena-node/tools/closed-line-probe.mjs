@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ENTRY_VOID (§16) WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE: the
 // signer node holding the on-time first mark can only decide at its round's close
 // ("closed" evidence). Measured beside the come-back case, where the chain

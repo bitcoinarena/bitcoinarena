@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # The acceptance criterion for stage 0: identical state hashes from every
 # engine. Exits non-zero on any divergence and prints the first differing tick.
 #

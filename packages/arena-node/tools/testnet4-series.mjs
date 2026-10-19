@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * POST ONE ROUND SERIES ON TESTNET4 (the owner 2026-09-28 11:44, POST72-1800: "When the node can write a 72 h series, post
  * one immediately ... Posted means the series publication transaction is broadcast (OP_RETURN ARN SERIES)").

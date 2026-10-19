@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BOND_MIN CHANGES WITH NOTICE (§27A.3, kanban #300): a fall at once; a rise once it held the whole notice; a rise in two steps in two
 // steps; and a node the rise will pass is told at T-30d, T-14d, T-3d and T+0.
 import { test } from 'node:test';

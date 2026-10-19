@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET IN THE PAGE (kanban #206 slice 2, §0A.7a; the owner 2026-10-07, decisions A and B of plan 777): the pick sheet's
 // model, the pick handed to the seats, the outcome checked by the page itself, and the lines the lobby draws.
 //

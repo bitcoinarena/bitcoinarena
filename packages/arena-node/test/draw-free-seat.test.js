@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 2026.0.2 SEATS (kanban #348): the round that names no draw, on a census of fourteen.
 // THE COMMITTEE IS WHOM THE CHAIN ASSIGNED.
 //

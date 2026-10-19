@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W5a ON A REAL FEDERATION: THE PLAYER'S REFUND AND WITHDRAW (v4.6.2 §23.2,
 // "the default path - nobody acting - is always the refund"). Run by
 // w5a-regtest.sh after the federation is up.

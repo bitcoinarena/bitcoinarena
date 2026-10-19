@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE NODE KEY, ONE SEAT (RULED the owner 2026-09-30, after testnet4 round 5eaa0966). A census still holding extra bond rows
 // under some node keys seated node 7 and node 4 twice (game) and node 2 twice (settlement); the stake's handout could not
 // be dealt. Now a key is drawn at most once, all its bonds one entry: its sats summed into its weight, its ticket drawn on

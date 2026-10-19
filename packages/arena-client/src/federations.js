@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THIS CLIENT BELIEVES ABOUT A FEDERATION (spec §23A.4, kanban #321): its guardians' newest signed record, read from
 // the round's nodes (GET /federations) and checked against the census this client checked itself (committee.js, #296) -
 // at least the threshold of the federation's bonded guardians, the invite naming that federation. Nothing else: "a client

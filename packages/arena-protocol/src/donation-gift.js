@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DONATION TO THE DEVELOPERS, OUTSIDE ANY ROUND (kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to
 // choose from 100, 500, 1000, 5000 satoshis or custom"; "B e cash").
 //

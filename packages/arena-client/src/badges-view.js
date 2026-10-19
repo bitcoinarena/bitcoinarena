@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PLAYER'S BADGES ON THE SEASON BOARD (kanban #362, docs/PLATFORM-RESEARCH.md items 13 and 1, presentation): the small
 // icons after a name on the board, from the seats that award NIP-58 badges (arena-node nostr-badges.js, served at
 // GET /badges?player=<identity> and GET /badge-definitions; protocol badges.js says who earned what).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION TRANSACTION, BUILT (§5A.3B "From proof to transaction", §5A.3's distribution; PRIORITIES
 // 2026-09-29 item 4, M4 in the repo only: built and checked, never posted, never spent against a live bond).
 //

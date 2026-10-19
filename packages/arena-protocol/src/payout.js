@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The payout table. Pure, and identical in node, client and replayer.
 //
 // Millisatoshi BigInt throughout. No float goes anywhere near money - not for

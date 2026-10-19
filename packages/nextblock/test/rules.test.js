@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The rules from section 18A, as tests rather than as prose.
 //
 // These are written against the CLAIM, not the implementation: a refactor that

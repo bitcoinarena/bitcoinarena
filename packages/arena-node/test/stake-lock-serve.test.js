@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE LONG-LIVED STAKE-LOCK TOOL FOR THE READ-ONLY QUESTIONS (kanban #293: a process per question put the test host's paid RPS
 // stack at load 50). A tool that speaks `--mode serve` answers status, id, guardians, gateways and fees from one process,
 // questions in flight at once matched by id; a tool without it (an older binary) answers every question the old way; send

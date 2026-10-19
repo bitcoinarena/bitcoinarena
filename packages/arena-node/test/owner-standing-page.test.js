@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER PAGE'S STANDING PANEL (kanban #302, #310): the page's own standingPanel, run on the doors' answers - the missed
 // seatings' warning with the serving = false update, and the bond's standing with each warning in the seat's words.
 import { test } from 'node:test';

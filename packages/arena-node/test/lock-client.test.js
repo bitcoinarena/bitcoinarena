@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOCK CLIENT (W1a): the player's own client code makes the stake lock -
 // a wasm crate on the stock fedimint 0.12.0 client crates, driven from Node -
 // and a W2 signer node commits the stake it locks. The real-federation run is

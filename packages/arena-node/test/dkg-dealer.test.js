@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HOW MANY SHARES OF THE POOL KEY ONE PROCESS HOLDS, COUNTED.
 //
 // M3.3 item 14, and this file is the before and the after. Written first as

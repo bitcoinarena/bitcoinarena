@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DAEMON ASKS BITCOIN WHO MAY HOLD THE ROUND.
 //
 // Everything letter 15 built was library code with no caller: measured at the

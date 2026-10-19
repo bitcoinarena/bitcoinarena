@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TWO TITLES AND TWO RULE SETS ON THE SAME SIGNER NODES, IN THE SAME WINDOW (M3 R1 step C; the owner
 // 2026-09-15 08:07: "several games at once, and several rule sets at once. Each round names its
 // core and its rules; signer nodes replay what that round names. Two titles and two configs can run on the

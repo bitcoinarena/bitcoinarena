@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAID MARKET AS A PUBLISHED SERIES ON REGTEST (kanban #206, the owner 2026-10-07 23:23, decision A): the lobby offers a paid
 // row only for a round of a series (lobby.js paidSeriesOnly), so the harness stands the regtest market up the way the live
 // paid rounds stand: seven bonded seats, one series published with OP_RETURN "ARN SERIES" below its beacon, held by the seats

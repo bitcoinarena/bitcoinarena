@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CORE A LAUNCHED ROUND NAMES: the one this tree builds, measured now.
 //
 // Every launcher used to write thirty-two bytes of 1 as the core - one that does not

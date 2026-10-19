@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PEG-IN MISS OF 2026-09-28 CANNOT HAPPEN AGAIN (the owner 2026-09-29 12:25, PEGIN-WATCH-1225).
 //
 // The configs are the real ones (fixtures/pegin-configs.json): gateway B's stale client config for 337ae01a that

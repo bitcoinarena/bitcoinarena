@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A STAKE LOCKED FOR A ROUND THE SIGNER NODES REFUSE, AND NEVER ENTERED, COMES BACK AT ONCE (kanban #191, the owner 2026-10-06
 // 08:57: "A round the seats refuse gets an immediate refund. Seats sign the return of a stake that was locked for that round
 // and never entered"; §23.2 row REFUSED). Measured live 05:31Z: round 49a50535 refused (donation set not in force), the

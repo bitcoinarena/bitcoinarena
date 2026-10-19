@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOND_MIN A 2026.0.3 ROUND MAY NAME (§27A.2-3, kanban #305): at least the census's bond-weighted median of the declared bond_min, a rise
 // counted after notice_period - refused below it by name, taken at or above it; a protocol-2 round is not asked.
 import { test } from 'node:test';

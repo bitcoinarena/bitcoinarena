@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING ROUND DOES NOT OPEN ON A SIGNER NODE THAT CANNOT READ THE CHAIN (RULED the owner 2026-09-25).
 //
 // MEASURED before this test (2026-09-25, a scratch probe): a node with the lock fixture's port and no chain view answered

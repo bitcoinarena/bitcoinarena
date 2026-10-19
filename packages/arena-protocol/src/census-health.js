@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STAKE CEILING FROM CENSUS HEALTH (§5A.10, kanban #306). "A real-money round must not start unless the eligible population is
 // meaningfully larger than the committee. The maximum stake bracket is derived from census health":
 //

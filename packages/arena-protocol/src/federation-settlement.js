@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SETTLEMENT TRANSACTION PER FEDERATION, ALL FROM ONE PAYOUT TABLE (2026.0.3, kanban #348; the owner 2026-10-13 ~11:45Z: "Es
 // muss möglich sein für alle Spiele über alle Federation zu zahlen").
 //

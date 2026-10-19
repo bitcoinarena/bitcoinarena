@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FIRST-MARK FIXTURE: two in-process signer nodes of a lock round and the helpers first-mark.test.js and
 // first-mark-late.test.js share (split 2026-09-24 so each file stays inside the suite's 180 s: every round now waits
 // for its result window's end block on the chain). See first-mark.test.js for the rules they drive.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { init, START_X, START_Z, bayZ, spawnBay, BAY_COUNT, SOLO_BAY } from '../src/sim.js';

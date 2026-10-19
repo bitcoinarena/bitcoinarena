@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §4.15: the candles are terrain. The layout from the tape, the chart band levelled to the apron, and what
 // the truck and the tanks do on it - measured by driving the core, not by reading its constants back.
 import { test } from 'node:test';

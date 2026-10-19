@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # A MARKET IN THE LIVE PAGE (kanban #206 slice 2): a fresh regtest bitcoind and market-live-stack.mjs - the bonded 2-of-2,
 # a free market round of "btc-close", the page at 127.0.0.1:29600. No Lightning, no federation.
 #   BUILD=<page dir> bash tools/market-live.sh

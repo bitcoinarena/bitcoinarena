@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LIQUIDITY PROVIDERS (spec §23A.10, kanban #494; the owner 2026-10-18: "On main net everybody needs incoming liquidity. Spec a fourth
 // service for nodes: lnd liquidity provider ... We try to have at least one connection to each node, maximum 2. So this service needs to
 // communicate with other nodes who opens liquidity to a new node").

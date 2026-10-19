@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TABLE WAITS (kanban #293, the owner 2026-10-11, path B): POST /h2h-want?game= records that a page found no round of a
 // head-to-head game this seat hosts open; GET /h2h-want answers when that was last said, per game - what the operator's
 // grid keeper reads before it publishes the next 30 min of rounds in one transaction.

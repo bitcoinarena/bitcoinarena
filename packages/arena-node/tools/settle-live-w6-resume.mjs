@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W6 LIVE, THE RESTART (the owner 2026-09-15): settle-live-regtest.mjs with W6_KILL=1 was SIGKILLed the
 // moment the real guardians (stock fedimintd 0.12.0) answered the signer nodes' signed settlement, before any
 // signer node wrote that answer down. This starts both signer nodes again - on their store files, their ports and

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ABSENCE ATTESTATIONS, ABANDONMENT PROOFS AND DEPARTURE NOTICES (spec §23A.4-5, kanban #322).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

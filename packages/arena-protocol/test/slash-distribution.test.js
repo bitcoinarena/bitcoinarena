@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3: WHERE A SLASHED BOND GOES.
 //
 // "Slashed bonds are distributed: half to the affected players of that round;

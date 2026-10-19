@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * A LATE JOIN ENDS WITH ITS ROUND (kanban #130, the owner 2026-10-04 14:30): "Rounds are 90 s. They always end at the 82/90
  * boundary: the run ends at 82 s, the slot at 90 s. A later join does not extend the round. The late joiner has less time.

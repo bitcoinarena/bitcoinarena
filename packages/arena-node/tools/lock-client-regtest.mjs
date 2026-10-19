@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOCK CLIENT, DRIVEN FROM NODE, ON A REAL FEDERATION (W1a). Run by
 // lock-client-regtest.sh after rehearsal step 1's setup: stock fedimintd 0.12.0,
 // 4 guardians, 3 of 4, one gateway, regtest.

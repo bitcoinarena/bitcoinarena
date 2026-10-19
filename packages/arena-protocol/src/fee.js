@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 22A: WHAT EACH NODE IS OWED, AND THE FACT THAT SOMEBODY COMPUTES IT.
 //
 // The fee was the one number in this protocol nobody recomputed. 5A.3 row 6

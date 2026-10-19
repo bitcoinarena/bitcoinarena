@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S OWN CHECK OF THE REFUND KEY, OUTSIDE THE PAGE (§24, v4.6.2, F2).
 //
 //   node packages/arena-node/tools/refund-key.mjs <seed-hex> <round-id-hex>

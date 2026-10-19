@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BUY ADD-ONS INSIDE UNITY (kanban #374, the owner 2026-10-16): the page hands Unity its add-ons (ARENA_ADDONS_VIEW), buys through the
 // shop's own purchase (ARENA_ADDONS_BUY -> buyShopItem), and says from which round a purchase plays: an entry already made keeps what
 // it named. The countdown box beside "exit game" offers "Buy add-ons", which opens Unity's panel. The jslib carries all of it.

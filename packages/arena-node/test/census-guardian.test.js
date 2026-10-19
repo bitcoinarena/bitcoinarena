@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CENSUS OVER REAL BLOCKS SAYS WHICH NODES ARE GUARDIANS, off the adverts their bonds carry (spec §5A.1 v4.6.4,
 // §23A.2 one node is one guardian, drawn from the guardian-capable census). The blocks are the ones
 // tools/census-regtest.mjs recorded (fixtures/regtest-census.json), where the honest node's bond says it is a guardian

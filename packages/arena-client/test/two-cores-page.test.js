@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE CARRIES TWO CORES AND THE ROUND SAYS WHICH (the owner 2026-10-04, path A): 2069b4c2 for every round published
 // before C became the bed fill and T sank from 20 s, the current core for every round after. The page's own script, run
 // over its two bundles: the round's hash picks the core under Unity's state and the global the jslib's init reads, and a

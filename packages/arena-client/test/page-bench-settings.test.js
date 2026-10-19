@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BENCHMARK IS IN SETTINGS (kanban #373, the owner 2026-10-16: "Remove the benchmark button and have that in the settings instead"):
 // the Settings sheet carries a Benchmark card whose button closes Settings and asks Unity for the same Benchmark the lobby's button ran
 // (SPECTATE + the page's frame-rate test); without Unity the test runs alone. the owner 2026-10-16: "Benchmark is disabled by default" -

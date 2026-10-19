@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3 ROW 3: A PAYOUT TABLE THAT IS NOT F OF ITS PUBLISHED INPUTS.
 //
 // §20: "PayoutTable = F(RoundContract, Membership, FinalResults).

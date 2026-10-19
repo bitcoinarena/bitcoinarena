@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TALLY AS A PLUGIN (kanban #202): its core, its one config, and its manifest - signed by a test developer key
 // (../sign.js) - as a node's launcher would register it. Its sim_wasm_hash is sha256 over its core's source, as the
 // truck's is over its sources.

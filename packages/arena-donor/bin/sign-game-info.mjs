@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GAME'S SIGNED DESCRIPTION AND WEBSITE, WRITTEN BESIDE ITS PLUGIN (kanban #276). Run by the game's developer with the dev
 // client's key; writes only public bytes - the two strings and the signature - as <plugin dir>/info.js, which the plugin
 // carries as `info`. The game id is the manifest's and does not change. A third string, the developer's Lightning address

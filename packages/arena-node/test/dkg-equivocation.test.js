@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE DEALER, TWO VALID CONTRIBUTIONS - AND NO HONEST SIGNER NODE KEEPS A SHARE OF EITHER KEY.
 //
 // Measured before the agreement step (this file at its first run): on 5 of 7,

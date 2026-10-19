@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ENGINE IMPORTS NO GAME (kanban #203, §0A.2: "the dependency runs one way: the engine never imports a game's code").
 //
 // nextblock may depend on the engine - protocol, arena-node, arena-client, arena-donor - and no engine file may depend on

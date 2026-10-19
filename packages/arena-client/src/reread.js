@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A READ THAT SURVIVES A DEAD KEPT-ALIVE SOCKET (M3.3-27).
 //
 // Measured on the regtest rehearsal: after the event loop was held past the

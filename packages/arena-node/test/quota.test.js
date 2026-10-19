@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // DISK IS SPENT ONLY ON STAKES THAT EXIST.
 //
 // IMPLEMENTATION.md calls this the main anti-DoS lever: "A funded entry is

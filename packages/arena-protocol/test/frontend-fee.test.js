@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, kanban #362 roadmap item 7; RULED the owner 2026-10-15, path (a): "Take it out of the
 // nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased by this fee").
 import { test } from 'node:test';

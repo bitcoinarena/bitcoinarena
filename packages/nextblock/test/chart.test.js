@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §0.3: the HUD's one chart, as the core hands it to the page. GROUND is the minimap's window, ROUND
 // the lead's; YOU, the gate, the objectives and the assault are core words through one mapping; reading it changes
 // nothing.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LEADERBOARD (named the season board until kanban #367) AS THE PAGE SHOWS IT (kanban #362, docs/PLATFORM-RESEARCH.md item 1, presentation): one game's board
 // over the last 7, 30 or 90 days, from a seat's GET /season?game=<name>&days=<n>&scope=network.
 //

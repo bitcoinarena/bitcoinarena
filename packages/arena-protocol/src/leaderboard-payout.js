@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LEADERBOARD PAYOUT REQUEST (kanban #460, the owner 2026-10-17: "new proposal type, not a withdrawal but re-assign to the federation when
 // a specific protocol version is active ... Example: distribution of X sats for the best 10 p&l of last week ... Which game/market/all
 // global and the top count. Amount is divided equally or configurable. Time period is last 7 days, last 14 days, last month. Payment

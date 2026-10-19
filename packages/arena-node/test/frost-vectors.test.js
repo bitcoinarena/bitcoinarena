@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RFC 9591'S OWN NUMBERS, NOT OURS.
 //
 // PRIORITIES calls FROST "comparatively low risk despite sounding like the

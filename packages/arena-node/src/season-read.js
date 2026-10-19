@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEASON'S ROUNDS AS THIS NODE HOLDS THEM (kanban #362 feature 1): what GET /season hands protocol season.js - one game's
 // rounds started inside a window, each entry with the FINAL result and the amount its round's settlement paid it.
 //

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * TESTNET4'S DONATION SET OF KEYS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): "Every dev has its own
  * client with a private key that corresponds to the 66.67% or 33.33% stake in the donation set."

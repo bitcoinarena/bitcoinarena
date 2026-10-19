@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SIGNER NODES' FORFEIT OF A QUALIFIER'S STAKE LOCK (v4.6.2 §23.2 row 1, W5b).
 //
 // "DELIVERED (qualifying): forfeit the stake lock -> it returns to the

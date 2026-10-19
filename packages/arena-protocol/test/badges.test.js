@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ACHIEVEMENTS AND BADGES (kanban #362, PLATFORM-RESEARCH item 13): who earned which badge, read through season() - a round
 // played and won exactly as the season board says - for an identity only, never a bare round key, with the earliest rounds
 // that earned it as evidence, and the same awards from the same rounds in any order.

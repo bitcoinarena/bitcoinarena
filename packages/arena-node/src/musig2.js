@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // MUSIG2 (BIP-327), FOR THE BOND'S KEY PATH (kanban #307, spec 5A.3B: "key path MuSig2(node_key,
 // arbitration_aggregate_key) -> cooperative release or cooperative slash, one signature, indistinguishable on chain").
 //

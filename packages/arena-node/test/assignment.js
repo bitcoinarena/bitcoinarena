@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 

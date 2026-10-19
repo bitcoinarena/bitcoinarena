@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER PAGE'S CRYPTO IN ONE FILE (kanban #276): BIP-39 words, the owner key and its signed requests, BIP-340.
 // Bundled into pages/owner-client.js by tools/bundle-owner.mjs; test/owner.test.js holds the bundle to this source.
 import { schnorr } from '@noble/curves/secp256k1.js';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOND OUTPUT KEY, AND WHY IT IS THE ONLY THING A VERIFIER CAN CHECK.
 //
 // 5A.3B builds the bond as a P2TR output with three spend paths:

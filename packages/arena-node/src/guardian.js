@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE NODE IS ONE GUARDIAN, AND THE NODE RUNS IT (spec §23A.2, RULED the owner 2026-09-26 22:54 / 22:57).
 //
 // Starting the node starts its guardian; stopping the node stops it. The operator configures nothing for it: no second

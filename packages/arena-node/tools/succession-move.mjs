@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE NOTES FOLLOW THE SUCCESSOR, MEASURED (kanban #325, §23A.6 step 3) - the page's own path, without a browser: a player
  * wallet (one seed) gets a deposit in the old federation A from the payer lnd; then A's record, as the seats sign it, is

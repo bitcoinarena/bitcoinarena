@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (the owner 2026-09-30 21:10, PRIORITIES): the page's boot lines, run on
 // a fake tab - the address the deposit offer noted goes back to the lobby behind it; any other address stays.
 import test from 'node:test';

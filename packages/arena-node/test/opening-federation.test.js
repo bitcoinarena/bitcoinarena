@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT OPENING A ROUND NAMES THE OPEN FEDERATION WITH THE LOWEST LOAD (§23A.3, kanban #324 step 2)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
