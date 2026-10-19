@@ -75,7 +75,7 @@ test('an entry with an item its owner bought and signed for is taken; without th
 });
 
 test('items only on a round of version 10 or later: a game that sells them runs no older round, and an older round takes none', () => {
-  assert.throws(() => opened(9), /requires protocol version 2026\.0\.10; that round runs 2026\.0\.9/);
+  assert.throws(() => opened(9), /requires protocol version 10; that round runs 9/);
   const { round, rid } = opened(9, NEXTBLOCK.gameId);
   keep(round.db, { id: b32(0xd1) });
   assert.throws(() => round.enter(entry(rid, [item(rid, 'large-truck', b32(0xd1))])), /a round takes items from protocol version 10 on; this round runs 9/);

@@ -50,7 +50,7 @@ test('version 7 is spoken: 2026.0.7, scalar markets', () => {
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(7));
   assert.equal(speaksVersion(7), true);
   assert.equal(speaksVersion(17), false, '11 is 2026.0.11, the protocol reserves; 12 is 2026.0.12, the leaderboard payout; 13 is 2026.0.13, the seated guardian pool; 14 the cohort; 15 the gateway seats; 16 the liquidity providers; 17 is spoken by no build');
-  assert.equal(protocolVersionName(7), '2026.0.7');
+  assert.equal(protocolVersionName(7), '7');
   assert.equal(TYPE_VALUE_ATTESTATION, 0x2a);
   assert.notEqual(TYPE_VALUE_ATTESTATION, TYPE_OUTCOME_ATTESTATION);
   assert.notEqual(TAG.valueAttestation, TAG.outcomeAttestation);
@@ -148,8 +148,8 @@ test('a scalar market\'s rules, each refused by name - low >= high among them', 
     'no market terms': [{ ...BODY, marketTerms: undefined }, /names its market terms/],
     'a template too': [{ ...BODY, template: { category: 'x', maxOutcomes: 2, resolveWithinMs: 86400000n }, roundPeriodMs: 0n }, /template/],
     'a game source too': [{ ...BODY, gameSource: PINNED_GAME_MARKET.gameSource, attestors: [], attestThreshold: 0 }, /no market on a game|names no attestors/],
-    'below version 7': [{ ...BODY, requiredProtocolVersion: 6 }, /requires protocol version 2026\.0\.7 or later/],
-    'no required version': [{ ...BODY, requiredProtocolVersion: undefined }, /requires protocol version 2026\.0\.7 or later/],
+    'below version 7': [{ ...BODY, requiredProtocolVersion: 6 }, /requires protocol version 7 or later/],
+    'no required version': [{ ...BODY, requiredProtocolVersion: undefined }, /requires protocol version 7 or later/],
     'no attestor': [{ ...BODY, attestors: [], attestThreshold: 0 }, /names 1 to 16 attestor keys/],
     'a replayed game': [{ gameName: 'r', gameDevPubkey: b32(1), version: 1, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.REPLAY, cores: [{ hash: b32(1), configs: [b32(2)] }],
       runTicksMax: 9000, roundPeriodMs: 0n, payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4, minScore: 1, clients: [], gameDonationSetId: b32(0xd0), scalar: SCALAR },
@@ -171,7 +171,7 @@ test('a scalar market\'s rules, each refused by name - low >= high among them', 
   const tooNew = signed({ ...BODY, requiredProtocolVersion: 17 });
   const st = manifestStands(tooNew, { verify: verifyEd });
   assert.equal(st.ok, false);
-  assert.match(st.why, /scalar market under protocol version \?\.\?\.17, which this build does not speak/);
+  assert.match(st.why, /scalar market under protocol version 17, which this build does not speak/);
   console.log('  FACTS (refusals):', JSON.stringify(said));
 });
 
@@ -180,7 +180,7 @@ test('a round of a scalar market is refused below version 7, and carries no byte
   for (const v of [1, 4, 6]) {
     const fits = roundFitsManifest({ ...ROUND, protocolVersion: v }, MARKET);
     assert.equal(fits.ok, false, `v${v}`);
-    assert.match(fits.why, /requires protocol version 2026\.0\.7; that round runs 2026\.0\./);
+    assert.match(fits.why, /requires protocol version 7; that round runs /);
   }
   // NO ROUND BYTE CHANGES: a v7 round is the v6 layout with its version byte - nothing appended
   const v7 = encodeRoundContract(ROUND), v6 = encodeRoundContract({ ...ROUND, protocolVersion: 6 });
@@ -202,7 +202,7 @@ test('a value attestation: its own type, its own tag, written at 7 - read back w
   }
   // REFUSED BELOW 7 (and at a version nobody speaks): the version bytes patched
   const bytes = encodeValueAttestation(valueSigned({ roundId: RID, value: 1n, observedAtMs: AT }, ATTESTORS.slice(0, 2)));
-  for (const [v, why] of [[6, /written at protocol version 2026\.0\.7 or later; this one names 2026\.0\.6/], [1, /names 2026\.0\.1/], [17, /names \?\.\?\.17/]]) {
+  for (const [v, why] of [[6, /written at protocol version 7 or later; this one names 6/], [1, /names 1/], [17, /names 17/]]) {
     const p = bytes.slice(); p[1] = v >> 8; p[2] = v & 255;
     assert.throws(() => decodeValueAttestation(p), why, `version ${v}`);
   }

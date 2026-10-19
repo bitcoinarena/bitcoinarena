@@ -28,6 +28,7 @@ export const HELP = (name) => `${name}: the Arena node on this machine
   ${name} config get <key>
   ${name} config set <key> <value>  then: ${name} restart
   ${name} config unset <key>
+  ${name} update                    update this node now to the newest signed release (auto update does it by itself)
   ${name} open                      the owner page in the browser
   ${name} version
 `;
@@ -132,6 +133,21 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
         io.out(`${b} unset. Takes effect at the next start: ${name} restart node`); return 0;
       }
       io.err(`${name} config [get <key> | set <key> <value> | unset <key> | file]`); return 2;
+    }
+    case 'update': {
+      // NOW (kanban #505): the newest signed release fetched, checked and the node moved to it - whatever auto_update says
+      const { checkOnce } = await import('./auto-update.js');
+      if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
+      const r = await checkOnce({ home, latest: deps.latest, force: true, log: (l) => io.out(l), ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
+      io.out(r.upToDate ? `Up to date: ${r.version} is the newest release.` : r.ok ? `Updated ${r.from} -> ${r.to}. Backup: ${r.backup}` : `Not updated: ${r.why}`);
+      return r.ok ? 0 : 1;
+    }
+    case 'auto-update': {
+      // THE SERVICE (kanban #505): a check every few hours; it ends after an update, and its service starts it again from the new release
+      const { runAutoUpdate } = await import('./auto-update.js');
+      if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
+      await runAutoUpdate({ home, latest: deps.latest });
+      return 0;
     }
     case 'open': {
       const n = nodeOf(home);

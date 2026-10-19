@@ -66,8 +66,14 @@ if (args.includes('--update')) {
   // the Windows asset is a .zip: Windows 10+ has tar (bsdtar), which reads zip too
   if (!existsSync(`${dir}/${name}`)) execFileSync('tar', [asset.endsWith('.zip') ? '-xf' : '-xzf', asset, '-C', dir]);
   const s = state.read();
+  // the auto update service (kanban #505) for a node that has none yet
+  const { installUpdater } = await import('../src/launchers.js');
+  const { installProgram } = await import('../src/service.js');
+  const { serviceFile } = await import('../src/node-services.js');
+  const installUpdaterFn = async (o) => (existsSync(serviceFile('updater', { home, platform: process.platform, env: process.env })) ? { ok: true, already: true }
+    : installUpdater({ ...o, installProgram }));
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}` });
+    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn });
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   await finish(r.ok ? 0 : 1);

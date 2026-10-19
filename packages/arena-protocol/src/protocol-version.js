@@ -44,11 +44,12 @@ export const PROTOCOL_RELEASES = Object.freeze([
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
 
-/** The YYYY.x.y name of wire version `v`. */
+/**
+ * How a protocol version is shown: its number (the owner 2026-10-19: "Protocol is just protocol 1..16" - the YYYY.x.y names belong to the
+ * node's releases, 2026.1.0 and on, not to the protocol). The table above stays for when each version came.
+ */
 export function protocolVersionName(v) {
-  if (!Number.isInteger(v) || v < 0 || v > 0xffff) return String(v);
-  const r = byVersion.get(v);
-  return r ? `${r.year}.${r.x}.${v}` : `?.?.${v}`;
+  return String(v);
 }
 
 /**
@@ -63,6 +64,6 @@ export function readProtocolVersionName(name) {
   const [year, x, v] = [Number(m[1]), Number(m[2]), Number(m[3])];
   if (v < 1 || v > 0xffff) return { ok: false, why: `${s}: the build number is 1..65535` };
   const r = byVersion.get(v);
-  if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${protocolVersionName(v)}` };
+  if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${r.year}.${r.x}.${v}` };
   return { ok: true, version: v, known: !!r };
 }

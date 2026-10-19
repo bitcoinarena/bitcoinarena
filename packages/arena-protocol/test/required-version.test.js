@@ -51,7 +51,7 @@ test('a manifest that requires a version carries it last and refuses an older ro
     rankNumerator: back.rankNumerator, rankDenominator: back.rankDenominator, minScore: back.minScore, blockTicks: 1 });
   const older = roundFitsManifest(round(PROTOCOL_VERSION), back, id);
   assert.equal(older.ok, false);
-  assert.match(older.why, /requires protocol version 2026\.0\.2; that round runs 2026\.0\.1/);
+  assert.match(older.why, /requires protocol version 2; that round runs 1/);
   assert.equal(roundFitsManifest(round(PROTOCOL_VERSION + 1), back, id).ok, true);
   // the same round against the manifest that requires nothing: no version asked
   assert.equal(roundFitsManifest({ ...round(PROTOCOL_VERSION), gameId: gameIdOf(base) }, base).ok, true);
@@ -63,23 +63,23 @@ test('a required version is 1 to 65535', () => {
   assert.throws(() => encodeManifest({ ...base, requiredProtocolVersion: 1.5 }), /1 to 65535/);
 });
 
-test('a wire version is named YYYY.x.y (the owner 2026-10-12: x starts at 0, y the build number) and read back to its u16', async () => {
+test('a protocol version is shown as its number (the owner 2026-10-19: "Protocol is just protocol 1..16"); old YYYY.x.y names are still read back to the u16', async () => {
   const { protocolVersionName, readProtocolVersionName } = await import('../src/protocol-version.js');
-  assert.equal(protocolVersionName(PROTOCOL_VERSION), '2026.0.1');
-  assert.equal(protocolVersionName(2), '2026.0.2');
-  assert.equal(protocolVersionName(4), '2026.0.4');
-  assert.equal(protocolVersionName(5), '2026.0.5');
-  assert.equal(protocolVersionName(6), '2026.0.6');
-  assert.equal(protocolVersionName(7), '2026.0.7');
-  assert.equal(protocolVersionName(8), '2026.0.8');
-  assert.equal(protocolVersionName(9), '2026.0.9');
-  assert.equal(protocolVersionName(10), '2026.0.10');
-  assert.equal(protocolVersionName(12), '2026.0.12', 'the leaderboard payout (kanban #460)');
-  assert.equal(protocolVersionName(17), '?.?.17', 'a version this build has no release for is named by its number');
+  assert.equal(protocolVersionName(PROTOCOL_VERSION), '1');
+  assert.equal(protocolVersionName(2), '2');
+  assert.equal(protocolVersionName(4), '4');
+  assert.equal(protocolVersionName(5), '5');
+  assert.equal(protocolVersionName(6), '6');
+  assert.equal(protocolVersionName(7), '7');
+  assert.equal(protocolVersionName(8), '8');
+  assert.equal(protocolVersionName(9), '9');
+  assert.equal(protocolVersionName(10), '10');
+  assert.equal(protocolVersionName(12), '12', 'the leaderboard payout (kanban #460)');
+  assert.equal(protocolVersionName(17), '17', 'a protocol version is shown as its number (the owner 2026-10-19)');
   assert.deepEqual(readProtocolVersionName('2026.0.1'), { ok: true, version: 1, known: true });
   assert.deepEqual(readProtocolVersionName('2027.0.17'), { ok: true, version: 17, known: false });
   assert.deepEqual(readProtocolVersionName('1'), { ok: true, version: 1, known: true });
-  assert.match(readProtocolVersionName('2025.0.1').why, /build 1 is 2026\.0\.1/);
+  assert.match(readProtocolVersionName('2025.0.1').why, /build 1 is 2026\.0\.1/, 'an old YYYY.x.y name is still read, and checked');
   assert.match(readProtocolVersionName('2026.0').why, /YYYY\.x\.y/);
   assert.match(readProtocolVersionName('2026.0.70000').why, /1\.\.65535/);
 });
