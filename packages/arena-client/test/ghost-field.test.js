@@ -26,7 +26,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
-import { watchGhosts, GHOST_BACKLOG, SILENT_MS, playersLine, newestPose } from '../src/ghost-field.js';
+import { watchGhosts, GHOST_BACKLOG, SILENT_MS, playersLine, newestPose } from '../../nextblock/page/ghost-field.js';
 import { encodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
@@ -253,8 +253,9 @@ test('the page ships the client it is written against, and one consumer of onGho
       `blwp.jslib calls BLWPCLIENT.${name} and the bundle does not export it`);
 
   // ONE CONSUMER OF onGhost IN THE SOURCE, and it is the measured one.
-  const dir = new URL('../src/', import.meta.url).pathname;
-  const sets = readdirSync(dir).filter((f) => /onGhost\s*=/.test(readFileSync(dir + f, 'utf8')));
+  // the client's source and Tick Tock's page part (packages/nextblock/page, where the field lives since kanban #521)
+  const dirs = [new URL('../src/', import.meta.url).pathname, new URL('../../nextblock/page/', import.meta.url).pathname];
+  const sets = dirs.flatMap((dir) => readdirSync(dir).filter((f) => /onGhost\s*=/.test(readFileSync(dir + f, 'utf8'))));
   assert.deepEqual(sets.sort(), ['client.js', 'ghost-field.js'],
     'onGhost is declared or set somewhere other than the client and the field');
 });
@@ -434,7 +435,7 @@ test('through the real client and daemon, this player\'s pre-reload entry is its
 
 /* ------------------------------------------------ what Unity is left holding */
 
-import { RETIRE_TICK } from '../src/ghost-field.js';
+import { RETIRE_TICK } from '../../nextblock/page/ghost-field.js';
 import { assumeStakeSeen } from '../../arena-node/test/assignment.js';
 // THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
 // 9000, so every test here that stands up a real daemon died before it could watch anything.

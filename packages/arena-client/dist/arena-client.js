@@ -24964,7 +24964,7 @@ function playerStoreRecord({ secretKey, displayName = null }) {
   };
 }
 
-// ---- arena-client/src/ghost-field.js
+// ---- nextblock/page/ghost-field.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THE PAGE DOES WITH A PICTURE OF SOMEBODY ELSE'S TRUCK.
@@ -32661,7 +32661,7 @@ function batchDeclineId({ roundId, k }) {
   return taggedHash(TAG.marketBatchDecline, w.finish());
 }
 
-// ---- arena-client/src/market.js
+// ---- btc-updown/page/market.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET IN THE PAGE (§0A.7a; 2026-10-07, decisions A and B of plan 777): the pick sheet's

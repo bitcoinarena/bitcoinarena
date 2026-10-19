@@ -30,7 +30,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
-import { playersLine } from '../src/ghost-field.js';
+import { playersLine } from '../../nextblock/page/ghost-field.js';
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now

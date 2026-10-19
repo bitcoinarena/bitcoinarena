@@ -36,7 +36,7 @@ import { SOLO_SEED, SOLO_BAY } from '../../nextblock/src/rng.js';
 import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../nextblock/src/state.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
 import { Client } from '../src/client.js';
-import { watchGhosts } from '../src/ghost-field.js';
+import { watchGhosts } from '../../nextblock/page/ghost-field.js';
 import { createRequire } from 'node:module';
 import { toHex } from '../../arena-protocol/src/hash.js';
 

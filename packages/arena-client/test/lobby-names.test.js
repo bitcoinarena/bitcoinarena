@@ -27,7 +27,7 @@ import { resultId, encodePlayerResult, RESULT_BYTES, RESULTS_FOR_FINAL } from '.
 import { roundId } from '../../arena-protocol/src/contracts.js';
 import { DELIVERED } from '../../arena-protocol/src/payout.js';
 import { playerFor, tabSeed } from '../src/join.js';
-import { playersLine } from '../src/ghost-field.js';
+import { playersLine } from '../../nextblock/page/ghost-field.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';

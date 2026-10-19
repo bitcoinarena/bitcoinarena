@@ -30,7 +30,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
-import { watchGhosts } from '../src/ghost-field.js';
+import { watchGhosts } from '../../nextblock/page/ghost-field.js';
 import { encodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';

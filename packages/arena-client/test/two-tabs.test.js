@@ -27,7 +27,7 @@ import { TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { Client } from '../src/client.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
-import { watchGhosts } from '../src/ghost-field.js';
+import { watchGhosts } from '../../nextblock/page/ghost-field.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { init as coreInit, step as coreStep } from '../../nextblock/src/sim.js';

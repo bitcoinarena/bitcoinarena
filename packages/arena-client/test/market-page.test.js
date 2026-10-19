@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { sign as edSign } from 'node:crypto';
-import { pickSheet, marketForRound, submitPick, checkAttestation, marketLines } from '../src/market.js';
+import { pickSheet, marketForRound, submitPick, checkAttestation, marketLines } from '../../btc-updown/page/market.js';
 import { entryFor, playerFor } from '../src/join.js';
 import { pageFunction } from './page-script.js';
 import { MARKET, MARKET_OUTCOMES } from '../../arena-node/test/plugins/market/index.js';
