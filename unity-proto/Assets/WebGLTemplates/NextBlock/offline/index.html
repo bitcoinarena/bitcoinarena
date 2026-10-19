@@ -69,10 +69,14 @@
     const list = (d.testnet && d.testnet.node) || d.node || [];
     seats = [...new Set(list.map(base))];
   }).catch(() => { seats = []; });
-  const ask = async (path, init) => {
-    for (const s of seats) { try { const r = await fetch(s + path, { ...init, signal: AbortSignal.timeout(8000) }); if (r.ok) return { seat: s, body: await r.json() }; } catch { /* the next seat */ } }
-    return null;
-  };
+  // every seat at once; the first that answers is taken. A seat before protocol 17 has no such door (404): said as such
+  let older = 0;
+  const ask = (path) => new Promise((done) => {
+    let left = seats.length; older = 0;
+    const one = () => { if (--left === 0) done(null); };
+    for (const s of seats) fetch(s + path, { signal: AbortSignal.timeout(8000) })
+      .then(async (r) => { if (r.ok) done({ seat: s, body: await r.json() }); else { if (r.status === 404) older++; one(); } }, one);
+  });
   $('find').onclick = async () => {
     $('err1').textContent = ''; $('step2').hidden = true;
     let codeBytes; try { codeBytes = C.parseEmergencyCode($('code').value); } catch (e) { $('err1').textContent = e.message; return; }
@@ -81,7 +85,7 @@
     await seatsP;
     if (!seats.length) { $('err1').textContent = 'The network\'s seats could not be read from daily.json. Try again in a moment.'; return; }
     const got = await ask('/emergency-departures?key=' + key);
-    if (!got) { $('err1').textContent = 'No seat answered. Try again in a moment.'; return; }
+    if (!got) { $('err1').textContent = older ? `The network's seats do not run protocol 17 yet (${older} of ${seats.length} have no emergency door), so no leave request can be posted.` : 'No seat answered. Try again in a moment.'; return; }
     if (!got.body.named) { $('err1').textContent = 'No node of the census names this emergency code in its bond advertisement. Check the code - or your node\'s bond was posted before protocol 17 and has no emergency path.'; return; }
     found = { ...got.body.named, tip: got.body.tip, key };
     const s2 = $('step2'); s2.hidden = false;
