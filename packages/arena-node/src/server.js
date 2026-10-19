@@ -3796,7 +3796,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const e = entries.find((x) => toHex(x.pubkey) === node);
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
-            const r = await fetch(`${String(e.advert.endpoint).replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${epoch}`, { signal: AbortSignal.timeout(10000) });
+            const r = await fetch(`${String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${epoch}`, { signal: AbortSignal.timeout(10000) });
             if (r.status === 200) signed.push(await r.json());
           } catch { /* that guardian's signature is missing this time */ }
         }
