@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// Bundles the BLWP client into one file for the browser.
+// Bundles the Arena client into one file for the browser.
 //
 // The same smallest-possible bundler `nextblock` uses, and for the same
 // stated reason: a bundler in the trust path is a bad property for something
