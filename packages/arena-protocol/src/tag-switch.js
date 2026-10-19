@@ -25,8 +25,14 @@ export const TAG_PAIRS = Object.freeze({
   foundingSetup: Object.freeze(['BLWP/v1/FOUNDING_SETUP', 'ARENA/v1/FOUNDING_SETUP']),
 });
 
-/** The point per network: { height, timeMs } or null (not named yet: the old tags everywhere). */
-export const TAG_SWITCH = Object.freeze({ mainnet: null, testnet4: null, regtest: null });
+/** The point per network: { height, timeMs } or null (not named yet: the old tags everywhere). testnet4: the owner 2026-10-19 ~20:45Z,
+ *  "Launch it as soon as possible" - H 157,064 (~00:50Z at one block per 20 min, after every seat, provider and installer node runs it),
+ *  T 2026-10-20 01:00:00Z. */
+export const TAG_SWITCH = Object.freeze({
+  mainnet: null,
+  testnet4: Object.freeze({ height: 157064, timeMs: Date.parse('2026-10-20T01:00:00Z') }),
+  regtest: null,
+});
 
 export const EPOCH_BLOCKS = 144;
 
