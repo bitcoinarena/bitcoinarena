@@ -861,6 +861,18 @@
       background: none; border-radius: 0; font-size: 10px; text-align: right; }
     body.arena-picking #arena-games .foot-row, body.arena-game-chosen:has(#boot:not(.done)) #boot-build { display: none; }
     body.arena-picking #arena-games .box { padding-bottom: 36px; }
+    /* THE ARENA'S OWN LOADING SCREEN HAS THE HEADER AND THE FOOTER (kanban #535: "the arena loading page, the one which opens when clicking the
+       arena button in the header in a game, does not have the header and footer elements. it should look like the loading layer when loading a
+       game"; measured on UI 233: only the gear, the build line in the middle): the logo, balance, Deposit, Withdraw and the gear above, the
+       build line and Donate at the bottom right, as a game's loading screen draws them */
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-hdr-bal, html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-hdr-deposit, html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-hdr-withdraw { display: inline-flex; align-items: center; flex: none; }
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-game-home { display: inline-flex; align-items: center; gap: 8px; width: auto; height: 32px; margin-right: auto; background: none; border-radius: 0;
+      color: #e8eaed; font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,.8); text-decoration: none; }
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px;
+      padding: 0 10px; border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-build { display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px;
+      padding: 0 100px 0 8px; background: none; border-radius: 0; font-size: 10px; text-align: right; }
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #boot-build { display: none; }
     body.blwp-clean #arena-donate-go, body.blwp-clean #arena-build { display: none !important; }
     /* ONE PLACE AND ONE LOOK FOR EVERY OVERLAY (2026-10-19: "the overlays (balance, deposit, withdraw, ...) should all open
        at the same starting position. they also should look alike. title (left aligned, amber), an 'x' to close (missing at balance), no extra
@@ -896,10 +908,21 @@
        the clicks, so no click through is possible until the overlay is closed ... from bellow the header up to the footer";: "when an
        overlay is open, selecting a game loads the game without closing the overlay first"): balance, deposit and withdraw lie on it */
     #arena-ov-scrim { display: none; position: fixed; left: 0; right: 0; top: calc(41px + env(safe-area-inset-top, 0px));
-      bottom: calc(30px + env(safe-area-inset-bottom, 0px)); z-index: 43; background: rgba(150, 162, 180, .14); }
+      bottom: calc(30px + env(safe-area-inset-bottom, 0px)); z-index: 43; background: rgba(170, 182, 200, .26); }
     body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
     body:has(#arena-bal-split:not([style*="none"]):not(:empty)) #arena-ov-scrim { display: block; }
     body.blwp-clean #arena-ov-scrim { display: none !important; }
+    /* A LIGHTER LAYER (kanban #536: "the contrast is still not enough, make this newly added layer a bit lighter"): .14 -> .26 */
+    /* THE DONATE BOX AS THE OTHER OVERLAYS (kanban #537: "adapt the donate layer to the changes of #533 and #536"): the same lighter layer
+       between header and footer (it was a dark sheet over the whole page, the header included), and its box where the balance, deposit
+       and withdraw boxes open - under the header, centred, 420 px, their panel, title and × */
+    #arena-donate { inset: auto; left: 0; right: 0; top: calc(41px + env(safe-area-inset-top, 0px)); bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+      z-index: 43; background: rgba(170, 182, 200, .26); padding: 0; align-items: flex-start; }
+    #arena-donate .box { position: absolute; left: 50%; top: 15px; transform: translateX(-50%); width: min(92vw, 420px); max-height: calc(100% - 30px); overflow-y: auto;
+      box-sizing: border-box; background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+    #arena-donate h3 { font: 700 16px/1.3 system-ui, -apple-system, sans-serif; color: #f7931a; }
+    #arena-donate .x { color: #e8eaed; font-size: 20px; line-height: 1; padding: 2px 6px; }
+    #arena-donate .x:hover { color: #f7931a; }
     /* WITHDRAW KEEPS ITS SIZE WHILE THE BALANCE IS READ (2026-10-19: "the withdraw overlay changes dimension because it does
        not have the wallet amount when opening. use a placeholder while loading the balance"): the amount line holds two lines from the start */
     #arena-withdraw #arena-wd-amount { min-height: calc(2 * 1.45em); }
@@ -7583,7 +7606,8 @@
         const el = document.querySelector(sel);
         if (el) el.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_SHOW_BALANCE_SPLIT(); });
       }
-      document.addEventListener('click', (e) => { const el = splitEl(); if (el && el.style.display !== 'none' && !el.contains(e.target)) el.style.display = 'none'; });
+      // CLOSED ONLY BY ITS × OR THE BALANCE BUTTON (kanban #534: "the overlay can be closed by clicking anywhere on the page. this is not the
+      // same behavior as deposit and withdrawal"): no click elsewhere closes it - the layer under it catches those (#533)
       // OUT OF A DRAINING FEDERATION, BY ITSELF (2026-10-13 ~12:00Z: "When a federation is draining the client has
       // automatically to move it to a safe federation"): each time the federations' records are checked, every federation this
       // browser holds notes in whose record says DRAINING or CRITICAL is emptied into its successor, else the lowest-load OPEN
@@ -8569,7 +8593,7 @@
       const say = (t, bad) => { const n = el.querySelector('.say'); n.textContent = t; n.classList.toggle('bad', !!bad); };
       const close = () => { el.classList.remove('show'); };
       el.querySelector('.x').addEventListener('click', close);
-      el.addEventListener('click', (e) => { if (e.target === el) close(); });
+      // as the balance, deposit and withdraw boxes (kanban #534, #537): only its × or its own button closes it, a click beside it does nothing
       let chosen = null, sets = null, wallets = [], confirming = false;
       const best = () => (wallets[0] ? wallets[0].msat / 1000n : 0n);
       const go = el.querySelector('.go'), input = el.querySelector('.custom input');
@@ -8681,10 +8705,12 @@
         leaderboard: { open: () => !!(window.ARENA_SEASON && window.ARENA_SEASON.isOpen()), close: () => window.ARENA_SEASON.close() },
         shop: { open: () => !!byId('arena-shop') && byId('arena-shop').classList.contains('show'), close: () => byId('arena-shop').classList.remove('show') },
         settings: { open: () => !!byId('arena-settings') && byId('arena-settings').style.display !== 'none', close: () => byId('arena-settings-close').click() },
+        // the donate box too (kanban #537: "opening the donate overlay should close any other open overlays")
+        donate: { open: () => !!byId('arena-donate') && byId('arena-donate').classList.contains('show'), close: () => byId('arena-donate').classList.remove('show') },
       };
       const BUTTONS = { 'arena-wb-deposit': 'deposit', 'arena-hdr-deposit': 'deposit', 'arena-wb-withdraw': 'withdraw', 'arena-hdr-withdraw': 'withdraw',
         'arena-hdr-bal': 'balance', 'arena-wb-season': 'leaderboard', 'arena-season-go': 'leaderboard', 'arena-shop-go': 'shop',
-        'arena-wb-gear': 'settings', 'arena-settings-go': 'settings' };
+        'arena-wb-gear': 'settings', 'arena-settings-go': 'settings', 'arena-donate-go': 'donate', 'arena-next-donate': 'donate' };
       document.addEventListener('click', (e) => {
         const b = e.target && e.target.closest ? e.target.closest('button') : null; if (!b) return;
         const name = BUTTONS[b.id] || (b.classList.contains('wb-bal') ? 'balance' : null);

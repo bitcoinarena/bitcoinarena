@@ -393,7 +393,7 @@ function emergencyPanel() {
   const seed = readSeed();
   const code = seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null;
   $('emergency').innerHTML = `
-    <p>If this node will be offline longer than it may be away - about two days on mainnet, 12 blocks on testnet4 - take it out of the
+    <p>If this node will be offline longer than the network allows - about two days on mainnet, 12 blocks on testnet4 - take it out of the
     network from anywhere with your emergency code, so it keeps its bond: open <b>My node is offline</b> on any other node
     (<code>/Dashboard/emergency</code>) or on the Arena site (<a href="https://testnet.bitcoin-arena.io/offline/">testnet.bitcoin-arena.io/offline</a>) and type the code.</p>
     <table style="width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 10px">
