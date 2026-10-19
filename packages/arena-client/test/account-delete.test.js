@@ -32,8 +32,8 @@ test('forgetPhrase removes that phrase\'s wallet data and recover mark, and no o
   assert.equal(forgetPhrase(L, 'not a phrase'), 0);
 });
 
-const from = HTML.indexOf('function blwpSeedKeeper(');
-const Keeper = pageFunction(PAGE, [], HTML.slice(from, HTML.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', from)), '; return blwpSeedKeeper;')();
+const from = HTML.indexOf('function arenaSeedKeeper(');
+const Keeper = pageFunction(PAGE, [], HTML.slice(from, HTML.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', from)), '; return arenaSeedKeeper;')();
 const open = (L, T) => Keeper({ L, T, now: () => 1e6, every: () => {}, on: () => {}, random: () => 'tab' + Math.random() });
 
 test('the reloaded tab of a deleted account takes no other kept phrase, until it holds one again', () => {

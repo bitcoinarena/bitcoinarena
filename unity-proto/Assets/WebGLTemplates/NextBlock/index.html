@@ -1583,7 +1583,7 @@
   <div id="arena-wallet">
     <div class="owed" id="arena-owed"></div>
     <div class="spent" id="arena-spent"></div>
-    <div class="spent" id="blwp-donation"></div>
+    <div class="spent" id="arena-donation"></div>
     <div class="spent" id="arena-settled"></div>
     <div class="spent" id="arena-wallet-withdraw"></div>
     <input id="arena-withdraw-invoice" type="text" autocomplete="off" spellcheck="false"
@@ -2163,7 +2163,7 @@
     // holds is also kept in the browser's storage (arena.seeds); a tab marks the one it holds with a heartbeat every 4 s. A tab
     // with no phrase of its own - a new tab, a browser opened again - takes a kept phrase no open tab holds (no
     // heartbeat for 12 s); only when every kept one is held does it get a new one. Two open tabs stay two players.
-    function blwpSeedKeeper({ L, T, now, every, on, random, locks = null, reload = () => {} }) {
+    function arenaSeedKeeper({ L, T, now, every, on, random, locks = null, reload = () => {} }) {
       const KEY = 'arena.player.seed', FROM = 'arena.player.seed.from', LIST = 'arena.seeds', HELD = 'arena.seed.held.';
       const read = () => { try { const l = JSON.parse(L.getItem(LIST) || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
       let tab = T.getItem('arena.tab.id');
@@ -2220,7 +2220,7 @@
       return { beat };
     }
     try {
-      window.ARENA_SEED_KEEPER = blwpSeedKeeper({ L: window.localStorage, T: window.sessionStorage, now: () => Date.now(),
+      window.ARENA_SEED_KEEPER = arenaSeedKeeper({ L: window.localStorage, T: window.sessionStorage, now: () => Date.now(),
         every: (fn, ms) => setInterval(fn, ms), on: (n, fn) => window.addEventListener(n, fn),
         locks: (navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null, reload: () => location.reload(),
         random: () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('') });
@@ -4277,7 +4277,7 @@
       try { const h = JSON.parse(vault().getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); if (h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('arena.tab.id')) return Promise.resolve(null); } catch { /* read below */ }
       if (!navigator.locks || typeof navigator.locks.request !== 'function') return fn();
       // WHILE IT HOLDS ANOTHER PHRASE'S LOCK, THE COLLECT SAYS SO ((b)): a new tab that finds that lock taken waits
-      // for it (blwpSeedKeeper) instead of dropping the phrase and minting another
+      // for it (arenaSeedKeeper) instead of dropping the phrase and minting another
       const mark = 'arena.seed.collecting.' + hex.slice(0, 16);
       return navigator.locks.request('arena.phrase.' + hex.slice(0, 16), { ifAvailable: true }, async (lock) => {
         if (!lock) return null;
@@ -6059,7 +6059,7 @@
       // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN (M3.2 6e): the
       // client's line off the client's state - which on a reload is the tab's
       // notes - painted before the lock branch, so a lock round shows it too.
-      document.getElementById('blwp-donation').textContent = BLWPCLIENT.donationPaidLine(window.ARENA_DONATION_PAID);
+      document.getElementById('arena-donation').textContent = BLWPCLIENT.donationPaidLine(window.ARENA_DONATION_PAID);
       // (NO "WHERE THE STAKE WENT" LINE: it read the signer nodes' hold state, the hold's amount and the
       // round's pool, which were THRESHOLD_LN's and are no longer reported - §23.6, RULED 2026-09-22 22:59.)
       // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
@@ -8737,7 +8737,7 @@
     // THE WALLET SCREEN (2026-10-10: "Introduce a new loading screen in each game - create a new wallet or
     // restore wallet. When creating a new wallet user may choose create new seed (24 words) with the existing process to create
     // new seed and to verify it (optional). Also Login with Nostr at this stage"). Shown at start when this tab holds no
-    // wallet seed and the browser keeps none it could take (blwpSeedKeeper ran before this). Its three ways in:
+    // wallet seed and the browser keeps none it could take (arenaSeedKeeper ran before this). Its three ways in:
     //   - Create: the tab's new seed (tabSeed), then the 24-word dialog with its optional verify - the existing process;
     //   - Restore: the 24 words or the seed (ARENA_RESTORE_SEED, as Settings does);
     //   - Nostr (window.ARENA_NOSTR, loaded only now): the account's game seed - from its NIP-78 event, else derived from an
