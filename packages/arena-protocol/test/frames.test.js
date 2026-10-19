@@ -64,7 +64,9 @@ test('one type carries no authority, and it is the ghost', () => {
   // 42 since a scalar market's value attestation (kanban #362 feature 8): the number that decides how its pool is split.
   // 44 since the developers' own ballot (kanban #382, §27A.4.1): a proposed split and a recipient's approval - who the donations pay.
   // 45 since a donation set of keys that vests (kanban #382, §27A.4.1): who the donations pay, day by day.
-  assert.equal(FRAMES.size, 45, 'a type was added without saying what it decides');
+  // 52 since the fee proposals and approvals (#462), the funding proposal, comment and signal (#397), the player name and the
+  // leaderboard payout (#460) were entered (2026-10-19): declared without an entry, bearsAuthority refused them as unknown
+  assert.equal(FRAMES.size, 52, 'a type was added without saying what it decides');
 });
 
 /**
