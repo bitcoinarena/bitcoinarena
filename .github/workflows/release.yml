@@ -94,7 +94,7 @@ jobs:
             "$R/runtime/node" src/main.js 31917 "$PWD/seat.db" > "$PWD/seat.log" 2>&1 &)
           for i in $(seq 1 90); do curl -sf -o /dev/null http://127.0.0.1:31917/identity && break; sleep 1; done
           curl -sf http://127.0.0.1:31917/games | grep -q '"name":"nextblock"' || { cat seat.log; exit 1; }
-          ("$R/arena-install" --port 31918 --seat-port 31919 --home "$PWD/home" > inst.log 2>&1 &)
+          ("$R/arena-install" --local --port 31918 --seat-port 31919 --home "$PWD/home" > inst.log 2>&1 &)   # --local: a runner has no display (session.js)
           for i in $(seq 1 30); do grep -q '?t=' inst.log && break; sleep 1; done
           link=$(grep -oE 'http://127.0.0.1:31918/\?t=[A-Za-z0-9_-]+' inst.log)
           cookie=$(curl -s -o /dev/null -D - "$link" | grep -i set-cookie | grep -oE 'arena_wizard=[^;]+')
@@ -148,7 +148,7 @@ jobs:
       - name: the .deb installs and its setup starts
         run: |
           sudo apt-get install -y -qq ./out/arena-node_*_amd64.deb
-          (HOME=$PWD/debhome timeout 60 arena-node-setup --port 31938 --seat-port 31939 > setup.log 2>&1 || true)
+          (HOME=$PWD/debhome timeout 60 arena-node-setup --local --port 31938 --seat-port 31939 > setup.log 2>&1 || true)
           cat setup.log | head -20
           grep -qE 'http://127.0.0.1:31938/\?t=' setup.log
       - uses: actions/upload-artifact@v4
