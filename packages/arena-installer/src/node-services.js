@@ -155,7 +155,7 @@ export async function chainCall({ url, cookie, method, params = [], fetcher = fe
  * What each service serves, asked: { ok, says }, or null when there is nothing to ask beyond its process. `node` from nodeOf.
  * `local` the seat's identity when it answered (the tunnel's must be the same).
  */
-async function probeOf(svc, { node, fetcher, local }) {
+async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000 }) {
   const v = node.conf.values, s = node.state;
   try {
     if (svc.id === 'node') {
@@ -165,7 +165,16 @@ async function probeOf(svc, { node, fetcher, local }) {
     }
     if (svc.id === 'tunnel') {
       if (!node.publicUrl) return { ok: false, says: 'no public_url in arena.conf' };
-      const id = await getIdentity(node.publicUrl, fetcher);
+      // A QUICK TUNNEL'S NEW NAME TAKES A FEW SECONDS INTO DNS (measured on macOS node A, 10 s after an update restarted its tunnel:
+      // ENOTFOUND, then answering): a name not found yet is asked again, twice, 5 s apart, before it counts
+      let id = null;
+      for (let i = 0; ; i++) {
+        try { id = await getIdentity(node.publicUrl, fetcher); break; } catch (e) {
+          const code = e.cause ? e.cause.code : e.code;
+          if (code !== 'ENOTFOUND' || i >= dnsRetries) throw e;
+          await new Promise((ok) => setTimeout(ok, dnsPauseMs));
+        }
+      }
       if (local && id !== local) return { ok: false, says: `${node.publicUrl} answers as another node (${id.slice(0, 16)}…)` };
       return { ok: true, says: `${node.publicUrl} reaches this node` };
     }
@@ -213,7 +222,7 @@ async function probeOf(svc, { node, fetcher, local }) {
  * THE OVERVIEW: { home, conf, version, instance, port, publicUrl, services: [{ id, title, name, running, pid, detail, probe }] }.
  * `probes` false: the states only (fast).
  */
-export async function overview({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, probes = true }) {
+export async function overview({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, probes = true, dnsPauseMs = 5000 }) {
   const node = nodeOf(home);
   const svcs = installedServices({ home, platform, env, node });
   const procs = platform === 'win32' ? await windowsProcesses(sh) : svcs.some((x) => x.inside) ? await unixProcesses(sh) : [];
@@ -228,7 +237,7 @@ export async function overview({ home, platform = process.platform, env = proces
     const local = { identity: null };
     for (const r of rows) {
       if (!r.running) { r.probe = null; continue; }
-      r.probe = await probeOf(r, { node, fetcher, local: local.identity });
+      r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs });
       if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
     }
   }

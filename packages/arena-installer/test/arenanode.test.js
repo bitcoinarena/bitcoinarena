@@ -202,3 +202,24 @@ test('the command on the PATH: a script with the node\'s home in it, linked into
     assert.match(ran[0].at(-1), /SetEnvironmentVariable\('Path'/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('a quick tunnel whose new name is not in DNS yet is asked again before it counts (macOS node A: ENOTFOUND 10 s after its update)', async () => {
+  const id = 'cd'.repeat(32);
+  const s = await seat(id);
+  const n = linuxNode({ port: s.port });
+  try {
+    const { sh } = fakeSh();
+    let asked = 0;
+    const fetcher = async (url, o) => {
+      if (!String(url).startsWith(`https://${NOW}`)) return fetch(url, o);
+      if (++asked < 3) { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; }
+      return fetch(`http://127.0.0.1:${s.port}/identity`, o);
+    };
+    const v = await overview({ home: n.home, platform: 'linux', env: n.env, sh, fetcher, dnsPauseMs: 10 });
+    const t = v.services.find((x) => x.id === 'tunnel');
+    assert.deepEqual([t.probe.ok, asked], [true, 3], t.probe.says);
+    asked = -10;   // never found: it counts, with the reason
+    const w = await overview({ home: n.home, platform: 'linux', env: n.env, sh, fetcher: async (url, o) => { if (String(url).startsWith('https://')) { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; } return fetch(url, o); }, dnsPauseMs: 10 });
+    assert.deepEqual([w.services.find((x) => x.id === 'tunnel').probe.ok, w.services.find((x) => x.id === 'tunnel').probe.says], [false, 'ENOTFOUND']);
+  } finally { s.close(); rmSync(n.root, { recursive: true, force: true }); }
+});
