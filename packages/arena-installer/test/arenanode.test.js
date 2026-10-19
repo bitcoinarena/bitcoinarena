@@ -200,6 +200,7 @@ test('the command on the PATH: a script with the node\'s home in it, linked into
     const w = writeCommand({ home, release: 'C:\\r', node: 'C:\\r\\runtime\\node.exe', platform: 'win32', env: { HOME: H }, run: (cmd, args) => ran.push([cmd, ...args]) });
     assert.match(readFileSync(w.file, 'utf8'), /^@echo off\r\nrem .*\r\n"C:\\r\\runtime\\node\.exe" "C:\\r[\\/]packages[\\/]arena-installer[\\/]bin[\\/]arenanode\.mjs" --home ".*" --name arenanode %\*\r\n$/);
     assert.match(ran[0].at(-1), /SetEnvironmentVariable\('Path'/);
+    assert.ok(w.pathSet instanceof Promise, 'the PATH change is handed back to be awaited (an update would end before it)');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
