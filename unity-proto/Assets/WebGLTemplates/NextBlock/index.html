@@ -2062,7 +2062,7 @@
        one in the page would be inventing a lobby. -->
   <script src="arena-client.js"></script>
   <!-- Same secp256k1 the daemons use. Without it a named round never joins. -->
-  <script src="blwp-curve.js"></script>
+  <script src="arena-curve.js"></script>
   <script>
     // THE COMMITTEE'S PRICE, APPLIED AT ITS TICK (§11): "a client includes each sample in its next InputBatch at
     // the tick it applied it ... The player never chooses the price." Once the round's seats serve attested samples
@@ -3452,7 +3452,7 @@
       // `player_pubkey` used to be 32 random bytes. It is where a winner's
       // payout is sent, so it has to be a secp256k1 x-only key - and the
       // browser's own crypto has no secp256k1, only Ed25519 and P-256. The
-      // curve is loaded beside this script (`blwp-curve.js`), which is why the
+      // curve is loaded beside this script (`arena-curve.js`), which is why the
       // guard below is a guard and not the normal path.
       const random = (n) => crypto.getRandomValues(new Uint8Array(n));
       if (!window.BLWP_CURVE || typeof window.BLWP_CURVE.pointX !== 'function') {

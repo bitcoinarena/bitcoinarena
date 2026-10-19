@@ -442,7 +442,7 @@
   view.append(el('div', 'empty', 'Reading the nodes…'));
   fetch(ARENA + 'daily.json').then(function (r) { return r.json(); }).then(function (d) {
     state.nodes = ((d.testnet || {}).node || []);
-    return load(ARENA + 'blwp-curve.js').then(function () { return load(ARENA + 'arena-client.js'); });
+    return load(ARENA + 'arena-curve.js').then(function () { return load(ARENA + 'arena-client.js'); });
   }).then(function () {
     pickKey();
     window.addEventListener('hashchange', route);

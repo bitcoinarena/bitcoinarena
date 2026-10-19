@@ -14,7 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = resolve(here, '../src/page-curve.js');
 // ARENA_BUNDLE_OUT builds into another directory, so a test can build this
 // source and compare it with what is committed; unset, it writes dist/ as ever.
-const out = process.env.ARENA_BUNDLE_OUT ? resolve(process.env.ARENA_BUNDLE_OUT, 'blwp-curve.js') : resolve(here, '../dist/blwp-curve.js');
+const out = process.env.ARENA_BUNDLE_OUT ? resolve(process.env.ARENA_BUNDLE_OUT, 'arena-curve.js') : resolve(here, '../dist/arena-curve.js');
 const bin = resolve(here, '../node_modules/esbuild/bin/esbuild');
 
 const r = spawnSync(bin, [
@@ -32,4 +32,4 @@ const r = spawnSync(bin, [
 if (r.status) process.exit(r.status || 1);
 
 const kb = (statSync(out).size / 1024).toFixed(1);
-console.log(`dist/blwp-curve.js  ${kb} KB`);
+console.log(`dist/arena-curve.js  ${kb} KB`);

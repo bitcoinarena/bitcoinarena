@@ -30,9 +30,9 @@ test('the page loads the curve before it joins', () => {
   const page = readFileSync(
     new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html',
       import.meta.url).pathname, 'utf8');
-  const curveTag = page.indexOf('src="blwp-curve.js"');
+  const curveTag = page.indexOf('src="arena-curve.js"');
   const joinCall = page.indexOf('joinTheRoundIfOneWasNamed');
-  assert.ok(curveTag >= 0, 'the page never loads blwp-curve.js');
+  assert.ok(curveTag >= 0, 'the page never loads arena-curve.js');
   assert.ok(joinCall > curveTag, 'the curve script is not in front of the join');
   assert.ok(!page.includes('so it is not joining'),
     'a named round still refuses the signer node in silence');

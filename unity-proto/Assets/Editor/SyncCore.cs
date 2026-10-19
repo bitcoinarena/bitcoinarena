@@ -65,9 +65,9 @@ public static class SyncCore
                 $"[SyncCore] copied client ({new FileInfo(cTo).Length / 1024} KB) into the template");
             if (!Node(clientRoot, "tools/bundle-curve.js", out string curveOut)) return;
             UnityEngine.Debug.Log("[SyncCore] " + curveOut.Trim());
-            File.Copy(Path.Combine(clientRoot, "dist/blwp-curve.js"),
+            File.Copy(Path.Combine(clientRoot, "dist/arena-curve.js"),
                       Path.Combine(Application.dataPath,
-                                   "WebGLTemplates/NextBlock/blwp-curve.js"), true);
+                                   "WebGLTemplates/NextBlock/arena-curve.js"), true);
             // AND THE LOCK CLIENT (W1b), which a page joining a lock round loads
             // to make the player's stake lock. Built outside Unity (the stock
             // fedimint crates to wasm) and committed in dist; copied as it is.

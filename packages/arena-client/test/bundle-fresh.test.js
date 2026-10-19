@@ -24,7 +24,7 @@ const ROOT = new URL('../../../', import.meta.url).pathname;
 const TEMPLATE = ROOT + 'unity-proto/Assets/WebGLTemplates/NextBlock/';
 const BUILDS = [
   ['arena-client.js', 'packages/arena-client/tools/bundle.js', 'packages/arena-client/dist/arena-client.js'],
-  ['blwp-curve.js', 'packages/arena-client/tools/bundle-curve.js', 'packages/arena-client/dist/blwp-curve.js'],
+  ['arena-curve.js', 'packages/arena-client/tools/bundle-curve.js', 'packages/arena-client/dist/arena-curve.js'],
   ['blwp-core.js', 'packages/nextblock/tools/bundle.js', 'packages/nextblock/dist/blwp-core.js'],
 ];
 

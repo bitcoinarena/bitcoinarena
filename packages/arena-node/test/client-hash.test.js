@@ -18,7 +18,7 @@ const TOOL = at('../tools/client-hash.mjs');
 const LIST = JSON.parse(readFileSync(at('../../arena-client/known-good-clients.json'), 'utf8'));
 const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/NextBlock');
 // The lock client (W1b) makes the player's stake lock, so it is pinned too.
-const SCRIPTS = ['arena-client.js', 'blwp-curve.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
+const SCRIPTS = ['arena-client.js', 'arena-curve.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
 // AND EACH GAME'S OWN (one list per game): nextblock's core bundle, and its mark
 const MARK = ['nextblock-icon.svg', 'nextblock-wordmark.svg', 'favicon.ico', 'apple-touch-icon.png', 'nextblock-icon-192.png',
   'nextblock-icon-512.png', 'nextblock-og.png', 'site.webmanifest'];
@@ -35,7 +35,7 @@ test('the list pins the scripts the rebuilt bundle and the template carry, and n
   assert.deepEqual(Object.keys(LIST.pinned).sort(), [...SCRIPTS].sort());
   for (const [game, names] of Object.entries(GAME_SCRIPTS)) assert.deepEqual(Object.keys(LIST.games[game].pinned).sort(), [...names].sort(), game);
   for (const [name, source] of [['arena-client.js', '../../arena-client/dist/arena-client.js'],
-    ['blwp-curve.js', '../../arena-client/dist/blwp-curve.js'], ['blwp-core.js', '../../nextblock/dist/blwp-core.js'],
+    ['arena-curve.js', '../../arena-client/dist/arena-curve.js'], ['blwp-core.js', '../../nextblock/dist/blwp-core.js'],
     ['blwp_lock_client.js', '../../arena-client/dist/blwp_lock_client.js'],
     ['blwp_lock_client_bg.wasm', '../../arena-client/dist/blwp_lock_client_bg.wasm'],
     ...MARK.map((f) => [f, `../../nextblock/brand/${f}`])]) {
@@ -74,7 +74,7 @@ test('a served script that differs by one byte is a MISMATCH, and a missing one 
   assert.equal(tampered.code, 1);
 
   const gone = mkdtempSync(join(tmpdir(), 'client-hash-'));
-  copyFileSync(join(TEMPLATE, 'blwp-curve.js'), join(gone, 'blwp-curve.js'));
+  copyFileSync(join(TEMPLATE, 'arena-curve.js'), join(gone, 'arena-curve.js'));
   const partial = await run(gone);
   assert.match(lineOf(partial.out, 'arena-client.js'), /missing/);
   assert.equal(partial.code, 1);
