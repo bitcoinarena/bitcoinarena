@@ -27,6 +27,9 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 
 const PAGE_URL = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const PAGE = readFileSync(PAGE_URL, 'utf8');
+// the pick sheet is Up/Down's page part, out of index.html's main script (kanban #521)
+const UPDOWN_PAGE_URL = new URL('../../btc-updown/page/market-page.js', import.meta.url);
+const UPDOWN_PAGE = readFileSync(UPDOWN_PAGE_URL, 'utf8');
 const b32 = (n) => new Uint8Array(32).fill(n);
 const ROUND_ID = b32(0x77);
 const CONTRACT = { gameId: MARKET.registration.gameId, simCoreHash: b32(0), configHash: b32(0), networkId: NETWORK_ID_REGTEST, stakeMsat: 1_000_000n };
@@ -81,11 +84,11 @@ function fakeDocument() {
   return { document: { getElementById: (id) => (id === 'arena-pick' ? root : null), createElement: make }, root, sheet };
 }
 function liftSheet(window, document) {
-  const at = PAGE.indexOf('    async function openPickSheet(');
-  assert.ok(at > 0, 'index.html has no openPickSheet');
-  const end = PAGE.indexOf('\n    }\n', at);
+  const at = UPDOWN_PAGE.indexOf('    async function openPickSheet(');
+  assert.ok(at > 0, 'market-page.js has no openPickSheet');
+  const end = UPDOWN_PAGE.indexOf('\n    }\n', at);
   const BLWPCLIENT = { marketForRound, pickSheet, roundPays: (c) => c.stakeMsat > 0n, toHex };
-  return pageFunction(PAGE_URL, ['window', 'document', 'BLWPCLIENT', 'donationBps', 'fetch', 'AbortSignal'], PAGE.slice(at, end + 6), 'return openPickSheet;')(
+  return pageFunction(UPDOWN_PAGE_URL, ['window', 'document', 'BLWPCLIENT', 'donationBps', 'fetch', 'AbortSignal'], UPDOWN_PAGE.slice(at, end + 6), 'return openPickSheet;')(
     window, document, BLWPCLIENT, () => 500, window.fetch, { timeout: () => undefined });
 }
 const buttons = (el) => el.children.flatMap((c) => (c.tag === 'button' ? [c] : buttons(c)));
