@@ -9,6 +9,8 @@
 // Its markup - the next round's box and the link's warning - is put where it stood; its CSS is unity-page.css beside this file.
 document.getElementById('arena-bal-split').insertAdjacentHTML('afterend', '<div id="blwp-next" role="status"><span id="arena-next-say"></span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons</button><button id="arena-next-donate" type="button">&hearts; Donate</button><button id="arena-next-exit" type="button">exit game</button></div>');
 document.getElementById('arena-lobby').insertAdjacentHTML('beforebegin', '<div id="arena-link-warn" role="alert" style="display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(92vw,720px);padding:8px 14px;border-radius:8px;background:#b3261e;color:#fff;font:600 14px/1.35 system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.4)"></div>');
+document.getElementById('arena-fps-toggle').closest('label').insertAdjacentHTML('beforebegin', '<select id="arena-gfx-select" aria-label="Graphics"><option value="auto" selected>Auto (by device)</option><option value="high">High</option><option value="low">Low</option></select><div class="muted" id="arena-gfx-now"></div>');   // Settings' graphics line
+document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<section class="settings-card" id="arena-set-bench"><h3>Benchmark</h3><label class="muted"><input type="checkbox" id="arena-bench-on"> On - off by default</label><div class="muted">Spectates the round and measures this device\'s frame rate with each graphics cost switched off in turn; the result shows under the FPS line. While it is on, a tap on the FPS line runs it too.</div><button id="arena-bench-go" type="button" disabled>Run the benchmark</button></section>');   // the benchmark's card
 
     // ---------------------------------------------------------------- Unity graphics: the benchmark switch, quality by device, the frame-rate test
     // THE BENCHMARK SWITCH (2026-10-16: "Benchmark is disabled by default"): Settings turns it on, this browser keeps it
@@ -160,6 +162,21 @@ document.getElementById('arena-lobby').insertAdjacentHTML('beforebegin', '<div i
         try { await fetch('https://bitcoin-arena.io/__bench', { method: 'POST', mode: 'no-cors', body: JSON.stringify({ ...window.ARENA_BENCH, gfx: window.ARENA_GFX_STATE || null, build: (document.querySelector('#build-stamp') || {}).textContent || null }) }); } catch { /* the lines stay on the screen */ }
       })();
     })();
+
+    // ---------------------------------------------------------------- the benchmark from Settings
+    // THE BENCHMARK FROM SETTINGS: Settings closes, and Unity spectates and runs the page's frame-rate test (Benchmark,
+    // as the lobby's button did); a game without Unity runs the test over its own client
+    {
+      const on = document.getElementById('arena-bench-on'), go = document.getElementById('arena-bench-go');
+      on.checked = window.ARENA_BENCH_ON(); go.disabled = !on.checked;
+      on.addEventListener('change', () => { try { window.ARENA_BROWSER_STORE().setItem('arena.bench.on', on.checked ? '1' : '0'); } catch { /* this page only */ } go.disabled = !on.checked; });
+    }
+    document.getElementById('arena-bench-go').addEventListener('click', () => {
+      if (!window.ARENA_BENCH_ON()) return;   // off by default
+      settingsPanel().style.display = 'none';
+      if (window.unityInstance && window.ARENA_UNITY !== false) { try { window.unityInstance.SendMessage('Bootstrap', 'Benchmark'); return; } catch { /* the test alone */ } }
+      if (typeof window.arenaBench === 'function') window.arenaBench();
+    });
 
     // ---------------------------------------------------------------- the run's end: the round let go, the replay link, the result summary, the run made safe, the next round and its box
     // THE RUN IS OVER, SO THE PAGE LETS GO OF ITS ROUND (2026-09-15 16:14, hole 2). Measured
