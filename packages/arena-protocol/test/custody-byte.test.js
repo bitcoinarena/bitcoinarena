@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CUSTODY FIELD HAS ONE VALUE, AND BYTE 0 IS NOT IT (RULED, the owner 2026-09-22 22:59, §23.6).
+// THE CUSTODY FIELD HAS ONE VALUE, AND BYTE 0 IS NOT IT (RULED 2026-09-22 22:59, §23.6).
 //
 // "THRESHOLD_LN does not exist, past rounds included, no decode-only value ... A round that names
 // anything else is invalid, PAST ROUNDS INCLUDED: a record from before this ruling that carries the
@@ -77,7 +77,7 @@ test('a record that carries byte 0 does not parse: it throws, it is not read as 
   assert.throws(() => decodeRoundContract(unknown), /custody byte 2 is not a custody of this network/);
 });
 
-// NO LABEL IN THE THROW EITHER (RULED the owner 2026-09-24, the enum slice's second cut): byte 0 throws the sentence byte 2
+// NO LABEL IN THE THROW EITHER (RULED 2026-09-24, the enum slice's second cut): byte 0 throws the sentence byte 2
 // throws, with only the digit changed. A message that named what byte 0 once was would be the decode-only label.
 test('decoding byte 0 and byte 2 throws one sentence, only the digit changed, and neither names the withdrawn custody', () => {
   const fed = encodeRoundContract(sample());

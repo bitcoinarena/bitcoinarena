@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET'S OWN TERMS (kanban #235, the owner 2026-10-09): its fee in its manifest ("per market in manifest"), its question,
+// A MARKET'S OWN TERMS (2026-10-09): its fee in its manifest ("per market in manifest"), its question,
 // resolution time, attestation deadline and source rule - and "refund at the deadline". The protocol half: the manifest's
 // optional terms, the fee as the manifest's rate, the resolution time on attestations, and the deadline's VOID.
 import { test } from 'node:test';
@@ -37,7 +37,7 @@ test('a market\'s terms are bounded: its fee within the network\'s, a question, 
   assert.equal(marketTermsFit(TERMS).ok, true);
   assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 501 }).why, /node fee is 0 to 500/);
   assert.match(marketTermsFit({ ...TERMS, donationBps: 600 }).why, /donation is 0 to 500/);
-  // AT MOST 10 % IN ALL, EACH AT MOST 5 % (the owner 2026-10-09: "I mean 10 in total"): 5 % + 5 % stands, 5.01 % of either does not
+  // AT MOST 10 % IN ALL, EACH AT MOST 5 % (2026-10-09: "I mean 10 in total"): 5 % + 5 % stands, 5.01 % of either does not
   assert.equal(marketTermsFit({ ...TERMS, nodeFeeBps: 500, donationBps: 500 }).ok, true);
   assert.equal(marketTermsFit({ ...TERMS, nodeFeeBps: 300, donationBps: 300 }).ok, true);
   assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 501, donationBps: 0 }).why, /node fee is 0 to 500/);
@@ -51,7 +51,7 @@ test('a market\'s terms are bounded: its fee within the network\'s, a question, 
 test('the market\'s fee is its manifest\'s rate, 0.5 % + 0.5 % by default; a game\'s the network\'s 5 %', () => {
   const m = { ...BODY, marketTerms: TERMS };
   assert.equal(feeBpsOf(m), 50);
-  // A MARKET WITHOUT TERMS: the market default 0.5 % + 0.5 % (the owner 2026-10-09); a game: the network's 5 %, its donation the player's
+  // A MARKET WITHOUT TERMS: the market default 0.5 % + 0.5 % (2026-10-09); a game: the network's 5 %, its donation the player's
   assert.equal(feeBpsOf(BODY), 50);
   assert.equal(donationBpsOf(BODY), 50);
   assert.equal(feeBpsOf({ ...m, marketTerms: { ...TERMS, nodeFeeBps: 200, donationBps: 100 } }), 200);
@@ -64,7 +64,7 @@ test('the market\'s fee is its manifest\'s rate, 0.5 % + 0.5 % by default; a gam
   const entry = { stakeMsat: 100000n, feeMsat: 500n, donationMsat: 500n };
   assert.equal(feeMatchesEntry(entry, { feeBps: 50 }).ok, true);
   assert.match(feeMatchesEntry(entry).why, /5% of 100000 is 5000/);
-  // AN ENTRY FEE: a market's carries its donation (both due at resolution, the owner 2026-10-09), so up to 10 % together
+  // AN ENTRY FEE: a market's carries its donation (both due at resolution, 2026-10-09), so up to 10 % together
   assert.equal(entryFeeMsat(100000n, 1000), 10000n);
   assert.throws(() => entryFeeMsat(100000n, 1001), /0 to 1000 bps/);
   assert.equal(entryFeeBpsOf(BODY), 100);

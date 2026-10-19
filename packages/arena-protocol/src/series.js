@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND SERIES: ONE PUBLICATION, A NEW ROUND EVERY 90 s, WRITTEN 72 h AHEAD (multiplayer_p2p.md §5A.5 "Round series";
-// the owner 2026-09-28, 18738972 and HORIZON72-1131 / NODE72-1131).
+// 2026-09-28, 18738972 and HORIZON72-1131 / NODE72-1131).
 //
 // The unit anchored on chain is a SERIES: its template - every field of a Round Contract, its committee_time and its
 // start - is hashed once, and `OP_RETURN "ARN" SERIES series_id` publishes it. Round `i` of it is derived, never
@@ -16,7 +16,7 @@
 //                          its committee_time; the writer still lays 72 h of rounds ahead on every network
 //
 // A ROUND OF A SERIES CARRIES ITS SERIES ID AND ITS INDEX, and its id is round_id(i) = H(series_id || i)
-// (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
+// (ALL-BUT-MIN-1727, 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
 // exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
 // (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
 import { msForTicks } from './tick.js';
@@ -29,15 +29,15 @@ import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { genesisFor } from './genesis.js';
 import { networkOf } from './constants.js';
 
-// THE GRID ITSELF LIVES IN constants.js (kanban #206: the manifest reads it there, so a client bundle carrying manifests
+// THE GRID ITSELF LIVES IN constants.js (the manifest reads it there, so a client bundle carrying manifests
 // does not carry the series code); every series reader takes it from here as before.
 export { ROUND_PERIOD_MS } from './constants.js';
 import { ROUND_PERIOD_MS } from './constants.js';
-// LATE JOIN (the owner 2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
+// LATE JOIN (2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
 // entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
 // (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.
 export const LATE_JOIN_MS = 45000n;
-// The last entry of a late-join round (kanban #130) is contracts.js LATE_JOIN_LAST_ENTRY_MS.
+// The last entry of a late-join round is contracts.js LATE_JOIN_LAST_ENTRY_MS.
 export { LATE_JOIN_LAST_ENTRY_MS } from './contracts.js';
 const lateJoinOf = (template) => {
   const late = template.entryCloseMs - template.startTimeMs;
@@ -45,13 +45,13 @@ const lateJoinOf = (template) => {
 };
 export const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
 
-// A GRID SERIES (kanban #293, the owner 2026-10-12: "Pick S ... Publish the grid as a short series, the format the spec
+// A GRID SERIES (2026-10-12: "Pick S ... Publish the grid as a short series, the format the spec
 // already has: one ARN S series_id output per table, two per grid"): an on-demand head-to-head grid - Rock Paper Scissors'
 // 2 tables of 8 s rounds - published as one series per table instead of one OP_RETURN per round (450 outputs, ~21,000 sat
 // at 1 sat/vB). Its own rule, in the owner's words: "lead of at least 45 minutes, as path B already uses; any start time; at
 // most 30 minutes of rounds; its own entry window". Still published on demand, about 1 h ahead: a series only in how it
 // is written on chain. Nothing per round is chosen after the beacon - every round is derived from the template.
-// 24 HOURS OF ROUNDS (the owner 2026-10-12 ~09:55Z: "Make sure each grid has 24 hours of gameplay, and cost as less as possible
+// 24 HOURS OF ROUNDS (2026-10-12 ~09:55Z: "Make sure each grid has 24 hours of gameplay, and cost as less as possible
 // on chain"): a grid runs at most a day - 10,800 slots of 8 s per table - published once a day for ~20 sat at 0.1 sat/vB;
 // the 30 minutes ruled at ~06:20Z gave way to it.
 // A template is one by `seriesGrid: true`, its period (`seriesPeriodMs`) and count (`seriesCount`) named; all three are
@@ -64,7 +64,7 @@ export const isGridSeries = (template) => !!template && template.seriesGrid === 
 const gridLateOf = (template) => template.entryCloseMs - template.startTimeMs;
 export const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
 
-// A SERIES RUNS ON ITS GAME'S OWN round_period (kanban #236/#237, §0A.7b.4 "Market rounds on their own 15 min period
+// A SERIES RUNS ON ITS GAME'S OWN round_period (§0A.7b.4 "Market rounds on their own 15 min period
 // instead of the 90 s grid"): a template may carry `seriesPeriodMs` - the node sets it from the game's manifest
 // (series-writer.js) - and every function here reads the period, and the day's round count, off the template. A template
 // without one is on the 90 s grid, as every series before this: its id, rounds and count are unchanged.
@@ -137,7 +137,7 @@ export function seriesLeadIsValid(template) {
     return { ok: false, why: 'a series names its committee time and its start' };
   const lead = template.startTimeMs - template.committeeTimeMs;
   if (isGridSeries(template)) return gridIsValid(template, lead);
-  // A TAIL (the 82/90 fork, the owner 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
+  // A TAIL (the 82/90 fork, 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
   // inside its day and running to that day's end, on testnet4 only, with a committee lead of at least 12 h.
   if (Number.isInteger(template.seriesCount) && template.seriesCount !== roundsPerSeries(periodOf(template))) return tailIsValid(template, lead);
   const min = seriesClockFor(template.networkId).leadMinMs;
@@ -187,7 +187,7 @@ function tailIsValid(template, lead) {
 const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, seriesGrid: _g, ...rest } = c; void _s; void _i; void _n; void _c; void _p; void _g; return rest; };
 
 /**
- * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, the owner 2026-10-01): a template may carry `seriesCount` - a tail's
+ * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, 2026-10-01): a template may carry `seriesCount` - a tail's
  * rounds, fewer than a day's 960 - and `seriesCutFrom` - the index from which a held series is replaced by a tail. Neither
  * is in the template's bytes; the count is in its series id (H(template || period || count)), the cut is the node's.
  */
@@ -195,7 +195,7 @@ const countOf = (template, count) => (count !== undefined ? count
   : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
 export const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
 
-// ONE TEMPLATE'S ID IS WORKED OUT ONCE PER PERIOD AND COUNT (kanban #468 item 4, measured on seat 3's start 2026-10-18:
+// ONE TEMPLATE'S ID IS WORKED OUT ONCE PER PERIOD AND COUNT (measured on seat 3's start 2026-10-18:
 // seriesRoundCheck - every door that touches a round asks it - encoded and hashed every held template again on every ask,
 // 4.5 % of the main thread's first minute). Kept per template object: a series file read again makes new objects; nothing
 // changes a template after it is read.
@@ -213,7 +213,7 @@ export function seriesId(template, { periodMs, count } = {}) {
   return id;
 }
 function seriesIdOf(template, periodMs, count) {
-  // a v2 template's `nodes` is no part of its id (2026.0.2, kanban #348): its rounds' seats are drawn after it
+  // a v2 template's `nodes` is no part of its id (2026.0.2): its rounds' seats are drawn after it
   const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
   const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
   bytes.set(body, 0);
@@ -241,7 +241,7 @@ export function seriesRound(template, i, { periodMs, count } = {}) {
  * 0 .. round_count - 1, and be byte for byte `seriesRound(template, i)` - its entry window the derived one.
  */
 /**
- * A SERIES' RUN FITS ITS 90 s SLOT (the 82/90 hard fork, the owner 2026-10-01; multiplayer_p2p.md "Timing": "a run lasts at
+ * A SERIES' RUN FITS ITS 90 s SLOT (the 82/90 hard fork, 2026-10-01; multiplayer_p2p.md "Timing": "a run lasts at
  * most 82 seconds ... run ends <= start_time(i+1) - 8 s"): the run its rounds name (blockTicks, at the core's tick rate)
  * ends at least 8 s before the next round starts. Asked of a series on a core that takes its rounds' run length; a core
  * held to one length (the truck before the fork, 180 s) is that core's own and was posted before the rule.
@@ -273,7 +273,7 @@ export function seriesRoundCheck(contract, templates, { periodMs, count: given }
     || contract.committeeTimeMs !== derived.committeeTimeMs)
     return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
       + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
-  // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2, kanban #348): compared without it
+  // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2): compared without it
   if (!seriesSameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
     return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
   return { ok: true, series: true, index: contract.roundIndex, template: t };

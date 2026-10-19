@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND WHOSE CONTRACT CANNOT BE FETCHED OR READ IS NOT ASKED FOR AGAIN FOR 30 s (kanban #266): measured on production after
+// A ROUND WHOSE CONTRACT CANNOT BE FETCHED OR READ IS NOT ASKED FOR AGAIN FOR 30 s: measured on production after
 // the Arena series went up - every poll asked every seat for every listed round's contract, 714 /round requests in 25 s.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

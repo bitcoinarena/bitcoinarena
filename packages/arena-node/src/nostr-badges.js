@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BADGES ON NOSTR (kanban #362, docs/PLATFORM-RESEARCH.md item 13): the badges protocol badges.js says a player earned, as
+// BADGES ON NOSTR (docs/PLATFORM-RESEARCH.md item 13): the badges protocol badges.js says a player earned, as
 // NIP-58 events signed by this seat's node key - beside its signed round results (nostr-results.js), on the same clock.
 //
 // NIP-58, AS THIS FILE BUILDS IT (nostr-protocol/nips 58.md):
@@ -58,7 +58,7 @@ export const BADGE_AWARD_KIND = 8;
  * and a later version of the catalogue dates its own - in the past when it ships: a relay refuses an event dated more than
  * a few minutes ahead of its clock (ours: 15 min), and a date set to the release day is ahead of every clock west of it.
  */
-// version 2 (kanban #367, 2026-10-15): the top-3 badge renamed "Leaderboard top 3" - dated the 15th, so every relay replaces the
+// version 2 (2026-10-15): the top-3 badge renamed "Leaderboard top 3" - dated the 15th, so every relay replaces the
 // definitions of the 14th (a replaceable event of the same date would be kept by the lower id, not the newer name)
 export const BADGES_AT_S = Math.floor(Date.UTC(2026, 9, 15) / 1000);
 /** How long after a week closes its board is read for the board badge: two hours, for the rounds started at its end to settle. */

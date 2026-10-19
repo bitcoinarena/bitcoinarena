@@ -1,4 +1,4 @@
-; ARENA NODE SETUP FOR WINDOWS (kanban #500, the owner 2026-10-19: "for windows we want an exe"): ArenaNodeSetup-<version>-windows-x64.exe.
+; ARENA NODE SETUP FOR WINDOWS (2026-10-19: "for windows we want an exe"): ArenaNodeSetup-<version>-windows-x64.exe.
 ; No administrator: the release goes to %LOCALAPPDATA%\ArenaNode (the node's services run it from there), the Start menu and the desktop
 ; get "Arena Node" (the small window, ArenaNode.ps1), and the window opens at the end - it runs the installer and opens the browser.
 ; makensis -DVERSION=<v> -DSTAGE=<unpacked release dir> -DOUT=<exe> arena-node.nsi   (tools/release/package.sh)

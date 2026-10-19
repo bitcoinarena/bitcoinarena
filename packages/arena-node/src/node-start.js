@@ -9,7 +9,7 @@
 // node starts its guardian (guardian.js, everything derived) and serves with it; its GET /guardian then says so. Either
 // missing: no guardian is started and no directory is made - the node answers {guardian: false}. main.js and the
 // launcher start every node through here, so whether a node is a guardian is decided by the node, never by a launcher.
-// Kanban #326: with ARENA_FOUNDING=1 a node without the files starts its guardian in setup mode, so it can be drawn; and a
+//: with ARENA_FOUNDING=1 a node without the files starts its guardian in setup mode, so it can be drawn; and a
 // guardian seated first in a successor runs a second one, the guardian-next (guardiansToStart below).
 import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -30,7 +30,7 @@ export function holdsGuardianKey(storePath, dir = '.guardian') {
 }
 
 /**
- * WHICH GUARDIANS A NODE STARTS (kanban #326), from its store and its environment:
+ * WHICH GUARDIANS A NODE STARTS, from its store and its environment:
  *
  *   own    its ceremony files held: the guardian, as always. None held and ARENA_FOUNDING=1: the guardian in SETUP MODE (fedimintd on
  *          an empty <store>.guardian/, same ports, binary and endpoint) - the node can then be drawn in a founding and take part
@@ -137,7 +137,7 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
     },
 
     // READ AN INVOICE THIS NODE DID NOT MAKE: a federation round's invoice comes from the federation
-    // (invoice first, the owner 2026-09-11), and the node has to say which hash and amount it carries
+    // (invoice first, 2026-09-11), and the node has to say which hash and amount it carries
     // before a player commits to them.
     async decode({ request }) {
       const d = await json(['decodepayreq', String(request)]);

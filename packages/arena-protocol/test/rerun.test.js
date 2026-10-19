@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE'S RE-RUN COUNT - rerun.js on its own (kanban #146, first surface; plan comment 187, Go 2026-10-05). It decides
+// THE COMMITTEE'S RE-RUN COUNT - rerun.js on its own (first surface; plan comment 187, Go 2026-10-05). It decides
 // the "re-run agreed" and "re-run not agreed" outcome paths: finality.js pays the agreed re-run's result, or hands the run to
 // noQuorumOutcome (VOID or FORFEIT). Until now it ran only inside arena-node's tests (67.5% lines / 58.3% branches from
 // protocol's own suite). Signatures are real BIP-340 from the noble library the nodes load - the only cross-package import.

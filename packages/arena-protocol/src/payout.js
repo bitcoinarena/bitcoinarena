@@ -145,7 +145,7 @@ export function remainderOrder(roundId, entries) {
 export const isQualifier = (e, minScore = 0) => e.outcome === DELIVERED && e.score >= minScore;
 
 /**
- * TOP-N PRIZE SPLITS (kanban #362 feature 3; manifest.js PAYOUT_RULE.TOP_SPLIT). A replayed game's manifest may pay its
+ * TOP-N PRIZE SPLITS (feature 3; manifest.js PAYOUT_RULE.TOP_SPLIT). A replayed game's manifest may pay its
  * pot by fixed shares over its top places instead of §18A's curve - [10000] winner takes all, [5000, 3000, 2000] the
  * classic 50/30/20. The shares are basis points of the pot: 1 to PAYOUT_SHARES_MAX of them, each a whole number of at
  * least 1, none above the place before it (a lower place is never paid more than a higher one), together exactly
@@ -239,7 +239,7 @@ export function computePayoutTable({ roundId, entries, minScore = 0, payoutShare
   // and every hold expired - one 2% donor, and the pool got 0 of the loser's
   // 98000 msat.
   //
-  // A TOP SPLIT (kanban #362) IS THE SAME ARITHMETIC WITH ITS SHARES FOR THE CURVE: place i's weight is its share in bps
+  // A TOP SPLIT IS THE SAME ARITHMETIC WITH ITS SHARES FOR THE CURVE: place i's weight is its share in bps
   // times its own net stake, so 22A's pick A holds for it unchanged (no double reward for donating; with every net equal
   // the net cancels and the pot is split exactly by the shares), the floors and the leftover go exactly as above, and the
   // pot is spent exactly.

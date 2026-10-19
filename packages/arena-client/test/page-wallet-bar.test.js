@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE DEPOSIT AND ONE WITHDRAW FOR EVERY GAME (kanban #294, the owner 2026-10-10: "Align the deposit process of nextblock, Rock
+// ONE DEPOSIT AND ONE WITHDRAW FOR EVERY GAME (2026-10-10: "Align the deposit process of nextblock, Rock
 // Paper Scissors, and the prediction UI. It must be the same everywhere. A game must not implement deposit itself. It imports
 // it from the protocol"). The page's own code (page-script.js) on a small fake page. Measured: Settings' buttons, the wallet
 // bar over a game's own client and ARENA_GAME.wallet all reach the one openMoney - a deposit builds the same offer and opens
@@ -24,7 +24,7 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
   for (const id of ['blwp-deposit-go', 'blwp-move-go', 'blwp-withdraw-lobby', 'blwp-money-why', 'blwp-settings', 'blwp-settings-go',
     'arena-wallet-bar', 'arena-wb-sats', 'arena-wb-pending', 'arena-wb-deposit', 'arena-wb-withdraw', 'arena-wb-gear', 'arena-wb-why']) el(id);
   els['blwp-settings'].style.display = settingsShown ? '' : 'none';
-  // kanban #399: the withdraw overlay, and Settings' panel with its home to go back to
+  //: the withdraw overlay, and Settings' panel with its home to go back to
   const home = { kids: [], insertBefore: (n) => { home.kids.push(n.id); n.parentNode = home; } };
   for (const id of ['blwp-withdraw-panel', 'blwp-money-why']) { el(id).parentNode = home; els[id].nextSibling = null; }
   const body = { kids: [], append: (...n) => { for (const x of n) { body.kids.push(x.id); x.parentNode = body; } } };
@@ -56,7 +56,7 @@ test('Settings\' Deposit and the wallet bar\'s Deposit open the same offer and t
 });
 
 test('Withdraw from a game\'s bar opens its own overlay with Settings\' panel in it, back on close; from Settings it stays as it is', () => {
-  // kanban #399 (the owner 2026-10-17: "make withdrawals an overlay like deposits ... do not touch deposit or withdrawal in the settings overlay")
+  // (2026-10-17: "make withdrawals an overlay like deposits ... do not touch deposit or withdrawal in the settings overlay")
   const p = page();
   p.click('arena-wb-withdraw');
   const b = p.els.withdrawBox;
@@ -108,22 +108,22 @@ test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw
   assert.match(api, /balance: \(\) => \(window\.BLWP_WALLET_BALANCE \?/);
   assert.match(api, /deposit: \(\) => openMoney\('deposit', window\.ARENA_WALLET_BAR_SAY\)/);
   assert.match(api, /withdraw: \(\) => openMoney\('withdraw', window\.ARENA_WALLET_BAR_SAY, \{ overlay: true \}\)/);
-  // the bar over a game's own client and over the games screen share one rule since kanban #350 (UI 88)
+  // the bar over a game's own client and over the games screen share one rule since (UI 88)
   const css = slice('    body.arena-picking #arena-wallet-bar, body.arena-own-client #arena-wallet-bar {', '\n    #arena-wb-why:empty { display: none; }');
   assert.match(css, /body\.arena-own-client #arena-client \{ top: calc\(41px \+ env\(safe-area-inset-top, 0px\)\)/, 'the frame starts under the 40 px bar and its border');
   assert.match(css, /height: 40px/);
   assert.match(HTML, /<div id="arena-wallet-bar" role="toolbar" aria-label="wallet">/);
 });
 
-// kanban #398 (the owner 2026-10-17: "leave the back link always in the header and move the balance to the other buttons"): the bar's own
-// ← right after the logo, the balance pushed right beside Deposit, the client's own "← Arena" hidden in its frame; ← closes an open sheet and goes to the arena (kanban #529)
+// (2026-10-17: "leave the back link always in the header and move the balance to the other buttons"): the bar's own
+// ← right after the logo, the balance pushed right beside Deposit, the client's own "← Arena" hidden in its frame; ← closes an open sheet and goes to the arena
 // first, else ARENA_GAME.back
 test('the way back is in the bar, the balance on the right, the client\'s own back hidden', () => {
   const HTML = readFileSync(PAGE, 'utf8');
   assert.match(HTML, /<span>Bitcoin Arena<\/span><\/a>\s*<button id="arena-wb-back" type="button"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/button>\s*<button class="wb-bal" type="button"/);
   assert.match(HTML, /#arena-wallet-bar \.wb-bal \{ flex: 0 1 auto; min-width: 0; margin-left: auto;/);
-  // kanban #508 (the owner 2026-10-19: "the button is superfluous and redundant. the bitcoin Arena logo already links back to the homepage"):
-  // no "← bitcoin-arena.io" on the games screen any more (#403/#404 added it); kanban #517: the balance is a button
+  // (2026-10-19: "the button is superfluous and redundant. the bitcoin Arena logo already links back to the homepage"):
+  // no "← bitcoin-arena.io" on the games screen any more (/#404 added it);: the balance is a button
   assert.doesNotMatch(HTML, /arena-wb-site/);
   assert.match(HTML, /body\.arena-own-client #arena-wb-back \{ display: inline-flex;/);
   assert.match(HTML, /'#back,button\.back\{display:none!important\}'/);
@@ -133,7 +133,7 @@ test('the way back is in the bar, the balance on the right, the client\'s own ba
   const document = { getElementById: () => btn, querySelector: () => (sheet ? { click: () => { closed++; } } : null) };
   const window = { ARENA_GAME: { back: () => { backs++; } } };
   pageFunction(PAGE, ['document', 'window'], src)(document, window);
-  // kanban #529: over a sheet ← closes it and goes back to the arena too
+  //: over a sheet ← closes it and goes back to the arena too
   sheet = true; btn.onclick(); sheet = null; btn.onclick();
   assert.deepEqual([closed, backs], [1, 2]);
 });

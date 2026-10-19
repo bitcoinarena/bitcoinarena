@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEV CLIENT BESIDE THIS NODE (kanban #357, the owner 2026-10-14: "make sure node 1 and node 2 show it in their dashboard, each node
+// A DEV CLIENT BESIDE THIS NODE (2026-10-14: "make sure node 1 and node 2 show it in their dashboard, each node
 // can set up a dev client and it would show there"). A node's operator may run a donation recipient's client (arena-donor, one
 // directory per dev: `arena-donor init <dir> --label "dev a"`, then `arena-donor loop <dir>`) and name its directory in
 // ARENA_DEV_CLIENT_DIR. The dashboard then shows what that client did, read from the files it keeps:
@@ -43,7 +43,7 @@ export function devClientSnapshot(dir, { recent = 12 } = {}) {
       withdrawals: withdrawals.map((w) => ({ at: w.at, federation: String(w.federation || ''), msat: String(w.msat || '0'), state: w.state || null, paid: !!w.preimage })),
       withdrawnMsat: String((state.withdrawals || []).filter((w) => w.preimage).reduce((t, w) => t + BigInt(w.msat || 0), 0n)),
       lastPass: state.lastPass || null,
-      // UNCLAIMED E-CASH AND ITS RECOVERY (kanban #357): what waits a pass to be recovered, and the last recovery
+      // UNCLAIMED E-CASH AND ITS RECOVERY: what waits a pass to be recovered, and the last recovery
       unclaimed: Object.entries(state.unclaimed || {}).map(([federation, u]) => ({ federation, msat: String(u.msat || '0'), outputs: (u.nonces || []).length, since: u.since || null })),
       lastRecovery: (state.recoveries || []).length ? (({ at, federation, unclaimedMsat, recoveredMsat, ok, backup, why }) => ({ at, federation, unclaimedMsat, recoveredMsat, ok, backup: backup ? String(backup).split('/').pop() : null, why }))(state.recoveries[state.recoveries.length - 1]) : null,
     };

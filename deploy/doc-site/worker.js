@@ -1,4 +1,4 @@
-// THE SITE IS PASSWORD PROTECTED (kanban #238, the owner 2026-10-08 17:11: "If the cookie is already there, log in automatically").
+// THE SITE IS PASSWORD PROTECTED (2026-10-08 17:11: "If the cookie is already there, log in automatically").
 // A visitor with the cookie sees the site at once; anyone else gets the password form. The cookie holds a hash of the password
 // (never the password), lasts a year, and on bitcoin-arena.io is set for the whole domain, so bitcoin-arena.io and
 // www.bitcoin-arena.io share one login. The password is the Pages secret SITE_PASSWORD.
@@ -37,7 +37,7 @@ const page = (wrong, next) => `<!doctype html><html lang="en"><head><meta charse
 export default { async fetch(request, env) {
 
   const url = new URL(request.url);
-  // THE DOCS LIVE AT docs.bitcoin-arena.io (kanban #361): the old name sends every path there, before the gate (the cookie is
+  // THE DOCS LIVE AT docs.bitcoin-arena.io: the old name sends every path there, before the gate (the cookie is
   // set for all of bitcoin-arena.io, so a logged-in reader arrives logged in)
   if (url.hostname === 'doc.bitcoin-arena.io') return Response.redirect('https://docs.bitcoin-arena.io' + url.pathname + url.search + url.hash, 301);
   // robots.txt OUTSIDE THE GATE: a fetcher that asks it first and gets 401 may stop there (the page itself stays gated)
@@ -52,13 +52,13 @@ export default { async fetch(request, env) {
     'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
   const html = (wrong, status) => new Response(page(wrong, url.pathname === '/__login' ? '/' : url.pathname),
     { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
-  // ?password=… LOGS IN TOO (the owner 2026-10-08 ~23:10): the cookie is set as by the form, and the visitor lands on the same
+  // ?password=… LOGS IN TOO (2026-10-08 ~23:10): the cookie is set as by the form, and the visitor lands on the same
   // address without the password in it
   // spaces around it are not part of it ("?password= lens-…" as typed into a chat measured 401)
   const given = url.searchParams.has('password') ? url.searchParams.get('password').trim() : null;
   if (given !== null) {
     if (given !== password) return html(true, 401);
-    // THE PAGE AT ONCE, NOT A REDIRECT (the owner 2026-10-08 23:08: a fetcher that keeps no cookie got 401 after the 303): the
+    // THE PAGE AT ONCE, NOT A REDIRECT (2026-10-08 23:08: a fetcher that keeps no cookie got 401 after the 303): the
     // asset without the parameter, answered here with the cookie set on the same response
     url.searchParams.delete('password');
     const asset = await env.ASSETS.fetch(new Request(url.toString(), { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers: request.headers }));

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// "BITCOIN UP OR DOWN - 15 MINUTES" (kanban #235/#278; the owner 2026-10-09: "match this polymarket market" -
+// "BITCOIN UP OR DOWN - 15 MINUTES" (2026-10-09: "match this polymarket market" -
 // polymarket.com/event/btc-updown-15m-1791598500, series "BTC Up or Down 15m", recurrence 15m). Its rule, verbatim:
 //
 //   "This market will resolve to "Up" if the time-weighted average price (TWAP) of Bitcoin ... of the time range specified
@@ -8,7 +8,7 @@
 //    "Down"."   (source: the Chainlink BTC/USD TWAP 60 s stream)
 //
 //
-// THE "TWAP" IS THE STREAM'S, NOT THE WINDOW'S (kanban #236, measured 2026-10-09, comment 1154). Chainlink's "TWAP 60 s"
+// THE "TWAP" IS THE STREAM'S, NOT THE WINDOW'S (measured 2026-10-09, comment 1154). Chainlink's "TWAP 60 s"
 // stream publishes, at each moment, the average of the 60 seconds before it. Polymarket compares that value at the
 // window's end with the same value at its start. A first reading of the rule averaged the whole window instead: over 4
 // live windows it disagreed with Polymarket twice (a late rise; a window that averaged above its start and closed below

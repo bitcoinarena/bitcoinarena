@@ -125,7 +125,7 @@ public class SpectatorCamera : MonoBehaviour
     /// The fingers AND the mouse: everything pressing the glass right now, which is what the flying pads are hit-tested
     /// against.
     ///
-    /// THE PADS DID NOTHING ON A DESKTOP (the owner 2026-09-18 21:52, photographed in spectate: "I can press it with the
+    /// THE PADS DID NOTHING ON A DESKTOP (2026-09-18 21:52, photographed in spectate: "I can press it with the
     /// mouse but it won't do anything ... and only on spectate"). The pad LIT UP under the pointer, because the pads
     /// themselves read the mouse - but this mode collected touches only, so on a screen with no glass the list was
     /// always empty and `Move` never saw the press. `Look` then read the same press as "on a control" and rightly

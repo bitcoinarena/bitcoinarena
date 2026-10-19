@@ -139,7 +139,7 @@ test('the recovery leaf spends after maturity and not before', () => {
 });
 
 /**
- * TEMPLATE 2: THE BOND'S OWN HEIGHT (kanban #295). A testnet4 bond confirmed at 156000 matures at 156000 + 144 or later;
+ * TEMPLATE 2: THE BOND'S OWN HEIGHT. A testnet4 bond confirmed at 156000 matures at 156000 + 144 or later;
  * its leaf carries that height in three bytes, and the same witness is refused one block before it, by the CLTV - the
  * error bitcoind names "Locktime requirement not satisfied" - and spends at it.
  */

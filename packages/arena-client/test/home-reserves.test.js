@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PROTOCOL RESERVES ON BITCOIN-ARENA.IO (kanban #397, the owner 2026-10-17: "Find a prominent place on the website under the
+// THE PROTOCOL RESERVES ON BITCOIN-ARENA.IO (2026-10-17: "Find a prominent place on the website under the
 // USPs to show the reserves ... Under the fees"): the homepage's own script asks the testnet's nodes (daily.json) for /reserves
 // and shows the total only when five name the same one; the games screen no longer carries the reserves box.
 import test from 'node:test';
@@ -70,7 +70,7 @@ test('the website names only the current configuration; the proposals forum is i
   assert.ok(GAMES_PAGE.includes('<s>nodes 4 %</s><s>protocol developers 2 %</s><s>you 2 %</s><s>reserves 2 %</s>'));
   assert.equal(HTML.includes('<section id="proposals"'), false, 'no proposals section on the homepage');
   assert.ok(HTML.includes('<a class="keep" href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a>'))
-  // #430: on a phone the menu keeps Proposals and Docs beside Play - only the section links are hidden
+  //: on a phone the menu keeps Proposals and Docs beside Play - only the section links are hidden
   assert.ok(HTML.includes('<a class="keep" href="https://docs.bitcoin-arena.io/">Docs</a>'));
   assert.match(HTML, /@media \(max-width: 860px\) \{ nav \.links a:not\(\.keep\) \{ display: none; \}/);
   assert.ok(!/nav \.links \{ display: none; \}/.test(HTML), 'the phone menu hides every link again');
@@ -80,10 +80,10 @@ test('the website names only the current configuration; the proposals forum is i
     'at most 10% of the reserves per proposal, 25% per 3 months', 'Project improvement proposals', 'ALWAYS THE IN-GAME KEY AND NAME', '<script src="/proposals/forum.js" defer></script>']) assert.ok(FORUM.includes(t), t);
   assert.match(JS, /BLWPCLIENT\.forumIdentity\(best\.hex/, 'signs with the in-game identity key of the kept wallet phrase (PIP)');
   assert.match(JS, /'PIP-' \+ p\.pip/, 'every proposal is a PIP');
-  // only the in-game key and name (the owner 2026-10-17: "Proposals always use the ingame key and name, no other options")
+  // only the in-game key and name (2026-10-17: "Proposals always use the ingame key and name, no other options")
   for (const gone of ['nsec', 'Use a new key', 'Forget this key', 'Save name']) assert.ok(!FORUM.includes(gone), gone);
   assert.ok(!/keyOfNsec|newProposalKey|kind: 'name'/.test(JS), 'the forum offers no other key and sets no name');
-  // the reserves' balance first on the page (the owner 2026-10-17: "Proposals page shows the current balance on top")
+  // the reserves' balance first on the page (2026-10-17: "Proposals page shows the current balance on top")
   assert.ok(FORUM.indexOf('id="balance"') > 0 && FORUM.indexOf('id="balance"') < FORUM.indexOf('<h1>'), 'the balance sits above the title');
   assert.match(JS, /function showBalance\(\)/);
   assert.match(JS, /verify: window\.BLWP_CURVE\.verify/, 'names are checked by the page, not taken from a node');
@@ -93,9 +93,9 @@ test('the website names only the current configuration; the proposals forum is i
   assert.match(readFileSync(new URL('proposals/index.html', HOME), 'utf8'), /url=https:\/\/testnet\.bitcoin-arena\.io\/proposals\//, 'bitcoin-arena.io/proposals sends readers there');
 });
 
-// A PIP'S FIELDS (kanban #432, the owner 2026-10-17: "Separate title field. Content on what the proposal does, in markdown including tables.
+// A PIP'S FIELDS (2026-10-17: "Separate title field. Content on what the proposal does, in markdown including tables.
 // Separate text field how does it improve bitcoin arena"): kept in the one signed purpose, read back apart; the Markdown is safe
-test('#432: title, content and "how it improves Bitcoin Arena" round-trip through the purpose; Markdown tables render, HTML does not', () => {
+test('title, content and "how it improves Bitcoin Arena" round-trip through the purpose; Markdown tables render, HTML does not', () => {
   const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
   const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
   const src = JS.slice(JS.indexOf("  var IMPROVES = "), JS.indexOf('  window.ARENA_FORUM_MD = markdown;'));
@@ -113,13 +113,13 @@ test('#432: title, content and "how it improves Bitcoin Arena" round-trip throug
   assert.match(FORUM, /PIPs improve Bitcoin Arena as a whole: its games, its protocol/);
 });
 
-// THE LOGO, TOP LEFT (kanban #433, the owner 2026-10-17: "show the Bitcoin arena logo on the left on Testnet.bitcoin-arena.io and that link
+// THE LOGO, TOP LEFT (2026-10-17: "show the Bitcoin arena logo on the left on Testnet.bitcoin-arena.io and that link
 // goes to the main page"): first in the games screen's bar, to bitcoin-arena.io; the old in-page "← bitcoin-arena.io" link is gone
-test('#433: the Bitcoin Arena logo is the first thing in the games screen\'s bar and links to bitcoin-arena.io', () => {
+test('the Bitcoin Arena logo is the first thing in the games screen\'s bar and links to bitcoin-arena.io', () => {
   const bar = GAMES.slice(GAMES.indexOf('<div id="arena-wallet-bar"'), GAMES.indexOf('</div>', GAMES.indexOf('<div id="arena-wallet-bar"')));
   assert.match(bar, /^<div id="arena-wallet-bar"[^>]*>\s*<a id="arena-wb-home" href="https:\/\/bitcoin-arena\.io\/"/);
   assert.match(GAMES, /body\.arena-picking #arena-wb-home, body\.arena-own-client #arena-wb-home \{ display: inline-flex;/);
-  // and in every game (the owner 2026-10-17): Tick Tock's header starts with the mark; no "build your own" anywhere on the page
+  // and in every game (2026-10-17): Tick Tock's header starts with the mark; no "build your own" anywhere on the page
   assert.match(GAMES, /<div id="blwp-money">\s*<a id="arena-game-home" href="https:\/\/bitcoin-arena\.io\/"/);
   assert.ok(!/why-build|Build your own|Build a game or a market|Build &amp; earn/.test(GAMES.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '')), 'build-your-own is gone');
   assert.match(GAMES, /<div class="foot-row"><span class="build-line">[^<]*<\/span><button type="button" class="donate-btn"/);

@@ -28,7 +28,7 @@ public static class DriveInput
     static float Merge(float key, float touch) => Mathf.Abs(touch) > Mathf.Abs(key) ? touch : key;
 
     /// <summary>
-    /// NO DRIVING AFTER THE RUN (the owner 2026-09-27 13:25: after WASTED and after a delivery "WASD still steers and the
+    /// NO DRIVING AFTER THE RUN (2026-09-27 13:25: after WASTED and after a delivery "WASD still steers and the
     /// drive sound plays ... No partial control after the round ends. No throttle, no steer, no drive sound"). Once the
     /// core has named the run - DELIVERED, WRECKED, MISSED latch in `S_STATE` - or the session says it ended, throttle,
     /// steer and handbrake read nothing, for every reader: the core's inputs, the wheels, the engine note. A roll-out

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SCORE ACROSS ROUNDS AT A SEAT (kanban #280; arena-protocol/src/match.js). For a decided head-to-head round whose two
+// THE SCORE ACROSS ROUNDS AT A SEAT (arena-protocol/src/match.js). For a decided head-to-head round whose two
 // entries both named an identity: the round before in the match - the last round of this game either identity played,
 // if that was a round the two played together, ended at most MATCH_CONTINUE_MS before this one's entry close - its score,
 // and this round's results (the result most of the round's seats signed, as /api/round-result reads it). The record -

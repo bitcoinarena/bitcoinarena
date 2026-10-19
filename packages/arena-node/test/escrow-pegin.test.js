@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PLAYERS' ESCROW INTO THE FEDERATION (kanban #307, §5A.3B): the arbitration set spends its escrow output whole, less
+// THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B): the arbitration set spends its escrow output whole, less
 // the fee, to the federation's peg-in script, signed as path B is - k of m on its own, fewer posts nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +30,7 @@ test('the escrow is spent whole less the fee to the peg-in script, k of m signin
   assert.match(dust.why, /is 200 sat, below dust/);
 });
 
-// THE SLASH'S PAYOUTS, LISTED (kanban #307): GET /slash-payouts - every share locked to a wronged player, or one round's
+// THE SLASH'S PAYOUTS, LISTED: GET /slash-payouts - every share locked to a wronged player, or one round's
 test('GET /slash-payouts lists the shares the set locked, by round; a malformed round id is refused', async () => {
   const R1 = 'a1'.repeat(32), R2 = 'a2'.repeat(32);
   const list = [{ round: R1, entry: 'e0'.repeat(32), refundPk: '02' + 'bb'.repeat(32), msat: '60000000', txid: '71'.repeat(32), outIdx: 0, contractId: 'c1'.repeat(32) },

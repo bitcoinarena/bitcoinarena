@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BACK TO THE GAMES FROM UNITY'S GAME (kanban #383, the owner 2026-10-16: "there is no link/button to get back to the game selection
+// BACK TO THE GAMES FROM UNITY'S GAME (2026-10-16: "there is no link/button to get back to the game selection
 // like in the other games"). On the page's own code: the strip holds "← Games", shown once a game is chosen and never over a
 // game's own client (that client has its own), and a click opens the address without the game, its round and play.
 import test from 'node:test';
@@ -13,7 +13,7 @@ const HTML = readFileSync(PAGE, 'utf8');
 
 test('the strip holds "← Games", shown for a chosen game, never over a game\'s own client', () => {
   const strip = HTML.slice(HTML.indexOf('  <div id="blwp-money">'), HTML.indexOf("<button id=\"blwp-settings-go\""));
-  // it says Arena, as every way back does (kanban #396)
+  // it says Arena, as every way back does
   assert.match(strip, /<button id="arena-games-back" type="button"[^>]*>.*&larr;.*Arena<\/span><\/button>/);
   assert.doesNotMatch(HTML, /\\u2190 Games|&larr; Games|← Games<\/button>/, 'no "← Games" left on the page');
   assert.match(HTML, /#arena-games-back \{ display: none; \}/);
@@ -29,7 +29,7 @@ test('a click opens the choice of games: the address without game, round and pla
     querySelector: (q) => (sheet && q.includes(sheet) ? { click: () => { closed++; } } : null) };
   const location = { search: '?game=nextblock&round=ab12&play=1&fed=b' };
   pageFunction(PAGE, ['document', 'location', 'URLSearchParams'], src)(document, location, URLSearchParams);
-  // kanban #529 (was #405): over the leaderboard or the shop in a game, ← closes that sheet AND goes to the arena
+  // (was): over the leaderboard or the shop in a game, ← closes that sheet AND goes to the arena
   for (const s of ['#arena-season.show .back', '#arena-shop.show .back']) {
     location.search = '?game=nextblock&round=ab12&play=1&fed=b'; sheet = s; click();
     assert.equal(location.search, 'fed=b');

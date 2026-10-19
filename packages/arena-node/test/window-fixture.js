@@ -256,7 +256,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 export { PLANTED_FIRST_MARK_DEADLINE };
 
 /**
- * A FIXTURE ROUND IN THE PRESENT (§13C, RULED the owner 2026-09-24): the result window opens at the first block at or after
+ * A FIXTURE ROUND IN THE PRESENT (§13C, RULED 2026-09-24): the result window opens at the first block at or after
  * the round's contract end (protocol roundEndMs) - so a round whose times sit in 1970 has no block on the fixtures' chain
  * and nothing is ever decided. This shifts committee time, start and entry close by one offset so that roundEndMs lands at
  * `endMs`; every interval between them is kept. Harness only: the protocol is not changed to keep the old times.
@@ -267,7 +267,7 @@ export function presentDay(contract, endMs) {
     entryCloseMs: contract.entryCloseMs + shift };
 }
 
-// THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): whatever a caller still
+// THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01): whatever a caller still
 // passes as its second argument, the contract says 600000 - any other number is an invalid contract the node refuses. A
 // test about that refusal sets the field itself.
 export const contractFor = (nodes, _windowNoLongerChosen, publicationRelays = []) => ({
@@ -377,7 +377,7 @@ export const opts = { funded: () => true, randomnessFor: beaconFor, windowChain:
  */
 // `endMs`: put the round's end (protocol roundEndMs) at that instant (presentDay) - a window test's round, whose 600 s
 // window is read on the wall clock; left out, the round sits in 1970 as it always did, its windows long closed.
-// `peers` (kanban #187 item 7, test-only): where the holder asks its peers, as serve's `peers` - a counting fake in that test.
+// `peers` (test-only): where the holder asks its peers, as serve's `peers` - a counting fake in that test.
 export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {}, endMs = null, peers = null } = {}) {
   // EVERY SIGNER NODE'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
@@ -510,7 +510,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
 // AN OBJECTION NAMES THE BLOCK IT IS FILED IN (§13A, RULED 2026-09-24): by default the chain's tip as it is filed.
 // ONE RETRY ON A RESET CONNECTION: a pooled keep-alive socket the daemon closed while idle (measured 2026-10-01: a second
 // daemon started on a file store between two requests outlasted the holder's keep-alive, and the reused socket reset).
-// AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24, RULED the owner 2026-10-04): the bundle a player
+// AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13ARULED 2026-10-04): the bundle a player
 // builds from what the holder hands out (GET /canonical, GET /receipts), claiming what the holder's OWN replay signed -
 // the honest replay - against the run that stands now (the agreed re-run's, while one does). Where the committee signed
 // the same run, that bundle is refused (422, "the replay agrees with the signed result"); where it signed another, it

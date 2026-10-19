@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEATED GUARDIAN PUBLISHES ITS COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1, kanban #323): "The
+// A SEATED GUARDIAN PUBLISHES ITS COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1): "The
 // guardians still seated publish, signed, their copy of the federation's spent-note set (the nonces the consensus has already
 // redeemed) as of the last session they hold."
 //

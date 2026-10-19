@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// FEE PROPOSALS ON THE PAGE (kanban #462 slice 3, the owner 2026-10-17: "Proposal type change fees. Any of the fees, all combinations can
+// FEE PROPOSALS ON THE PAGE (2026-10-17: "Proposal type change fees. Any of the fees, all combinations can
 // be changed with a proposal"): the fees in force as the testnet's nodes answer them (GET /fees - at a height when asked: a round's
 // census height, the set its entry pays and its settlement splits), a proposal built from what the form typed - any subset, refused
 // by the very limits and sums the seats enforce (fee-proposal.js feeProposalStands) before anything is signed - and signed by the

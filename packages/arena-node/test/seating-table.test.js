@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (kanban #293, the owner 2026-10-13 pick (c)): of an RPS v2 table's rounds only round 0 exchanges
+// A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (2026-10-13 pick (c)): of an RPS v2 table's rounds only round 0 exchanges
 // PRESENTs and signs a seating; every later round of the table takes round 0's seating, state and certificate - so all of them name one
 // committee, and the seats make one claim key for the table.
 import { test } from 'node:test';

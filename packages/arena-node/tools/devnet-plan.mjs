@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVNET'S PORTS AND ITS CHECK OF THEM (kanban #362, docs/PLATFORM-RESEARCH.md item 15): the pure half of
+// THE DEVNET'S PORTS AND ITS CHECK OF THEM (docs/PLATFORM-RESEARCH.md item 15): the pure half of
 // tools/devnet.mjs, kept apart so a test reads it without starting anything.
 //
 // ONE BASE, EVERYTHING ELSE DERIVED FROM IT (DEVNET_BASE_PORT, default 24000). A developer moves a whole devnet by one

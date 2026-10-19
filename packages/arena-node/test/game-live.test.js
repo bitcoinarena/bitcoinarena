@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// GET /games' live counts (kanban #338): the rounds of each game live now at this seat, and the players in them.
+// GET /games' live counts: the rounds of each game live now at this seat, and the players in them.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
@@ -29,7 +29,7 @@ const entryFor = (rid) => ({
 });
 import { gameLive } from '../src/game-live.js';
 
-// HOW MANY PLAY EACH GAME NOW (kanban #338): a round is live from its seating close (start - 120 s, §5A.7) to its end -
+// HOW MANY PLAY EACH GAME NOW: a round is live from its seating close (start - 120 s, §5A.7) to its end -
 // never from its committee time, from which a series drawn 72 h ahead counted 1,266 Tick Tock rounds on testnet4
 test('a round is live from start - 120 s to its end, with the players entered in it; rounds hours ahead are not live', () => {
   let now = 1000000;
@@ -46,7 +46,7 @@ test('a round is live from start - 120 s to its end, with the players entered in
   assert.deepEqual(later()[toHex(NEXTBLOCK_GAME_ID)], { rounds: 2, players: 1 });
 });
 
-test('a round taking entries for hours after its start is live until its entry close plus one run (the owner 2026-10-14: Tick Tock "shows no open round")', () => {
+test('a round taking entries for hours after its start is live until its entry close plus one run (2026-10-14: Tick Tock "shows no open round")', () => {
   let now = 100000000;
   const r = new Round(openStore(), () => now, { plugins: HOSTED });
   const sixHours = 6 * 3600000;

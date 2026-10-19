@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND'S CREATOR (§6 creator_pubkey / creator_signature, kanban #313; 2026.0.3). The contract may name its creator's x-only key,
+// A ROUND'S CREATOR (§6 creator_pubkey / creator_signature2026.0.3). The contract may name its creator's x-only key,
 // last, after its marker - every contract naming none keeps its bytes and id; the creator's BIP-340 signature over the round id
 // rides beside it (creator.js), and stands only by that key.
 import { test } from 'node:test';
@@ -64,7 +64,7 @@ test('the creator signature stands only by the named key over this round\'s id; 
   assert.equal(creatorSignatureStands(decodeRoundContract(encodeRoundContract(round)), sig, { verify }).ok, false);
 });
 
-test('a series naming its creator: one signature over the series id stands for it, and travels on its series line (kanban #313)', async () => {
+test('a series naming its creator: one signature over the series id stands for it, and travels on its series line', async () => {
   const { seriesCreatorMessage, seriesCreatorStands } = await import('../src/creator.js');
   const { seriesId } = await import('../src/series.js');
   const { parseSeriesLine, seriesLineOf } = await import('../../arena-node/src/series-line.js');

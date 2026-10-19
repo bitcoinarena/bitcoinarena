@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ADVERTISEMENT UPDATE, NOT A NEW BOND (multiplayer_p2p.md §5A.2; the owner 2026-09-28: "Advertisement updates, not new
+// AN ADVERTISEMENT UPDATE, NOT A NEW BOND (multiplayer_p2p.md §5A.2; 2026-09-28: "Advertisement updates, not new
 // bonds. Spec 5A.2 is the path. Bond 0c82db59 stays the bond").
 //
 // "A new advertisement is an update, not a new bond. The bond commits, at its creation, to the node's first

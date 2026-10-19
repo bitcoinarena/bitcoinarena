@@ -73,7 +73,7 @@ import { payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../a
 import { donationPaidRecord, noteDonationShare } from './donation-pay.js';
 
 /**
- * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (the owner 2026-09-11).
+ * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (2026-09-11).
  *
  * Here, and not in join.js, because this is the file that asks a node what a
  * player pays (session-pay.test.js: one file quotes a player). V1's pool is a
@@ -352,7 +352,7 @@ export class Client {
           + 'opened the page: two things that agree with each other are not Bitcoin');
     }
 
-    // THE ANCHOR FOLLOWS THE ROUND'S NETWORK (kanban #209), read off the contract the round id was just checked against
+    // THE ANCHOR FOLLOWS THE ROUND'S NETWORK, read off the contract the round id was just checked against
     const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
@@ -371,7 +371,7 @@ export class Client {
     if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
       throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
         + 'is not signed by the node it names');
-    // A CARRIED BOND (kanban #209): its ancestor advertisement and its re-affirmation are signed by the same key, or the
+    // A CARRIED BOND: its ancestor advertisement and its re-affirmation are signed by the same key, or the
     // endpoint its update names is not that bond's
     for (const c of seen.checks || []) {
       if (!await verify(c.signature, c.message, c.key))
@@ -382,7 +382,7 @@ export class Client {
       base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
     });
     // THE CHAIN THIS CALL PROVED, carried on the client so the page can open its NEXT round from it rather than
-    // proving the same headers again at a boundary where a starved tab misses the ten seconds (the owner 2026-09-18).
+    // proving the same headers again at a boundary where a starved tab misses the ten seconds (2026-09-18).
     client.provedChain = seen.chain || null;
     client.reusedChain = !!seen.reusedChain;
     // AND EVERY OTHER COMMITTEE NODE, for the checkpoints. Section 10: "a
@@ -461,7 +461,7 @@ export class Client {
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.samples = [];            // [tick, price], the live price samples not yet published
     this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
-    this.attests = [];            // [tick, kind, cents, sigs], the committee's word on a sample (0) or the tape (1) (§11, #311)
+    this.attests = [];            // [tick, kind, cents, sigs], the committee's word on a sample (0) or the tape (1) (§11)
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -505,7 +505,7 @@ export class Client {
     this.marksTimedOut = 0;       // marks never sent: a node did not hold their inputs in time
     this.marksTimedOutWhy = null;
     this.pendingLink = null;      // { id, bytes, tick }: stored by some node, not carried by the committee
-    this.marksHeadRecovered = 0;  // heads read back from the nodes after a mark neither carried nor pending (kanban #155)
+    this.marksHeadRecovered = 0;  // heads read back from the nodes after a mark neither carried nor pending
     this.marksRelinked = 0;       // pending links re-sent until the committee carried them
     this.publishing = null;
     this.marking = null;
@@ -573,7 +573,7 @@ export class Client {
     this.nodes = [...contract.nodes];
     this.gameVerifySlots = contract.gameVerifySlots || this.nodes.length;
     const mine = roundId(contract);
-    // THE NODE'S ANSWER FOR THIS ROUND IS KEPT FOR THE PAGE (the owner 2026-10-02, the join's 2-3 s): POST /round took 1.4 s
+    // THE NODE'S ANSWER FOR THIS ROUND IS KEPT FOR THE PAGE (2026-10-02, the join's 2-3 s): POST /round took 1.4 s
     // of a paid join after the stake was locked, and the page can ask it at the click, beside the lock. Kept per node
     // and round, the promise itself; a refusal is not kept, so the session then asks afresh and is told why.
     const key = `${this.base}|${toHex(mine)}`;
@@ -623,7 +623,7 @@ export class Client {
     // The count is kept, not thrown: the round is joined either way, and the
     // stake is committed or not by the signer nodes' own answers.
     if (this.stakeLock) {
-      // THE LOCKS GO TO THE SIGNER NODES IN THE BACKGROUND (JOIN-TIME, the owner 2026-10-02: "Join click to the round actually
+      // THE LOCKS GO TO THE SIGNER NODES IN THE BACKGROUND (JOIN-TIME, 2026-10-02: "Join click to the round actually
       // loaded: 2 to 3 seconds at most"; ruled the same day: the stake is confirmed in the background - the signer nodes hold
       // a player's ticks until they have seen it, and an unconfirmed stake by the start deadline voids the entry). The
       // session opens now. The stake lock and the fee lock go to every node at once, and a node that did not take one yet
@@ -646,7 +646,7 @@ export class Client {
     const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
     if (this.stakeLock.feeLock) kinds.push({ door: 'fee-lock', fields: this.stakeLock.feeLock.fields, key: 'feeLockHanded' });
     const took = new Map(kinds.map((k) => [k.door, new Set()]));
-    // A MARKET ORDER'S LOCKS ARE HANDED UNTIL ITS ROUND'S ENTRY CLOSES (kanban #237, measured on the regtest stack: three
+    // A MARKET ORDER'S LOCKS ARE HANDED UNTIL ITS ROUND'S ENTRY CLOSES (measured on the regtest stack: three
     // seats refused a stake lock while the federation was still accepting it, the 120 s ran out, and the order sat at 4 of 7
     // seats - a batch needs 5 signers, each holding the order's locks - so it never traded): `handUntilMs` from the page
     const until = Math.max(Date.now() + LOCK_HAND_MS, Number(this.stakeLock.handUntilMs || 0));
@@ -742,7 +742,7 @@ export class Client {
   #feed(base) {
     const f = this.peerFeed(base);
     if (f.running) { f.again = true; return f.running; }
-    // A PEER THAT REFUSED THE ENTRY IS LEFT ALONE UNTIL ITS BACKOFF IS OVER (kanban #376; the owner 2026-10-16: "Lower the amount of
+    // A PEER THAT REFUSED THE ENTRY IS LEFT ALONE UNTIL ITS BACKOFF IS OVER (2026-10-16: "Lower the amount of
     // concurrent connections and network load"): measured on live UI 154, three peers that answer the entry 400 were sent every
     // batch and the entry again at each one - a refused POST /entry every 1-2 s for the whole round
     if (f.entryBackoffUntil && this.now() < f.entryBackoffUntil) return Promise.resolve();
@@ -1155,7 +1155,7 @@ export class Client {
     let receipt = null;
     if (typeof answer === 'string')
       (answer.startsWith(CLOSED) ? unreached : refused).unshift(`${this.base}: ${answer}`);
-    // THIS CLIENT'S OWN NODE'S RECEIPT IS CHECKED AS A PEER'S IS (kanban #155): one that fails the check is a refusal named
+    // THIS CLIENT'S OWN NODE'S RECEIPT IS CHECKED AS A PEER'S IS: one that fails the check is a refusal named
     // by its node, not an exception that loses the whole mark - measured in the 0.0.2815 control, a throw here left the
     // mark stored at every seat and nothing on this side to say so.
     else {
@@ -1370,7 +1370,7 @@ export class Client {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
-    // A SET OF KEYS IS PAID IN THE LOCK TRANSACTION, not here (the owner 2026-10-03, FEDERATION.md): nothing to send over Lightning
+    // A SET OF KEYS IS PAID IN THE LOCK TRANSACTION, not here (2026-10-03, FEDERATION.md): nothing to send over Lightning
     if (set && donationSetPaysKeys(set.recipients))
       return { ok: true, ...none, paidMsat: entry.donationMsat, inLock: true, why: 'paid in the federation, in the same transaction as the stake' };
     // NOT BEFORE THE SIGNER NODES HOLD THE STAKE (M3.2 6e, §22A): the donation is part of
@@ -1386,7 +1386,7 @@ export class Client {
       const named = donationSetMatchesRound(round, set.recipients);
       if (!named.ok) return { ok: false, ...none, why: named.why };
     }
-    // THE PLAYER WALLET PAYS IT (the owner 2026-10-01: "donation is paid by the player as well"): `payWith(invoice)` -
+    // THE PLAYER WALLET PAYS IT (2026-10-01: "donation is paid by the player as well"): `payWith(invoice)` -
     // the federation player wallet's own send - in place of a wallet connection; each share's invoice is still the
     // recipient's own, checked against its pay request, as below.
     const where = payWith ? { ok: true } : (typeof connection === 'string' ? parseConnection(connection) : connection);
@@ -1722,11 +1722,11 @@ export class Client {
    * THE NEWEST MARK THE COMMITTEE CARRIES, READ BACK FROM THE NODES: this node's marks, newest first, and the first one
    * that five distinct committee keys have receipted - the receipts recovered from this node and from every peer, each
    * verified. Used by `resume` after a drop or a reload, and by `markNow` when a mark was neither carried nor pending
-   * (kanban #155). Moves nothing itself; answers `{ adopted, receipts }`.
+   *. Moves nothing itself; answers `{ adopted, receipts }`.
    */
   async carriedHead({ roundId, entryId }) {
     const marks = await this.recoverReceipts({ roundId, entryId });
-    // AND EACH COMMITTEE PEER'S OWN RECEIPTS (the owner 2026-10-03, the reload in a running round): every node receipts a
+    // AND EACH COMMITTEE PEER'S OWN RECEIPTS (2026-10-03, the reload in a running round): every node receipts a
     // mark to the client that sent it, so after a RELOAD the newest mark's receipts were in the closed tab - measured on
     // 0.0.2493, all 7 seats held mark 120 with one receipt each (their own), this node's /receipts showed 1, the resume
     // adopted mark 60 and every later mark was refused "does not follow the chain head". Each peer's receipts are
@@ -1755,7 +1755,7 @@ export class Client {
   }
 
   /**
-   * A RUN TAKEN BACK AFTER THE TAB WAS RELOADED (the owner 2026-10-03: "a reload after the round has started ... That run
+   * A RUN TAKEN BACK AFTER THE TAB WAS RELOADED (2026-10-03: "a reload after the round has started ... That run
    * must not be lost"). The same entry and session key (the page kept both); this client is new and knows nothing of the
    * run, so it is told the round and then resumes from what the node holds - its input chain, its next tick and the newest
    * mark five committee members carried. NOTHING IS RECORDED UNTIL THAT IS DONE: the game ticks through the fetches, and a
@@ -1780,7 +1780,7 @@ export class Client {
    */
   setRound({ roundId, entryId, blockTicks }) {
     this.where = { roundId, entryId };
-    // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK (kanban #130): the round's tick it joined at, so its run ends with the round's.
+    // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
     const joinTick = this.joinedEntry && Number.isInteger(this.joinedEntry.joinTick) ? this.joinedEntry.joinTick : 0;
     if (joinTick > 0) this.nextTick = joinTick;
@@ -1819,7 +1819,7 @@ export class Client {
     this.marksHeadRecovered = 0;
     this.publishing = null;
     this.marking = null;
-    // FROM THE JOIN TICK TOO (kanban #130, measured live on 0.0.2727, round f9857c83: a late entry at tick 1750 VOIDed on its first
+    // FROM THE JOIN TICK TOO (measured live on 0.0.2727, round f9857c83: a late entry at tick 1750 VOIDed on its first
     // batch - "2 ticks offered but 1750 published and 2 held" - because nextTick began at the join tick and this at 0).
     this.offered = joinTick;
     this.ended = false;
@@ -1858,7 +1858,7 @@ export class Client {
   }
 
   /**
-   * THE CORE SAID THE RUN IS OVER, AND THE RUN STOPS THERE (the owner 2026-09-15 16:14).
+   * THE CORE SAID THE RUN IS OVER, AND THE RUN STOPS THERE (2026-09-15 16:14).
    *
    * Measured before this, replaying every run a signer node held: each truck that drove into
    * the miner's mouth was DELIVERED in the core and signed so 2 of 2 - and its page went on
@@ -1893,7 +1893,7 @@ export class Client {
         this.endingReason = unsent ? `${why}; ${unsent} tick(s) could not be sent` : why;
         this.state = 'ended';
         if (this.onEnd) this.onEnd(this.ending, this.endingReason);
-        // AND THE SOCKET STAYS UP, FOR WATCHING (the owner 2026-09-18 19:30: "spectate after a round: no action in the
+        // AND THE SOCKET STAYS UP, FOR WATCHING (2026-09-18 19:30: "spectate after a round: no action in the
         // world, as if no longer connected to the nodes").
         //
         // This used to close here, and it is the only connection a page has: a player who pressed SPECTATE after
@@ -1929,7 +1929,7 @@ export class Client {
    */
   coreWord({ state, stateHash = null, tick = 0 } = {}) {
     if (!this.where || this.ended || this.finishing) return null;
-    // DELIVERED, WRECKED AND MISSED ALL LATCH IN THE CORE (the owner 2026-09-15: "end the run here too,
+    // DELIVERED, WRECKED AND MISSED ALL LATCH IN THE CORE (2026-09-15: "end the run here too,
     // same client path") - a run that has an outcome is over, whichever it is.
     const word = RUN_ENDING_WORDS[state | 0];
     if (!word) return null;
@@ -1969,7 +1969,7 @@ export class Client {
    */
   submitLoad(feeSats, btcHundredths, roomUsed) {
     if (this.ended || !this.where) return false;
-    // AND THE ROOM THE BED TAKES when the page has one (the owner 2026-10-04 08:54: the cargo factor C is the bed fill), so
+    // AND THE ROOM THE BED TAKES when the page has one (2026-10-04 08:54: the cargo factor C is the bed fill), so
     // the signer nodes' replay sets the same C; a load without one crosses as before
     const room = roomUsed === undefined || roomUsed === null ? [] : [roomUsed | 0];
     this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room]);
@@ -1977,7 +1977,7 @@ export class Client {
   }
 
   /**
-   * A LIVE PRICE SAMPLE the page handed its core before the tick it is about to record (the owner 2026-09-17 16:01: the chart
+   * A LIVE PRICE SAMPLE the page handed its core before the tick it is about to record (2026-09-17 16:01: the chart
    * was frozen because nothing ever did). It moves the tape, so it goes into the transcript beside that tick, published
    * with the batch that covers it, exactly as a load is. Refused once the run has ended.
    */
@@ -1988,14 +1988,14 @@ export class Client {
   }
 
   /**
-   * THE COMMITTEE'S PRICE (§11, kanban #311): a sample the seats signed for `tick`, in cents, with their signatures
+   * THE COMMITTEE'S PRICE (§11): a sample the seats signed for `tick`, in cents, with their signatures
    * ([key, sig]). It must be applied at exactly that tick - the run is at it now (`offered`) - and goes into the transcript
    * in the tape's unit beside its attestation, which every seat checks. Refused at any other tick, or once the run ended.
    */
   submitAttestedSample({ tick, priceCents, sigs, readings }) {
     if (this.ended || !this.where || tick !== this.offered) return false;
     this.samples.push([tick, centsToTapeUnits(priceCents)]);
-    // PROTOCOL 5 (kanban #312): the median and the seats' own signed readings it is the median of ([key, cents, sig]), kind 2
+    // PROTOCOL 5: the median and the seats' own signed readings it is the median of ([key, cents, sig]), kind 2
     this.attests.push(readings ? [tick, 2, priceCents, readings] : [tick, 0, priceCents, sigs]);
     return true;
   }
@@ -2086,7 +2086,7 @@ export class Client {
    * counted.
    */
   drain() {
-    // A DRAIN THAT FINDS A BATCH IN FLIGHT IS OWED, NOT DROPPED (the owner 2026-09-17 19:15: "updates only every 300-600 ms").
+    // A DRAIN THAT FINDS A BATCH IN FLIGHT IS OWED, NOT DROPPED (2026-09-17 19:15: "updates only every 300-600 ms").
     // The page drains every sixth tick; a slot that found the last batch unanswered used to wait for the next slot, so
     // any link slower than 100 ms round trip halved the pictures - measured through a proxy holding 80 ms each way:
     // 5.0 pictures a second, 200 ms apart, 167 ms old on arrival. The answer now sends what is held at once.
@@ -2144,7 +2144,7 @@ export class Client {
     this.samples = this.samples.filter(([at]) => at >= through);
     const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
-    // the committee's word on the samples and the tape this batch carries, and on nothing else (§11, kanban #311)
+    // the committee's word on the samples and the tape this batch carries, and on nothing else (§11)
     const attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
     this.attests = this.attests.filter((a) => !attests.includes(a));
 
@@ -2351,7 +2351,7 @@ export class Client {
         const r = await this.mark(stateHash, {
           roundId: where.roundId, entryId: where.entryId, tick, inputChainHash, final,
         });
-        // A MARK NEITHER CARRIED NOR PENDING, AND REFUSED SOMEWHERE, MAY STILL BE THE SEATS' HEAD (kanban #155). Measured
+        // A MARK NEITHER CARRIED NOR PENDING, AND REFUSED SOMEWHERE, MAY STILL BE THE SEATS' HEAD. Measured
         // live: all 7 seats stored and receipted a mark (testnet4 ea63aa94 @1620; the control on 0.0.2815, entry 0b68a08f,
         // @1140) while this client counted none of the answers, so it set no pending link, kept the mark before as its
         // head, and every later mark named that old parent - refused at every seat "does not follow the chain head", and

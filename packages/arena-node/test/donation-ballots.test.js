@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVELOPERS' BALLOTS A SEAT KEEPS (§27A.4.1, kanban #382): kept only when signed by a recipient of the parent set, tallied
+// THE DEVELOPERS' BALLOTS A SEAT KEEPS (§27A.4.1): kept only when signed by a recipient of the parent set, tallied
 // against the admin key's set, approved once more than half accepted - and the chain behind an approved set, for the page.
 import test from 'node:test';
 import assert from 'node:assert/strict';

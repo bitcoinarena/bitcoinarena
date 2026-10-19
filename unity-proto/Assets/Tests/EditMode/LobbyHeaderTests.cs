@@ -4,7 +4,7 @@ using NUnit.Framework;
 using Blwp;
 
 /// <summary>
-/// THE HEADER ABOVE THE ROUNDS AND THE LINE UNDER THEM (kanban #43 follow-up, the owner 2026-10-06, plan comment 430): one
+/// THE HEADER ABOVE THE ROUNDS AND THE LINE UNDER THEM (follow-up, 2026-10-06, plan comment 430): one
 /// shared header line names each kind of round listed with that kind's OWN signer numbers - from its rows, the same source
 /// as the row - and the line under the rows speaks only of the round PLAY joins, in that row's words. Measured before: the
 /// header said "JOIN NEEDS 2 OF 2 SIGNER NODES" (the first row's number, a fallback 2, the same number both sides) beside a

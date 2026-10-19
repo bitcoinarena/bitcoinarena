@@ -39,7 +39,7 @@ export class Dkg {
    */
   constructor(round, { curve, random, peers = [], fetcher = null, epochOf = epochId } = {}) {
     this.round = round;
-    // WHICH EPOCH A COMMITTEE IS (kanban #397): a round's by default; a federation's reserve key names its own (reserveEpochId)
+    // WHICH EPOCH A COMMITTEE IS: a round's by default; a federation's reserve key names its own (reserveEpochId)
     this.epochOf = epochOf;
     this.curve = curve;
     this.random = random;
@@ -131,7 +131,7 @@ export class Dkg {
     try { c = decodeContribution(bytes); }
     catch (e) { return { ok: false, why: 'that is not a contribution: ' + e.message }; }
 
-    // ONE THIS NODE HOLDS ALREADY, byte for byte, is not proven and opened again (kanban #345): every run of a peer posts
+    // ONE THIS NODE HOLDS ALREADY, byte for byte, is not proven and opened again: every run of a peer posts
     // its contribution anew, and checking it each time was a third of a seat's processor at grid density
     const had = this.round.contributionsOf(c.epochId).find((r) => Buffer.compare(Buffer.from(r.bytes), Buffer.from(bytes)) === 0);
     if (had) return { ok: true, fresh: false, from: c.from };
@@ -183,7 +183,7 @@ export class Dkg {
           + 'contributed, and a key a subset chose is a key that subset can steer',
       };
 
-    // EACH CONTRIBUTION OPENED ONCE (kanban #345): a finish that waits for the committee's agreements is asked again every
+    // EACH CONTRIBUTION OPENED ONCE: a finish that waits for the committee's agreements is asked again every
     // second, and opening every contribution again each time was most of a seat's processor at grid density. Kept by the
     // contribution's own bytes, so a different contribution is opened as before.
     const opened = [];

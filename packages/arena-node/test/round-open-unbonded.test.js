@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PAYING ROUND DOES NOT OPEN ON AN UNBONDED FEDERATION (§23.6, P3; RULED the owner 2026-09-25: "guardiansBonded runs before
+// A PAYING ROUND DOES NOT OPEN ON AN UNBONDED FEDERATION (§23.6, P3; RULED 2026-09-25: "guardiansBonded runs before
 // round.open and refuses with 409 and its why ... nothing stored, nothing listed").
 //
 // MEASURED before this test (2026-09-25, a probe on this same fixture, the round's clock inside its entry window): under

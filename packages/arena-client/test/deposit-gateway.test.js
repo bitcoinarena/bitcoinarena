@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FUNDED-GATEWAY RULE (the owner 2026-09-30 14:30: "A deposit goes only to a gateway that holds e-cash"): the choice,
+// THE FUNDED-GATEWAY RULE (2026-09-30 14:30: "A deposit goes only to a gateway that holds e-cash"): the choice,
 // and the list carried from daily.json through the lobby link into the join link the page deposits from.
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// TOP-N PRIZE SPLITS (kanban #362 feature 3): a payout rule a replayed game's manifest may pick - fixed shares of the pot over
+// TOP-N PRIZE SPLITS (feature 3): a payout rule a replayed game's manifest may pick - fixed shares of the pot over
 // its top places ([10000] winner takes all, [5000, 3000, 2000]) - encoded so every existing manifest keeps its bytes and its
-// game id, required to name protocol version 4 (#349), and computed by the one F every caller shares.
+// game id, required to name protocol version 4, and computed by the one F every caller shares.
 import { test } from 'node:test';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../src/constants.js';
 import assert from 'node:assert/strict';
@@ -136,7 +136,7 @@ test('a top split requires protocol version 4 or later, one this build speaks; n
   for (const v of [undefined, null, 1, 3])
     assert.throws(() => encodeManifestBody({ ...SPLIT, requiredProtocolVersion: v }), /requires protocol version 4 or later/);
   assert.ok(encodeManifestBody({ ...SPLIT, requiredProtocolVersion: 8 }));
-  // one past the newest version this build speaks (was a fixed 8, stale since scalar templates made 8 spoken - kanban #362)
+  // one past the newest version this build speaks (was a fixed 8, stale since scalar templates made 8 spoken -)
   const next = Math.max(...SUPPORTED_PROTOCOL_VERSIONS) + 1;
   const tooNew = signed({ ...SPLIT, requiredProtocolVersion: next });
   const st = manifestStands(tooNew, { verify: verifyEd25519 });

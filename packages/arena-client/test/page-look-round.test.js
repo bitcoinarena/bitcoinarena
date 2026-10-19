@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PAYOUT LOOK WITHOUT JOINING THE ROUND'S OWN WALLET (kanban #200, comment 567: the join froze the lobby 270 ms on
+// THE PAYOUT LOOK WITHOUT JOINING THE ROUND'S OWN WALLET (comment 567: the join froze the lobby 270 ms on
 // desktop and 1.1 s on a phone at every load of a tab with an open round). index.html's lookRound runs under the page's
 // name (page-script.js) with fake wallets. Measured: with the round's wallet read empty before, a look asks lockStatus of
 // the player wallet already open on the same federation and joins nothing; it joins the round's wallet when something is

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHO HOSTS A FEDERATION'S LIGHTNING: THE TWO GATEWAY SEATS (spec §23A.9, kanban #471; the owner 2026-10-18: "If more than 2 nodes in the
+// WHO HOSTS A FEDERATION'S LIGHTNING: THE TWO GATEWAY SEATS (spec §23A.92026-10-18: "If more than 2 nodes in the
 // federation want to host a guardian a clear process must choose the best guardians possible, make the rules and requirements clear").
 // Pure: every guardian ranks the same candidates the same way from the same measurements, and the federation record (signed at
 // threshold) names the seats. The measurements are each guardian's own; flooring them is what makes honest guardians agree.
@@ -22,7 +22,7 @@ export const GATEWAY_TICKET_TAG = 'BLWP/v1/GATEWAY';
 export const UNSEAT_MARGIN_PCT = 25n;
 /** The minimums per network (spec §23A.9 table). */
 export const GATEWAY_MINIMUMS = Object.freeze({
-// inbound and outbound each half of what the single capacity minimum was (the owner 2026-10-18: a gateway with outbound only takes no deposit)
+// inbound and outbound each half of what the single capacity minimum was (2026-10-18: a gateway with outbound only takes no deposit)
   mainnet: Object.freeze({ inboundSats: 250_000n, outboundSats: 250_000n, pegInSats: 2_000_000n, availabilityPct: 95 }),
   testnet4: Object.freeze({ inboundSats: 100_000n, outboundSats: 100_000n, pegInSats: 50_000n, availabilityPct: 95 }),
   regtest: Object.freeze({ inboundSats: 10_000n, outboundSats: 10_000n, pegInSats: 5_000n, availabilityPct: 95 }),

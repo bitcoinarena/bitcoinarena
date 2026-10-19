@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# FEDERATION.md REHEARSAL 14B ON REGTEST (§23A.4, kanban #322 / #326): absence attestations signed by each guardian's node from
+# FEDERATION.md REHEARSAL 14B ON REGTEST (§23A.4): absence attestations signed by each guardian's node from
 # its OWN fedimintd's view (src/absence-producer.js), not by the script.
 #   1. federation-hold-probe's 4 guardians (3 of 4), SETUP_ONLY.
 #   2. a pass: every guardian sees the other three; nothing signed.

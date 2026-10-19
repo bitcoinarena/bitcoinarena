@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE STANDS FOR A GATEWAY SEAT (spec §23A.9, kanban #471): its gateway claim, signed by its node key - which federation, where its
+// A NODE STANDS FOR A GATEWAY SEAT (spec §23A.9): its gateway claim, signed by its node key - which federation, where its
 // gateway answers (its public address /gateway/), its Lightning node key, the public channel capacity and peg-in it states, when. Its
 // seat serves it (GET /gateway-claim); the federation's guardians read it, probe the gateway it names, and rank the claims (gateway-
 // seats.js). What a guardian can check itself it checks (the signature, the node being seated, the gateway serving the federation);
 // capacity and peg-in are stated here and stand only while the gateway's routed volume does not contradict them.
-// INBOUND AND OUTBOUND APART (the owner 2026-10-18, on the installer's LND: "Does the [LND] we setup have incoming liquidity?" - it had none):
+// INBOUND AND OUTBOUND APART (2026-10-18, on the installer's LND: "Does the [LND] we setup have incoming liquidity?" - it had none):
 // a deposit reaches the federation through the gateway's INBOUND liquidity, a payout leaves through its OUTBOUND, so a claim states
 // both (the remote and the local balance of its public channels), and the address its LND takes peer connections at (host:port,
 // empty when it takes none) - the federation's channel ring (custody-agent.js) dials it. outsideInboundSats: the inbound from peers OUTSIDE

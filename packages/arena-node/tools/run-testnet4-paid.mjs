@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * THE PAYING TESTNET4 ROUND (the owner 2026-09-27 07:51: "A paid testnet4 round must be open and testable"). Seven signer
+ * THE PAYING TESTNET4 ROUND (2026-09-27 07:51: "A paid testnet4 round must be open and testable"). Seven signer
  * nodes, 5-of-7, on the testnet4 bitcoind - bonds broadcast and six deep in somebody else's blocks, the round published
  * and joined under the first block past its committee_time, nothing mined. The seven are the seven testnet nodes, each
- * holding one guardian key of the 5-of-7 federation (tools/testnet4-found.mjs; the owner 2026-09-27 10:04: "7 nodes and 7
+ * holding one guardian key of the 5-of-7 federation (tools/testnet4-found.mjs; 2026-09-27 10:04: "7 nodes and 7
  * guardians, one each"), on their own stores and ports, so each starts its own guardian (node-start.js) and says so on
  * GET /guardian. The stake goes into a lock in that federation, read through the stake-lock port. The Daily is not
  * touched: its own stores, ports, chain and pin are elsewhere.
@@ -16,13 +16,13 @@
  *   BLWP_WSS_31221=wss://seat.example.com/guardian-1 ... \
  *   node tools/run-testnet4-paid.mjs
  *
- * ARENA_ATTACH=1 (the owner 2026-09-29: the seven blwp-tn4-node units own the guardians): the seven nodes already run, one
+ * ARENA_ATTACH=1 (2026-09-29: the seven blwp-tn4-node units own the guardians): the seven nodes already run, one
  * process each (src/main.js on node-<k>.db, each starting its own guardian) - this runner starts none and opens no node
  * store. It reads each node's key from GET /identity and its bond from the chain, publishes and posts the rounds over
  * HTTP, names the paying ones in ARENA_FUNDED_ROUNDS_FILE and writes the page's bond proof to ARENA_ATTACH_PROOF_DIR,
  * both of which the nodes read. Each node makes each round's claim key itself, with its peers, on their own doors.
  *
- * ON ANOTHER CHAIN (kanban #148 step 6, the regtest harness tn4-tools-regtest.sh): ARENA_TN4_NETWORK (default testnet4) is
+ * ON ANOTHER CHAIN (the regtest harness tn4-tools-regtest.sh): ARENA_TN4_NETWORK (default testnet4) is
  * the round's network, and ARENA_TN4_PORTS (default the seven testnet4 seats) the seven node ports. The Funnel paths are
  * testnet4's alone, so another network neither reads nor adds them.
  */
@@ -36,13 +36,13 @@ import { GAME as RPS_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scis
 import { UPDOWN_TN4 } from '../../btc-updown/plugin/btc-updown.js';
 import { GAME as UPDOWN_V2 } from '../../btc-updown/plugin/btc-updown-v2.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
-// THE UP/DOWN VERSION THE RUNNER POSTS (kanban #454, the owner 2026-10-17: the market's protocol reserve fee): DUTY_UPDOWN_PLUGIN names a
+// THE UP/DOWN VERSION THE RUNNER POSTS (2026-10-17: the market's protocol reserve fee): DUTY_UPDOWN_PLUGIN names a
 // btc-updown plugin file - btc-updown-v13.js, whose terms pay 0.4 % nodes + 0.4 % donation + 0.2 % protocol reserve; unset, version 2
 const UPDOWN_PLUGIN = process.env.DUTY_UPDOWN_PLUGIN || '';
 if (UPDOWN_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_PLUGIN)) throw new Error(`DUTY_UPDOWN_PLUGIN names a btc-updown plugin file, not ${UPDOWN_PLUGIN}`);
 const UPDOWN_CHOSEN = UPDOWN_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_PLUGIN}`)).GAME : null;
 if (UPDOWN_CHOSEN) console.log(`[duty] Up/Down rounds of ${UPDOWN_PLUGIN}: game ${Buffer.from(UPDOWN_CHOSEN.gameId).toString('hex').slice(0, 16)}`);
-// PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
+// PAID_MARKET=1: the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { GAME as NEXTBLOCK_V3 } from '../../nextblock/plugin/nextblock-v3.js';
@@ -62,13 +62,13 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
 import { TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 
-// 2026.0.2 (kanban #348): ARENA_PROTOCOL_VERSION=2 opens the v2 game (its manifest requires the round that names no draw)
+// 2026.0.2: ARENA_PROTOCOL_VERSION=2 opens the v2 game (its manifest requires the round that names no draw)
 const ROCK_PAPER_SCISSORS = Number(process.env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? RPS_V2 : RPS_V1;
 const RPS_ROUND_FIELDS = Object.freeze({ ...RPS_FIELDS_V1, gameId: ROCK_PAPER_SCISSORS.gameId });
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
-// SEVEN NODES, SEVEN GUARDIANS, ONE EACH (the owner 2026-09-27 10:04): /guardian-1..7 on the Funnel, 127.0.0.1:31221..31281
+// SEVEN NODES, SEVEN GUARDIANS, ONE EACH (2026-09-27 10:04): /guardian-1..7 on the Funnel, 127.0.0.1:31221..31281
 const network = env.ARENA_TN4_NETWORK || 'testnet4';
 const guardianPorts = env.ARENA_TN4_PORTS ? env.ARENA_TN4_PORTS.split(',').map(Number) : [31221, 31231, 31241, 31251, 31261, 31271, 31281];
 const plainPorts = [];
@@ -129,7 +129,7 @@ const guardianOf = ports.map((_, i) => {
 });
 
 const [pa, pb, pc, ...more] = ports;
-// THE SETS THE DEVELOPERS APPROVED (§27A.4.1, kanban #382): every round names the set in force at its census height - an approved
+// THE SETS THE DEVELOPERS APPROVED (§27A.4.1): every round names the set in force at its census height - an approved
 // one too, read from the attached seat's ballots and tallied here; refreshed every 2 min, and once before anything is published
 const APPROVED = createApprovedSets({ seatUrl: `http://${env.ARENA_BIND || '127.0.0.1'}:${pa}`,
   known: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
@@ -137,7 +137,7 @@ const APPROVED = createApprovedSets({ seatUrl: `http://${env.ARENA_BIND || '127.
 setInterval(() => { APPROVED.refresh().catch(() => {}); }, 120000).unref?.();
 const donationSetInForce = (args) => signedSetInForce({ ...args, approved: APPROVED.sets() });
 await APPROVED.refresh();
-// THE NODES' OWN ADDRESS (kanban #348): attached to nodes that listen on ARENA_BIND - federation B's seven on the test host bind
+// THE NODES' OWN ADDRESS: attached to nodes that listen on ARENA_BIND - federation B's seven on the test host bind
 // its tailnet address - the runner reached for 127.0.0.1 and failed at once (ECONNREFUSED 127.0.0.1:6221, 13:20:45Z)
 const NODE_HOST = env.ARENA_BIND || '127.0.0.1';
 const round = await standUpRound({ host: NODE_HOST, portA: pa, portB: pb, portC: pc, extraPorts: more,
@@ -149,9 +149,9 @@ const round = await standUpRound({ host: NODE_HOST, portA: pa, portB: pb, portC:
   // OR AN ENTRY CLOSE AT A WALL-CLOCK INSTANT (ISO), the window then fitted to it once committee_time is known
   ...(env.ARENA_ENTRY_CLOSE_AT ? { entryCloseAtMs: Date.parse(env.ARENA_ENTRY_CLOSE_AT) } : {}),
   signerNode: { closeAtEnd: true, stakeLocks: lock },
-  // PAID_FIRST=0 (kanban #293, the RPS grid): no round of its own - only the grid keeper below publishes
+  // PAID_FIRST=0 (the RPS grid): no round of its own - only the grid keeper below publishes
   openFirst: env.PAID_FIRST !== '0',
-  // ITS OWN FIRST ROUND NAMES THE DONATION SET IN FORCE, as the grid below does (kanban #348)
+  // ITS OWN FIRST ROUND NAMES THE DONATION SET IN FORCE, as the grid below does
   donationSetAt: (height, networkId) => {
     const keys = donationKeysForNetworkId(networkId);
     const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery,
@@ -171,7 +171,7 @@ const round = await standUpRound({ host: NODE_HOST, portA: pa, portB: pb, portC:
 say({ paid: 'up', network, custody: round.contract.custody, stakeMsat: String(stakeMsat),
   federation: toHex(fed.federationId), guardians: fed.keys.length, threshold: fed.threshold,
   nodes: round.nodes, firstRound: round.id, beacon: round.beacon && round.beacon.ok ? round.beacon.height : null });
-// THE FUNDED GATEWAY STAYS IN THE LINK (the owner 2026-09-30 14:30 and the leadMs letter): a start used to write the link
+// THE FUNDED GATEWAY STAYS IN THE LINK (2026-09-30 14:30 and the leadMs letter): a start used to write the link
 // without `gateway=`, and a page opened on it deposits through whichever gateway the lock client picks. The gateway the
 // link already named is kept.
 if (round.id) {
@@ -185,21 +185,21 @@ writeFileSync(join(home, 'paid', 'lobby-url.txt'), lobbyUrl + '\n');
 writeFileSync(join(home, 'paid', 'testnet4.json'),
   JSON.stringify({ node: round.nodes, bond: round.bond, advert: round.advert, federation: invite, round: round.id }, null, 2) + '\n');
 console.log(round.lobbyUrl);
-// THE NEXT ONE-OFF 4 h BEFORE THE CURRENT ENTRY CLOSES (the owner 2026-09-30: "4 h is the lead"): a round is published first
+// THE NEXT ONE-OFF 4 h BEFORE THE CURRENT ENTRY CLOSES (2026-09-30: "4 h is the lead"): a round is published first
 // and joinable only once its beacon is 6 deep - measured 1.5-3 h on testnet4 - so opening it 60 s before the close left a
 // 1.5-3 h gap every 6 h with no paid round to join.
-// PAID_KEEP=0 (kanban #325, the regtest succession): no next round - with a short ARENA_ENTRY_WINDOW_MS every round closes
+// PAID_KEEP=0 (the regtest succession): no next round - with a short ARENA_ENTRY_WINDOW_MS every round closes
 // within the 4 h lead, and the keeper opened one every 10 s (87 in run 13), mining the regtest chain past its federation
 if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
 }
-// THE PUBLISHER NAMES ITSELF (§6 creator_pubkey, kanban #313; 2026.0.3): with ARENA_PROTOCOL_VERSION=3 and ARENA_CREATOR_KEY_FILE (a
+// THE PUBLISHER NAMES ITSELF (§6 creator_pubkey2026.0.3): with ARENA_PROTOCOL_VERSION=3 and ARENA_CREATOR_KEY_FILE (a
 // 32-byte secret, hex) every grid this runner publishes names that key as its creator and signs each series id - the key the series
-// publisher's fee is paid back to (#304). A v1/v2 round cannot name one (contracts.js CREATOR_VERSION); every later version can
-// (kanban #312: the Tick Tock duty runner moves to version 5 and keeps naming its creator).
+// publisher's fee is paid back to. A v1/v2 round cannot name one (contracts.js CREATOR_VERSION); every later version can
+// (the Tick Tock duty runner moves to version 5 and keeps naming its creator).
 const CREATOR = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 3 && env.ARENA_CREATOR_KEY_FILE
   ? { creatorSecret: Uint8Array.from(Buffer.from(readFileSync(env.ARENA_CREATOR_KEY_FILE, 'utf8').trim(), 'hex')) } : {};
-// THE DUTY TO POST THE NEXT 24 H (kanban #352, the owner 2026-10-13 ~18:35Z; arena-protocol/src/duty.js, spec §5A.5): PAID_DUTY=1 runs ONE
+// THE DUTY TO POST THE NEXT 24 H (2026-10-13 ~18:35Z; arena-protocol/src/duty.js, spec §5A.5): PAID_DUTY=1 runs ONE
 // plan item - DUTY_GAME (rps | updown) in DUTY_FEDERATION (federation id hex), named DUTY_ITEM - on every machine of the network. Every
 // 30 s it reads the chain: the slot's anchor, the census there, the duty order; when the node on duty for the current slot is one this
 // machine runs (DUTY_LOCAL_KEYS, else its own daemons) it posts what slotsToPost names - its own slot and, from 5 min in, every missed
@@ -294,7 +294,7 @@ if (env.PAID_DUTY === '1') {
   };
   look(); setInterval(look, 30000);
 }
-// ONE POSTING PER GAME PER DAY, AT THE LOWEST FEE (the owner 2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the
+// ONE POSTING PER GAME PER DAY, AT THE LOWEST FEE (2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the
 // fees must be as low as possible"). PAID_DUTY_DAILY=1 runs one game (DUTY_GAME rps | updown | nextblock) for every federation in
 // DUTY_FEDERATIONS (hex, comma-separated) on every machine. Day d's duty node (duty.js: the census at the day's anchor in duty order;
 // the next one an hour later while the day is not posted) publishes ONE transaction: the next UTC day's rounds of this game in every
@@ -318,7 +318,7 @@ if (env.PAID_DUTY_DAILY === '1') {
   const dir = join(home, 'paid', 'duty-day'); mkdirSync(dir, { recursive: true });
   const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
   const UPDOWN_BASE = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
-  // THE CHOSEN VERSION FROM A NAMED DAY ON (kanban #454): DUTY_UPDOWN_FROM_SLOT - the first day slot posted as DUTY_UPDOWN_PLUGIN; a day
+  // THE CHOSEN VERSION FROM A NAMED DAY ON: DUTY_UPDOWN_FROM_SLOT - the first day slot posted as DUTY_UPDOWN_PLUGIN; a day
   // before it keeps the version its seats' census advertisements name (an Up/Down game no census entry hosts has no committee)
   const UPDOWN_FROM_SLOT = Number(env.DUTY_UPDOWN_FROM_SLOT || 0);
   const censusAt = new Map();
@@ -339,7 +339,7 @@ if (env.PAID_DUTY_DAILY === '1') {
     const ds = donationSet();
     const common = { feeRate, maxFeeRate, committeeTimeMs: committee, extraOutputs: [dutyMarkerOutput(slot, item)], waitBeacon: false };
     const per = (extra) => feds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
-    // DUTY_NEXTBLOCK_V3=1 (kanban #369): Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
+    // DUTY_NEXTBLOCK_V3=1: Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
     // need protocol 10 (ARENA_PROTOCOL_VERSION=10) and seats whose census advertisements name its game id
     const NB_FIELDS = env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
     const got = game === 'nextblock'
@@ -404,7 +404,7 @@ if (env.PAID_DUTY_DAILY === '1') {
   };
   look(); setInterval(look, 60000);
 }
-// TICK TOCK IN 90 s ROUNDS, NOW (the owner 2026-10-14 ~10:26Z, his phone on the Tick Tock lobby: "Sollte es nicht eine 90s Runde sein?").
+// TICK TOCK IN 90 s ROUNDS, NOW (2026-10-14 ~10:26Z, his phone on the Tick Tock lobby: "Sollte es nicht eine 90s Runde sein?").
 // The rounds open were the old grid keeper's - four rounds a grid, each taking entries for six hours - and the duty publisher's
 // 90 s grids (40 an hour) start only where those end (DUTY_FROM_SLOT, 10-16 03:00Z). PAID_NB90_GRID=1 publishes ONE grid in the
 // duty's own Tick Tock shape - 90 s rounds, entry closing 45 s into each (the late join), the runner's game and core - from the
@@ -429,7 +429,7 @@ if (env.PAID_NB90_GRID === '1') {
   if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
   say({ nb90: 'asked', federation: fed.slice(0, 16), game: env.NB90_V3 === '1' ? toHex(NEXTBLOCK_V3.gameId).slice(0, 16) : 'the runner\'s', committeeTime: new Date(committee).toISOString(), firstStart: new Date(firstStart).toISOString(),
     until: new Date(until).toISOString(), slots });
-  // NB90_V3=1 (kanban #369): the grid is Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b, beside the
+  // NB90_V3=1: the grid is Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b, beside the
   // duty's day of version 2 (versions run parallel); it needs ARENA_PROTOCOL_VERSION=10 and seats whose census adverts name its game id
   const V3 = env.NB90_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
   const got = await round.openGrid({ ...CREATOR, fields: { ...V3, donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fed) }, stakeMsat },
@@ -441,7 +441,7 @@ if (env.PAID_NB90_GRID === '1') {
     firstStart: got.firstStart, lastClose: got.lastClose, posted: got.posted });
   process.exit(got.ok ? 0 : 1);
 }
-// PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
+// PAID ROCK PAPER SCISSORS ON DEMAND (2026-10-11, path B - "a grid published on demand: when a table
 // waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
 // read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
 // grid is published - one short series per table since 2026-10-12 (round-2of2.mjs openGrid): committee_time 45 min past
@@ -451,7 +451,7 @@ if (env.PAID_NB90_GRID === '1') {
 if (env.PAID_RPS_GRID === '1') {
   const slots = Number(env.RPS_GRID_SLOTS || 225), tables = Number(env.RPS_GRID_TABLES || 2);
   const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 120 * 60000);
-  // RPS_GRID_FEE_RATE (sat/vB, the owner 2026-10-12 "Mach das deutlich sparsamer"): under the wallet's 1 sat/vB down to the
+  // RPS_GRID_FEE_RATE (sat/vB, 2026-10-12 "Mach das deutlich sparsamer"): under the wallet's 1 sat/vB down to the
   // node's 0.1 - a block without the grid raises it (doubling, to RPS_GRID_MAX_FEE_RATE)
   const feeRate = Number(env.RPS_GRID_FEE_RATE || 1), maxFeeRate = Number(env.RPS_GRID_MAX_FEE_RATE || 4);
   // RPS_GRID_AFTER_MS: a grid already running when this keeper starts (its last close, ms) - the next one's first close comes
@@ -463,8 +463,8 @@ if (env.PAID_RPS_GRID === '1') {
     let wantAt = 0;
     try { wantAt = (await (await fetch(`http://${NODE_HOST}:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
     if (now1) { wantAt = Date.now(); now1 = false; }
-    // RPS_GRID_ALWAYS=1 (kanban #353, the owner 2026-10-13 ~21:45Z: paid rounds of all 3 games in both federations by 10:00): tables are kept
-    // published ahead whether or not a page asked - since pick (c) (kanban #293) an empty table makes no claim key and is seated once
+    // RPS_GRID_ALWAYS=1 (2026-10-13 ~21:45Z: paid rounds of all 3 games in both federations by 10:00): tables are kept
+    // published ahead whether or not a page asked - since pick (c) an empty table makes no claim key and is seated once
     if (env.RPS_GRID_ALWAYS === '1') wantAt = Date.now();
     if (Date.now() - wantAt > 180000 || lastCloseMs > Date.now() + aheadMs) return;
     busy = true;
@@ -474,11 +474,11 @@ if (env.PAID_RPS_GRID === '1') {
       // before the median passes it. On testnet4 the median runs ahead of the clock (74 min at 18:01Z), and a round starts
       // only after its committee time - so the first close is also at least 5 min past it (measured 17:54-17:59Z: with the
       // committee 60 min past a median 2 h ahead, every grid started before its committee time and none was published)
-      // RPS_GRID_COMMITTEE_LEAD_MS (kanban #293, measured 2026-10-12: testnet4's coinbase-only blocks move the median ~20 min each
+      // RPS_GRID_COMMITTEE_LEAD_MS (measured 2026-10-12: testnet4's coinbase-only blocks move the median ~20 min each
       // while a block that takes transactions came 2.5 h apart - grid 39101772 (committee 45 min out) saw its beacon before
       // its publication confirmed): how far past the tip's median the committee time is, so a real block has that long
       const committee = mtp + Number(env.RPS_GRID_COMMITTEE_LEAD_MS || 45 * 60000) + 500;
-      // AND A SHORT SERIES' LEAD (the owner 2026-10-12, S; series.js gridIsValid): the first start - 80 s before the first close -
+      // AND A SHORT SERIES' LEAD (2026-10-12, S; series.js gridIsValid): the first start - 80 s before the first close -
       // at least 45 min after the committee time
       const firstClose = Math.max(Date.now() + leadMs, committee + 45 * 60000 + 80000 + 1000, lastCloseMs + 8000);
       // THE DONATION SET IN FORCE AT THE GRID'S CENSUS HEIGHT, as every seat checks it (server.js donationSetFor; measured
@@ -493,7 +493,7 @@ if (env.PAID_RPS_GRID === '1') {
       const donationSetId = idOfDonationSet(forced.recipients);
       say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
       say({ rpsGrid: 'donation set', serial: String(forced.serial), id: toHex(donationSetId).slice(0, 16), censusHeight: round.contract.censusHeight });
-      // THE FEDERATION THIS GRID NAMES (§23A.3, kanban #324 step 2: "A seat opening a round names the OPEN federation with the
+      // THE FEDERATION THIS GRID NAMES (§23A.3,: "A seat opening a round names the OPEN federation with the
       // lowest load among those its own bond qualifies it to serve"): the seats' signed records (GET /federations), over the
       // federations this opener holds an invite for - its own, and ARENA_OTHER_FEDERATION_INVITES (comma-separated)
       const own = toHex(round.contract.federationId);
@@ -515,7 +515,7 @@ if (env.PAID_RPS_GRID === '1') {
   };
   look(); setInterval(look, 30000);
 }
-// TICK TOCK AS A 24 H GRID (kanban #353, the owner 2026-10-13 ~22:00Z: "Poste immer 24h Runden"): PAID_NEXTBLOCK_GRID=1 keeps one table of
+// TICK TOCK AS A 24 H GRID (2026-10-13 ~22:00Z: "Poste immer 24h Runden"): PAID_NEXTBLOCK_GRID=1 keeps one table of
 // NB_GRID_SLOTS (default 4: 24 h) rounds of the single rounds' own shape - NB_GRID_PERIOD_MS (default 6 h) apart, each open for
 // entries its whole period, so one closes as the next starts - published NB_GRID_AHEAD_MS (default 30 h) ahead in the runner's
 // own federation, game and core, each table right after the last (NB_GRID_AFTER_MS: a table already published, its last close).
@@ -551,7 +551,7 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
   };
   keep(); setInterval(keep, 60000);
 }
-// BITCOIN UP OR DOWN AS A GRID (kanban #348/#293, the owner 2026-10-13 "Ja": Up/Down rounds tonight in every federation - a daily
+// BITCOIN UP OR DOWN AS A GRID (2026-10-13 "Ja": Up/Down rounds tonight in every federation - a daily
 // series needs 24 h from its committee to its start; a grid needs 45 min): PAID_UPDOWN_GRID=1 publishes one table of
 // UPDOWN_GRID_SLOTS (default 96, 24 h) 15-minute windows on the UTC grid - each round's entries close at its start, its window
 // the 15 min before (attested.js marketWindowOf) - on the lowest-load OPEN federation this opener serves, its locks lasting
@@ -603,7 +603,7 @@ if (env.PAID_UPDOWN_GRID === '1') {
   };
   keep(); setInterval(keep, 60000);
 }
-// PAID ROCK PAPER SCISSORS BACK TO BACK (kanban #293, the owner 2026-10-10: head-to-head needs no series, and a paid round is
+// PAID ROCK PAPER SCISSORS BACK TO BACK (2026-10-10: head-to-head needs no series, and a paid round is
 // still paid - 100 sats as Tick Tock's): PAID_RPS=1 keeps a paying RPS round closing every 8 s, published ahead, at this
 // runner's stake and custody (ARENA_PUBLISH_AHEAD=1 in this runner's environment)
 if (env.PAID_RPS === '1')

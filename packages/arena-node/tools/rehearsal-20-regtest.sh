@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# FEDERATION.md REHEARSAL 20, A FOUNDING BY SORTITION ON REGTEST (§23A.2, kanban #320): a private bitcoind and six fedimintd in setup
+# FEDERATION.md REHEARSAL 20, A FOUNDING BY SORTITION ON REGTEST (§23A.2): a private bitcoind and six fedimintd in setup
 # mode, then tools/rehearsal-20.mjs - the six seats' founding.js draws four, the silent one is replaced by an alternate after
 # founding_window, the four seated run the DKG and the federation answers. Heavy (6 fedimintd): the test host load rule applies.
 #   FEDIMINT_BIN=<fork bin dir> bash tools/rehearsal-20-regtest.sh

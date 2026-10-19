@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE WRITES EVERY ROUND OF THE NEXT 72 HOURS (the owner 2026-09-28 11:31, NODE72-1131 / HORIZON72-1131: "the node
+// THE NODE WRITES EVERY ROUND OF THE NEXT 72 HOURS (2026-09-28 11:31, NODE72-1131 / HORIZON72-1131: "the node
 // writes and lists every round for the next 72 hours. A 48-hour window is not enough").
 //
 // A series (arena-protocol/src/series.js) fixes every one of its rounds; this is the node putting them in its round store
@@ -14,7 +14,7 @@ import { pluginForRound } from './plugins.js';
 import { seriesPeriodFits } from '../../arena-protocol/src/manifest.js';
 
 export const SERIES_HORIZON_MS = SERIES_WRITE_AHEAD_MS;       // 72 h on every network (TN24-1405)
-// A GRID'S ROUNDS ARE WRITTEN 3 h AHEAD, not 72 h (kanban #293, the owner 2026-10-12: a grid now runs 24 h - 21,600 rounds of 8 s
+// A GRID'S ROUNDS ARE WRITTEN 3 h AHEAD, not 72 h (2026-10-12: a grid now runs 24 h - 21,600 rounds of 8 s
 // across its two tables; a seat opens and assigns them as the clock reaches them, not all at once)
 export const GRID_HORIZON_MS = 3n * 3600n * 1000n;
 
@@ -28,7 +28,7 @@ export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZO
   if (!lead.ok) throw new Error(`series refused: ${lead.why}`);
   // AND ITS RUN FITS ITS SLOT (the 82/90 fork): on a core that takes the round's run length, at most 82 s of 90.
   const runs = round && round.plugins ? pluginForRound(template, round.plugins) : null;
-  // AND ITS GAME'S round_period (kanban #202; a market's own, #236/#237)
+  // AND ITS GAME'S round_period (a market's own, /#237)
   if (runs && runs.ok) {
     const period = seriesPeriodFits(runs.plugin.manifest);
     if (!period.ok) throw new Error(`series refused: ${period.why}`);
@@ -36,7 +36,7 @@ export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZO
     // wherever the node reads this series (series.js periodOf); a 90 s game's series is exactly what it was
     if (period.periodMs !== 90000n) template.seriesPeriodMs = period.periodMs;
   }
-  // NOT A GRID'S (kanban #293, the owner 2026-10-12): its rounds overlap by design - an 8 s grid of 80 s entry windows - and
+  // NOT A GRID'S (2026-10-12): its rounds overlap by design - an 8 s grid of 80 s entry windows - and
   // its rule is its own entry window (series.js gridIsValid), not the 90 s grid's slot
   if (runs && runs.ok && runs.core && !Number.isInteger(runs.core.fixedRunTicks) && !isGridSeries(template)) {
     const fits = seriesRunFits(template);
@@ -58,7 +58,7 @@ export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZO
       if (written.has(i)) continue;
       if (Date.now() >= untilMs) { writer.more = true; break; }
       const c = seriesRound(template, i);
-      // A ROUND THE STORE HOLDS ALREADY IS NOT OPENED AGAIN (kanban #468 item 4, measured on seat 2's start 2026-10-18 07:51Z: every
+      // A ROUND THE STORE HOLDS ALREADY IS NOT OPENED AGAIN (measured on seat 2's start 2026-10-18 07:51Z: every
       // start re-opened the ~4,500 rounds of its 72 h - each checked against its core's run length in the core's sandbox - and the
       // loop was held 6.4 s in 17 slices): it was checked when it was first opened, and is only remembered as written
       const known = typeof round.has === 'function' ? roundId(c) : null;

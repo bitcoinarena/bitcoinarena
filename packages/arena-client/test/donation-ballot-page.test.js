@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SET ITS DEVELOPERS APPROVED, CHECKED BY THE PAGE ITSELF (§27A.4.1, kanban #382): the nodes serve the admin key's set it
+// A SET ITS DEVELOPERS APPROVED, CHECKED BY THE PAGE ITSELF (§27A.4.1): the nodes serve the admin key's set it
 // replaces and the ballots since; the page pays the approved split only when the approvals it was handed make it the set in
 // force at the round's height - and refuses a ballot without enough approvals, or with a forged one.
 import test from 'node:test';

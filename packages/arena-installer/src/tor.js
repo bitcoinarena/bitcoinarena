@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// TOR FOR THE NODE'S LIGHTNING (kanban #471, the owner 2026-10-18: "find a way to connect to it via a tunnel" / "connect via tor to the
+// TOR FOR THE NODE'S LIGHTNING (2026-10-18: "find a way to connect to it via a tunnel" / "connect via tor to the
 // other nodes as well"): Lightning peers speak their own protocol over TCP, which no web tunnel carries, and most nodes take no
 // connection (no open port, a dynamic address). So the node runs Tor and its LND runs hybrid: a permanent onion address others dial,
 // clearnet peers still dialled directly. The federation's channel ring and the gateway's outside channel reach every node this way.
@@ -43,7 +43,7 @@ export function writeTorrc({ home, ports = TOR_PORTS }) {
   const dir = join(home, 'tor');
   mkdirSync(join(dir, 'data'), { recursive: true, mode: 0o700 });
   const file = join(dir, 'torrc');
-  writeFileSync(file, ['# The Arena node\'s Tor (kanban #471), written by the installer: LND dials and is dialled through it.',
+  writeFileSync(file, ['# The Arena node\'s Tor, written by the installer: LND dials and is dialled through it.',
     `SocksPort 127.0.0.1:${ports.socks}`, `ControlPort 127.0.0.1:${ports.control}`, 'CookieAuthentication 1',
     `DataDirectory ${join(dir, 'data')}`, ''].join('\n'), { mode: 0o600 });
   return file;

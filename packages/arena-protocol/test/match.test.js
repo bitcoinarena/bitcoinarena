@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SCORE ACROSS ROUNDS (kanban #280): the step rule - a win adds one, a draw nothing, a round not played ends the match -
+// A SCORE ACROSS ROUNDS: the step rule - a win adds one, a draw nothing, a round not played ends the match -
 // and the bytes a proof and a record are signed over.
 import test from 'node:test';
 import assert from 'node:assert/strict';

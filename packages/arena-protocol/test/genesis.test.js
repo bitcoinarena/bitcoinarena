@@ -44,7 +44,7 @@ test('test nets use 2-of-2, one confirmation, 100-block maturity, bitcoin block 
   assert.deepEqual(g.bondMarker, bondMarker('testnet'));
 });
 
-// THE FOUNDING CONFIG STAYS THE NETWORK'S, AND THE CURRENT CORE'S ROUNDS NAME THEIR OWN (the owner 2026-10-04, fix 1 of the
+// THE FOUNDING CONFIG STAYS THE NETWORK'S, AND THE CURRENT CORE'S ROUNDS NAME THEIR OWN (2026-10-04, fix 1 of the
 // spec audit; §27A.6 "a round is bound to the config it was created under"). The founding hash is the pinned one and the
 // network ids above do not move; the current config is versioned, hashed from the current core's own constants, and names
 // what the founding encoding cannot - par, the time bounds and the cargo rule.

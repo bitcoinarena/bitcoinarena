@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEATS' MARKET ORDER BOOK (kanban #278, step 4 + comment 1127; the owner 2026-10-09: "Order batches alle 1s, wenn möglich
+// THE SEATS' MARKET ORDER BOOK (step 4 + comment 1127; 2026-10-09: "Order batches alle 1s, wenn möglich
 // alle 0.5s", and "(a)").
 //
 //   AN ORDER IS AN ENTRY with a limit price (contracts.js ORDER_MARKER). The player locks first - its stake lock is its budget
@@ -44,7 +44,7 @@ const isHex = (s, n) => typeof s === 'string' && s.length === 2 * n && /^[0-9a-f
 const isOrder = (e) => e && e.limitPrice !== undefined && e.limitPrice !== null;
 
 /**
- * A MARKET'S RATES AT ONE ROUND (kanban #462): one that pays the protocol reserve (its terms name one, #454) at the market rates of the
+ * A MARKET'S RATES AT ONE ROUND: one that pays the protocol reserve (its terms name one) at the market rates of the
  * fee set in force there (`fees`, fee-proposal.js marketBps); any other at its own terms. The website share is the set's. Answers
  * { feeBps, nodeBps, donationBps, reserveBps, websitePct? } - feeBps the whole rate an order's fee lock holds.
  */
@@ -60,8 +60,8 @@ export function marketRates(manifest, fees = null) {
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null } = {}) {
     this.round = round;
-    // THE FEES IN FORCE AT A ROUND (kanban #462): `feesFor(contract)` -> the fee set at its census height (server.js, funding-book.js
-    // feesAt). A market that pays the protocol reserve (its terms name one, #454) trades at that set's market rates
+    // THE FEES IN FORCE AT A ROUND: `feesFor(contract)` -> the fee set at its census height (server.js, funding-book.js
+    // feesAt). A market that pays the protocol reserve (its terms name one) trades at that set's market rates
     this.feesFor = feesFor;
     this.plugins = plugins;
     this.peersFor = peersFor;
@@ -78,9 +78,9 @@ export class OrderBook {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.plugins);
     if (!found.ok || !found.attested) return refuse('that round is not a market this node hosts');
-    // a round of a template counts its own outcomes (kanban #362 feature 5)
+    // a round of a template counts its own outcomes (feature 5)
     if ((marketOfRound(found.plugin.manifest, contract).outcomes || []).length !== 2) return refuse('the order book trades a two-outcome market (Up / Down)');
-    // A SCALAR MARKET'S BOOK (kanban #362, §0A.7e): its two sides trade as any two outcomes do; at resolution a LONG share is worth
+    // A SCALAR MARKET'S BOOK (§0A.7e): its two sides trade as any two outcomes do; at resolution a LONG share is worth
     // (V - low) / (high - low) of a sat and a SHORT share the rest (book-ledger.js bookSettlement `scalar`)
     const m = found.plugin.manifest;
     return { ok: true, contract, manifest: m, ...marketRates(m, typeof this.feesFor === 'function' ? this.feesFor(contract) : null),
@@ -482,7 +482,7 @@ export class OrderBook {
     return { book: true, filled: positionFilled(p), cancelled: !!(p && p.cancelled), inPending };
   }
 
-  /** GET /market-rounds (kanban #452): the rounds that took orders here since `sinceMs` (at most 2 days back), newest first, at
+  /** GET /market-rounds: the rounds that took orders here since `sinceMs` (at most 2 days back), newest first, at
    *  most 200 - where a player's own orders are read back from after a reload, open or closed. Ids only: each round's contract
    *  is fetched by its id and hashes to it. */
   recentRounds(sinceMs, nowMs = Date.now()) {

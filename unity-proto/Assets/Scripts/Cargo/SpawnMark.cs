@@ -52,7 +52,7 @@ public class SpawnMark : MonoBehaviour
         // comes back.
         bool held = truck.controlsLocked || (loadout != null && loadout.IsOpen);
 
-        // IN ITS BAY IS A TWO-DIMENSIONAL QUESTION, BECAUSE THE CORE'S IS (the owner 2026-09-16).
+        // IN ITS BAY IS A TWO-DIMENSIONAL QUESTION, BECAUSE THE CORE'S IS (2026-09-16).
         //
         // This used to measure a THREE-dimensional distance against a mark whose height moves with the
         // ground. The core's rule is two-dimensional: `BlwpCore.Teleport` takes x and z and drops y,

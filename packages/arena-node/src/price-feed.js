@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE'S PRICE FEED (§11, kanban #311): "the committee nodes publish one attested sample every 5 s of round time
+// THE COMMITTEE'S PRICE FEED (§11): "the committee nodes publish one attested sample every 5 s of round time
 // from the contract's named feed - and, with the first, the 64 samples before start_time from the feed's history ... The
 // player never chooses the price; he can only replay it or not play."
 //
@@ -20,12 +20,12 @@
 //   THE ENDS. A round's result is made from two samples only: sample 0 (its open) and the last sample at or before its last tick
 //         (its close, closeSampleK). Every seat that keeps one of them also writes it to its database, so a restart keeps it; a
 //         seat that lacks one at the end asks the committee for it (GET /price-samples?ks=) and keeps it once it stands
-//         (measured on testnet4 2026-10-14, kanban #312: the samples lived in memory only, every seat of a 6 h Tick Tock round
+//         (measured on testnet4 2026-10-14,: the samples lived in memory only, every seat of a 6 h Tick Tock round
 //         had restarted during it, and each held a different first sample - 2151, 2175, 2190 ... - so no two would have signed
 //         the same open).
 // What a client does with them (the batch carries each attested sample at its tick; a run with none is SIM) is slice 2.
 //
-// PROTOCOL 5 - THE MEDIAN OF SIGNED READINGS (kanban #312, RULED the owner 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
+// PROTOCOL 5 - THE MEDIAN OF SIGNED READINGS (RULED 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
 // signs the price it read, and the sample is the median of five signed readings. Nobody proposes a price, so nobody chooses
 // BULLS, BEARS, or FLAT."). For a round whose OWN version is 5 or later (constants.js mediansPrices) - a round below keeps all
 // of the above unchanged:
@@ -57,7 +57,7 @@ export const SIGN_SLACK_MS = 15000;
 export const SERVE_AFTER_MS = 2500;
 /** Protocol 5: a seat short of an end's readings asks the committee again at most this often. */
 export const ASK_ENDS_EVERY_MS = 30000;
-// THE TOLERANCE, 0.05 % (kanban #312, RULED the owner 2026-10-14 ~21:50Z, interim D): at 0.5 % a seat signed any proposed price
+// THE TOLERANCE, 0.05 % (RULED 2026-10-14 ~21:50Z, interim D): at 0.5 % a seat signed any proposed price
 // within about +-$408 of its own reading - more than BTC moves in a run - so the seat that proposed a sample chose BULLS, BEARS
 // or FLAT (measured on rounds 6b51be20 / a45f2ae5: both ends the 15:36 close, $81,766.45, while the run traded $81,713-81,838).
 // 0.05 % (about +-$41) narrows that choice until protocol 5 signs each seat's own reading and takes the median; a sample whose
@@ -79,7 +79,7 @@ export function closeSampleK(endTick) {
 }
 
 /**
- * BTC/USD FROM COINBASE'S EXCHANGE TICKER, WITH ITS TIME (kanban #312 interim B): the last trade's price and when it traded -
+ * BTC/USD FROM COINBASE'S EXCHANGE TICKER, WITH ITS TIME (interim B): the last trade's price and when it traded -
  * real time, where the consumer spot price (below) is cached and trailed the exchange by 5-20 s (measured 2026-10-14 21:41Z).
  * Answers { cents, atMs }.
  */
@@ -121,7 +121,7 @@ export class PriceFeed {
     this.samples = new Map();    // round hex -> Map(k -> { tick, priceCents, sigs })
     this.tapes = new Map();      // round hex -> { tick, prices, sigs }
     this.signed = new Map();     // `${round}:${k}` -> price this seat signed (one price per sample)
-    // PROTOCOL 5 (kanban #312): the committee's own signed readings
+    // PROTOCOL 5: the committee's own signed readings
     this.heard = new Map();      // round hex -> Map(k -> Map(key hex -> [{ priceCents, signature }] - two only from a key that read twice))
     this.heardTapes = new Map(); // round hex -> Map(key hex -> [{ prices, signature }])
     this.mine = new Map();       // `${round}:${k}` / `${round}:tape` -> the reading this seat signed (one each)
@@ -152,7 +152,7 @@ export class PriceFeed {
   }
 
   /**
-   * This seat's own reading for the moment `ms`, or null. NEVER OLDER THAN ONE PERIOD (kanban #312 interim C): only a reading
+   * This seat's own reading for the moment `ms`, or null. NEVER OLDER THAN ONE PERIOD (interim C): only a reading
    * whose price was current within EVERY (5 s) of `ms` counts - the nearest such - so no stale price is vouched for; a seat
    * without one signs nothing for that moment.
    */
@@ -176,7 +176,7 @@ export class PriceFeed {
     try { got = await this.readPrice(); } catch { got = null; }
     // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade)
     const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs) } : null;
-    // a price already older than one period when it is read is no reading (kanban #312 interim C)
+    // a price already older than one period when it is read is no reading (interim C)
     const c = r && r.cents > 0 && Number.isFinite(r.atMs) && now - r.atMs <= EVERY ? r.cents : null;
     if (c !== null) this.readings.set(at, { cents: c, atMs: Math.min(r.atMs, now) });
     for (const k of [...this.readings.keys()].sort((a, b) => a - b).slice(0, Math.max(0, this.readings.size - 128))) this.readings.delete(k);
@@ -275,7 +275,7 @@ export class PriceFeed {
   }
 
   /**
-   * GET /round-result?round=: WHO WON THE ROUND (§13 RoundResult, kanban #312) - once its run has ended, the result this seat
+   * GET /round-result?round=: WHO WON THE ROUND (§13 RoundResult) - once its run has ended, the result this seat
    * makes from the round's two ends: sample 0 is the open, the closing sample (closeSampleK) the close. A seat that lacks one
    * asks the committee for it; without both it signs nothing, so no seat signs an open or close of its own choosing. Signed with
    * its node key; a client takes it when the committee's threshold signed the same result (round-result.js roundResultStands).
@@ -345,7 +345,7 @@ export class PriceFeed {
     const start = Number(c.contract.startTimeMs);
     const prices = [];
     for (let i = 0; i < PRICE_TAPE_LENGTH; i++) prices.push(this.ownAt(start - (PRICE_TAPE_LENGTH - i) * EVERY));
-    // A MOMENT THIS SEAT DID NOT READ STAYS UNREAD (kanban #312 interim C): it is not filled with an older price - the tape goes
+    // A MOMENT THIS SEAT DID NOT READ STAYS UNREAD (interim C): it is not filled with an older price - the tape goes
     // out only when this seat read every moment; the other seats vouch for the moments they read (sign: at least half)
     if (prices.some((p) => p === null)) return refuse('this seat did not read every moment before the start, and fills none with an older price');
     const own = this.sign({ round: rh, kind: 'tape', prices }); if (!own.ok) return own;
@@ -357,7 +357,7 @@ export class PriceFeed {
   }
 
   /**
-   * THE OPEN PRICE ROUNDS, EACH CONTRACT DECODED ONCE (the owner 2026-10-15: "Do everything you can to lower the load"; profiled on
+   * THE OPEN PRICE ROUNDS, EACH CONTRACT DECODED ONCE (2026-10-15: "Do everything you can to lower the load"; profiled on
    * a testnet4 seat: the beat was 13.8 % of its main thread - every 5 s it read every open round's contract out of the store and
    * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). A round's contract never
    * changes: the open ids are read (no contract), a round seen for the first time is decoded once and remembered as a price round
@@ -405,7 +405,7 @@ export class PriceFeed {
   }
 
   // ------------------------------------------------------------------------------------------------------------------------
-  // PROTOCOL 5: THE MEDIAN OF SIGNED READINGS (kanban #312)
+  // PROTOCOL 5: THE MEDIAN OF SIGNED READINGS
 
   /** The round's contract facts when it is held, a price round and of protocol 5 - else null. */
   #median(roundHex) {

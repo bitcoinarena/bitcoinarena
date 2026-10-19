@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A REFUSED JOIN NEVER BECOMES "JOINED" (kanban #191, measured live 2026-10-06 05:31Z on core 0.0.2805): PLAY on round
+// A REFUSED JOIN NEVER BECOMES "JOINED" (measured live 2026-10-06 05:31Z on core 0.0.2805): PLAY on round
 // 49a50535, its hold to the round's start already set; the session refusal then marked the join refused
 // (BLWP_REFUSED_JOIN) but did not cancel it, and at the start the hold's release set it 'joined' with the refusal still as
 // its why - Unity started a run on a round with no session and the tab stopped answering. index.html's BLWP_REFUSED_JOIN and
@@ -51,7 +51,7 @@ test('the hold\'s release asks BLWP_JOIN_GOES_ON before it sets "joined"; the jo
   assert.match(answer, /if \(join\.cancelled\) \{[^]*: dropped'\);\s*return;/, 'the join\'s answer does not drop a cancelled join');
 });
 
-// AND A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED BEFORE ANY LOCK (kanban #191): the donation-set step of
+// AND A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED BEFORE ANY LOCK: the donation-set step of
 // the join refuses on "donation set in force" and returns, ahead of BLWPCLIENT.lockStake.
 test('the join refuses on "donation set in force" at its donation-set step, before the stake lock', () => {
   const step = PAGE.indexOf("const ds = await joinStep('fetchDonationSet'");
@@ -64,7 +64,7 @@ test('the join refuses on "donation set in force" at its donation-set step, befo
   assert.match(branch, /return;/);
 });
 
-// THE TAB NEVER FREEZES ON A REFUSED JOIN (kanban #191, measured live 2026-10-06 11:32:15Z on 0.0.2813, round dad75338, and at
+// THE TAB NEVER FREEZES ON A REFUSED JOIN (measured live 2026-10-06 11:32:15Z on 0.0.2813, round dad75338, and at
 // 05:31Z / 08:02Z before): ~2 min after the refusal the session's socket - opened beside the entry - dropped; the jslib's
 // onDrop called net.client.reconnect with net.client already null (the session-error path nulled it without closing the
 // client): "TypeError: Cannot read properties of null (reading 'reconnect')"; Unity's loader then ran its error handler, whose

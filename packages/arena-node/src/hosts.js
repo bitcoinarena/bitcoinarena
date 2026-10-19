@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT THIS NODE HOSTS (the owner 2026-10-03 22:50, plan accepted 2026-10-04): node 1 hosts gateway A and LND 1, node 2 gateway
+// WHAT THIS NODE HOSTS (2026-10-03 22:50, plan accepted 2026-10-04): node 1 hosts gateway A and LND 1, node 2 gateway
 // B and LND 2, nodes 3-7 neither. A node that hosts them shows them on its own /dashboard, read here - read-only, from this
 // machine: the LND over its own loopback REST API with its READ-ONLY macaroon (getinfo, channel balance, forwarding
 // history, payments - not lncli, which cannot run inside the seats' `unshare -r` namespace: measured 2026-10-03 23:31Z, it

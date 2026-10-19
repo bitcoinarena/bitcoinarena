@@ -50,7 +50,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const RANDOMNESS = b32(0x9b);
 const session = ed25519.utils.randomSecretKey();
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
-// THE FIXTURE'S OWN WORLD, RE-MEASURED AGAIN (the owner 2026-09-16). These tests are about a run that
+// THE FIXTURE'S OWN WORLD, RE-MEASURED AGAIN (2026-09-16). These tests are about a run that
 // came to nothing, and the world secret is the fixture's to choose. b32(0x16) chose one where the
 // drive was WRECKED at tick 547 for a score of 128 - by armour that drove onto the truck. Armour
 // now holds about 28 m off it, so nothing rams: measured, that same drive is still LIVE at tick

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE 10% ON A KNOWN STAKE (kanban #205, §0A.8 and §22A, RULED the owner 2026-10-06/07): out of the stake the player chose,
+// THE 10% ON A KNOWN STAKE (§0A.8 and §22A, RULED 2026-10-06/07): out of the stake the player chose,
 // 5% to the nodes - mandatory, the entry's fee lock, three equal pools of 5/3 % (two halves when no guardian is eligible)
 // - and a donation of 0-5% (default 5%), half to the protocol devs (the network's set) and half to the game dev (the
 // game's set), one output per recipient when both sets name it. The rest, at least 90%, is the net stake.
@@ -50,7 +50,7 @@ test('on 100 000 000 msat: nodes 5 000 000 in thirds 1 666 666 / 1 666 666 / 1 6
   assert.deepEqual(split.game.map((s) => s.amountMsat), [2_500_000n]);
   assert.equal(net, 90_000_000n);
   assert.equal(fee + donation + net, stake);
-  // NO GUARDIAN ELIGIBLE: two halves of the 5%, nothing left unallocated (the owner 2026-10-07)
+  // NO GUARDIAN ELIGIBLE: two halves of the 5%, nothing left unallocated (2026-10-07)
   const two = tableOn(stake, { [GAME_VERIFY]: seats[GAME_VERIFY], [SETTLEMENT]: seats[SETTLEMENT], [GUARDIAN]: [] });
   assert.deepEqual([two.pools[GAME_VERIFY], two.pools[SETTLEMENT], two.pools[GUARDIAN], two.unallocated], [2_500_000n, 2_500_000n, 0n, 0n]);
 });

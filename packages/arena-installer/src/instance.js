@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// SEVERAL NODES ON ONE MACHINE (kanban #495, the owner 2026-10-18: "3 macOS os native nodes newly installed via the installer"). The
+// SEVERAL NODES ON ONE MACHINE (2026-10-18: "3 macOS os native nodes newly installed via the installer"). The
 // installer assumed one node per machine: fixed service names (arena-node.service, io.bitcoin-arena.node, the task "Arena node")
 // and fixed ports (LND 9735/10009/10080, the gateway 8476, Tor 19050/19051, the seat 8470, the chain bridge 8471, the liquidity
 // provider 8477, the wizard 7800), so a second node overwrote the first one's services and collided on every port.
 //   instance=<name>      a-z0-9, at most 12: every service of this node is named apart - arena-node--<name>.service,
 //                        io.bitcoin-arena.node--<name>, "Arena node <name>" - the double dash keeps names like arena-chain-bridge apart
 //   port_offset=<n>      0..20000: added to every fixed port above
-// Both are read from the node's arena.conf (kanban #499: every setting in that file) - the home is the command's --home, else
+// Both are read from the node's arena.conf (every setting in that file) - the home is the command's --home, else
 // ARENA_HOME, else ~/.arena-node - and, for a new node whose arena.conf the wizard has not written yet, from --instance / --port-offset
 // (or the older ARENA_INSTANCE / ARENA_PORT_OFFSET). Neither set: names and ports as before. Read once, when the program starts.
 import { readFileSync } from 'node:fs';

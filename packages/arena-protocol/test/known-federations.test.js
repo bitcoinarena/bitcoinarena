@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE KNOWN-GOOD FEDERATIONS (spec §23.6, kanban #318): the page's own list, like the known games - federation 337ae01a on
+// THE KNOWN-GOOD FEDERATIONS (spec §23.6): the page's own list, like the known games - federation 337ae01a on
 // testnet4 and the regtest test federation are on it, any other id is not. Adding one is a reviewed code change.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +21,7 @@ test('337ae01a on testnet4 and the regtest test federation are known, by hex or 
   assert.equal(Object.keys(KNOWN_GOOD_FEDERATIONS).length, 3);
 });
 
-test('federation B on testnet4 is known too (kanban #348): a deposit may go to the one with less funds', () => {
+test('federation B on testnet4 is known too: a deposit may go to the one with less funds', () => {
   assert.equal(federationIsKnown(TN4_B), true);
   assert.deepEqual(knownFederation(TN4_B), { name: 'Arena testnet4 B', network: 'testnet4', nominal: 7, threshold: 5 });
 });

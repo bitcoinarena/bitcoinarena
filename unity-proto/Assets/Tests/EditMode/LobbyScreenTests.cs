@@ -40,7 +40,7 @@ public class LobbyScreenTests
     static string Heights(DailyLobby.Frame f) => string.Join("/", System.Array.ConvertAll(f.howToCells, c => c.height.ToString("0.0")));
 
     /// <summary>
-    /// A PHONE UPRIGHT'S FOUR PAGES (the owner 2026-09-15, option B): panel i alone on page i, each
+    /// A PHONE UPRIGHT'S FOUR PAGES (2026-09-15, option B): panel i alone on page i, each
     /// taller than the same panel in the grid that screen had (`grid`), and 1 and 2 at least
     /// CarouselTaller x that grid's top row; the arrows a finger's size, in the box, on no panel
     /// and not on each other.
@@ -96,7 +96,7 @@ public class LobbyScreenTests
             // here; 1-2 over 3-4 on a portrait screen, one row on a desktop.
             Assert.IsNotNull(l.howToCells, $"no how-to panels {at}");
             Assert.AreEqual(4, l.howToCells.Length, $"not four how-to panels {at}");
-            // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57): panels on different pages
+            // A PHONE UPRIGHT TURNS PAGES (2026-09-15 11:57): panels on different pages
             // share the box, so only panels on the same page must keep clear of each other.
             bool portrait = css.y > css.x;
             Assert.IsFalse(l.howToCarousel && !portrait, $"a carousel on a screen that is not portrait {at}");
@@ -189,7 +189,7 @@ public class LobbyScreenTests
     }
 
     /// <summary>
-    /// PLAY JOINS A FREE ROUND FIRST (the owner 2026-09-15, the 12:54 lobby: one free round and one
+    /// PLAY JOINS A FREE ROUND FIRST (2026-09-15, the 12:54 lobby: one free round and one
     /// paying 2-of-2 open at once). The rows the Daily listed after its first rollover: the old
     /// free round about to close, the new free round, the paying round with the most entry left -
     /// all joinable. Measured before: PLAY picked the paying round, so a player with no sats who
@@ -218,7 +218,7 @@ public class LobbyScreenTests
     }
 
     /// <summary>
-    /// A PAYING ROW SAYS WHAT IT COSTS (the owner 2026-09-15 16:08: "Paid must read like 'PAID ·
+    /// A PAYING ROW SAYS WHAT IT COSTS (2026-09-15 16:08: "Paid must read like 'PAID ·
     /// 100 sats'"). Measured before: the live Daily's paying round (100000 msat) read
     /// "PAID · closes ... · 2 of 2 signer nodes" in every form. The stake is in every form the row is
     /// shortened to, from the page's own view row; a free row says FREE and no amount.
@@ -230,13 +230,13 @@ public class LobbyScreenTests
             + "{\"id\":\"5a343b8d00\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":993,\"joined\":1,\"stakeSats\":0},"
             + "{\"id\":\"eb1109af00\",\"free\":false,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":1000,\"joined\":0,\"stakeSats\":100}]}");
         Assert.IsNotNull(s, "the page's lobby view was not read");
-        // every form names the stake and the time; the first three the signer nodes too (the shorter ones are a phone's, kanban #8)
+        // every form names the stake and the time; the first three the signer nodes too (the shorter ones are a phone's)
         var paidForms = DailyLobby.RowWords(s.rows[1]);
         for (int i = 0; i < 3; i++) StringAssert.StartsWith("PAID · 100 sats · join until 16:40 · 2 signer nodes (2 needed)", paidForms[i]);
         foreach (var w in paidForms)
         {
             StringAssert.StartsWith("PAID · 100 sats · join until 16:40", w, "a form of the paying row does not say its stake");
-            // NEVER "SEAT" TO THE PLAYER (the owner 2026-09-15 16:22).
+            // NEVER "SEAT" TO THE PLAYER (2026-09-15 16:22).
             StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
         }
         foreach (var w in DailyLobby.RowWords(s.rows[0]))
@@ -251,7 +251,7 @@ public class LobbyScreenTests
     }
 
     /// <summary>
-    /// THE ROW NEVER READS AS A ROUND LENGTH (kanban #43, the owner 2026-10-04 11:25Z: "PAID · 100 sats · closes 1:57 · 7 of 5
+    /// THE ROW NEVER READS AS A ROUND LENGTH (2026-10-04 11:25Z: "PAID · 100 sats · closes 1:57 · 7 of 5
     /// signer nodes" - how can that be a 90 s round?). The countdown was the ENTRY close of a round not yet started. The row
     /// says when the round starts and until when it can be joined, from the page's own fields; "7 signer nodes (5 needed)".
     /// </summary>
@@ -286,7 +286,7 @@ public class LobbyScreenTests
     }
 
     /// <summary>
-    /// PLAY STARTS THE ROUND, IN THIS PAGE (M3.3-34, the owner 2026-09-13 07:11:
+    /// PLAY STARTS THE ROUND, IN THIS PAGE (M3.3-34, 2026-09-13 07:11:
     /// "after PLAY the loading screen must not come again"). The page takes the
     /// signer node without a reload and says so; the round starts once the page says
     /// joined and the session is open - or after the patience without one - and
@@ -316,7 +316,7 @@ public class LobbyScreenTests
     }
 
     /// <summary>
-    /// A WITHDRAWAL AVAILABLE, SAID IN THE LOBBY AFTER START (the owner 2026-09-14): the page looks
+    /// A WITHDRAWAL AVAILABLE, SAID IN THE LOBBY AFTER START (2026-09-14): the page looks
     /// at every kept round and hands the lobby what one still owes; the lobby says so with the
     /// amount until it is withdrawn, and says where when another tab of the browser holds it.
     /// </summary>

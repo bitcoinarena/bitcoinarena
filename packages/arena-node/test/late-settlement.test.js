@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LATE LOSER'S SECOND SETTLEMENT (§13A; RULED the owner 2026-09-24, slice C3b-1).
+// A LATE LOSER'S SECOND SETTLEMENT (§13A; RULED 2026-09-24, slice C3b-1).
 //
 // The round's one settlement leaves out an entry still in its re-run window (C3a). When that entry then ends FINAL and
 // FAILED, or FORFEIT, its lock is claimed in a second transaction of its own - one per (round, entry) - and its net
@@ -102,11 +102,11 @@ async function claimedLate(outcome) {
     assert.equal(facts.lateLockGone, true);
     assert.deepEqual(facts.stakeClaims, [key(late.outpoint)]);
     assert.deepEqual(facts.feeClaims, [key(late.feeOutpoint)], 'the late fee lock was not claimed with it');
-    // WINNINGS-AUTO (RULED the owner 2026-10-01): the late share is a payout contract to the first winner's own lock key
+    // WINNINGS-AUTO (RULED 2026-10-01): the late share is a payout contract to the first winner's own lock key
     // (C3b-1), redeemed into its federation wallet - never a send (C3b-2a withdrawn); no late send row anywhere.
     assert.deepEqual(facts.winnerPaid, want.payouts.map((p) => [toHex(refundKeyOf(won.entry.playerPubkey)), p.msat]));
     assert.deepEqual(facts.winnerSent, [false], 'the late winner was paid by a send');
-    // the late entry's net stake - its stake less the 5% fee (kanban #205) - whole, on the zero-fee federation
+    // the late entry's net stake - its stake less the 5% fee - whole, on the zero-fee federation
     assert.equal(want.payouts[0].msat, late.entry.stakeMsat - entryFeeMsat(late.entry.stakeMsat), 'the late payout on the zero-fee federation is not the whole net stake');
     assert.deepEqual([w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid).length), [0, 0], 'a late send was planned');
     assert.ok(facts.signerNodePayouts > 0, 'the late fee lock paid no signer node');
@@ -170,7 +170,7 @@ test('a late DELIVERED qualifier is in no second transaction: its stake comes ba
   } finally { await w.close(); }
 });
 
-// `finalityOf` IS A SERVE TEST AID ONLY (RULED the owner 2026-09-24): in arena-node/src it is server.js's option, defaulting to
+// `finalityOf` IS A SERVE TEST AID ONLY (RULED 2026-09-24): in arena-node/src it is server.js's option, defaulting to
 // resultFinality, handed only to the LockSettlement it makes; LockSettlement's own option defaults to resultFinality too;
 // main.js - the daemon - never names it, and no other source passes one. A SOURCE-LEVEL PIN, named as such.
 test('finalityOf is an option only of server.js and settlement.js, each defaulting to resultFinality, and never named by main.js', () => {

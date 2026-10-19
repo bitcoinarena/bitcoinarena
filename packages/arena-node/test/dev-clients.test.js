@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S OWN DEV CLIENTS (kanban #358): set up from the owner page with a new or an imported key, run as children, a withdrawal
+// THE NODE'S OWN DEV CLIENTS: set up from the owner page with a new or an imported key, run as children, a withdrawal
 // left for the client, removal that keeps the key - and each donation split into the protocol developers' part and its game's part.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,7 +103,7 @@ test('labels become directory names', () => {
   assert.equal(slugOf('../../etc'), 'etc');
 });
 
-test('a dev key\'s earnings by period: today, this week from Monday, this month, this year, all time, and day by day (kanban #382)', () => {
+test('a dev key\'s earnings by period: today, this week from Monday, this month, this year, all time, and day by day', () => {
   // Thursday 2026-10-15 12:00Z; the week began Monday 10-12
   const nowMs = Date.UTC(2026, 9, 15, 12);
   const at = (y, m, d, h = 10) => Date.UTC(y, m - 1, d, h);

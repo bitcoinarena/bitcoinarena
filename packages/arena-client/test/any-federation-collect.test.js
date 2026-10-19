@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// 2026.0.3 STEP 7 - THE WINNER COLLECTS IN EVERY FEDERATION THAT PAID IT (kanban #348). A round that takes any federation settles one
+// 2026.0.3 STEP 7 - THE WINNER COLLECTS IN EVERY FEDERATION THAT PAID IT. A round that takes any federation settles one
 // transaction per federation; the seats list each with what it paid (/lock-settlement `federations`). The page refunds each payout
 // contract to its key into the player's wallet of THAT federation, notes each, and a reload asks only for what is left.
 import { test } from 'node:test';

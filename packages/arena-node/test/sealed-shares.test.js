@@ -9,7 +9,7 @@
 // use this file as it stands"), and the hold invoice made it true.
 //
 // What is measured here is the closing number: a stranger opens ZERO.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';

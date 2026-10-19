@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PLAYER'S WINNINGS LIST, AS THE ROUNDS PAGE DRAWS IT (kanban #187 item 6, plan comment 298, Go 2026-10-05). The script
+// THE PLAYER'S WINNINGS LIST, AS THE ROUNDS PAGE DRAWS IT (plan comment 298, Go 2026-10-05). The script
 // of pages/rounds.html runs as it is, on a small fake page (no jsdom, by decision): elements by id that keep their HTML,
 // and the finished cards found again from the data-id the script writes, each with its accordion and head button. fetch is
 // faked with an api/rounds and an api/round-result answer. What is measured: sats formatted, players sorted by wonMsat then

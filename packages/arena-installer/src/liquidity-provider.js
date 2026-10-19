@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LIQUIDITY PROVIDER SERVICE (spec §23A.10, kanban #494; the owner 2026-10-18: "This service alone listens to new nodes and creates
+// THE LIQUIDITY PROVIDER SERVICE (spec §23A.102026-10-18: "This service alone listens to new nodes and creates
 // incoming liquidity for them ... at least one connection to each node, maximum 2 ... needs to communicate with other nodes who opens
 // liquidity to a new node"). Every tick:
 //   1. its own LND: the channels it gave (open and pending - a pending open already counts, so no other provider doubles it) and its
@@ -79,7 +79,7 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
   let queue = Promise.resolve();
   const serial = (fn) => (queue = queue.then(fn, fn));
   /**
-   * A NEW TOP-UP ADDRESS (the owner 2026-10-18: "a button generate a new address for the lp wallet"): LND makes one, it becomes the
+   * A NEW TOP-UP ADDRESS (2026-10-18: "a button generate a new address for the lp wallet"): LND makes one, it becomes the
    * claim's depositAddress at once (the claim re-signed and written), and the owner page and dashboard show it. Answers { ok, address }.
    */
   const newAddress = () => serial(async () => {

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Rock Paper Scissors, a head-to-head game on Bitcoin Arena (kanban #233): its decide adapter, plugin registration and web client.",
+  "description": "Rock Paper Scissors, a head-to-head game on Bitcoin Arena: its decide adapter, plugin registration and web client.",
   "scripts": {
     "test": "node --test --test-timeout=120000 test/*.test.js"
   }

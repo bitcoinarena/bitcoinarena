@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT EACH OUTCOME DOES TO ITS STAKE LOCK, AND WHAT IT TAKES TO DO IT (§23.1, §23.2 - the federation's custody, the one
-// this network has: §23.6, RULED the owner 2026-09-22 22:59).
+// this network has: §23.6, RULED 2026-09-22 22:59).
 //
 // A player's stake is a lock in the round's federation: LNv2's OutgoingContract, claimed by the preimage and the claim
 // key, forfeited by the claim key to the refund key, refunded after its expiry by the refund key alone. So a lock has
@@ -87,7 +87,7 @@ export function lockAction({
  * from the pool is their winnings on top. So the equality below is over SHARES and not over amounts: the table hands a
  * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
  */
-// `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound; kanban #362), or null for the rank curve.
+// `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound), or null for the rank curve.
 export function lockActions({ roundId, entries, minScore = 0, payoutShares = null }) {
   const table = computePayoutTable({ roundId, entries, minScore, payoutShares });
   const claims = new Set(table.settling);
@@ -106,7 +106,7 @@ export function lockActions({ roundId, entries, minScore = 0, payoutShares = nul
     return { entry: e, action, why: said.why };
   });
 
-  // A WALK-AWAY IS NEVER A REFUND, EVEN WITH NO QUALIFIER (RULED the owner 2026-09-30): an entry the signer node's own store
+  // A WALK-AWAY IS NEVER A REFUND, EVEN WITH NO QUALIFIER (RULED 2026-09-30): an entry the signer node's own store
   // holds FORFEIT AT THE DOOR (`atTheDoor`: §15, no first mark, or a first mark past the line) has its lock claimed
   // when nobody qualifies, and what it holds is the round's REMAINDER - split by the ruled remainder split, not handed
   // out by the table (lock-settlement.js). Every other loser keeps the no-qualifier expiry: nobody acts on its lock.

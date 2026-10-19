@@ -320,7 +320,7 @@ public class PostOfficeTests
     }
 
     /// <summary>
-    /// THE WHITEPAPER IS ON ITS PLAQUE, NOT OVER THE LOT (the owner 2026-09-18 22:16, photographed from spectate: "the
+    /// THE WHITEPAPER IS ON ITS PLAQUE, NOT OVER THE LOT (2026-09-18 22:16, photographed from spectate: "the
     /// Bitcoin whitepaper text on the MEMPOOL facade is TOO LARGE. It spills off the plaque").
     ///
     /// `TheLetteringFillsItsPlates` above could not catch this. It measures the text against the plate's renderer, and

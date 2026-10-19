@@ -3,7 +3,7 @@
 using UnityEngine;
 
 /// <summary>
-/// THE GAME'S NAME AND MARK IN UNITY (kanban #228, the owner 2026-10-06: "Tick Tock, Next Block"). The lobby's title bar and
+/// THE GAME'S NAME AND MARK IN UNITY (2026-10-06: "Tick Tock, Next Block"). The lobby's title bar and
 /// the result card draw them; the page carries the same mark (packages/nextblock/brand). The icon is the 192 px render
 /// of nextblock-icon.svg, loaded once from Resources.
 /// </summary>

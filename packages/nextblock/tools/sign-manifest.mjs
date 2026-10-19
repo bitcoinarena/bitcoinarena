@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NEXTBLOCK'S MANIFEST, SIGNED BY ITS DEVELOPER WITH THE DEV CLIENT (kanban #202, the owner 2026-10-07 15:40; moved here from
-// arena-donor/bin by #203: the body is nextblock's, so the step is the game's, and the engine imports no game). It calls the
+// NEXTBLOCK'S MANIFEST, SIGNED BY ITS DEVELOPER WITH THE DEV CLIENT (2026-10-07 15:40; moved here from
+// arena-donor/bin by: the body is nextblock's, so the step is the game's, and the engine imports no game). It calls the
 // dev client's signer (arena-donor/src/manifest-sign.js) with the game developer's key, held in the dev client's own
 // directory, and writes only public bytes - the body (with the public key) and the signature - into this package. Run by
 // the game's developer, never on a seat; a seat only verifies.
@@ -10,7 +10,7 @@
 //
 // The key is <dev dir>/game-dev.pkcs8 (Ed25519, PKCS#8 DER, mode 600). For nextblock the body is its registration's own
 // (core/plugin/truck-cores.js nextblockManifestBody): every installed core with its configs, the game's client files
-// (its core script and, since kanban #228, its mark: icons, wordmark, link preview) as arena-client/known-good-clients.json
+// (its core script and, since, its mark: icons, wordmark, link preview) as arena-client/known-good-clients.json
 // lists them for nextblock, and the donation set the testnet4 series name. Run it
 // again whenever a core, a config or a client of nextblock changes: an update is a new manifest (§0A.3), and
 // core/test/nextblock-manifest.test.js is red until the signed bytes are the registration's.

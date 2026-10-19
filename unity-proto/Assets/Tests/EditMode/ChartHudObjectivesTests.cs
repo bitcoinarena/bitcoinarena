@@ -7,7 +7,7 @@ using UnityEngine;
 using L = Blwp.Layout;
 
 /// <summary>
-/// THE CHART DRAWS THE CORE'S OBJECTIVES, AND ONLY THEM (kanban #29, WAR_TACTICS.md §4.11 and its §0 client row): HIGH, LOW and
+/// THE CHART DRAWS THE CORE'S OBJECTIVES, AND ONLY THEM (WAR_TACTICS.md §4.11 and its §0 client row): HIGH, LOW and
 /// OPEN at the points the core writes - its candle's centre and the seam over it - in the core's own words, read from
 /// packages/nextblock/test/fixtures/chart-objectives.json (chartView's GROUND view on the core this tree builds, written by
 /// packages/nextblock/tools/chart-objectives-fixture.mjs, never typed here). An absent OPEN draws nothing; one candle that is both

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
+// PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 12026-10-16: "a signed proposal names
 // purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
 // 15 % or more of the nodes that served a round in the last 432 blocks, after 1008 blocks"; signals are "signed messages kept and
 // passed on by the seats. Not on-chain signals. A signal weighs one per node and moves no money").
 //
-//     FundingProposal { network_id, author, published_height, amount_sats, lnurl, purpose }     signed by the author, anyone (the owner 2026-10-17)
+//     FundingProposal { network_id, author, published_height, amount_sats, lnurl, purpose }     signed by the author, anyone (2026-10-17)
 //     FundingComment  { proposal_id, parent_id, author, at_height, text }                       signed by its writer, anyone
 //     FundingSignal   { proposal_id, node, at_height }                                          signed by the node
 //
@@ -26,7 +26,7 @@ import { decodeFeeProposal, feeProposalId, decodeFeeApproval, feeApprovalId } fr
 import { decodeLeaderboardPayout, leaderboardPayoutId } from './leaderboard-payout.js';
 
 /** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
-// THE HIJACK DEFENCES, FIVE RULES (§27A.9.5, kanban #397, the owner 2026-10-17: "It needs to be more simple so people understand it" -
+// THE HIJACK DEFENCES, FIVE RULES (§27A.9.52026-10-17: "It needs to be more simple so people understand it" -
 // "Make it 3 months" - "older nodes ... can get a factor that increases their weight"; comment 2820, Go), in blocks:
 //   season          1  a bond votes (and a node signals) only if it is at least this old when the proposal is published (~3 months)
 //   lockAfterVote   1  ... and only if its CLTV maturity is at least this far past the vote's last block (~3 months)
@@ -47,7 +47,7 @@ export const FUNDING_CAP_WINDOW_PCT = 25n;      // rule 4: all payments of a win
 export const FUNDING_LARGE_PCT = 1n;            // rule 5: above this share of the reserves a payment goes out in tranches
 export const FUNDING_TRANCHES = 4;
 export const FUNDING_ACTIVE_WEEKS = 4, FUNDING_ACTIVE_WEEKS_NEEDED = 3;   // the signal's active node
-/** The vote's rule (§27A.9.3 stage 2, RULED the owner 2026-10-16): turnout of the snapshot's bonded capital, and YES of YES + NO. */
+/** The vote's rule (§27A.9.3 stage 2, RULED 2026-10-16): turnout of the snapshot's bonded capital, and YES of YES + NO. */
 export const FUNDING_TURNOUT_PCT = 30n;
 export const FUNDING_APPROVAL_PCT = 60n;
 export const FUNDING_SIGNAL_PCT = 15;
@@ -138,10 +138,10 @@ export function readSignedFunding(kind, bytes, verify) {
     else if (kind === 'comment') { obj = decodeFundingComment(body); id = fundingCommentId(obj); signer = obj.author; }
     else if (kind === 'signal') { obj = decodeFundingSignal(body); id = fundingSignalId(obj); signer = obj.node; }
     else if (kind === 'name') { obj = decodePlayerName(body); id = playerNameId(obj); signer = obj.player; }   // the forum's names (PIP)
-    // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER (kanban #462, fee-proposal.js): signed by its author, and by the developer
+    // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER (fee-proposal.js): signed by its author, and by the developer
     else if (kind === 'fee') { obj = decodeFeeProposal(body); id = feeProposalId(obj); signer = obj.author; }
     else if (kind === 'fee-approval') { obj = decodeFeeApproval(body); id = feeApprovalId(obj); signer = obj.dev; }
-    // A LEADERBOARD PAYOUT REQUEST (kanban #460, leaderboard-payout.js): signed by its author, anyone
+    // A LEADERBOARD PAYOUT REQUEST (leaderboard-payout.js): signed by its author, anyone
     else if (kind === 'leaderboard') { obj = decodeLeaderboardPayout(body); id = leaderboardPayoutId(obj); signer = obj.author; }
     else return { ok: false, why: 'a proposal, a comment, a signal, a name, a fee proposal or a fee approval' };
   } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
@@ -180,8 +180,8 @@ export function signalOutcome({ proposal, signals = [], active = null, tip, sche
 }
 
 /**
- * THE VOTE OF A PROPOSAL WHOSE SIGNAL PASSED (§27A.9.3 stage 2, kanban #397 slice 7): its period [signalEnd, signalEnd + vote) and
- * its last block; when a seat may decide it - that last block `decideDepth` deep, counting the block itself (as #329's tally:
+ * THE VOTE OF A PROPOSAL WHOSE SIGNAL PASSED (§27A.9.3 stage 2): its period [signalEnd, signalEnd + vote) and
+ * its last block; when a seat may decide it - that last block `decideDepth` deep, counting the block itself (as 's tally:
  * decided at tip >= last + depth - 1). A failed or open signal has no vote.
  */
 export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.spec }) {
@@ -192,7 +192,7 @@ export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.sp
 }
 
 /**
- * THE COUNT (§27A.9.3 stage 2), #329's vote read for a funding proposal: `census` the bonds active at the vote's start -
+ * THE COUNT (§27A.9.3 stage 2), 's vote read for a funding proposal: `census` the bonds active at the vote's start -
  * [{ pubkey, outpoint, bondSats }]; `votes` the "ARN" 'V' outputs found on chain - [{ payload, height, txid }]. A vote counts for every
  * bond whose key its signature verifies under, only inside [from, until); per bond outpoint the last by height wins, a tie inside one
  * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
@@ -221,7 +221,7 @@ export function fundingTally({ proposalId, census = [], votes = [], from, until,
   const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
   const decided = yes + no;
   const approved = decided > 0n && yes * 100n >= FUNDING_APPROVAL_PCT * decided;
-  // RULE 3 (the owner 2026-10-17, comment 2820): 60 % of the votes say YES, and YES is at least 20 % of everyone who could vote - the
+  // RULE 3 (2026-10-17, comment 2820): 60 % of the votes say YES, and YES is at least 20 % of everyone who could vote - the
   // 30 % turnout is gone, this asks real participation itself. `quorum` stays reported for the record
   const absolute = total > 0n && yes * 100n >= FUNDING_ABSOLUTE_PCT * total;
   return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved, absolute,

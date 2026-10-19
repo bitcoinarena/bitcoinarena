@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE SEED, ALONE IN ITS MODULE (#23, 2026-10-04): the round's shared world (seed.js) is H(committee_seed ||
+// THE COMMITTEE SEED, ALONE IN ITS MODULE (2026-10-04): the round's shared world (seed.js) is H(committee_seed ||
 // "world") (§5A.5), so seed.js needs this one formula - and beacon.js, which also reads the chain and the genesis, is not a
 // module the page's bundle may carry. Both import it from here; there is one copy.
 import { taggedHash } from './hash.js';

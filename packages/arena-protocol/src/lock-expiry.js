@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET ROUND'S LOCKS OUTLIVE ITS WHOLE LIFE (kanban #236, the owner 2026-10-09: "drop the fixed 144 blocks. Size expiry from
+// A MARKET ROUND'S LOCKS OUTLIVE ITS WHOLE LIFE (2026-10-09: "drop the fixed 144 blocks. Size expiry from
 // the round end plus the void deadline plus the objection window plus a margin. Seats check that size; the page computes it").
 //
 // A lock expires back to its player at a block height, and nobody can claim it after: a lock that expires before its round

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LND'S PEERS (kanban #471, the owner 2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
+// LND'S PEERS (2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
 // reached from outside - LND announces that address; not reached - Tor, and LND makes an onion address through it (hybrid).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -19,7 +19,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { parse } from 'acorn';
 
-// THE GUARD AS A FUNCTION (kanban #28): `checkCoreTree(root)` answers every hit in one core's tree - its file, line,
+// THE GUARD AS A FUNCTION: `checkCoreTree(root)` answers every hit in one core's tree - its file, line,
 // rule and the core's own source text - so the test suite can run it over every core a seat installs (core/src and
 // core/frozen/*) against each core's recorded baseline. The command line below is unchanged: it checks core/src.
 const ROOT = new URL('../src', import.meta.url).pathname;

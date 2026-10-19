@@ -195,7 +195,7 @@ test('late start at close (5e): B records ENTRY_VOID, the late first mark reache
 });
 
 
-// §13C'S EVIDENCE IS TIED TO ITS BLOCK (RULED the owner 2026-09-24): a proof counts only when its block is strictly before the
+// §13C'S EVIDENCE IS TIED TO ITS BLOCK (RULED 2026-09-24): a proof counts only when its block is strictly before the
 // result window's end block, at every holder. THE LATE PROOF: B records ENTRY_VOID on a real outage and closes before the
 // end block; past it B decides. Only then does the player's late first mark reach A, and A closes: the pair it can now
 // make sits at or after the end block - outside at both. Both write the same record.

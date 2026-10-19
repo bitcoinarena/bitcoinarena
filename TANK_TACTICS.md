@@ -1,6 +1,6 @@
 # Tank tactics
 
-HARD (the owner 2026-09-16). Source of truth for armour in the **core**.
+HARD (2026-09-16). Source of truth for armour in the **core**.
 Deterministic. Same integers on every signer node. No live LLM. No `Math.random`.
 
 Truck rules and tank-vs-tank rules are **not the same**.
@@ -16,7 +16,7 @@ Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, 
 
 ---
 
-## 0. What the player must see (the owner 2026-09-16, addendum)
+## 0. What the player must see (2026-09-16, addendum)
 
 The tanks must **not look dumb among themselves**. They must read as **smart**, an **active
 battlefield** - to the player, from the cab. This section is what "smart" means here, in numbers, so
@@ -39,7 +39,7 @@ bay unless said otherwise.
 | Losses and replacements, both sides, all round | gun §4.4, reinforce §3 | neither side is at full 12 with zero losses over any 60 s window while the other side has a tank inside 46 m; neither side falls below 4 living tanks on more than 5% of ticks |
 | The two lines are not mirror images | §2.4, §4.10 | the two sides' slot orders differ on every seed; the two sides' mean push depth differs by >= 4 m on > 50% of ticks |
 
-the owner 2026-09-16 (during this review): *"We want an exciting game for the player and the war must
+2026-09-16 (during this review): *"We want an exciting game for the player and the war must
 really look like war - not tanks stood in a row playing each other dumb. A DYNAMIC WAR."* The last
 three rows are that order. A static line of six slots that never moves in z is **not** this spec, even
 if every other row passes. §4.10 is the rule that moves it.
@@ -261,7 +261,7 @@ If a probe on this table fails, the doctrine is not live, whatever the code says
 - **Stop** (seam parking lot): no tank holds nearer than its forward line (16 m) to the seam except while
   overrun-fallback or crowded rules are moving it; two tanks never share a metre (§1.1, §2.4).
 
-### 4.10 The front moves - pressure (the owner 2026-09-16: DYNAMIC WAR)
+### 4.10 The front moves - pressure (2026-09-16: DYNAMIC WAR)
 
 The lines of §2 are where a team **starts** and what it **returns to**. They are not where it stays. A
 team that is winning its stretch takes ground across the seam; a team that is losing it gives ground.

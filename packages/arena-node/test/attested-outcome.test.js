@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND WHOSE RESULT IS NOT A REPLAY, ON TWO SIGNER NODES AND THE FAKE FEDERATION (kanban #206 slice 1, §0A.7a; the owner
+// A ROUND WHOSE RESULT IS NOT A REPLAY, ON TWO SIGNER NODES AND THE FAKE FEDERATION (§0A.7a; the owner
 // 2026-10-07): an attested market's round - entries that back an outcome (`pick`) and play no run, the attestors' outcome
 // in through POST /outcome, the pari-mutuel table out of GET /outcome, built by the seats from the picks and the outcome
 // with no game code. Nothing moves in this slice: the settlement of an attested round is held.
@@ -8,7 +8,7 @@
 //   2. an attestation one signature short, signed by a key the manifest does not name, made for another round, or with an
 //      outcome out of range is refused by name at the seat;
 //   3. two standing attestations of different outcomes are held as the proof, and the round settles on neither;
-//   4. the table balances to the msat, losers' net stakes to the winners pro rata, fee and donation as #205.
+//   4. the table balances to the msat, losers' net stakes to the winners pro rata, fee and donation as.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound } from './lock-round-fixture.js';
@@ -51,7 +51,7 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     const jobs = watchReplays(w.nodes);
     const target = { network: NETWORK, game: MARKET.registration.donationSet };
     // FOUR ENTRIES: picks 0, 0, 1, 2 - each its stake lock and its fee lock, which holds the market default's 0.5 % node fee
-    // AND 0.5 % donation, both due at resolution (kanban #235, the owner 2026-10-09): no donation outputs beside the stake
+    // AND 0.5 % donation, both due at resolution (2026-10-09): no donation outputs beside the stake
     const picks = [[0], [0], [1], [2]];
     const entries = [];
     for (const [i, [pick]] of picks.entries()) entries.push(await lockAndPlay(w, player(i), { noMarks: true, pick }));
@@ -156,7 +156,7 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.deepEqual(disputed.outcomesNamed, [1, 2]);
     assert.equal(disputed.proof.length, 2, 'the two attestations are kept as the proof');
     assert.equal(disputed.table, undefined, 'a disputed round has no table');
-    assert.equal(settled2.state, 'VOID', 'a contradiction voids the round (kanban #235): nothing settles, every stake back at once');
+    assert.equal(settled2.state, 'VOID', 'a contradiction voids the round: nothing settles, every stake back at once');
     assert.equal(jobs.filter((k) => k.startsWith(toHex(r2.rid))).length, 0);
   } finally { await w.close(); }
 });

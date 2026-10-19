@@ -77,7 +77,7 @@ async function lockRound({ minScore = 1 } = {}) {
       d.stakeSecrets.peers = there;
       d.dkg.peers = there;
     }
-    // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26), as lock-round-fixture's: its results are held inside its window
+    // THE ROUND ENDS NOW, NOT IN 1970, as lock-round-fixture's: its results are held inside its window
     const drafted = presentDay({ ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
       custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore }, testNow() + 3000);
     const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
@@ -160,7 +160,7 @@ const ask = async (d, w, eid) => {
   const r = await fetch(`http://127.0.0.1:${d.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(eid)}`);
   return { status: r.status, body: r.ok ? await r.json() : (await r.text()).trim() };
 };
-// lock-round-fixture's close: in live order past final_after (kanban #26)
+// lock-round-fixture's close: in live order past final_after
 const closeRound = (w) => closeRoundLive({ ...w, c: w.c || w.contract });
 async function untilForfeit(w, eid, ms = 20000) {
   let got;
@@ -196,7 +196,7 @@ test('the qualifier\'s lock is forfeited by both signer nodes after the window -
       bKeepsTheSame: !!onB && !!sig && toHex(onB.signature) === toHex(sig), bAnswersTheSame: fromB.status === 200 && fromB.body.signature === got.body.signature,
       loser: lost.status, loserKeptBy: [w.a, w.b].filter((d) => d.round.forfeit(loser.eid)).length,
       loserLockHeld: w.port.locks.has(`${toHex(loser.outpoint.txid)}:${loser.outpoint.outIdx}`),
-      // W4 (the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed
+      // W4 (2026-09-14 07:22: "a loser loses the stake. The lock is claimed
       // into the pool."): the loser's lock is not forfeited - it is an input of the
       // round's one settlement. Before W4 this read held (the parked hole: back to
       // the loser at its expiry).
@@ -226,7 +226,7 @@ test('a Delivered run below the round\'s min_score is not a qualifier: its forfe
   // GATE_X (window-fixture.js; the score was 12, then 367, then 34, and each number is the driver of its day -
   // MEASURED, never chosen). What this test pins is unchanged: a DELIVERED run under the round's minimum is
   // not a qualifier, and the refusal says the score and the minimum out loud. Score 2 since 087b707f tightened the
-  // paying front (the owner 2026-09-23: FRONT_SCORE_SPAN 40 -> 36 m) - the same run, measured here in the node's own
+  // paying front (2026-09-23: FRONT_SCORE_SPAN 40 -> 36 m) - the same run, measured here in the node's own
   // score, not a figure carried over from a core test.
   // it was 12, then 367), and the claim is about a DELIVERED run under the minimum.
   // THE FLOOR NO RUN REACHES, the field's largest: scores are E x T x C in 1e-5 points (a delivering world scores up to

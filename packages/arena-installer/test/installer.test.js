@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE INSTALLER, FRESH, THROUGH ITS API (kanban #471 slice 1, F.1): the wizard's doors in order against a real seat process - started from
+// THE INSTALLER, FRESH, THROUGH ITS API (F.1): the wizard's doors in order against a real seat process - started from
 // the settings the wizard wrote, on a fake testnet4 bitcoind that serves block 0 - and the owner login the running seat checks itself.
 // And the guards: the token works once, a foreign Host or a missing header is refused, the seed is asked back, the genesis decides.
 import { test } from 'node:test';
@@ -178,7 +178,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(conf.includes('\nbind=0.0.0.0\n'), true, 'a direct node listens on every interface');
   assert.equal(conf.includes(`\npublic_url=http://127.0.0.1:${seatPort}\n`), true, 'and names its public address');
   assert.equal(conf.includes(`\nport=${seatPort}\n`), true, 'and its port');
-  assert.equal(existsSync(join(home, 'node.env')), false, 'no environment file (kanban #499)');
+  assert.equal(existsSync(join(home, 'node.env')), false, 'no environment file');
   assert.equal(statSync(join(home, 'arena.conf')).mode & 0o777, 0o600);
   // a stranger's key is not the owner: the seat itself refuses it (proof the binding is the seat's, not the wizard's)
   const { signOwnerRequest } = await import('../../arena-node/src/owner.js');
@@ -233,7 +233,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.deepEqual([joined.ok, joined.federations[0].name, gwKit.joined], [true, 'T', 'fed1testinvite']);
   assert.equal((await c.get('/api/state')).json.gateway.passwordFile, undefined, 'the page is not told where the admin password is');
 
-  // THE FEDERATION, ITS OWN STEP (the owner 2026-10-18): explained, no choice - a guardian seat is drawn (founding or succession), never invited
+  // THE FEDERATION, ITS OWN STEP (2026-10-18): explained, no choice - a guardian seat is drawn (founding or succession), never invited
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'federation');
   assert.equal((await c.post('/api/federation', { mode: 'invite', invite: 'fed1x' })).json.mode, 'drawn', 'no invitation: a guardian seat is only drawn');
@@ -271,7 +271,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(s.step, 'done');
   assert.match(readFileSync(join(home, 'bin', 'arena-node-start'), 'utf8'), /systemctl --user start .*arena-lnd.service .*arena-gateway.service .*arena-node.service/, 'the start script names this node\'s services');
   assert.ok((await c.get('/api/state')).json.launchers.start.endsWith('arena-node-start'));
-  // THE ARENANODE COMMAND (kanban #499): written with this node's home in it, and on the PATH (~/.local/bin)
+  // THE ARENANODE COMMAND: written with this node's home in it, and on the PATH (~/.local/bin)
   const cmd = readFileSync(join(home, 'bin', 'arenanode'), 'utf8');
   assert.match(cmd, /exec '[^']+' '[^']+\/packages\/arena-installer\/bin\/arenanode\.mjs' --home '[^']+' --name arenanode "\$@"/);
   assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')), 'linked into ~/.local/bin');
@@ -384,7 +384,7 @@ test('a new node starts with game / verify and settlement ticked; custody and li
   assert.deepEqual(['verify', 'settlement', 'custody', 'liquidity'].filter((k) => ticked({ roles: ['custody', 'verify'] }, k)), ['verify', 'custody'], 'a saved choice is shown as saved');
 });
 
-test('the intro (kanban #498): what a node is, one picture, what it earns and needs, then step 1', () => {
+test('the intro: what a node is, one picture, what it earns and needs, then step 1', () => {
   const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
   const intro = html.slice(html.indexOf('<section id="s-intro">'), html.indexOf('<section id="s-chain">'));
   assert.match(intro, /<svg viewBox="0 0 640 230" role="img"/, 'one overview picture');
@@ -395,7 +395,7 @@ test('the intro (kanban #498): what a node is, one picture, what it earns and ne
   assert.match(html, /\$\('intro-go'\)\.onclick = \(\) => \{ introSkipped = true; try \{ localStorage\.setItem/, '"Set up my node" goes on, remembered where the browser allows');
 });
 
-test('the roles step shows each role in one line, its needs as chips, the long text behind "more" (kanban #497: "a wall of text that nobody reads")', () => {
+test('the roles step shows each role in one line, its needs as chips, the long text behind "more" ("a wall of text that nobody reads")', () => {
   for (const [k, r] of Object.entries(ROLES)) {
     assert.ok(r.does && r.does.length <= 40, `${k}: one short phrase`);
     assert.ok(Array.isArray(r.chips) && r.chips.length >= 2 && r.chips.every((c) => c.length <= 24), `${k}: its needs as short chips`);

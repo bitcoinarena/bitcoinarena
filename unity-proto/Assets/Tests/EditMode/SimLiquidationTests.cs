@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// THE SIM SWITCH DOES NOT WRITE THE CORE OF A SIGNED RUN (the owner 2026-09-15). Measured before on the
+/// THE SIM SWITCH DOES NOT WRITE THE CORE OF A SIGNED RUN (2026-09-15). Measured before on the
 /// Daily (0.0.1356, round 8386f6f5): one SIM press at tick 192 put a simulated liquidation into the
 /// page's core and nowhere else; the card read DELIVERED 222 at tick 2129, both signer nodes signed
 /// FAILED 268, and the held transcript replayed alone gives the signed 268, still live at its end.
@@ -19,7 +19,7 @@ public class SimLiquidationTests
     }
 
     /// <summary>
-    /// THE LIVE MARKET FEED IS HELD TO THE SAME RULE (the owner 2026-09-15): its handler in Bootstrap asks
+    /// THE LIVE MARKET FEED IS HELD TO THE SAME RULE (2026-09-15): its handler in Bootstrap asks
     /// this before `BlwpCore.Liquidation`. Measured before on the Daily (0.0.1356): four live forced
     /// orders fell inside one signed run and the handler sent every one; none is in a transcript.
     /// </summary>

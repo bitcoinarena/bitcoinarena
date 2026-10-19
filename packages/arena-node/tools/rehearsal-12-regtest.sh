@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# FEDERATION.md REHEARSAL 12, CAN STOCK 0.12 RESHARE? (§23A.6, kanban #326): "measure whether a running federation can seat a new
+# FEDERATION.md REHEARSAL 12, CAN STOCK 0.12 RESHARE? (§23A.6): "measure whether a running federation can seat a new
 # guardian or move a gone guardian's share; the answer decides whether §23A.6's succession is the first path or the fallback".
 # Fedimint 0.12 has no reshare in its source (no endpoint, no CLI); the only peer-set API is the setup API before the key
 # ceremony (set-local-params, add-peer, start-dkg, restart_federation_setup). This asks a RUNNING federation's guardian every one

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * THE STAKE LOCK, MEASURED ON THE OPEN TESTNET4 ROUND (the owner 2026-09-27 07:51: "Open the paying round. Measure the
+ * THE STAKE LOCK, MEASURED ON THE OPEN TESTNET4 ROUND (2026-09-27 07:51: "Open the paying round. Measure the
  * stake lock"). Nothing here stands a round or a signer node: the round is the one tools/run-testnet4-paid.mjs opened,
  * read back off its own signer nodes, and the lock is the page's own - the WebGL template's lock client, the bytes a
  * player is served - driven from Node:
@@ -120,7 +120,7 @@ try {
   const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
     stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, joinTick: 0,
     // A SHARED-WORLD ROUND'S ENTRY NAMES NO WORLD SECRET, as the page's join writes it (join.js; found by the regtest run of
-    // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
+    //: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
     worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
     feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref };

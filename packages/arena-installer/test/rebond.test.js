@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LARGER BOND, IN ONE STEP (kanban #471 part D, rebond.js): the posted bond from its maturity on and the wallet's coins become a new
+// A LARGER BOND, IN ONE STEP (rebond.js): the posted bond from its maturity on and the wallet's coins become a new
 // bond; the plan first, the broadcast only when asked, the new bond recorded. Measured against testnet4 Core: see rebond.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

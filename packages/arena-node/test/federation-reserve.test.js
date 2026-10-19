@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION'S RESERVE, READ FROM ITS GUARDIANS (§23A.3, kanban #324): each guardian's stock wallet_summary over its
+// A FEDERATION'S RESERVE, READ FROM ITS GUARDIANS (§23A.3): each guardian's stock wallet_summary over its
 // JSON-RPC WebSocket; kept only when a threshold of them name one sum. A fake WebSocket per endpoint answers as a guardian.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +34,7 @@ test('the reserve is the sum a threshold of guardians name - spendable plus the 
   assert.deepEqual([five.ok, five.reserveSats, five.agreeing], [true, 650007n, 5]);
 });
 
-// A walletv2 FEDERATION (the fork's regtest; kanban #324, measured 2026-10-12: no guardian answered wallet_summary): its
+// A walletv2 FEDERATION (the fork's regtestmeasured 2026-10-12: no guardian answered wallet_summary): its
 // module answers federation_wallet - { value, outpoint, tweak }, or null before the first peg-in - and the value is the reserve
 test('a walletv2 federation\'s reserve is its federation_wallet value, named by a threshold; none yet is 0', async () => {
   const v2 = (byEndpoint) => class {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #349 (the owner 2026-10-12): a game can require a protocol version; a node that did not update drops out.
+// (2026-10-12): a game can require a protocol version; a node that did not update drops out.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, speaksVersion } from '../src/constants.js';
@@ -14,16 +14,16 @@ import { KNOWN_GAME as NEXTBLOCK } from '../../nextblock/plugin/known.js';
 test('this build writes its version and reads the versions it lists', () => {
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(PROTOCOL_VERSION));
   assert.equal(speaksVersion(PROTOCOL_VERSION), true);
-  assert.equal(speaksVersion(2), true, '2026.0.2: the round that names no draw (kanban #348)');
-  assert.equal(speaksVersion(4), true, '2026.0.4: top-N prize splits (kanban #362)');
-  assert.equal(speaksVersion(5), true, '2026.0.5: the median of signed readings (kanban #312)');
-  assert.equal(speaksVersion(6), true, '2026.0.6: markets on games (kanban #362 feature 6)');
-  assert.equal(speaksVersion(7), true, '2026.0.7: scalar markets (kanban #362 feature 8)');
-  assert.equal(speaksVersion(8), true, '2026.0.8: scalar templates (kanban #362)');
-  assert.equal(speaksVersion(9), true, '2026.0.9: the website that brought the entry (kanban #362 item 7)');
-  assert.equal(speaksVersion(10), true, '2026.0.10: in-game items (kanban #365)');
-  assert.equal(speaksVersion(11), true, '2026.0.11: the protocol reserves (kanban #397)');
-  assert.equal(speaksVersion(12), true, '2026.0.12: the leaderboard payout (kanban #460)');
+  assert.equal(speaksVersion(2), true, '2026.0.2: the round that names no draw');
+  assert.equal(speaksVersion(4), true, '2026.0.4: top-N prize splits');
+  assert.equal(speaksVersion(5), true, '2026.0.5: the median of signed readings');
+  assert.equal(speaksVersion(6), true, '2026.0.6: markets on games (feature 6)');
+  assert.equal(speaksVersion(7), true, '2026.0.7: scalar markets (feature 8)');
+  assert.equal(speaksVersion(8), true, '2026.0.8: scalar templates');
+  assert.equal(speaksVersion(9), true, '2026.0.9: the website that brought the entry');
+  assert.equal(speaksVersion(10), true, '2026.0.10: in-game items');
+  assert.equal(speaksVersion(11), true, '2026.0.11: the protocol reserves');
+  assert.equal(speaksVersion(12), true, '2026.0.12: the leaderboard payout');
   assert.equal(speaksVersion(16), true);
   assert.equal(speaksVersion(17), false);
 });
@@ -65,7 +65,7 @@ test('a required version is 1 to 65535', () => {
   assert.throws(() => encodeManifest({ ...base, requiredProtocolVersion: 1.5 }), /1 to 65535/);
 });
 
-test('a protocol version is shown as its number (the owner 2026-10-19: "Protocol is just protocol 1..16"); old YYYY.x.y names are still read back to the u16', async () => {
+test('a protocol version is shown as its number (2026-10-19: "Protocol is just protocol 1..16"); old YYYY.x.y names are still read back to the u16', async () => {
   const { protocolVersionName, readProtocolVersionName } = await import('../src/protocol-version.js');
   assert.equal(protocolVersionName(PROTOCOL_VERSION), '1');
   assert.equal(protocolVersionName(2), '2');
@@ -76,8 +76,8 @@ test('a protocol version is shown as its number (the owner 2026-10-19: "Protocol
   assert.equal(protocolVersionName(8), '8');
   assert.equal(protocolVersionName(9), '9');
   assert.equal(protocolVersionName(10), '10');
-  assert.equal(protocolVersionName(12), '12', 'the leaderboard payout (kanban #460)');
-  assert.equal(protocolVersionName(17), '17', 'a protocol version is shown as its number (the owner 2026-10-19)');
+  assert.equal(protocolVersionName(12), '12', 'the leaderboard payout');
+  assert.equal(protocolVersionName(17), '17', 'a protocol version is shown as its number (2026-10-19)');
   assert.deepEqual(readProtocolVersionName('2026.0.1'), { ok: true, version: 1, known: true });
   assert.deepEqual(readProtocolVersionName('2027.0.17'), { ok: true, version: 17, known: false });
   assert.deepEqual(readProtocolVersionName('1'), { ok: true, version: 1, known: true });

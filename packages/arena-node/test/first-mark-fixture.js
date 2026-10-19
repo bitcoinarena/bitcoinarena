@@ -63,7 +63,7 @@ export async function signerNodes({ endIn = 9000, serveOpts = {} } = {}) {
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it). By default
-  // 9 s (kanban #26: a result counts only if its seat held it before the round's end + 600 s + 5 s - a round dated in
+  // 9 s (a result counts only if its seat held it before the round's end + 600 s + 5 s - a round dated in
   // 1970 has every result late, and VOID). `endIn: null`: the old 1970 dates, for a test about a long-closed window.
   const drafted = endIn === null ? base : presentDay(base, testNow() + endIn);
   // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the round's times stand.
@@ -185,7 +185,7 @@ export async function outcomeAt(d, w, run) {
     forfeit: f.status };
 }
 export async function closeAndSettle(w, run) {
-  // in live order past final_after (lock-round-fixture closeRound; kanban #26)
+  // in live order past final_after (lock-round-fixture closeRound)
   await closeRoundLive({ a: w.a, b: w.b, rid: w.rid, c: w.c });
   for (let t = Date.now(); Date.now() - t < 15000; await wait(250)) {
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
@@ -229,7 +229,7 @@ export const finalAtBoth = async (w, run, ms = 20000) => {
   for (let t = Date.now(); Date.now() - t < ms; await wait(250)) {
     const now = states();
     if (now.every((x) => x === 'FINAL')) return true;
-    // published too, as a live seat's are seconds after its result (§13A, kanban #26: postings count only if held in time)
+    // published too, as a live seat's are seconds after its result (§13A,: postings count only if held in time)
     const published = [w.a, w.b].every((d) => { const f = resultFinality(d.round, w.rid, run.eid); return f.state === 'FINAL' || f.published === true; });
     if (now.every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL') && published) skipTo(Number(roundEndMs(w.c)) + 605000 + 100);
   }

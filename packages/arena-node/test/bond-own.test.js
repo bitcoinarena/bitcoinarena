@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEAT SERVES ONLY ITS OWN BOND (kanban #376, measured 2026-10-16 06:2xZ): the seven second-host seats shared one proof directory and all
+// A SEAT SERVES ONLY ITS OWN BOND (measured 2026-10-16 06:2xZ): the seven second-host seats shared one proof directory and all
 // served transaction 74a47b5e, which is no seat's bond - a page proving a seat's endpoint is handed that seat's /bond, so a seat
 // serving another's sends the player's door to a refusal. GET /bond now answers 409, by name, when the proof's advertisement names
 // another node; its own, and a proof whose transaction names nobody this build reads, are served as before.

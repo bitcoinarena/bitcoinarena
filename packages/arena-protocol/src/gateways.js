@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND THAT PAYS OUT NEEDS SOMEWHERE FOR THE MONEY TO COME IN.
 //
-// M3 (RULED the owner 2026-09-20 11:09, named pick A): a paying round needs "inbound liquidity and >= 2
+// M3 (RULED 2026-09-20 11:09, named pick A): a paying round needs "inbound liquidity and >= 2
 // independent gateways", and that means two LIVE testnet4 LND nodes that each have inbound - "same host is
 // fine. No fake labelled gateways." (RULED 2026-09-20 19:xx, named pick (i): inbound on each of the two nodes
 // from any peer, INCLUDING FROM EACH OTHER. Inbound from the public network is a later letter.)
@@ -93,7 +93,7 @@ export function gatewaysAreIndependent({ gateways, need = 2, minInboundSat = GAT
 
 /**
  * HOW MANY GATEWAYS A ROUND'S FEDERATION REALLY HAS, AS ITS LOCK PORT CAN SEE THEM (§23.6: "deposits and
- * withdrawals through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
+ * withdrawals through any of at least two gateways ... run by different operators"; RULED 2026-09-23).
  *
  * `listed` is what the guardians registered and what each registered name said for itself when asked
  * (`blwp-stake-lock --mode gateways`): `{ url, live, lightningPublicKey }`. IDENTITY IS THE LIGHTNING NODE KEY -

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PAGE CARRIES TWO CORES AND THE ROUND SAYS WHICH (the owner 2026-10-04, path A): 2069b4c2 for every round published
+// THE PAGE CARRIES TWO CORES AND THE ROUND SAYS WHICH (2026-10-04, path A): 2069b4c2 for every round published
 // before C became the bed fill and T sank from 20 s, the current core for every round after. The page's own script, run
 // over its two bundles: the round's hash picks the core under Unity's state and the global the jslib's init reads, and a
 // hash the page carries no core for is refused. The bundles are the ones the cores hash to.
@@ -14,7 +14,7 @@ const T = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/', impor
 const html = readFileSync(new URL('index.html', T), 'utf8');
 const OLD = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const DE2F = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
-// 7e2123d1, the core before 68e2b3d6 (kanban #29): §4.11's objectives from the relief; kept beside it for its rounds
+// 7e2123d1, the core before 68e2b3d6: §4.11's objectives from the relief; kept beside it for its rounds
 const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
 const NEW = coreHashHex();
 const FROZEN = new URL('../../nextblock/frozen/2069b4c2', import.meta.url).pathname;

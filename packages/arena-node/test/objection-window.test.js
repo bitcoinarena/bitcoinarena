@@ -57,7 +57,7 @@ import {
   b32, rand, RANDOMNESS, BEACON, STAKE, WINDOW_MS, wait, WINNER, LOSER, contractFor, say, joinAndPlay, opts, sevenSignerNodes, object,
 } from './window-fixture.js';
 
-// ON THE WALL CLOCK FROM THE ROUND'S END (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): each round here ends a few
+// ON THE WALL CLOCK FROM THE ROUND'S END (§13A, WINDOW-10-SPEC, RULED 2026-10-01): each round here ends a few
 // seconds ahead, its objection window is [end, end + 600 s), a seat signs FINAL from end + 605 s, and five signatures make
 // it FINAL. Reads at named instants are the holder's store at a stubbed clock; FINAL is the holder's own signature and four
 // others', the fixtures' clock skipped past final_after.
@@ -81,7 +81,7 @@ test('seven signer nodes: an objection filed in the window against a run this no
       const before = mayAt(mid, name);
       assert.equal(before.ok, false, `${name}: a share was released inside the window`);
       assert.match(before.why, /objection window/, `${name}: refused for another reason: ${before.why}`);
-      // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24): against the run the committee signed as the
+      // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A): against the run the committee signed as the
       // holder replayed it, the bundle is refused at the door (422) and nothing is stored; against the forged one, taken.
       const r = await object(w, eidOf(name));
       assert.equal(r.status, name === 'agrees' ? 422 : 201, `${name}: ${await r.text()}`);

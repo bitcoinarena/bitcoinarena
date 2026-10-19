@@ -5,7 +5,7 @@
 // "Slashed bonds are distributed: half to the affected players of that round;
 // the other half 75% evenly to the active census nodes at the slashing height
 // minus the round's own seats (the witnesses) and 25% to the donation set of
-// §22A - the developers. Nothing is ever burned (RULED, the owner 2026-09-21),
+// §22A - the developers. Nothing is ever burned (RULED 2026-09-21),
 // here or anywhere in this protocol ... so every remainder in this document has
 // a recipient."
 //

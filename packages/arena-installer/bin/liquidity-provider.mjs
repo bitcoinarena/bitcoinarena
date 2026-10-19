@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LIQUIDITY PROVIDER SERVICE (liquidity-provider.js, spec §23A.10, kanban #494): every minute its claim, the others' claims and
+// THE LIQUIDITY PROVIDER SERVICE (liquidity-provider.js, spec §23A.10): every minute its claim, the others' claims and
 // the nodes' gateway claims, the assignment, and its channels. Its claim is served at --listen (GET /liquidity-claim) and written to
 // --claim-file (a seat serves that file as GET /liquidity-claim, ARENA_LIQUIDITY_CLAIM_FILE).
 //
 //     liquidity-provider --rest https://127.0.0.1:8182 --lnddir <lnd dir> --key <node key hex file> --state <file> [--listen 8477]
 //                        [--claim-file <file>] [--peers https://a,https://b] [--seeds https://testnet.bitcoin-arena.io/daily.json]
 //
-// HOW A NEW NODE IS FOUND (the owner 2026-10-18: "How do new nodes communicate with the lnd liquidity providers?"): it does not call a
+// HOW A NEW NODE IS FOUND (2026-10-18: "How do new nodes communicate with the lnd liquidity providers?"): it does not call a
 // provider. It is bonded (so in the census, with its endpoint in its advertisement) and its seat serves its signed gateway claim (its
 // LND key and address). A provider reads the census from any node that answers (GET /roles: every census node and its endpoint) and
-// asks each endpoint for its gateway claim and its liquidity claim. FULLY DYNAMIC (the owner 2026-10-18: "The node discovery must be fully
+// asks each endpoint for its gateway claim and its liquidity claim. FULLY DYNAMIC (2026-10-18: "The node discovery must be fully
 // dynamic never in just a daily.json. For a seed node daily.json is ok"): daily.json only seeds the first nodes to ask; every node the
 // census names is kept (in the state file) and asked next time, so the provider finds the network without it.
 import http from 'node:http';

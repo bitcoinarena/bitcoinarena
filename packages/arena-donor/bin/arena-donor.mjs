@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEV'S DONATION CLIENT (the owner 2026-10-03): one instance per dev, one directory each.
+// THE DEV'S DONATION CLIENT (2026-10-03): one instance per dev, one directory each.
 //
 //   arena-donor init <dir> --label "dev a" [--lnddir D --rpcserver H:P]   makes the key (key.json, 0600) and donor.json
 //   arena-donor once <dir>      one pass: ask the seats, redeem in every federation, withdraw to the dev's LND
@@ -9,7 +9,7 @@
 //   arena-donor status <dir>    the key, what the seats list for it, what each federation wallet holds
 //   arena-donor game-key <dir>  makes the game developer's Ed25519 key (game-dev.pkcs8, 0600) and prints its public key
 //   arena-donor sign <dir> <body.mjs>  signs the manifest body the module exports as BODY with <dir>/game-dev.pkcs8, checks it
-//                               as a node does, and writes <dir>/<game>-manifest.hex; prints the game id (kanban #208)
+//                               as a node does, and writes <dir>/<game>-manifest.hex; prints the game id
 //
 // The federation is the page's own wasm lock client (donor.json wasmPkg), run in Node; each federation's wallet state is
 // kept in <dir>/wallet-<federation id 16>.json. The LND is the dev's own, through lncli. Invites: donor.json `invites`
@@ -34,7 +34,7 @@ const readJson = (p, d) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) 
 const writeJson = (p, v) => { writeFileSync(`${p}.tmp`, JSON.stringify(v, null, 1)); renameSync(`${p}.tmp`, p); };
 if (!cmd || !dir) { console.error('arena-donor init|once|loop|status|game-key <dir>  |  arena-donor sign <dir> <body.mjs>'); process.exit(2); }
 
-// THE GAME DEVELOPER'S KEY AND SIGNATURE (kanban #202, #208): held by the developer's own client, never by a node
+// THE GAME DEVELOPER'S KEY AND SIGNATURE: held by the developer's own client, never by a node
 if (cmd === 'game-key') {
   mkdirSync(dir, { recursive: true });
   const keyPath = join(dir, 'game-dev.pkcs8');
@@ -120,7 +120,7 @@ async function invites() {
       const d = await (await fetch(url, { cache: 'no-store' })).json();
       // the guardians' second route, as the page takes it (not the loopback donation route)
       Object.assign(routes, (d && d.testnet && d.testnet.alt) || {});
-      // the gateways the network names (kanban #357): a withdrawal tries these first
+      // the gateways the network names: a withdrawal tries these first
       for (const g of [].concat((d && d.testnet && d.testnet.gateway) || [])) if (typeof g === 'string' && !namedGateways.includes(g)) namedGateways.push(g);
       for (const inv of [d && d.testnet && d.testnet.federation, d && d.federation].filter((x) => typeof x === 'string')) {
         try { out[String(LC.federationIdOf(inv)).toLowerCase()] = inv; } catch { /* not an invite */ }
@@ -133,8 +133,8 @@ async function invites() {
 }
 let routed = false;
 const namedGateways = [];
-// ONE CLIENT PER FEDERATION, KEPT ACROSS PASSES (kanban #230): joined on the first pass, used by every later one
-// AN IMPORTED KEY RECOVERS, IT NEVER JOINS FRESH (kanban #358): a dev key set up on a node from the owner page may have held e-cash
+// ONE CLIENT PER FEDERATION, KEPT ACROSS PASSES: joined on the first pass, used by every later one
+// AN IMPORTED KEY RECOVERS, IT NEVER JOINS FRESH: a dev key set up on a node from the owner page may have held e-cash
 // elsewhere; a fresh join would reuse its note indices. Fedimint's recovery reads them back from the federation into this wallet.
 const clientFor = walletClients(async (invite, fed, secret, store) => {
   const LC = await lockClient();
@@ -149,7 +149,7 @@ async function pass() {
   say({ step: 'asked the seats', donations: got.total, federations: [...got.byFederation.keys()].map((f) => f.slice(0, 16)), unanswered: got.unanswered });
   const known = await invites();
   const LC = await lockClient();
-  // EVERY FEDERATION THIS DEV HOLDS A WALLET IN, NOT ONLY THOSE WITH NEW DONATIONS (kanban #357, measured 2026-10-14: once the seats had
+  // EVERY FEDERATION THIS DEV HOLDS A WALLET IN, NOT ONLY THOSE WITH NEW DONATIONS (measured 2026-10-14: once the seats had
   // deleted the rows this client read, no pass reached the withdrawal again, and 38,563 msat sat in federation A)
   const feds = new Map(got.byFederation);
   for (const f of readdirSync(dir).filter((x) => /^wallet-[0-9a-f]{16}\.json$/.test(x)).map((x) => x.slice(7, 23))) {
@@ -162,7 +162,7 @@ async function pass() {
     if (!invite) { say({ step: 'federation', federation: fed.slice(0, 16), donations: donations.length, why: 'no invite to this federation is known: its funds stay there until one is' }); continue; }
     let client = await clientFor(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
     if (donations.length) {
-      // RECORDED FOR GOOD FIRST, THEN REDEEMED, THEN THE SEATS TOLD AND THEIR COPY DELETED (kanban #156): donations.jsonl in
+      // RECORDED FOR GOOD FIRST, THEN REDEEMED, THEN THE SEATS TOLD AND THEIR COPY DELETED: donations.jsonl in
       // this dir is the dev's permanent record - sender key, round id, amount, time, the USD and EUR rate and their provider.
       const r = await settleRead({ path: join(dir, 'donations.jsonl'), donations, client, key: { recipientPkHex: cfg.recipientPkHex, secretHex: key.secretHex }, seats: cfg.seats, done });
       for (const d of [...r.redeemed, ...r.spent]) done.add(d.outpoint);
@@ -172,7 +172,7 @@ async function pass() {
         redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n), alreadySpent: r.spent.length,
         failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`), receipted: r.receipted, seats: r.answers.map((a) => `${a.seat}: ${a.status || a.why} ${a.said || ''}`.trim()) });
     }
-    // UNCLAIMED E-CASH, RECOVERED ON ITS OWN (kanban #357): after the redeem, before the withdrawal - see claimUnclaimed
+    // UNCLAIMED E-CASH, RECOVERED ON ITS OWN: after the redeem, before the withdrawal - see claimUnclaimed
     {
       const f16 = fed.slice(0, 16), walletPath = join(dir, `wallet-${f16}.json`), recPath = join(dir, `wallet-${f16}.recovering.json`);
       const secret = walletSecretFor(key.secretHex, fed);
@@ -201,7 +201,7 @@ async function pass() {
         if (r.step !== 'none') say({ step: `unclaimed: ${r.step}`, federation: f16, ...r });
       } catch (e) { say({ step: 'unclaimed: check failed', federation: f16, why: e.message }); }
     }
-    // NO LND, NO AUTOMATIC WITHDRAWAL (kanban #358): a client set up from the owner page keeps its e-cash until the owner withdraws it
+    // NO LND, NO AUTOMATIC WITHDRAWAL: a client set up from the owner page keeps its e-cash until the owner withdraws it
     if (!cfg.lnd || cfg.autoWithdraw === false) {
       let balanceMsat; try { balanceMsat = await client.balanceMsat(); } catch { balanceMsat = 0; }
       state.balances[fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
@@ -214,7 +214,7 @@ async function pass() {
       writeJson(statePath, state);
     }
     let balanceMsat; try { balanceMsat = await client.balanceMsat(); } catch { balanceMsat = 0; }
-    // WHAT THE NODE'S DASHBOARD SHOWS (kanban #357): this dev's balance per federation, kept beside the record
+    // WHAT THE NODE'S DASHBOARD SHOWS: this dev's balance per federation, kept beside the record
     state.balances[fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
     writeJson(statePath, state);
     say({ step: 'withdraw', federation: fed.slice(0, 16), ...w, balanceMsat });
@@ -224,7 +224,7 @@ async function pass() {
 }
 
 /**
- * THE OWNER'S WITHDRAWAL (kanban #358): the node leaves { id, invoice | lnAddress, msat?, federation? } in withdraw-request.json; it is
+ * THE OWNER'S WITHDRAWAL: the node leaves { id, invoice | lnAddress, msat?, federation? } in withdraw-request.json; it is
  * taken once (renamed), paid from one federation's wallet - the one named, else the one holding most - and answered in
  * state.requests (the newest 20), which the owner page reads.
  */
@@ -281,7 +281,7 @@ if (cmd === 'status') {
       redeemed: ds.filter((d) => state.done.includes(d.outpoint)).length }])), withdrawals: state.withdrawals.slice(-5) });
   process.exit(0);
 }
-// AN E-CASH STRING INTO THIS DEV'S OWN WALLET (kanban #364): the receive whose claim a test can strand (the throwaway federation T's
+// AN E-CASH STRING INTO THIS DEV'S OWN WALLET: the receive whose claim a test can strand (the throwaway federation T's
 // armed guardians, tools/fedimint-test-reject-armed.patch); the passes then note, back up and recover what stays unclaimed, as for a
 // donation's redeem (claimUnclaimed). Without an e-cash string it only opens the wallet: the passes look at every federation this
 // dev holds a wallet file for.
@@ -298,7 +298,7 @@ if (cmd === 'receive-ecash') {
   say({ step: ecash ? 'receive-ecash' : 'wallet opened', federation: fed.slice(0, 16), before, said, after: await read() });
   process.exit(0);
 }
-// PAYOUTS TO KEYS FROM THIS WALLET (kanban #365, an in-game item's purchase): arena-donor pay-keys <dir> <federation> <payouts.json>
+// PAYOUTS TO KEYS FROM THIS WALLET (an in-game item's purchase): arena-donor pay-keys <dir> <federation> <payouts.json>
 // [--wasm <pkg>] - the lock client's paySubmit (one transaction of pre-expired payout contracts, [{ pk, msat, image }]) and its
 // acceptance read back output by output (lockAccepted); prints the txid, every output and the balance before and after
 if (cmd === 'pay-keys') {
@@ -323,7 +323,7 @@ if (cmd === 'once') { await pass(); process.exit(0); }
 if (cmd === 'loop') {
   for (;;) {
     try { await pass(); } catch (e) { say({ step: 'pass failed', why: e.message }); }
-    // the owner's withdrawal is taken within 5 s, between passes too (kanban #358)
+    // the owner's withdrawal is taken within 5 s, between passes too
     const until = Date.now() + (cfg.intervalSec || 300) * 1000;
     while (Date.now() < until) {
       try { await serveRequest(); } catch (e) { say({ step: 'owner withdrawal failed', why: e.message }); }

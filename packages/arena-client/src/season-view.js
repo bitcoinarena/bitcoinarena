@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LEADERBOARD (named the season board until kanban #367) AS THE PAGE SHOWS IT (kanban #362, docs/PLATFORM-RESEARCH.md item 1, presentation): one game's board
+// THE LEADERBOARD (named the season board until) AS THE PAGE SHOWS IT (docs/PLATFORM-RESEARCH.md item 1, presentation): one game's board
 // over the last 7, 30 or 90 days, from a seat's GET /season?game=<name>&days=<n>&scope=network.
 //
 // The seat built the board (protocol season.js, merged across seats by mergeSeasonAccounts: a round counts only when 3
@@ -108,7 +108,7 @@ export function seasonView(answer, { title = null, viewer = [], limit = SEASON_R
   // THE SEAT'S ORDER, NOT OURS: season.js ranked the rows (net, wins, best score, then the key), and the page keeps that
   // order by rank - sorting again by anything else would be a second ranking beside the seat's
   rows.sort((a, b) => a.rank - b.rank);
-  // ONLY THE PLAYERS AHEAD (kanban #367, the owner 2026-10-15: "only show positive entries"): a row whose net over the window is
+  // ONLY THE PLAYERS AHEAD (2026-10-15: "only show positive entries"): a row whose net over the window is
   // 0 or below is not drawn - the viewer's own included. The seat ranks by net first, so the rows left keep ranks 1, 2, 3 ...
   const ahead = rows.filter((r) => r.sign > 0);
   const behind = rows.length - ahead.length;

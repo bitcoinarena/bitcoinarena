@@ -39,7 +39,7 @@ const keyOf = (contract) => `${contract.committeeTimeMs}:${contract.censusConfir
 export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
   if (typeof call !== 'function') throw new Error('a chain beacon needs a way to ask a node');
   const held = new Map();
-  // ONE READ IN FLIGHT PER QUESTION (the owner 2026-09-30, the testnet4 bitcoind flood): rounds that share a committee_time
+  // ONE READ IN FLIGHT PER QUESTION (2026-09-30, the testnet4 bitcoind flood): rounds that share a committee_time
   // share the read, instead of each reading 400 headers until the first answer lands.
   const reading = new Map();
   // AND ONE HEADER WINDOW FOR EVERY QUESTION (ORDER-2116, measured on the free pair 2026-10-01): a round asked about
@@ -85,7 +85,7 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
       const read = (async () => {
         const view = await extend();
         let seen = beaconFromChain(contract, view);
-        // A BEACON BEHIND THE WINDOW (kanban #157, measured on testnet4 2026-10-07): a seat started after its round's beacon
+        // A BEACON BEHIND THE WINDOW (measured on testnet4 2026-10-07): a seat started after its round's beacon
         // had sunk more than the window below the tip read "this view begins at height ... already after this round's
         // committee time" for good - no committee, no peer for the send plan, a settle retried forever. A tip window that
         // begins after committee_time cannot say which block is the first one; a range read forward from the round's

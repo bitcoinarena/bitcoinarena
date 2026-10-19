@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY GAME A SEAT CAN HOST IS ONE THE PAGE KNOWS (kanban #376, the live break of 2026-10-16 05:19Z, kanban #369): once the seats
+// EVERY GAME A SEAT CAN HOST IS ONE THE PAGE KNOWS (the live break of 2026-10-16 05:19Z): once the seats
 // listed nextblock v3's rounds the page found v3 (b8b88e23) nowhere in KNOWN_GOOD_GAMES and showed "Tick Tock, Next Block cannot be
 // loaded". Every module under the seats' game packages' plugin/ that exports a GAME with a manifest - what a seat's ARENA_GAMES loads - must be
 // listed by its game id, under its manifest's name, with every core its manifest names; a new version that is not fails here first.

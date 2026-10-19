@@ -24,7 +24,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 // because a contract carries none: 5A.5 derives it and section 6's contract
 // has no field for it.
 const SEED = b32(11);
-// THE ROUND'S GAME, which every node of these censuses hosts (kanban #204: game/verify counts only hosting nodes)
+// THE ROUND'S GAME, which every node of these censuses hosts (game/verify counts only hosting nodes)
 const GAME = new Uint8Array(32).fill(0x6e);
 const round = (networkId, over = {}) => ({
   networkId, gameId: GAME, committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', gameVerifySlots: 2, settlementSlots: 2,

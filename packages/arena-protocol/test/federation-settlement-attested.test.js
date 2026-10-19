@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// 2026.0.3 STEP 5c - AN ATTESTED MARKET THAT TAKES ANY FEDERATION SETTLES ONE TRANSACTION PER FEDERATION (kanban #348). Its plan is
+// 2026.0.3 STEP 5c - AN ATTESTED MARKET THAT TAKES ANY FEDERATION SETTLES ONE TRANSACTION PER FEDERATION. Its plan is
 // decided once (pariMutuelTable -> attestedLockSettlement, no fee) and split: each federation claims only the losing locks it holds,
 // every winner gets the same fraction of each federation's pot (paid to its refund key there), the fee locks pay the nodes per pot.
 import { test } from 'node:test';

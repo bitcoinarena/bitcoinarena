@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE THAT KEEPS MISSING ITS SEATS IS WARNED (§5A.3, kanban #302): drawn and not seated, three times in a row, newest first - and the
+// A NODE THAT KEEPS MISSING ITS SEATS IS WARNED (§5A.3): drawn and not seated, three times in a row, newest first - and the
 // serving = false update is offered. A round it was not drawn for is no seating it missed; one it sat ends the count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +16,7 @@ test('missed seatings count in a row from the newest, skip rounds not drawn for,
   assert.match(w.says, /drawn and not seated 3 times in a row/); assert.match(w.says, /serving = false/); assert.match(w.update, /ARENA_ADVERT_SERVING=false/);
 });
 
-test('a reserve that was present missed nothing: it ends the count, and 28 present reserve sits warn of nothing (kanban #302, testnet4 2026-10-14)', () => {
+test('a reserve that was present missed nothing: it ends the count, and 28 present reserve sits warn of nothing (testnet4 2026-10-14)', () => {
   const r = (atMs, drawn, seated, present) => ({ atMs, drawn, seated, present });
   assert.equal(missedInARow(Array.from({ length: 28 }, (_, i) => r(i, true, false, true))), 0, 'test host node 5: present every time, a reserve every time');
   assert.equal(seatingWarning(missedInARow(Array.from({ length: 28 }, (_, i) => r(i, true, false, true)))), null);

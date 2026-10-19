@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NEXT ROUND, JOINED BY DEFAULT (the owner 2026-09-28, option 1 of A; NEXT-ROUND-1407). On real series rounds - 90 s
+// THE NEXT ROUND, JOINED BY DEFAULT (2026-09-28, option 1 of A; NEXT-ROUND-1407). On real series rounds - 90 s
 // apart, every run starting together at its start_time, at most 82 s - the page finds round i+1 while round i is on
 // the road, holds the 8 s result card, then says exactly "joining next round in N seconds" beside "exit game" until
 // the next start; "exit game" goes back to the lobby.

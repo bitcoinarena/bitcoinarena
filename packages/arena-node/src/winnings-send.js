@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WINNINGS ARE ALWAYS SENT, BY THE SIGNER NODES, ON A FEDERATION ROUND (the owner 2026-09-21 13:25: "winnings are always
+// WINNINGS ARE ALWAYS SENT, BY THE SIGNER NODES, ON A FEDERATION ROUND (2026-09-21 13:25: "winnings are always
 // sent. There is no Collect"; ruled for FEDERATION 2026-09-23 - the refund key is the committee's, the gateway is the
 // lowest live key, and an invoice is taken only if its amount and its LUD-06 description hash stand).
 //
@@ -16,7 +16,7 @@
 //
 // Every message a signer node signs it rebuilds from its own store and its own tool first: no door takes a message.
 //
-// AND THE DONATION SET'S 25% OF A WALK-AWAY'S LOCK (RULED the owner 2026-09-30, destination 1), sent the same way: one plan
+// AND THE DONATION SET'S 25% OF A WALK-AWAY'S LOCK (RULED 2026-09-30, destination 1), sent the same way: one plan
 // per recipient of the round's donation set, its invoice fetched from that recipient's LNURL, agreed by the seats,
 // kept (donation_sends, under the send id `donationSendId`), signed, asked of the gateway, and re-sent if unpaid. A
 // recipient has no key, so it is paid only by the send - there is no contract only its owner could move.
@@ -65,7 +65,7 @@ export class WinningsSend {
   }
 
   /**
-   * THE PORT OF THIS ROUND'S FEDERATION (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation"): a
+   * THE PORT OF THIS ROUND'S FEDERATION (RULED 2026-10-13: "Every node serves every federation"): a
    * router's own port for the round's federation, else the one port this node has, as before.
    */
   async portFor(roundIdBytes) {
@@ -227,7 +227,7 @@ export class WinningsSend {
 
   /**
    * Qualifier payouts of the base plan whose entry named an address, with that address - NONE since WINNINGS-AUTO (RULED
-   * the owner 2026-10-01): a qualifier is paid by its payout contract into its federation wallet, never by a Lightning send,
+   * 2026-10-01): a qualifier is paid by its payout contract into its federation wallet, never by a Lightning send,
    * so no winner is planned a send (and none could be paid twice). Donation shares still are.
    */
   qualifiersWithAddress(base) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE THAT IS FALLING BEHIND SAYS SO (§5A.10B, kanban #310). "Everything needed to answer that is public. A node can compute its own
+// A NODE THAT IS FALLING BEHIND SAYS SO (§5A.10B). "Everything needed to answer that is public. A node can compute its own
 // standing from the chain, with no service to ask":
 //   own_weight      its bond, against total bonded capital in its role
 //   brackets_served rounds it was eligible for, of the rounds that ran

@@ -135,7 +135,7 @@ public class ChartHudTests
         for (int s = 0; s < 2; s++) if (w[L.CH_ASSAULT + s * L.CH_ASSAULT_WORDS] != L.ASSAULT_IDLE) running++;
         Assert.Greater(running, 0, "the fixture holds a running assault");
         Assert.AreEqual(running, loud.Banners.Count);
-        // THE BANNER CARRIES NO OBJECTIVE NAME (the owner 2026-09-17 09:17, "only LOW and HIGH" - RIDGE / HOLLOW / GAP are
+        // THE BANNER CARRIES NO OBJECTIVE NAME (2026-09-17 09:17, "only LOW and HIGH" - RIDGE / HOLLOW / GAP are
         // off the HUD; and 2026-09-19 12:55, which asked for the banner itself). It says who is attacking, and the
         // lane is already drawn as the tinted column under the candles, which the next line still counts.
         StringAssert.IsMatch("^(BULLS|BEARS) (ASSAULT|CONSOLIDATE)$", loud.Banners[0]);

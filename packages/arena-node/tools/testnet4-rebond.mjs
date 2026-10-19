@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEVEN TESTNET4 BONDS MOVED INTO TEMPLATE 2 (kanban #295; the owner 2026-10-11: "the 7 testnet4 bonds re-bonded to v2
+// THE SEVEN TESTNET4 BONDS MOVED INTO TEMPLATE 2 (2026-10-11: "the 7 testnet4 bonds re-bonded to v2
 // at confirmation + 144, path A refused before H, census counts all 7"; "spend path A into a v2 bond and publish the new
 // advert, only after a testmempoolaccept dry run").
 //
@@ -94,7 +94,7 @@ for (const x of nodes) {
   say({ node: x.n, nodeKey: toHex(x.pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     template: bond.advert.bondScriptTemplateVersion, maturity: bond.maturity, ancestor: !!bond.ancestor, updatedBy: bond.updatedBy || null,
     otherBonds: x.bonds.slice(1).map((b) => `${b.txid}:${b.vout}`) });
-  // A TEMPLATE-2 BOND THE CENSUS NEVER COUNTS is moved too (kanban #326, measured 2026-10-19: T2's four guardians' bonds confirmed at
+  // A TEMPLATE-2 BOND THE CENSUS NEVER COUNTS is moved too (measured 2026-10-19: T2's four guardians' bonds confirmed at
   // 156669 with maturity 156807, "6 block(s) short of its confirmation 156669 plus 144" - so T2 was never named and had no record)
   const stands = maturityStands(bond.advert, bond.height, 'testnet4');
   if (bond.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V2 && stands.ok) { say({ node: x.n, rebond: 'not needed: its bond is template 2 and counts' }); continue; }

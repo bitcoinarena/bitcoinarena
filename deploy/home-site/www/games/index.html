@@ -8,7 +8,7 @@
 <script>window.CHAIN_READ = fetch('/api/chain-nodes', { cache: 'no-store' }).then((r) => r.json());   // asked at once, before any script loads</script>
 <link rel="modulepreload" href="/js/games-check.js">
 <script defer src="/js/blwp-curve.js"></script>
-<!-- THE GAMES, LIVE (kanban #272, the owner 2026-10-09): one card per game the nodes host - its open rounds now, the players at
+<!-- THE GAMES, LIVE (2026-10-09): one card per game the nodes host - its open rounds now, the players at
      a table, free or paid, how many nodes host it, Play. The nodes are found on Bitcoin, never written here: the site's
      Worker reads testnet4's bond announcements through mempool.space (/api/chain-nodes), and this page checks every
      transaction, proof and signature itself (js/chain-nodes.js) before it asks a single node anything. -->

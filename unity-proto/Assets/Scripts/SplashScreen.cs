@@ -31,7 +31,7 @@ public class SplashScreen : MonoBehaviour
     Texture2D _flat;
     GUIStyle _title, _sub, _body, _btn;
 
-    // THE DAILY'S LOBBY (M3.3-34, the owner 2026-09-12 22:11-22:16): this screen is
+    // THE DAILY'S LOBBY (M3.3-34, 2026-09-12 22:11-22:16): this screen is
     // the lobby when the page is one - the rounds, who you are, PLAY and
     // SPECTATE. Null when the page is not a lobby (offline, or a round).
     Blwp.LobbyState _lobby;
@@ -52,14 +52,14 @@ public class SplashScreen : MonoBehaviour
     bool _howToAsked;
     Rect _lastHowTo;
     Rect[] _lastHowToCells;
-    // A phone upright turns pages (the owner 2026-09-15 11:57): which one, its arrows, what was drawn
+    // A phone upright turns pages (2026-09-15 11:57): which one, its arrows, what was drawn
     int _howToPage;
     bool _lastHowToCarousel;
     Rect _lastHowToPrev, _lastHowToNext;
     readonly System.Collections.Generic.List<int> _howToShown = new System.Collections.Generic.List<int>();
     Rect _lastName, _lastKey, _lastMore, _lastBalance;
     string _lastNotice = "";
-    /// <summary>The collect lines this frame drew - text, kind, rect, font size - for the lobby report (kanban #153).</summary>
+    /// <summary>The collect lines this frame drew - text, kind, rect, font size - for the lobby report.</summary>
     readonly List<(string text, string kind, Rect rect, int size)> _lastCollect = new List<(string, string, Rect, int)>();
     string _lastSilent = "";
     Rect _lastSilentRect;
@@ -95,9 +95,9 @@ public class SplashScreen : MonoBehaviour
 
     void Update()
     {
-        // WASTED FIRST, THEN THE LOBBY (the owner 2026-09-16 17:00). A wreck ends the run in the same tick, so the lobby
+        // WASTED FIRST, THEN THE LOBBY (2026-09-16 17:00). A wreck ends the run in the same tick, so the lobby
         // came up in the frame the truck blew and covered the whole death sequence.
-        // WHILE THE CARGO IS CHOSEN THE CORE STILL HOLDS THE RUN BEFORE (the owner 2026-09-26 14:08, measured: after a finished
+        // WHILE THE CARGO IS CHOSEN THE CORE STILL HOLDS THE RUN BEFORE (2026-09-26 14:08, measured: after a finished
         // run the next PLAY opened the cargo panel and the lobby came straight back over it - the core's word, left from
         // the run before until roll-out restarts it, read as this run's end and its hold long spent; a WRECKED before read
         // as this run's wreck). Until roll-out this run has no core word of its own; its session's end still counts.
@@ -123,7 +123,7 @@ public class SplashScreen : MonoBehaviour
             }
         }
         if (_hud == null) _hud = FindFirstObjectByType<DriveHud>();
-        // THE NEXT ROUND IS COMING, SO THE LOBBY IS NOT (the owner 2026-09-29 21:58, SPECTATE-2158): while the page takes the
+        // THE NEXT ROUND IS COMING, SO THE LOBBY IS NOT (2026-09-29 21:58, SPECTATE-2158): while the page takes the
         // player to the next round - its countdown up, from the run's end until "exit game" or that round's start - no
         // PLAY, no round list, no banner: the result card, or WASTED, stays and the camera is the player's.
         if (!Showing && Time.unscaledTime - _continuingPolledAt > 0.5f)
@@ -135,7 +135,7 @@ public class SplashScreen : MonoBehaviour
             if (FollowsThePage(Continuing, _nextJoin) && page != null) _lobby = page;
         }
         if (Showing) Continuing = false;
-        // AND WHILE THE RESULT SUMMARY HOLDS (the owner 2026-10-04): on a wreck too, which draws no card - the page's hold to the
+        // AND WHILE THE RESULT SUMMARY HOLDS (2026-10-04): on a wreck too, which draws no card - the page's hold to the
         // round's close + 20 s (DriveHud.ResultHolding), so the signed names stand on WASTED as on the card
         bool cardUp = _hud != null && (_hud.ArrivalShowing || _hud.ResultHolding);
         if (!Showing && MayReturnToLobby(Continuing, _nextJoin) && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
@@ -145,7 +145,7 @@ public class SplashScreen : MonoBehaviour
         if (!Showing && !Continuing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
         // AND THE NEXT ROUND'S JOIN IS TAKEN HERE, lobby or not: held by the page to its start, then played.
         if (!Showing && FollowsThePage(Continuing, _nextJoin)) { AdoptNextJoin(); if (StepJoin()) return; }
-        // A NODE REFUSED THE ENTRY BEFORE THE RUN WAS LIVE (the owner 2026-09-26, the 21:13 case): the page has taken the
+        // A NODE REFUSED THE ENTRY BEFORE THE RUN WAS LIVE (2026-09-26, the 21:13 case): the page has taken the
         // join fallback and reports the join refused; with no live session and the truck still at the ramp, this round is
         // not played - the chooser closes and the lobby comes back, its "Not joined" line the page's.
         if (!Showing && Time.unscaledTime - _refusedPolledAt > 0.5f)
@@ -168,7 +168,7 @@ public class SplashScreen : MonoBehaviour
         }
         // held here, whatever else thinks it should be driveable
         if (truck != null) truck.controlsLocked = true;
-        // ON THE PAGE'S WORD (kanban #372): a round link held to its start does not drive on its play=1
+        // ON THE PAGE'S WORD: a round link held to its start does not drive on its play=1
         if (_autoPlay && Time.frameCount > 3)
         {
             if (_autoPlayAskedAt < 0f) _autoPlayAskedAt = Time.realtimeSinceStartup;
@@ -187,7 +187,7 @@ public class SplashScreen : MonoBehaviour
                 _joinWhy = _lobby.join.why;
             if (_lobby != null)
             {
-                // THE PLAYER'S TAP IS KEPT, A DEFAULT IS NOT (the owner 2026-09-15, free first): keeping
+                // THE PLAYER'S TAP IS KEPT, A DEFAULT IS NOT (2026-09-15, free first): keeping
                 // the last default made a paying round picked once stay picked through every rollover.
                 int k = Blwp.DailyLobby.Keep(_lobby.rows, _tapId);
                 _pickId = k >= 0 ? _lobby.rows[k].id : "";
@@ -200,11 +200,11 @@ public class SplashScreen : MonoBehaviour
 
     /// <summary>True while the page is taking the player to the next round (SPECTATE-2158); DriveHud keeps the card up.</summary>
     public static bool Continuing { get; private set; }
-    /// <summary>Where the page's next-round box starts, a fraction of the canvas from its top (0 while it is not up): the result card's floor (kanban #9).</summary>
+    /// <summary>Where the page's next-round box starts, a fraction of the canvas from its top (0 while it is not up): the result card's floor.</summary>
     public static float NextBoxTop { get; private set; }
 
     /// <summary>
-    /// THE NEXT ROUND IS PLAYED, NOT THE LOBBY (the owner 2026-09-30 09:39, item 2: "After the countdown the lobby comes back and
+    /// THE NEXT ROUND IS PLAYED, NOT THE LOBBY (2026-09-30 09:39, item 2: "After the countdown the lobby comes back and
     /// the player must join by hand. Wrong. The next round starts by itself"). At the next round's start the page says, in
     /// the same repaint, that its join is "joined" and that it is no longer continuing. A poll that read both at once left
     /// the adopted join unread and unstepped - it was stepped and the page read only while continuing - and the last run's
@@ -218,7 +218,7 @@ public class SplashScreen : MonoBehaviour
     float _continuingPolledAt = -10f;
 
     /// <summary>
-    /// THE NEXT ROUND THE PAGE ENTERED IS PLAYED LIKE ONE PLAY JOINED (the owner 2026-09-28, option 1 of A: continuing is the
+    /// THE NEXT ROUND THE PAGE ENTERED IS PLAYED LIKE ONE PLAY JOINED (2026-09-28, option 1 of A: continuing is the
     /// default). The page enters round i+1 after a run and holds it until its start; Unity takes that join as its own,
     /// once per round, and starts the run when it says joined - at the round's start, with everybody.
     /// </summary>
@@ -233,7 +233,7 @@ public class SplashScreen : MonoBehaviour
     }
 
     /// <summary>
-    /// PLAY IN THE LOBBY JOINS IN THIS PAGE (the owner 2026-09-13 07:11): no reload, so no second loading screen - the round
+    /// PLAY IN THE LOBBY JOINS IN THIS PAGE (2026-09-13 07:11): no reload, so no second loading screen - the round
     /// starts here once the page has joined it. True when the run was started.
     /// </summary>
     bool StepJoin()
@@ -263,7 +263,7 @@ public class SplashScreen : MonoBehaviour
     SpectatorCamera _spectator;
 
     /// <summary>
-    /// EXIT FROM SPECTATE GOES BACK TO THE LOBBY (the owner 2026-09-16 14:45). SPECTATE hides the lobby and opens the
+    /// EXIT FROM SPECTATE GOES BACK TO THE LOBBY (2026-09-16 14:45). SPECTATE hides the lobby and opens the
     /// free camera; EXIT only closed the camera, so the player was left over a locked truck with no PLAY - measured
     /// on 0.0.1391, the lobby still not showing 1, 5 and 15 s after EXIT. The lobby comes back once the camera
     /// SPECTATE opened is no longer flying.
@@ -295,7 +295,7 @@ public class SplashScreen : MonoBehaviour
     bool _fromLobby;
 
     /// <summary>
-    /// BACK TO THE LOBBY WHEN THE RUN IS OVER (the owner 2026-09-15 16:14: a live drive into the
+    /// BACK TO THE LOBBY WHEN THE RUN IS OVER (2026-09-15 16:14: a live drive into the
     /// mouth ends and the player is back in the lobby). The page says the run ended - the core's
     /// DELIVERED finished it, or a VOID did - and a round PLAY started from this lobby comes back
     /// to it, instead of leaving the player on a truck that can no longer be driven.
@@ -303,7 +303,7 @@ public class SplashScreen : MonoBehaviour
     public static bool BackToLobby(bool runEnded, bool fromLobby) => runEnded && fromLobby;
 
     /// <summary>
-    /// AND A WRECK IS SHOWN BEFORE IT (the owner 2026-09-16 17:00: "when he dies the WASTED screen is missing and the
+    /// AND A WRECK IS SHOWN BEFORE IT (2026-09-16 17:00: "when he dies the WASTED screen is missing and the
     /// lobby comes first. Show WASTED, then lobby"). A run the core ended WRECKED goes back only once the death
     /// sequence has had `hold` unscaled seconds - the truck's own burn, `TruckHealth.respawnSeconds`.
     /// </summary>
@@ -311,7 +311,7 @@ public class SplashScreen : MonoBehaviour
         BackToLobby(runEnded, fromLobby) && (!wrecked || sinceWreck >= hold);
 
     /// <summary>
-    /// AND EVERY RESULT IS READ BEFORE THE LOBBY TAKES THE SCREEN (the owner 2026-09-18 19:30: "lobby comes back too
+    /// AND EVERY RESULT IS READ BEFORE THE LOBBY TAKES THE SCREEN (2026-09-18 19:30: "lobby comes back too
     /// fast when the truck reaches the goal - the player cannot read the result. Hold the result at least 5 seconds").
     ///
     /// A run ends in the tick the core says DELIVERED, and the page hands that word over in the same frame, so the
@@ -347,7 +347,7 @@ public class SplashScreen : MonoBehaviour
     /// <summary>
     /// THE WHOLE RETURN-TO-LOBBY DECISION, in one place so it can be tested as one.
     ///
-    /// THE TIMER MUST END THE ROUND (the owner 2026-09-20 16:21: "when the round timer hits 0 the game must end and
+    /// THE TIMER MUST END THE ROUND (2026-09-20 16:21: "when the round timer hits 0 the game must end and
     /// return to the lobby by itself. It used to. It no longer does."). The core does its half: measured, a run
     /// braked from the start reaches RUN_MISSED at elapsed 10800 - `gate.js` returns RUN_MISSED once
     /// `tickInBlock >= BLOCK_TICKS`. What failed was the client's half, and it was an asymmetry left here
@@ -388,10 +388,10 @@ public class SplashScreen : MonoBehaviour
 
     float _refusedPolledAt = -10f;
 
-    public const float ResultHoldSeconds = DriveHud.ArrivalHoldSeconds;   // 8 s (the owner 2026-09-25 21:53), the card's own
+    public const float ResultHoldSeconds = DriveHud.ArrivalHoldSeconds;   // 8 s (2026-09-25 21:53), the card's own
 
     /// <summary>
-    /// ONLY THE LOBBY AFTER THE LOADING SCREEN (the owner 2026-09-25 21:11/21:13, phone, btc-logistics-core.pages.dev: "the
+    /// ONLY THE LOBBY AFTER THE LOADING SCREEN (2026-09-25 21:11/21:13, phone, btc-logistics-core.pages.dev: "the
     /// old splash is still there ... That splash must not draw. A closed round is not a reason to show it").
     ///
     /// In a browser build this screen is the lobby and nothing else: while the page has no lobby to hand over - before its
@@ -405,7 +405,7 @@ public class SplashScreen : MonoBehaviour
     public const string Reading = "reading";
 
     /// <summary>
-    /// THE LOBBY IS NOT DRAWN OVER THE RESULT CARD (the owner 2026-09-25, playtest 18:39 follow-up: "while the result card
+    /// THE LOBBY IS NOT DRAWN OVER THE RESULT CARD (2026-09-25, playtest 18:39 follow-up: "while the result card
     /// is up, the lobby is not drawn over it ... The check is coverage, not the clock").
     ///
     /// The card (DriveHud.ArrivalShowing) and the lobby's hold (ResultHoldSeconds) are both five seconds, but on two
@@ -418,7 +418,7 @@ public class SplashScreen : MonoBehaviour
     DriveHud _hud;
 
     /// <summary>
-    /// AND THE HOLD IS TIMED FROM THE OUTCOME ITSELF, not from the wire (the owner 2026-09-18 20:00: "one clock").
+    /// AND THE HOLD IS TIMED FROM THE OUTCOME ITSELF, not from the wire (2026-09-18 20:00: "one clock").
     ///
     /// `sinceOutcome` is measured from the instant the CORE named the run - RUN_DELIVERED, WRECKED or MISSED - which
     /// is the same instant `DriveHud` starts its result card from. Timing this from the client's `Ended` instead put
@@ -459,7 +459,7 @@ public class SplashScreen : MonoBehaviour
     /// WHETHER THE END OF THIS RUN GOES BACK TO THE LOBBY. PLAY pressed in the lobby does; so does a run the
     /// page's address started (`play=1`, what PLAY leaves behind and a reload brings back). That one used
     /// to be decided by whether a lobby poll had landed yet - auto-play fires on the fourth frame, before
-    /// the first poll - so it never came back (the owner 2026-09-16 14:24, measured on 0.0.1386).
+    /// the first poll - so it never came back (2026-09-16 14:24, measured on 0.0.1386).
     /// </summary>
     public static bool StartedFromLobby(bool lobbyPolled, bool fromAddress) => lobbyPolled || fromAddress;
 
@@ -479,7 +479,7 @@ public class SplashScreen : MonoBehaviour
                                      : new Vector3(-114f, 20f, 0f),
                         4.2f);
 
-        // THE LAST ROUND'S WRECK GOES NOW, behind the lobby as it closes (the owner 2026-09-27 13:25): in a live round it
+        // THE LAST ROUND'S WRECK GOES NOW, behind the lobby as it closes (2026-09-27 13:25): in a live round it
         // was held under WASTED rather than brought back into the bay
         var wreck = FindFirstObjectByType<TruckHealth>();
         if (wreck != null) wreck.Revive();
@@ -553,7 +553,7 @@ public class SplashScreen : MonoBehaviour
         float gap = Mathf.Max(8f, padV * 0.35f);
 
         // one row, one baseline, one height - the primary takes half because it is the one to press; SPECTATE the other half
-        // (BENCHMARK is in the page's Settings since kanban #373, the owner 2026-10-16: "Remove the benchmark button and have that in
+        // (BENCHMARK is in the page's Settings since, 2026-10-16: "Remove the benchmark button and have that in
         // the settings instead")
         float row = panel.yMax - padV * 0.6f - bh;
         float wide = (inner - gap) * 0.5f;
@@ -582,7 +582,7 @@ public class SplashScreen : MonoBehaviour
 
     void OnGUI()
     {
-        // NOTHING ON THE FIRST FRAME (kanban #266, the owner 2026-10-08): the first OnGUI's text layout and font-atlas fill were
+        // NOTHING ON THE FIRST FRAME (2026-10-08): the first OnGUI's text layout and font-atlas fill were
         // 320 ms inside Unity's 2.2 s start-up hold at 10x CPU as an Android phone (named profile, DriveHud.OnGUI first draw);
         // drawn from the next frame on, that work leaves the hold.
         if (FirstGuiFrame.Now()) return;
@@ -641,7 +641,7 @@ public class SplashScreen : MonoBehaviour
                                  new Color(0.07f, 0.065f, 0.05f, 0.98f));
         PanelSkin.Rule(new Rect(head.x, head.yMax - 3f, head.width, 3f), PanelSkin.Gold);
 
-        // THE NAME ON ONE LINE WITH THE GAME'S MARK BESIDE IT (kanban #228): "TICK TOCK, NEXT BLOCK" is longer than the old
+        // THE NAME ON ONE LINE WITH THE GAME'S MARK BESIDE IT: "TICK TOCK, NEXT BLOCK" is longer than the old
         // title and wrapped to two lines on a phone, under the backup banner. The icon and the name are centred together in
         // the bar, and set smaller until both fit on one line.
         _title.wordWrap = false;
@@ -705,7 +705,7 @@ public class SplashScreen : MonoBehaviour
         // were cut at half height and split panels 1 and 2 (measured, 1280x800).
         // A cell is exactly its panel's shape, so nothing is stretched.
         if (!_howToAsked) { _howToAsked = true; _howToWhole = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToWhole); }
-        // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57, option B): only the page shown is
+        // A PHONE UPRIGHT TURNS PAGES (2026-09-15 11:57, option B): only the page shown is
         // drawn - one panel, 1 to 4 - and the arrows turn back and on, round.
         _howToShown.Clear();
         if (_howToWhole != null && l.howToCells != null)
@@ -728,7 +728,7 @@ public class SplashScreen : MonoBehaviour
         var youStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), wordWrap = true, richText = true, alignment = TextAnchor.MiddleLeft };
         youStyle.normal.textColor = Color.white;
-        // A WITHDRAWAL AVAILABLE (the owner 2026-09-14) takes the key's line until it is withdrawn;
+        // A WITHDRAWAL AVAILABLE (2026-09-14) takes the key's line until it is withdrawn;
         // a name the page refused still comes first, and KEY still shows the key.
         _lastNotice = Blwp.DailyLobby.WithdrawNotice(_lobby);
         string second = !string.IsNullOrEmpty(_nameWhy) ? $"<color=#ff7b72>{Escape(_nameWhy)}</color>"
@@ -738,10 +738,10 @@ public class SplashScreen : MonoBehaviour
         // the name wrapped to a third line in a two-line box, and the box clipped
         // "You are" at the top and the key at the bottom (the owner 22:16: every
         // element fully visible).
-        // NO NAME AND NO KEY IN THE LOBBY (the owner 2026-09-29 12:47, SETTINGS-1254: "Remove the name and the key from the lobby.
+        // NO NAME AND NO KEY IN THE LOBBY (2026-09-29 12:47, SETTINGS-1254: "Remove the name and the key from the lobby.
         // The name lives in settings only"). The page's strip over the lobby shows the balance; this box keeps only a
         // withdrawal that is waiting, or why a name was refused.
-        // AND THE BALANCE WHERE THEY WERE (the owner 2026-09-29: "display balances on top of lobby in the modal"): the row NAME
+        // AND THE BALANCE WHERE THEY WERE (2026-09-29: "display balances on top of lobby in the modal"): the row NAME
         // and KEY stood in, above the rounds, is reported as `balance`; the page draws confirmed and pending there, with
         // their icons, over this panel.
         _lastBalance = Rect.MinMaxRect(Mathf.Min(l.name.xMin, l.key.xMin), Mathf.Min(l.name.yMin, l.key.yMin),
@@ -758,8 +758,8 @@ public class SplashScreen : MonoBehaviour
         var head = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, wordWrap = false };
         head.normal.textColor = PanelSkin.Gold;
-        // each kind listed with its own signer numbers, from its rows (kanban #43 follow-up) - no fixed 2
-        GUI.Label(l.head, FitWords(head, Blwp.DailyLobby.HeaderWordings(rows), l.head.width), head);   // the longest that fits (kanban #8)
+        // each kind listed with its own signer numbers, from its rows (follow-up) - no fixed 2
+        GUI.Label(l.head, FitWords(head, Blwp.DailyLobby.HeaderWordings(rows), l.head.width), head);   // the longest that fits
         if (_offset >= rows.Length) _offset = 0;
         if (l.rows > 0 && rows.Length > l.rows)
         {
@@ -771,7 +771,7 @@ public class SplashScreen : MonoBehaviour
         _drawnRows.Clear();
         var rowStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), alignment = TextAnchor.MiddleLeft, wordWrap = false, clipping = TextClipping.Clip };
-        // WHILE A REFUSAL NAMES A ROUND, EVERY ROW SAYS ITS OWN NAME (the owner 2026-09-26 16:56): the next paid round read exactly
+        // WHILE A REFUSAL NAMES A ROUND, EVERY ROW SAYS ITS OWN NAME (2026-09-26 16:56): the next paid round read exactly
         // as the closed one had, under "the round is closed".
         bool namedRows = !_joining && !string.IsNullOrEmpty(_joinWhy) && _lobby.join != null && !string.IsNullOrEmpty(_lobby.join.round);
         for (int i = 0; i < l.rows && _offset + i < rows.Length; i++)
@@ -803,7 +803,7 @@ public class SplashScreen : MonoBehaviour
             var said = new GUIContent(_lastSilent);
             float inner = l.list.width - 20f;
             float top = l.list.y + drawn * l.rowH;
-            // UNDER THE ROWS, NEVER OVER ONE (the owner 2026-09-26 16:56: "Covering the row is not removing the offer"): set smaller
+            // UNDER THE ROWS, NEVER OVER ONE (2026-09-26 16:56: "Covering the row is not removing the offer"): set smaller
             // until it fits the list below its rows, and past the list's foot rather than on a row when even 10 does not.
             float room = Mathf.Max(l.list.yMax - top, 0f);
             while (red.fontSize > 10 && red.CalcHeight(said, inner) + 12f > room) red.fontSize--;
@@ -813,7 +813,7 @@ public class SplashScreen : MonoBehaviour
             PanelSkin.Border(_lastSilentRect, new Color(1f, 0.42f, 0.42f, 0.9f));
             GUI.Label(new Rect(_lastSilentRect.x + 10f, _lastSilentRect.y + 6f, inner, height - 12f), said, red);
         }
-        // THE COLLECT'S OWN LINES (kanban #153, the owner 2026-10-07): under the last round row - and under the red box when there is
+        // THE COLLECT'S OWN LINES (2026-10-07): under the last round row - and under the red box when there is
         // one - inside the list, each set smaller until it fits its width, never past the list's foot (so never over the hint,
         // PLAY or SPECTATE); nothing when the page wrote none. The words and their kind are the page's.
         _lastCollect.Clear();
@@ -843,7 +843,7 @@ public class SplashScreen : MonoBehaviour
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
             none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
             GUI.Label(l.list, _lobby.from == Reading ? "Reading the rounds from the signer nodes …"
-                : Blwp.DailyLobby.EmptyListLine(_lobby), none);   // none reached is said so (kanban #6)
+                : Blwp.DailyLobby.EmptyListLine(_lobby), none);   // none reached is said so
         }
     }
 
@@ -854,15 +854,15 @@ public class SplashScreen : MonoBehaviour
     string LobbyHint()
     {
         if (_joining) return string.IsNullOrEmpty(_lobby.join.stage) ? "joining the round …" : $"joining the round - {_lobby.join.stage} …";
-        // SAID ONCE (the owner 2026-09-26 16:56: "The same sentence is repeated under the card"): a refusal the red box on the
+        // SAID ONCE (2026-09-26 16:56: "The same sentence is repeated under the card"): a refusal the red box on the
         // list says is not said again here - this line says what PLAY does now.
         if (RefusalHere) return $"not joined: {_joinWhy}";
         int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
-        // the round PLAY joins, in its row's words; or what PLAY waits for (kanban #43 follow-up)
+        // the round PLAY joins, in its row's words; or what PLAY waits for (follow-up)
         return Blwp.DailyLobby.HintWords(k >= 0 ? _lobby.rows[k] : null, _lobby.rows.Length);
     }
 
-    /// <summary>The line under the rows, longest first: shorter wordings of the round PLAY joins for a phone (kanban #8).</summary>
+    /// <summary>The line under the rows, longest first: shorter wordings of the round PLAY joins for a phone.</summary>
     string[] LobbyHintWordings()
     {
         string full = LobbyHint();
@@ -1043,7 +1043,7 @@ public class SplashScreen : MonoBehaviour
             // A REFUSED JOIN IS AN ERROR AND READS AS ONE: red and bold on the line above PLAY, not the hint's grey (2026-09-17,
             // "the tiny grey fetch line is not enough").
             if (RefusalHere) { hint.normal.textColor = new Color(1f, 0.50f, 0.46f); hint.fontStyle = FontStyle.Bold; }
-            _lastHint = FitWords(hint, LobbyHintWordings(), f.hint.width);   // the longest that fits (kanban #8)
+            _lastHint = FitWords(hint, LobbyHintWordings(), f.hint.width);   // the longest that fits
             GUI.Label(f.hint, _lastHint, hint);
         }
         else GUI.Label(f.hint, Hint, _sub);
@@ -1080,8 +1080,8 @@ public class SplashScreen : MonoBehaviour
     }
 
     /// <summary>
-    /// SPECTATE, and the page's frame-rate test once the camera has settled (kanban #266) - started from the page's Settings
-    /// (kanban #373: SendMessage("Bootstrap", "Benchmark")), no longer from a lobby button.
+    /// SPECTATE, and the page's frame-rate test once the camera has settled - started from the page's Settings
+    /// (SendMessage("Bootstrap", "Benchmark")), no longer from a lobby button.
     /// </summary>
     public void Benchmark()
     {

@@ -95,7 +95,7 @@ public class TerritoryMap : MonoBehaviour
         if (terrain == null || field == null) return;
         float w = terrain.width, d = terrain.depth;
 
-        // ONE FRONT PER COLUMN AND THE NOISE ONCE (kanban #266, measured 2026-10-08 in a named profile of the production line,
+        // ONE FRONT PER COLUMN AND THE NOISE ONCE (measured 2026-10-08 in a named profile of the production line,
         // test host Chrome as an Android phone at 10x CPU: TerritoryMap.Repaint was 232-254 ms of the block after 100 %, every
         // 0.35 s after it). The front depends on x alone and the noise on the pixel alone, yet both were asked per pixel -
         // 24,576 calls into the core where 192 give the same numbers. The same values, so the same texture.

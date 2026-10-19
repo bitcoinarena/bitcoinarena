@@ -28,7 +28,7 @@ export const tweakPoint = (internalKey, tweak) => {
 };
 
 /**
- * WHAT A SIGNED MESSAGE NEEDS (liquidity.js addressSigned, kanban #494: a provider's coins signed by their address keys): the key a
+ * WHAT A SIGNED MESSAGE NEEDS (liquidity.js addressSigned,: a provider's coins signed by their address keys): the key a
  * compact signature recovers, a key's hash160 (P2WPKH) and its BIP-86 output key (P2TR, no script).
  */
 export const messageCurve = {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TRANSACTION FUNDED AND SIGNED BY THE WALLET AT A FEE RATE UNDER ITS OWN FLOOR.
 //
-// the owner 2026-10-12, "Mach das deutlich sparsamer": a 450-round RPS grid paid 21,000 sat at 1 sat/vB. Bitcoin Core's
+// 2026-10-12, "Mach das deutlich sparsamer": a 450-round RPS grid paid 21,000 sat at 1 sat/vB. Bitcoin Core's
 // wallet funds at no less than its mintxfee (1 sat/vB, measured on the testnet4 wallet: fundrawtransaction and
 // sendtoaddress both refuse 0.1), while the node relays from its minrelaytxfee (0.1 sat/vB on testnet4; peers' feefilters
 // 0 / 0.1 / 1 sat/vB). So the coins are chosen here - the wallet's own spendable outputs, largest first - and the wallet

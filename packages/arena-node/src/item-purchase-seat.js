@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ITEM PURCHASE, AS A SEAT KEEPS IT (kanban #365 step 3): the buyer's signed record (protocol purchase.js) checked twice - by
+// AN ITEM PURCHASE, AS A SEAT KEEPS IT: the buyer's signed record (protocol purchase.js) checked twice - by
 // its own terms against this seat's manifest, donation sets and merged served list (purchaseStands), and against the federation,
 // output by output, as a round's donation outputs are (stake-lock-signer-node.js verifyDonationOutputs): at each outpoint the
 // federation holds the pre-expired payout contract to that payee for exactly that msat with the buyer's key as its image. A
@@ -18,7 +18,7 @@ export const ITEM_PURCHASES_SQL = `CREATE TABLE IF NOT EXISTS item_purchases (
  * purchaseStands takes them; `port` the federation's lock port (status, contractId); `db` the seat's store; `verify` BIP340.
  * Answers { ok, id, kept: 'new' | 'held' } or { ok: false, status, why }.
  */
-// `fees`: the fee set in force (kanban #462): an item's parts on the reserves' terms; unset, today's
+// `fees`: the fee set in force: an item's parts on the reserves' terms; unset, today's
 export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null, fees = null }) {
   const no = (status, why) => ({ ok: false, status, why });
   const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey, fees });
@@ -40,7 +40,7 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
   }
   db.prepare('INSERT OR IGNORE INTO item_purchases (id, player, game_dev, game_name, item_id, txid, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, toHex(p.playerPubkey), toHex(p.gameDevPubkey), p.gameName, p.itemId, toHex(p.txid), Buffer.from(encodePurchase(p)), Buffer.from(p.signature), nowMs);
-  // THE RESERVES' 20 % (kanban #397 slice 5): its output, checked above with the federation like every other, kept as a reserve row
+  // THE RESERVES' 20 %: its output, checked above with the federation like every other, kept as a reserve row
   // under the federation's reserve key - what GET /reserves counts - with the purchase's id in the entry's place
   const reserve = reserveRowOf(p, id, (outIdx) => heldIds.get(outIdx));
   if (reserve && keepReserve) keepReserve(reserve);
@@ -68,7 +68,7 @@ export function itemsOwned(db, { player, gameDev = null, gameName = null }) {
     .map((r) => ({ id: r.id, gameDev: r.game_dev, gameName: r.game_name, itemId: r.item_id, txid: r.txid,
       purchase: Buffer.from(r.bytes).toString('hex'), signature: Buffer.from(r.signature).toString('hex') }));
 }
-/** ONE KEPT PURCHASE BY ITS ID (kanban #369: an entry names it, its buyer's key checks the entry's proof), or null. */
+/** ONE KEPT PURCHASE BY ITS ID (an entry names it, its buyer's key checks the entry's proof), or null. */
 export function itemPurchaseKept(db, id) {
   db.exec(ITEM_PURCHASES_SQL);
   const r = db.prepare('SELECT * FROM item_purchases WHERE id = ?').get(String(id).toLowerCase());

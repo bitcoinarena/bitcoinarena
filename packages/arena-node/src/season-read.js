@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SEASON'S ROUNDS AS THIS NODE HOLDS THEM (kanban #362 feature 1): what GET /season hands protocol season.js - one game's
+// A SEASON'S ROUNDS AS THIS NODE HOLDS THEM (feature 1): what GET /season hands protocol season.js - one game's
 // rounds started inside a window, each entry with the FINAL result and the amount its round's settlement paid it.
 //
 // EVERY FIGURE IS READ FROM THIS NODE'S OWN STORE, as the dashboard's are (dashboard.js), and nothing is worked out again:
@@ -21,7 +21,7 @@
 //     MARKET has neither a result per entry nor a settlement, so nothing of it is on a season.
 //
 // WHO AN ENTRY COUNTS UNDER: a head-to-head entry's identity (h2h_identities - the identity key's own signature over the
-// round, the entry and the key, kanban #280), else the identity the round key's signed lobby record names (POST /name
+// round, the entry and the key), else the identity the round key's signed lobby record names (POST /name
 // verifies that record under the round key), else the round key itself. The round key alone would make every round a new
 // player - each tab joins under a fresh one - and the season would be a list of strangers.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';

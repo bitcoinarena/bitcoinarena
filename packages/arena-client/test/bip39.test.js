@@ -86,7 +86,7 @@ test('a seed that is not 32 bytes is refused rather than padded', () => {
   assert.equal(phraseFromSeed(undefined).ok, false);
 });
 
-// KANBAN #27: the restore inputs take the 24 words (checked) or the 64 hex digits, and hand importSeed the same 64 hex.
+// KANBAN: the restore inputs take the 24 words (checked) or the 64 hex digits, and hand importSeed the same 64 hex.
 test('what the player types - the 24 words or the 64 hex - becomes the same seed hex; a wrong word is refused', () => {
   const words = 'legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth '
     + 'useful legal winner thank year wave sausage worth title';

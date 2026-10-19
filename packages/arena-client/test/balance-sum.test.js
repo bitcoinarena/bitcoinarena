@@ -32,7 +32,7 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
   assert.deepEqual(opened, ['bb'], 'B opened (held, invite verified); C held but no verified invite: not opened; A already kept');
 });
 
-// A SUM ASKED BEFORE ANY WALLET IS OPEN IS NOT THE LAST ONE (kanban #376, measured on preview UI 150, pinned seed 6b360bd8 restored
+// A SUM ASKED BEFORE ANY WALLET IS OPEN IS NOT THE LAST ONE (measured on preview UI 150, pinned seed 6b360bd8 restored
 // in a fresh profile: the lock client held 4000000 msat and the page said 0 sat for 512 s and on - the first sum met no await, its
 // own finally cleared `summing` before the assignment kept the finished promise, and every later call answered that one)
 test('a sum asked before the wallet opens does not stop every later sum; notes still arriving are said and read again', async () => {
@@ -77,7 +77,7 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
   for (const sel of Object.keys(bars)) assert.equal(typeof bars[sel].listeners.click, 'function', sel + ' opens it');
 });
 
-// A HELD FEDERATION'S FUNDS ONCE ITS STATUS IS KNOWN (kanban #467, live UI 220 2026-10-18: the statuses landed ~15 s after the first
+// A HELD FEDERATION'S FUNDS ONCE ITS STATUS IS KNOWN (live UI 220 2026-10-18: the statuses landed ~15 s after the first
 // sum; 2,500 sat in a second federation stayed out of the balance - 53 sat shown for 2,553 held - until some later read)
 test('when the statuses land, a held federation with no wallet open is summed again; all open - nothing more is read', async () => {
   const A = 'aa'.repeat(32), B = 'bb'.repeat(32);

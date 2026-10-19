@@ -71,7 +71,7 @@ export class Writer {
   }
 
   /**
-   * 64-bit SIGNED, BigInt only, two's complement (kanban #362 feature 8: a scalar market's bounds and an attested value may be
+   * 64-bit SIGNED, BigInt only, two's complement (feature 8: a scalar market's bounds and an attested value may be
    * below zero - a temperature, a price change). Written as the u64 with the same bits, so a reader that knows the field is
    * signed reads it back exactly; nothing written before uses it.
    */

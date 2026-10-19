@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// PROTOCOL 5: THE MEDIAN OF SIGNED READINGS (kanban #312, RULED the owner 2026-10-14 ~21:50Z: "each seat signs the price it read,
+// PROTOCOL 5: THE MEDIAN OF SIGNED READINGS (RULED 2026-10-14 ~21:50Z: "each seat signs the price it read,
 // and the sample is the median of five signed readings"). What needs no signature: the median's rule, the version, the batch
 // layout of the readings - and that a round below 5 keeps every byte it had (pinned from origin/main 7f04592b).
 // The signed readings themselves are checked in arena-node/test/price-median.test.js (it has the curve).
@@ -43,7 +43,7 @@ test('an outlier cannot move the median beyond the honest range: two of seven ly
 test('protocol 5 is 2026.0.5: spoken, named, and it is the round\'s version that picks the median', () => {
   assert.equal(PRICE_MEDIAN_VERSION, 5);
   assert.equal(speaksVersion(5), true);
-  // version 5 is spoken (was a pinned [1 .. 7], stale since 8 and 9 were added - kanban #362, #365)
+  // version 5 is spoken (was a pinned [1 .. 7], stale since 8 and 9 were added -)
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(5));
   assert.equal(protocolVersionName(5), '5');
   assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map((v) => mediansPrices({ protocolVersion: v })), [false, false, false, false, true, true, true]);

@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// SPECTATE AFTER THE RUN (the owner 2026-10-03): when a run ends WRECKED or DELIVERED the camera rises over about 3 s from
+/// SPECTATE AFTER THE RUN (2026-10-03): when a run ends WRECKED or DELIVERED the camera rises over about 3 s from
 /// the chase view to a steep top-down view, and the keys or a swipe pan it, the wheel or a pinch zoom it. Here the end is
 /// handed in (no core in the editor); the camera's part is what is measured.
 /// </summary>

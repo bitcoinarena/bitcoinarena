@@ -1,11 +1,11 @@
-// THE SITE IS PASSWORD PROTECTED (kanban #238, the owner 2026-10-08 17:11: "If the cookie is already there, log in automatically").
+// THE SITE IS PASSWORD PROTECTED (2026-10-08 17:11: "If the cookie is already there, log in automatically").
 // A visitor with the cookie sees the site at once; anyone else gets the password form. The cookie holds a hash of the password
 // (never the password), lasts a year, and on bitcoin-arena.io is set for the whole domain, so bitcoin-arena.io and
 // www.bitcoin-arena.io share one login. The password is the Pages secret SITE_PASSWORD.
 const COOKIE = 'ba_gate';
 import { scanChain } from './chain-scan.js';
 
-// THE NODES, AS BITCOIN NAMES THEM (kanban #272): the cron below reads testnet4 through mempool.space every 2 minutes and
+// THE NODES, AS BITCOIN NAMES THEM: the cron below reads testnet4 through mempool.space every 2 minutes and
 // keeps the read in KV; /api/chain-nodes hands it out at once. It is evidence, not a verdict - the page (www/js/
 // chain-nodes.js) proves every transaction into its block and checks every signature before it believes a node.
 const CHAIN_KEY = 'chain:testnet4';
@@ -57,11 +57,11 @@ async fetch(request, env, ctx) {
 
   const url = new URL(request.url);
   // robots.txt OUTSIDE THE GATE: a fetcher that asks it first and gets 401 may stop there (the page itself stays gated)
-  // A PHONE'S BENCHMARK LINES (kanban #269, the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
+  // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {
     const body = (await request.text()).slice(0, 20000);
     console.log('[bench] ' + body);
-    // KEPT, so a phone's run is not lost when no one is watching the log (kanban #269, the 01:45 gate found none)
+    // KEPT, so a phone's run is not lost when no one is watching the log (the 01:45 gate found none)
     if (env.BENCH) {
       const country = (request.cf && request.cf.country) || '';
       await env.BENCH.put(`bench:${new Date().toISOString()}:${crypto.randomUUID().slice(0, 8)}`, body,
@@ -70,7 +70,7 @@ async fetch(request, env, ctx) {
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } });
   }
   if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } });
-  // chatgpt.bitcoin-arena.io HAS NO PASSWORD (the owner 2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out
+  // chatgpt.bitcoin-arena.io HAS NO PASSWORD (2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out
   // of search indexes; every other hostname stays gated
   if (url.hostname === 'chatgpt.bitcoin-arena.io') {
     if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
@@ -89,13 +89,13 @@ async fetch(request, env, ctx) {
     'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
   const html = (wrong, status) => new Response(page(wrong, url.pathname === '/__login' ? '/' : url.pathname),
     { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
-  // ?password=… LOGS IN TOO (the owner 2026-10-08 ~23:10): the cookie is set as by the form, and the visitor lands on the same
+  // ?password=… LOGS IN TOO (2026-10-08 ~23:10): the cookie is set as by the form, and the visitor lands on the same
   // address without the password in it
   // spaces around it are not part of it ("?password= lens-…" as typed into a chat measured 401)
   const given = url.searchParams.has('password') ? url.searchParams.get('password').trim() : null;
   if (given !== null) {
     if (given !== password) return html(true, 401);
-    // THE PAGE AT ONCE, NOT A REDIRECT (the owner 2026-10-08 23:08: a fetcher that keeps no cookie got 401 after the 303): the
+    // THE PAGE AT ONCE, NOT A REDIRECT (2026-10-08 23:08: a fetcher that keeps no cookie got 401 after the 303): the
     // asset without the parameter, answered here with the cookie set on the same response
     url.searchParams.delete('password');
     const asset = await env.ASSETS.fetch(new Request(url.toString(), { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers: request.headers }));

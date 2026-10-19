@@ -5,7 +5,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// SETTLE ON CORE GROUND (kanban #151: no test named SettleOnCoreGround.cs). Something held at a point and a lift is set
+/// SETTLE ON CORE GROUND (no test named SettleOnCoreGround.cs). Something held at a point and a lift is set
 /// down at the ground's height there plus that lift whenever the drawn terrain rebuilds (`MempoolTerrain.Version`).
 /// In EditMode no deterministic core answers (`BlwpCore.HasSurface` false), so the ground is the terrain's own analytic
 /// relief, `SampleWorld` - the same one Bootstrap.BuildBoundary placed the walls from.

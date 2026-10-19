@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE'S PRICE FEED (§11, kanban #311): seven seats, each reading its own price; the sample's leader proposes its
+// THE COMMITTEE'S PRICE FEED (§11): seven seats, each reading its own price; the sample's leader proposes its
 // reading, the others sign only what they saw too, and an attested sample is held by every seat once it stands.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,7 +93,7 @@ test('the tape of the 64 prices before the start: led by seat 0 at the start fro
   assert.deepEqual(await net.seatOf(1).beat(), [], 'seat 1 leads neither the tape nor sample 0');
 });
 
-test('who won the round (§13 RoundResult, kanban #312): the open is sample 0 and the close the last sample at or before the last tick, BULLS, signed by all seven seats; the client takes it at the threshold', async () => {
+test('who won the round (§13 RoundResult): the open is sample 0 and the close the last sample at or before the last tick, BULLS, signed by all seven seats; the client takes it at the threshold', async () => {
   const { roundVerdict } = await import('../../arena-client/src/round-verdict.js');
   const { msForTicks } = await import('../../arena-protocol/src/tick.js');
   let t; let price;
@@ -127,7 +127,7 @@ test('who won the round (§13 RoundResult, kanban #312): the open is sample 0 an
   assert.equal(outsiders.ok, false);
 });
 
-test('the ends survive a restart and are asked of the committee (kanban #312, measured on testnet4 2026-10-14: the samples lived in memory only, and seats restarted during a 6 h round each held a different first sample)', async () => {
+test('the ends survive a restart and are asked of the committee (measured on testnet4 2026-10-14: the samples lived in memory only, and seats restarted during a 6 h round each held a different first sample)', async () => {
   const { msForTicks } = await import('../../arena-protocol/src/tick.js');
   let t; let price;
   const dbs = [0, 1, 2, 3, 4, 5, 6].map(() => new DatabaseSync(':memory:'));
@@ -160,7 +160,7 @@ test('the ends survive a restart and are asked of the committee (kanban #312, me
   assert.equal(c.ok, false); assert.match(c.why, /no attested opening sample \(k 0\)/);
 });
 
-// THE INTERIM RULES (kanban #312, RULED the owner 2026-10-14 ~21:50Z: B, C and D until protocol 5 signs each seat's own reading)
+// THE INTERIM RULES (RULED 2026-10-14 ~21:50Z: B, C and D until protocol 5 signs each seat's own reading)
 test('C: a reading older than one period (5 s) is no reading - a seat that holds only that signs nothing', async () => {
   let t = START + 0 * 5000 + 100;   // sample 1 reads round time 0
   // every seat's price is a trade 6 s old when it is read (the cached-feed case): not kept

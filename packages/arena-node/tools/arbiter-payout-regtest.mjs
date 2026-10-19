@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * THE ARBITER'S PAYOUT STEP, END TO END ON A REGTEST CHAIN (kanban #307, §5A.3B) - the service's own code (arbiter.js
+ * THE ARBITER'S PAYOUT STEP, END TO END ON A REGTEST CHAIN (§5A.3B) - the service's own code (arbiter.js
  * payOutSlash) on a slash it recorded: a players' escrow output funded from the stack's wallet as path B pays it (its txid
  * standing in for the posted slash), two wronged players with their shares; payOutSlash is called as the service's pass
  * calls it until it says paid - the escrow spent by k of the set into the federation, the peg-in claimed, each share locked

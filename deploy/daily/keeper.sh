@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# THE DAILY'S KEEPER (the owner 2026-09-15, 12:54: always one free round and one paying 2-of-2 open).
+# THE DAILY'S KEEPER (2026-09-15, 12:54: always one free round and one paying 2-of-2 open).
 #
 # The signer nodes are reached through two Cloudflare quick tunnels, and a quick tunnel gets a new public
 # name every time it restarts; the signer nodes bond under those names, and daily.json - deployed beside
@@ -13,7 +13,7 @@
 #      when daily.json differs from the one last deployed from here.
 # Durable public names (an account tunnel) stay parked; this covers the gap.
 #
-# ITS DEPLOYS NEED CLOUDFLARE AUTH THAT NEEDS NO BROWSER (the owner 2026-09-15: a Pages-only API token,
+# ITS DEPLOYS NEED CLOUDFLARE AUTH THAT NEEDS NO BROWSER (2026-09-15: a Pages-only API token,
 # for the keeper alone). Measured before: wrangler's OAuth login lapsed - "Not logged in ... the
 # environment is non-interactive" - and a tunnel restart then left the Daily naming dead signer nodes with
 # nothing able to deploy. The unit reads $ARENA_2OF2_DIR/cloudflare.env, owned by this user, mode 600:

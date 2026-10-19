@@ -10,12 +10,12 @@
 //
 // One signer node, five rounds: free and open, free with its committee pending, free
 // and past its entry close, paying and open, free and closed. Every round that has not ended is listed (ROUNDS-EP-1612,
-// the owner 2026-09-28: "It lists every announced round") - the one past its entry close too, saying entryOpen false - and
+// 2026-09-28: "It lists every announced round") - the one past its entry close too, saying entryOpen false - and
 // the closed one is not; the open ones first.
 //
 // MEASURED BEFORE (TASKBOOK, M3.3-34): GET /rounds was 404 - no door listed
 // rounds, and a page with no `round=` in its link could only be the offline game.
-// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { test } from 'node:test';

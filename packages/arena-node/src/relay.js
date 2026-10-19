@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT ACCUSES SOMEBODY GOES SOMEWHERE PUBLIC TOO (spec §25.2, kanban #327): "equivocation proofs, objections - direct, AND any
+// WHAT ACCUSES SOMEBODY GOES SOMEWHERE PUBLIC TOO (spec §25.2): "equivocation proofs, objections - direct, AND any
 // public broadcast channel ... The Round Contract names where: publication_relays[]". Transcripts and slash proofs already went
 // there; an objection and a checkpoint equivocation stayed at the seat that took them. These send them on, best effort - a
 // relay keeps no promise (§25.2: "Relays have none") - and each relay is a seat door that checks what it is handed itself.

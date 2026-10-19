@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CARGO FACTOR C IS THE BED FILL (the owner 2026-10-04 08:54): empty is 0, a full bed is 1, room used over the bed from
+// THE CARGO FACTOR C IS THE BED FILL (2026-10-04 08:54): empty is 0, a full bed is 1, room used over the bed from
 // cargo.js roomFor. Init is empty. submitLoad writes S_CARGO and T_CARGO to the fill of the room the load carries; a load
 // that carries no room (stored before it crossed) keeps 0.7; the heat stays the heat rule, untied to C.
 import { test } from 'node:test';

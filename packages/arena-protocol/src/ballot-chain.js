@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE BALLOT READ OFF THE CHAIN, AND ACTIVATION (spec §27A.7.3, §27A.7.5, kanban #329), the second slice.
+// THE BALLOT READ OFF THE CHAIN, AND ACTIVATION (spec §27A.7.3, §27A.7.5), the second slice.
 //
 //   VOTES      every OP_RETURN output of a block whose push is a 77-byte "ARN" 'V' vote (ballot.js decodeVote), with the height and
 //              txid the tally needs - the tally then decides which bond, which phase, which one is last
@@ -8,7 +8,7 @@
 //              lower proposal id). "parent serialises competing proposals. Both may pass; the first to activate becomes the
 //              config, and the second is void at its activation height because its parent is no longer current" (§27A.7.2)
 //
-//   DEPOSIT    a proposal's deposit_txid, read off its transaction (RULED the owner 2026-10-13, option A): one P2TR output per share
+//   DEPOSIT    a proposal's deposit_txid, read off its transaction (RULED 2026-10-13, option A): one P2TR output per share
 //              of the network's KEYED donation set, split as a donation is (share_bps floored, the remainder to the first as
 //              published), each output key the recipient key's x-only form, untweaked - the recipient spends it with the key it
 //              already holds, and checking it needs no curve. The height it confirmed at is the proposal's publication (§27A.7.3:
@@ -64,7 +64,7 @@ export function liveConfig({ genesis, passed = [], height }) {
  * ballot record, so no repeal reaches them as ancestors - a repeal goes back only to configs the ballot itself held live.
  *
  * WRITTEN OUT, NOT COMPUTED: the bytes are nextblock's encodeGameConfigV4 (nextblock/config/game-config.js), and the engine
- * imports no game (kanban #203, #328). nextblock/test/ballot-genesis.test.js holds them to that encoder and the hash to the
+ * imports no game. nextblock/test/ballot-genesis.test.js holds them to that encoder and the hash to the
  * config every truck round names (TRUCK_CURRENT_CONFIG). While no proposal has passed, this is the only entry of the history,
  * and every round is served exactly as before (configServesRound below answers `governed` only for configs the ballot named).
  */

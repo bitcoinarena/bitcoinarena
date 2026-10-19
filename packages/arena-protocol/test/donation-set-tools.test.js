@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TOOLS THAT SIGN TESTNET4'S DONATION SETS REFUSE EVERY KEY BUT TESTNET4'S AUTHORITY, AND WRITE NOTHING WHEN THEY DO;
 // AND, ON A COPY WHOSE AUTHORITY IS A TEST KEY, WHAT THEY WRITE WHEN THEY SIGN (below)
-// (kanban #148, plan comment 222). tools/sign-testnet4-donation-set.mjs and sign-testnet4-key-donation-set.mjs run as they are
+// (plan comment 222). tools/sign-testnet4-donation-set.mjs and sign-testnet4-key-donation-set.mjs run as they are
 // run, with ARENA_GENESIS_KEYS pointing at a temp dir holding a TEST key - never the live authority's. Both write straight into
 // src/ (testnet4-donation-set.js, testnet4-donation-set-keys.js) once they sign, so each refusal is checked against those two
 // files' bytes, before and after: a refused run changes nothing. Signing itself needs the live authority key, which no test uses.
@@ -63,7 +63,7 @@ test('the key set tool refuses missing donors, a missing VALID_FROM, and a key t
   assert.deepEqual(sums(), before, 'a refused run changed src/');
 });
 
-// WHAT EACH SIGNER WRITES WHEN IT SIGNS (kanban #148 hole B, plan comment 238, Go 2026-10-05). The tools only sign with the
+// WHAT EACH SIGNER WRITES WHEN IT SIGNS (hole B, plan comment 238, Go 2026-10-05). The tools only sign with the
 // key testnet4's genesis names, and no test holds it. So each runs UNCHANGED on a temp copy of packages/protocol in which -
 // in the copy only - AUTHORITY_PUBKEY_TESTNET4 is a test key's public key; core sits beside it as the copy imports it. The
 // module it writes there is read back: the set, its id, VALID_FROM, and a signature that verifies under the test key and

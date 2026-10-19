@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NOBODY WON: a loser's stake lock is forfeited back to its player at settlement, not at expiry (the owner 2026-10-03, "1 is
+// NOBODY WON: a loser's stake lock is forfeited back to its player at settlement, not at expiry (2026-10-03, "1 is
 // fine") - only on this signer node's own record: settlement ACCEPTED, no winner's share, the lock not claimed, no entry
 // still inside its window; a walk-away (FORFEIT) never.
 import test from 'node:test';

@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// COPY GAME REPLAY AFTER EVERY ENDING (the owner 2026-09-27 13:19: "After every round end he must be able to copy a
+/// COPY GAME REPLAY AFTER EVERY ENDING (2026-09-27 13:19: "After every round end he must be able to copy a
 /// replay. The button is missing on the Wasted screen and on the timeout screen ... An empty truck is not a reason to
 /// hide it"). The result card carries the control for a delivery and a miss with freight aboard; every other ending -
 /// WASTED, a run the timer or a VOID stopped, a truck with nothing on the bed - has no card, so the same control is
@@ -23,7 +23,7 @@ public class CopyReplayEveryEndingTests
     }
 
     /// <summary>
-    /// "copied!" STANDS ON WRECKED TOO (the owner 2026-09-29 17:45, SEE-AND-COPIED-1745): on WRECKED only the lone control
+    /// "copied!" STANDS ON WRECKED TOO (2026-09-29 17:45, SEE-AND-COPIED-1745): on WRECKED only the lone control
     /// is up, and the press was forgotten every frame the result card was not showing. It is forgotten only when neither
     /// control is up.
     /// </summary>

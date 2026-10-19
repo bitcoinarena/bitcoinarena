@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE /settled READ OF EACH SIGNER NODE PER OWED SCAN, MATCHED AGAINST EVERY SAVED PHRASE (kanban #153, the owner 2026-10-07):
+// ONE /settled READ OF EACH SIGNER NODE PER OWED SCAN, MATCHED AGAINST EVERY SAVED PHRASE (2026-10-07):
 // measured on 0.0.2842 (comment 695), the scan asked 7 x the kept phrases - 14 for 2, 21 for 3, 49 for a 7-phrase browser.
 // index.html's own findTheRoundsOwed, lifted, with the real findOwedRounds and a counting fetch: 7 signer nodes, 3 phrases.
 import { test } from 'node:test';
@@ -49,7 +49,7 @@ test('3 kept phrases, 7 signer nodes: one /settled read per node; a round owed t
   assert.equal(PL.savedCollects(L, { seed: seeds[0] }).length, 0, 'and not under the tab\'s own');
 });
 
-// NO WALLET YET (kanban #346): behind the start screen collectSeed() is null; the scan waits for the first seed instead of
+// NO WALLET YET: behind the start screen collectSeed() is null; the scan waits for the first seed instead of
 // throwing "Cannot read properties of null (reading 'length')", and asks the signer nodes only once there is one
 test('a fresh browser behind the start screen: the scan waits for the wallet, then reads each signer node once', async () => {
   const seed = new Uint8Array(32).fill(9);
@@ -74,7 +74,7 @@ test('a fresh browser behind the start screen: the scan waits for the wallet, th
   assert.ok(asked.every((a) => a.at >= minted), 'no signer node asked before the wallet exists');
 });
 
-// A CONTRACT READ ONCE IS KEPT (kanban #378; the owner 2026-10-16: "Lower the amount of concurrent connections and network load";
+// A CONTRACT READ ONCE IS KEPT (2026-10-16: "Lower the amount of concurrent connections and network load";
 // measured on live UI 158, one run, 60 s window: GET /round 208): the id is the contract's hash, so a second scan does not read it again
 test('a second owed scan does not read the round contract again', async () => {
   PL.forgetOwedRounds();

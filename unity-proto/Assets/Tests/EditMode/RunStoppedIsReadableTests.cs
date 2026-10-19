@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE PLAYER IN THE BAY IS TOLD WHY, AND THE LAST WORDS SURVIVE (the owner 2026-09-20).
+/// THE PLAYER IN THE BAY IS TOLD WHY, AND THE LAST WORDS SURVIVE (2026-09-20).
 ///
 /// MEASURED on one build with a VOID forced by starving a tab until its round closed under it:
 ///   owner-screens/ring-11.png  the ROAD, run VOID, lobby still down - "RUN STOPPED - the node refuses this

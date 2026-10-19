@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SECOND GAME ON THE SAME NODES AS NEXTBLOCK (kanban #202, the owner 2026-10-06/07: "Done when a round of a second,
+// A SECOND GAME ON THE SAME NODES AS NEXTBLOCK (2026-10-06/07: "Done when a round of a second,
 // minimal test plugin opens, replays and settles on the same nodes as nextblock").
 //
 // Two signer nodes host two games: nextblock (core/plugin/nextblock.js, as the launcher hands it) and tally

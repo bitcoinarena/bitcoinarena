@@ -712,7 +712,7 @@ namespace Blwp
                 return;
             }
 
-            // THE ANCHOR IS RE-READ FROM THE CORE, EVERY FRAME (the owner 2026-09-16).
+            // THE ANCHOR IS RE-READ FROM THE CORE, EVERY FRAME (2026-09-16).
             //
             // `_cloudAt` is taken at the bomb run, and the bowl is dug 384 ticks
             // after the blast - so the height in it is the ground as it stood
@@ -776,7 +776,7 @@ namespace Blwp
                     _skirt3.localPosition = _skirtRestPos;
                 }
 
-                // AND THE WHOLE CLOUD STANDS ON ITS LOWEST POINT (the owner 2026-09-16).
+                // AND THE WHOLE CLOUD STANDS ON ITS LOWEST POINT (2026-09-16).
                 //
                 // `_cloudAt` is the impact point on the ground, and putting the
                 // transform there put the model's ORIGIN there - which is its
@@ -849,7 +849,7 @@ namespace Blwp
                                       + $"-> lowest point now {floor:F2}, "
                                       + $"stem foot {_stemFoot:F2} = {(_stemFoot - floor):F2} m proud of the floor");
 
-                            // THE CORE'S OWN CLOCK, BECAUSE THE PAGE'S IS NOT IT (the owner 2026-09-16).
+                            // THE CORE'S OWN CLOCK, BECAUSE THE PAGE'S IS NOT IT (2026-09-16).
                             //
                             // The bowl is dug 384 ticks after the core consumes the liquidation, and the
                             // cloud's clock starts at the IMPACT - the bomb run sits between the two and has
@@ -913,7 +913,7 @@ namespace Blwp
                     {
                         var sb = _skirtR.bounds;
 
-                        // AND IT RIDES THE PARENT (the owner 2026-09-16). It used to
+                        // AND IT RIDES THE PARENT (2026-09-16). It used to
                         // lift ITSELF onto the highest of five `Ground()`
                         // samples, on the reasoning that a wide disc must clear
                         // the tallest ground beneath it. That rule was measured
@@ -931,7 +931,7 @@ namespace Blwp
                         // whole hierarchy moves as one.
                         _skirtUnderside = sb.min.y;   // measured, not assumed
 
-                        // WHAT THE SKIRT IS STANDING ON, AND WHICH GROUND THAT IS (the owner 2026-09-16).
+                        // WHAT THE SKIRT IS STANDING ON, AND WHICH GROUND THAT IS (2026-09-16).
                         //
                         // The stem and the crater floor are already reported by the `[cloud] stem footing`
                         // line above; this is the smallest print that adds the rest. The skirt no longer
@@ -1374,7 +1374,7 @@ namespace Blwp
                                                  : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
 
         /// <summary>
-        /// THE CORE'S SURFACE, AND NOTHING LAID ON TOP OF IT (the owner 2026-09-16).
+        /// THE CORE'S SURFACE, AND NOTHING LAID ON TOP OF IT (2026-09-16).
         ///
         /// `Ground` above answers with the ROAD DECK wherever there is one:
         /// `RoadNetwork.SurfaceHeight` returns the ribbon's own chord plus

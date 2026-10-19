@@ -6,7 +6,7 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
 /// <summary>
-/// THE RENDER COSTS, ONE SWITCH EACH, SET BY THE PAGE WHILE IT RUNS (kanban #266, the owner 2026-10-08: "Auf dem iPhone 16 Pro sind
+/// THE RENDER COSTS, ONE SWITCH EACH, SET BY THE PAGE WHILE IT RUNS (2026-10-08: "Auf dem iPhone 16 Pro sind
 /// es 25-35 fps. Können wir die FPS noch besser optimieren?" and "measure it alone and display the data you need in the fps
 /// line"). A phone's GPU cannot be profiled from here, so the page's frame-rate test (index.html, arenaBench) switches these
 /// one at a time on the player's own phone and writes the frame rate of each into the FPS line:
@@ -14,7 +14,7 @@ using UnityEngine.Rendering.Universal;
 ///   shadows  the main light's shadow map (URP shadow distance)
 ///   hdr      the HDR colour target
 ///   cascades shadow cascades (1-4; 0 = as built), shadowres the shadow map's size (0 = as built), shadowdist its reach in
-///            metres (0 = as built) - the iPhone 16 Pro's BENCHMARK (the owner 2026-10-08) doubled without shadows, 31 -> 60 fps,
+///            metres (0 = as built) - the iPhone 16 Pro's BENCHMARK (2026-10-08) doubled without shadows, 31 -> 60 fps,
 ///            so the test measures which part of the shadow map that is before a phone default is chosen
 /// SendMessage("GfxSwitches", "Set", "post=0;shadows=1;hdr=1"); a key left out keeps its state. Nothing is off until the page asks.
 /// </summary>
@@ -24,7 +24,7 @@ public class GfxSwitches : MonoBehaviour
     bool _hdr = true;
     int _cascadesWas, _resWas;
     int _cascades, _res, _dist;
-    // THE 3D AT FEWER PIXELS, THE HUD AT ALL OF THEM (kanban #269): URP's render scale. The page's devicePixelRatio shrinks the
+    // THE 3D AT FEWER PIXELS, THE HUD AT ALL OF THEM: URP's render scale. The page's devicePixelRatio shrinks the
     // whole screen, and IMGUI lays the HUD out in screen pixels, so at 1x the chart grew to twice its share of the screen
     // (measured, iPhone profile). 0 = as built.
     float _scale, _scaleWas = -1f;

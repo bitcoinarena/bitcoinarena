@@ -7,7 +7,7 @@
 // and no predicate contradicted it. `grep` found no fee arithmetic anywhere in
 // `packages/*/src` before this.
 //
-// 22A leaves nothing to taste: 5.00% of the gross since Bitcoin Arena (§0A.8, kanban #205; BLWP's was 2%), two halves
+// 22A leaves nothing to taste: 5.00% of the gross since Bitcoin Arena (§0A.8BLWP's was 2%), two halves
 // to two seven-slot pools when no guardian is named (three equal thirds when one is), unearned shares redistributed
 // inside the same pool "keeping the total", and remainders floored in millisatoshi and handed out in ascending
 // H(round_id || node_pubkey). Every figure below is computed from the rule (FEE, HALF), not written down.
@@ -81,7 +81,7 @@ test('a signer node in both pools earns both shares, and they do not merge', () 
 });
 
 test('the rates are 22A\'s and are not a taste', () => {
-  assert.equal(NODE_FEE_BPS, 500, '5.00% of gross_round_volume (§0A.8, kanban #205)');
+  assert.equal(NODE_FEE_BPS, 500, '5.00% of gross_round_volume (§0A.8)');
   assert.equal(POOL_BPS, 250, '2.50% to each pool when the round names no guardian (two halves)');
   assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN, 'gateway', 'liquidity'], 'the gateway seats\' pool (2026.0.15) and the liquidity providers\' (2026.0.16) appended');
 });
@@ -339,7 +339,7 @@ test('per-entry floors can collect less than the table owes, never more', () => 
   }
 });
 
-// THE DRAIN IS PAID (§23A.6 step 5, kanban #325): a round naming a successor lists, beside the successor's guardians, the
+// THE DRAIN IS PAID (§23A.6 step 5): a round naming a successor lists, beside the successor's guardians, the
 // draining predecessor's seated ones - "one share per seat across both federations, so a guardian seated in both earns two
 // shares, and a guardian seated only in the old one still earns one"
 test('a guardian seated in the successor and in its draining predecessor is listed twice and earns two guardian shares', () => {

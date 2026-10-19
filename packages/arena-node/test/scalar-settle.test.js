@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SCALAR MARKET SETTLED AT A SEAT (kanban #362 feature 8; protocol 2026.0.7): its attestors' VALUE attestation comes in at
+// A SCALAR MARKET SETTLED AT A SEAT (feature 8; protocol 2026.0.7): its attestors' VALUE attestation comes in at
 // POST /outcome beside the outcome attestations, is held in the same table and read back by its own type byte, and every reader
 // of an attested round's outcome reads the value: the settlement makes the scalar table (LONG (V - low) / (high - low) of the net
 // pool, SHORT the rest) and pays it by the lock rule - a row paid less than its stake has its lock claimed and its rest paid back,
@@ -150,7 +150,7 @@ test('one side only: the return door hands every stake and fee back at once; two
   console.log(`  FACTS: two sides - ${waits.why.slice(0, 80)} | one side - ${back.why.slice(0, 80)} | plan - ${plan.why.slice(0, 80)}`);
 });
 
-test('a scalar market trades its sides in a book too (kanban #362, §0A.7e): an order passes the door\'s scalar rule, and a plain pick of a side does', () => {
+test('a scalar market trades its sides in a book too (§0A.7e): an order passes the door\'s scalar rule, and a plain pick of a side does', () => {
   const M = market();
   const rid = roundId(M);
   const { round, clock } = seatStore([M]);

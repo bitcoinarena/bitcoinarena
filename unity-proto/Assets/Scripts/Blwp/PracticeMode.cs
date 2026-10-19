@@ -36,7 +36,7 @@ namespace Blwp
         public static int Input => On ? BlwpCore.ONE : 0;
 
         /// <summary>
-        /// THE INPUT A RUN SENDS (the owner 2026-10-04): never practice in a signed run. Practice was on by default and its
+        /// THE INPUT A RUN SENDS (2026-10-04): never practice in a signed run. Practice was on by default and its
         /// switch sat under the cargo panel until ROLL OUT, so every staked run carried practice ticks - S_PRACTICE set, the
         /// damage withheld. Unity stops sending it; the core and its pinned hash are unchanged.
         /// </summary>

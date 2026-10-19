@@ -16,7 +16,7 @@ using NUnit.Framework;
 /// It said "verbinde … (connecting)". It is drawn under the price, in the
 /// place a player reads for the market.
 ///
-/// AND IT NO LONGER CARRIES THE SOCKET'S WORD AT ALL (the owner 2026-09-18 20:04). "connecting … (error)" was
+/// AND IT NO LONGER CARRIES THE SOCKET'S WORD AT ALL (2026-09-18 20:04). "connecting … (error)" was
 /// photographed at 20:00 across the sky over the mempool: with no price the headline is dashes, and spectating there
 /// is no box and no chrome around that line. A player is told what is broken in words they can act on - "Bitcoin
 /// price feed is down. Chart may be stale." - in the corner of the HUD they are already reading, and this subline is

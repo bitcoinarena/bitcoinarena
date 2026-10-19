@@ -5,7 +5,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
 
 /// <summary>
-/// THE CLEAN SCREEN'S KEY (kanban #151: no test named CleanHud.cs). Shift+H toggles `CleanHud.On`, read once a frame by
+/// THE CLEAN SCREEN'S KEY (no test named CleanHud.cs). Shift+H toggles `CleanHud.On`, read once a frame by
 /// `CleanHud.Poll` through the Input System's `wasPressedThisFrame`. In plain edit mode the Input System counts no frames
 /// (measured: the key state arrives, wasUpdatedThisFrame and wasPressedThisFrame stay false), so this runs on the Input
 /// System's own test fixture, whose updates are player frames. Shift+H pressed and released twice: on, then off. H alone

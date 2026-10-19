@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE NODE IS ONE GUARDIAN, AND THE NODE RUNS IT (spec §23A.2, RULED the owner 2026-09-26 22:54): a node started with no
+// ONE NODE IS ONE GUARDIAN, AND THE NODE RUNS IT (spec §23A.2, RULED 2026-09-26 22:54): a node started with no
 // guardian config starts its guardian, the guardian's endpoint is the node's own public address, and stopping the node
 // stops it.
 import { test } from 'node:test';
@@ -147,7 +147,7 @@ test('a chain that fails once is asked again, and the node is still a guardian',
   assert.match(dead.why, /fetch failed \(asked 3 times\)/);
 });
 
-// THE GUARDIAN-NEXT (kanban #326): its ports, its unit, its endpoint, and the node carrying it at /guardian-next beside /guardian
+// THE GUARDIAN-NEXT: its ports, its unit, its endpoint, and the node carrying it at /guardian-next beside /guardian
 test('the guardian-next: ports +5000..+8000 that meet no guardian of the row, its unit, its endpoint under the same public address', async () => {
   assert.deepEqual(guardianNextPorts(31221), { api: 36221, p2p: 37221, ui: 38221, metrics: 39221 });
   assert.deepEqual(guardianNextPorts(6221), { api: 11221, p2p: 12221, ui: 13221, metrics: 14221 });

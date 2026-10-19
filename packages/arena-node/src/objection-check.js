@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN OBJECTION, CHECKED ON ITS OWN EVIDENCE (§13A, kanban #24, RULED the owner 2026-10-04: "An objection must carry the
+// AN OBJECTION, CHECKED ON ITS OWN EVIDENCE (§13ARULED 2026-10-04: "An objection must carry the
 // transcript and the receipts").
 //
 // "It is valid iff every checkpoint carries genuine receipts, the chain is consistent, and deterministic replay under
@@ -171,7 +171,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     replayed: { outcome: built.result.outcome, score: built.result.score }, claimed: { outcome: o.claimedOutcome, score: o.claimedScore } };
   if (hex(replayed) !== hex(claimed))
     return { ...no('replay', `the replay gives ${built.result.outcome} ${built.result.score}, not the claimed ${o.claimedOutcome} ${o.claimedScore}`), ...facts };
-  // THE TEST FAULT, OFF BY DEFAULT (test-dissent.js dissentsOn; kanban #146, the owner 2026-10-05): for the one named entry this
+  // THE TEST FAULT, OFF BY DEFAULT (test-dissent.js dissentsOn2026-10-05): for the one named entry this
   // seat's replay counts as differing here too, as it does in finality - the fault's "an objection to it holds here".
   if (hex(claimed) === hex(signedResultId) && !dissentsOn(entryId))
     return { ...no('replay', 'the replay agrees with the signed result'), ...facts };

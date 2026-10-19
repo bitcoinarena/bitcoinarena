@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEE PROPOSAL AS A SEAT KEEPS AND DECIDES IT (kanban #462 slice 2): kept as a funding proposal is (refused at submission when its set
+// A FEE PROPOSAL AS A SEAT KEEPS AND DECIDES IT: kept as a funding proposal is (refused at submission when its set
 // breaks a limit), given the same signal and the same bond-weighted vote, then decided whole - with the protocol developers' majority
 // for a donation it changes - and from its activation height on the seat's settlement inputs are the new fees: a version-11 round's
 // node fee and website share, and the market rates of an Up/Down version that pays the protocol reserve (v13; v2 keeps its terms).

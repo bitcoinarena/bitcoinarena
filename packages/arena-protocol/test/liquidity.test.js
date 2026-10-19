@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LIQUIDITY PROVIDERS (§23A.10, kanban #494): signed claims; at least 1 and at most 2 providers per node, chosen the same way by all;
+// LIQUIDITY PROVIDERS (§23A.10): signed claims; at least 1 and at most 2 providers per node, chosen the same way by all;
 // the weight for the fee.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,7 +52,7 @@ test('the weight: channels to the federation\'s nodes + free balance, floored to
   const poor = prov(2, { freeSats: 399999, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }] });
   assert.equal(liquidityWeight(poor, [N.lightningPubkey]), 0n, 'free + given 499,999: below the deposit minimum (500,000 on testnet4), no share');
   assert.equal(liquidityWeight({ ...poor, freeSats: '2399999' }, [N.lightningPubkey], 'mainnet'), 0n, 'mainnet minimum 2,500,000');
-  // the owner 2026-10-18 "ok accepted": the channels it gave count toward the minimum - a provider at exactly 5 x L keeps its share
+  // 2026-10-18 "ok accepted": the channels it gave count toward the minimum - a provider at exactly 5 x L keeps its share
   // after giving one (measured: LND D, 600,000 -> 496,150 free + a 100,000 channel)
   const gave = prov(3, { freeSats: 496150, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }] });
   assert.equal(liquidityWeight(gave, [N.lightningPubkey]), 590000n, '496,150 free + 100,000 given = 596,150 >= 500,000: weight 590,000');

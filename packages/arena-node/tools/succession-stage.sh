@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# ---- 8. SUCCESSION (kanban #325, §23A.6): sourced by tn4-tools-regtest.sh when SUCCESSION=1, after its readings ----
+# ---- 8. SUCCESSION (§23A.6): sourced by tn4-tools-regtest.sh when SUCCESSION=1, after its readings ----
 # Federation B is founded on seven MORE nodes (one node is one guardian; the old federation's guardians keep serving its
 # drain), both gateways join B and peg into it, A's seats are told the successor (ARENA_DRAINING) and sign A's record
 # DRAINING with successor_id B, and a player's notes in A move to B by the page's own migratePlayerWallet.
@@ -44,7 +44,7 @@ for p in $(pgrep -f "tools/run-testnet4-paid.mjs"); do ps -E -ww -o command= -p 
 portsHeld() { for p in ${NODE_PORTS//,/ }; do curl -s -o /dev/null --max-time 2 http://127.0.0.1:$p/identity && return 0; done; return 1; }
 for i in $(seq 1 30); do portsHeld || break; sleep 2; done
 if portsHeld; then for p in $(pgrep -f "tools/run-testnet4-paid.mjs"); do ps -E -ww -o command= -p $p 2>/dev/null | grep -q "$H" && kill -KILL $p; done; sleep 3; fi
-# A TEST OWNER for A's seats (kanban #321): the CRITICAL stage below signs two owner leaves with its secret
+# A TEST OWNER for A's seats: the CRITICAL stage below signs two owner leaves with its secret
 OWNER_SECRET=${OWNER_SECRET:-1111111111111111111111111111111111111111111111111111111111111111}
 OWNER_PUB=$("$NODE" --input-type=module -e "import { schnorr } from '@noble/curves/secp256k1.js'; console.log(Buffer.from(schnorr.getPublicKey(Buffer.from('$OWNER_SECRET', 'hex'))).toString('hex'))")
 ( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TEST_OWNER_PUBKEY=$OWNER_PUB ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
@@ -83,13 +83,13 @@ cat $H/move.out >> "$LOG"
 poolOfB() { curl -s --max-time 10 "http://127.0.0.1:${NODE_PORTS%%,*}/federations" | "$NODE" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const a=(j.federations||[]).find(f=>f.federation==='$FED')||{};console.log(JSON.stringify({status:a.status,signers:a.signers,successor:a.successor||null,drainPaid:((j.drainPools||{})['$FED_B']||[]).length}))})"; }
 reading "S4 notes moved: {\"exit\":$MOVE_RC,\"record\":$(grep '"step":"A record"' $H/move.out | tail -1 || echo null),\"moved\":$(grep '"step":"moved"' $H/move.out | tail -1 || echo null)}"
 reading "P1 the drain pool of B: $(poolOfB)"
-# ---- 9. CRITICAL (kanban #321, §23A.1 / 23A.4): two of A's seven seats leave by their owner's signed leave; A's record then
+# ---- 9. CRITICAL (§23A.1 / 23A.4): two of A's seven seats leave by their owner's signed leave; A's record then
 # says CRITICAL (reserve 0 - a worse band than DRAINING, which it keeps), and the client offers only Withdraw and Move
 ( cd "$HERE/.." && NODES=$NODE_PORTS LEAVE=6,7 OWNER_SECRET=$OWNER_SECRET WAIT_S=600 timeout 700 "$NODE" tools/critical-leave.mjs ) > $H/critical.out 2>&1; CRIT_RC=$?
 cat $H/critical.out >> "$LOG"
 reading "C1 two leave, A critical: {\"exit\":$CRIT_RC,\"leaves\":[$(grep '"step":"leave"' $H/critical.out | paste -sd, -)],\"record\":$(grep '"step":"record"' $H/critical.out | tail -1 || echo null)}"
 reading "P2 after the leaves, the drain pool of B: $(poolOfB)"
-# ---- 10. CLOSED (§23A.6 step 4, kanban #325): drain_blocks after DRAINING (ARENA_DRAIN_MS here) with no open round naming A,
+# ---- 10. CLOSED (§23A.6 step 4): drain_blocks after DRAINING (ARENA_DRAIN_MS here) with no open round naming A,
 # A's record is CLOSED, and nobody is named for B's guardian pool any more
 closedA() { poolOfB | grep -q '"status":"CLOSED"'; }
 # (the paid round of reading 4 names A: A closes only once it is closed - its entry window, its run, its objection window;

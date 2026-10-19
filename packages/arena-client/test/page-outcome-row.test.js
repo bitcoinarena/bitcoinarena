@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PICK'S RESULT FROM THE SEAT THAT HOLDS ITS ROW (kanban #447, measured live 2026-10-17 18:05Z): a seat outside the round's committee
+// A PICK'S RESULT FROM THE SEAT THAT HOLDS ITS ROW (measured live 2026-10-17 18:05Z): a seat outside the round's committee
 // answers GET /outcome ATTESTED with an empty table marked refunded; the page kept the first answer, so a won and a lost order read
 // "your pick is not in the signer nodes' table" and stayed "waiting for the result". The page's own readMarketOutcomes, on fake seats.
 import { test } from 'node:test';
@@ -24,7 +24,7 @@ function run(picks, outcomes = new Map()) {
   const asked = [];
   const fetch = async (url) => { const base = url.split('/outcome')[0]; asked.push(base); const a = SEATS[base]; return { ok: !!a, json: async () => JSON.parse(JSON.stringify(a)) }; };
   const BLWPCLIENT = { checkMarketOutcome: async () => ({ verified: true, why: 'signed by 2 of 3' }), checkAttestation: async () => ({ verified: true }) };
-  // OUTCOMES_READ (kanban #464): the rounds whose outcome the page has asked for once
+  // OUTCOMES_READ: the rounds whose outcome the page has asked for once
   const fn = pageFunction(PAGE, ['readPicks', 'MARKET_OUTCOMES', 'marketOfPick', 'BLWPCLIENT', 'window', 'fetch', 'AbortSignal', 'OUTCOMES_READ'], [SRC], 'return readMarketOutcomes;');
   const read = fn(() => picks, outcomes, () => ({ name: 'btc-updown-15m' }), BLWPCLIENT, { BLWP_CURVE: {} }, fetch, { timeout: () => undefined }, new Set());
   return { read, outcomes, asked };

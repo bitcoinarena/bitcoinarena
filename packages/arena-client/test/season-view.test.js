@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEASON BOARD'S LINES (kanban #362, docs/PLATFORM-RESEARCH.md item 1): what the page draws from a seat's
+// THE SEASON BOARD'S LINES (docs/PLATFORM-RESEARCH.md item 1): what the page draws from a seat's
 // GET /season?scope=network answer. The net in whole sats from msat strings - signed, never a float, the magnitude rounded
 // down; the best score in the game's own unit; the header line; the viewer's own row marked (and drawn below the top when
 // it ranks further down); an empty board said in words; an answer that is not a board refused by name, so the page asks
@@ -69,7 +69,7 @@ test('the rows and the header: the seat\'s order and names, the net in sats, the
   assert.equal(own.header, 'Rock Paper Scissors · last 30 days · 1 player ahead · from one node only');
 });
 
-test('only the players ahead are drawn (kanban #367): a net of 0 or below is left out, the viewer\'s own row too', () => {
+test('only the players ahead are drawn: a net of 0 or below is left out, the viewer\'s own row too', () => {
   const v = seasonView(answer([
     row(1, key(0x11), { netMsat: '42000' }),
     row(2, key(0x22), { netMsat: '1' }),                      // 1 msat ahead is ahead, though it shows as "0 sat"

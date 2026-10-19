@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Bitcoin Up or Down 15m on testnet4 (kanban #293): the market's signed manifest - its own developer and attestor keys - its registration and its known-games entry.",
+  "description": "Bitcoin Up or Down 15m on testnet4: the market's signed manifest - its own developer and attestor keys - its registration and its known-games entry.",
   "scripts": {
     "test": "node --test --test-timeout=120000 test/*.test.js"
   }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN EXISTING NODE UPDATED IN PLACE (kanban #471 part E, slice 3; the owner 2026-10-18: "also supports updating an existing node that
+// AN EXISTING NODE UPDATED IN PLACE (slice 3; 2026-10-18: "also supports updating an existing node that
 // applies, updates and supports existing settings and doesn't break it").
 //
 //   1. the install is found (its home: state.json, node.env, node.db) and the running release read from its unit;
@@ -57,7 +57,7 @@ export function envForRelease(text, newRelease, exists = existsSync) {
 }
 
 /**
- * THE PEER PORTS OF AN OLDER INSTALL ON THIS MACHINE ONLY (kanban #471, the Windows VM 2026-10-19: Windows Firewall asked to open bitcoind
+ * THE PEER PORTS OF AN OLDER INSTALL ON THIS MACHINE ONLY (the Windows VM 2026-10-19: Windows Firewall asked to open bitcoind
  * and lnd to public networks). What a new install writes (bitcoind.js, lnd.js), applied to the node's own files when they still have the
  * old default: the node's Bitcoin Core gets bind=127.0.0.1:<its port> when it names no bind; LND behind Tor (and no outside address)
  * listens on 127.0.0.1 instead of 0.0.0.0. Answers the services whose settings changed ('bitcoind-<network>', 'lnd'), to restart.
@@ -166,7 +166,7 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
       seatFor: (release) => windowsLauncher({ node, release, home, port }), seatFile,
       stop: async (fs, release) => {
         for (const f of fs) await sh('schtasks', ['/end', '/tn', task(f)]);
-        // every process of that release but the auto update that runs this update (kanban #505): it ends by itself when done
+        // every process of that release but the auto update that runs this update: it ends by itself when done
         const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${q(release)}*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
@@ -231,7 +231,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   if (!stop.ok) return { ok: false, why: stop.why };
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
-  // THE SETTINGS (kanban #499): arena.conf, its paths into an older release moved to the new one. A node from before it ran from
+  // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
   // node.env: its settings are moved into arena.conf here, once (node.env stays until the new release answers, then is kept as
   // node.env.migrated; a rollback takes arena.conf away again and the old release reads node.env as before)
   const envFile = join(home, 'node.env');
@@ -292,7 +292,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       local = peerPortsLocal(home);
       for (const id of local) await restartService(id, { home, platform, env, sh });
     } catch (e) { local = [`not changed: ${e.message}`]; }
-    // THE AUTO UPDATE SERVICE for a node installed before it (kanban #505), once
+    // THE AUTO UPDATE SERVICE for a node installed before it, once
     let updater = null;
     if (installUpdaterFn) {
       try { updater = await installUpdaterFn({ home, platform, env, sh }); } catch (e) { updater = { ok: false, why: e.message }; }

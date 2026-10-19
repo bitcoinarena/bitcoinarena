@@ -262,7 +262,7 @@ test('a view that begins after committee_time says so instead of answering', () 
   assert.deepEqual(also.hash, named.hash);
 });
 
-// ROUND_RANDOMNESS IS THE BLOCK HASH ITSELF, IN INTERNAL ORDER (§5A.5 and §12, RULED the owner 2026-09-24, ruling B). A PIN,
+// ROUND_RANDOMNESS IS THE BLOCK HASH ITSELF, IN INTERNAL ORDER (§5A.5 and §12, RULED 2026-09-24, ruling B). A PIN,
 // NOT A RED-FIRST TEST: the code never mixed in a height, the spec now says so, and nothing measured here changed. It
 // fixes the bytes: a height term, or the reversed hex a block explorer prints, would move every committee and world.
 test('round_randomness is the beacon block\'s hash in internal order, and the committee seed is built on it alone', () => {

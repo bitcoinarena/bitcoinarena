@@ -90,7 +90,7 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
   // Unity has already drawn is gone from the queue; it is still a player
   // in the round, and the page's count has to say so.
   const present = new Map();
-  // HOW EACH DRAWN TRUCK LAST MOVED, for the debug label over it (the owner 2026-09-17 19:15): the arrows between its last
+  // HOW EACH DRAWN TRUCK LAST MOVED, for the debug label over it (2026-09-17 19:15): the arrows between its last
   // two pictures and when the newest arrived.
   const motion = new Map();
   const field = {
@@ -124,20 +124,20 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
 
     /**
      * WHAT THE RENDERER DRAWS NOW: every retire, then the NEWEST picture of each truck - never a backlog of where a truck
-     * was (the owner 2026-09-17 17:05 / 17:12: "the ghost is drawn at a completely different place ... 60 s+ delay ... must
+     * was (2026-09-17 17:05 / 17:12: "the ghost is drawn at a completely different place ... 60 s+ delay ... must
      * be REALTIME"). Pictures queued behind a newer one of the same truck are dropped here, so a tab whose frames paused
      * or fell behind draws each other truck where its newest picture puts it, not where it stood a minute ago. A truck
      * that has sent nothing for SILENT_MS is retired: a live run sends ten pictures a second even parked, so silence is a
      * run that ended or a tab that left, and its truck must not stand frozen. Up to `max` are handed over; the rest stay.
      */
     drain(max = queue.length, nowMs = clock()) {
-      // A QUIET TRUCK IS COUNTED, NOT TAKEN AWAY (the owner 2026-09-18 10:42). A gap of three or five seconds is the
+      // A QUIET TRUCK IS COUNTED, NOT TAKEN AWAY (2026-09-18 10:42). A gap of three or five seconds is the
       // signer nodes stalling, not a player leaving, and removing the truck for it is what "missing, then in the
       // wrong place" was: the next picture drew it again somewhere else.
       field.silenced = 0;
       for (const [, d] of drawnEntry) if (nowMs - d.at > SILENT_MS) field.silenced++;
 
-      // BUT A TRUCK OF A ROUND THAT IS OVER GOES (the owner 2026-09-18 12:02: "after 2nd round Truck 1 cannot see
+      // BUT A TRUCK OF A ROUND THAT IS OVER GOES (2026-09-18 12:02: "after 2nd round Truck 1 cannot see
       // Truck 2. Age 6736ms"). Measured on the Daily with a watcher that kept its field across two boundaries: it
       // carried one truck of the round it had left into each new round and never received a single picture of the
       // new one - first picture NEVER, superseded 0, stale pictures 0 - so that truck stood for ever with its age
@@ -239,7 +239,7 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
 const ONE_METRE = 65536;
 
 /**
- * WHICH WAY A TRUCK WENT BETWEEN TWO OF ITS PICTURES, as the debug label draws it (the owner 2026-09-17 19:15): an up
+ * WHICH WAY A TRUCK WENT BETWEEN TWO OF ITS PICTURES, as the debug label draws it (2026-09-17 19:15): an up
  * arrow for forward, a down arrow for back, a left or right arrow for a turn, both when it did both. Read off the
  * pictures - what reached this page through the nodes - not off anybody's keys. Forward is the step along the hull
  * (heading in turns: x = sin, z = cos, a growing heading turns right); a turn is the heading's change, mirrored while
@@ -256,7 +256,7 @@ export function moveGlyphs(a, b) {
 }
 
 /**
- * THE WALL CLOCK OF EACH TICK A TAB DROVE, shared with the other tabs of this browser (the owner 2026-09-17 19:15: "age =
+ * THE WALL CLOCK OF EACH TICK A TAB DROVE, shared with the other tabs of this browser (2026-09-17 19:15: "age =
  * how old the last move is, as seen on the other client after it went through the nodes"). A driving tab posts its
  * newest tick and the time it recorded it; a watching tab reads the time of the tick a picture names when that picture
  * is drawn. Only the stamp travels on the channel - the picture itself still comes from the nodes. A tab with no

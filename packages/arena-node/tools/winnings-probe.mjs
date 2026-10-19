@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * WINNINGS ALWAYS SENT, ON A REAL FEDERATION (the owner 2026-09-21; ruled for FEDERATION 2026-09-23).
+ * WINNINGS ALWAYS SENT, ON A REAL FEDERATION (2026-09-21; ruled for FEDERATION 2026-09-23).
  *
  *   PROBE=<federation-hold-probe dir, SECOND_GATEWAY=1> LOCK_BIN=<blwp-stake-lock with gateways/send> WASM_PKG=<dir>
  *   INVITE=<invite> ALICE_RPC=<host:port> BOB_RPC=<host:port> CAROL_RPC=<host:port> LND_BIN=<dir> [PHASE=pass|fail|expiry|poolA|poolB|poolC]
@@ -33,7 +33,7 @@
  * locks still in the federation, the fee locks settled.
  * POOL C: as A with every qualifier addressed - the table's own split, one send per paying qualifier through the
  * lowest-key live gateway, each SETTLED once.
- * WALKAWAY (RULED the owner 2026-09-30, destination 1; regtest only): nobody qualifies. A walker locks through the page's
+ * WALKAWAY (RULED 2026-09-30, destination 1; regtest only): nobody qualifies. A walker locks through the page's
  * own lock client, commits at both signer nodes and sends nothing; a player beside it plays and is WRECKED (FAILED). The
  * door (§15) signs the walker FORFEIT 0 at both; its first mark sent after the line is the same door. At the close the
  * walker's stake lock is claimed - 75% to the round's two sitting signer nodes, each one pre-expired contract to its

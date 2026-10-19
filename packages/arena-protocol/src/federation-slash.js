@@ -110,7 +110,7 @@ export const MAINNET_CLOCKS = Object.freeze({
 });
 
 /**
- * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (the owner 2026-09-21: much shorter), so a whole
+ * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (2026-09-21: much shorter), so a whole
  * federation lifetime can be watched in a day instead of a month: 2 h / 3 h / 3 h / 24 h / 1.5 h.
  * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
  */
@@ -158,7 +158,7 @@ export function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
     return { ok: false, why: 'a halt happens at a block height' };
   // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
   // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
-  // claim_blocks before (kanban #323, found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
+  // claim_blocks before (found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
   // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
   return {
     ok: true,
@@ -178,7 +178,7 @@ export function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCK
 }
 
 /**
- * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4, kanban #323). `claims`: notes presented
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4). `claims`: notes presented
  * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
  * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
  *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
@@ -226,7 +226,7 @@ const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString
 /**
  * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
  * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
- * the owner 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
+ * 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
  * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
  * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
  */

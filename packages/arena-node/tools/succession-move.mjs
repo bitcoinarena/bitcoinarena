@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * THE NOTES FOLLOW THE SUCCESSOR, MEASURED (kanban #325, §23A.6 step 3) - the page's own path, without a browser: a player
+ * THE NOTES FOLLOW THE SUCCESSOR, MEASURED (§23A.6 step 3) - the page's own path, without a browser: a player
  * wallet (one seed) gets a deposit in the old federation A from the payer lnd; then A's record, as the seats sign it, is
  * checked the way the page checks it (federationStatus against the round's census), and the page's migratePlayerWallet
  * moves what the A wallet can send into the player's wallet in B. Balances read before and after in both.
@@ -78,7 +78,7 @@ try {
   else if (env.SEAT_RECORD === '1') {
     // SEAT_RECORD=1 (said in the reading): the harness seats serve a header chain fixed at their start, short of the bonds,
     // so this client cannot check the census here; A's record is read as the seats sign it, not verified - the record's
-    // verification against a census is #321's (federation-record.test, page-federation.test)
+    // verification against a census is 's (federation-record.test, page-federation.test)
     const j = await (await fetch(`${nodes[0]}/federations`)).json();
     const f = (j.federations || []).find((x) => String(x.federation).toLowerCase() === fedA);
     if (!f) throw new Error(`no record of A at ${nodes[0]}`);

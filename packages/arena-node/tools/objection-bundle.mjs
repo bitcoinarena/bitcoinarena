@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN OBJECTION BUNDLE, BUILT FROM WHAT ANY SIGNER NODE HANDS OUT (§13A, kanban #24): the canonical transcript
+// AN OBJECTION BUNDLE, BUILT FROM WHAT ANY SIGNER NODE HANDS OUT (§13A): the canonical transcript
 // (GET /canonical - the batches and the signed marks, the object a result's transcript_hash names), the signed receipts
 // (GET /receipts), and the Objection itself, signed by the objector's own key. Anyone can build one; a seat takes it
 // only if its check holds (objection-check.js).

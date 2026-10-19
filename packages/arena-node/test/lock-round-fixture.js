@@ -85,8 +85,8 @@ export async function nameAddress(daemons, played, address = ADDRESS) {
 export const curve = { ...feldmanGroup, tweakPoint };
 
 // `n`: THE ROUND'S SIGNER NODES - 2 (a 2-of-2), or 7 (5 of 7, receiptsNeeded); `a` and `b` are the first two.
-// `round`: fields of the round's contract over the fixture's (kanban #202: another game's id, core, config and run length).
-// `alignCloseMs`: the round shifted forward so its entry close lands on that period's grid (a market's own clock, kanban #236);
+// `round`: fields of the round's contract over the fixture's (another game's id, core, config and run length).
+// `alignCloseMs`: the round shifted forward so its entry close lands on that period's grid (a market's own clock);
 // `stakeExpiryFor(contract)`: the round's own lock span (lock-expiry.js), from its final times
 export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2, endMs = testNow() + 3000, round = {}, alignCloseMs = null, stakeExpiryFor = null } = {}) {
   const address = lnurl(port);
@@ -105,14 +105,14 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
     d.stakeSecrets.peers = there;
     d.dkg.peers = there;
   }
-  // THE GAMES THE NODES' ADVERTISEMENTS HOST (kanban #204): the games they were handed
+  // THE GAMES THE NODES' ADVERTISEMENTS HOST: the games they were handed
   const hostedGames = (serveOpts.plugins || HOSTED).map((p) => p.gameId);
   return openLockRound({ a, b, nodes, port, slot, lnurl: address, hostedGames, close: async () => { for (const d of nodes) await d.close(); } },
     { minScore, stakeMsat, endMs, round, alignCloseMs, stakeExpiryFor });
 }
 
 /**
- * A ROUND OPENED ON SIGNER NODES ALREADY STANDING (kanban #202: a second round on the same two nodes, of another game):
+ * A ROUND OPENED ON SIGNER NODES ALREADY STANDING (a second round on the same two nodes, of another game):
  * `on` is what lockRound stood - its nodes, lock port, chain slot and address - and the round is built, bonded, opened and
  * keyed on them as lockRound's first. Answers the same object lockRound does, for this round.
  */
@@ -122,7 +122,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   const n = nodes.length;
   const first = { ...contractFor(nodes.map((d) => d.round.pubkey), BigInt(WINDOW_MS), nodes.map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore, stakeMsat, ...round };
-  // THE ROUND ENDS NOW, NOT IN 1970 (§13A/§13C, kanban #26: a result counts only if its seat held it before the round's end
+  // THE ROUND ENDS NOW, NOT IN 1970 (§13A/§13C,: a result counts only if its seat held it before the round's end
   // + 600 s + 5 s). The fixture's rounds were dated in 1970, so every result they held came decades after their window
   // closed - under the deadline every run of them would be VOID. A round ends 3 s after it is built (or at `endMs`); its
   // results are held inside its window, and closeRound skips the fixtures' clock past final_after. `endMs: null`: the old
@@ -137,7 +137,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   // among its blocks. The round id follows from them.
   const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`),
     ...(on.hostedGames ? { hostedGames: on.hostedGames } : {}),
-    // a round of a later version is seated only on nodes whose advert lists it (#349): the bonded nodes then speak 1 .. that version
+    // a round of a later version is seated only on nodes whose advert lists it: the bonded nodes then speak 1 .. that version
     ...(drafted.protocolVersion > 1 ? { protocolVersions: Array.from({ length: drafted.protocolVersion }, (_, i) => i + 1) } : {}) });
   const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };
   const rid = roundId(c);
@@ -161,16 +161,16 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
 // `address`: the entry names the fixture's Lightning address at every signer node once it has played.
-// `game`: { adapter, config } - the run played by that game's core, not the truck's (kanban #202), with no loads in its batch.
+// `game`: { adapter, config } - the run played by that game's core, not the truck's, with no loads in its batch.
 // `donation`: { msat, target } - the entry donates `msat`, split over `target` (one set, or a round's { network, game }; kanban
-// #205) into one payout contract per share above 0 msat, each held by the federation at an outpoint the entry names.
-// `pick`: the outcome an entry into an attested round backs (§0A.7a, kanban #206) - such an entry plays no run, so pass noMarks.
-// `hidden`: { move, salt } - an entry into a head-to-head round (kanban #233) names H(round || session key || move || salt); such
+//) into one payout contract per share above 0 msat, each held by the federation at an outpoint the entry names.
+// `pick`: the outcome an entry into an attested round backs (§0A.7a) - such an entry plays no run, so pass noMarks.
+// `hidden`: { move, salt } - an entry into a head-to-head round names H(round || session key || move || salt); such
 // an entry plays no run either (noMarks), and reveals after entry close (POST /reveal).
-// THE ROUND'S GAME'S ENTRY FEE (kanban #235): a market's node fee and donation together (1 % by default, both in the fee lock
+// THE ROUND'S GAME'S ENTRY FEE: a market's node fee and donation together (1 % by default, both in the fee lock
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
-// `order`: { price (PRICE_SCALE units), expiryMs } - a market order (kanban #278): the entry buys `pick` at that limit
+// `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
 export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, expirySpan = null, frontendPk = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
@@ -193,11 +193,11 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     claimKeyAttestationRef: b32(0x9a),
     ...(pick !== undefined ? { pick } : {}),
     ...(order ? { limitPrice: Number(order.price), orderExpiryMs: order.expiryMs ?? 0n } : {}),
-    // the website that brought this entry (kanban #362 item 7): its payout key, in the entry's signed bytes
+    // the website that brought this entry: its payout key, in the entry's signed bytes
     ...(frontendPk ? { frontendPk } : {}),
   };
   if (hidden) entry.commit = headToHeadCommit({ roundId: w.rid, entryKey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
-  // THE DONATION'S OUTPUTS (kanban #205): one payout contract per share, to its key, for exactly its amount
+  // THE DONATION'S OUTPUTS: one payout contract per share, to its key, for exactly its amount
   const donated = [];
   if (donation && donation.msat > 0n) {
     const split = splitDonation({ donationMsat: donation.msat, recipients: donation.target });
@@ -210,7 +210,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     entry.donationOutpoints = donated.map((d) => d.outpoint);
   }
   const eid = entryId(entry);
-  // THE LOCK SPAN: the round's own when it names more than the ruled 144 (a market's, kanban #236 - as the page locks for
+  // THE LOCK SPAN: the round's own when it names more than the ruled 144 (a market's, - as the page locks for
   // round.stakeExpiryBlocks), else the fixture's 200 as before; `expirySpan` a test's own (a lock made at the old 144)
   const span = expirySpan ?? (w.c.stakeExpiryBlocks > 144 ? w.c.stakeExpiryBlocks : 200);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
@@ -222,7 +222,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: game ? [] : bedFrom(0) };
   let endHash;
-  // A GAME'S RUN (kanban #202) IN TWO BATCHES: a first mark at `game.firstMark` (before the round's start deadline - a run
+  // A GAME'S RUN IN TWO BATCHES: a first mark at `game.firstMark` (before the round's start deadline - a run
   // that only ends at its run length cannot make its first mark at its end), then the rest and the last mark.
   let gameRun = null;
   if (game) {
@@ -287,7 +287,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     const receipt = await say(d.port, signedMark);
     assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, typeof receipt === 'string' ? `the mark was refused: ${receipt}` : undefined);
   }
-  // `fork` (§13B at a later tick; kanban #25): the run in two batches, a first mark at tick 60, and at its end mark X to
+  // `fork` (§13B at a later tick): the run in two batches, a first mark at tick 60, and at its end mark X to
   // the first seat and a contradicting mark Y to the second - `fork: 'tick'` Y at the same tick with another state,
   // `fork: 'parent'` Y one tick earlier from the same parent. Both signed by the entry's session key; each seat holds one.
   let forked = null;
@@ -304,7 +304,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       sessionPubkey: ed25519.getPublicKey(session) };
     const x = { ...mark, inputChainHash: batchId(b2), previousHash: checkpointId(m1) };
     const y = fork === 'parent' ? { ...x, tick: who.ticks - 1, stateHash: sha256(x.stateHash) } : { ...x, stateHash: sha256(x.stateHash) };   // 'tick', 'one-seat'
-    // `fork: 'stale'` - A PAGE STUCK ON AN OLD HEAD (measured on testnet4, kanban #25): the head H at the tick before the end,
+    // `fork: 'stale'` - A PAGE STUCK ON AN OLD HEAD (measured on testnet4): the head H at the tick before the end,
     // receipted by every seat, then a later mark S naming the OLD parent (the first mark) - refused at every seat, never carried
     let stale = null;
     if (fork === 'stale') {
@@ -325,7 +325,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       if (stale) {
         answers.push(said(await say(d.port, sign(stale.h))));
         (forked.staleAnswers = forked.staleAnswers || []).push(said(await say(d.port, sign(stale.s))));
-        // `staleMarks: N` (kanban #155, measured live: 63 refused marks from one stuck page): N - 1 more, each naming the
+        // `staleMarks: N` (measured live: 63 refused marks from one stuck page): N - 1 more, each naming the
         // same old parent with another state - every one refused, every one a "second child" on paper
         for (let k = 1; k < staleMarks; k++)
           forked.staleAnswers.push(said(await say(d.port, sign({ ...stale.s, stateHash: sha256(Uint8Array.of(k, ...stale.s.stateHash)) }))));

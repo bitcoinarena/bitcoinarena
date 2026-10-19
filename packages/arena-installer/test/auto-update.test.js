@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AUTO UPDATE (kanban #505): a newer signed release found, this system's asset fetched in pieces from the unlisted path, joined, its
+// AUTO UPDATE: a newer signed release found, this system's asset fetched in pieces from the unlisted path, joined, its
 // SHA-256 and SHA256SUMS checked before anything is unpacked, the node moved by update.js; off in arena.conf it only reports; the service
 // ends with 75 after an update; its launchers start it again (systemd, launchd, the Windows loop).
 import { test } from 'node:test';

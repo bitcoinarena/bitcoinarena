@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE WHOLE ANSWER WITHIN THE LIMIT (kanban #395): a seat that sends its headers at once and its body late is as silent as one
+// THE WHOLE ANSWER WITHIN THE LIMIT: a seat that sends its headers at once and its body late is as silent as one
 // that sends nothing - measured on testnet4: federation B's /rounds bodies took 19-45 s, and the lobby's first read waited for them.
 import test from 'node:test';
 import assert from 'node:assert/strict';

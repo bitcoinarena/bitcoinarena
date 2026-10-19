@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A SECOND TITLE ON THE SAME SIGNER NODES - THE ACCEPTANCE FOR M3 R1 (the owner 2026-09-15 08:07: "several
+// A SECOND TITLE ON THE SAME SIGNER NODES - THE ACCEPTANCE FOR M3 R1 (2026-09-15 08:07: "several
 // games at once, and several rule sets at once ... two titles and two configs can run on the same
 // nodes in the same window").
 //
@@ -24,12 +24,12 @@ export const COUNTER_HASH = sha(readFileSync(new URL('./counter-core.js', import
 export const CONFIGS = [{ target: 1000, ticks: 120 }, { target: 2000000000, ticks: 120 }]
   .map((c) => ({ config: c, hash: sha(`counter-config:${c.target}:${c.ticks}`) }));
 
-/** The core as its game installs it (kanban #202: a core is installed for a game, never beside one). */
+/** The core as its game installs it (a core is installed for a game, never beside one). */
 export const COUNTER = Object.freeze({
   name: CORE.name, hash: COUNTER_HASH, url: new URL('./counter-core.js', import.meta.url).href, adapter: CORE,
   configs: new Map(CONFIGS.map(({ config, hash }) => [hash.toString('hex'), config])),
 });
 
-/** THE COUNTER AS A GAME OF ITS OWN (kanban #202): its manifest, signed by a test key, and the core above. */
+/** THE COUNTER AS A GAME OF ITS OWN: its manifest, signed by a test key, and the core above. */
 export const COUNTER_GAME = testGame({ name: 'counter', cores: new Map([[COUNTER_HASH, COUNTER]]), runTicksMax: 120 });
 export const COUNTER_GAME_ID = COUNTER_GAME.gameId;

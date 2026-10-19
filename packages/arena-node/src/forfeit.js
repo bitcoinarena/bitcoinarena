@@ -42,7 +42,7 @@ import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 
-// A FEE LOCK'S RETURN (kanban #278, the owner 2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
+// A FEE LOCK'S RETURN (2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
 // the stake lock's, so an entry's two returns never stand in each other's place
 const FEE_RETURN_TAG = new TextEncoder().encode('arena fee lock return v1');
 export const feeReturnKey = (entryIdBytes) => { const m = new Uint8Array(FEE_RETURN_TAG.length + 32); m.set(FEE_RETURN_TAG); m.set(entryIdBytes, FEE_RETURN_TAG.length); return sha256(m); };
@@ -59,9 +59,9 @@ export class Forfeit {
    */
   constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null } = {}) {
     this.round = round;
-    // AN ORDER OF AN ORDER BOOK (kanban #278, comment 1127): the book's word on it - filled, cancelled, in a batch not decided
+    // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled, cancelled, in a batch not decided
     this.bookStanding = bookStanding;
-    // §23.2 REFUSED (kanban #191): rid -> why this node refuses the round, or null while it offers it
+    // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
     // THE OTHER SIGNER NODES' PROOF OF TWO FIRST MARKS, pulled and checked here before a
     // Void lock is refunded (M3.3-34): `pullProof(rid, eid)` keeps a pair that
@@ -90,7 +90,7 @@ export class Forfeit {
     // AN ORDER OF AN ORDER BOOK: its own rules (comment 1127)
     { const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
       if (book && book.book) return this.#bookReturn(roundIdBytes, entryIdBytes, contract, kind, book); }
-    // A CANCELLED MARKET ORDER (kanban #278): signed by its player before entry close, out of the round's table at this seat
+    // A CANCELLED MARKET ORDER: signed by its player before entry close, out of the round's table at this seat
     const cancelled = !!(this.round.cancelled && this.round.cancelled(entryIdBytes));
     if (kind === 'fee') {
       const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
@@ -100,7 +100,7 @@ export class Forfeit {
       return this.#signable(contract, fl);
     }
     let lock = this.round.stakeLock(entryIdBytes);
-    // §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): no entry,
+    // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): no entry,
     // but a lock this node kept for a round it refuses, under its handout's id (POST /refused-lock) - returned at once, on
     // this node's own record that it still refuses the round and that the lock stakes no entry here. No result, no window.
     let refused = null;
@@ -157,12 +157,12 @@ export class Forfeit {
       return refuse('this signer node learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
         + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other signer nodes: it signs no refund of the lock - `
         + 'a signer node it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
-    // AN ATTESTED ROUND (§0A.7a, kanban #206 slice 2): no run and no result. A stake comes back by this forfeit once THIS
+    // AN ATTESTED ROUND (§0A.7a): no run and no result. A stake comes back by this forfeit once THIS
     // signer node's settlement of the round is ACCEPTED and did not claim the lock - a winning pick's, or every pick's when
     // nobody picked the outcome. Before that it waits; a claimed lock was a losing pick's, and is not the player's.
     const attested = !voided && !refused && !cancelled && this.round.plugins
       ? (() => { const f = pluginForRound(contract, this.round.plugins); return f.ok && f.attested; })() : false;
-    // A MARKET ROUND REFUNDED (kanban #235, the owner 2026-10-09: "refund at the deadline", "refund the fees too"): VOID at its
+    // A MARKET ROUND REFUNDED (2026-10-09: "refund at the deadline", "refund the fees too"): VOID at its
     // deadline or on a contradiction, or final with nobody holding the right pick - nothing is claimed in it, so every stake
     // comes back now, on this signer node's own record, with no settlement to wait for
     const refund = attested ? this.#marketRefund(roundIdBytes, contract) : { ok: false };
@@ -205,7 +205,7 @@ export class Forfeit {
     const fields = lockFieldsFromJson(lock.fields);
     if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('that lock names another claim key than this round\'s');
     if (!this.port) return refuse('this signer node reaches no federation, so it cannot rebuild the lock');
-    // THE ROUND'S OWN FEDERATION'S PORT (kanban #348): every node serves every federation in its census
+    // THE ROUND'S OWN FEDERATION'S PORT: every node serves every federation in its census
     const port = this.port && typeof this.port.forFederation === 'function' ? ((await this.port.forFederation(toHex(contract.federationId))) || this.port) : this.port;
     const id = String(await port.contractId(fields));
     if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
@@ -213,7 +213,7 @@ export class Forfeit {
   }
 
   /**
-   * NOBODY WON: THE STAKE BACK AT SETTLEMENT, NOT AT EXPIRY (the owner 2026-10-03: "1 is fine" - the money back within a
+   * NOBODY WON: THE STAKE BACK AT SETTLEMENT, NOT AT EXPIRY (2026-10-03: "1 is fine" - the money back within a
    * block, stake_expiry_blocks stays 144 as the backstop). A round whose settlement paid no winner claims no loser's
    * lock but a walk-away's (lock-settlement.js `nobody`), and every other lock "expires back to its player" - after 144
    * blocks. On THIS signer node's own record - its settlement ACCEPTED, no winner's share in it, this lock not among
@@ -236,7 +236,7 @@ export class Forfeit {
   }
 
   /**
-   * AN ORDER'S LOCKS AT THE RETURN DOOR (kanban #278, comment 1127; the owner 2026-10-09 "(a)"). A lock moves whole, so:
+   * AN ORDER'S LOCKS AT THE RETURN DOOR (comment 1127; 2026-10-09 "(a)"). A lock moves whole, so:
    *  - FILLED: closed - a whole return would hand back filled money; its lock is claimed at resolution and its unfilled rest
    *    paid back there (also when it was cancelled after a fill, and a seller's proceeds);
    *  - in a batch NOT DECIDED yet: it waits for that batch;
@@ -260,15 +260,15 @@ export class Forfeit {
   #marketRefund(roundIdBytes, contract) {
     const f = pluginForRound(contract, this.round.plugins);
     if (!f.ok || !f.attested) return { ok: false };
-    // every standing outcome: the attestations and a market on a game's held source result (kanban #362 feature 6)
+    // every standing outcome: the attestations and a market on a game's held source result (feature 6)
     const held = heldOutcomes(this.round, roundIdBytes);
     const nowMs = this.round.now ? this.round.now() : Date.now();
-    // a template's round is VOID by its own resolution time's deadline (kanban #362 feature 5: roundTermsOf); a market on a game
+    // a template's round is VOID by its own resolution time's deadline (feature 5: roundTermsOf); a market on a game
     // AT ONCE when its source result refunds it or its source can never fit it (feature 6: game-market.js marketVoidOf)
     const voided = marketVoidOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, held, nowMs });
     if (voided.voided) return { ok: true, why: voided.why };
     const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs });
-    // A SCALAR MARKET (kanban #362 feature 8) HAS NO PICK THAT MISSES: every side is paid by where the value lies. It is refunded
+    // A SCALAR MARKET (feature 8) HAS NO PICK THAT MISSES: every side is paid by where the value lies. It is refunded
     // only when one side had nobody (scalar.js scalarOneSided - the table's own rule, so it claims nothing either)
     if (isScalar(f.plugin.manifest)) {
       if (!fin.final) return { ok: false };

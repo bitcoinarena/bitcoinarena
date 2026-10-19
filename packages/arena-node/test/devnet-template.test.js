@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE DEVNET'S GAME TEMPLATE (kanban #362, PLATFORM-RESEARCH item 15; tools/devnet-template): its core is a core a node can
+// THE DEVNET'S GAME TEMPLATE (PLATFORM-RESEARCH item 15; tools/devnet-template): its core is a core a node can
 // run - its state hash a true SHA-256, its runs the same integers twice - and `devnet.mjs new-game` turns it into a game of the
 // developer's own: keys made by the dev client, the manifest signed, and the game hosted as a node hosts it (signature, core
 // hash, the core loaded in its sandbox, config, donation set). Run again, it keeps the developer's keys and files.

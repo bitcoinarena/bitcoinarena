@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARBITRATION SET, AS A SERVICE (kanban #307, spec 5A.3B "From proof to transaction" steps 1-5). Disjoint from every
+// THE ARBITRATION SET, AS A SERVICE (spec 5A.3B "From proof to transaction" steps 1-5). Disjoint from every
 // round committee and from settlement: it touches bonds only, never a player stake, a round or a result.
 //
 // Until this the seats FILED slash proofs (verify.js fileSlashProofs) and said what one would owe (slash-owing.js), and
@@ -129,7 +129,7 @@ export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeig
 }
 
 /**
- * THE ESCROW INTO THE FEDERATION (§5A.3B, kanban #307): the set's spend of a players' escrow output (`escrow`: { txid
+ * THE ESCROW INTO THE FEDERATION (§5A.3B): the set's spend of a players' escrow output (`escrow`: { txid
  * (internal order), vout, value }) to the peg-in script `toScript`. The escrow must be the set's own escrowOutput; answers
  * the same shape as buildSlash, so memberSign and assemble take it as they take path B.
  */
@@ -142,7 +142,7 @@ export function buildEscrowPegin({ escrow, set, toScript, feeSats = 1000n }) {
 }
 
 // AFTER PATH B (spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share to its player",
-// kanban #307): once the slash is confirmed, its players' escrow is spent by k of the set to a peg-in address of the
+//): once the slash is confirmed, its players' escrow is spent by k of the set to a peg-in address of the
 // arbiter's own client of the round's federation (ARENA_ARBITER_CLIENT_DIR, through ARENA_STAKE_LOCK_BIN), claimed, and each
 // wronged player's share locked to refundKeyOf(their entry key) - the key a settlement's payout names, so the page collects
 // it the same way. Each step is kept (`keep`, the service's state file) before the next, so a restart picks up where it
@@ -229,7 +229,7 @@ export async function post(rpc, hex) {
 // ---- the arbitration set's half of a cooperative key-path spend (POST /musig/nonce, /musig/partial) ----
 
 /**
- * THE MEMBERS AS ONE MUSIG2 PARTY for a bond's key path (kanban #307, spec 5A.3B key path). A session is opened by a
+ * THE MEMBERS AS ONE MUSIG2 PARTY for a bond's key path (spec 5A.3B key path). A session is opened by a
  * coordinator with the bond's node key, its tree's tweak and the 32-byte sighash; each member draws its nonce pair here
  * and keeps its secret nonce, and signs once, only for the message the session was opened with. `allow(session)` is the
  * set's policy - which spends it agrees to (a release with no open proof against the node, a judged slash).
@@ -263,7 +263,7 @@ export function musigParty({ set, allow = () => ({ ok: false, why: 'no spend is 
 export { REPLAY_CONTRADICTS };
 
 /**
- * THE ARBITER'S DOORS (kanban #307): POST /musig/nonce { sessionId, nodeKey, tweak, msg, spend } -> the 7 members'
+ * THE ARBITER'S DOORS: POST /musig/nonce { sessionId, nodeKey, tweak, msg, spend } -> the 7 members'
  * pubnonces; POST /musig/partial { sessionId, aggnonce } -> their partial signatures (each nonce used once); GET /status
  * -> the set and what it posted. `posted` is the arbiter loop's record of path B spends it broadcast.
  */
@@ -275,15 +275,15 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/status')
       return answer(200, { network: set.network, k: set.k, members: set.members.map((m) => toHex(m.key)), posted });
-    // THE SLASH'S PAYOUTS (kanban #307): every share this set locked to a wronged player - round, entry, the player's refund
+    // THE SLASH'S PAYOUTS: every share this set locked to a wronged player - round, entry, the player's refund
     // key, msat, and the pre-expired lock's outpoint - for one round with ?round=, else all; a page collects its own
     if (req.method === 'GET' && url.pathname === '/slash-payouts') {
       const round = String(url.searchParams.get('round') || '').toLowerCase();
       if (round && !/^[0-9a-f]{64}$/.test(round)) return answer(400, { ok: false, why: 'a round id, 32 bytes hex' });
       return answer(200, { network: set.network, payouts: payouts().filter((p) => !round || p.round === round) });
     }
-    // A HALTED FEDERATION'S CLAIMS (§23A.5, kanban #323): the notes a client presents, and the table the window's end pays
-    // THE CLAIMS PAID (kanban #323): each lock the set made to a claim's key - the halted federation, the federation it was paid in
+    // A HALTED FEDERATION'S CLAIMS (§23A.5): the notes a client presents, and the table the window's end pays
+    // THE CLAIMS PAID: each lock the set made to a claim's key - the halted federation, the federation it was paid in
     // (`into`), the key, msat, txid and out_idx - so a page collects its own by Refund, as a slash payout
     if (req.method === 'GET' && url.pathname === '/liquidation-payouts') {
       const fid = String(url.searchParams.get('federation') || '').toLowerCase();

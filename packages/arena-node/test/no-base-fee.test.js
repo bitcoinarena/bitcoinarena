@@ -3,7 +3,7 @@
 // A NODE DOES NOT SIT A ROUND AGAINST A FEDERATION THAT CHARGES A BASE FEE (§22A, FEDERATION.md item 4).
 //
 // The spec's own words: "The 2% stays. Fedimint's own base fees are 0: the federation runs with
-// `disable_base_fees`. Lightning `min_htlc` / routing is not a federation fee." And the owner 2026-09-15 07:44
+// `disable_base_fees`. Lightning `min_htlc` / routing is not a federation fee." And 2026-09-15 07:44
 // says the same thing as a ruling.
 //
 // WHY IT MATTERS ON THE NODE AND NOT ONLY IN THE PAGE. A base fee comes out of EVERY input and output of the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// LOGIN WITH NOSTR (kanban #277): the game seed of a Nostr account, against the game's own relay (arena-node nostr-relay.js).
+// LOGIN WITH NOSTR: the game seed of a Nostr account, against the game's own relay (arena-node nostr-relay.js).
 //   - an nsec: first login derives the seed and publishes it encrypted (NIP-78 + NIP-44); a second login - another device -
 //     reads the same seed back; the event's content is not the seed in clear;
 //   - a signer (NIP-07 shaped, and a NIP-46 bunker answering over the relay): a random seed, the same one on the next login;
@@ -102,7 +102,7 @@ test('a seed event that does not decrypt is left alone; no relay answering makes
 });
 
 test('a new account (fresh): its seed is made without asking the relays for one, and is the seed a later login reads', async () => {
-  // kanban #381: a key made a moment ago has no seed event; the ask waited for every relay's answer first
+  //: a key made a moment ago has no seed event; the ask waited for every relay's answer first
   const r = await startRelay({ port: 0 });
   const url = `ws://127.0.0.1:${r.port}`;
   const pool = new SimplePool();

@@ -1,5 +1,5 @@
 #!/bin/sh
-# ARENA NODE ON LINUX: THE SETUP (kanban #500). Installed by arena-node_<version>_<arch>.deb as /usr/bin/arena-node-setup, and in the
+# ARENA NODE ON LINUX: THE SETUP. Installed by arena-node_<version>_<arch>.deb as /usr/bin/arena-node-setup, and in the
 # desktop's menu as "Arena Node". The release is under /opt/arena-node/<release> (read-only; the node's services run it from there):
 #   no node yet      the installer runs, its one-time link opens in the browser; with a desktop a small window (zenity) shows its
 #                    progress with Open in browser / Stop, without one the terminal does

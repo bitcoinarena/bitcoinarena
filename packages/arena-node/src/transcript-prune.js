@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§34, kanban #33 step 4; the owner 2026-10-17: "Transcripts are deleted when the claim window
+// TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§342026-10-17: "Transcripts are deleted when the claim window
 // ends, as §34 reads - not kept longer"). §34: "transcripts must be retained through the objection and claim windows by all seven
 // nodes". Measured 2026-10-18 on seat 1: 447,137 tick rows (43.7 MB), 66,501 batches (25.0 MB) and 4,498 checkpoints (1.7 MB) over
 // 246 rounds, none ever deleted.
@@ -45,7 +45,7 @@ export function pruneTranscripts({ db, nowMs = Date.now(), keptUntil = (row) => 
   return { pruned, kept, rows };
 }
 
-// ROUNDS NOBODY USED LEAVE TOO (kanban #468, the owner 2026-10-18: "optimise cpu usage and space on nodes ... Make it lean"). Measured on
+// ROUNDS NOBODY USED LEAVE TOO (2026-10-18: "optimise cpu usage and space on nodes ... Make it lean"). Measured on
 // seat 2: 272,857 rounds (233 MB of contracts) of which 316 ever had an entry; their committee and seating records - 1,803,671
 // signer_nodes rows, 820,816 seat_presents, 460,725 seat_sigs, 265,768 round_beacons, 106,637 seat_certs - were never deleted, every
 // start decoded all 272k contracts (server.js, the posted rounds re-read) and the seating agent held every certificate in memory.

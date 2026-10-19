@@ -21,12 +21,12 @@
 //     ARENA_CLOSE_AT_END=1         this node closes every round that is over, itself
 //     ARENA_PRICE_FEED=1           this node reads BTC/USD every 5 s and signs the price samples of its nextblock rounds (§11)
 //     ARENA_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name - and
-//                                 the chain this seat reads, for the network store (kanban #276)
+//                                 the chain this seat reads, for the network store
 //     ARENA_FEDERATION_INVITE      the federation invite this seat hands out with its network (GET /network)
 //     ARENA_ATTACH_PROOF_DIR       the launcher's headers.bin and bond.json, served on GET /headers and GET /bond,
 //                                 read at every ask (the launcher writes them once the nodes are up)
 //     ARENA_GAMES                  the games this node hosts: registration modules, comma-separated, each exporting GAME
-//                                 (kanban #203, §0A.4: none given hosts none - the engine names no game;
+//                                 (§0A.4: none given hosts none - the engine names no game;
 //                                 packages/nextblock/bin/node.mjs is the reference launcher and names nextblock)
 //     ARENA_SERIES_FILE            the series this node holds: one Round Contract template per line, hex (serve's
 //                                 `series`). Measured 2026-09-29: without it a node process could hold no series at all,
@@ -67,7 +67,7 @@ import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 import { installFetchRoutes } from './fetch-routes.js';
-// THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js, kanban #348)
+// THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js)
 { const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout`); }
 
 const port = Number(process.argv[2] || 8080);
@@ -96,7 +96,7 @@ if (!ln.ok) {
 }
 
 const db = openStore(path);
-// THE GAMES THIS NODE HOSTS (kanban #202/#203, §0A.4): the registration modules ARENA_GAMES names, each exporting GAME -
+// THE GAMES THIS NODE HOSTS (§0A.4): the registration modules ARENA_GAMES names, each exporting GAME -
 // a manifest as its developer signed it with the dev client (public bytes only), the cores installed for it, its replay
 // page. The node verifies the signature and refuses a manifest that does not stand (plugins.js); it holds no developer
 // key and never signs a game. NONE BY DEFAULT: the engine names no game. nextblock's launcher
@@ -107,7 +107,7 @@ for (const at of (process.env.ARENA_GAMES || '').split(',').map((x) => x.trim())
   if (!m.GAME) throw new Error(`ARENA_GAMES names ${at}, which exports no GAME`);
   games.push(m.GAME);
 }
-// AND THE GAMES ITS OWNER INSTALLED FROM OTHER SEATS (kanban #276 step 5, plugin-package.js): each package checked again -
+// AND THE GAMES ITS OWNER INSTALLED FROM OTHER SEATS (plugin-package.js): each package checked again -
 // manifest, donation set, every file's hash, the scan - before it is loaded; a refused one is said and left out
 const pluginsDir = process.env.ARENA_PLUGINS_DIR || `${path}.plugins`;
 {
@@ -120,13 +120,13 @@ const pluginsDir = process.env.ARENA_PLUGINS_DIR || `${path}.plugins`;
 console.log(`[games] hosting ${games.length ? games.map((g) => g.name).join(', ') : 'none (ARENA_GAMES names no game)'}`);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
-// THE OWNER'S KEY AND CLAIM CODE (kanban #276, owner.js): two files beside the database, the code readable by the operator only
+// THE OWNER'S KEY AND CLAIM CODE (owner.js): two files beside the database, the code readable by the operator only
 const ownerFiles = { store: {
   read: () => { try { return JSON.parse(readFileSync(`${path}.owner.json`, 'utf8')); } catch { return null; } },
   write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
   writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
 } };
-// THE OPERATOR UI'S TOKENS (spec §27A.7.7, kanban #332): kept as hashes beside the database; the first-start pairing URI written
+// THE OPERATOR UI'S TOKENS (spec §27A.7.7): kept as hashes beside the database; the first-start pairing URI written
 // beside it too, readable by the operator only, as the claim code is. The endpoint is the node's public one (ARENA_WSS_<port>)
 const operatorFiles = {
   store: {
@@ -139,7 +139,7 @@ const operatorFiles = {
 const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, operator: operatorFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
-// THE COMMITTEE'S PRICE FEED (§11, kanban #311): read BTC/USD every 5 s and lead / sign the attested price samples
+// THE COMMITTEE'S PRICE FEED (§11): read BTC/USD every 5 s and lead / sign the attested price samples
 if (process.env.ARENA_PRICE_FEED === '1') options.priceFeed = true;
 {
   const net = process.env.ARENA_DONATION_NETWORK;
@@ -147,24 +147,24 @@ if (process.env.ARENA_PRICE_FEED === '1') options.priceFeed = true;
   // testnet4 also holds the set series 3cfbe516 names, under the old id (PICK B, arena-protocol/src/old-series.js)
   // AND TESTNET4'S SET WITH REAL RECIPIENTS (LNURL-0822, serial 2): for the contracts that name it; a contract names its set
   // by id (22A), so the rounds already written keep theirs
-  // AND, FROM ITS valid_from (154965), TESTNET4'S SET OF KEYS (serial 3; the owner 2026-10-03, FEDERATION.md "Donations in the
+  // AND, FROM ITS valid_from (154965), TESTNET4'S SET OF KEYS (serial 3; 2026-10-03, FEDERATION.md "Donations in the
 // federation"): every round whose census reaches it names it; the rounds already written keep the set they named
-// ON REGTEST THE KEY SET WHEN ASKED (kanban #237): ARENA_REGTEST_DONATION_SET=keys - a market whose own game set pays keys
+// ON REGTEST THE KEY SET WHEN ASKED: ARENA_REGTEST_DONATION_SET=keys - a market whose own game set pays keys
 // (the Up/Down test market) settles only beside a protocol set that pays keys too ("never one of each"); every other
 // regtest tool keeps the LNURL set
-// THE CHAIN THIS SEAT READS, as its network's genesis names it (kanban #276: the network store takes no package for another chain)
+// THE CHAIN THIS SEAT READS, as its network's genesis names it (the network store takes no package for another chain)
 if (net) options.chain = net === 'regtest' ? 'bitcoin-regtest' : 'bitcoin-testnet4';
 if (process.env.ARENA_FEDERATION_INVITE) options.federationInvite = process.env.ARENA_FEDERATION_INVITE.trim();
 if (net) options.donationSets = net === 'regtest' ? (process.env.ARENA_REGTEST_DONATION_SET === 'keys' ? [TEST_DONATION_SET_KEYS_REGTEST] : [TEST_DONATION_SET_REGTEST]) : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
 // ONE SERIES A LINE (series-line.js): its template, hex; then count=N, cut=N, and for a grid series grid and period=N.
 const readSeriesFile = (path) => readSeriesLines(readFileSync(path, 'utf8'));
-// THE OPERATOR'S REFUSE-ROUNDS FILE (kanban #191): round ids this node refuses at every door, read again when it changes
+// THE OPERATOR'S REFUSE-ROUNDS FILE: round ids this node refuses at every door, read again when it changes
 if (process.env.ARENA_REFUSE_ROUNDS_FILE) options.refuseRoundsFile = process.env.ARENA_REFUSE_ROUNDS_FILE;
 if (process.env.ARENA_SERIES_FILE) {
   const path = process.env.ARENA_SERIES_FILE;
   try { options.series = readSeriesFile(path); } catch (e) { console.error(`ARENA_SERIES_FILE: a line is not a series: ${e.message}`); process.exit(2); }
-  // A SERIES ADDED TO THE FILE IS TAKEN WITHOUT A RESTART (the owner 2026-10-02: "find out the reason for the restarts and
+  // A SERIES ADDED TO THE FILE IS TAKEN WITHOUT A RESTART (2026-10-02: "find out the reason for the restarts and
   // find a way to recover from them"): the 82/90 waiter restarted the seven seats one at a time, 10 min apart, after each
   // day's series - one restarted between a player's join and the round's start lost his session and his run went FORFEIT
   // (round 798ebc79, seat 1, 11:45:56Z), one restarted inside the objection window never signed FINAL (seat 2). The file is
@@ -178,16 +178,16 @@ if (process.env.ARENA_SERIES_FILE) {
     return read;
   };
 }
-// THE GRID SERIES POSTED TO THIS SEAT (POST /series, kanban #293), kept beside its store so a restart holds them again
+// THE GRID SERIES POSTED TO THIS SEAT (POST /series), kept beside its store so a restart holds them again
 options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-series`;
 // WHERE THE OTHER SIGNER NODES ANSWER, as the operator knows it (serve's `peers`; ORDER-2116, measured on the free pair):
 // with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
-// whose address moved since answers there no more. The free pair's nodes run as their own units (the owner 2026-10-01) and
+// whose address moved since answers there no more. The free pair's nodes run as their own units (2026-10-01) and
 // lost the peers the 2-of-2 launcher handed them: 44 runs sat at 1 of 2 FINAL signatures. Comma-separated base URLs.
-// WHAT THIS NODE HOSTS (the owner 2026-10-03 22:50): node 1 gateway A + LND 1, node 2 gateway B + LND 2 - read for its /dashboard
-// A DEV CLIENT BESIDE THIS NODE (kanban #357): its directory, read for the dashboard (never its key)
+// WHAT THIS NODE HOSTS (2026-10-03 22:50): node 1 gateway A + LND 1, node 2 gateway B + LND 2 - read for its /dashboard
+// A DEV CLIENT BESIDE THIS NODE: its directory, read for the dashboard (never its key)
 if (process.env.ARENA_DEV_CLIENT_DIR) options.devClientDir = process.env.ARENA_DEV_CLIENT_DIR;
-// THE DEV CLIENTS THE OWNER SETS UP ON THE OWNER PAGE (kanban #358): run by this node, one directory each beside its database. A new
+// THE DEV CLIENTS THE OWNER SETS UP ON THE OWNER PAGE: run by this node, one directory each beside its database. A new
 // client takes the seats, invites and gateways this node knows - from a template donor.json (ARENA_DEV_TEMPLATE, else the client
 // beside it), else from ARENA_DEV_SEATS
 // and ARENA_DEV_INVITES_FROM - and the page's lock client from ARENA_DEV_WASM_PKG; without that the owner page says it runs none.
@@ -214,7 +214,7 @@ if (process.env.ARENA_ATTACH_PROOF_DIR) {
   const dir = process.env.ARENA_ATTACH_PROOF_DIR;
   options.headerBytes = () => { try { return new Uint8Array(readFileSync(`${dir}/headers.bin`)); } catch { return null; } };
   options.bondProof = () => { try { return JSON.parse(readFileSync(`${dir}/bond.json`, 'utf8')); } catch { return null; } };
-  // THIS NODE'S ADVERTISEMENT (kanban #204): the newest it posted - an update's, when the operator put the update
+  // THIS NODE'S ADVERTISEMENT: the newest it posted - an update's, when the operator put the update
   // transaction beside the bond as advert-update.json ({ hex }) - else the one its bond committed to. serve() holds its
   // hosted_games to ARENA_GAMES and refuses to start on an advertised game it does not host.
   try {
@@ -227,7 +227,7 @@ if (process.env.ARENA_ATTACH_PROOF_DIR) {
 }
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });
-  // GET /headers KEPT UP WITH THE CHAIN (kanban #296): the attach proof's headers.bin was written once (to 156046 on
+  // GET /headers KEPT UP WITH THE CHAIN: the attach proof's headers.bin was written once (to 156046 on
   // 2026-10-11), and a client that builds a committee itself needs headers past each round's beacon. The file stays the
   // start - it begins at the network's anchor - and every new block's header is appended from this node's bitcoind,
   // read every 30 s; a header that does not link to the one before stops the append (a reorg is read again next time).
@@ -299,7 +299,7 @@ if (url) {
   // (No census is read ahead for rounds owing an on-chain pool payout: that payout is gone with the withdrawn custody -
   // §23.6, RULED 2026-09-25. A round's view is read the first time it is asked for, below.)
   Object.assign(options, {
-    // THE BALLOT'S PROPOSALS (kanban #329): a deposit read from the block its proposer names - getrawtransaction with a block hash
+    // THE BALLOT'S PROPOSALS: a deposit read from the block its proposer names - getrawtransaction with a block hash
     // needs no txindex - and that block's height, only while it is on this bitcoind's main chain. The lowest bracket's bond_min
     // is the rounds' floor until the 27A.2 median is built (testnet4's rounds name 50 000 sat): ARENA_LOWEST_BOND_MIN_SATS.
     ballot: {
@@ -334,7 +334,7 @@ if (url) {
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats,
           height: Number.isInteger(e.height) ? e.height : null, maturity: e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : null }));
       },
-      // THE WHOLE CENSUS AT A HEIGHT, ADVERTS AND ALL (kanban #326): a founding's trigger height is the chain's, not any round's - the
+      // THE WHOLE CENSUS AT A HEIGHT, ADVERTS AND ALL: a founding's trigger height is the chain's, not any round's - the
       // seats' newest rounds name census heights days back, and their views end at those rounds' beacons (measured live 2026-10-15:
       // B1's newest round names 156538, node 15's 156388, so B7's notice at 156644 never found its beacon or census and no founding
       // started). The same derivation and window as censusAt above, every entry whole (the draw reads guardian_capable,
@@ -351,7 +351,7 @@ if (url) {
     },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
     chainTip: async () => Number(await call('getblockcount')),
-    // A RAW TRANSACTION CHECKED, THEN BROADCAST (kanban #471 part D, the owner's bond withdrawal): testmempoolaccept first - a bridge
+    // A RAW TRANSACTION CHECKED, THEN BROADCAST (the owner's bond withdrawal): testmempoolaccept first - a bridge
     // in Electrum mode serves none, and its Electrum server refuses an invalid transaction itself
     chainSend: async (hex) => {
       let r = null;
@@ -359,18 +359,18 @@ if (url) {
       if (r && !r.allowed) throw new Error(`the mempool refuses it: ${r['reject-reason']}`);
       return String(await call('sendrawtransaction', [hex]));
     },
-    // A LIQUIDITY PROVIDER'S COIN, UNSPENT AND CONFIRMED (kanban #494, §23A.10: a guardian counts only coins its own chain shows)
+    // A LIQUIDITY PROVIDER'S COIN, UNSPENT AND CONFIRMED (§23A.10: a guardian counts only coins its own chain shows)
     chainTxOut: async (txid, vout) => { const o = await call('gettxout', [txid, vout, false]); return o ? { sats: BigInt(Math.round(Number(o.value) * 1e8)), script: o.scriptPubKey.hex } : null; },
-    // THE CHAIN'S MEDIAN TIME AT A HEIGHT (kanban #397 slice 6): a funding signal's active window, read alike by every seat
+    // THE CHAIN'S MEDIAN TIME AT A HEIGHT: a funding signal's active window, read alike by every seat
     blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
-    // OF IT IN FLIGHT (the owner 2026-09-30, measured on testnet4): a node holding series 3cfbe516 lists ~508 rounds that
+    // OF IT IN FLIGHT (2026-09-30, measured on testnet4): a node holding series 3cfbe516 lists ~508 rounds that
     // all name the same census and beacon, and a view read per round id - ~100 blocks each, re-asked on every listing
     // while unread - flooded the testnet4 bitcoind from seven nodes: "Too many open files" at 07:10Z, the daemon
     // restarted, and the LNDs on it shut down. A round asked by id alone answers from the key it was read under.
     chainFor: ({ contract, roundIdBytes } = {}) => {
       const rid = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
-      // A ROUND ASKED BY ID ALONE AFTER A RESTART (the owner 2026-10-02: "find a way to recover from them"): the id -> view key
+      // A ROUND ASKED BY ID ALONE AFTER A RESTART (2026-10-02: "find a way to recover from them"): the id -> view key
       // map lives in memory, so a seat restarted inside a round's objection window answered "no chain view for that round",
       // could not say who is bonded, gathered no FINAL signature and kept none - seat 2 stayed PROVISIONALLY_FINAL on round
       // 798ebc79 while the other six signed FINAL 7 of 7. The round's own contract is in the store: its key is read from it.
@@ -420,7 +420,7 @@ if (url) {
           })().catch(() => {}).finally(() => reading.delete(key)));
         return had;
       }
-      // A READ THAT FAILED IS SAID ONCE AND TRIED AGAIN A MINUTE LATER, not on every pass (the owner 2026-10-02, the load): the
+      // A READ THAT FAILED IS SAID ONCE AND TRIED AGAIN A MINUTE LATER, not on every pass (2026-10-02, the load): the
       // error was dropped, so every close and verify pass over a round whose view would not read - on all seven testnet4
       // seats, rounds from days back and today's alike - read ~2,100 blocks from bitcoind again, and the seat said only
       // "no chain view for that round".
@@ -459,10 +459,10 @@ if (url) {
       options.chainFor({ contract: { ...c, censusHeight: OLD_TESTNET4_SERIES_BOND_HEIGHT } });
   }
 }
-// THE NODE, AND ITS GUARDIAN WHEN IT HOLDS A GUARDIAN KEY (node-start.js; §23A.2, RULED the owner 2026-09-26 22:54 and
+// THE NODE, AND ITS GUARDIAN WHEN IT HOLDS A GUARDIAN KEY (node-start.js; §23A.2, RULED 2026-09-26 22:54 and
 // 2026-09-27): nothing here is guardian config - whether this node is a guardian is the key beside its store, and the
 // network, bitcoind, data, ports and public endpoint are all read off what this node already has (guardian.js).
-// WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "every node serving players needs a valid certificate ... Node software
+// WSS FROM THE NODE ITSELF (spec §25.3,: "every node serving players needs a valid certificate ... Node software
 // SHOULD make certificate provisioning a first-class setup step"): ARENA_TLS_CERT and ARENA_TLS_KEY, PEM files as
 // tools/tls-setup.sh writes them - the node answers https and wss on its port. The files are read again every hour, so a
 // renewed certificate is taken without a restart.

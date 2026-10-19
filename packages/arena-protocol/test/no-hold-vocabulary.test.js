@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE HOLD-INVOICE PATH IS GONE, NOT RENAMED (§23.6, RULED the owner 2026-09-22 22:59; cut 6b RULED 2026-09-24: "Delete the
+// THE HOLD-INVOICE PATH IS GONE, NOT RENAMED (§23.6, RULED 2026-09-22 22:59; cut 6b RULED 2026-09-24: "Delete the
 // hold vocabulary from payout.js. lock-settlement.js takes settle-or-refund from a federation-only function with the
 // same outputs ... comments that name THRESHOLD_LN. No decode-only label. An old round that names it stays invalid.").
 //

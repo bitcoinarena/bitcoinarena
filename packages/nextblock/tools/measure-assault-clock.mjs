@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ASSAULT IN THE WORDS A PLAYER WOULD SEE (the owner 2026-09-20 16:22 / 16:26).
+// THE ASSAULT IN THE WORDS A PLAYER WOULD SEE (2026-09-20 16:22 / 16:26).
 //
 // `measure-assault.mjs` already measures WAR_TACTICS §4.12 against its §0.1 rows - declared-then-happens, the
 // lulls, the win/fail split, the push. This asks a different and much smaller question, and only because the

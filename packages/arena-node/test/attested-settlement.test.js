@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ATTESTED ROUND'S DOOR AND ITS SETTLEMENT, ON TWO SIGNER NODES AND THE FAKE FEDERATION (kanban #206 slice 2, §0A.7a;
-// the owner 2026-10-07, plan 777):
+// AN ATTESTED ROUND'S DOOR AND ITS SETTLEMENT, ON TWO SIGNER NODES AND THE FAKE FEDERATION (§0A.7a;
+// 2026-10-07, plan 777):
 //   - the door: an attestation before the round's entries close, or one observed before they closed, refused by name;
 //   - final 600 s after the first standing attestation: inside it nothing settles, and a contradiction makes it DISPUTED;
 //   - past it the seats settle the pari-mutuel table by themselves (the sweep): the losers' stake locks and every fee lock
@@ -101,7 +101,7 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
       payouts: (moved.payouts || []).map((p) => [p.kind, String(p.pk).slice(0, 10), String(p.msat)]) };
     console.log('  SETTLED:', JSON.stringify(facts));
     assert.equal(got.state, 'ACCEPTED', got.why);
-    // EACH FEE LOCK HOLDS THE MARKET'S 1 %: 0.5 % node fee and 0.5 % donation, both due now, at resolution (kanban #235)
+    // EACH FEE LOCK HOLDS THE MARKET'S 1 %: 0.5 % node fee and 0.5 % donation, both due now, at resolution
     const fee = entryFeeMsat(STAKE, 50);
     const donated = entryFeeMsat(STAKE, 100) - fee;
     const net = STAKE - fee - donated;
@@ -119,7 +119,7 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
       assert.equal(BigInt(p.msat), BigInt(row.payoutMsat) - BigInt(row.netMsat), 'a winner was not paid its table share to the msat');
     }
     assert.equal(sum(moved.payouts.filter((x) => x.kind === 'qualifier').map((x) => BigInt(x.msat))), 2n * net, 'the winners were not paid the whole losing pool');
-    // the seats: the fee locks, two halves each (no guardian eligible), as #205
+    // the seats: the fee locks, two halves each (no guardian eligible), as 
     const seats = moved.payouts.filter((x) => x.kind === 'signer node');
     assert.equal(sum(seats.map((x) => BigInt(x.msat))), 4n * fee);
     // the donation, from the same fee locks, to the donation keys: half the protocol devs' set, half the game dev's
@@ -154,7 +154,7 @@ test('nobody right: nothing is claimed, the fees neither, every stake back at on
     await closeRound(w);
     await attestBoth(w, 2);
     skipTo(Number((await outcome(w.a, w.rid)).finalAtMs) + 100);
-    // REFUND THE FEES TOO (kanban #235, the owner 2026-10-09): nothing is claimed - no stake lock, no fee lock - and every stake
+    // REFUND THE FEES TOO (2026-10-09): nothing is claimed - no stake lock, no fee lock - and every stake
     // comes back by the return door at once, with no settlement to wait for; every fee lock at its expiry
     await wait(6000);                                         // a sweep has passed
     const nothing = await w.a.settlements.settle(w.rid);
@@ -183,7 +183,7 @@ test('nobody right: nothing is claimed, the fees neither, every stake back at on
     const s2 = await standing(r2.a, r2);
     console.log('  DISPUTED:', JSON.stringify({ contradiction: contra.slice(0, 3), state: disputed.state, settle: held2.state, why: held2.why, settlement: s2.state || 'none' }));
     assert.equal(disputed.state, 'DISPUTED');
-    // A CONTRADICTION VOIDS THE ROUND (kanban #235): nothing settles, every stake comes back at once
+    // A CONTRADICTION VOIDS THE ROUND: nothing settles, every stake comes back at once
     assert.equal(held2.state, 'VOID');
     assert.match(held2.why, /contradicted themselves/);
     assert.notEqual(s2.state, 'ACCEPTED');
@@ -201,7 +201,7 @@ test('nobody right: nothing is claimed, the fees neither, every stake back at on
   } finally { await w.close(); }
 });
 
-// REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market whose manifest names a resolution time and a deadline -
+// REFUND AT THE DEADLINE (2026-10-09): a market whose manifest names a resolution time and a deadline -
 // here 1 minute after entry close and 1 minute for its attestors - and no attestation by then: the round is VOID, nothing
 // is claimed, and every stake comes back at once. Before the deadline it is only held.
 const TERMS = { nodeFeeBps: 50, donationBps: 50,
@@ -235,7 +235,7 @@ test('a market with terms and no outcome by its deadline: VOID, nothing claimed,
   } finally { await w.close(); }
 });
 
-// A CANCEL (kanban #278, the owner 2026-10-09: "until then the orders can be cancelled at no cost"; "when an order is filled, the
+// A CANCEL (2026-10-09: "until then the orders can be cancelled at no cost"; "when an order is filled, the
 // fee is of course due too"): before entry close, signed by the entry's session key - out of the table, both locks back at once
 test('a cancel before entry close is free: out of the table at every seat, its stake and fee locks back at once; after entry close refused, its fee due', async () => {
   const w = await lockRound({ stakeMsat: STAKE, round: ROUND, endMs: testNow() + 900000,

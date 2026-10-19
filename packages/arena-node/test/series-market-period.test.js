@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET'S SERIES ON ITS OWN PERIOD (kanban #236/#237, §0A.7b.4: "Market rounds on their own 15 min period instead of the
+// A MARKET'S SERIES ON ITS OWN PERIOD (§0A.7b.4: "Market rounds on their own 15 min period instead of the
 // 90 s grid"): the paid lobby offers only rounds of a published series, and a series ran only on the 90 s grid - so the
 // 15-minute Up/Down market could have no paid round. A series now runs on its market's round_period: 96 rounds a day, each
 // on the quarter hour, written by the node like any series round; every 90 s series is exactly what it was.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE COUNTS THE FEDERATION'S BONDED GUARDIANS ON ITS OWN EVIDENCE (§23.6;
-// the owner 2026-09-15 07:33): the keys off its lock client's config, the bonds
+// 2026-09-15 07:33): the keys off its lock client's config, the bonds
 // proven into a mined chain, each advertisement signed by the node it names.
 // Whoever named the candidates can omit and cannot forge.
 import { test } from 'node:test';
@@ -115,7 +115,7 @@ test('guardians read off another federation than the round names count nothing',
   assert.equal((await count({ chain: theirs.chain, offers: theirs.offers })).bonded, 2);
 });
 
-// THE NEWEST ADVERTISEMENT COUNTS (§5A.2; the owner 2026-09-28, the advertisement-update letter: "the page guardian-bond
+// THE NEWEST ADVERTISEMENT COUNTS (§5A.2; 2026-09-28, the advertisement-update letter: "the page guardian-bond
 // check: same newest-update rule as the census"). Three bonds name keys the federation no longer holds - the refound
 // gave every guardian a new one - and each node's signed update names its new key: the page counts the new keys, the
 // same bonds. An update signed by anybody else, or mined below its bond, is refused by name and the bond's own

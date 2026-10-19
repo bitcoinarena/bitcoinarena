@@ -21,9 +21,9 @@ const rand = (n) => new Uint8Array(randomBytes(n));
 const CORE = fromHex(coreHashHex());
 const UNKNOWN = b32(1);            // what every launcher used to write
 const seed = b32(0x5e);
-// SINCE KANBAN #202 A ROUND NAMES ITS GAME, and a core is known only as a core its game lists (known-game.js)
+// SINCE KANBAN A ROUND NAMES ITS GAME, and a core is known only as a core its game lists (known-game.js)
 const paying = (simCoreHash, gameId = NEXTBLOCK_GAME_ID) => ({ id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId, simCoreHash, federationId: TEST_FEDERATION_ID });
-// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
 // that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
 // a non-zero outpoint, paying to the dealt stake's point where one is dealt.

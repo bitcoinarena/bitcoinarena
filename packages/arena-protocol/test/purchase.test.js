@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ITEM, BOUGHT (kanban #365 step 2): the buyer's signed record, its outputs rebuilt from the split, refused by name when anything differs.
+// AN ITEM, BOUGHT: the buyer's signed record, its outputs rebuilt from the split, refused by name when anything differs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
@@ -66,7 +66,7 @@ test('a purchase that pays anything else, of anything else, against another list
   assert.match(s({ ...p, txid: b32(0x7b) }), /signature does not verify/, 'the transaction is part of what the buyer signed');
 });
 
-// THE DEVELOPERS' SHARE IS THE BUYER'S CHOICE (kanban #377, the owner 2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game
+// THE DEVELOPERS' SHARE IS THE BUYER'S CHOICE (2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game
 // devs (25/25) but are fully optional ... 50% 40% 30% 20% 10% 0% ... if the ingame donations are zero the price is 250 Sats instead of
 // 500 sats. Node fees are never optional.")
 test('the price at each share: 500 sat at 50 %, 250 sat at 0 %, the nodes\' 250 always', () => {

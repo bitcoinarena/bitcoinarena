@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PAGE HOLDS THE VICTORY UNTIL THE RUN IS SAFE (kanban #315, §13A "Client duty"): the template's own BLWP_SECURE_RUN on stubs -
+// THE PAGE HOLDS THE VICTORY UNTIL THE RUN IS SAFE (§13A "Client duty"): the template's own BLWP_SECURE_RUN on stubs -
 // a DELIVERED run is asked of its nodes until two hold all of it, and the line over the result card says so; anything else is not gated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

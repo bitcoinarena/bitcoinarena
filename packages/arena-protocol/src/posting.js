@@ -44,7 +44,7 @@ export function encodeTranscriptPosting(p) {
   // WHO SAYS SO is in the signed bytes, so a signature cannot be moved from one
   // signer node's record to another's.
   w.bytes32(p.signerNodePubkey);
-  // THE BLOCK THE POSTING SITS IN (§13A, RULED the owner 2026-09-24): the hash of a block of the chain, named by the signer
+  // THE BLOCK THE POSTING SITS IN (§13A, RULED 2026-09-24): the hash of a block of the chain, named by the signer
   // node when it posts. The first objection window opens at the block of the posting that completes the threshold, so
   // it is a chain fact every holder reads the same, not the moment a posting reached one node.
   w.bytes32(p.blockHash);

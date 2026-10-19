@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN ENTRY'S ITEMS REACH THE CORE'S START AS THEIR UNLOCKS (kanban #365, #369): the seat maps each item the entry names to its game's
+// AN ENTRY'S ITEMS REACH THE CORE'S START AS THEIR UNLOCKS: the seat maps each item the entry names to its game's
 // catalogue unlock (core.items, plugins.js itemUnlocksOf) and the sandbox's driver hands them to start() - only when there are some, so
 // a core that sells nothing is started exactly as before; an item the game does not sell is not replayed. The same in a warm ghost.
 import { test } from 'node:test';
@@ -67,7 +67,7 @@ test('a warm ghost opens its run with the same unlocks', () => {
   assert.match(bad.why, /does not sell/);
 });
 
-// THE SEATS' OWN PATH (kanban #369, measured live 2026-10-16 05:50Z): a close replays in a worker (replayInWorker, the pool), and the
+// THE SEATS' OWN PATH (measured live 2026-10-16 05:50Z): a close replays in a worker (replayInWorker, the pool), and the
 // core crossed to it without its catalogue - every committee seat held the truck entry 3de8e94c "plays with item "large-truck", which
 // the round's game does not sell". The worker's replay of an entry with items equals the in-thread one.
 test('in the worker too: the unlocks reach start() and the run is the in-thread one', async () => {

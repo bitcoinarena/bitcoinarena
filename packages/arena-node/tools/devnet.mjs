@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEVELOPER DEVNET IN ONE COMMAND (kanban #362, docs/PLATFORM-RESEARCH.md item 15: "one command starts a local chain, a
+// A DEVELOPER DEVNET IN ONE COMMAND (docs/PLATFORM-RESEARCH.md item 15: "one command starts a local chain, a
 // federation and seven nodes, with a game template and a replay simulator. The first hour decides whether a developer
 // stays"). Regtest only: no testnet4, no mainnet, no bond or stake anywhere but the devnet's own chain.
 //
@@ -357,7 +357,7 @@ async function runner() {
     const { bitcoindRpc } = await import('../src/chain-rpc.js');
     const { toHex } = await import('../../arena-protocol/src/hash.js');
     const { decodeRoundContract } = await import('../../arena-protocol/src/contracts.js');
-    // THE FIRST BOND OF EACH NODE IS POSTED BY THE ATTACHED RUNNER (round-2of2.mjs, kanban #348): its secret read from the
+    // THE FIRST BOND OF EACH NODE IS POSTED BY THE ATTACHED RUNNER (round-2of2.mjs): its secret read from the
     // node's own store, read-only, and the advertisement says what the running node says - its endpoint, that it is a
     // guardian and where, and which key of the federation it holds
     process.env.ARENA_POST_FIRST_BONDS = '1';

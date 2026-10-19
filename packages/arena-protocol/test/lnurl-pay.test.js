@@ -44,7 +44,7 @@ test('the invoice is exactly the share, under the endpoint\'s own metadata hash,
   assert.match(invoiceAnswersPayRequest({ amountMsat: 1n, metadata: '' }).why, /handed no invoice/);
 });
 
-// A LIGHTNING ADDRESS (LUD-16), because winnings must be able to leave without NWC (the owner 2026-09-21
+// A LIGHTNING ADDRESS (LUD-16), because winnings must be able to leave without NWC (2026-09-21
 // 13:54): a player with no wallet connected names an address once, and the node LNURL-pays it exactly what
 // the pool owes. It is where money LEAVES for, so it is read strictly.
 test('name@host is that host\'s well-known endpoint, and nothing is guessed', () => {

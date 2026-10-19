@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SERIES EDGES - series.js's untested functions (kanban #146, fourth surface; plan comment 193, Go 2026-10-05): the run
+// THE SERIES EDGES - series.js's untested functions (fourth surface; plan comment 193, Go 2026-10-05): the run
 // that fits its 90 s slot (seriesRunFits, series-writer.js), the rounds a window holds (seriesRoundsWithin, series-writer.js),
 // the first and the last round with and without late join, and the series publication - its payload, its output, and where
 // a chain view carries it (findSeriesPublication, roster.js). series-round.test.js and series-tail.test.js keep derivation

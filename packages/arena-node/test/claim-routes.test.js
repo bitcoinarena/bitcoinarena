@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CLAIM AND SEATING ROUTES OVER HTTP (kanban #494, §23A.9 / §23A.10): measured on the seats rolled to protocol 16, every one
+// THE CLAIM AND SEATING ROUTES OVER HTTP (§23A.9 / §23A.10): measured on the seats rolled to protocol 16, every one
 // answered 400 "answer is not defined" - the guardians could never fetch each other's gateway or liquidity seatings. On a running
 // seat: a claim file served 200 as it is, none 404 with why; a seating not signed 404 with why.
 import test from 'node:test';

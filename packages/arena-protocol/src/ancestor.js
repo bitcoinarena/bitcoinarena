@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NETWORK BEFORE THIS ONE, AS ITS CHAIN STILL CARRIES IT (spec 0A.9, §27A.8.3; kanban #209, the owner 2026-10-08).
+// THE NETWORK BEFORE THIS ONE, AS ITS CHAIN STILL CARRIES IT (spec 0A.9, §27A.8.32026-10-08).
 //
-// Every wire tag moved from BLWP/v1/... to ARENA/v1/... (kanban #207). What was already on Bitcoin did not: testnet4's
+// Every wire tag moved from BLWP/v1/... to ARENA/v1/.... What was already on Bitcoin did not: testnet4's
 // seven bonds pay the BLWP bond marker's dust and commit to an advertisement under the BLWP advert tag, in the
-// advertisement layout of before hosted_games (kanban #204). 0A.9 keeps those bonds - "a confirmed bond stays the bond" -
+// advertisement layout of before hosted_games. 0A.9 keeps those bonds - "a confirmed bond stays the bond" -
 // by re-affirmation (reaffirm.js) and an advertisement update naming hosted_games[]. So the census must still be able to
 // FIND and READ them; these are the ancestor's facts it reads them by, frozen, never written by anything new:
 //

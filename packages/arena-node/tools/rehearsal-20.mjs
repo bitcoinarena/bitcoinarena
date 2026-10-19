@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// FEDERATION.md REHEARSAL 20, A FOUNDING BY SORTITION ON REAL GUARDIANS (§23A.2, kanban #320). tools/rehearsal-20-regtest.sh starts
+// FEDERATION.md REHEARSAL 20, A FOUNDING BY SORTITION ON REAL GUARDIANS (§23A.2). tools/rehearsal-20-regtest.sh starts
 // a private regtest and six fedimintd in setup mode (nodes n0..n5, one guardian-capable operator each); this runs the six seats'
 // src/founding.js in one process, each driving its own fedimintd through the stock setup API (fedimint-cli admin setup). Four are
 // drawn, two alternates; the drawn node at position SILENT (default 1) never takes part. Blocks are mined as the window runs.

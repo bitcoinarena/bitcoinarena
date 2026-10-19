@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE BENCHMARK IS IN SETTINGS (kanban #373, the owner 2026-10-16: "Remove the benchmark button and have that in the settings instead"):
+// THE BENCHMARK IS IN SETTINGS (2026-10-16: "Remove the benchmark button and have that in the settings instead"):
 // the Settings sheet carries a Benchmark card whose button closes Settings and asks Unity for the same Benchmark the lobby's button ran
-// (SPECTATE + the page's frame-rate test); without Unity the test runs alone. the owner 2026-10-16: "Benchmark is disabled by default" -
+// (SPECTATE + the page's frame-rate test); without Unity the test runs alone. 2026-10-16: "Benchmark is disabled by default" -
 // a switch on the card, off unless this browser turned it on; while off, neither the button nor a tap on the FPS line runs it.
 // The handlers are lifted from the page and run.
 import { test } from 'node:test';
@@ -30,7 +30,7 @@ test('Settings has a Benchmark card with its button, inside the settings sheet',
 
 test('the switch: off with nothing kept, on only with "1" kept; a blocked store is off', () => {
   const line = PAGE.slice(PAGE.indexOf('    window.ARENA_BENCH_ON = '), PAGE.indexOf('\n', PAGE.indexOf('    window.ARENA_BENCH_ON = ')));
-  // the page reaches the browser's store through its one door, window.BLWP_BROWSER_STORE (kanban #465)
+  // the page reaches the browser's store through its one door, window.BLWP_BROWSER_STORE
   const on = (localStorage) => { const window = { BLWP_BROWSER_STORE: () => localStorage }; new Function('window', 'localStorage', line)(window, localStorage); return window.ARENA_BENCH_ON(); };
   assert.equal(on({ getItem: () => null }), false, 'off by default');
   assert.equal(on({ getItem: () => '0' }), false);

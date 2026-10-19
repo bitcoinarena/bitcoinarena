@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// FEDERATION.md REHEARSAL 20b, THE SEAT'S OWN FOUNDING WIRING ON REAL GUARDIANS (§23A.2, kanban #320): as rehearsal 20, but each of the
+// FEDERATION.md REHEARSAL 20b, THE SEAT'S OWN FOUNDING WIRING ON REAL GUARDIANS (§23A.2): as rehearsal 20, but each of the
 // six seats runs src/founding-seat.js - the trigger read off its held records (a DRAINING record at the trigger height), the seed the
 // block AFTER the trigger, taking part only while its own guardian's admin status names no federation (wsAdminStatus), and every
 // setup call through cliSetup (fedimint-cli admin setup on the guardian's socket, with its password). Then as below:
-// FEDERATION.md REHEARSAL 20, A FOUNDING BY SORTITION ON REAL GUARDIANS (§23A.2, kanban #320). tools/rehearsal-20-regtest.sh starts
+// FEDERATION.md REHEARSAL 20, A FOUNDING BY SORTITION ON REAL GUARDIANS (§23A.2). tools/rehearsal-20-regtest.sh starts
 // a private regtest and six fedimintd in setup mode (nodes n0..n5, one guardian-capable operator each); this runs the six seats'
 // src/founding.js in one process, each driving its own fedimintd through the stock setup API (fedimint-cli admin setup). Four are
 // drawn, two alternates; the drawn node at position SILENT (default 1) never takes part. Blocks are mined as the window runs.
 // Asked: the draw; who posted; the no-show replaced after founding_window; the DKG on the four seated; the federation then answers
 // (invite code, session_count on every seated guardian). One JSON line per question; it decides nothing. Never testnet4.
-// THE WINDOW (kanban #320, comment 2258): one block a step, and each step names the beacon, the window's end, its fifth, when each
+// THE WINDOW (comment 2258): one block a step, and each step names the beacon, the window's end, its fifth, when each
 // seated node was seated, the no-shows, and whether the founding runs or is void. CRASH=<position>: the guardian seated there is
 // killed right after it posted its setup code, so the DKG cannot finish - the founding must be void at beacon + founding_window.
 import { execFileSync } from 'node:child_process';

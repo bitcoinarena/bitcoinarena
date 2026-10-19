@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH PHASE HELD THE EVENT LOOP, IN THE DAEMON'S OWN LOG.
 //
-// the owner 2026-09-17 19:15, the ghost letter's remainder: measured from outside the Daily, half the stalls over 300 ms
+// 2026-09-17 19:15, the ghost letter's remainder: measured from outside the Daily, half the stalls over 300 ms
 // have a [custody], [payout] or [close] line inside their window, and every picture gap over 600 ms lies inside a
 // stall. That says WHICH PATH was running, not which call held the loop - `lncli` is spawned asynchronously, a
 // replay runs in a worker, and a line printed during a stall is a breadcrumb, not a cause.
@@ -107,7 +107,7 @@ function nameAsyncWork() {
 const typeOf = new Map();
 
 /**
- * THE LOOP WATCHES ITSELF AND SAYS WHAT HELD IT (the owner 2026-09-17 19:15, the ghost lag). Measured from outside, 32 of
+ * THE LOOP WATCHES ITSELF AND SAYS WHAT HELD IT (2026-09-17 19:15, the ghost lag). Measured from outside, 32 of
  * the 34 stalls over 300 ms left on the Daily had no phase name at all: an outside pinger can only say WHEN the loop
  * stopped answering. This ticks every `every` ms and, when a tick is late by more than `over`, prints the labels that
  * were open, the garbage collections inside that window, and - when there were neither - says so in those words,

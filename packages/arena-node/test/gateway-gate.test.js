@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING FEDERATION ROUND OPENS ONLY ON A FEDERATION WITH TWO DISTINCT LIVE GATEWAYS (§23.6: "deposits and
-// withdrawals through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
+// withdrawals through any of at least two gateways ... run by different operators"; RULED 2026-09-23).
 //
 // The count is read through the signer node's own lock port, as the guardians are: the names the federation's
 // guardians registered, each with the Lightning node key it answered `routing_info` with. Identity is that key;

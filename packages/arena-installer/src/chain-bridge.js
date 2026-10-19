@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE WITHOUT ITS OWN BITCOIN CORE (kanban #471 ruling 4: the Electrum option, since testnet4 Electrum servers exist). The seat
+// A NODE WITHOUT ITS OWN BITCOIN CORE (ruling 4: the Electrum option, since testnet4 Electrum servers exist). The seat
 // reads its chain through bitcoind's JSON-RPC (arena-node/src/chain-rpc.js) and needs whole blocks - a census is read from the bonds
 // and adverts in them - which an Electrum server does not serve. This bridge answers the seat's calls on 127.0.0.1:
 //
@@ -177,7 +177,7 @@ export function createBridge({ electrum, home, esplora = ESPLORA_TESTNET4, sessi
       if (verbosity !== 0) throw Object.assign(new Error('the chain bridge serves raw blocks only (verbosity 0)'), { code: -32601 });
       return (await rawBlock(hash)).toString('hex');
     },
-    // THE OWNER'S BOND WITHDRAWAL (kanban #471 part D) is sent through the Electrum server, which refuses an invalid one itself
+    // THE OWNER'S BOND WITHDRAWAL is sent through the Electrum server, which refuses an invalid one itself
     sendrawtransaction: async ([hex]) => String(await ask('blockchain.transaction.broadcast', [String(hex)])),
     getrawtransaction: async ([txid, verbose = false]) => {
       if (verbose) throw Object.assign(new Error('the chain bridge serves raw transactions only'), { code: -32601 });

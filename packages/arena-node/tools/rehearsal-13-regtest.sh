@@ -1,11 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# FEDERATION.md REHEARSAL 13, SUCCESSION ON REGTEST (§23A.6, kanban #326): "a 4-guardian federation with notes in three wallets
+# FEDERATION.md REHEARSAL 13, SUCCESSION ON REGTEST (§23A.6): "a 4-guardian federation with notes in three wallets
 # and one open lock; one guardian abandons (attested); a successor of 4 is founded with the three seated first; every wallet's
 # notes move on their own through a gateway that serves both, with no press; the lock settles in the old federation and its
 # payout moves; the old record goes CLOSED; nothing lost anywhere, and the amounts written down".
-# tools/succession-regtest.sh (#276, measured) with: a third wallet; p3's stake lock (blwp-stake-lock, the committee's claim key)
+# tools/succession-regtest.sh (measured) with: a third wallet; p3's stake lock (blwp-stake-lock, the committee's claim key)
 # open across the departure, settled in the old federation by the committee's one signature to p1, the winner, who collects the
 # payout (Refund of the pre-expired contract) and moves it with the rest; the records signed and verified (tools/rehearsal-13.mjs).
 # Heavy (8 fedimintd, 2 lnd, a gatewayd, bitcoind): the test host load rule applies. Nothing here reaches testnet4.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LIVE PRICE ON THE SIGNER NODES (the owner 2026-09-17 16:01): price samples ride the batch beside their ticks, the node
+// THE LIVE PRICE ON THE SIGNER NODES (2026-09-17 16:01): price samples ride the batch beside their ticks, the node
 // stores and serves them, and a replay reaches the state of the page that fought on the moving chart.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
@@ -88,7 +88,7 @@ function stored(ticks, { chunk = 100, samples = SAMPLES, tape = null } = {}) {
 }
 
 /**
- * THE CHART MOVES ON THE SIGNER NODES TOO (the owner 2026-09-17 16:01: "no new candles coming in" - nothing had ever
+ * THE CHART MOVES ON THE SIGNER NODES TOO (2026-09-17 16:01: "no new candles coming in" - nothing had ever
  * submitted a price sample). A sample moves the tape, the candles, the seam and the market the army reads, so it is in
  * the batch beside its tick, the node stores it, the transcript carries it and the replay reaches the player's state.
  */

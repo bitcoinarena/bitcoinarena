@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OBJECTION WINDOW IS EXACTLY 600 s OF WALL TIME FROM THE ROUND'S END (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+// THE OBJECTION WINDOW IS EXACTLY 600 s OF WALL TIME FROM THE ROUND'S END (§13A, WINDOW-10-SPEC, RULED 2026-10-01).
 //
 // Measured on one daemon of a seven-seat round (sevenSignerNodes: the holder, and six keys this test signs with), its
 // round's end put a few seconds ahead (presentDay), on the fixtures' clock that skips (test-clock.js) - no test waits ten
@@ -247,7 +247,7 @@ test('4b. a valid objection to the agreed re-run, received before end + 1805 s, 
   } finally { await w.close(); }
 });
 
-// WINDOW-LIVE-1155 (the owner 2026-10-02: "The measured rounds that stayed PROVISIONALLY_FINAL are not done"): a seat that held
+// WINDOW-LIVE-1155 (2026-10-02: "The measured rounds that stayed PROVISIONALLY_FINAL are not done"): a seat that held
 // no valid objection and whose run never reached five FINAL signatures decides §13C at the re-run window's end, once.
 test('2b. short of five FINAL signatures at end + 1205 s, a seat that held no objection and signed FINAL itself decides VOID, and a later FINAL signature does not turn it back', async () => {
   const w = await roundAhead();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GONE GUARDIAN: SLASHED OR DEPARTED, AND WHO ITS BOND PAYS (§23A.5, FEDERATION.md rehearsal 14, kanban #326).
+// A GONE GUARDIAN: SLASHED OR DEPARTED, AND WHO ITS BOND PAYS (§23A.5, FEDERATION.md rehearsal 14).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardianSlashStands, guardianSlashPayees } from '../src/federation-slash.js';

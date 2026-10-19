@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE 10% ON A REAL FEDERATION (kanban #205, the owner 2026-10-07): one paid round of each game on a regtest federation of the
+// THE 10% ON A REAL FEDERATION (2026-10-07): one paid round of each game on a regtest federation of the
 // patched fork, settled by its two signer nodes, and the game dev's own key collecting its 2.5% through the donor client.
 //   - nextblock: its game set is the network's protocol devs (one output per key, both halves merged);
 //   - tally-205: a game whose dev holds a key of its own, made here by `arena-donor init` - its set is that one key.
@@ -23,9 +23,9 @@ import { stakeLockPort } from '../src/stake-lock-port.js';
 import { lockRound, openLockRound, closeRound, standing, nameAddress } from '../test/lock-round-fixture.js';
 import { drivenTape, b32, rand, GENESIS_HASH, playFor, warmPlay, say, secretScalar, wait, WINNER, LOSER, RANDOMNESS, loaded, bedFrom } from '../test/window-fixture.js';
 import { testGame, attestorSign } from '../test/plugins/sign.js';
-// A MARKET (#206 slice 2): the regtest market the client pins - three outcomes, three test attestors, two to sign
+// A MARKET (slice 2): the regtest market the client pins - three outcomes, three test attestors, two to sign
 import { MARKET } from '../test/plugins/market/index.js';
-// THE TEST UP/DOWN MARKET (node 0.5% + donation 0.5%, two outcomes, a 15-minute grid): FRONTEND_BOOK's order book (kanban #362 comment 2295)
+// THE TEST UP/DOWN MARKET (node 0.5% + donation 0.5%, two outcomes, a 15-minute grid): FRONTEND_BOOK's order book (comment 2295)
 import { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } from '../test/plugins/updown/index.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { YES as BOOK_YES, NO as BOOK_NO } from '../../arena-protocol/src/order-book.js';
@@ -153,11 +153,11 @@ async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, 
     feeMsat, donationMsat, joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint,
     feePreimage: feeSecret, stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee.outpoint, claimKeyAttestationRef: b32(0x9a),
     donationOutpoints: donated.map((d) => d.outpoint),
-    // AN ATTESTED ROUND'S ENTRY BACKS AN OUTCOME (#206 slice 2) and plays no run
+    // AN ATTESTED ROUND'S ENTRY BACKS AN OUTCOME (slice 2) and plays no run
     ...(pick !== undefined ? { pick } : {}),
-    // THE WEBSITE THAT BROUGHT THIS ENTRY (kanban #362 item 7): its payout key, in the entry's signed bytes
+    // THE WEBSITE THAT BROUGHT THIS ENTRY: its payout key, in the entry's signed bytes
     ...(frontendPk ? { frontendPk } : {}),
-    // A MARKET ORDER (kanban #278): its limit price, standing until it fills or the market closes
+    // A MARKET ORDER: its limit price, standing until it fills or the market closes
     ...(order ? { limitPrice: Number(order.price), orderExpiryMs: 0n } : {}),
   };
   const eid = entryId(entry);
@@ -258,11 +258,11 @@ const w = await lockRound({ stakeMsat: STAKE, port, serveOpts: { plugins: [NEXTB
 // THE ENTRY DOOR OPENS AT THE COMMITTEE TIME: the fixtures' clock goes there, the round's end ~230 s on - room for real locks
 skipTo(Number(w.c.committeeTimeMs) + 100);
 try {
-  // ===== FRONTEND=1 (kanban #362 roadmap item 7, RULED path (a)): THE WEBSITE'S SHARE ON THE REAL FEDERATION =====
+  // ===== FRONTEND=1 (roadmap item 7, RULED path (a)): THE WEBSITE'S SHARE ON THE REAL FEDERATION =====
   // The same tally round twice on the same two seats and federation: once with no website, once at 2026.0.9 with both entries
   // naming a website's payout key. Every line of each settlement transaction, to the msat, and what the federation holds after.
   if (env.FRONTEND_BOOK) {
-    // ===== FRONTEND_BOOK=1 (kanban #362 comment 2295): THE WEBSITE'S SHARE ON AN ORDER BOOK, ON THE REAL FEDERATION =====
+    // ===== FRONTEND_BOOK=1 (comment 2295): THE WEBSITE'S SHARE ON AN ORDER BOOK, ON THE REAL FEDERATION =====
     // The test Up/Down market, two 10,000 sat orders (YES and NO at 0.50, both filled), Up wins - once with no website, once at
     // 2026.0.9 with both orders naming one. Every line of each settlement transaction, to the msat.
     const B = 500;
@@ -388,7 +388,7 @@ try {
   facts.collect = { listedBefore: listed.map((l) => l.length), donor: lines, gameDevOutputsAfter: after, listedAfter };
   out({ step: 'the tally dev\'s outputs after the donor pass', after, listedAfter });
 
-  // ===== #206 SLICE 2: MARKETS ON THE SAME NODES AND FEDERATION =====
+  // ===== SLICE 2: MARKETS ON THE SAME NODES AND FEDERATION =====
   const [A0, A1, A2] = MARKET.attestors;
   const MARKET_ROUND = { ...NETWORK_ROUND, gameId: MARKET.registration.gameId, simCoreHash: b32(0), configHash: b32(0), entryCloseMs: 60000n };
   const mTarget = { network: NETWORK, game: MARKET.registration.donationSet };

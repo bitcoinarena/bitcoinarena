@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// SCALAR MARKETS (kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8; protocol 2026.0.7): "a numeric outcome (a price, a
+// SCALAR MARKETS (feature 8, docs/PLATFORM-RESEARCH.md item 8; protocol 2026.0.7): "a numeric outcome (a price, a
 // count) paid linearly between bounds. Richer questions than buckets; one market instead of many."
 //
 // THE SHAPE. The market's manifest names a scalar (manifest.js `scalar`, marker 0x06): bounds low < high, whole numbers in a named
@@ -31,7 +31,7 @@
 //
 // ONE SIDE ONLY (decided here): a market where nobody backed one side has no counterparty - the side's share of a value it
 // did not reach would belong to nobody. It is REFUNDED: every net stake back to its own entry, its fee too, exactly as a
-// pari-mutuel round "nobody picked" (kanban #235, the owner 2026-10-09: "refund the fees too"; lock-settlement.js claims nothing).
+// pari-mutuel round "nobody picked" (2026-10-09: "refund the fees too"; lock-settlement.js claims nothing).
 // Likewise a market with no entry. A round where both sides staked nothing (a free round) is not a refund: each gets its 0.
 //
 // NO VALUE BY THE DEADLINE, OR TWO DIFFERENT VALUES: VOID, every stake back - attested.js marketVoided reads a value's standing

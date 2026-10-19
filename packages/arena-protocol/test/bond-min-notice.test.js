@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BOND_MIN CHANGES WITH NOTICE (§27A.3, kanban #300): a fall at once; a rise once it held the whole notice; a rise in two steps in two
+// BOND_MIN CHANGES WITH NOTICE (§27A.3): a fall at once; a rise once it held the whole notice; a rise in two steps in two
 // steps; and a node the rise will pass is told at T-30d, T-14d, T-3d and T+0.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +33,7 @@ test('the node the rise passes is told at T-30d, T-14d, T-3d and T+0; one whose 
   assert.equal(bondMinWarning({ pending, ownBondSats: 90000n, nowHeight: 2000 }), null);
 });
 
-test('the median history a seat holds: one census per height, its bond-weighted median, ascending; then the floor in force (kanban #300)', async () => {
+test('the median history a seat holds: one census per height, its bond-weighted median, ascending; then the floor in force', async () => {
   const { medianHistory, bondMinInForce, NOTICE_BLOCKS } = await import('../src/bond-min-notice.js');
   const { bondWeightedMedian } = await import('../src/census-median.js');
   const node = (bond, declared) => ({ bondSats: bond, advert: { declares: { bondMinSats: declared } } });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A WALK-AWAY IS NEVER A REFUND, EVEN WITH NO QUALIFIER (RULED the owner 2026-09-30, destination 1): the walker - staked,
+// A WALK-AWAY IS NEVER A REFUND, EVEN WITH NO QUALIFIER (RULED 2026-09-30, destination 1): the walker - staked,
 // no first mark - is FORFEIT 0 at both signer nodes at the door, never ENTRY_VOID, and when the round ends with nobody
 // qualifying its stake lock is claimed all the same and paid by the ruled remainder split: 75% to the round's sitting
 // signer nodes (pre-expired contracts to their own keys, as the fee locks pay them), 25% to the donation set by

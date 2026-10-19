@@ -181,7 +181,7 @@ test('the header window is read once and extended by new blocks; two rounds shar
   assert.deepEqual({ ok: kept.ok, height: kept.height }, { ok: fresh.ok, height: fresh.height });
 });
 
-// A BEACON BEHIND THE WINDOW (kanban #157): measured on testnet4 2026-10-07, a seat started after its round's beacon had
+// A BEACON BEHIND THE WINDOW: measured on testnet4 2026-10-07, a seat started after its round's beacon had
 // sunk 736 blocks below the tip read a 400-header window that began after committee_time, and refused for good. From the
 // round's census height, which comes before committee_time, the beacon is found - the same block the whole chain names.
 test('a beacon below the tip window is read from the round\'s census height, the same block the whole chain names', async () => {

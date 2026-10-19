@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A REPLAY WORKER READS THE RUN OUT OF THE STORE ITSELF (the owner 2026-09-17 19:15, the ghost lag).
+// A REPLAY WORKER READS THE RUN OUT OF THE STORE ITSELF (2026-09-17 19:15, the ghost lag).
 //
 // The close used to read every entry's rows on the daemon's own thread - the thread that answers /play and pushes a
 // pictured truck - and hand them across. Measured live: a close held that loop 554-1511 ms before it waited, with a

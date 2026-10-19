@@ -1,5 +1,5 @@
 [Unit]
-# THE SECOND TESTNET4 GATEWAY (M3 inbound liquidity, the owner 2026-09-20).
+# THE SECOND TESTNET4 GATEWAY (M3 inbound liquidity, 2026-09-20).
 #
 # This node was started once by hand and left as a transient systemd-run unit, which does not survive a
 # reboot. It was down from 2026-09-16 14:26 until 2026-09-20, and because it is the counterparty on the only

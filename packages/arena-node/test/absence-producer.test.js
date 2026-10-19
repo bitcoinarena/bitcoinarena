@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GUARDIAN'S OWN ABSENCE ATTESTATIONS (spec §23A.4, kanban #322), the producing slice: four guardians, peer 3 stops contributing
+// A GUARDIAN'S OWN ABSENCE ATTESTATIONS (spec §23A.4), the producing slice: four guardians, peer 3 stops contributing
 // at height 100; guardians 0, 1 and 2 each sign once at once and once a day, and three of them (2f + 1) prove it ABANDONED once the
 // absence spans abandon_blocks. A restart keeps last_seen_height where it was.
 import { test } from 'node:test';

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEVEN TESTNET4 BONDS CARRIED ONTO BITCOIN ARENA (kanban #209 step 4; spec 0A.9, §27A.8.3): for each seat, one
+// THE SEVEN TESTNET4 BONDS CARRIED ONTO BITCOIN ARENA (spec 0A.9, §27A.8.3): for each seat, one
 // RE-AFFIRMATION of its BLWP bond for testnet4's Arena network id and one ADVERTISEMENT UPDATE naming hosted_games
 // [nextblock] - the bond never spent, its maturity never restarted, no new bond. Rehearsed first on regtest
 // (reaffirm-regtest.mjs, rehearse209.mjs, rehearse209b.mjs: carried bonds counted by the Arena census, unspent at their
@@ -17,7 +17,7 @@
 //
 //   ARENA_FUND_INPUT=<txid>:<vout> node tools/testnet4-reaffirm.mjs [--publish] [--update-only]
 //
-// THE ADVERTISEMENT CARRIED IS THE BOND'S NEWEST OF THE BLWP ERA (kanban #209, measured 2026-10-09): the BLWP updates of
+// THE ADVERTISEMENT CARRIED IS THE BOND'S NEWEST OF THE BLWP ERA (measured 2026-10-09): the BLWP updates of
 // 154282 named each node's guardian of federation 337ae01a; step 4's updates (155609) were built from the bond's FIRST
 // advertisement (154172), whose guardian_of[] names keys the federation does not have - so under series ab069055's census
 // 0 of its 7 guardians were bonded and every seat refused every paid round (409, §23.6). The BLWP updates pay the BLWP
@@ -42,9 +42,9 @@ import { splitSignedAdvert } from '../../arena-protocol/src/advert.js';
 import { witnessRunsOf } from '../../arena-protocol/src/tx.js';
 
 const env = process.env;
-// THE GAMES EACH SEAT HOSTS (kanban #293, the owner 2026-10-10: the seven seats name Tick Tock, Rock Paper Scissors and Bitcoin Up
+// THE GAMES EACH SEAT HOSTS (2026-10-10: the seven seats name Tick Tock, Rock Paper Scissors and Bitcoin Up
 // or Down): ARENA_HOSTED_GAMES, game ids in hex, comma-separated - written sorted, as an advertisement lists them; unset,
-// nextblock's alone (as the #209 updates). A seat serves a game's rounds only if its advert in the round's census names it.
+// nextblock's alone (as the updates). A seat serves a game's rounds only if its advert in the round's census names it.
 const HOSTED = (env.ARENA_HOSTED_GAMES ? env.ARENA_HOSTED_GAMES.split(',').map((x) => fromHex(x.trim())) : [NEXTBLOCK.gameId])
   .sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 if (!HOSTED.every((g) => g.length === 32) || new Set(HOSTED.map(toHex)).size !== HOSTED.length) throw new Error('ARENA_HOSTED_GAMES: 32-byte game ids, each once');

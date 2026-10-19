@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHERE A WINNER'S WINNINGS ARE SENT (RULED the owner 2026-09-23: winnings are always sent; a qualifier who names no
+// WHERE A WINNER'S WINNINGS ARE SENT (RULED 2026-09-23: winnings are always sent; a qualifier who names no
 // address is not paid, its share pooled over those who did).
 //
 // ONCE, AT THE RUN'S END, AND ONLY TO A QUALIFIER. On the existing BLWP_RUN_OVER hook the page asks the player one

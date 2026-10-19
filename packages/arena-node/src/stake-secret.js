@@ -69,7 +69,7 @@ export function decodeShareAnswer(bytes) {
 
 export class StakeSecrets {
   constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null } = {}) {
-    // AN ORDER OF AN ORDER BOOK (kanban #278, comment 1127): the book's word on it - filled or not
+    // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled or not
     this.bookStanding = bookStanding;
     this.round = round;
     this.curve = curve;
@@ -125,17 +125,17 @@ export class StakeSecrets {
   mayRelease(roundIdBytes, entryIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
-    // AN ATTESTED ROUND (§0A.7a, kanban #206 slice 2): no run, no result - the share of a LOSING PICK is handed out once the
+    // AN ATTESTED ROUND (§0A.7a): no run, no result - the share of a LOSING PICK is handed out once the
     // round's outcome is final (600 s after its first standing attestation, no contradiction), and only when somebody picked
     // the outcome (else every stake comes back and none is claimed). A winning pick's share never: its lock is its own.
     { const contract = decodeRoundContract(new Uint8Array(row.contract));
       const found = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
       if (found && found.ok && found.attested) {
-        // (a market on a game's held source result counts as its attestation would: kanban #362 feature 6, heldOutcomes)
+        // (a market on a game's held source result counts as its attestation would: feature 6, heldOutcomes)
         const heldAtt = heldOutcomes(this.round, roundIdBytes);
         const f = outcomeFinality(heldAtt, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
         if (!f.final) return { ok: false, why: `no share of an attested round is handed out before its outcome is final (${f.state}${f.finalAtMs ? `, final at ${new Date(f.finalAtMs).toISOString()}` : ''})` };
-        // A SCALAR MARKET (kanban #362 feature 8): a lock is claimed when its entry gets back less than its net stake - by the table
+        // A SCALAR MARKET (feature 8): a lock is claimed when its entry gets back less than its net stake - by the table
         // the settlement pays (game-market.js attestedTable over the entries whose stake this seat saw), and only then
         if (isScalar(found.plugin.manifest)) {
           const counted = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || this.round.stakeSeen(entryId))
@@ -171,7 +171,7 @@ export class StakeSecrets {
     // proven, says FORFEIT, and a FORFEIT's lock is claimed into the settlement (23.2).
     // Measured before: "this node has replayed nothing for that run" at both
     // signer nodes, so the hold could never settle and expired to the player.
-    // A PROOF OF TWO FIRST MARKS - OR OF A FORK AT ANY LATER TICK (§13B; kanban #25) - HELD HERE RELEASES FIRST - even over a result
+    // A PROOF OF TWO FIRST MARKS - OR OF A FORK AT ANY LATER TICK (§13B) - HELD HERE RELEASES FIRST - even over a result
     // this signer node signed before it held the proof: §13B forfeits the entry whatever
     // run was signed. Measured before on 5 of 7: signer nodes that had signed FAILED
     // (never final) refused, too few shares opened, the hold expired to the player.

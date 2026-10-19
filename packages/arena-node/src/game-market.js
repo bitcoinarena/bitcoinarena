@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET ON A GAME AT A SEAT (kanban #362 feature 6; protocol 2026.0.6): THE NODE SIDE. A market round of a game market
+// A MARKET ON A GAME AT A SEAT (feature 6; protocol 2026.0.6): THE NODE SIDE. A market round of a game market
 // (manifest.js `gameSource`) is decided by its source round's own signed result, never by an attestation (attested.js refuses
 // one for it). This is where a seat checks such a result, holds it, and settles the market on it:
 //
@@ -36,7 +36,7 @@ import { pluginForRound } from './plugins.js';
 import { endpointsOf } from './roster.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
-/** The outcome column of a held VALUE attestation (kanban #362 feature 8): no index - its value is in its bytes (heldOutcomes). */
+/** The outcome column of a held VALUE attestation (feature 8): no index - its value is in its bytes (heldOutcomes). */
 export const VALUE_HELD_OUTCOME = -1;
 /** A VOID held with no source result (a source that can never fit the market): its result id is 32 zero bytes. */
 export const NO_RESULT_ID = new Uint8Array(32);
@@ -48,7 +48,7 @@ const SOURCES_KEPT = 4096;
  * evidence in `game`). A VOID (outcome 255) is not an outcome: `marketVoidOf` answers it. What attested.js outcomeFinality,
  * outcomeStanding and marketVoided read, wherever a seat reads an attested round's outcome.
  *
- * A SCALAR MARKET'S VALUE ATTESTATIONS (kanban #362 feature 8) are held in the same table and read back by their own type byte:
+ * A SCALAR MARKET'S VALUE ATTESTATIONS (feature 8) are held in the same table and read back by their own type byte:
  * decoded as a value attestation, with its BigInt `value` and no outcome index - outcomeStanding answers the value they agree on.
  */
 export function heldOutcomes(round, roundIdBytes) {
@@ -64,7 +64,7 @@ export function heldOutcomes(round, roundIdBytes) {
 }
 
 /**
- * THE TABLE OF AN ATTESTED ROUND WHOSE OUTCOME STANDS, by its game's rule: a scalar market's (kanban #362 feature 8) by the value
+ * THE TABLE OF AN ATTESTED ROUND WHOSE OUTCOME STANDS, by its game's rule: a scalar market's (feature 8) by the value
  * its attestors signed - scalar.js scalarPayoutTable over its manifest's bounds - and every other market's pari-mutuel over the
  * outcome, as before. `standing` is outcomeStanding's or outcomeFinality's answer. One answer for the settlement, the stake-share
  * handout and GET /outcome, so the three never read a round by two rules. Throws as the tables do.
@@ -81,8 +81,8 @@ export function gameVoidOf(round, roundIdBytes) {
 }
 
 /**
- * IS A MARKET ROUND VOID ON THIS SEAT'S RECORD (attested.js marketVoided, kanban #235), with a market on a game's early VOID
- * (kanban #362 feature 6): a held VOID - its source ended on a value the market refunds, or can never fit it - voids the round
+ * IS A MARKET ROUND VOID ON THIS SEAT'S RECORD (attested.js marketVoided), with a market on a game's early VOID
+ * (feature 6): a held VOID - its source ended on a value the market refunds, or can never fit it - voids the round
  * AT ONCE; otherwise as any market: a contradiction, or no standing outcome by its deadline. Answers { voided, why, early? }.
  */
 export function marketVoidOf(round, roundIdBytes, { contract, manifest, held = null, nowMs }) {
@@ -318,7 +318,7 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
 export function gameMarketHook(opts) { return gameMarkets(opts).resolve; }
 
 /**
- * RESOLVE WITHOUT BEING ASKED (kanban #362 feature 6), bounded and sliced - and NEVER THE SAME ROUNDS AGAIN EVERY PASS (the
+ * RESOLVE WITHOUT BEING ASKED (feature 6), bounded and sliced - and NEVER THE SAME ROUNDS AGAIN EVERY PASS (the
  * series writer's lesson, measured 2026-10-15: a pass asking ~900 rounds a stored read each outran its 150 ms slice and ran
  * again at once, seven seats at a core each). Each round of the store is looked at ONCE, in rowid order behind a cursor
  * (`roundsAfter(cursor, n)` -> [{ rowid, round_id, contract }]); only a market round on a game this seat hosts, with no outcome

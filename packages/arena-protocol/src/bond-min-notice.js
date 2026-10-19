@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// BOND_MIN CHANGES WITH NOTICE, AND WITH ESCALATION (§27A.3, kanban #300). "A rise in bond_min takes effect notice_period after the median
+// BOND_MIN CHANGES WITH NOTICE, AND WITH ESCALATION (§27A.3). "A rise in bond_min takes effect notice_period after the median
 // first crosses it - reference 30 days, and never less than bond_maturity minus the confirmation depth. A fall takes effect immediately:
 // nobody is harmed by a floor dropping." And a node the rise will pass "SHOULD escalate to its operator rather than warn once":
 //   T-30d informational, T-14d actionable (the shortfall), T-3d urgent (the last point a new bond can confirm in time), T+0 status change.
@@ -49,7 +49,7 @@ export function bondMinWarning({ pending, ownBondSats, nowHeight, blockMs = 6000
 export const NOTICE_BLOCKS = Object.freeze({ mainnet: 4320, testnet4: 144, testnet: 144, regtest: 10 });
 
 /**
- * THE MEDIAN HISTORY A SEAT HOLDS (kanban #300): one census per census height, from the rounds it holds - `rounds` [{ censusHeight,
+ * THE MEDIAN HISTORY A SEAT HOLDS: one census per census height, from the rounds it holds - `rounds` [{ censusHeight,
  * entries }] (entries with bondSats and advert.declares) - as [{ height, median }] for bondMinInForce, ascending, nulls dropped.
  */
 export function medianHistory(rounds, bondWeightedMedian) {

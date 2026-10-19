@@ -4,7 +4,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 E = json.load(open(os.path.join(HERE, 'endpoints.json')))
 esc = lambda s: html.escape(str(s))
 
-# THE GROUPS: the audience of each door in endpoints.json, as OpenAPI tags (kanban #363)
+# THE GROUPS: the audience of each door in endpoints.json, as OpenAPI tags
 TAGS = [
     ('game/market developer', 'Builders', 'List your game, read its rounds, follow results and, for a market, report the outcome.'),
     ('player/page', 'Players', 'What the game page uses: the lobby, joining, stake locks, winnings, leaderboards and results.'),
@@ -91,7 +91,7 @@ open(os.path.join(HERE, 'www', 'api', 'index.html'), 'w').write(counts(api))
 
 page = counts(open(os.path.join(HERE, 'docs-template.html')).read())
 
-# SECTIONS AS ACCORDIONS (kanban #361): every h2 section of the main column becomes a <details class="sec">, open in the file
+# SECTIONS AS ACCORDIONS: every h2 section of the main column becomes a <details class="sec">, open in the file
 # (a reader without JavaScript sees everything) and folded by the page's script, which opens the one a link points at
 m0 = page.index('<main id="top">'); m1 = page.index('</main>')
 main = page[m0:m1]
@@ -105,6 +105,6 @@ for p in parts[1:]:
     out.append('\n  <details class="sec" open><summary>' + h.group(1) + '</summary><div class="sec-body">' + p[h.end():] + '\n  </div></details>')
 page = page[:m0] + ''.join(out) + tail + page[m1:]
 open(os.path.join(HERE, 'www', 'index.html'), 'w').write(page)
-# the homepage serves the same page at /docs (kanban #359), so both stay one
+# the homepage serves the same page at /docs, so both stay one
 open(os.path.join(HERE, '..', 'home-site', 'www', 'docs', 'index.html'), 'w').write(page)
 print('written docs', len(page), 'api', nops_total, 'operations', count)

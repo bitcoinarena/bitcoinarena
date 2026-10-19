@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ROCK PAPER SCISSORS' DECIDE ADAPTER (kanban #233): what beats what, for two players and for more.
+// ROCK PAPER SCISSORS' DECIDE ADAPTER: what beats what, for two players and for more.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DECIDE, MOVES } from '../plugin/decide.js';

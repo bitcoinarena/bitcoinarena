@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// MARKETS ON GAMES (kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6; protocol 2026.0.6): a market whose outcome is a
+// MARKETS ON GAMES (feature 6, docs/PLATFORM-RESEARCH.md item 6; protocol 2026.0.6): a market whose outcome is a
 // game round's own signed result - Tick Tock's §13 RoundResult, BULLS or BEARS, signed by 5 of the source round's 7 seats - and
 // no attestor's. The manifest names its source game, the result kind and a mapping onto its outcomes (marker 0x05); each round
 // names its source round (contract tail 0xc4). Both only from version 6: every manifest and contract written before keeps its
@@ -161,7 +161,7 @@ test('version 6 is spoken: 2026.0.6, markets on games', () => {
   assert.equal(GAME_MARKET_VERSION, 6);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(6));
   assert.equal(speaksVersion(6), true);
-  assert.equal(speaksVersion(17), false, '11 is 2026.0.11, the protocol reserves (kanban #397); 12 is 2026.0.12, the leaderboard payout (kanban #460); 13 is 2026.0.13, the seated guardian pool (kanban #33); 14 the cohort, 15 the gateway seats (kanban #471); 16 the liquidity providers (kanban #494); 17 is spoken by no build');
+  assert.equal(speaksVersion(17), false, '11 is 2026.0.11, the protocol reserves; 12 is 2026.0.12, the leaderboard payout; 13 is 2026.0.13, the seated guardian pool; 14 the cohort, 15 the gateway seats; 16 the liquidity providers; 17 is spoken by no build');
 });
 
 test('a game source rides in its manifest after its own marker: read back whole, after the market terms and before the required version', () => {
@@ -267,8 +267,8 @@ test('a source round below version 6, on a series, beside a question, or of zero
   const v6 = encodeRoundContract(ROUND);
   const v5 = new Uint8Array(v6); v5[2] = 5;
   assert.throws(() => decodeRoundContract(v5), /trailing bytes/);
-  // and a version 10 contract is no contract of this build (9 is 2026.0.9, the website's fee - kanban #362 item 7)
-  const v10 = new Uint8Array(v6); v10[2] = 17;    // 14 and 15 are 2026.0.14/15 since kanban #471, 16 since #494 (the liquidity providers): the version nobody speaks is 17
+  // and a version 10 contract is no contract of this build (9 is 2026.0.9, the website's fee -)
+  const v10 = new Uint8Array(v6); v10[2] = 17;    // 14 and 15 are 2026.0.14/15 since, 16 since (the liquidity providers): the version nobody speaks is 17
   assert.throws(() => decodeRoundContract(v10), /protocol version 17/);
 });
 

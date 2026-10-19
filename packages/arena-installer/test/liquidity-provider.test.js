@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LIQUIDITY PROVIDER SERVICE (§23A.10, kanban #494): two providers and a new node, through each other's claims - the node gets at
+// THE LIQUIDITY PROVIDER SERVICE (§23A.10): two providers and a new node, through each other's claims - the node gets at
 // least one and at most two channels; a provider short of funds opens nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

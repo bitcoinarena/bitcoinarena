@@ -229,7 +229,7 @@ test('one signer node refused (1): B is up and refuses the on-time first mark - 
     assert.equal(after.b.refusedHere, true);
     assert.equal(after.lockHeld, true);
 
-    // A VOID CLAIMS NOTHING - THE FEE LOCK UNWINDS WITH THE STAKE (§13C, and the owner 2026-09-21).
+    // A VOID CLAIMS NOTHING - THE FEE LOCK UNWINDS WITH THE STAKE (§13C, and 2026-09-21).
     //
     // This is the round that FAILED for a technical reason: B refused the on-time first mark, no quorum
     // formed, and after the result window both signer nodes recorded VOID. §22A's 2% is compensation for a
@@ -370,7 +370,7 @@ test('one signer node refused (5, 6): B refuses, then sees the stake and takes t
   } finally { await w.close(); }
 });
 
-// §13C'S RESULT WINDOW ON THE WALL CLOCK (WINDOW-10-SPEC, RULED the owner 2026-10-01; it was blocks from 2026-09-24): it opens at
+// §13C'S RESULT WINDOW ON THE WALL CLOCK (WINDOW-10-SPEC, RULED 2026-10-01; it was blocks from 2026-09-24): it opens at
 // the round's contract end (roundEndMs - the same instant at every holder) and closes 600 s later; each holder decides
 // from end + 605 s on its own clock. Two holders that close seconds apart write their §13C outcome from that same instant -
 // not each at its own close + W, where the first could freeze a refund or a forfeit the other could still contradict.
@@ -454,7 +454,7 @@ test('§13C on the wall clock: a holder whose chain lags decides at the same ins
   } finally { await w.close(); }
 });
 
-// §13C'S EVIDENCE IS TIED TO ITS BLOCK (RULED the owner 2026-09-24): a refusal counts only when its block is strictly before
+// §13C'S EVIDENCE IS TIED TO ITS BLOCK (RULED 2026-09-24): a refusal counts only when its block is strictly before
 // the result window's end block, at every holder. THE LATE REFUSAL: A closes before the end block holding nothing of the
 // entry; past the end block the player's on-time first mark reaches B, which refuses it (it does not see the stake), and
 // B closes. The refusal sits at or after the end block - outside at both holders: they write the same record.
@@ -486,7 +486,7 @@ test('a refusal after the result window\'s end block is outside at both holders:
     assert.equal(refusedAfterEnd, true, 'B did not refuse after the end block: not the case the test names');
     assert.equal(after.b.refusedHere, true, 'B kept no refusal: not the case the test names');
     assert.equal(after.a.record, after.b.record, `the holders split on a refusal after the end block: A ${after.a.record}, B ${after.b.record}`);
-    // THE REFUSAL, OUTSIDE, IS NO EVIDENCE. Since the result window's deadline (kanban #26, RULED the owner 2026-10-04) B's own
+    // THE REFUSAL, OUTSIDE, IS NO EVIDENCE. Since the result window's deadline (RULED 2026-10-04) B's own
     // result - made only when it closes, after the deadline - completes the 2 of 2 late, so the entry is VOID at both by
     // that deadline (§13A: results must be in before the window closes; §13C: no quorum in the window, nothing proven
     // against the player, refunded) - not by the refusal: neither seat's reason rests on a refused first mark.

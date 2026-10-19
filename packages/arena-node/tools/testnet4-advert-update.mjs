@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ADVERTISEMENT UPDATES FOR THE SEVEN TESTNET4 BONDS, NOT NEW BONDS (spec §5A.2; the owner 2026-09-28, the
+// ADVERTISEMENT UPDATES FOR THE SEVEN TESTNET4 BONDS, NOT NEW BONDS (spec §5A.2; 2026-09-28, the
 // advertisement-update letter: "Bond 0c82db59 stays the bond. Do not post a new bond. Do not spend the bond. Do not
 // start a maturity clock ... one small transaction per node, seven in all, paid from the bond wallet. Each names that
 // node's existing bond outpoint and its new advert, the refounded guardian key").
@@ -39,28 +39,28 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
   [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const CARRIER_SATS = 3000n;
-// 2026.0.2 (kanban #348): ARENA_ADVERT_PROTOCOL_VERSIONS="1,2" - the versions the node speaks, which the census reads to
+// 2026.0.2: ARENA_ADVERT_PROTOCOL_VERSIONS="1,2" - the versions the node speaks, which the census reads to
 // draw it for a v2 round - and ARENA_ADVERT_ADD_GAMES="<id hex>,..." - games it hosts besides those it advertises (the v2
 // ids); each update carries both, everything else of the advertisement as it was
 const VERSIONS = env.ARENA_ADVERT_PROTOCOL_VERSIONS ? env.ARENA_ADVERT_PROTOCOL_VERSIONS.split(',').map(Number) : null;
 const ADD_GAMES = (env.ARENA_ADVERT_ADD_GAMES || '').split(',').filter((x) => /^[0-9a-f]{64}$/.test(x));
-// STEPPING OUT WITHOUT UNBONDING (§5A.3, kanban #302): ARENA_ADVERT_SERVING=false takes the named nodes out of every census from
+// STEPPING OUT WITHOUT UNBONDING (§5A.3): ARENA_ADVERT_SERVING=false takes the named nodes out of every census from
 // the update's block on (true brings them back), their bonds untouched; ARENA_ADVERT_NODES="3,5" names which (all seven when unset)
 const SERVING = env.ARENA_ADVERT_SERVING === 'false' ? false : env.ARENA_ADVERT_SERVING === 'true' ? true : null;
 const ONLY = (env.ARENA_ADVERT_NODES || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 1);
-// THE SUCCESSOR TOO (§23A.2 "every guardian re-advertises with guardian_of[] naming (federation_id, peer key)", kanban #326):
+// THE SUCCESSOR TOO (§23A.2 "every guardian re-advertises with guardian_of[] naming (federation_id, peer key)"):
 // ARENA_ADVERT_GUARDIAN_NEXT=1 - a node seated first in its federation's successor runs a second guardian (<store>.guardian-next);
 // once its ceremony is done, guardian_of names both: the federation it still guards through the drain and its successor. Each
 // guardian's federation is read from its own directory's invite-code (a node drawn into a successor guards the successor, not
 // the federation this machine's invite names); ARENA_ADVERT_NODES may name node numbers past 7 (node 15)
 const GUARDIAN_NEXT = env.ARENA_ADVERT_GUARDIAN_NEXT === '1';
-// THE NODE'S DECLARED SCALARS (§27A.2, kanban #305): ARENA_ADVERT_DECLARE="<bond_min sats>:<proposal deposit sats>"
+// THE NODE'S DECLARED SCALARS (§27A.2): ARENA_ADVERT_DECLARE="<bond_min sats>:<proposal deposit sats>"
 const DECLARE = /^\d+:\d+$/.test(env.ARENA_ADVERT_DECLARE || '')
   ? (([b, p]) => ({ bondMinSats: BigInt(b), proposalDepositSats: BigInt(p) }))(env.ARENA_ADVERT_DECLARE.split(':')) : null;
-// THE OPERATOR IT DECLARES AS A KEY (§5A.13, kanban #309): ARENA_ADVERT_OPERATOR=<64 hex> - an entry declaring the same operator
+// THE OPERATOR IT DECLARES AS A KEY (§5A.13): ARENA_ADVERT_OPERATOR=<64 hex> - an entry declaring the same operator
 // conflicts this node in that round (it neither signs nor earns); unset, the advert's operator stays as it was
 const OPERATOR = /^[0-9a-f]{64}$/.test(env.ARENA_ADVERT_OPERATOR || '') ? env.ARENA_ADVERT_OPERATOR : null;
-// THE GUARDIAN'S PAYOUT KEY (§22A v4.6.4, 2026.0.13, kanban #33 gap 2): ARENA_ADVERT_PAYOUT=1 - each named node's advertisement
+// THE GUARDIAN'S PAYOUT KEY (§22A v4.6.4, 2026.0.13, gap 2): ARENA_ADVERT_PAYOUT=1 - each named node's advertisement
 // names a real payout_pubkey instead of the placeholder 32 x 0x03 every testnet4 advert carried (measured 2026-10-17): a key made
 // once per node and kept (0600, never printed) at ARENA_PAYOUT_KEY_DIR/node-<n>.hex, a copy at ARENA_PAYOUT_KEY_BACKUP when set.
 // Only a 2026.0.13 round reads it (its guardian share); below that nothing does.
@@ -96,7 +96,7 @@ function guardianEntry(dir) {
 
 const plans = [];
 for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
-  // ARENA_ADVERT_STORE="<path with {n}>" - the stores of nodes kept elsewhere (kanban #495: the seven new macOS nodes, fed2/n495-{n}.db)
+  // ARENA_ADVERT_STORE="<path with {n}>" - the stores of nodes kept elsewhere (the seven new macOS nodes, fed2/n495-{n}.db)
   const store = env.ARENA_ADVERT_STORE ? env.ARENA_ADVERT_STORE.split('{n}').join(String(n)) : join(home, `node-${n}.db`);
   const db = openStore(store);
   const { secret, pubkey } = nodeIdentity(db);

@@ -3,7 +3,7 @@
 using NUnit.Framework;
 
 /// <summary>
-/// A SIGNED RUN SENDS NO PRACTICE (the owner 2026-10-04): practice was on by default and its switch sat under the cargo panel
+/// A SIGNED RUN SENDS NO PRACTICE (2026-10-04): practice was on by default and its switch sat under the cargo panel
 /// until ROLL OUT, so every staked run carried practice ticks. The input a run sends is 0 in a signed run whatever the
 /// switch says; outside one the switch rules as before. The box says so.
 /// </summary>

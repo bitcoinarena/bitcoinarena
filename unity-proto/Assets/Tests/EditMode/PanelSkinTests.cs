@@ -4,7 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE PANEL SKIN'S COLOURS (kanban #151: no test named PanelSkin.cs; the owner's ruling (a), comment 538: the colours only).
+/// THE PANEL SKIN'S COLOURS (no test named PanelSkin.cs; the owner's ruling (a), comment 538: the colours only).
 /// The draw helpers draw through GUI.DrawTexture, which Unity allows only inside OnGUI, so their rectangles are recorded
 /// on the card from the code rather than tested here: Glow draws a halo up to `steps` (5) px outside the rectangle,
 /// Corners starts 1 px outside it, Gradient's last slice reaches 1 px below it, Scan's trailing lines up to 8 px above.

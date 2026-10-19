@@ -56,9 +56,9 @@ test('the generated name is the public key\'s: the same key always, different ke
 test('the player\'s own name replaces the generated one, stays across a reload, and blank brings the generated one back', () => {
   const storage = tab();
   const before = tabIdentity({ storage, random, curve });
-  assert.deepEqual(setPlayerName('  the owner   the  Hauler ', { storage }), { ok: true, custom: true, name: 'the owner the Hauler' });
+  assert.deepEqual(setPlayerName('  Alice   the  Hauler ', { storage }), { ok: true, custom: true, name: 'Alice the Hauler' });
   const named = tabIdentity({ storage, random, curve });
-  assert.equal(named.name, 'the owner the Hauler');
+  assert.equal(named.name, 'Alice the Hauler');
   assert.equal(named.custom, true);
   assert.equal(named.generated, before.generated, 'choosing a name changed the generated one');
   assert.equal(named.pubkeyHex, before.pubkeyHex, 'choosing a name changed the key');
@@ -68,7 +68,7 @@ test('the player\'s own name replaces the generated one, stays across a reload, 
     .map((t) => [t, setPlayerName(t, { storage })]);
   for (const [t, r] of refused) assert.equal(r.ok, false, `"${t}" was taken as a name`);
   assert.match(refused[0][1].why, /at most 24/);
-  assert.equal(tabIdentity({ storage, random, curve }).name, 'the owner the Hauler');
+  assert.equal(tabIdentity({ storage, random, curve }).name, 'Alice the Hauler');
   assert.equal(playerNameIsValid('Zoë_7').ok, true, 'a letter outside ASCII was refused');
 
   assert.deepEqual(setPlayerName('   ', { storage }), { ok: true, custom: false });
