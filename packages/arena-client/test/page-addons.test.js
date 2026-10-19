@@ -12,7 +12,8 @@ const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 const UNITY_JS = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 const UNITY_CSS = readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
 const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
-const lineOf = (head) => { const at = PAGE.indexOf(head); assert.ok(at > 0, `the page has no ${head.trim()}`); return PAGE.slice(at, PAGE.indexOf('\n', at)); };
+// the add-ons panel Unity draws is Tick Tock's page part (kanban #521)
+const lineOf = (head) => { const at = UNITY_JS.indexOf(head); assert.ok(at > 0, `unity-page.js has no ${head.trim()}`); return UNITY_JS.slice(at, UNITY_JS.indexOf('\n', at)); };
 
 test('from which round a purchase plays: the round being joined, its entry made, is passed over; else the next entry', () => {
   const window = {}; new Function('window', lineOf('    window.ARENA_ADDONS_FROM = '))(window);
@@ -25,8 +26,8 @@ test('from which round a purchase plays: the round being joined, its entry made,
 });
 
 test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a purchase is the shop sheet\'s own', () => {
-  for (const f of ['ARENA_ADDONS_OPEN', 'ARENA_ADDONS_VIEW', 'ARENA_ADDONS_BUY', 'ARENA_ADDONS_USE']) assert.match(PAGE, new RegExp(`window\\.${f} = `), f);
-  const buy = PAGE.slice(PAGE.indexOf('    window.ARENA_ADDONS_BUY = '), PAGE.indexOf('    window.ARENA_ADDONS_USE = '));
+  for (const f of ['ARENA_ADDONS_OPEN', 'ARENA_ADDONS_VIEW', 'ARENA_ADDONS_BUY', 'ARENA_ADDONS_USE']) assert.match(UNITY_JS, new RegExp(`window\\.${f} = `), f);
+  const buy = UNITY_JS.slice(UNITY_JS.indexOf('    window.ARENA_ADDONS_BUY = '), UNITY_JS.indexOf('    window.ARENA_ADDONS_USE = '));
   assert.match(buy, /await buyShopItem\(shop, it\)/, 'the same purchase as the shop sheet');
   assert.match(buy, /addons\.seq \+= 1; addons\.bought = \{ seq: addons\.seq, id: it\.id, name: it\.name, txid: String\(got\.txid \|\| ''\), from \}/);
   assert.match(buy, /if \(!it \|\| addons\.busy\) return 0;/, 'one purchase at a time');
