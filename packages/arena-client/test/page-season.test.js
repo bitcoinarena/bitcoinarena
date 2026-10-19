@@ -182,7 +182,8 @@ test('its ways in: a link on each tile, the strip beside the gear and the wallet
   assert.match(HTML, /season\.className = 'season-go'/);
   assert.match(HTML, /b\.append\(play, head, desc, signed, stats, season\);/);
   assert.match(HTML, /window\.ARENA_SEASON\.open\(g\)/);
-  assert.match(HTML, /window\.ARENA_GAME_CHOSEN = game;\n.*\n\s+document\.body\.classList\.add\('arena-game-chosen'\);/);
+  // the class follows the choice within a few lines (22b2b331 put the wallet's early start between them)
+  assert.match(HTML, /window\.ARENA_GAME_CHOSEN = game;\n(?:.*\n){1,6}\s+document\.body\.classList\.add\('arena-game-chosen'\);/);
   assert.match(HTML, /<button id="blwp-season-go" type="button"/);
   assert.match(HTML, /<button id="arena-wb-season" type="button"/);
   assert.match(HTML, /body\.blwp-clean #arena-season, body\.blwp-clean #blwp-season-go, body\.blwp-clean #arena-wb-season \{ display: none !important; \}/);
