@@ -7,7 +7,9 @@
 //     arena-install --join-federation <invite code> [--home ~/.arena-node]
 //     arena-install --add-custody [--home ~/.arena-node]
 //
-// --tunnel     the machine is remote: open a Cloudflare quick tunnel (no account) and print its https link instead
+// --tunnel     open a Cloudflare quick tunnel (no account) and print its https link instead - by itself in a remote session (ssh, or
+//              Linux without a display: session.js, kanban #503)
+// --local      the 127.0.0.1 link even in a remote session (an ssh port forward)
 // --port       the wizard's local port (127.0.0.1 only)
 // --seat-port  the node's port for connections from outside (8470, kanban #471 ruling 7)
 // --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
@@ -28,6 +30,7 @@ import { execFile } from 'node:child_process';
 import { createWizard } from '../src/wizard.js';
 import { nodeState, defaultHome } from '../src/state.js';
 import { openQuickTunnel } from '../src/tunnel.js';
+import { setupLinkMode } from '../src/session.js';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
@@ -119,11 +122,19 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   server.close(); setTimeout(() => process.exit(0), 300);
 } });
 
+// THE TUNNEL ENDS WITH THE INSTALLER (kanban #503, measured on the test host: an installer ended by a signal left its cloudflared running,
+// holding a public link to nothing): Ctrl-C, a closed ssh session (SIGHUP) or a kill close the tunnel first
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { if (tunnel && tunnel.close) tunnel.close(); } catch { /* ending anyway */ } process.exit(130); });
+
 server = http.createServer((req, res) => wizard.handle(req, res));
 server.listen(port, '127.0.0.1', async () => {
   const local = `http://127.0.0.1:${port}/?t=${wizard.token}`;
   console.log(`Arena node installer (testnet4). Node home: ${home}`);
-  if (args.includes('--tunnel')) {
+  // A REMOTE SESSION (kanban #503): an ssh login or a Linux machine without a display gets no window and no browser here - the setup
+  // page through a temporary Cloudflare link, to open on a phone or laptop (session.js); --local keeps the 127.0.0.1 link
+  const mode = setupLinkMode(args);
+  if (mode.tunnel) {
+    if (mode.why !== '--tunnel') console.log(`\n${mode.why[0].toUpperCase()}${mode.why.slice(1)}, so the setup page opens on another device: through a temporary Cloudflare link (no account, nothing to set up). Open it on your phone or laptop; this terminal shows each step's progress. Keep this session open until the page says Done (or run the installer in tmux or screen). (--local keeps a link for this machine only.)\n`);
     console.log('Opening a Cloudflare quick tunnel (no account)...');
     tunnel = await openQuickTunnel({ port, bin: cloudflared });
     if (!tunnel.ok) { console.error(`No tunnel: ${tunnel.why}`); process.exit(1); }
