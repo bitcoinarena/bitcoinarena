@@ -143,13 +143,13 @@ const fed = await port.guardians();
 // AND THE BONDS ON THE FEDERATION'S OWN REGTEST CHAIN (federation-round-3.mjs's way): the fixture chain carries two bonds,
 // and this round needs seven. Its own wallet, funded here; the chain answers to -rpcuser/-rpcpassword.
 const RPCPORT = env.BTC_RPCPORT || '31101';
-const btcBase = ['-regtest', `-datadir=${P}/btc`, `-rpcport=${RPCPORT}`, '-rpcuser=blwp', '-rpcpassword=blwp'];
+const btcBase = ['-regtest', `-datadir=${P}/btc`, `-rpcport=${RPCPORT}`, '-rpcuser=arena', '-rpcpassword=arena'];
 const BTC = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
 const cliRaw = (...a) => execFileSync(BTC, [...btcBase, ...a], { encoding: 'utf8' }).trim();
-try { cliRaw('createwallet', 'blwp'); } catch { try { cliRaw('loadwallet', 'blwp'); } catch { /* loaded */ } }
-const cli = (...a) => execFileSync(BTC, [...btcBase, '-rpcwallet=blwp', ...a], { encoding: 'utf8' }).trim();
+try { cliRaw('createwallet', 'arena'); } catch { try { cliRaw('loadwallet', 'arena'); } catch { /* loaded */ } }
+const cli = (...a) => execFileSync(BTC, [...btcBase, '-rpcwallet=arena', ...a], { encoding: 'utf8' }).trim();
 if (Number(cli('getbalance')) < 10) cli('generatetoaddress', '101', cli('getnewaddress'));
-const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPCPORT}/wallet/blwp`, readCookie: () => 'blwp:blwp' });
+const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPCPORT}/wallet/arena`, readCookie: () => 'arena:arena' });
 const BASE = Number(env.PORT_A || 31240);
 const round = await standUpRound({ host: '127.0.0.1', portA: BASE, portB: BASE + 1, extraPorts: [2, 3, 4, 5, 6].map((i) => BASE + i),
   rpc, cli, stakeMsat: 1000000n, federationId, invite: env.INVITE, objectionWindowMs: 3000n, donationRecipients: null,

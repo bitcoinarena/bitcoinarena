@@ -26,7 +26,7 @@ L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAY_MSAT=${PAY_MSAT:-300000000}       # 300,000 sat per player
 # the run's own datadir: a bitcoin.conf of the machine (the test host's names testnet4) must not reach these calls
-bcn() { $B/bitcoin-cli -datadir=$P/btc -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp "$@"; }
+bcn() { $B/bitcoin-cli -datadir=$P/btc -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena "$@"; }
 bc() { bcn -rpcwallet=probe "$@"; }
 stop() {
   for pid in $(cut -d' ' -f1 $P/pids 2>/dev/null); do kill -TERM -- -$pid 2>/dev/null; done

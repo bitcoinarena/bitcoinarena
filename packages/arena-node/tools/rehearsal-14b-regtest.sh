@@ -20,7 +20,7 @@ P=${PROBE_DIR:-$(mktemp -d /tmp/r14b-XXXXXX)}
 B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
 L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
-BTC_ARGS="-datadir=$P/btc -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp"
+BTC_ARGS="-datadir=$P/btc -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena"
 bcn() { $B/bitcoin-cli $BTC_ARGS "$@"; }
 stop() {
   for pid in $(cut -d' ' -f1 $P/pids 2>/dev/null); do kill -TERM -- -$pid 2>/dev/null; done
