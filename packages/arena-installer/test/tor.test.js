@@ -31,6 +31,8 @@ test('lnd.conf: reached from outside - its address announced, no Tor; not reache
   assert.match(behind, /tor\.skip-proxy-for-clearnet-targets=true/, 'hybrid: clearnet peers still dialled directly');
   assert.doesNotMatch(behind, /externalip=/);
   assert.doesNotMatch(behind, /nat=true/, 'Tor: no NAT-PMP - LND stops when no router answers it');
+  assert.match(behind, /^listen=127\.0\.0\.1:9735$/m, 'behind Tor the peer port is local only: no Windows Firewall prompt (inbound comes through the onion)');
+  assert.match(reached, /^listen=0\.0\.0\.0:9735$/m, 'reached from outside: every interface');
 });
 
 test('Linux: LND\'s unit restarts with the node\'s Tor (its onion is gone when Tor restarts - measured on the test host)', async () => {
