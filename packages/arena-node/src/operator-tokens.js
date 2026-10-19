@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OPERATOR UI'S TOKENS (spec §27A.7.7). "Pairing is a blwp-operator: URI - endpoint plus a 32-byte token the
+// THE OPERATOR UI'S TOKENS (spec §27A.7.7). "Pairing is an arena-operator: URI - endpoint plus a 32-byte token the
 // node prints on first start - pasted or scanned. The UI asks for an action; the node performs it. No key ever leaves the
 // node." Tokens are scoped:
 //   read    dashboards, income, bracket status          - stolen: information disclosure
@@ -13,14 +13,16 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const OPERATOR_SCOPES = Object.freeze(['read', 'vote', 'config']);
-export const OPERATOR_URI_SCHEME = 'blwp-operator:';
+export const OPERATOR_URI_SCHEME = 'arena-operator:';
+// AN OLD PAIRING URI STILL PAIRS (kanban #522): operators hold URIs minted as blwp-operator: - read as the same endpoint and token
+const OPERATOR_URI = /^(?:arena|blwp)-operator:(https?:\/\/[^#\s]+)#([0-9a-f]{64})$/;
 
 const digest = (token) => createHash('sha256').update(String(token), 'utf8').digest();
 /** The pairing URI: the node's endpoint, the token after '#', so a link handed around carries it no further than the UI. */
 export const operatorUri = ({ endpoint, token }) => `${OPERATOR_URI_SCHEME}${String(endpoint).replace(/\/+$/, '')}#${token}`;
 /** The endpoint and token in a pairing URI, or null. */
 export function readOperatorUri(uri) {
-  const m = /^blwp-operator:(https?:\/\/[^#\s]+)#([0-9a-f]{64})$/.exec(String(uri || '').trim());
+  const m = OPERATOR_URI.exec(String(uri || '').trim());
   return m ? { endpoint: m[1], token: m[2] } : null;
 }
 
@@ -49,7 +51,7 @@ export function createOperatorTokens({ store, nowMs = () => Date.now(), random =
     /** A bearer token for `scope`: { ok, id } or { ok: false, status, why }. */
     check(bearer, scope) {
       const m = /^Bearer\s+([0-9a-f]{64})$/i.exec(String(bearer || '').trim());
-      if (!m) return { ok: false, status: 401, why: 'an operator door asks for "Authorization: Bearer <token>" (the blwp-operator: pairing token)' };
+      if (!m) return { ok: false, status: 401, why: 'an operator door asks for "Authorization: Bearer <token>" (the arena-operator: pairing token)' };
       const d = digest(m[1].toLowerCase());
       const hit = kept.find((k) => { const h = Buffer.from(k.hash, 'hex'); return h.length === d.length && timingSafeEqual(h, d); });
       if (!hit) return { ok: false, status: 401, why: 'that is not a token of this node (revoked, or never minted here)' };

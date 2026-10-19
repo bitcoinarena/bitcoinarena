@@ -517,7 +517,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let fedRecords = null;                       // federation-records.js, set once the roster and the invites are known
   // ABSENCE ATTESTATIONS (§23A.4): taken at POST /absence, and what proves a guardian ABANDONED in the record
   // HELD ACROSS A RESTART: beside the store, as the other per-seat files are
-  const absencesFile = db && db.blwpPath ? `${db.blwpPath}.held-absences.json` : null;
+  const absencesFile = db && db.arenaPath ? `${db.arenaPath}.held-absences.json` : null;
   // THE GATEWAY SEATINGS (§23A.9): `${federation}:${epoch}` -> the standing seating / this guardian's own signed one (gathered below)
   const gatewaySeatings = new Map(), ownSeatings = new Map();
   // THE LIQUIDITY SEATINGS (§23A.10): the same, for the providers and their weights
@@ -4393,7 +4393,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(readFileSync(new URL('../pages/owner-client.js', import.meta.url)));
       }
-      // THE OPERATOR UI'S DOORS (§27A.7.7): a scoped bearer token, paired through the node's blwp-operator: URI
+      // THE OPERATOR UI'S DOORS (§27A.7.7): a scoped bearer token, paired through the node's arena-operator: URI
       if (url.pathname.startsWith('/operator/')) {
         if (!operatorTokens) return text(res, 404, 'this node runs without operator tokens');
         const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };

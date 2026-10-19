@@ -1147,7 +1147,7 @@ export class Verifier {
    * truck (2026-09-17 19:15, the ghost lag).
    */
   #runFor(roundIdBytes, entryIdBytes) {
-    const store = this.round.db.blwpPath || null;
+    const store = this.round.db.arenaPath || null;
     return store
       ? { transcript: null, source: { store, roundId: roundIdBytes, entryId: entryIdBytes } }
       : { transcript: this.round.transcript(roundIdBytes, entryIdBytes), source: null };

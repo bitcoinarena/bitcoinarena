@@ -52,7 +52,7 @@ export function openStore(path = ':memory:') {
   // WHERE THIS STORE IS, kept on the handle (2026-09-17 19:15, the ghost lag): a replay worker opens the same
   // file read-only and reads a run's rows itself, instead of the thread that answers /play reading them and handing
   // them across. ':memory:' names no file, and those rows are handed across as before.
-  db.blwpPath = path === ':memory:' ? null : path;
+  db.arenaPath = path === ':memory:' ? null : path;
   // EVERY STATEMENT COMPILED ONCE (NODE-OPT-1648, 2026-10-02: "Optimize the node software for CPU, memory, and
   // performance"): node:sqlite keeps no statement cache, and the store is asked through db.prepare(sql) inline - a tick
   // batch alone compiled seven statements per call; profiled on a testnet4 seat during a live round, prepare and exec were

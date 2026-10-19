@@ -53,8 +53,8 @@ test('a worker handed a store and two ids replays exactly what a worker handed t
   const path = join(dir, 'store.db');
   try {
     const store = openStore(path);
-    assert.equal(store.blwpPath, path, 'the store does not say where it is, so no worker can read it');
-    assert.equal(openStore().blwpPath, null, 'an in-memory store named a file');
+    assert.equal(store.arenaPath, path, 'the store does not say where it is, so no worker can read it');
+    assert.equal(openStore().arenaPath, null, 'an in-memory store named a file');
     const round = new Round(store, () => 1234, { plugins: HOSTED });
     const rid = round.open(contract());
     const entry = entryFor(rid);
