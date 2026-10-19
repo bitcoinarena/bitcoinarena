@@ -3622,8 +3622,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const fedOf = (invite) => { try { return invite ? readInvite(invite).federationId : null; } catch { return null; } };
   // THE FEDERATION RECORDS: signed here when this node guards one, gathered from the guardians, mirrored at
   // GET /federations; gathered every ARENA_FEDERATION_RECORD_MS (10 min)
+  // A FEDERATION THIS SEAT GUARDS NAMES ITS OWN INVITE (§23A.6 step 4, measured 2026-10-19 ~22:15Z): B's successor 4dc88be7 was founded
+  // live on 10-15 and 7 of 7 in consensus, yet no seat ever built its record - its guardians (B1-B6 through their guardian-next, node 15
+  // through its guardian) held its invite only in their guardian directories, and a record is built and signed only by a seat that names
+  // the federation's invite ("none of its guardians holds a record"). The invite-code of this seat's guardian and guardian-next now counts
+  const guardedInvites = () => [guardian, guardianNext].map((g) => {
+    if (!g || !g.dataDir) return null;
+    try { return readFileSync(joinPath(g.dataDir, 'invite-code'), 'utf8').trim() || null; } catch { return null; }
+  });
   const inviteOfFed = (fidHex) => {
-    const all = [federationInvite, ...[...networksHeld.values()].map((h) => h.pkg.invite)].filter(Boolean);
+    const all = [federationInvite, ...[...networksHeld.values()].map((h) => h.pkg.invite), ...guardedInvites()].filter(Boolean);
     return all.find((inv) => String(fedOf(inv) || '').toLowerCase() === fidHex) || null;
   };
   // SUCCESSION (§23A.6 steps 2 and 4): the successor this seat was told of signs into the old federation's
