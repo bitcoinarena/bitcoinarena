@@ -8,7 +8,7 @@
 // that the words exist would be measuring the core twice and the client not at all.
 //
 // The page is the Daily on the owner's test host (HARD 2026-09-18 19:05: live Chrome runs there, CDP 9341/9342 forwarded
-// by monitoring/blwp_mac_playtest.sh). With no page reachable this test FAILS rather than skipping: O4 is a red row,
+// by monitoring/arena_mac_playtest.sh). With no page reachable this test FAILS rather than skipping: O4 is a red row,
 // and a silent skip would read as an answer.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,7 +94,7 @@ const WATCH = `(function () {
 
 test('the page draws the core\'s three objective markers', { timeout: 110000 }, async () => {
   const p = await page();
-  assert.ok(p, `no page on CDP ${PORT}: start it with monitoring/blwp_mac_playtest.sh start && ... tunnel`);
+  assert.ok(p, `no page on CDP ${PORT}: start it with monitoring/arena_mac_playtest.sh start && ... tunnel`);
   try {
     await p.send('Page.navigate', { url: PAGE });
     await wait(9000);

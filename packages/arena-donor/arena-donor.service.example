@@ -1,5 +1,5 @@
 [Unit]
-Description=BLWP dev donation client "dev <x>" (2026-10-03): asks the seats what its key was given, redeems in every federation, withdraws to LND C
+Description=Arena dev donation client "dev <x>" (2026-10-03): asks the seats what its key was given, redeems in every federation, withdraws to LND C
 [Service]
 ExecStart=/home/arena/.nvm/versions/node/v24.15.0/bin/node /home/arena/blwp-testnet4/code/packages/arena-donor/bin/arena-donor.mjs loop /home/arena/blwp-testnet4/donor-<x>
 Restart=always
