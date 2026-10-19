@@ -3,6 +3,7 @@
 // donation index (the rows settlements put there).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { donationTotals, donationReport } from '../src/owner-donations.js';
@@ -55,4 +56,12 @@ test('GET /owner/donations on a running seat: the rows its settlements verified,
     // the seat stamps a row with the time it verified it (round.js putDonationOutputs): the day is today's, in UTC
     assert.deepEqual(mine.byDay.map((x) => [x.day, x.msat]), [[new Date().toISOString().slice(0, 10), '1734']]);
   } finally { await node.close(); }
+});
+
+test('a set that pays Lightning addresses (serial 1 on testnet4) names each by its LNURL, not "undefined" (macOS node A, rc.22)', () => {
+  const r = donationReport({ protocolSets: [{ networkId: new Uint8Array(32), serial: 1, recipients: [{ lnurl: 'dev@example.com', shareBps: 6667 }, { lnurl: 'other@example.com', shareBps: 3333 }] }],
+    rowsFor: () => { throw new Error('no key to look up'); } });
+  assert.deepEqual(r.sets[0].recipients.map((x) => [x.key, x.lnurl, x.totalMsat]), [['', 'dev@example.com', '0'], ['', 'other@example.com', '0']]);
+  const html = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
+  assert.match(html, /\$\{x\.key \? esc\(x\.key\.slice\(0, 12\)\) \+ '…' : esc\(x\.lnurl \|\| 'a Lightning address'\)\}/, 'the page shows the LNURL when there is no key');
 });
