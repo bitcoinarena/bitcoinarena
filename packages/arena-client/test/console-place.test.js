@@ -39,7 +39,7 @@ function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = sl
     if (panel.style.bottom === 'auto') { p.top = px(panel.style.top); p.bottom = p.top + PANEL_H; } else { p.bottom = h - p.bottomGap; p.top = p.bottom - PANEL_H; }
     p.rightX = w - p.right; p.left = p.rightX - p.width;
   }
-  return { btn, p, placed: window.BLWP_CONSOLE_PLACED };
+  return { btn, p, placed: window.ARENA_CONSOLE_PLACED };
 }
 const PAD = (s) => ({ left: s.padX, right: s.padX + s.padW, top: s.padY });
 

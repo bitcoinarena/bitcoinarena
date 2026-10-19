@@ -60,13 +60,13 @@ test('at every instant of the series the row read is the soonest round whose ent
   }
 });
 
-// THE PAGE: the row Unity reads (BLWP_LOBBY_VIEW) and PLAY's row (BLWP_LOBBY) are picked by lobbyRowsAt at the read's own
+// THE PAGE: the row Unity reads (BLWP_LOBBY_VIEW) and PLAY's row (ARENA_LOBBY) are picked by lobbyRowsAt at the read's own
 // Date.now() - not the last paint's pick - and nothing in the pick depends on the wallet's balance (no lead).
 test('the page picks the paid row when Unity reads it, with no lead', () => {
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url).pathname, 'utf8');
   const view = page.slice(page.indexOf('window.BLWP_LOBBY_VIEW = () =>'), page.indexOf('refused: refused.map(String)', page.indexOf('window.BLWP_LOBBY_VIEW = () =>')));
   assert.ok(view.length > 0, 'BLWP_LOBBY_VIEW not found');
   assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
-  assert.match(page, /const lobbyNow = \(\) => \(window\.BLWP_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.BLWP_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
+  assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
   assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');
 });

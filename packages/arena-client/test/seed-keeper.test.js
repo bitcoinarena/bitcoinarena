@@ -11,7 +11,7 @@ import { pageFunction } from './page-script.js';
 
 const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const from = html.indexOf('function blwpSeedKeeper(');
-const to = html.indexOf('\n    try {\n      window.BLWP_SEED_KEEPER', from);
+const to = html.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', from);
 const Keeper = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), [], html.slice(from, to), '; return blwpSeedKeeper;')();
 
 const store = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), map: m }; };

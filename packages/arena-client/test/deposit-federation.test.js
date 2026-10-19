@@ -54,8 +54,8 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   const slice = HTML.slice(a, HTML.indexOf('\n    }\n', m) + 7);
   const run = (held, which = 'deposit', parts = []) => {
     const fn = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'walletSeed', 'moneyRound', 'vault', 'localStorage'], [slice], 'return moneyContext;');
-    const window = { BLWP_LOBBY: [{ id: 'r1', free: false, raw: { contract: { stakeMsat: 100000n } } }], BLWP_LEDGER_LOBBY: { federation: inviteOf(A) },
-      ARENA_FED_LOADS: new Map([[A, st(A, 4.3333)], [B, st(B, 0.0002)]]), BLWP_WALLET_BALANCE: { parts } };
+    const window = { ARENA_LOBBY: [{ id: 'r1', free: false, raw: { contract: { stakeMsat: 100000n } } }], ARENA_LEDGER_LOBBY: { federation: inviteOf(A) },
+      ARENA_FED_LOADS: new Map([[A, st(A, 4.3333)], [B, st(B, 0.0002)]]), ARENA_WALLET_BALANCE: { parts } };
     const BLWPCLIENT = { depositFederation, withdrawFederation, ledgerFederations: () => held, federationIsKnown: () => true, federationConfirmed: () => false,
       inviteNamesFederation: sameFederation, marketForRound: () => null, lobbyStakeSats: () => 100,
       fromHex: (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16))) };

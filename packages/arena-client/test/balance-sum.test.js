@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER 2026-10-13 ~11:55Z: "Die Funds müssen immer sichtbar sein von allen Föderationen, ohne zwischen Federations zu klicken
-// und zu wechseln, immer alle Balances summiert und ersichtlich" - the page's BLWP_SUM_BALANCES, run on its own source
+// und zu wechseln, immer alle Balances summiert und ersichtlich" - the page's ARENA_SUM_BALANCES, run on its own source
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
-const a = HTML.indexOf("      window.BLWP_WALLETS = window.BLWP_WALLETS || new Map();");
+const a = HTML.indexOf("      window.ARENA_WALLETS = window.ARENA_WALLETS || new Map();");
 const b = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
 const src = HTML.slice(a, b);
 
@@ -17,15 +17,15 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
   const bal = { [A]: 1500000n, [B]: 2250000n };
   const opened = [];
   const window = { ARENA_FED_LOADS: new Map([[A, { federation: A, invite: 'invA' }], [B, { federation: B, invite: 'invB' }]]),
-    BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), BLWP_PENDING_SATS: 0 };
+    ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_PENDING_SATS: 0 };
   const client = (f) => ({ balanceMsat: async () => String(bal[f] || 0n) });
   const BLWPCLIENT = { ledgerFederations: () => [A, B, C], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
     openPlayerWallet: async ({ federationId }) => { const f = Buffer.from(federationId).toString('hex'); opened.push(f.slice(0, 2)); return client(f); } };
-  const run = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', src + '\nreturn window.BLWP_SUM_BALANCES;');
+  const run = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', src + '\nreturn window.ARENA_SUM_BALANCES;');
   const sum = run(window, BLWPCLIENT, () => new Uint8Array(32), () => ({}));
-  window.BLWP_KEEP_WALLET(A, client(A));            // the round's wallet, kept as the page keeps it
+  window.ARENA_KEEP_WALLET(A, client(A));            // the round's wallet, kept as the page keeps it
   await sum();
-  const got = window.BLWP_WALLET_BALANCE;
+  const got = window.ARENA_WALLET_BALANCE;
   console.log('  SUM:', JSON.stringify({ sats: got.sats, federation: got.federation, parts: got.parts.map((p) => p.federation.slice(0, 2) + ' ' + p.sats), opened }));
   assert.equal(got.sats, 3750, '1,500 + 2,250 sat');
   assert.equal(got.federation, '2 federations');
@@ -37,19 +37,19 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
 // own finally cleared `summing` before the assignment kept the finished promise, and every later call answered that one)
 test('a sum asked before the wallet opens does not stop every later sum; notes still arriving are said and read again', async () => {
   const A = 'aa'.repeat(32);
-  const window = { ARENA_FED_LOADS: new Map(), BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), BLWP_PENDING_SATS: 0 };
+  const window = { ARENA_FED_LOADS: new Map(), ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_PENDING_SATS: 0 };
   const BLWPCLIENT = { ledgerFederations: () => [], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')), openPlayerWallet: async () => null,
     issuingMsat: async (c) => BigInt(await c.issuingMsat()) };
-  const sum = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', 'setTimeout', src + '\nreturn window.BLWP_SUM_BALANCES;')(window, BLWPCLIENT, () => null, () => ({}), () => 0);
+  const sum = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', 'setTimeout', src + '\nreturn window.ARENA_SUM_BALANCES;')(window, BLWPCLIENT, () => null, () => ({}), () => 0);
   await sum();                                   // the restore's first sum: no wallet yet
-  assert.equal(window.BLWP_WALLET_BALANCE, undefined);
+  assert.equal(window.ARENA_WALLET_BALANCE, undefined);
   const w = { held: 3000000n, issuing: 1000000n, balanceMsat: async () => String(w.held), issuingMsat: async () => String(w.issuing) };
-  window.BLWP_KEEP_WALLET(A, w);                 // the wallet opens
+  window.ARENA_KEEP_WALLET(A, w);                 // the wallet opens
   await sum();
-  assert.deepEqual([window.BLWP_WALLET_BALANCE.sats, window.BLWP_WALLET_BALANCE.arriving], [3000, 1000], 'summed, and the arriving notes said');
+  assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, window.ARENA_WALLET_BALANCE.arriving], [3000, 1000], 'summed, and the arriving notes said');
   w.held = 4000000n; w.issuing = 0n;             // the notes land
   await sum();
-  assert.deepEqual([window.BLWP_WALLET_BALANCE.sats, window.BLWP_WALLET_BALANCE.arriving], [4000, 0]);
+  assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, window.ARENA_WALLET_BALANCE.arriving], [4000, 0]);
 });
 
 test('a tap on any balance opens the split: each federation\'s sats, its status and load, and the total', () => {
@@ -63,7 +63,7 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
   const split = mk('div'); split.style.display = 'none';
   const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#arena-lobby-balance': mk('div'), '#arena-set-wallet .bal-grid': mk('div') };
   const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
-  const window = { BLWP_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
+  const window = { ARENA_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
     ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };
   new Function('window', 'document', src2)(window, document);
   bars['#arena-wallet-bar .wb-bal'].listeners.click({ stopPropagation: () => {} });
@@ -82,20 +82,20 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
 test('when the statuses land, a held federation with no wallet open is summed again; all open - nothing more is read', async () => {
   const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
   const bal = { [A]: 53000n, [B]: 2500000n };
-  const window = { ARENA_FED_LOADS: new Map(), BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), BLWP_PENDING_SATS: 0 };
+  const window = { ARENA_FED_LOADS: new Map(), ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_PENDING_SATS: 0 };
   const client = (f) => ({ balanceMsat: async () => String(bal[f] || 0n) });
   let opens = 0;
   const BLWPCLIENT = { ledgerFederations: () => [A, B], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
     openPlayerWallet: async ({ federationId }) => { opens += 1; return client(Buffer.from(federationId).toString('hex')); } };
   new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', src)(window, BLWPCLIENT, () => new Uint8Array(32), () => ({}));
-  window.BLWP_KEEP_WALLET(A, client(A));
-  await window.BLWP_SUM_BALANCES();               // the page's first sum: no statuses yet, B cannot open
-  assert.equal(window.BLWP_WALLET_BALANCE.sats, 53);
+  window.ARENA_KEEP_WALLET(A, client(A));
+  await window.ARENA_SUM_BALANCES();               // the page's first sum: no statuses yet, B cannot open
+  assert.equal(window.ARENA_WALLET_BALANCE.sats, 53);
   window.ARENA_FED_LOADS = new Map([[A, { federation: A, invite: 'invA' }], [B, { federation: B, invite: 'invB' }]]);
-  await window.BLWP_SUM_HELD();                    // the statuses land
-  assert.deepEqual([window.BLWP_WALLET_BALANCE.sats, opens], [2553, 1], 'B opened and summed');
-  assert.equal(window.BLWP_SUM_HELD(), null, 'every held federation open: no further read');
+  await window.ARENA_SUM_HELD();                    // the statuses land
+  assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, opens], [2553, 1], 'B opened and summed');
+  assert.equal(window.ARENA_SUM_HELD(), null, 'every held federation open: no further read');
   const calls = HTML.split('window.ARENA_FED_LOADS = all;').slice(1).map((s) => s.split('\n').slice(0, 2).join('\n'));
   assert.equal(calls.length, 2, 'both places that set the statuses');
-  for (const c of calls) assert.match(c, /if \(window\.BLWP_SUM_HELD\) window\.BLWP_SUM_HELD\(\);/);
+  for (const c of calls) assert.match(c, /if \(window\.ARENA_SUM_HELD\) window\.ARENA_SUM_HELD\(\);/);
 });

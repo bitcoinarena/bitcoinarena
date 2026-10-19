@@ -16,8 +16,8 @@ const file = readFileSync(new URL('blwp-core-f0cc7b7b.js', T));
 const LIST = JSON.parse(readFileSync(new URL('../known-good-clients.json', import.meta.url), 'utf8'));
 
 function loader(bytesFor) {
-  const i = html.indexOf('    window.BLWP_CORE_FILES = '), j = html.indexOf('  </script>', i);
-  const window = { BLWP_CORES: {}, BLWP: 'the page\'s own core' };
+  const i = html.indexOf('    window.ARENA_CORE_FILES = '), j = html.indexOf('  </script>', i);
+  const window = { ARENA_CORES: {}, BLWP: 'the page\'s own core' };
   const ctx = vm.createContext({ window, crypto: webcrypto, TextDecoder, console: { log() {}, error() {} },
     fetch: async (f) => ({ ok: true, status: 200, arrayBuffer: async () => { const b = bytesFor(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); } }) });
   vm.runInContext(html.slice(i, j), ctx);
@@ -32,22 +32,22 @@ test('the core file is the bundle pinned for nextblock, and the page loads it on
   assert.ok(!/<script src="blwp-core-f0cc7b7b\.js"/.test(html), 'not a script tag every page load pays for');
   const w = loader(() => file);
   const t0 = Date.now();
-  const got = await w.BLWP_LOAD_CORE(F0CC);
+  const got = await w.ARENA_LOAD_CORE(F0CC);
   assert.deepEqual({ ...got }, { ok: true, hex: F0CC });
-  assert.equal(typeof w.BLWP_CORES[F0CC].init, 'function');
+  assert.equal(typeof w.ARENA_CORES[F0CC].init, 'function');
   assert.equal(w.BLWP, 'the page\'s own core', 'loading it does not replace the page\'s BLWP');
   // the core it loaded plays the larger truck with its unlock
-  const st = w.BLWP_CORES[F0CC].init(0x5eed1234, { items: ['10dec674eb2f698400bb775c508e727d9c15734a6e7056889d12bb0ebab54d69'] });
+  const st = w.ARENA_CORES[F0CC].init(0x5eed1234, { items: ['10dec674eb2f698400bb775c508e727d9c15734a6e7056889d12bb0ebab54d69'] });
   assert.deepEqual({ ...st.truck }, { bedLength: 255590, topSpeed: 2235175, driveAccel: 327844 });
-  assert.equal(w.BLWP_CORES[F0CC].init(0x5eed1234, {}).truck, null);
+  assert.equal(w.ARENA_CORES[F0CC].init(0x5eed1234, {}).truck, null);
   console.log(`  FACTS: loaded ${file.length} bytes, sha ${sha.slice(0, 16)}, in ${Date.now() - t0} ms; the larger truck's state: ${JSON.stringify(st.truck)}`);
   // another hash is not this page's, and a tampered file is refused
-  assert.equal((await w.BLWP_LOAD_CORE('ab'.repeat(32))).ok, false);
+  assert.equal((await w.ARENA_LOAD_CORE('ab'.repeat(32))).ok, false);
   const bad = loader(() => Buffer.concat([file, Buffer.from('\n// tampered')]));
-  const no = await bad.BLWP_LOAD_CORE(F0CC);
+  const no = await bad.ARENA_LOAD_CORE(F0CC);
   assert.equal(no.ok, false);
   assert.match(no.why, /hashes to .*, not the pinned 319763d01161c46b/);
-  assert.equal(bad.BLWP_CORES[F0CC], undefined);
+  assert.equal(bad.ARENA_CORES[F0CC], undefined);
 });
 
 test('the shop, the run\'s items and their unlocks are wired into the page', () => {
@@ -57,7 +57,7 @@ test('the shop, the run\'s items and their unlocks are wired into the page', () 
   assert.match(html, /BLWPCLIENT\.entryItemsFor\(/);
   assert.match(html, /frontendPk: pageFrontendPk\(\), items: runItems,/);
   assert.match(html, /window\.BLWP_ITEM_UNLOCKS = roundManifest \? BLWPCLIENT\.entryUnlocks\(window\.BLWP_ENTRY, roundManifest\) : \[\];/);
-  assert.match(html, /await window\.BLWP_LOAD_CORE\(BLWPCLIENT\.roundCoreHex\(named\.round\)\)/);
+  assert.match(html, /await window\.ARENA_LOAD_CORE\(BLWPCLIENT\.roundCoreHex\(named\.round\)\)/);
   const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
   assert.equal((jslib.match(/b\.core\.init\(net\.seedWord, blwpWithItems\(/g) || []).length, 2, 'both run starts take the unlocks');
   assert.match(jslib, /BlwpTruckBed: function/);

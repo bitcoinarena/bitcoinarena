@@ -63,7 +63,7 @@ async function bot(name) {
   const t0 = Date.now();
   await c('Page.navigate', { url: env.URL });
   let up = false;
-  for (let i = 0; i < 240 && !up; i++) { await wait(500); up = !!(await ev('!!(window.ARENA_GAME && window.ARENA_GAME.market && window.BLWP_READ_BALANCE)').catch(() => false)); }
+  for (let i = 0; i < 240 && !up; i++) { await wait(500); up = !!(await ev('!!(window.ARENA_GAME && window.ARENA_GAME.market && window.ARENA_READ_BALANCE)').catch(() => false)); }
   say({ bot: name, step: 'page up', ok: up, s: (Date.now() - t0) / 1000 });
   // EVERY DEPOSIT THE PAGE ASKS FOR: its Custom tab set to DEPOSIT_SAT, and the invoice it then makes paid from alice's lnd
   const paid = new Set(); const deposits = [];
@@ -81,16 +81,16 @@ async function bot(name) {
     rec.ok = r.status === 'SUCCEEDED'; rec.ms = Date.now() - rec.at; rec.feeMsat = r.fee_msat;
     say({ bot: name, step: 'deposit paid', msat: rec.msat, ok: rec.ok, ms: rec.ms, why: rec.ok ? undefined : (r.failure_reason || r.error) });
   }, 400);
-  const balance = async () => { await ev('window.BLWP_READ_BALANCE && window.BLWP_READ_BALANCE()'); return ev('JSON.stringify(window.BLWP_WALLET_BALANCE || null)').then((s) => JSON.parse(s || 'null')); };
+  const balance = async () => { await ev('window.ARENA_READ_BALANCE && window.ARENA_READ_BALANCE()'); return ev('JSON.stringify(window.ARENA_WALLET_BALANCE || null)').then((s) => JSON.parse(s || 'null')); };
   // ONE ORDER, as the market's client places it, and its join followed to the end (picked / refused)
   const order = async (round, pick, cents, shares, expiryMs = 0) => {
     const stakeSat = Math.ceil((shares * cents) / 100 / FEE);
-    const before = await ev('JSON.stringify(window.BLWP_PICKED || null)');
+    const before = await ev('JSON.stringify(window.ARENA_PICKED || null)');
     const s0 = Date.now();
     const took = await ev(`window.ARENA_GAME.market.order(${J(round)}, ${pick}, ${cents * TICK}, ${expiryMs}, ${stakeSat * 1000})`);
     let st = null;
     for (const stop = Date.now() + 240000; Date.now() < stop; await wait(400)) {
-      st = JSON.parse(await ev(`JSON.stringify({ join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: window.BLWP_JOIN.why } : null, picked: window.BLWP_PICKED || null, refused: window.BLWP_JOIN_REFUSED || null })`) || '{}');
+      st = JSON.parse(await ev(`JSON.stringify({ join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: window.BLWP_JOIN.why } : null, picked: window.ARENA_PICKED || null, refused: window.BLWP_JOIN_REFUSED || null })`) || '{}');
       if (st.join && st.join.state === 'refused') break;
       if (st.picked && J(st.picked) !== before && st.join && st.join.state === 'picked') break;
     }
@@ -179,7 +179,7 @@ let after = {};
     if (still >= 3 && collected.length * 20000 >= Number(env.COLLECT_MIN_MS || 120000)) break;
   }
 }
-const withdrawable = {}; for (const b of bots) withdrawable[b.name] = await b.ev('window.BLWP_WITHDRAW_AVAILABLE ? JSON.stringify(window.BLWP_WITHDRAW_AVAILABLE(), (k, v) => (typeof v === "bigint" ? String(v) : v)) : null');
+const withdrawable = {}; for (const b of bots) withdrawable[b.name] = await b.ev('window.ARENA_WITHDRAW_AVAILABLE ? JSON.stringify(window.ARENA_WITHDRAW_AVAILABLE(), (k, v) => (typeof v === "bigint" ? String(v) : v)) : null');
 say({ step: 'settlement', state: ls && ls.state, why: ls && ls.why, txid: ls && ls.txid, after, withdrawable });
 for (const b of bots) { await b.shot('end'); b.stop(); }
 writeFileSync(`${OUT}/book-bots.json`, J({ round, beat, endPrice, outcome, orders, before, after, collected, withdrawable, book: finalBook, settlement: ls, outcomeDoc,

@@ -34,8 +34,8 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
   els.withdrawBox = { body, close, shown, home };
   const did = [];
   const document = { getElementById: (id) => els[id] || null, body: { classList: { contains: (c) => c === 'arena-own-client' && ownClient } } };
-  const window = { BLWP_WALLET_BALANCE: balance, sessionStorage: {}, BLWP_PAINT_SETTINGS: () => did.push('paint settings'),
-    BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: 'LC' }) };
+  const window = { ARENA_WALLET_BALANCE: balance, sessionStorage: {}, ARENA_PAINT_SETTINGS: () => did.push('paint settings'),
+    ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: 'LC' }) };
   const BLWPCLIENT = { depositDonationMsat: () => 1000n, marketForRound: () => null,
     settingsDepositOffer: async (o) => { if (depositFails) throw new Error(depositFails); did.push(['offer', o.invite, String(o.donationMsat)]); return { offer: 1 }; } };
   const intervals = [];
@@ -105,7 +105,7 @@ test('the bar shows the balance this wallet read, only while a game\'s client ru
 
 test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw - and the bar sits above its frame, never over it', () => {
   const api = slice('        wallet: {', '\n        },\n');
-  assert.match(api, /balance: \(\) => \(window\.BLWP_WALLET_BALANCE \?/);
+  assert.match(api, /balance: \(\) => \(window\.ARENA_WALLET_BALANCE \?/);
   assert.match(api, /deposit: \(\) => openMoney\('deposit', window\.ARENA_WALLET_BAR_SAY\)/);
   assert.match(api, /withdraw: \(\) => openMoney\('withdraw', window\.ARENA_WALLET_BAR_SAY, \{ overlay: true \}\)/);
   // the bar over a game's own client and over the games screen share one rule since (UI 88)

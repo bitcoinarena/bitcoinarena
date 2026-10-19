@@ -1724,7 +1724,7 @@ export function recordsToCollect(storage, { tabSeed = null } = {}) {
 /**
  * THE COLLECT'S LINES FOR THE LOBBY (2026-10-07): at most three, only those that apply, in the words of
  * the collect's records line - another kept seed's records (open / done, collected too; or held by another tab), a failed
- * collect, an uncollectable record. `records` as the page keeps them in BLWP_RECORDS ({ round, seed, own, state });
+ * collect, an uncollectable record. `records` as the page keeps them in ARENA_RECORDS ({ round, seed, own, state });
  * `failed` a Map round -> the error; `held` a Set of rounds another tab holds. Each: { text, kind }.
  */
 export function collectLines(records = [], { failed = new Map(), held = new Set() } = {}) {

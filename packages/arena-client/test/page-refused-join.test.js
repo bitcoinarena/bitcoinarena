@@ -2,10 +2,10 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A REFUSED JOIN NEVER BECOMES "JOINED" (measured live 2026-10-06 05:31Z on core 0.0.2805): PLAY on round
 // 49a50535, its hold to the round's start already set; the session refusal then marked the join refused
-// (BLWP_REFUSED_JOIN) but did not cancel it, and at the start the hold's release set it 'joined' with the refusal still as
-// its why - Unity started a run on a round with no session and the tab stopped answering. index.html's BLWP_REFUSED_JOIN and
-// BLWP_JOIN_GOES_ON are lifted out of the page by their text and run as they are; the release and the join's answer must ask
-// BLWP_JOIN_GOES_ON before they go on.
+// (ARENA_REFUSED_JOIN) but did not cancel it, and at the start the hold's release set it 'joined' with the refusal still as
+// its why - Unity started a run on a round with no session and the tab stopped answering. index.html's ARENA_REFUSED_JOIN and
+// ARENA_JOIN_GOES_ON are lifted out of the page by their text and run as they are; the release and the join's answer must ask
+// ARENA_JOIN_GOES_ON before they go on.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,36 +17,36 @@ const lift = (head) => {
   assert.ok(at > 0, `index.html has no ${head.trim()}`);
   return PAGE.slice(at, PAGE.indexOf('\n    };\n', at) + '\n    };\n'.length);
 };
-const pageWith = (window) => pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window'], [lift('    window.BLWP_REFUSED_JOIN = '), lift('    window.BLWP_JOIN_GOES_ON = ')], 'return window;')(window);
+const pageWith = (window) => pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window'], [lift('    window.ARENA_REFUSED_JOIN = '), lift('    window.ARENA_JOIN_GOES_ON = ')], 'return window;')(window);
 
 test('a join refused while it is held to its start does not go on: cancelled, refused, and no longer the join that goes on', () => {
-  const w = pageWith({ BLWP_LOBBY: [] });
+  const w = pageWith({ ARENA_LOBBY: [] });
   const join = { state: 'joining', round: '49a50535'.padEnd(64, '0'), held: true, loaded: true, stage: 'next round starts in 0:15' };
   w.BLWP_JOIN = join;
-  assert.equal(w.BLWP_JOIN_GOES_ON(join), true, 'a join going on is not seen as going on');
-  const back = w.BLWP_REFUSED_JOIN('the node refused the round: at census height 155088 this network\'s donation set in force is serial 3');
+  assert.equal(w.ARENA_JOIN_GOES_ON(join), true, 'a join going on is not seen as going on');
+  const back = w.ARENA_REFUSED_JOIN('the node refused the round: at census height 155088 this network\'s donation set in force is serial 3');
   assert.equal(back, join, 'the refusal is not on the join the page holds');
   assert.equal(join.state, 'refused');
   assert.equal(join.cancelled, true, 'the refused join is not cancelled, so its hold still releases it');
   assert.equal(join.held, false);
-  assert.equal(w.BLWP_JOIN_GOES_ON(join), false, 'a refused join still goes on');
+  assert.equal(w.ARENA_JOIN_GOES_ON(join), false, 'a refused join still goes on');
   // the release at the start, as the page runs it: it must not set 'joined' on this join
-  if (w.BLWP_JOIN_GOES_ON(join)) { join.state = 'joined'; }
+  if (w.ARENA_JOIN_GOES_ON(join)) { join.state = 'joined'; }
   assert.equal(join.state, 'refused');
 });
 
 test('a join that is no longer the page\'s join, or cancelled by time, does not go on', () => {
-  const w = pageWith({ BLWP_LOBBY: [] });
+  const w = pageWith({ ARENA_LOBBY: [] });
   const join = { state: 'joining' };
   w.BLWP_JOIN = { state: 'joining' };
-  assert.equal(w.BLWP_JOIN_GOES_ON(join), false);
+  assert.equal(w.ARENA_JOIN_GOES_ON(join), false);
   w.BLWP_JOIN = join; join.cancelled = true;
-  assert.equal(w.BLWP_JOIN_GOES_ON(join), false);
+  assert.equal(w.ARENA_JOIN_GOES_ON(join), false);
 });
 
-test('the hold\'s release asks BLWP_JOIN_GOES_ON before it sets "joined"; the join\'s answer drops a cancelled join', () => {
+test('the hold\'s release asks ARENA_JOIN_GOES_ON before it sets "joined"; the join\'s answer drops a cancelled join', () => {
   const release = PAGE.slice(PAGE.indexOf('                const release = () => {'), PAGE.indexOf('                release();'));
-  assert.match(release, /if \(!window\.BLWP_JOIN_GOES_ON\(join\)\) return;/, 'release() does not ask BLWP_JOIN_GOES_ON');
+  assert.match(release, /if \(!window\.ARENA_JOIN_GOES_ON\(join\)\) return;/, 'release() does not ask ARENA_JOIN_GOES_ON');
   const answer = PAGE.slice(PAGE.indexOf('          joinTheRoundIfOneWasNamed()\n            .then(() => {'), PAGE.indexOf('              // A LATE ENTRY IS HELD TO ITS JOIN TICK'));
   assert.match(answer, /if \(join\.cancelled\) \{[^]*: dropped'\);\s*return;/, 'the join\'s answer does not drop a cancelled join');
 });
@@ -59,7 +59,7 @@ test('the join refuses on "donation set in force" at its donation-set step, befo
   const lock = PAGE.indexOf('await BLWPCLIENT.lockStake(', step);
   assert.ok(step > 0 && lock > step, 'the join has no donation-set step ahead of its lock');
   assert.ok(refusal > step && refusal < lock, 'no refusal on "donation set in force" between the donation-set step and the lock');
-  const branch = PAGE.slice(refusal, PAGE.indexOf('else { window.BLWP_DONATION_SET_WHY', refusal));
+  const branch = PAGE.slice(refusal, PAGE.indexOf('else { window.ARENA_DONATION_SET_WHY', refusal));
   assert.match(branch, /window\.BLWP_JOIN_REFUSED = 'the signer nodes refuse this round: '/);
   assert.match(branch, /return;/);
 });
