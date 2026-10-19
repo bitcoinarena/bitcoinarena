@@ -3,13 +3,13 @@
 // UP/DOWN'S ORDER HISTORY, AS ITS CLIENT SHOWS IT (the tests of - 2026-10-17: "also show closed orders with
 // the history with how much you won or lost, and also show there if it's still pending (10 minute delay)"; "Don't forget past orders
 // ... round (human readable name eg 18:45-19:00), result, stake, p/l"). The client's own <history> block, cut out of
-// plugins/updown/client/index.html as it ships and run here with no page: every state an order can be in, the 10-minute window
+// btc-updown/client/index.html as it ships and run here with no page: every state an order can be in, the 10-minute window
 // counted down and then final, and the past orders kept in the browser.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const CLIENT = readFileSync(new URL('./plugins/updown/client/index.html', import.meta.url), 'utf8');
+const CLIENT = readFileSync(new URL('../../btc-updown/client/index.html', import.meta.url), 'utf8');
 const from = CLIENT.indexOf('// <history>'), to = CLIENT.indexOf('// </history>');
 assert.ok(from > 0 && to > from, 'the client has its <history> block');
 const HISTORY = new Function(`${CLIENT.slice(from, to)}\nreturn HISTORY;`)();

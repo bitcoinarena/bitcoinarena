@@ -4,7 +4,7 @@
 // "updates only every 300-600 ms"; a label with the name, the age in ms and arrows for how it moved).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { watchGhosts, moveGlyphs, tickClock, ghostLabels, ghostLabelText } from '../src/ghost-field.js';
+import { watchGhosts, moveGlyphs, tickClock, ghostLabels, ghostLabelText } from '../../nextblock/page/ghost-field.js';
 import { Client } from '../src/client.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 

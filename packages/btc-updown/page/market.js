@@ -11,7 +11,7 @@
 //   the join ends in state `picked` - Unity does not take it over.
 // - The outcome is the seats' GET /outcome, but believed only once its attestation verifies against the attestors the page
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
-import { stakeOf } from './join.js';
+import { stakeOf } from '../../arena-client/src/join.js';
 import { decodeManifest, gameIdOf, isAttested, isScalar, isGameMarket, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, isValueAttestationBytes, valueAttestationBodyId, valueAttestationStands } from '../../arena-protocol/src/scalar.js';
 import { gameMarketResolution } from '../../arena-protocol/src/game-market.js';
@@ -24,7 +24,7 @@ import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/
 import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { encodeEntryContract, entryId, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { handLock } from './page-lock.js';
+import { handLock } from '../../arena-client/src/page-lock.js';
 import { cancelId, sellId, PRICE_SCALE } from '../../arena-protocol/src/order-book.js';
 
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
