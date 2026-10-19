@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET RUNS IN ITS WINDOW ONLY (the owner 2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00. Man
 // darf davor und danach nicht am Markt teilnehmen und mit Wetten. Das ist die allgemeine Regel für prediction markets"): a
 // market on its game's period takes a pick from entry_close - period to entry_close and at no other time, is seated 120 s

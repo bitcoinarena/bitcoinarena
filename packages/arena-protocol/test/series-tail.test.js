@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TAIL SERIES (the 82/90 fork, the owner 2026-10-01: "the partial-day tail"): testnet4 only, on the 90 s grid inside its day,
 // running to that day's end (960 - its index rounds), a committee lead of at least 12 h; its id is taken over its count,
 // and a series cut at an index takes no round from it on.

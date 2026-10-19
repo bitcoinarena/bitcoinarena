@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A STALL NAMES WHAT HELD THE LOOP, OR SAYS NOTHING NAMED DID (the owner 2026-09-17 19:15, the ghost lag).
 //
 // Measured from outside the Daily, 32 of the 34 stalls over 300 ms left had no phase name: a pinger can only say WHEN

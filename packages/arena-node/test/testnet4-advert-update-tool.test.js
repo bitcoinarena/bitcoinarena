@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEVEN TESTNET4 ADVERTISEMENT UPDATES, BUILT OFF THE CHAIN (kanban #148, plan comment 222). tools/testnet4-advert-update.mjs
 // runs as it is run, against the fake bitcoin-cli (test/fake-bitcoin-cli.mjs), over a home dir built here the way
 // ~/blwp-testnet4 is: seven node stores, each guardian's local.json and consensus.json, the invite. Each node's bond is a real

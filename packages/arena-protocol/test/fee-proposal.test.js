@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE PROPOSAL CHANGES FEES FROM THREE AREAS AT ONCE (kanban #462, agreed 2026-10-17, comment 3079): game node fee 4 -> 3.5 %, market
 // reserve 0.2 -> 0.3 %, round donation 4 -> 4.5 % with the protocol developers' approval. It passes its signal and its bond-weighted
 // vote; before its activation height a round and a market settle on the old fees, after it on the new ones, to the msat. The same

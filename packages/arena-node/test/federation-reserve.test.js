@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION'S RESERVE, READ FROM ITS GUARDIANS (§23A.3, kanban #324): each guardian's stock wallet_summary over its
 // JSON-RPC WebSocket; kept only when a threshold of them name one sum. A fake WebSocket per endpoint answers as a guardian.
 import { test } from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HOW THE WORLD REACHES THE NODE (kanban #471 ruling 7, the owner 2026-10-18: "the other is direct connection, the installer automatically
 // detects if outside connections are possible and if firewalls block it. If it succeeds that is the default option. Make up a default
 // port for remote node connections. Other option is permanent tunnel with wrangler / cloud flare with installation help ... Anonymous

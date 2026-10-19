@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STAKE CEILING ON A PAID LOBBY ROW (§5A.10, kanban #306): computed from the census the page checked; on a test network shown
 // and never a refusal, on mainnet a refusal by name.
 import { test } from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLUGIN STORE'S PACKAGE (kanban #276 step 5, the owner 2026-10-09: "Choose supported games and markets, as a plugin store.
 // See what other nodes host. Install it. Always scan for malicious code before install"; 2026-10-10: "some sort of plugin
 // system where games can be downloaded from other nodes"). A seat serves each game it hosts as one package: its signed

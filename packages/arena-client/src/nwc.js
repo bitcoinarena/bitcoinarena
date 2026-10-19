@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S WALLET, REACHED OVER NOSTR WALLET CONNECT (NIP-47).
 //
 // M3.2 item 6. The client could already ask what an entry owes and refuse a quote

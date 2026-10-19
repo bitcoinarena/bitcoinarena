@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * ZAPS (NIP-57) BETWEEN PLAYERS AND TIPS TO DEVELOPERS, AS RULES (kanban #362 item 14).
  *

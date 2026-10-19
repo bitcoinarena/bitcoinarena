@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S OWN SCRIPT, RUN UNDER THE PAGE'S OWN NAME (kanban #150). Tests lift a slice of a page's inline script by its
 // text - index.html's lobbyViewRow, rounds.html's paint - and ran it through `new Function`: V8 ran it, but under no file,
 // so coverage could not place a single line of it in the page. `pageFunction` runs the same slices under the page's own

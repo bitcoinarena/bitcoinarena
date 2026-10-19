@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // W5b ON A REAL FEDERATION: THE SIGNER NODES' FORFEIT AND THE PLAYER'S REDEEM
 // (v4.6.2 §23.2 row 1). Run by w5b-regtest.sh after the federation is up.
 //

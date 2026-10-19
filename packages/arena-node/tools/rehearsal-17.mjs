@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL 17, LIQUIDATION (§23A.5, kanban #326 / #323), the chain half; tools/rehearsal-17-regtest.sh runs the
 // federation half and calls this one step at a time, the state kept in $P/r17.json. Never testnet4, never a live bond.
 //

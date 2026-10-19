@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Golden vectors: input logs and the state hashes they must produce.
 //
 // The point, from the build order: "a second implementation could be written

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THE PAGE DOES UNDER A FEDERATION'S SIGNED STATUS (spec §23A.1 / §23A.4, kanban #321), on the page's own code
 // (page-script.js): CRITICAL leaves Withdraw and Move only - Deposit refused by name, its buttons hidden; DRAINING closes
 // Deposit and nothing else; HALTED closes everything; OPEN and "unverified" change nothing. And the client's own

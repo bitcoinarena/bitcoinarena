@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 2026.0.3 STEP 6 - A ROUND THAT TAKES ANY FEDERATION READS AS ONE SETTLEMENT (kanban #348). It keeps one row per federation and
 // none in lock_settlements, so the forfeit, the winnings plan, the standing and the sweeps ask settlementState: ACCEPTED once every
 // federation's transaction is. Its moves are kept once over all its federations (keepFederationMoves), as keepMoves keeps one.

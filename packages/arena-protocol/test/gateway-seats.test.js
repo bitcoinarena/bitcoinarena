@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TWO GATEWAY SEATS (spec §23A.9, kanban #471): who may stand, how the best two are ranked, one seat per operator, an incumbent kept
 // unless ineligible or out-routed by 25 %, an empty seat said.
 import { test } from 'node:test';

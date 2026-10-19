@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE INSTALLER PACKAGES (kanban #500, the owner 2026-10-19: "For the installer, for windows we want an exe, for macOS OS we want a deb. That also
 # includes a small gui version of the installer that launches the browser etc"). Each wraps a release asset build-release.sh made:
 #   windows  ArenaNodeSetup-<v>-windows-x64.exe   NSIS (makensis): no administrator, %LOCALAPPDATA%\ArenaNode, Start menu "Arena Node"

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOADING BAR MOVES ON THE COMPOSITOR (kanban #386, the owner 2026-10-16: two amber bars - the bar and, from 90 %, a second one -
 // and "100 %" with the bar half full). Measured by screencast at 10x CPU on live UI 167: the bar's width transition (main
 // thread) froze at 75 % while Unity held the main thread and the creep (a transform) ran from 90 % beside it. On the page's own

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ORDER BOOK'S LEDGER AND ITS SETTLEMENT (kanban #278, comment 1127; the owner 2026-10-09: "(a)"). A pure function of the
 // certified batches, so every seat that holds the same batches holds the same positions and builds the same settlement.
 //

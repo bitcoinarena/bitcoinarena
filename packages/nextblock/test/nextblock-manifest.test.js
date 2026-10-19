@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // NEXTBLOCK'S NEWEST SIGNED MANIFEST IS ITS REGISTRATION (kanban #202, §0A.3; since #369 the newest is version 3): the manifest
 // plugin/nextblock-v3.js carries is, byte for byte, the body truck-cores.js builds from the cores it installs, the client scripts
 // arena-client/known-good-clients.json lists for nextblock, the testnet4 series' donation set and the items it sells, as an update

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // POSITIONS BACKED BY LOCKS (kanban #278, comment 1127; the owner 2026-10-09: "Pick (a)"). Seven seats of one Up/Down market
 // round; every order an entry with its stake lock (budget less 1 %) and fee lock (the 1 %), the player locking first. Each
 // case of the plan, in one round: placement, a match all seats agree, a match that fails agreement (void), a leader that

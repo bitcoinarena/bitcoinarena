@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WALLET THE COMMITTEE SPENDS FROM, AND NOTHING ELSE CAN.
 //
 // 23.5: "Settled loser stakes accumulate in a wallet whose every operation

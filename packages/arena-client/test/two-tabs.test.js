@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TWO TABS, TWO IDENTITIES, ONE ROUND THE DAEMONS AGREED ON.
 //
 // This is the page's own path, in `node --test`: the URL an operator prints,

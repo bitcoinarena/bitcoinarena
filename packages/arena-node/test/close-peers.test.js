@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AT A LIVE CLOSE, THE PREIMAGE ASK REACHES THE OTHER SIGNER NODES (M3.3-24; the payout gather beside it went with the
 // on-chain pool payout, §23.6, RULED 2026-09-25).
 //

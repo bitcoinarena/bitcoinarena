@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE AS A SERVICE (kanban #471 step C.9; Linux in slice 1 - launchd and Windows in slice 4): a systemd user unit that starts the
 // seat from the installed release with the settings the wizard wrote, restarts it when it falls over, and is checked healthy by the
 // installer before the wizard goes on. The user needs no root: `loginctl enable-linger` keeps a user unit running with nobody logged

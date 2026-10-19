@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE THE CHAIN COMES FROM, AND WHY MORE THAN ONE OF THEM.
 //
 // Section 25.1: "block headers from several independent sources, most work

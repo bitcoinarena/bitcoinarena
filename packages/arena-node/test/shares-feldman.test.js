@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SAME HANDOUT, UNDER THE CURVE THIS SYSTEM ACTUALLY USES.
 //
 // `packages/protocol` carries no curve on purpose, so its own test of this

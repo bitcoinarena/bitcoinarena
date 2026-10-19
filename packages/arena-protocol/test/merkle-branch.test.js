@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE THAT HOLDS A BLOCK CAN HAND A CLIENT THE BRANCH (M3, the page's guardian count): the
 // branch `merkleBranchOf` builds rebuilds, through `merkleRootFromProof`, the root the header
 // commits to - for every position of blocks of every size, odd levels included.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE MARKET ORDER BOOK: SIGNED LIMIT ORDERS, CLEARED IN BATCHES AT ONE UNIFORM PRICE (kanban #278; #234 design (c), the owner
 // 2026-10-09: "batch auction"). A two-outcome market (YES = outcome 0, NO = outcome 1) with no house: every share is half of
 // a COMPLETE SET - 1 sat of collateral pays 1 sat to whichever side wins - so a YES buyer at price p and a NO buyer at

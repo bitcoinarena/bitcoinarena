@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE PAGE MAKES THE PLAYER'S STAKE LOCK, ON A REAL FEDERATION (W1b): rehearsal
 # step 1's setup (stock fedimintd 0.12.0, 4 guardians, 3 of 4, one gateway,
 # regtest) and the committee's claim key, as lock-client-regtest.sh (W1a) has

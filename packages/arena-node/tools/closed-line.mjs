@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ENTRY_VOID (§16) WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE, ON A REAL
 // FEDERATION. Run by outage-regtest.sh with OUTAGE_SCRIPT=closed-line.mjs.
 //

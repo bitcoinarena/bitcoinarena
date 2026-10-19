@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION TRANSACTION, ASKED OF BITCOIND (§5A.3B; PRIORITIES 2026-09-29 item 4 - M4 in the repo only). A
 // private regtest, never testnet4, never a live bond: a bond is funded here, and the slashing transaction
 // `arbitration-tx.js` builds from slash.js's own distribution is handed to `testmempoolaccept` - 5 of 7 arbitration

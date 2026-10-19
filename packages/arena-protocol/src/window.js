@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OBJECTION WINDOWS OF ONE ROUND, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
 //
 //   window_open   = round_end                  the round's end as its contract fixes it (roundEndMs), in UTC

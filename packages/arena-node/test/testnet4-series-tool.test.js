@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TOOL THAT POSTS A ROUND SERIES ON TESTNET4, DRY AND OFF THE CHAIN (kanban #148, plan comment 222, Go 2026-10-05):
 // tools/testnet4-series.mjs run as it is run, as a child process, against a FAKE bitcoin-cli (test/fake-bitcoin-cli.mjs: every
 // call logged, every answer scripted) and a fake signer node serving the round. No node, no wallet, no testnet4 is touched.

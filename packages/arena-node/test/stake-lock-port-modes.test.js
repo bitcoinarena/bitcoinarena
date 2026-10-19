@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE STAKE-LOCK PORT'S GUARDIANS, SEND AND SETTLE: what the node hands the fork's blwp-stake-lock and how it reads it back
 // (kanban #149 step 2, plan comment 249, Go 2026-10-05). A stand-in tool logs its argv and prints, per mode, what the real
 // one prints (tools/stake-lock/src/main.rs: one JSON line on stdout, exit 0; a hard error on stderr, exit 1, no JSON).

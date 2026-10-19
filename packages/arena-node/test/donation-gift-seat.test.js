@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DONATION TO THE DEVELOPERS OUTSIDE ANY ROUND (kanban #431, the owner 2026-10-17: "B e cash"): the protocol record, the split over the
 // set (100 / 500 / 1000 / 5000 sat or custom), the seat's checks against the set and the federation, and the outputs indexed for the
 // developers' own clients (the rows GET /donations?key= serves).

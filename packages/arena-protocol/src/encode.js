@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Hand-written fixed-layout binary encoding.
 //
 // Not JSON: key order, number formatting, -0 and unicode escaping are

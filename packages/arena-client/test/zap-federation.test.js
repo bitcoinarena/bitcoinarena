@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ZAP FROM THE SEASON BOARD IS E-CASH IN THE FEDERATION (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's
 // account of the user not an external lightning payment, remove the configuration setting"): the sender's wallet pays one payout
 // contract to the player's identity refund key, the record names the player and no set, the seats' rule takes it, and the player's

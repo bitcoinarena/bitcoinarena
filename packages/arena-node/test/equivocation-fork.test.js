@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §13B AT ANY TICK (kanban #25, RULED the owner 2026-10-04): "A player who publishes two different checkpoints for the same
 // (round_id, player_pubkey, tick), or two chains that diverge at any tick, forfeits the entry." Before: only two FIRST marks
 // diverted to forfeit; a fork at a later tick was stored and the canonical run signed as ever. On a 2-of-2 round of two

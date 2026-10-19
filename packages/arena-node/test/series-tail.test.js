@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE 82 s TAIL OF A DAY (the 82/90 fork, the owner 2026-10-01, accepted): a node holds a day's series cut at round 360 (the
 // old core, 10800 ticks) and its tail from 360 (the new core, 4920 ticks, 600 rounds, committee 12 h before its first round).
 // Across the cut the announcement is 90 s start to start with no gap and no double: rounds before 360 are the series',

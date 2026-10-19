@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TWO GAMES ON ONE PAIR OF SEATS, FOR THE PAGE (kanban #208): a private regtest bitcoind, two seats hosting nextblock and the
 // regtest market btc-close (each advertising both), a free round of each kept open, and the page served from a build
 // directory - so a browser's lobby offers both games and loads each one's own client. Regtest only; no bond on any other

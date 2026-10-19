@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RESULT IS NOT FINAL UNTIL ITS TRANSCRIPT IS POSTED WHERE ANYONE CAN REPLAY IT (P2).
 //
 // Spec v4.6.2 §13A, "Publication is a condition of finality": a

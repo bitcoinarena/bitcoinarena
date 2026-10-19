@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT'S PART IN A FOUNDING (spec §23A.2, kanban #320): when to start one and how its own guardian takes part. founding.js runs
 // the ceremony; this reads its inputs off what the seat holds and drives the node's own guardian.
 //

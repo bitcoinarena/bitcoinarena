@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Tagged hashing, BIP-340 style.
 //
 //   H_tag(x) = sha256( sha256(tag) || sha256(tag) || x )

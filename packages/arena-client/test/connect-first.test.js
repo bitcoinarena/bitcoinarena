@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FIRST SOCKET IS TRIED UNTIL IT OPENS (PRIORITIES 2026-10-02 12:13, the owner's playtest: "Not joined PAID · 100 sats
 // round 3fe0d7d1: socket error" - the entry held by all 7 signer nodes, the stake locked, and one failed socket ended the
 // join; no first mark came and the door signed FORFEIT). A server that drops the first two upgrades and takes the third:

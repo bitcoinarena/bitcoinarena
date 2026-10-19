@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET ON A GAME SETTLED AT A SEAT (kanban #362 feature 6, §0A.7d; protocol 2026.0.6): the source round's signed result is
 // HELD where an attestation is held (store.js game_outcomes) and every reader of an attested round's outcome reads it, so the
 // market settles exactly as an attested market - pari-mutuel, final after the round's objection window - with the source's

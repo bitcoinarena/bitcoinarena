@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NEXT PAID ROUND ONLY WITH ITS STAKE IN THE PLAYER WALLET (kanban #158, comment 592: on 0.0.2832, round dcd6cbb6, the
 // page entered the next paid round d8cf7893 with 73 sat for a 100 sat stake; its join waited on a deposit nobody asked for,
 // Unity held that join as its next one, and the result card held the screen past 420 s). index.html's continueToTheNextRound,

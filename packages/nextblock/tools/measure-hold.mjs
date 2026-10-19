@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WAR_TACTICS.md §0 "Hold is the default" - WHY a tank of a living pair is off post, and why a leg's bounding tank
 // does not arrive. The bars are in measure-war.mjs (H1, H2); this is the breakdown of the gap.
 //

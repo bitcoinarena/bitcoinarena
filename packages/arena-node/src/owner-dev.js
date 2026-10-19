@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SIGN NEW GAMES AND MARKETS IN THE OWNER AREA (kanban #276 step 4, the owner 2026-10-09: "Sign new games and markets"): the
 // owner's developer key is an Ed25519 key derived from the owner's 24 words under its own tag (never the owner key itself,
 // which signs owner requests with BIP-340), and a manifest is signed in the page exactly as `arena-donor sign` signs it:

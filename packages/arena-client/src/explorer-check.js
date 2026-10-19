@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SECOND, INDEPENDENT VIEW OF THE CHAIN (§5A.4, §25.1, kanban #299): "paying rounds need headers from >= 2 independent sources". By
 // default both of a page's header sources are the round's own nodes (join.js) - two parties, but both of the network being checked.
 // An Esplora-style block explorer (mempool.space and its kind: GET /block-height/<h> -> the block hash) is a party outside it. It serves

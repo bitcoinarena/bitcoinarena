@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S KEY FROM THE PLAYER'S SEED, FRESH PER ROUND, WITH A FINGERPRINT
 // (§24, v4.6.2, F2). Protocol carries no curve, so `pointX` is a stand-in here;
 // the real curve is in the client's and the node's tests.

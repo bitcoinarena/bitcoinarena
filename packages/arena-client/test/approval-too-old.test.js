@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #349 scope 3: "The page shows 'node X: protocol too old' in the approval facts (#317)"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

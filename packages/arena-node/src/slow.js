@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH PHASE HELD THE EVENT LOOP, IN THE DAEMON'S OWN LOG.
 //
 // the owner 2026-09-17 19:15, the ghost letter's remainder: measured from outside the Daily, half the stalls over 300 ms

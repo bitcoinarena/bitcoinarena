@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A REFUSED SETTLE IS OFFERED AGAIN, BUT IT DOES NOT SPIN (kanban #229, the owner 2026-10-07 08:35): on code-seat29 a plan no
 // peer could take ("this signer node knows no peer to hand the send plan to yet") was offered again every second, 120
 // times per round, each offer a whole settle pass - every seat near one core. The first offers stay quick (a peer not yet

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO WON A PRICE ROUND (spec §13 RoundResult, kanban #312): "Who won the round is decided once, by the price, at the round's
 // end ... RoundResult { round_id, open_cents, close_cents (first and last attested sample of the round), front (BULLS if
 // close > open, BEARS if lower, FLAT if equal), node_pubkey, signature (5-of-7 of the settlement committee) }". It is what

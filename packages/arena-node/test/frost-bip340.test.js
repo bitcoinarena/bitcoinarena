@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A 5-OF-7 SIGNATURE THAT BITCOIN'S OWN VERIFIER ACCEPTS.
 //
 // `frost-vectors.test.js` proves the algebra against RFC 9591's published

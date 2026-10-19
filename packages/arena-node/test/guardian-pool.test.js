@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GUARDIAN THIRD GOES TO THE FEDERATION'S SEATED GUARDIANS (§22A v4.6.4, kanban #33 gap 1). Measured on Tick Tock round 32cfad1c
 // (2026-10-16, federation A 337ae01a, 7 guardians = test host seats 1-7, no absence, no departure): test host 7 was out of that day's census
 // and got nothing, the six in it 278 msat each. From SEATED_GUARDIAN_VERSION the pool is the record's seated guardians - all seven -

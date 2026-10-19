@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION'S RESERVE KEY (§27A.9.2, kanban #397 slice 2, custody "A"): its seven guardian seats make a 5-of-7 key with the
 // DKG a round's claim key uses, under the federation's own reserve epoch. Five sign a payout message, four cannot, every seat
 // serves the same key at GET /reserves - and the key is never a round committee's key over the same seven nodes.

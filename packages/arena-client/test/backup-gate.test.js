@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §24B's warning, measured: what a wallet with no backup is TOLD, and that nothing is refused.
 //
 // Ruled 2026-09-21 20:01: PLAY is always allowed, free or paid, and so is putting money in. The earlier

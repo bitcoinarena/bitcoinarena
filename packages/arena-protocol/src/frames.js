@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH FRAMES CARRY AUTHORITY, AND WHICH ONE IS ONLY A PICTURE.
 //
 // 0.10: "Ghost snapshots are never inputs to this calculation." The core

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PROTOCOL 5: THE MEDIAN OF SIGNED READINGS (kanban #312, RULED the owner 2026-10-14 ~21:50Z: "each seat signs the price it read,
 // and the sample is the median of five signed readings"). What needs no signature: the median's rule, the version, the batch
 // layout of the readings - and that a round below 5 keeps every byte it had (pinned from origin/main 7f04592b).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND SETTLED UNDER RULES THIS SEAT DOES NOT RUN IS NOT OPENED (§6, kanban #314; 2026.0.3): POST /round with a contract naming another
 // rule hash is refused 409 by name, nothing stored; one naming this build's rules opens. Harness: federation-named's.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';

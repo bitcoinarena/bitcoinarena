@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE HISTORY LINE PER JOIN (kanban #132, the owner's playtest 2026-10-04 15:45, plan comment 220 accepted 2026-10-05): "One
 // line: Stake round xxx -100 sat. The 100 is the stake plus the donation. No Donation row." saveLock writes two ledger rows
 // for one join - the stake (stake + fee lock, 98 sat) and the donation paid in the same transaction (2 sat) - and the wallet

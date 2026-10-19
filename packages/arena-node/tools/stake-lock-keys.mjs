@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE KEYS A STAKE LOCK NAMES (FEDERATION.md, rehearsal step 1).
 //
 //   claim_pk   the round's settlement committee key - here a 2-of-2 made by

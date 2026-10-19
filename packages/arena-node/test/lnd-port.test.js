@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THIS NODE STILL TYPES AT LIGHTNING: `addinvoice` and `decodepayreq`, and nothing that holds money.
 //
 // This file used to pin the hold invoice's four acts - addholdinvoice, lookupinvoice, settleinvoice,

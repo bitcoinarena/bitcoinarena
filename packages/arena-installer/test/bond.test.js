@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S WALLET AND BOND (kanban #471 slice 2): the wallet's address is BIP86 on testnet4, the bond is two transactions a census
 // reads as this node's template-2 bond. Measured 2026-10-18 against testnet4 Bitcoin Core: 20 of 20 wallet addresses equal to
 // `deriveaddresses tr(key)`; a funding + bond package from a 5,000 sat deposit accepted by testmempoolaccept (111 vB at 232 sat,

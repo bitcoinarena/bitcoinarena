@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE WITHOUT ITS OWN BITCOIN CORE (kanban #471 ruling 4: the Electrum option, since testnet4 Electrum servers exist). The seat
 // reads its chain through bitcoind's JSON-RPC (arena-node/src/chain-rpc.js) and needs whole blocks - a census is read from the bonds
 // and adverts in them - which an Electrum server does not serve. This bridge answers the seat's calls on 127.0.0.1:

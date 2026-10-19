@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE STANDS FOR A GATEWAY SEAT (spec §23A.9, kanban #471): its gateway claim, signed by its node key - which federation, where its
 // gateway answers (its public address /gateway/), its Lightning node key, the public channel capacity and peg-in it states, when. Its
 // seat serves it (GET /gateway-claim); the federation's guardians read it, probe the gateway it names, and rank the claims (gateway-

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEE PROPOSALS ON THE PAGE (kanban #462 slice 3): the form reads the fees in force as the nodes agree on them, builds any subset of
 // changes, and signs only what the seats' own rule takes - the same limits and sums, so a proposal the form signs a seat keeps and one
 // the form refuses a seat refuses with the same words; and a join pays the fees in force at its round's census height (GET /fees?height=),

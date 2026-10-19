@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Committee selection: bond-weighted, linear, and decided in integers.
 
 import { Writer } from './encode.js';

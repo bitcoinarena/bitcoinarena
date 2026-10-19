@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WHOLE SETTLEMENT ON A REAL FEDERATION (W4): two signer nodes of a lock round, each
 // with its own port on the stock fedimint 0.12.0 client (blwp-stake-lock) and its
 // own joined client; a winner and a loser whose stake locks - and fee locks, only

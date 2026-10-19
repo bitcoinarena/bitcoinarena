@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // IN-GAME ITEMS (kanban #365): a manifest's catalogue (protocol 10) and the 25 / 25 / 50 split of a purchase.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

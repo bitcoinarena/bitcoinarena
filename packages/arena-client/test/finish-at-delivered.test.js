@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RUN STOPS WHEN THE CORE SAYS IT IS OVER (the owner 2026-09-15 16:14).
 //
 // Measured before, replaying every run a signer node held: each truck that drove into the miner's

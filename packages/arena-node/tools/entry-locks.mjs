@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOCKS A HEADLESS ENTRY PAYS, AS THE PAGE MAKES THEM (kanban #397 / #494): the live tools tn4-live-run.mjs and tn4-rps-paid.mjs
 // built every entry the pre-11 way - a 5 % fee, no donation - and on the first protocol-11 day every seat refused it ("entry refused:
 // reserves: on protocol version 11 the node fee is 4000 msat (4 %), not 5000"). Below protocol 11: the stake lock and, when the round

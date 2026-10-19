@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Spike B, part two: do the engines' transcendental libraries actually agree,
 // over a wide sweep rather than four samples?
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE REPLAY QUEUE, AND AN OBJECTION NEVER WAITS BEHIND A RUN NOBODY DISPUTED.
 //
 // PRIORITIES names the pool: worker threads, each importing the core once;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A STAKE OR A SETTLEMENT THAT IS NEVER SEEN - join.js stakeSeenBy, settlementBy and roundCoreHex on their own (kanban #147,
 // surface 3 of "The player's money lines", plan comment 202, accepted 2026-10-05). The page asks every node it holds who it
 // is (/identity) and, from the round's settlement signer nodes only, whether it saw this entry's stake (/stake) and where

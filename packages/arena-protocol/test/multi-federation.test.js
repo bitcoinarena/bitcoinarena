@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 2026.0.3 - EVERY GAME THROUGH EVERY FEDERATION (kanban #348; the owner 2026-10-13 ~11:45Z: "Es muss möglich sein für alle Spiele über
 // alle Federation zu zahlen"). A v3 paying round may name no single federation (a zero federation_id: any federation its seats hold
 // OPEN); each entry then names the federation its locks are in, after its own marker, so every older entry keeps its bytes and id.

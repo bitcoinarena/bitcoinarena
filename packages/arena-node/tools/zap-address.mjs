@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ZAP-TAKING LIGHTNING ADDRESS IN FRONT OF ONE LND (kanban #362 item 14; src/zap-address.js). Invoices are minted and
 // looked up with lncli; receipts are signed with the key in ZAP_KEY_FILE (32 bytes hex, made on first start, 0600) and
 // sent to the relays each zap request names.

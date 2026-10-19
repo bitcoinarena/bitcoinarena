@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT THE POOL PAYS OUT, AND TO WHOM, AS OUTPUTS.
 //
 // §20: "PayoutTable = F(RoundContract, Membership, FinalResults). Deterministic.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE COMMITTEE'S PRICE FEED (§11, kanban #311): seven seats, each reading its own price; the sample's leader proposes its
 // reading, the others sign only what they saw too, and an attested sample is held by every seat once it stands.
 import { test } from 'node:test';

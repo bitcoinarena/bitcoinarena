@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6): a proposal signed by its bonded author, comments
 // and signals signed by their writers, and the signal's two rules - 15 % of the active nodes, active = served a round in the 432 blocks
 // before the signal ends. the owner's edges: a 14 % signal fails and a 15 % one passes; a node last active 433 blocks before the end does

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CENSUS ADVERT SAYS A NODE IS A GUARDIAN (spec §5A.1 v4.6.4: `guardian_capable`, `guardian_endpoint`; §23A.2: one
 // node is one guardian, drawn by sortition over the guardian-capable census - RULED the owner 2026-09-26 22:54).
 //

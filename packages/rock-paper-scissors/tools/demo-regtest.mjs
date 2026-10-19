@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ROCK PAPER SCISSORS, ALWAYS PLAYABLE (kanban #233, "Two players can always play each other. It is a demo."): a private
 // regtest bitcoind, two seats hosting nextblock and rock-paper-scissors (each advertising both), free 15-second rounds of
 // Rock Paper Scissors back to back (kanban #279), and the lobby link printed.

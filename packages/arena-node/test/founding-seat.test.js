@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT'S PART IN A FOUNDING (spec §23A.2, kanban #320): a record entering DRAINING at 200 triggers a succession; every seat reads the
 // same beacon (block 201) and census and draws the same four; only nodes whose guardian waits in setup take part; a seat whose post
 // was lost picks the codes up from a peer's GET /founding; the CLI setup is called with the guardian's own socket and password.

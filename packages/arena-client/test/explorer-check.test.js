@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SECOND, INDEPENDENT VIEW OF THE CHAIN (§5A.4, kanban #299): the explorer names the same block at the census height, or the round is
 // refused by name; an unreachable explorer is said, never taken as agreement.
 import { test } from 'node:test';

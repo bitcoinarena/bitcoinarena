@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // GET /served (kanban #365): who served a round in a window, from the FINAL signatures a seat holds - the protocol's list exactly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE TESTNET4 STACK TOOLS, EACH RUN AS IT IS RUN LIVE, ON A PRIVATE REGTEST (kanban #148 step 6, plan comment 235,
 # Go 2026-10-05). The binaries are the patched fork (/home/arena/blwp-testnet4/patched/bin); stock Fedimint is not used.
 # ARENA_TN4_NETWORK=regtest is the one thing the tools are told differently from live, with the paths and ports of this

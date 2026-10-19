@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEATED GUARDIAN'S OWN COPY OF A HALTED FEDERATION'S SPENT SET (§23A.5 step 1, kanban #323): its guardian asked through fedimint-cli
 // (stubbed here), the copy signed with the node key as of the last finished session, standing against the record; then posted.
 import { test } from 'node:test';

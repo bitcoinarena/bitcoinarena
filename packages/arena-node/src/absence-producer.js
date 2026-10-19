@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GUARDIAN'S OWN ABSENCE ATTESTATIONS (spec §23A.4: "Each guardian signs, once a day while it lasts, (federation_id, peer,
 // last_seen_height, height) for every peer it has not seen in consensus"; kanban #322), the producing slice - absence.js holds the
 // signed objects and absences.js the seat's store. The node runs its guardian (§23A.2), so it asks it: the admin `status` of the

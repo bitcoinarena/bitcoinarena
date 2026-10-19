@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER 2026-10-13 ~11:55Z: "Die Funds müssen immer sichtbar sein von allen Föderationen, ohne zwischen Federations zu klicken
 // und zu wechseln, immer alle Balances summiert und ersichtlich" - the page's BLWP_SUM_BALANCES, run on its own source
 import { test } from 'node:test';

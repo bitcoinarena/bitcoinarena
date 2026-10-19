@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // #471: drive the wizard page in a headless Chrome over CDP (port 9361) and screenshot every step, full page:
 //     node tools/wizard-drive.mjs <link file> <out dir> <ws module path>
 import { writeFileSync, readFileSync } from 'node:fs';

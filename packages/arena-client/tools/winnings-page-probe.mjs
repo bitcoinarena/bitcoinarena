@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE PAGE ASKS A WINNER WHERE TO SEND THE WINNINGS, ON A REAL FEDERATION (ruled 2026-09-23).
  *

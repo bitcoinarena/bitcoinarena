@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DEV'S DONATION CLIENT (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): one private key, whose public
 // half is this dev's recipient key in the network's donation set. It asks every seat it knows what that key was given
 // (GET /donations), learns from the answers in which federations the funds are, redeems each payout contract into its own

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A ROUND POSTED AHEAD OF ITS BEACON OUTLIVES A RESTART (ORDER-2116, measured on the free pair 2026-10-01). The free opener
 // posts each round ~15 min ahead; a node stores it (202) and assigns its signer nodes once the beacon is on its chain. The
 // rounds waiting for that lived in memory only, so every round posted before a node's restart stayed unassigned and no

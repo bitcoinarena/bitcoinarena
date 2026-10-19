@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §13C'S EVIDENCE ON THE RE-RUN WINDOW, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
 //
 // Until that ruling every §13A window was blocks at both ends (RULED 2026-09-24), and this file locked it: two holders with

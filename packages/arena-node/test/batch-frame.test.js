@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // NO BATCH A TRANSCRIPT CANNOT FRAME (kanban #342): the transcript frames each batch with a u16 length, so a seat refuses at
 // intake a batch longer than 65,535 bytes, naming the limit - measured live: a 97,309-byte batch was taken by all seven seats
 // and every close then failed "u16 out of range", replayed again and again without end.

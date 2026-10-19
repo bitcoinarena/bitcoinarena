@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HOW MANY PLAY EACH GAME HERE NOW (kanban #338, the owner 2026-10-11: "Anzeigen wieviele nodes das haben und wieviele spieler
 // insgesamt drin sind"): per game this seat hosts, the rounds that are live now - open for entries or running - and the
 // players entered in them, from this seat's own round store - live from the seating close (start - 120 s) to the end. Each round's contract is read once (by rowid), the entries

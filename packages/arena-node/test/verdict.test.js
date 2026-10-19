@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FIVE OF SEVEN SIGNING WHAT THEY EACH REPLAYED, AND A LATER NODE CAN CHECK IT
 // WITHOUT REPLAYING ANYTHING.
 //

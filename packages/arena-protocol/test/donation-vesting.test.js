@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // DAILY VESTING (§27A.4.1, kanban #382, the owner 2026-10-16: "a new person gets 10% in 12 months ... While a new donation dev is vesting
 // the old configuration still applies ... the other old devs get the reminder proportionally"; "it can also mean that an existing
 // stakeholder can get additional shares by adding vesting"; "vesting is daily").

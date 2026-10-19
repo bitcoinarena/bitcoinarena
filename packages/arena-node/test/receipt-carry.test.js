@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CHECKPOINT'S RECEIPTS ARE CARRIED ACROSS THE COMMITTEE AT THE CLOSE (M3.3-22).
 //
 // Section 13C: the canonical transcript is "the longest checkpoint chain that

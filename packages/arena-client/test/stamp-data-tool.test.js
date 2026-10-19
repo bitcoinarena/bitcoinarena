@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOBBY'S BUILD STAMP IS REWRITTEN IN UNITY'S BROTLI .data.unityweb AT EACH DEPLOY (kanban #148, plan comment 222).
 // tools/stamp-data.mjs runs as deploys run it, on a file built here the way Unity's brotli writes one: the stream's window
 // bits, a metadata block carrying "UnityWeb Compressed Content (brotli)" where the loader looks, then the compressed data

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S SOCKET DROPPING BEFORE THE ROUND STARTS (rig from own-socket-drop.test.js).
 //
 // Measured 2026-09-10 on one real daemon, the page's reconnect wired as the

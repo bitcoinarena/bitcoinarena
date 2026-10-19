@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHY ONE ROUND'S DEPOSIT IS MORE THAN ITS STAKE, AS THE DEPOSIT BOX SAYS IT (kanban #30): the line under the deposit tabs
 // gave "the federation's e-cash comes in notes of 0.512 sat" - false since notes are 1 msat ("1 sat = 1 sat", the owner
 // 2026-10-01; page-lock.js NOTE_MSAT). index.html's own depositWhyLine runs under the page's name (page-script.js).

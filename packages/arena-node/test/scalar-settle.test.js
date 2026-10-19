@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SCALAR MARKET SETTLED AT A SEAT (kanban #362 feature 8; protocol 2026.0.7): its attestors' VALUE attestation comes in at
 // POST /outcome beside the outcome attestations, is held in the same table and read back by its own type byte, and every reader
 // of an attested round's outcome reads the value: the settlement makes the scalar table (LONG (V - low) / (high - low) of the net

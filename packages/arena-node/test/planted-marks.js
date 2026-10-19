@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE START DEADLINE THE SETTLING FIXTURE ROUNDS NAME (§15, a late start).
 //
 // These fixtures plant ONE first mark, at the end of a player's run - the

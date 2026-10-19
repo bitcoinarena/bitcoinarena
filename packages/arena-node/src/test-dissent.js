@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A TEST FAULT, OFF BY DEFAULT (ORDER-2116, RULED the owner 2026-10-02: invalidation case 1 - "for one named entry, 4 of the 7
 // seats sign a different run. Their valid objection suspends it, the re-run voids it, and the pending line goes").
 //

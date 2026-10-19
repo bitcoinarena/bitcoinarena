@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE A WINNER'S WINNINGS ARE SENT (RULED the owner 2026-09-23: winnings are always sent; a qualifier who names no
 // address is not paid, its share pooled over those who did).
 //

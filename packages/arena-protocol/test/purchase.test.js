@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ITEM, BOUGHT (kanban #365 step 2): the buyer's signed record, its outputs rebuilt from the split, refused by name when anything differs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

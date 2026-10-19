@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A SIGNING ROUND PUTS ON THE WIRE, AND NOTHING ELSE GOES ON IT.
 //
 // Two shapes, both fixed-width, both readable by a node that trusts nothing

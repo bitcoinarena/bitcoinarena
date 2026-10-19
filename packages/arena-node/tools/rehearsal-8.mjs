@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL ITEM 8, MEASURED ON THE SHIPPED PAGE PATH: "deposit into the player wallet; a stake spent from
 // it into a lock with no Lightning payment between; the lock verified by the seats as in item 1". Run by
 // rehearsal-8-regtest.sh after the federation is up (stock fedimintd 0.12.0, 4 guardians, 3 of 4).

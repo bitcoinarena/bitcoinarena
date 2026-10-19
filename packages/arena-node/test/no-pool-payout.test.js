@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WITHDRAWN CUSTODY'S ON-CHAIN POOL PAYOUT IS GONE (§23.6, RULED the owner 2026-09-22 22:59; this cut RULED 2026-09-25:
 // "Cut the on-chain pool payout and those four tools now ... Do not relabel them FEDERATION").
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE SERIES A LINE (ARENA_SERIES_FILE, the body of POST /series, and GET /series-template): its template, hex; then `count=N` for
 // a tail (the 82/90 fork: fewer than a day's 960 rounds - its id is taken over that count) and `cut=N` for a series replaced from
 // round N by its tail; and for a grid series (kanban #293, the owner 2026-10-12: an RPS grid published as a short series) `grid`,

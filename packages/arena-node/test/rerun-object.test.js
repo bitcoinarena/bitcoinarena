@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE COMMITTEE SIGNER NODE'S RE-RUN OF A SUSPENDED RESULT, AND THE COUNT THAT MAKES IT AUTHORITATIVE (§13A).
 //
 // The object and the count are protocol (`arena-protocol/src/rerun.js`); exercised

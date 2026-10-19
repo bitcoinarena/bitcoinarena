@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The protocol has to agree across engines too - it computes round_ids that
 // pin money, and a browser client derives them independently of the node.
 import { TEST_FEDERATION_ID } from '../src/test-federation.js';

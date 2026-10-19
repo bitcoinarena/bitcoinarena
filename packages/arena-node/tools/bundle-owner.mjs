@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // node tools/bundle-owner.mjs [--check]: pages/owner-entry.js -> pages/owner-client.js (kanban #276). --check exits 1 when
 // the committed bundle is not what the source builds.
 import { build } from '../../arena-client/node_modules/esbuild/lib/main.js';

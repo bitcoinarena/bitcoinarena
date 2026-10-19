@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODES THAT SERVED A ROUND IN THE LAST 24 HOURS (kanban #365, the owner 2026-10-15: an in-game item's price goes "50% an die
 // nodes die in den letzten 24h an einer Runde beteiligt waren"). The part of the item plan that moves no money (plan: comment 2310):
 // WHICH nodes, and in how many rounds each, read so that every node arrives at the same list.

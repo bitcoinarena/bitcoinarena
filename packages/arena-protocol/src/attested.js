@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ATTESTED OUTCOME AND THE PARI-MUTUEL TABLE (§0A.7a, kanban #206, the owner 2026-10-07): the result of a round of an
 // attested game - a prediction market - is not a replayed run but the outcome its attestors sign. The game's manifest
 // names the outcomes, the attestor keys and how many of them must sign (k of n, chosen by the game dev); a round's

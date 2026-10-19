@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GAME'S DESCRIPTION AND WEBSITE, SIGNED BY ITS DEVELOPER (kanban #276, the owner 2026-10-11: "Das Manifest soll auch eine
 // Description und Webseite haben die signiert wird, die hier angezeigt wird"; and ~06:55Z: "Mach es so dass beide hashes
 // akzeptiert werden - mit URL und ohne URL, mit Description und ohne").

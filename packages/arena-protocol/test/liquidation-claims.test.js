@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLAIMS ON A HALTED FEDERATION'S ESCROW (spec §23A.5 liquidation, kanban #323): notes at face first, pro rata only when the
 // escrow is short, late ones from what is left until drain_blocks, and only then the remainder 75 / 25.
 import { test } from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ONE ROW PER GAME, WHATEVER ITS VERSIONS (kanban #376, the owner 2026-10-16 06:25Z: "games show up as duplicates it's always the same
 // round twice"). Measured on seat 3 at 06:49Z: every 90 s instant listed nextblock v1 on federation A, v1 on B and v3 (b8b88e23) on
 // A; the lobby kept one row per game ID, so v1's and v3's rounds of one instant were two rows. Rows are kept per game NAME now, and of

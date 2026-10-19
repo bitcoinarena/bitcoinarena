@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The core's air arm, laid beside test/vectors/csharp-gunships.json.
 //
 // Same job as tools/measure-army.js and for the same reason: the recording is

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER, FRESH, THROUGH ITS API (kanban #471 slice 1, F.1): the wizard's doors in order against a real seat process - started from
 // the settings the wizard wrote, on a fake testnet4 bitcoind that serves block 0 - and the owner login the running seat checks itself.
 // And the guards: the token works once, a foreign Host or a missing header is refused, the seed is asked back, the genesis decides.

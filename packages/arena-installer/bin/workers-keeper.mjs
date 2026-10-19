@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WORKERS KEEPER'S SERVICE (kanban #471, workers.js): every 20 s the quick tunnel's name; a new one goes into the node's Worker on
 // the operator's workers.dev at once, so its permanent address keeps answering. Lines in <home>/workers.log.
 //

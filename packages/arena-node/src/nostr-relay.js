@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // OUR OWN NOSTR RELAY (kanban #277, the owner 2026-10-10: "ours and a few public ones"): the relay the page's Nostr login writes
 // to first. NIP-01 (EVENT, REQ, CLOSE; OK, EOSE, NOTICE, CLOSED), NIP-11 (its information document), replaceable and
 // parameterized-replaceable events kept newest-only (NIP-01), ephemeral events passed on and never kept. It takes only what

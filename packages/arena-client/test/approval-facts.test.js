@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BEFORE APPROVAL (spec §22A Transparency, §5A.13; kanban #317): the selected node identities (or pending), the committee
 // overlap and whether a selected operator is playing - on the paying row's lobby line, from its seating, the checked census
 // (operator_id per node) and the round's checked players.

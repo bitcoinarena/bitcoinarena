@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEAT SIGNS THE FRONT A PRICE ROUND'S RUN ENDED ON (§13 front_*, kanban #312): resultFrom with the round played against the feed
 // writes the run's open, close and front (LIVE) off its own attested samples - 178 bytes; any other round's result keeps its 168.
 import { test } from 'node:test';

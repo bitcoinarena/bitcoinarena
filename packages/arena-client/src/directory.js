@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE TO TALK, AND WHY.
 //
 // Section 25.1: "A client finds nodes by reading Bitcoin. There is no

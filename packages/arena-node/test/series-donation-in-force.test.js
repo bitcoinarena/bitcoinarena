@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SERIES NAMING A DONATION SET THAT IS NOT IN FORCE AT ITS CENSUS HEIGHT IS OFFERED NOWHERE (kanban #191, the owner 2026-10-06:
 // series d37c1ef1 named serial 2's 79b7f62a where serial 3 was in force; the seats wrote and listed its rounds 7 of 7, the
 // page locked a 100 sat stake into one, and only the session then refused it). The check lived at POST /round alone, which

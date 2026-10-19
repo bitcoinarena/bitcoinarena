@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CHAIN OF REAL, MINED HEADERS, FOR TESTS AND VECTORS.
 //
 // NOT part of the protocol: nothing in `src/` imports it, the same rule

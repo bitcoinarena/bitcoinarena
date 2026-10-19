@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DONATION SEND WHOSE GATEWAY NEVER PAYS (the owner 2026-10-01: "test fee payments and donations properly"). Since
 // WINNINGS-AUTO no winner is paid by a Lightning send; the send machinery carries a walk-away round's 25% to the
 // donation set (each recipient by its Lightning-address send). The re-send it keeps for a gateway that never pays was

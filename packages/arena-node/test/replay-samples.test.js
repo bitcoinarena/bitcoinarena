@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIVE PRICE ON THE SIGNER NODES (the owner 2026-09-17 16:01): price samples ride the batch beside their ticks, the node
 // stores and serves them, and a replay reaches the state of the page that fought on the moving chart.
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';

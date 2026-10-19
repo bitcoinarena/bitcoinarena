@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // RESERVE SEATS AT A SEAT (multiplayer_p2p.md §5A.7, kanban #301). For each round this node is drawn for, per role:
 //
 //   before seating_close (start - 120 s)  it signs PRESENT once it can serve the round, keeps it, and hands it to every

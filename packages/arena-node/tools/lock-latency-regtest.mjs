@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * HOW LONG A STAKE LOCK TAKES TO BE ACCEPTED BY THE FEDERATION (kanban #178, plan comment 327, Go 2026-10-05: "under 200 ms").
  *

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHERE THE WORLD ENDS AT THE MINER: the numbers the code actually holds, against the building as it is modelled.
 //
 // the owner's playtest of 2026-09-19 13:09 (owner-screens/miner-entrance-covered-1309.jpg): "the miner model / entry

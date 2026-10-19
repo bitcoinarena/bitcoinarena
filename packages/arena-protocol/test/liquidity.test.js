@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LIQUIDITY PROVIDERS (§23A.10, kanban #494): signed claims; at least 1 and at most 2 providers per node, chosen the same way by all;
 // the weight for the fee.
 import { test } from 'node:test';

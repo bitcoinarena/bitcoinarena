@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CURVE THE DAEMON BRINGS TO THE CENSUS.
 //
 // `packages/protocol` carries no curve on purpose - every other package reads

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ZCASH FOUNDATION'S frost-secp256k1-tr v3.0.0, BYTE FOR BYTE.
 //
 // FEDERATION.md's condition before real money: "FROST and DKG bit-matched

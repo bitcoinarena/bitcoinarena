@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The transcript: one object, one hash, and it says where it broke.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

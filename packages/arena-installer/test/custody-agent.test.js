@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CUSTODY AGENT (kanban #471 slice 5 part 4, custody-agent.js; the owner 2026-10-18: "It should happen automatically"): nothing before a
 // founding; once fedimintd wrote the invite, guardian_of[] is published in an advertisement update of the node's bond (signed by its key,
 // paid from its wallet), then the gateway joins the federation, then the peg-in goes to the gateway's address - each once.

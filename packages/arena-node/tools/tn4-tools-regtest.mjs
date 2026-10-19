@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE READINGS OF THE TESTNET4 STACK TOOLS ON A PRIVATE REGTEST (kanban #148 step 6, plan comment 235, Go 2026-10-05).
 // tools/tn4-tools-regtest.sh stands the stack up and runs each tool as it is run live; this answers what each one left
 // behind, one JSON line per reading, and refuses the whole run first if anything points at the live testnet4 stack.

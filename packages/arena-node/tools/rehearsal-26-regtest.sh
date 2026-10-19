@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md REHEARSAL 26, A SUCCESSION FOUNDED BY NOTICE ON REGTEST (§23A.2 + §23A.6 step 1, kanban #326): a private bitcoind with
 # cookie auth (as a node reads its chain), then tools/rehearsal-26.mjs - five arena nodes that start every fedimintd themselves (setup
 # mode, then a guardian-next beside a running guardian), an old federation of four founded, a departure notice, and its successor

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S HALF: ASK FOR THE OTHER TRUCKS, AND KEEP WHAT ARRIVES.
 //
 // Measured at the start of letter 28: a ghost was produced, delivered and

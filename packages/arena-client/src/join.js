@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ROUND A PAGE WAS SENT TO, NAMED IN ITS OWN URL.
 //
 // The page has always refused to invent a round: `BLWP_ROUND` is undefined in

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHICH CHAIN OUTPUTS COUNT AS BONDS.
 //
 // Measured before this file existed: `deriveCensus` accepted a candidate at

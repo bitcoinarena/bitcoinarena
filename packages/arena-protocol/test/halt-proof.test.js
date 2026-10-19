@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HALT, PROVEN BY THE SEATS (spec §23A.5 "How a halt is proven", RULED 2026-10-14; kanban #323) - rehearsal 17's case:
 // a federation of four (3 of 4) whose g2 and g3 left, so no 2f + 1 can sign for it; nine census seats observe it.
 import { test } from 'node:test';

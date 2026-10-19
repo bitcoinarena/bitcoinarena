@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // An input batch: what a player sends while a round is running.
 //
 // THE SHAPE IS THE CORE'S, not a new one. `packages/nextblock`'s `step` takes

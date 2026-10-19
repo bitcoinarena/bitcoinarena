@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // MY ORDERS, FROM THE SEATS (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and still no closed
 // orders"; "Have the open orders from the nodes not from local storage"): of a round's entries as its seats hold them, the orders whose
 // player key is one this wallet makes for that round, read back with their side, limit, expiry, stake and the key's order index.

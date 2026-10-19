@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md REHEARSAL 17, LIQUIDATION ON REGTEST (§23A.5, kanban #326 / #323): "a 4-guardian federation (3 of 4) with notes
 # in three wallets at 90% of its cap; two guardians abandon, attested and slashed into the escrow; the federation halts for
 # abandon_blocks; the two seated guardians publish the spent set; each wallet's client presents its notes ... and is paid at

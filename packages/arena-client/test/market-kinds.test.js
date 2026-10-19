@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAGE'S MARKET LINES FOR PROTOCOLS 6 AND 7 (kanban #362, docs/PLATFORM-RESEARCH.md items 6 and 8): a scalar market's value and
 // a market on a game's source result, each checked by the page itself before a line says what a pick won - the value against the
 // attestors its manifest names, the source result against the committee the page derives (never the seats' list).

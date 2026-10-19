@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /** Generate test donation keys and write public genesis-ids.js */
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';

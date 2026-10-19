@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CONSOLE BUTTON AND ITS PANEL, PLACED FROM THE HUD'S OWN SLOT: index.html's BLWP_PLACE_CONSOLE run on fake slots - the
 // measured screens and an upright phone. The button stays under the HUD corner (the owner 2026-10-04). THE OPEN PANEL (kanban
 // #198, the owner 2026-10-06 17:11: it covered the truck) is bottom right at its fixed 260 px: its right edge at the HUD's

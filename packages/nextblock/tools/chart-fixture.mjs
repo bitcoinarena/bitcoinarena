@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The core's own chart words (src/chart.js) for the Unity painter's EditMode tests: the painter is tested on what the
 // core hands a page, not on numbers a test made up.
 //

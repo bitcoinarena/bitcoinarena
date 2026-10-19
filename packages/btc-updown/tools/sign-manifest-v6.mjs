@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 6, SIGNED BY ITS DEVELOPER (kanban #443, the owner 2026-10-17: "This looks pretty bad, make it
 // prettier and more structured"): version 5 in every term, with its new client - My orders as cards, each with its result - beside
 // version 5's and the older ones, so any of them runs a round of it. Parent: version 5.

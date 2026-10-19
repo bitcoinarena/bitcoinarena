@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The two artifacts everything else hangs off.
 //
 // A RoundContract is what every participant must agree on byte for byte before

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 12, SIGNED BY ITS DEVELOPER (kanban #456, the owner 2026-10-17: "Include plus minus buttons ... default to
 // 100 Sats ... saves the last user amount in local storage"): version 11 in every term, with its new client - the amount's − / + steps,
 // 100 by default, kept in the browser - beside version 11's and the older ones, so any of them runs a round of it. Parent: version 11.

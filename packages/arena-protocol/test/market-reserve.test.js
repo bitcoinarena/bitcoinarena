@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET'S PROTOCOL RESERVE (kanban #454, the owner 2026-10-17: "Prediction markers brauchen auch eine protocol reserve fee: 0.4%
 // donation (50/50 protocol / market dev), 0.4% node, 0.2% protocol reserve fee"): the terms name it after their own marker, the
 // whole fee stays node + donation (1 %), and the settlement pays 0.2 % of the stakes out of the donation's part to the reserve key

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 2026.0.3 STEP 7 - A PLAYER JOINS A ROUND THAT TAKES ANY FEDERATION (kanban #348; the owner 2026-10-13: "Es muss möglich sein für alle
 // Spiele über alle Federation zu zahlen"). The page locks where its wallet covers the stake, the lowest-load such federation
 // (lockFederation); the round is resolved to it (inFederation) with its own id kept; the entry names that federation.

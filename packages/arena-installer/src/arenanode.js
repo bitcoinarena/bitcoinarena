@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARENANODE COMMAND (kanban #499, the owner 2026-10-19: "Take a look how openclaw is used using the openclaw command, ie openclaw status,
 // openclaw gateway restart etc. no messing with command line parameters"). One word, then what to act on:
 //

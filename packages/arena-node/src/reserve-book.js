@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROTOCOL RESERVES' BOOK (§27A.9.2, kanban #397 slice 4, the owner 2026-10-16: "Every node serves GET /reserves: the total
 // held, by federation, the last rounds' payments in ... all from its own store, as /donations is"). A version-11 entry's reserve
 // output is checked and kept as a row (donation_outputs, under the federation's reserve key) only by the signer nodes its lock

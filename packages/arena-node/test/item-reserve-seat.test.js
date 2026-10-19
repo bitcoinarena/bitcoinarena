@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN ITEM ON THE RESERVES' TERMS, AS A SEAT KEEPS IT (kanban #397 slice 5): every output checked with the federation as before, and the
 // reserves' 20 % kept as a reserve row under the federation's reserve key - what GET /reserves counts, labelled with the item. A
 // purchase whose reserve output the federation does not hold, or holds 1 msat short, is refused and leaves no row.

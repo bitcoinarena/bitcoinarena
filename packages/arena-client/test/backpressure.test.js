@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHAT A SLOW NODE DOES TO A CLIENT THAT KEEPS PUBLISHING.
 //
 // The game hands over five words a tick and asks for a batch every sixth and a

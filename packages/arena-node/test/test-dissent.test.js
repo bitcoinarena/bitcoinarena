@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE TEST FAULT IS OFF BY DEFAULT AND NAMES ONE ENTRY (ORDER-2116, RULED the owner 2026-10-02, invalidation case 1). A seat
 // reads ARENA_TEST_DISSENT_ENTRY once, at start: unset, nothing dissents; set, that one entry and no other.
 import { test } from 'node:test';

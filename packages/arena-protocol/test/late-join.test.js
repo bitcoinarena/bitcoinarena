@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LATE JOIN: A RUN BEGINS WHERE THE ENTRY SAYS IT JOINED.
 //
 // 0.8: "A round supports a dynamically growing number of competitors... Late

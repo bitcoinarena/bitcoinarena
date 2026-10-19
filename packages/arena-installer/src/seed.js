@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S SEED, WRITTEN DOWN AND ASKED BACK (kanban #471 step C.5-C.6; the owner 2026-10-18: "prompts the user to setup his node keys or
 // Nostr so he can authenticate in the future and prompts the user to write down his seed").
 //

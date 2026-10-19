@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING ROUND ON A CORE THIS CLIENT DOES NOT KNOW GETS NO STAKE AND NO SIGNER NODE
 // (§5, v4.6; F2's second clause). Measured before this: `stakeFor` and
 // `entryFor` never looked at `simCoreHash`, and every launcher wrote b32(1) -

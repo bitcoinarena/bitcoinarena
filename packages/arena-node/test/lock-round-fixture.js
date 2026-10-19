@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAYING FEDERATION ROUND ON TWO SIGNER NODES AND A FAKE LOCK PORT, PLAYED TO ITS CLOSE (moved out of
 // lock-settlement.test.js so the winnings test drives the very same round): `lockRound` stands it, `lockAndPlay`
 // locks a player's stake and fee and plays their run, `closeRound`, `standing` and `untilSettled` watch it settle.

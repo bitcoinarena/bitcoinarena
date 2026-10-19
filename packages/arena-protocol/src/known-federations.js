@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FEDERATIONS THIS CLIENT LETS A PLAYER DEPOSIT AND STAKE INTO WITHOUT ASKING (spec §23.6, kanban #318): "federation_id
 // is on the client's known-good list, or the client shows it and its guardians and requires an explicit confirmation -
 // the same rule as sim_wasm_hash (§5)". By federation id (the hash of its configuration). Adding one is a reviewed code

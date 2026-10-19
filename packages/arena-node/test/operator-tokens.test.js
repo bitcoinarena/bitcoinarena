@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OPERATOR UI'S PAIRING AND SCOPED TOKENS (spec §27A.7.7, kanban #332): a blwp-operator: URI with a 32-byte token, printed on
 // first start; read / vote / config scopes, none of which moves money; minted and revoked by the owner's signature only.
 import test from 'node:test';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GATEWAY SEATING OF AN EPOCH, SIGNED BY THE GUARDIANS (spec §23A.9, kanban #471): each guardian ranks its federation's gateway
 // claims (gateway-seats.js) on the epoch it measured and signs the seats it got; a seating stands when at least the federation's
 // threshold of its seated guardians signed the same seats for the same epoch. Kept apart from the federation record on purpose: a

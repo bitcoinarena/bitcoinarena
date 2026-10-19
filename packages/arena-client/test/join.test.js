@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PAGE CAN BE SENT TO A ROUND THAT ALREADY EXISTS.
 //
 // The shipped page refuses to invent `BLWP_ROUND` and that refusal is right.

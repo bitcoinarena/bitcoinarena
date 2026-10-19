@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // ROCK PAPER SCISSORS' MANIFEST VERSION 3, SIGNED BY ITS DEVELOPER (kanban #396, the owner 2026-10-16: "everywhere where you added
 // < games as navigation it needs to say Arena"): version 2 in every term, with its new client ("← Arena") beside version 2's,
 // so either file runs a round of it. Parent: version 2 (plugin/rock-paper-scissors-v2.js).

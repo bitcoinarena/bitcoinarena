@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
  * THE STAKE LOCK, MEASURED ON THE OPEN TESTNET4 ROUND (the owner 2026-09-27 07:51: "Open the paying round. Measure the
  * stake lock"). Nothing here stands a round or a signer node: the round is the one tools/run-testnet4-paid.mjs opened,

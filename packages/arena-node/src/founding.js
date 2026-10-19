@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FOUNDING CEREMONY, AS A SEAT RUNS IT (spec §23A.2, kanban #320): the draw is guardian-founding.js (arena-protocol); this is
 // what the drawn nodes do with it. Every seat computes the same draw from the census and the beacon after trigger_height, so no
 // message decides who sits - the messages only carry what the guardians need to find each other:

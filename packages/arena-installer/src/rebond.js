@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LARGER BOND, IN ONE STEP (kanban #471 part D): the bond the wizard posted, from its maturity on, plus the wallet's coins become one
 // new, larger bond with a new lock (bond.js buildBond with `oldBond`). `arena-install --rebond <sats>` shows the plan; with --yes it
 // broadcasts and records the new bond. Measured 2026-10-18 against testnet4 Bitcoin Core: test host seat 1's matured bond (50,000 sat,

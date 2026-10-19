@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40).
 //
 // "A Round Contract whose objection_window_W is not exactly 600000 ms is invalid: a node refuses to open it, list it or

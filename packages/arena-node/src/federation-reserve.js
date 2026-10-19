@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION'S ON-CHAIN RESERVE (spec §23A.3, kanban #324: "Custody held is public. A federation's reserve is its on-chain
 // wallet"; load = reserve / exposure_cap). Read from its guardians' stock wallet module: each guardian's public
 // `wallet_summary` over its JSON-RPC WebSocket (the API the stock client uses), and kept only when at least `threshold`

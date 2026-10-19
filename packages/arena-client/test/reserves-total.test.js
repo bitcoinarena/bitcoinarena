@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE RESERVES' TOTAL ON THE ARENA PAGE (§27A.9.2, kanban #397 slice 4): GET /reserves on the network's nodes; the total is shown
 // only when five of them answer the same one - so a node that counts too much, or one still catching up, cannot set it alone.
 import test from 'node:test';

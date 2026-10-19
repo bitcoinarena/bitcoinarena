@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // 5A.3 ROW 5: A NODE THAT SIGNED FOR A ROUND ITS OWN OPERATOR PLAYED.
 //
 // 5A.13: "A selected node may not sign anything for a round in which its

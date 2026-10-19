@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // KANBAN #130 ON THE PAGE (the owner 2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time.
 // Join closes when 45 s remain"): a late-join round is offered until start + 37 s less a join's time, a late entry names the
 // round tick it joins at and is held to that tick's instant, and its run is the round's run less those ticks.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CHAIN BRIDGE (kanban #471, Electrum mode): the seat's bitcoind calls answered from an Electrum server's headers and Esplora's
 // blocks - a block kept only when its header, merkle root and witness commitment say it is that block; a wallet call refused by name.
 // Live, 2026-10-18: 27 blocks (4.5 MB) byte-identical to Bitcoin Core through mempool.space; 301 real blocks accepted and 903

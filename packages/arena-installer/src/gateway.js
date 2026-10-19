@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE GATEWAY FOR CUSTODY (kanban #471 slice 5, part 2: "Custody help: set up LND ..., its wallet and the gateway, test it"): the
 // patched fork's gatewayd (custody binaries beside the release, runtime/custody/), on this node's LND, joined to federations by invite.
 //

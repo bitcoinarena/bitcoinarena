@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LIQUIDITY PROVIDER SERVICE (liquidity-provider.js, spec §23A.10, kanban #494): every minute its claim, the others' claims and
 // the nodes' gateway claims, the assignment, and its channels. Its claim is served at --listen (GET /liquidity-claim) and written to
 // --claim-file (a seat serves that file as GET /liquidity-claim, ARENA_LIQUIDITY_CLAIM_FILE).

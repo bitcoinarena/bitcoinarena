@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A SEASON: ONE GAME'S FINAL ROUNDS OVER A TIME WINDOW, PER PLAYER (kanban #362, feature 1 of docs/PLATFORM-RESEARCH.md).
 //
 // A round's board (leaderboard.js) is forgotten when the round ends; status over weeks is what brings a player back. So

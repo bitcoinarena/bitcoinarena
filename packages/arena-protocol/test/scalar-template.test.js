@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // SCALAR TEMPLATES (2026.0.8, kanban #362, docs/PLATFORM-RESEARCH.md items 5 + 8: "Left: scalar templates"): a scalar market that is
 // a template - anyone opens a numeric question by publishing one round of it, and the round names its own bounds (inside the
 // template's, in its unit) in its question's tail. Nothing below version 8 moves.

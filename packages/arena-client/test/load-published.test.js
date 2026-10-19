@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LOAD REACHES THE NODE, AND IT REACHES IT ON THE TICK IT WAS DECLARED.
 //
 // Letter 40. How hard the war hunts a truck is decided by what is on its bed,

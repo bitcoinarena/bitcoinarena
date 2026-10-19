@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO A FILED SLASH OWES, WRITTEN DOWN AND NOT SPENT.
 //
 // §5A.3's three rulings of 2026-09-22 made this computable, and until they landed it was not: nothing

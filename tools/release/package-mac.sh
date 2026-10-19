@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE macOS PACKAGE (kanban #500): ArenaNode-<v>-darwin-<arch>.dmg - "Arena Node.app" (pkg/macos/arena-node-app with the release inside it)
 # and a link to Applications, to drag it to. Made with hdiutil, so on a macOS (CI: the macos runner). Its line goes into
 # <out>/SHA256SUMS.packages. Usage: package-mac.sh <version> <out dir with the darwin assets>

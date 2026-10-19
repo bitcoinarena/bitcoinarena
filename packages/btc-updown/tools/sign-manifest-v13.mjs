@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 13, SIGNED BY ITS DEVELOPER (kanban #454, the owner 2026-10-17: "Prediction markers brauchen auch
 // eine protocol reserve fee: 0.4% donation (50/50 protocol / market dev), 0.4% node, 0.2% protocol reserve fee"): version 12 in every
 // term but the fee - node 0.4 %, donation 0.6 % of which 0.2 % is the protocol reserve (the whole fee stays 1 %) - with its new client

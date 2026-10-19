@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CHAIN THAT KEEPS TIME WITH THE TEST (§13A, RULED the owner 2026-09-24: every objection window is blocks at both ends,
 // read from the node's own chain view, and every posting, objection and re-run names the block it sits in). The fixtures'
 // signer nodes read no bitcoind, so they are handed this: one mined header per `spacingS` seconds of the wall clock, each

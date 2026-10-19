@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A RESULT THAT IS NOT A REPLAY (kanban #206 slice 1, §0A.7a; the owner 2026-10-07: attestors named in the manifest, k of n,
 // chosen by the game dev; the pari-mutuel rule): an attested game's manifest, the entry's pick, the outcome attestation and
 // its refusals, the standing of a round on its attestations, and the pari-mutuel table to the msat.

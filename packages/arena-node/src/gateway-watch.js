@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A GUARDIAN WATCHES ITS FEDERATION'S GATEWAYS (spec §23A.9, kanban #471): every probe (10 minutes) it reads each seated guardian's
 // gateway claim from that node's seat (GET /gateway-claim, signed by the node key), and asks the gateway the claim names whether it
 // serves this federation (POST <gateway>/routing_info with the federation id: the LNv2 call a client makes before paying - public,

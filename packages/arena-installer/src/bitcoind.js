@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN CORE, INSTALLED BY THE WIZARD WHEN ASKED (kanban #471 ruling 8; the owner 2026-10-18: "471 can also install bitcoind if
 // requested and not installed yet. It evaluates how much disk space is needed and [warns] if [it is] not enough for both main net and
 // Testnet4. It runs bitcoind as a service and the monitor in the website monitors the progress and gives an eta how long it will take.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A transaction funded under the wallet's floor (fund-at-rate.js): the coins chosen here, the fee the asked rate times
 // the signed size, a change below dust given to the fee, every input replaceable.
 import { test } from 'node:test';

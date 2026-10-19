@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE DAEMON REPLAYS A RUN. IT DOES NOT RUN ONE BESIDE THE PLAYER.
 //
 // `arena-client/src/client.js` opens by saying why this file did not exist:

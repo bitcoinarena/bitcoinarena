@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A STAKE OPENS AT THE ROUND'S THRESHOLD, NEVER THE ONE A PLAYER DEALT (M3.3-26).
 //
 // Measured on the regtest rehearsal: both daemons reached the loser's settle,

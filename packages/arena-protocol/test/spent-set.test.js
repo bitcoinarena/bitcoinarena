@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HALTED FEDERATION'S SPENT-NOTE SET (spec §23A.5 liquidation step 1, kanban #323).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

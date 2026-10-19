@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEVEN TESTNET4 BONDS MOVED INTO TEMPLATE 2 (kanban #295; the owner 2026-10-11: "the 7 testnet4 bonds re-bonded to v2
 // at confirmation + 144, path A refused before H, census counts all 7"; "spend path A into a v2 bond and publish the new
 // advert, only after a testmempoolaccept dry run").

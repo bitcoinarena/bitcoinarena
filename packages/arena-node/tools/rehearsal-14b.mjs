@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL 14B, ABSENCE FROM THE GUARDIANS THEMSELVES (§23A.4, kanban #322 / #326): rehearsal 14 signed the
 // attestations in the script; here each guardian's node signs them from what its own fedimintd says (src/absence-producer.js,
 // the admin `status` over the guardian's API socket) - the code every seat runs. tools/rehearsal-14b-regtest.sh stands up the

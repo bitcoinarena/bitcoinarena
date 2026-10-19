@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A FEDERATION NOT ON THE KNOWN-GOOD LIST, ON THE PAGE'S OWN CODE (spec §23.6, kanban #318): a deposit or paid join into it
 // opens the modal first - its id, its signed status (#321), every guardian from the census this client checked (#296) -
 // and is refused until "I trust this federation"; the answer is kept per browser and per federation, Forget asks again; a

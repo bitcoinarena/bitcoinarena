@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A transcript replays to the same round the inputs did.
 //
 // This is the property M2.1 step 2 exists for, and it is the reason the

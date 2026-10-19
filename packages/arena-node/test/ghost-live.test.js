@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PICTURE HAS TO KEEP UP WITH THE TRUCK THAT IS DRIVING.
 //
 // Letter 28 got a ghost drawn. the owner, 09:44: two tabs see the other truck at

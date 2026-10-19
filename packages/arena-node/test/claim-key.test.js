@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLAIM KEY IS THE COMMITTEE'S ONLY WITH ITS THRESHOLD OF SIGNER NODES
 // (§23.1 step 0, v4.6.2, F3). Signed with real BIP-340 keys, so what is counted
 // is signatures a signer node could actually produce.

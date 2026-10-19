@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A NODE'S BEACON, KEPT AS AN ANSWER RATHER THAN FETCHED IN THE MIDDLE OF ONE.
 //
 // `roster.seedFor` and `verify` ask for the beacon SYNCHRONOUSLY - they are in

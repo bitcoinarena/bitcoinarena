@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+# Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # FEDERATION.md REHEARSAL ITEM 9 (b) ON A REAL FEDERATION: one deposit into the player wallet, then two rounds staked
 # from it, every Lightning payment after the deposit counted (rehearsal-9b.mjs). Rehearsal step 1's setup: stock fedimintd 0.12.0, 4 guardians,
 # 3 of 4, two gateways (SECOND_GATEWAY=1: B on carol's lnd), regtest.

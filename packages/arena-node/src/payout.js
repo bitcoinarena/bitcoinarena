@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO ASKS FOR A ROUND'S SETTLEMENT, AND THE STATES AN OLD POOL PAYOUT WAS RECORDED IN.
 //
 // This file was the on-chain pool payout - a committee pool output, its signed payout table (§20), a FROST spend

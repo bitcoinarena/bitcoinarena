@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE REACHES THE SAME STATE THE PLAYER DID, FROM WHAT IT ALREADY STORED.
 //
 // Section 13 makes a result final when five of seven nodes agree, and until a

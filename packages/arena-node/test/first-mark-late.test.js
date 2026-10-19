@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LATE START AT THE CLOSE WITH TWO FIRST MARKS (5b-5e), AND §13C'S EVIDENCE TIED TO ITS BLOCK - split from
 // first-mark.test.js (2026-09-24) so each file stays inside the suite's 180 s. The fixture is first-mark-fixture.js.
 import { testNow, skipTo } from './test-clock.js';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A BLWP BOND CARRIED ONTO BITCOIN ARENA ON A REAL REGTEST (kanban #209 step 1, spec 0A.9 / §27A.8.3): the bond is posted
 // by the BLWP network's own code (the phase0 tree, PHASE0_TREE), exactly as testnet4's seven were; this tree's census
 // reads the chain bitcoind made; this tree's builder re-affirms it (prepareReaffirmation / postReaffirmation) and updates

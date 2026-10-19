@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SERIES PUBLICATION, FOUND WITH EACH BLOCK READ ONCE (the load, the owner 2026-10-15): roster.js findSeriesPublication answers
 // as series.js's does - the lowest block of the view carrying the series' payload, by height - and reads a block's transactions
 // only the first time it is asked about that block.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A CUSTODY NODE'S GUARDIAN (kanban #471 slice 5, ruling 3): its settings start the release's fedimintd in setup mode (ARENA_FOUNDING=1)
 // at the node's public address /guardian, and its bond advertises it guardian-capable there - so it can be drawn when nodes found a
 // federation (guardian-founding.js draws from the census's guardian-capable adverts). No custody, no Core or no binaries: none of it.

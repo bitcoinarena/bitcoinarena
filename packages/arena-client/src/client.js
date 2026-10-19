@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLAYER'S HALF OF THE PROTOCOL.
 //
 // The node is a store. It takes rounds, entries, batches and checkpoints and

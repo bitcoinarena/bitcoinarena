@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HUB'S RETURN-CHANNEL WATCHER (hub-return.js): every minute, a channel back to each new gateway that opened one to this LND.
 //
 //     hub-return-watch --rest https://127.0.0.1:8182 --lnddir /mnt/bitcoin/lnd-testnet4-c --state <file.json>

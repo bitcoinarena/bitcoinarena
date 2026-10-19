@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // CHECK AN OBJECTION BUNDLE AS A STRANGER (§13A, kanban #24: "Anyone can check this; there is no judgement involved, only
 // replay"). Everything is read off a signer node's public doors - the round's contract (GET /round), the entry (GET
 // /entry), the signed results (GET /results), the beacon (GET /randomness) - and the replay runs HERE, under the core the

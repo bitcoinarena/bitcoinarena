@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A HALTED FEDERATION'S NOTES, CHECKED OFFLINE (§23A.5 step 3, kanban #323): "A claim is valid if the note carries the
 // federation's signature" - checked by the arbitration set against a client of that federation it joined while it was OPEN (its
 // config holds the mint's keys per denomination, so nothing is asked of a guardian).

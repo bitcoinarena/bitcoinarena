@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A STAKE OWED BACK SHOWS AS PENDING UNTIL IT IS COLLECTED (kanban #106, comment 583). The pending chip counted winnings only
 // (/standing payouts); a stake coming back - the signer nodes' forfeit or the refund by the player's key - was on no chip
 // until WINNINGS-AUTO collected it, and since 2e11b2ba no longer on the "Withdrawal available" line either. index.html's own

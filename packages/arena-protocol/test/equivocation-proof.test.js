@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PORTABLE PROOF OF EQUIVOCATION - checkpoint.js provesEquivocation on its own (kanban #146, second surface; plan comment
 // 189, Go 2026-10-05). It decides the "proven equivocation FORFEIT" path: verify.js calls it on a peer's /checkpoints record
 // and at the close, and a true answer takes the stake (§13B). Until now protocol's own suite never called it. The marks are

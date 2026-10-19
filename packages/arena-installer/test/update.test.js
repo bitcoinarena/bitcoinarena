@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN EXISTING NODE UPDATED IN PLACE (kanban #471 part E, F.1): a node installed from one release is updated to another - settings,
 // database, key and owner kept, the same node answering after - and to a broken one, which is rolled back by itself to the old
 // release and its backup. systemd is played by a fake `systemctl` that starts the seat from the unit file's own command line.

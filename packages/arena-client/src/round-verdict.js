@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO WON THE ROUND, AS THE CLIENT SHOWS IT (§13 RoundResult, kanban #312): "what every client shows as THE BULLS WIN / THE
 // BEARS WIN, the same for every player in the round, whenever they drove". Each seat answers its own signed result at
 // GET /round-result once the round has ended; the client takes the one result that `threshold` distinct keys of the round's

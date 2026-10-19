@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PAYOUT OF A PASSED FUNDING PROPOSAL FROM THE PROTOCOL RESERVES (§27A.9.3 "Payout", kanban #397 slice 8, the owner 2026-10-17: "Accepted:
 // the 5-of-7 LNURL payout you just wrote. Build that slice. No new fork.").
 //

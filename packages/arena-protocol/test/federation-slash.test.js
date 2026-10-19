@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE THREE WAYS THE HALT CASE GETS GOT WRONG, EACH HELD DOWN BY A TEST.
 //
 // the owner 2026-09-21, the law of bc05268f: a slashed bond waits in escrow and never goes straight to

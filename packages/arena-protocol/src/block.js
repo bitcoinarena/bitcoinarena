@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A BLOCK AS A NODE SERVES IT.
 //
 // Kept out of `tx.js` on purpose: the client bundles the transaction parser

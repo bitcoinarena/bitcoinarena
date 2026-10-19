@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PLUGIN STORE'S CHECKS, IN THE PAGE AND ON THE SEAT ALIKE (kanban #276 step 5, the owner 2026-10-10: "Everything with
 // loading plugins must happen in the browser including updating games and networks like an AppStore. Malicious code checks
 // are very important"). Isomorphic - no Node API: the owner page bundles it and shows its report before Install; the seat

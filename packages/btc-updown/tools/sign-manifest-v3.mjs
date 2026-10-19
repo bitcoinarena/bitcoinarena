@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BITCOIN UP OR DOWN'S MANIFEST VERSION 3, SIGNED BY ITS DEVELOPER (kanban #388, the owner 2026-10-16: "Go. Add the back-to-games overview
 // control on bitcoin up or down, same place and behavior as the Rock Paper Scissors header"): the market as version 2 has it in
 // every term, with its new client (the back button on its own row, the title on its own line) beside version 2's, so either file

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEED CHECK IS IN SETTINGS, NOT IN THE FIRST RUN (kanban #340, the owner 2026-10-11: "The wallet should be deterministic, so
 // showing the seed and forcing a check interrupts the flow. Put the seed display and the mandatory check in settings, as a
 // backup."). On the page's own code: Create on the start screen makes the wallet and opens no dialog; a Nostr login shows no

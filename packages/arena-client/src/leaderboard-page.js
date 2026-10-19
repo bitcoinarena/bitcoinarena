@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A LEADERBOARD PAYOUT REQUEST FROM THE PAGE (kanban #460): built from the form - the scope, the top N, the amount, the paying federation,
 // an equal or a per-place split, the period and the payment date turned into a height - checked by the record's own rules before it is
 // signed by the forum's key, and handed to every node as a funding proposal is (funding-page.js postFunding, kind 'leaderboard'). A

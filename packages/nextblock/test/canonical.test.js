@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // The digest must describe the state, not the machine.
 //
 // This is the gap the cross-architecture run could not see: x86-64 and arm64
