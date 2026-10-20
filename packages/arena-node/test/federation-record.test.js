@@ -402,8 +402,13 @@ test('ARENA_RECORD_BASIS=chain: a seat holding only an old round takes the chain
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 }); } }));
   let seats = make(false);
   for (const s of seats) await s.gatherAll(inviteFederationId);
+  for (const s of seats) await s.gatherAll(inviteFederationId);
   assert.equal(seats[0].censusNow().height, 156768, 'by default the held round\'s census');
-  assert.deepEqual(seats[0].list(), [], 'which names no federation: no record');
+  // kanban #549: a federation the held round's census does not name is read from the chain's census - with no setting
+  const auto = seats[0].list().find((x) => x.federation === toHex(FED));
+  assert.ok(auto, 'the federation only the chain\'s census names is gathered by default (kanban #549)');
+  assert.deepEqual([auto.status, auto.signers], ['OPEN', 4]);
+  assert.equal(Number(auto.height), 156984, 'from the chain\'s census, 6 below the tip at a multiple of 6');
   seats = make(true);
   for (const s of seats) await s.gatherAll(inviteFederationId);
   assert.equal(seats[0].censusNow().height, 156984, 'chain first: the census 6 below the tip at a multiple of 6');
@@ -460,4 +465,33 @@ test('the owner\'s emergency departure of a guardian (§23A.5a, protocol 17): in
     lateSeat.offer(signAbsence({ federationId: FED, peerKey: s2.nodes[3].guardianKey, lastSeenHeight: 155700, height: 155988, attester: n.pubkey }, (m) => schnorr.sign(m, n.secret)));
   const said = await s2.seats[1].mySignatureWithGone(toHex(FED), [toHex(s2.nodes[3].guardianKey)], null, null, [], [], [emergencyHex(late.req)]);
   assert.match(said.why, /emergency departure does not stand here, or came after abandon_blocks/);
+});
+
+// kanban #549 (the owner 2026-10-20 ~06:55Z: "federation shows as draining on b18947f085d4 but no new federation is created ... it may not be a
+// manual step"): a DRAINING federation's successor, named in its guardians' adverts only after the held rounds' census froze, gets its own
+// record from the chain's census by itself - and the drained one keeps the record its round census gives it
+test('a draining federation\'s successor, unknown to the held rounds\' census, gets its record from the chain\'s census with no setting (kanban #549)', async () => {
+  const SUCC = new Uint8Array(32).fill(0x4d);
+  const nodes = Array.from({ length: 4 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 61) }));
+  for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.oldKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x90 + i)]); n.nextKey = Uint8Array.from([3, ...new Uint8Array(32).fill(0xa0 + i)]); n.endpoint = `wss://s549-${i}.example`; }
+  const entry = (n, i, guardianOf) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xd0 + i), vout: 0, bondSats: 50000n,
+    advert: { operatorId: `op549-${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g549-${i}.example`, guardianOf } });
+  const roundCensus = { ok: true, entries: nodes.map((n, i) => entry(n, i, [{ federationId: FED, guardianKey: n.oldKey }])) };
+  const chainCensus = nodes.map((n, i) => entry(n, i, [{ federationId: FED, guardianKey: n.oldKey }, { federationId: SUCC, guardianKey: n.nextKey }]));
+  const seats = nodes.map((n) => federationRecords({
+    round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(7), contract: { censusHeight: 156873, networkId: NET } }),
+    roster: { censusFor: () => roundCensus }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,
+    successorOf: (fid) => (fid === toHex(FED) ? toHex(SUCC) : null),
+    censusAt: async () => chainCensus, chainTip: async () => 157090,
+    fetcher: async (url) => { const u = new URL(url); if (!u.pathname.endsWith('/federation-record')) return new Response('{}', { status: 404 });
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))]; const hp = u.searchParams.get('height');
+      const body = await j.mySignature(u.searchParams.get('federation'), hp === null ? null : Number(hp), u.searchParams.get('reserve'));
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 }); } }));
+  for (let pass = 0; pass < 2; pass++) for (const s of seats) await s.gatherAll(inviteFederationId);
+  const list = seats[0].list();
+  const drained = list.find((x) => x.federation === toHex(FED)), succ = list.find((x) => x.federation === toHex(SUCC));
+  assert.ok(drained && drained.successor === toHex(SUCC), 'the drained federation\'s record names its successor');
+  assert.equal(Number(drained.height), 156873, 'from the held round\'s census, as before');
+  assert.ok(succ, 'the successor has a record');
+  assert.deepEqual([succ.signers, Number(succ.height)], [4, 157080], 'signed by its 4 guardians at the chain\'s census (157,090 - 6, down to a multiple of 6)');
 });
