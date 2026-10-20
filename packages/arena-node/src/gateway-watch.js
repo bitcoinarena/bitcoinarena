@@ -72,22 +72,32 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const h = await tip();
     const epoch = Math.floor(h / epochBlocks);
     const at = epochs.has(epoch - 1) ? epoch - 1 : epoch;
-    const rows = epochs.get(at) || new Map();
     const all = (await entries()) || [];
     const seatedNow = new Set((await seated(fid)) || []);
-    const candidates = [...rows].map(([node, r]) => {
-      const e = all.find((x) => toHex(x.pubkey) === node);
-      return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (e && e.advert && e.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
-        registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(at) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
-        availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: e ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl };
-    });
-    const beacon = await beaconAt(at * epochBlocks);
-    if (!beacon) return { ok: false, why: `the epoch's first block ${at * epochBlocks} is not in this seat's chain` };
-    const s = seatGateways({ candidates, beacon, epoch: at, incumbents, network, bondMinGuardian });
-    if (at < epoch) incumbents = s.seated;
-    return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...s,
-      gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
+    // ONE EPOCH RANKED: its probes' candidates, by gateway-seats.js, from `incumbents`
+    const rank = async (e, inc) => {
+      const rows = epochs.get(e) || new Map();
+      const candidates = [...rows].map(([node, r]) => {
+        const x = all.find((y) => toHex(y.pubkey) === node);
+        return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (x && x.advert && x.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
+          registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(e) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
+          availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: x ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl };
+      });
+      const beacon = await beaconAt(e * epochBlocks);
+      if (!beacon) return { ok: false, why: `the epoch's first block ${e * epochBlocks} is not in this seat's chain` };
+      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian });
+      return { ok: true, s, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
+    };
+    const w = await rank(at, incumbents);
+    if (!w.ok) return w;
+    if (at < epoch) incumbents = w.s.seated;
+    // AND THE RUNNING EPOCH, AS IT STANDS (kanban #552, measured 2026-10-20 08:36Z: claims for B and its successor stood from 08:07Z, in
+    // epoch 1091, which began at 157,104 - the seats rank the last whole epoch, 1090, so every page said "0 of 2" for a day and nothing
+    // said why): what the running epoch would seat at its end, and the block it ends at
+    let next = null;
+    if (at < epoch) { const r = await rank(epoch, w.s.seated); if (r.ok) next = { epoch, fromBlock: (epoch + 1) * epochBlocks, seated: r.s.seated, why: r.s.why, gateways: r.gateways }; }
+    return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...w.s, gateways: w.gateways, ...(next ? { next } : {}) };
   }
   return { probe, view };
 }
