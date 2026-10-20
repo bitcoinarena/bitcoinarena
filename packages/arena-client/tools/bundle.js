@@ -300,7 +300,7 @@ out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings,
 out += '         winningsQualify: winningsQualify,\n';
 // A MARKET (§0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
 out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
-out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
+out += '         marketLines: marketLines, quietOrders: quietOrders, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
 // A SCALAR MARKET'S VALUE AND A MARKET ON A GAME'S SOURCE RESULT, CHECKED BY THE PAGE (protocols 7 and 6)
 out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,\n';
 // A HEAD-TO-HEAD ROUND: the hidden move, its commitment, its reveal, and the reveals the seats hold

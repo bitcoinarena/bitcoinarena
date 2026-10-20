@@ -11579,6 +11579,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  '0860b4a7b5007bf5e21d421b66a3773bba892d9a8747602d5a8bb4cdaf3e3584': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 15, parent fe07fe23 - version 14 in every term, with the new client (every order's round with its day)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
@@ -32821,6 +32835,24 @@ function scalarValueLine(value, unit) {
 }
 
 /**
+ * THE ORDERS KEPT OUT OF SIGHT WHILE THEIR RESULT IS READ: of the lines (marketLines), the entries still 'waiting' or 'unknown'
+ * whose order is
+ *   - one whose window closed before this page loaded (`loadedMs`) and whose round's outcome this page has not asked for yet
+ *     (`read`: the round ids asked at least once) - the owner 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting
+ *     for result, then it disappears" - his two orders of 20:45-21:00, settled and paid two hours before, were listed under
+ *     My orders as "waiting for the result" until the page's first outcome read, 10 s after load, moved them to History;
+ *   - or, as before (2026-10-17, UI 211), an order read back from the seats whose window closed more than 10 min ago, for its
+ *     first minute after it was read back.
+ * An order whose window closes while the page is open is never hidden: its "waiting for the result" is true.
+ */
+function quietOrders({ picks, lines, read = new Set(), loadedMs = 0, nowMs = Date.now() }) {
+  const quiet = new Set(picks.filter((p) => p.order && Number(p.entryCloseMs) < nowMs && (
+    (Number(p.entryCloseMs) < loadedMs && !read.has(p.roundIdHex))
+    || (p.order.restored && nowMs > Number(p.entryCloseMs) + 600000 && nowMs - Number(p.order.placedMs || 0) < 60000))).map((p) => p.entryIdHex));
+  return new Set(lines.filter((l) => quiet.has(l.entry) && (l.state === 'waiting' || l.state === 'unknown')).map((l) => l.entry));
+}
+
+/**
  * THE LOBBY'S MARKET LINES (Unity draws them under the round rows, kind 'market'): for each pick this page made, the pick
  * while its round is open, then the outcome as the page checked it, and what it means for this pick.
  * `picks`: [{ roundIdHex, entryIdHex, market, pick, stakeMsat, entryCloseMs }]; `outcomes`: Map roundIdHex -> the seats'
@@ -34116,7 +34148,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          askForWinnings: askForWinnings, resendWinnings: resendWinnings, winningsAddressOf: winningsAddressOf,
          winningsQualify: winningsQualify,
          marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,
-         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,
+         marketLines: marketLines, quietOrders: quietOrders, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,
          checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,
          hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,
          seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,

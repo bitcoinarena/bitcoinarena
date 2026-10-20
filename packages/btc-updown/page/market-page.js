@@ -58,7 +58,8 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         const hasRow = (o) => !!(o && o.table && Array.isArray(o.table.rows) && o.table.rows.some((x) => x.entryId === p.entryIdHex));
         if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex)) continue;
         const market = marketOfPick(p);
-        if (!market) continue;
+        // a market this page cannot read is asked no more - and its orders are not kept out of sight for it (quietOrders)
+        if (!market) { OUTCOMES_READ.add(p.roundIdHex); continue; }
         const answers = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/outcome?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(6000) })
           .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
         OUTCOMES_READ.add(p.roundIdHex);
@@ -93,6 +94,9 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       }
     }
     setInterval(() => { readMarketOutcomes().catch((e) => console.warn('[arena] market outcomes: ' + e.message)); }, 10000);
+    // THE FIRST READ AT ONCE, not 10 s after load: the orders closed before the load wait out of sight for it (quietOrders)
+    const PAGE_LOADED_MS = Date.now();
+    setTimeout(() => { readMarketOutcomes().catch((e) => console.warn('[arena] market outcomes: ' + e.message)); }, 300);
     // MY ORDERS FROM THE SEATS (2026-10-17: "When I reload the page my open orders are gone and still no closed
     // orders"; "Have the open orders from the nodes not from local storage"): the tab's picks live in sessionStorage, which a reload,
     // a new tab or another device does not have. Every 15 s, in a market game, each paid round of it the lobby lists is read from its
@@ -215,11 +219,10 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       // at most a minute after it was read back, so an order whose result cannot be read still shows
       const picks = readPicks().filter((p) => !ids || ids.has(String(p.gameId || '').toLowerCase()))
         .map((p) => Object.assign({}, p, { market: marketOfPick(p) })).filter((p) => p.market);
-      const quiet = new Set(picks.filter((p) => p.order && p.order.restored && Date.now() > Number(p.entryCloseMs) + 600000
-        && Date.now() - Number(p.order.placedMs || 0) < 60000).map((p) => p.entryIdHex));
+      // AND AN ORDER WHOSE WINDOW CLOSED BEFORE THIS PAGE LOADED, until its outcome was asked once (quietOrders, 2026-10-20)
       try {
         const all = ARENACLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() });
-        const held = new Set(all.filter((l) => quiet.has(l.entry) && (l.state === 'waiting' || l.state === 'unknown')).map((l) => l.entry));
+        const held = ARENACLIENT.quietOrders({ picks, lines: all, read: OUTCOMES_READ, loadedMs: PAGE_LOADED_MS, nowMs: Date.now() });
         QUIET_ORDERS = held;        // the client's order list (market.orders) leaves them out too
         return all.filter((l) => !held.has(l.entry));
       } catch (e) { return [{ kind: 'market', text: 'markets: ' + e.message }]; }

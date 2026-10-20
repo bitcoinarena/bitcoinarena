@@ -306,6 +306,24 @@ export function scalarValueLine(value, unit) {
 }
 
 /**
+ * THE ORDERS KEPT OUT OF SIGHT WHILE THEIR RESULT IS READ: of the lines (marketLines), the entries still 'waiting' or 'unknown'
+ * whose order is
+ *   - one whose window closed before this page loaded (`loadedMs`) and whose round's outcome this page has not asked for yet
+ *     (`read`: the round ids asked at least once) - the owner 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting
+ *     for result, then it disappears" - his two orders of 20:45-21:00, settled and paid two hours before, were listed under
+ *     My orders as "waiting for the result" until the page's first outcome read, 10 s after load, moved them to History;
+ *   - or, as before (2026-10-17, UI 211), an order read back from the seats whose window closed more than 10 min ago, for its
+ *     first minute after it was read back.
+ * An order whose window closes while the page is open is never hidden: its "waiting for the result" is true.
+ */
+export function quietOrders({ picks, lines, read = new Set(), loadedMs = 0, nowMs = Date.now() }) {
+  const quiet = new Set(picks.filter((p) => p.order && Number(p.entryCloseMs) < nowMs && (
+    (Number(p.entryCloseMs) < loadedMs && !read.has(p.roundIdHex))
+    || (p.order.restored && nowMs > Number(p.entryCloseMs) + 600000 && nowMs - Number(p.order.placedMs || 0) < 60000))).map((p) => p.entryIdHex));
+  return new Set(lines.filter((l) => quiet.has(l.entry) && (l.state === 'waiting' || l.state === 'unknown')).map((l) => l.entry));
+}
+
+/**
  * THE LOBBY'S MARKET LINES (Unity draws them under the round rows, kind 'market'): for each pick this page made, the pick
  * while its round is open, then the outcome as the page checked it, and what it means for this pick.
  * `picks`: [{ roundIdHex, entryIdHex, market, pick, stakeMsat, entryCloseMs }]; `outcomes`: Map roundIdHex -> the seats'
