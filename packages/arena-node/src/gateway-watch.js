@@ -9,12 +9,14 @@
 // credited to the gateway whose module key (its routing_info's module_public_key) funded it, in the epoch of the probe that first
 // saw it. The first probe only takes the index (history before the watch is not credited to any epoch). Outgoing is not counted.
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { seatGateways, GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
+import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS } from '../../arena-protocol/src/gateway-seats.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
 
 export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = fetch, network = 'testnet4', bondMinGuardian = 50000n,
-  epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null, keep = null }) {
+  epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null, keep = null,
+  // THE SEATS A FEDERATION NEEDS (the owner 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"): async (fid) -> n
+  seatsFor = async () => GATEWAY_SEATS }) {
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
@@ -105,6 +107,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const at = epochs.has(epoch - 1) ? epoch - 1 : epoch;
     const all = (await entries()) || [];
     const seatedNow = new Set((await seated(fid)) || []);
+    let seats = GATEWAY_SEATS; try { const n = Number(await seatsFor(fid)); if (Number.isInteger(n) && n >= 1) seats = n; } catch { /* two */ }
     // ONE EPOCH RANKED: its probes' candidates, by gateway-seats.js, from `incumbents`
     const rank = async (e, inc) => {
       const rows = epochs.get(e) || new Map();
@@ -116,7 +119,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       });
       const beacon = await beaconAt(e * epochBlocks);
       if (!beacon) return { ok: false, why: `the epoch's first block ${e * epochBlocks} is not in this seat's chain` };
-      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian });
+      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats });
       return { ok: true, s, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
     };
@@ -128,7 +131,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     // said why): what the running epoch would seat at its end, and the block it ends at
     let next = null;
     if (at < epoch) { const r = await rank(epoch, w.s.seated); if (r.ok) next = { epoch, fromBlock: (epoch + 1) * epochBlocks, seated: r.s.seated, why: r.s.why, gateways: r.gateways }; }
-    return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...w.s, gateways: w.gateways, ...(next ? { next } : {}), lastProbe };
+    return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', seats, ...w.s, gateways: w.gateways, ...(next ? { next } : {}), lastProbe };
   }
   return { probe, view, lastProbe: () => lastProbe };
 }
