@@ -47,11 +47,12 @@ test('the federations that hold funds, each with its health; a halted one says w
   const { split, window } = run({ debug: false });
   window.ARENA_SHOW_BALANCE_SPLIT();
   assert.equal(split.style.display, '');
-  assert.match(split.textContent, /Federation aaaaaaaa…Healthy · load 72 %2,000 sat/);
+  // kanban #556: an OPEN federation by its load - 72 % is amber, "Filling up" (green under 70 %, red from 90 %)
+  assert.match(split.textContent, /Federation aaaaaaaa…Filling up · load 72 %2,000 sat/);
   assert.match(split.textContent, /Federation bbbbbbbb…Offline \(halted\)When it is paid back is read from the chain …1,000 sat/);
   await new Promise((r) => setTimeout(r, 20));
   assert.match(split.textContent, /Paid back in about 15 blocks \(~5 h\), at block 157,085\./, 'halt 157,064 + 12 + 9 on testnet4, tip 157,070, 20 min a block');
-  assert.equal(flat(split).filter((n) => n.className === 'hl ok').length, 1);
+  assert.equal(flat(split).filter((n) => n.className === 'hl warn').length, 1, 'the 72 % one amber');
   assert.equal(flat(split).filter((n) => n.className === 'hl bad').length, 1);
   assert.doesNotMatch(split.textContent, /All federations/, 'no debug rows with the toggle off');
 });

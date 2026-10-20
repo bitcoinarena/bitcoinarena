@@ -62,7 +62,8 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
     append(...c) { this.children.push(...c); }, addEventListener(k, f) { this.listeners[k] = f; }, contains: () => false,
     set textContent(v) { this._t = v; this.children = []; }, get textContent() { return this._t + this.children.map((c) => c.textContent).join(' | '); } }; return e; };
   const split = mk('div'); split.style.display = 'none';
-  const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#arena-lobby-balance': mk('div'), '#arena-set-wallet .bal-grid': mk('div') };
+  // kanban #558: Settings' balance boxes are part of the Wallet itself, so they open nothing; the header's, the bar's and the lobby's open the Wallet
+  const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#arena-lobby-balance': mk('div'), '#arena-hdr-bal': mk('button') };
   const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, createTextNode: (t) => ({ textContent: t }), querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
   const window = { ARENA_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
     ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };
