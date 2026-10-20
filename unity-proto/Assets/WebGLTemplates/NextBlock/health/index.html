@@ -92,6 +92,12 @@
     finally { free(); }
   }
   const first = async (seats, path) => { for (const s of seats) { const a = await ask(s, path); if (a.ok) return { seat: s, ...a }; } return null; };
+  // EVERY SEAT ASKED AT ONCE, THE ANSWER THAT SCORES HIGHEST KEPT (`score(body)` -> [numbers], compared in order)
+  const best = async (seats, path, score) => {
+    const got = (await Promise.all(seats.map(async (s) => { const a = await ask(s, path); return a.ok && a.body ? { seat: s, ...a, sc: score(a.body) } : null; }))).filter(Boolean);
+    got.sort((x, y) => { for (let i = 0; i < Math.max(x.sc.length, y.sc.length); i++) { const d = (y.sc[i] || 0) - (x.sc[i] || 0); if (d) return d; } return 0; });
+    return got[0] || null;
+  };
 
   let reading = false;
   async function read() {
@@ -101,14 +107,20 @@
       const net = daily.testnet || daily;
       ROUTES = net.alt || daily.alt || {};
       const seats = [...new Set((net.node || []).map(viaAlt))];
-      // EVERY NODE OF THE CENSUS, from the first seat that answers /roles
-      const roles = await first(seats, '/roles');
+      // EVERY NODE OF THE CENSUS (the owner 2026-10-20: "On each automatic background refresh it is loosing the protocol reserve ... Make sure the
+      // data is being updated properly"): every seat is asked and the newest census kept - not the first seat's, which after a restart or by the
+      // rounds it holds can be days older (measured: 156,968 / 156,813 / 156,220 on three seats at once)
+      const roles = await best(seats, '/roles', (b) => [Number(b.censusHeight) || 0, (b.nodes || []).length]);
       // the federations a node guards: from the records it signed (custody), then its advertisement - the census the seat reads can be older
       // than an advertisement that added a federation (kanban #557, 10-20: the fed2 seats guard Federation 3 too, the census at 156,968 said 2 only)
       const nodes = roles ? roles.body.nodes.map((n) => ({ ...n, guardianOf: [...new Set([...(n.custody || []).map((c) => c.federation), ...(n.guardianOf || [])])], base: viaAlt(n.endpoint) })) : seats.map((s) => ({ node: null, base: s, roles: [], serving: null, guardianOf: [] }));
       // THE SEATS' OWN READS run beside the nodes' (measured: /network-games asks every seat itself and took most of the first 15 s);
       // only the tip is waited for before the nodes' rows
-      const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = ['/fees', '/federations', '/network-games', '/reserves', '/funding', '/capacity'].map((p) => first(seats, p));
+      // the network's answers from the seat that holds the most: the newest tip, every federation record, every reserve entry (seats hold
+      // different parts of the reserve ledger - measured 112,000 / 102,000 / 10,000 msat at once), the most proposals
+      const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = [['/fees', (b) => [Number(b.tip) || 0]], ['/federations', (b) => [(b.federations || []).length, Math.max(0, ...(b.federations || []).map((f) => Number(f.height) || 0))]],
+        ['/network-games', null], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]]]
+        .map(([p, score]) => (score ? best(seats, p, score) : first(seats, p)));
       const fees = await feesP;
       const tip = fees ? fees.body.tip : null;
       let feds = null, reserves = null, funding = null;
@@ -147,7 +159,8 @@
   function paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding }) {
     const up = nodes.filter((n) => n.version && n.version.ok).length;
     const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const p = Math.max(...(n.version.body.protocols || [0])); protos.set(p, (protos.get(p) || 0) + 1); }
-    const bonds = nodes.reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : 0), 0);
+    // every census node's bond: its own answer, else the census's (a node that does not answer still has a bond)
+    const bonds = nodes.reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : Number(n.bondSats || 0)), 0);
     const facts = [
       ['Bitcoin tip (testnet4)', tip == null ? '-' : sat(tip), tip == null ? 'bad' : ''],
       ['Census nodes', nodes.length + (roles ? ' (census at ' + sat(roles.body.censusHeight) + ')' : ''), roles ? '' : 'bad'],
