@@ -514,6 +514,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // serves nothing
     // THE FEDERATION'S SEATED GUARDIANS, BY NODE KEY (§22A v4.6.4 from SEATED_GUARDIAN_VERSION): its newest record's
     // guardians that are not gone (§23A.1); null when this seat holds no record of it (the census rule then stands)
+    // THE NEWEST CENSUS THIS SEAT READS (kanban #552: an operator's new advertisement counts once its update is in the chain's census, not
+    // only when the rounds' census moves past it, a day later): the chain's when read, else the basis's
+    censusNewest() { const cb = chainBasis(null); if (cb && cb.ok) return cb.census.entries || []; const b = basis(); return b.ok ? b.census.entries || [] : []; },
     // THE FEDERATION'S GUARDIANS BY THE CENSUS (kanban #552): node keys hex of the census that names it (the held round's, else the chain's) -
     // what stands before this seat holds its record (seatedGuardians is null then; "the census rule then stands")
     censusGuardians(fidHex) {

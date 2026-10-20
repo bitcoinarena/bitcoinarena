@@ -232,12 +232,12 @@
       let g = null;
       for (const s of seats) { const a = await ask(s, '/gateway-seats?federation=' + f.federation); if (a.ok && a.body && a.body.federationId === f.federation) { g = { seat: s, ...a }; break; } }
       if (!g) { rows.push(`<tr><td>${dot('bad')}${fedName(f.federation)}</td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
-      const b = g.body, seated = b.seated || [];
-      const c = seated.length >= 2 ? 'ok' : seated.length ? 'warn' : 'bad';
-      rows.push(`<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(b.epoch)}</td><td>${seated.length} of 2</td>
+      const b = g.body, seated = b.seated || [], need = Number(b.seats) || 2;   // 2 seats, 1 for a draining federation (hard rule, 2026-10-20)
+      const c = seated.length >= need ? 'ok' : seated.length ? 'warn' : 'bad';
+      rows.push(`<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(b.epoch)}</td><td>${seated.length} of ${need}</td>
         <td class="mono">${seated.map((s) => short(s.node || s, 10)).join(', ') || '-'}</td><td class="wrap muted">${esc(b.why || '')}</td></tr>`
         // THE RUNNING EPOCH (kanban #552): the seats rank the last whole epoch; what this one would seat, and from which block
-        + (b.next ? `<tr><td></td><td class="muted">${esc(b.next.epoch)}</td><td class="muted">${(b.next.seated || []).length} of 2</td>
+        + (b.next ? `<tr><td></td><td class="muted">${esc(b.next.epoch)}</td><td class="muted">${(b.next.seated || []).length} of ${need}</td>
           <td class="mono muted">${(b.next.seated || []).map((s) => short(s, 10)).join(', ') || '-'}</td><td class="wrap muted">next epoch, from block ${sat(b.next.fromBlock)}: ${esc(b.next.why || '')}</td></tr>` : ''));
     }
     const claims = nodes.filter((n) => n.gw && n.gw.ok).map((n) => `<span class="tag mono">${short(n.node, 10)} · LND ${short(n.gw.body.lightningPubkey, 10)}</span>`).join('');
