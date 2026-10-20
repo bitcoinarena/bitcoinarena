@@ -34,11 +34,13 @@ test('a kept wallet resumes its federation\'s pending deposits once per page, wh
   assert.equal(window.ARENA_WALLETS.get(A).id, 'wallet A again', 'the newest client is the kept one');
 });
 
-test('a deposit claimed this way reads the balance again', () => {
+test('a deposit claimed this way reads the balance again (after the sweep of one another wallet claimed, if any)', async () => {
   const { window, resumed, reads } = page();
   window.ARENA_KEEP_WALLET('cc'.repeat(32), {});
   resumed[0].onClaimed({ amountMsat: 99000n });
+  await new Promise((r) => setTimeout(r, 0));
   assert.equal(reads.length, 1);
+  assert.equal(typeof resumed[0].others, 'function', 'the other kept wallets are offered for a deposit this one does not hold');
 });
 
 test('the lobby\'s wallet is kept through the same door (no second resume of its own)', () => {
