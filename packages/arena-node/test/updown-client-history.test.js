@@ -27,8 +27,10 @@ const past = (o, l, now, kept = []) => HISTORY.merge(kept, HISTORY.isClosed(o, l
 const row = (p, now) => ({ round: HISTORY.roundOf(p.closeMs), stake: Math.floor(p.stakeMsat / 1000), result: HISTORY.resultLine(p, OUT),
   pl: HISTORY.plLine(p), status: HISTORY.statusLine(p, now) });
 
-test('the round reads as its window: 18:45–19:00 UTC', () => {
-  assert.equal(HISTORY.roundOf(CLOSE), '18:45–19:00 UTC');
+test('the round reads as its day and window: 17 Oct · 18:45–19:00 UTC', () => {
+  assert.equal(HISTORY.roundOf(CLOSE), '17 Oct · 18:45–19:00 UTC');
+  // the day the window starts: the 23:45–00:00 window is the 20th's
+  assert.equal(HISTORY.roundOf(Date.UTC(2026, 9, 21, 0, 0)), '20 Oct · 23:45–00:00 UTC');
 });
 
 test('open: before the close, with the time left - not in the history', () => {
@@ -51,7 +53,7 @@ test('refunded ±0, and void the same; disputed refunded at expiry', () => {
   for (const st of ['refunded', 'void']) {
     const l = line(st, { backMsat: '61000', final: false, finalAtMs: FINAL_AT });
     assert.deepEqual(view(order(), l, now), { closed: true, chip: 'refunded', amount: '±0', pnlMsat: 0 });
-    assert.deepEqual(row(past(order(), l, now)[0], now), { round: '18:45–19:00 UTC', stake: 61, result: 'refunded', pl: '±0', status: 'pending · final in 9:55' });
+    assert.deepEqual(row(past(order(), l, now)[0], now), { round: '17 Oct · 18:45–19:00 UTC', stake: 61, result: 'refunded', pl: '±0', status: 'pending · final in 9:55' });
   }
   assert.equal(view(order(), line('disputed'), now).chip, 'refunded at expiry');
 });
@@ -60,14 +62,14 @@ test('cancelled: closed at once, ±0, and final at once', () => {
   const now = CLOSE - 300000;
   const o = order({ cancelled: true });
   assert.deepEqual(view(o, line('open'), now), { closed: true, chip: 'cancelled', amount: '', pnlMsat: 0 });
-  assert.deepEqual(row(past(o, line('open'), now)[0], now), { round: '18:45–19:00 UTC', stake: 61, result: 'cancelled', pl: '±0', status: 'final' });
+  assert.deepEqual(row(past(o, line('open'), now)[0], now), { round: '17 Oct · 18:45–19:00 UTC', stake: 61, result: 'cancelled', pl: '±0', status: 'final' });
 });
 
 test('won while pending: +amount, the 10-minute window counted down, then final at the final time', () => {
   const l = line('won', { gainMsat: '60390', payoutMsat: '120780', final: false, finalAtMs: FINAL_AT });
   const at = (now) => row(past(order(), l, now)[0], now);
   assert.deepEqual(view(order(), l, CLOSE + 15000), { closed: true, chip: 'won', amount: '+60 sats', pnlMsat: 60390 });
-  assert.deepEqual(at(CLOSE + 15000), { round: '18:45–19:00 UTC', stake: 61, result: 'Up won', pl: '+60 sats', status: 'pending · final in 10:00' });
+  assert.deepEqual(at(CLOSE + 15000), { round: '17 Oct · 18:45–19:00 UTC', stake: 61, result: 'Up won', pl: '+60 sats', status: 'pending · final in 10:00' });
   assert.equal(at(FINAL_AT - 61000).status, 'pending · final in 1:01');
   assert.equal(at(FINAL_AT - 1).status, 'pending · final in 0:01');
   assert.equal(at(FINAL_AT).status, 'final', 'final at the final time, by the clock');
@@ -78,7 +80,7 @@ test('lost while pending: −amount, the window counted down, then final; the re
   const o = order({ entry: 'e2', pick: 1 });
   const l = line('lost', { entry: 'e2', pick: 1, lostMsat: '60390', final: false, finalAtMs: FINAL_AT });
   assert.deepEqual(view(o, l, CLOSE + 15000), { closed: true, chip: 'lost', amount: '−60 sats', pnlMsat: -60390 });
-  assert.deepEqual(row(past(o, l, CLOSE + 15000)[0], CLOSE + 15000), { round: '18:45–19:00 UTC', stake: 61, result: 'Up won', pl: '−60 sats', status: 'pending · final in 10:00' });
+  assert.deepEqual(row(past(o, l, CLOSE + 15000)[0], CLOSE + 15000), { round: '17 Oct · 18:45–19:00 UTC', stake: 61, result: 'Up won', pl: '−60 sats', status: 'pending · final in 10:00' });
   assert.equal(row(past(o, l, FINAL_AT + 5000)[0], FINAL_AT + 5000).status, 'final');
   assert.equal(HISTORY.plCls(past(o, l, FINAL_AT)[0]), 'lost');
 });
@@ -86,7 +88,7 @@ test('lost while pending: −amount, the window counted down, then final; the re
 test('a past order kept from before a reload: no live line any more, final once its time has passed', () => {
   const kept = [{ entry: 'e9', closeMs: CLOSE - 900000, side: 0, stakeMsat: 100000, limit: 60, state: 'won', pnlMsat: 39000, final: false, finalAtMs: FINAL_AT - 900000 }];
   const before = HISTORY.merge(kept, [], FINAL_AT - 900000 - 30000);
-  assert.deepEqual(row(before[0], FINAL_AT - 900000 - 30000), { round: '18:30–18:45 UTC', stake: 100, result: 'Up won', pl: '+39 sats', status: 'pending · final in 0:30' });
+  assert.deepEqual(row(before[0], FINAL_AT - 900000 - 30000), { round: '17 Oct · 18:30–18:45 UTC', stake: 100, result: 'Up won', pl: '+39 sats', status: 'pending · final in 0:30' });
   const after = HISTORY.merge(kept, [], FINAL_AT);
   assert.equal(row(after[0], FINAL_AT).status, 'final');
   assert.equal(HISTORY.isFinal(after[0], FINAL_AT), true);
@@ -97,7 +99,7 @@ test('a live line overrides the kept summary of the same order', () => {
   const l = line('won', { gainMsat: '60390', final: true, finalAtMs: FINAL_AT });
   const got = HISTORY.merge(kept, [{ o: order(), l }], FINAL_AT + 1);
   assert.equal(got.length, 1);
-  assert.deepEqual(row(got[0], FINAL_AT + 1), { round: '18:45–19:00 UTC', stake: 61, result: 'Up won', pl: '+60 sats', status: 'final' });
+  assert.deepEqual(row(got[0], FINAL_AT + 1), { round: '17 Oct · 18:45–19:00 UTC', stake: 61, result: 'Up won', pl: '+60 sats', status: 'final' });
 });
 
 test('newest round first, at most 200 kept', () => {

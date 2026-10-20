@@ -60,8 +60,12 @@ export const UPDOWN_CLIENT_V12_HASH = createHash('sha256').update(readFileSync(U
 export const UPDOWN_CLIENT_V13_FILE = new URL('../../../../btc-updown/client/index-v13.html', import.meta.url);
 export const UPDOWN_CLIENT_V13_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V13_FILE)).digest();
 // version 14 (kanban #461): a phone's Compact / Advanced switch - Advanced shows the exchange (chart or depth, the full order book)
-export const UPDOWN_CLIENT_V14_FILE = new URL('../../../../btc-updown/client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V14_FILE = new URL('../../../../btc-updown/client/index-v14.html', import.meta.url);
 export const UPDOWN_CLIENT_V14_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V14_FILE)).digest();
+// version 15 (the owner 2026-10-20: "In the history and pending always display the date of the bet"): every order's round reads as its
+// day and window, "20 Oct · 20:45–21:00 UTC"
+export const UPDOWN_CLIENT_V15_FILE = new URL('../../../../btc-updown/client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V15_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V15_FILE)).digest();
 // ITS DONATION KEY IS A POINT ON THE CURVE (kanban #237, measured on the regtest stack: the settlement failed with
 // "blwp-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
 // curve only half the time; this market's key is the public key of a test secret, so a payout to it can be made
