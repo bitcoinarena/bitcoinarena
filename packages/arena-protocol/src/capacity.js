@@ -164,15 +164,27 @@ export function guardianWeights({ bonds, reserveSats, exposureCapSats, nominal, 
  * from the signed seating (a seat without one counts 0); null when CALM, under no peg-in pressure, or when the seating proves
  * none - the part is split evenly then.
  */
-export function gatewayWeights({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null }) {
+/**
+ * PEG-IN PRESSURE (§23A.3a part 2): P* when the federation is in PRESSURE or worse and its seated gateways' proved peg-ins
+ * (`pegIns` [{ node, pegInSats }]) fall short of seats x P* - else null. One rule for the ranking (gateway-seats.js: peg-in up to P*
+ * before routed volume) and the gateways' part (gatewayWeights).
+ */
+export function pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null }) {
   const cap = BigInt(exposureCapSats || 0), reserve = BigInt(reserveSats || 0);
   if (cap <= 0n || !(pegIns || []).length) return null;
   const load = Number(reserve * 1000000n / cap) / 1000000;
   const b = band || capacityBand(load, 'CALM');
   if (!['PRESSURE', 'CRITICAL', 'FULL'].includes(b)) return null;
   const star = targetPegIn({ headroomSats: cap > reserve ? cap - reserve : 0n, pegInMinSats, seats });
+  const held = pegIns.reduce((a, g) => { const x = BigInt(g.pegInSats || 0); return a + (x < star ? x : star); }, 0n);
+  return held >= BigInt(seats) * star ? null : { targetPegInSats: star };
+}
+
+export function gatewayWeights({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null }) {
+  const p = pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats, band });
+  if (!p) return null;
+  const star = p.targetPegInSats;
   const held = pegIns.map((g) => { const x = BigInt(g.pegInSats || 0); return [String(g.node).toLowerCase(), x < star ? x : star]; });
-  if (held.reduce((a, [, x]) => a + x, 0n) >= BigInt(seats) * star) return null;   // no peg-in pressure
   if (!held.some(([, x]) => x > 0n)) return null;
   return new Map(held.map(([n, x]) => [n, x * x]));
 }

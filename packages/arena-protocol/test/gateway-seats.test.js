@@ -82,3 +82,18 @@ test('who waits and why (kanban #552): behind the same operator\'s better node, 
   ]);
   assert.deepEqual(seat([ok(5)]).waiting, [], 'nobody waits when every eligible operator is seated');
 });
+
+// kanban #559/#543 (spec §23A.3a part 2): under peg-in pressure the proved peg-in up to P* ranks before routed volume
+test('peg-in pressure: the proved peg-in (up to P*) ranks before volume; without pressure volume ranks first as before', async () => {
+  const { pegInPressure } = await import('../src/capacity.js');
+  const busy = ok(1, { volumeSats: 900_000n, provedPegInSats: 10_000n }), deep = ok(2, { volumeSats: 1_000n, provedPegInSats: 60_000n }), mid = ok(3, { volumeSats: 5_000n, provedPegInSats: 0n });
+  const at = (star) => seatGateways({ candidates: [busy, deep, mid], beacon, network: 'testnet4', bondMinGuardian: 50_000n, seats: 1, pegInStarSats: star }).seated;
+  assert.deepEqual(at(null), [toHex(k(1))], 'no pressure: the most routed volume');
+  assert.deepEqual(at(50_000n), [toHex(k(2))], 'under pressure: the gateway that can take the deposits');
+  assert.deepEqual(at(5_000n), [toHex(k(1))], 'both above a small P*: capped alike, volume decides again');
+  // the pressure itself: PRESSURE band (load 0.8) and the seated short of 2 x P*; full at P*: none; CALM: none
+  const base = { reserveSats: 800_000n, exposureCapSats: 1_000_000n, pegInMinSats: 50_000n, seats: 2 };
+  assert.deepEqual(pegInPressure({ ...base, pegIns: [{ node: 'a', pegInSats: 10_000n }, { node: 'b', pegInSats: 60_000n }] }), { targetPegInSats: 50_000n });
+  assert.equal(pegInPressure({ ...base, pegIns: [{ node: 'a', pegInSats: 50_000n }, { node: 'b', pegInSats: 60_000n }] }), null);
+  assert.equal(pegInPressure({ ...base, reserveSats: 300_000n, pegIns: [{ node: 'a', pegInSats: 0n }] }), null);
+});
