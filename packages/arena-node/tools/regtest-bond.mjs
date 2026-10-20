@@ -430,14 +430,19 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
   // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
-    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1] } = {}) {
+    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     // A NEW BOND IS TEMPLATE 2: its maturity is the next block, a few of slack and this network's offset
     // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
     const maturity = template === BOND_TEMPLATE_V2 ? maturityHeightFor(height(), network) : g.bondMaturity;
     const built = keyAt(nodeKey, maturity);
 
-    const advert = {
+    // ADD TO BOND (kanban #544): `advert` - a node's own newest advertisement (bondsOf) - posted as this bond's body, with the
+    // new bond's template, height and timestamp: a second output beside the node's first, saying what the node says now.
+    // `utxo` - a carrier output funded already (not broadcast yet, for a testmempoolaccept dry run) - in place of `fund`.
+    if (givenAdvert && toHex(givenAdvert.nodePubkey) !== toHex(nodeKey)) throw new Error('an added bond names the node key that signs it');
+    const advert = givenAdvert ? { ...givenAdvert, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
+      ...(template === BOND_TEMPLATE_V2 ? { bondMaturityHeight: maturity } : {}), timestamp: BigInt(Date.now()) } : {
       // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (a node of
       // its own operator, drawable beside the 14 '2of2' nodes; it speaks what its build speaks)
       nodePubkey: nodeKey, operatorId, protocolVersions, roles, hostedGames,
@@ -456,7 +461,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
     const carrierSecret = schnorr.utils.randomSecretKey();
     const pieces = chunksOf(body);
     const carrier = carrierFor(carrierSecret, pieces.length);
-    const utxo = fundBtc ? fund(carrier.spk, fundBtc) : fund(carrier.spk);
+    const utxo = givenUtxo ? (typeof givenUtxo === 'function' ? givenUtxo(carrier.spk) : givenUtxo) : fundBtc ? fund(carrier.spk, fundBtc) : fund(carrier.spk);
     const outputs = [
       { value: bondSats, script: fromHex('5120' + toHex(built.outputKey)) },
       { value: 330n, script: fromHex('5120' + toHex(bondMarker(network))) },
@@ -478,7 +483,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
         script: carrier.script, controlBlock: carrier.control,
       })],
     }));
-    return { nodeKey, advert, hex, bondSats, maturity, built,
+    return { nodeKey, advert, hex, bondSats, maturity, built, carrierSecret, utxo,
       txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 

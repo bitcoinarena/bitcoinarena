@@ -5,6 +5,7 @@
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
 //     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
+//     arena-install --add-bond <sats> [--yes] [--home ~/.arena-node]
 //     arena-install --rebond <sats> [--yes] [--home ~/.arena-node]
 //     arena-install --join-federation <invite code> [--home ~/.arena-node]
 //     arena-install --add-custody [--home ~/.arena-node]
@@ -17,6 +18,8 @@
 // --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
 // --update     update this node to a downloaded release: SHA256SUMS and SHA256SUMS.sig beside the asset are checked against the Arena
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
+// --add-bond   add <sats> to the bond as a second bond output beside the first, counted with it (the default way to raise a bond,
+//              add-bond.js). Without --yes it only shows the plan.
 // --rebond     a larger bond in one step, once the posted bond's lock has ended: that bond and the wallet's coins become a new bond
 //              of <sats> with a new lock (rebond.js). Without --yes it only shows the plan.
 // --add-custody  custody for a node installed without it: the wizard opens again at its roles step with custody chosen and shows the
@@ -80,6 +83,20 @@ if (args.includes('--update')) {
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   await finish(r.ok ? 0 : 1);
+}
+
+// ADD TO BOND (kanban #544): a second bond output beside the first, counted with it - the plan, then with --yes the broadcast
+if (args.includes('--add-bond')) {
+  const { addBondOnNode } = await import('../src/add-bond.js');
+  const r = await addBondOnNode({ state, release, addSats: opt('--add-bond', ''), post: args.includes('--yes') });
+  if (!r.ok) { console.error(`Not possible: ${r.why}`); process.exit(1); }
+  const p = r.plan;
+  console.log(`Add ${Number(p.addSats).toLocaleString('en-US')} sat to the bond: a second output beside ${p.outputs.map((o) => `${o.txid.slice(0, 16)}...:${o.vout} (${Number(o.sats).toLocaleString('en-US')} sat)`).join(', ')}, which stay as they are.`
+    + `\nThe bond becomes ${Number(p.totalSats).toLocaleString('en-US')} sat (now ${Number(p.bondSats).toLocaleString('en-US')} sat).`
+    + `\nFees ${p.fees.funding} + ${p.fees.bond} = ${p.fees.total} sat${p.changeSats !== '0' ? `, ${p.changeSats} sat back to the wallet` : ''}.`
+    + `\nThe added output is locked until block ${p.maturity} (${p.lock.blocks} blocks, about ${new Date(p.lock.estimatedMs).toUTCString()}) and counts after ${p.countsAfter} confirmations.`);
+  console.log(r.bond ? `Posted: the added bond output is ${r.bond.txid}:0 (funding ${r.bond.fundingTxid}).` : 'Nothing sent. Run again with --yes to post it.');
+  await finish(0);
 }
 
 // A LARGER BOND: the plan, then with --yes the broadcast
