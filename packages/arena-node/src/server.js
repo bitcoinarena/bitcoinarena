@@ -5156,7 +5156,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // as settlement, as custody"): its advertised roles, whether it is guardian-capable and serving, and the federations whose
       // held record seats it as a guardian (custody) - one ask for the lobby's node list, out of the census this seat reads
       if (req.method === 'GET' && url.pathname === '/roles') {
-        const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false, why: 'this seat reads no census' };
+        // THE CHAIN'S CENSUS FIRST (the owner 2026-10-20: "On each automatic background refresh it is loosing ... Make sure the data is being updated
+        // properly and we always keep a healthy state" - measured: three seats answered three round censuses, 156,968 / 156,813 / 156,220, by the
+        // rounds each held): every seat takes it at the same height step, so they agree; a seat that has not read it yet answers its round's
+        const chainNow = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+        const now = chainNow && chainNow.entries.length ? { ok: true, height: chainNow.height, entries: chainNow.entries }
+          : fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false, why: 'this seat reads no census' };
         if (!now.ok) return text(res, 503, now.why);
         const custody = new Map();
         for (const f of (fedRecords.list() || [])) {
