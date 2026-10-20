@@ -172,7 +172,11 @@
       const v = n.version, b = n.bond;
       const health = !v ? 'warn' : !v.ok ? 'bad' : n.serving === false || v.ms > 3000 ? 'warn' : 'ok';
       const proto = v && v.ok ? Math.max(...(v.body.protocols || [0])) : null;
-      const bd = b && b.ok && b.body.bond ? b.body.bond : null, lock = b && b.ok ? b.body.lock : null;
+      // its own answer, else the census's (the owner 2026-10-20: "the bonds take a long time to show up, if they show up at all" - a node right
+      // after a restart answers /owner/bond without one; every seat's census holds it, read once from /roles)
+      const own = b && b.ok && b.body.bond ? b.body.bond : null;
+      const bd = own || (n.bondSats ? { sats: n.bondSats } : null);
+      const lock = own && b.body.lock ? b.body.lock : (n.bondMaturity != null && Number.isFinite(Number(tip)) ? { blocksLeft: Number(n.bondMaturity) - Number(tip) } : null);
       const role = (n.roles || []).map((r) => `<span class="tag">${esc(r)}</span>`).join('') + (n.guardianOf && n.guardianOf.length ? `<span class="tag">${n.guardianOf.map((f) => (fedNoOf(f) ? `federation ${fedNoOf(f)}` : `guardian of ${short(f, 6)}`)).join(', ')}</span>` : '')
         + (n.liq && n.liq.ok ? '<span class="tag">liquidity</span>' : '') + (n.gw && n.gw.ok ? '<span class="tag">gateway</span>' : '');
       return `<tr><td>${dot(health)}${i + 1}</td><td class="mono">${short(n.node, 12)}</td><td class="mono">${esc((n.base || '').replace(/^https?:\/\//, ''))}</td>
