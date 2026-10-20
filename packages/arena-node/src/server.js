@@ -63,6 +63,8 @@ import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
+import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
+import { paysBondMarker } from '../../arena-protocol/src/chain.js';
 import { createServer, request as httpRequest } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -488,6 +490,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   chainBlockTxids = null,
   chainInMempool = null,
   chainTips = null,
+  chainMempoolIds = null,
+  chainRawTx = null,
+  chainMempoolAncestors = null,
+  chainRecentBlocks = null,
   expiry = {},
   // WHERE EVERY CORE A STORED ROUND NAMES IS KEPT FOR ITS REPLAY (2026-09-26 13:28: "the copied replay link must
   // keep working. Always ... Keep every core a stored round names, and serve it. Do not drop it when HEAD moves"): a
@@ -3919,6 +3925,63 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return out;
   }
   let pendingKept = null;
+  const TX_BACK = 12;   // a bond or update counts until the seats' census step has taken it: at most 12 blocks deep
+  const rawKept = new Map();   // txid -> parsed transaction, mempool reads only (a confirmed one comes with its block)
+  const txidOf = (tx) => toHex(Uint8Array.from(tx.txid).reverse());
+  function arenaTxOf(tx, network) {
+    if (!network || !paysBondMarker(tx, network)) return null;
+    const u = readAdvertUpdate(tx, { network });
+    if (u.ok) { const a = u.advert || {}; return { kind: 'advert update', node: toHex(a.nodePubkey || u.nodePubkey), endpoint: String(a.endpoint || ''),
+      protocols: Math.max(0, ...(a.protocolVersions || [0])), bond: `${toHex(Uint8Array.from(u.bondTxid).reverse())}:${u.bondVout}` }; }
+    const a = advertInTransaction(tx);
+    if (a) return { kind: 'bond', node: toHex(a.nodePubkey), endpoint: String(a.endpoint || ''), protocols: Math.max(0, ...(a.protocolVersions || [0])),
+      maturity: Number.isInteger(a.bondMaturityHeight) ? a.bondMaturityHeight : null };
+    return { kind: 'bond marker' };
+  }
+  async function pendingTxs(tip, grids, pegIns) {
+    const nid = chainNetworkId(); const network = nid ? networkOf(typeof nid === 'string' ? fromHex(nid) : nid) : null;
+    const out = new Map();
+    const add = (txid, row) => { const was = out.get(txid); if (!was) out.set(txid, { txid, ...row }); };
+    // the last blocks: bonds and updates still on their way into the census
+    if (typeof chainRecentBlocks === 'function' && network) {
+      const inWindow = new Map(), parents = [];
+      for (const b of await chainRecentBlocks(Math.max(0, tip - TX_BACK + 1), tip)) for (const raw of b.transactions) {
+        let tx; try { tx = parseTransaction(raw); } catch { continue; }
+        const id = txidOf(tx);
+        inWindow.set(id, b.height);
+        const what = arenaTxOf(tx, network);
+        if (what) { add(id, { ...what, height: b.height, confirmations: tip - b.height + 1, inMempool: false }); for (const i of tx.inputs) parents.push([toHex(Uint8Array.from(i.previousTxid).reverse()), id]); }
+      }
+      // and the parents they spent from the same blocks - the fundings, which a branch holds or loses together with them
+      for (const [pid, child] of parents) if (inWindow.has(pid) && !out.has(pid)) add(pid, { kind: 'funding', parentOf: child, height: inWindow.get(pid), confirmations: tip - inWindow.get(pid) + 1, inMempool: false });
+    }
+    // the mempool: bonds and updates not in a block yet, and every unconfirmed parent they wait on
+    const waiting = [];
+    if (typeof chainMempoolIds === 'function' && typeof chainRawTx === 'function' && network) {
+      const ids = await chainMempoolIds(), live = new Set(ids);
+      for (const k of [...rawKept.keys()]) if (!live.has(k)) rawKept.delete(k);
+      for (const id of ids) {
+        let tx = rawKept.get(id);
+        if (tx === undefined) { try { tx = parseTransaction(await chainRawTx(id)); } catch { tx = null; } rawKept.set(id, tx); }
+        const what = tx ? arenaTxOf(tx, network) : null;
+        if (what) { add(id, { ...what, height: null, confirmations: 0, inMempool: true }); waiting.push(id); }
+      }
+    }
+    for (const g of grids) {
+      const p = g.publication;
+      add(p.txid, { kind: 'grid publication', game: g.game, slots: g.slots, height: p.height, confirmations: p.confirmations, inMempool: !!p.inMempool });
+      if (!p.height && p.inMempool) waiting.push(p.txid);
+    }
+    // a peg-in transaction once, with each of its outputs a gateway claims (f3394aa8 pays two federations)
+    for (const p of pegIns) {
+      add(String(p.txid), { kind: 'peg-in', outputs: [], confirmations: p.confirmations, finality: p.finality, height: null, inMempool: false });
+      const row = out.get(String(p.txid));
+      if (row.outputs && !row.outputs.some((o) => o.vout === p.vout)) row.outputs.push({ vout: p.vout, federation: p.federation, node: p.node, sats: p.sats });
+    }
+    if (typeof chainMempoolAncestors === 'function')
+      for (const id of waiting) for (const a of await chainMempoolAncestors(id)) add(a, { kind: 'funding', parentOf: id, height: null, confirmations: 0, inMempool: true });
+    return [...out.values()];
+  }
   async function pendingNow() {
     if (typeof chainTip !== 'function') return { ok: false, why: 'this node reads no chain' };
     const tip = Number(await chainTip());
@@ -3974,7 +4037,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
       }
     } catch { /* none said */ }
-    const r = { ok: true, node: toHex(round.pubkey), tip, ...(chain ? { tipHash: chain.hash } : {}), nowMs: String(now),
+    // THE TRANSACTIONS THE NETWORK WAITS ON, ONE LIST (the owner 2026-10-20: "Make sure that both show the same number of transactions at
+    // all times" - the health page and the mining view had listed different ones): every grid publication and peg-in above, every
+    // transaction paying the bond marker (a bond, an advertisement update) in this node's mempool or its last TX_BACK blocks, and the
+    // unconfirmed parents each in the mempool waits on - all read on this node's own chain
+    const txs = [];
+    try { txs.push(...(await pendingTxs(tip, grids, pegIns))); } catch { /* the list is partial this time */ }
+    const r = { ok: true, node: toHex(round.pubkey), tip, ...(chain ? { tipHash: chain.hash } : {}), nowMs: String(now), txs,
       // the tips beside this node's own within 12 blocks: "same" work is a split the next block decides; "more" work this node has
       // not taken (its blocks not here, or invalid to it) - what this node reads below is its own branch's
       chain: chain ? { hash: chain.hash, height: chain.height, rivals: chain.rivals.filter((x) => x.work !== 'less' || x.height >= chain.height) } : null,
