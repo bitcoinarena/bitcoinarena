@@ -145,6 +145,15 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!chainCensus.get(h)) { try { const e = await censusAt(h); if (Array.isArray(e) && e.length) chainCensus.set(h, { entries: e }); } catch { /* the next pass */ } }
     if (chainCensus.get(h)) chainHeight = h;
   }
+  // A NAMED HEIGHT NOT READ YET IS READ BEFORE THE ANSWER (kanban #549, measured 2026-10-20 07:37Z: right after a restart every guardian
+  // seat of 4dc88be7 answered its gatherer "this seat holds no round with census height 157086" - the read had only been started - so
+  // the record waited for the next pass); a held round's census still comes first, and a height already read is not read again
+  async function chainReady(atHeight) {
+    if (atHeight === null || typeof censusAt !== 'function' || !Number.isInteger(atHeight) || atHeight < 0 || chainCensus.get(atHeight)) return;
+    if (roundBasis(atHeight).ok) return;
+    try { const e = await censusAt(atHeight); if (Array.isArray(e) && e.length) chainCensus.set(atHeight, { entries: e }); } catch { /* answered below as before */ }
+    while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
+  }
   function chainBasis(atHeight) {
     const h = atHeight !== null ? atHeight : chainHeight;
     if (h === null) return null;
@@ -232,6 +241,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, reserveSats: r.reserveSats };
   }
   async function mySignature(federationIdHex, atHeight = null, reserveNamed = null) {
+    await chainReady(atHeight);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
@@ -378,6 +388,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
   async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = []) {
+    await chainReady(atHeight);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
