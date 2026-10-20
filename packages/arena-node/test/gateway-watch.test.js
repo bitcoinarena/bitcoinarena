@@ -110,3 +110,28 @@ test('routed volume: incoming contracts credited to the gateway whose module key
   assert.deepEqual([v.gateways[keys[1].hex].volumeSats, v.gateways[keys[0].hex].volumeSats], ['6000', '1000'], 'msat summed per module key, in sat');
   assert.equal(v.ranked[0].node, keys[1].hex, 'more routed volume ranks first, before the larger capacity of gateway 0');
 });
+
+// kanban #552 (the owner 2026-10-20: "Shows 0 of 2 again. Why is this so hard to fix?"): every restart cleared the epoch's probes
+test('the epoch\'s probes outlive a restart: a new watch reads what the last one kept and seats the same gateway without a probe', async () => {
+  const kept = new Map();
+  const keep = { load: async (f) => Object.fromEntries([...kept].filter(([k]) => k.startsWith(f)).map(([k, v]) => [k.split(':')[1], v])), save: async (f, e, rows) => { kept.set(`${f}:${e}`, JSON.parse(JSON.stringify(rows))); } };
+  const claims = { 0: claimOf(0) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
+    if (/routing_info$/.test(url)) return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
+    throw new Error(`unexpected ${url}`);
+  };
+  const make = () => createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex], entries: async () => entries, tip: async () => 144 * 10 + 5,
+    beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher, keep });
+  const a = make(); await a.probe(); await a.probe();
+  assert.deepEqual((await a.view()).seated, [keys[0].hex]);
+  assert.equal(a.lastProbe().claims, 1);
+  const b = make();                                   // a restart: no probe yet
+  const v = await b.view();
+  assert.deepEqual([v.seated, v.gateways[keys[0].hex].probes], [[keys[0].hex], 2], 'seated from the kept probes, 2 of them');
+  // a kept claim is checked again: a forged one is dropped
+  for (const [k, rows] of kept) for (const r of Object.values(rows)) r.claim = { ...r.claim, pegInSats: '999999999' };
+  assert.deepEqual((await make().view()).seated, []);
+});
