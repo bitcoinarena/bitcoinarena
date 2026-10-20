@@ -3790,8 +3790,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
       // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
       seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
-      entries: async () => { const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
+      entries: async () => { if (fedRecords.censusNewest) { const e = fedRecords.censusNewest(); if (e.length) return e; } const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
       keep: gatewayKeep,
+      // 1 seat for a federation draining into its successor, 2 for every other (the owner 2026-10-20, hard rule)
+      seatsFor: async (fid) => { const r = fedRecords.recordOf ? fedRecords.recordOf(fid) : null; return r && ['DRAINING', 'CRITICAL'].includes(r.status) ? 1 : 2; },
       tip: async () => Number(await chainTip()),
       beaconAt: async (h) => {
         if (ballot && typeof ballot.blockHashAt === 'function') { const x = await ballot.blockHashAt(h); return x ? fromHex(String(x)).reverse() : null; }

@@ -135,3 +135,23 @@ test('the epoch\'s probes outlive a restart: a new watch reads what the last one
   for (const [k, rows] of kept) for (const r of Object.values(rows)) r.claim = { ...r.claim, pegInSats: '999999999' };
   assert.deepEqual((await make().view()).seated, []);
 });
+
+// the owner 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"
+test('a draining federation needs one gateway seat: "1 of 1" seated from one operator; an open one still two', async () => {
+  const claims = { 0: claimOf(0) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
+    if (/routing_info$/.test(url)) return { status: 200, text: async () => '{"lightning_public_key":"02.."}' };
+    throw new Error(`unexpected ${url}`);
+  };
+  const make = (n) => createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => 144 * 10 + 5,
+    beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher, seatsFor: async () => n });
+  const d = make(1); await d.probe();
+  const v = await d.view();
+  assert.deepEqual([v.seats, v.seated.length, v.empty], [1, 1, 0]); assert.match(v.why, /1 of 1 gateway seats filled/);
+  const o = make(2); await o.probe();
+  const w = await o.view();
+  assert.deepEqual([w.seats, w.seated.length, w.empty], [2, 1, 1]);
+});
