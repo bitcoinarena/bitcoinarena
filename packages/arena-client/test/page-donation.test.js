@@ -52,7 +52,7 @@ test('donationBps: 500 by default; a stored 0-500 in steps of 100 is taken; anyt
 });
 
 // the page's own expressions, checked present in index.html, then computed
-const DEPOSIT_EXPR = 'const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stake: ctx.roundStake,\n            settingsBps: donationBps(), storage: window.sessionStorage });';
+const DEPOSIT_EXPR = 'const donationMsat = ARENACLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stake: ctx.roundStake,\n            settingsBps: donationBps(), storage: window.sessionStorage });';
 const JOIN_EXPR = 'const settingsPct = String(donationBps() / 100);';
 const depositDonation = (bps, stake, s) => depositDonationMsat({ roundIdHex: RID, stake, settingsBps: bps, storage: s });
 const joinDonation = (bps, s) => chooseDonation({ roundIdHex: RID, round: ROUND, ask: () => String(bps / 100), confirm: () => false, storage: s }).donationMsat;
@@ -95,7 +95,7 @@ test('the deposit keeps nothing; every kept/Settings pair sizes the deposit as t
 // else Settings - or the warm quote is for another donation and the join quotes itself again. The expression is lifted
 // out of index.html's warmLockQuotes call and evaluated as written.
 const WARM = (() => {
-  const at = PAGE.indexOf('BLWPCLIENT.warmLockQuotes({');
+  const at = PAGE.indexOf('ARENACLIENT.warmLockQuotes({');
   assert.ok(at > 0, 'index.html warms no lock quotes');
   const call = PAGE.slice(at, PAGE.indexOf('\n              .then(', at));
   const from = call.indexOf('donationMsat: ') + 'donationMsat: '.length;
@@ -104,8 +104,8 @@ const WARM = (() => {
 const warmDonation = (s, stakeSats = 100) => {
   const { donationBps, window } = pageWith(s);
   window.sessionStorage = s;
-  const BLWPCLIENT = { lobbyStakeSats: () => stakeSats, depositDonationMsat };
-  return pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['BLWPCLIENT', 'r', 'donationBps', 'window'], WARM, ';', 'return ')(BLWPCLIENT, { id: RID, raw: {} }, donationBps, window);
+  const ARENACLIENT = { lobbyStakeSats: () => stakeSats, depositDonationMsat };
+  return pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['ARENACLIENT', 'r', 'donationBps', 'window'], WARM, ';', 'return ')(ARENACLIENT, { id: RID, raw: {} }, donationBps, window);
 };
 
 test('the warm quote sizes the donation the join will write: a kept choice wins over Settings; none falls back to Settings', () => {

@@ -25,14 +25,14 @@ function page({ note = true, warm = 'open', fed = FED, owed = 0n, inTab = 0n, he
   const player = { lockStatus: async (t, i) => { asked.push([t, i]); return '{"stored":null}'; }, withdrawableMsat: async () => '999000' };
   const window = { ARENA_WALLET_WARM: warm === 'open' ? Promise.resolve(player) : warm === 'failed' ? Promise.resolve(undefined) : undefined,
     ARENA_WALLET_FEDERATION: fed, ARENA_LOCK_WASM: async () => ({ LockClient: 'LC' }) };
-  const BLWPCLIENT = { toHex: (x) => x, lookOwed: async (a) => {
+  const ARENACLIENT = { toHex: (x) => x, lookOwed: async (a) => {
     looks.push(a.client);
     if (a.client.lockStatus) await a.client.lockStatus('tx', 0);
     const tab = typeof a.client.withdrawableMsat === 'function' && a.client !== player ? inTab : 0n;
     return { owedMsat: owed, inTabMsat: tab }; } };
   const roundWallet = async () => { joins.push(1); return held ? { LockClient: 'LC', client: { lockStatus: async () => '{}', withdrawableMsat: async () => String(inTab) } } : null; };
-  const run = pageFunction(PAGE, ['vault', 'window', 'BLWPCLIENT', 'roundAsk', 'roundWallet', 'performance'], SRC, 'return lookRound;')(
-    vault, window, BLWPCLIENT, () => ({}), roundWallet, { now: () => now });
+  const run = pageFunction(PAGE, ['vault', 'window', 'ARENACLIENT', 'roundAsk', 'roundWallet', 'performance'], SRC, 'return lookRound;')(
+    vault, window, ARENACLIENT, () => ({}), roundWallet, { now: () => now });
   return { run: () => run(round), store, asked, joins, looks, player };
 }
 

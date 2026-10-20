@@ -64,7 +64,7 @@ public class OnlyTheLobbyTests
         StringAssert.Contains("window.ARENA_ENTRY_REFUSED(net.error)", lib);
         StringAssert.Contains("if (n && !n.client && n.state === 'error') return 1;", lib);
         string page = PageText();
-        StringAssert.Contains("window.BLWP_ENTRY_REFUSED = async (why) =>", page);
+        StringAssert.Contains("window.ARENA_ENTRY_REFUSED = async (why) =>", page);
     }
 
     // THE NODE STRIP IS NOT ON THE CARGO PANEL, AND IT CUTS NO NAME (2026-09-26 14:02): hidden while the panel is
@@ -78,7 +78,7 @@ public class OnlyTheLobbyTests
         StringAssert.Contains("window.ARENA_LOADOUT_OPEN = open !== 0;", lib);
         string page = PageText();
         // and the Console is told the strip is gone (427bab76, the console collapse: the strip lives behind its button)
-        StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
+        StringAssert.Contains("|| window.ARENA_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
         int a = page.IndexOf("const nodeHealth = {};"), b = page.IndexOf("function paintPlayers()");
         int c = page.IndexOf("const ab = ['A', 'B']");
         string strip = page.Substring(a, b - a) + page.Substring(c, page.IndexOf('\n', c) - c);

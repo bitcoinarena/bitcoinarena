@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE CONSOLE BUTTON AND ITS PANEL, PLACED FROM THE HUD'S OWN SLOT: index.html's BLWP_PLACE_CONSOLE run on fake slots - the
+// THE CONSOLE BUTTON AND ITS PANEL, PLACED FROM THE HUD'S OWN SLOT: index.html's ARENA_PLACE_CONSOLE run on fake slots - the
 // measured screens and an upright phone. The button stays under the HUD corner (2026-10-04). THE OPEN PANEL (kanban
 //, 2026-10-06 17:11: it covered the truck) is bottom right at its fixed 260 px: its right edge at the HUD's
 // corner margin, its bottom one HUD margin above the throttle pad (the screen's bottom margin where no pads are drawn) and
@@ -12,9 +12,9 @@ import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
 const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-const a = html.indexOf('      window.BLWP_PLACE_CONSOLE = () => {');
-const b = html.indexOf("      window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());", a);
-assert.ok(a > 0 && b > a, 'the page places its Console button in BLWP_PLACE_CONSOLE');
+const a = html.indexOf('      window.ARENA_PLACE_CONSOLE = () => {');
+const b = html.indexOf("      window.addEventListener('resize', () => window.ARENA_PLACE_CONSOLE());", a);
+assert.ok(a > 0 && b > a, 'the page places its Console button in ARENA_PLACE_CONSOLE');
 const body = html.slice(a, b);
 const PANEL_H = 260;
 const css = html.slice(html.indexOf('body.arena-console-open #arena-wallet { position: fixed;'), html.indexOf('#arena-console-thumb {'));
@@ -23,11 +23,11 @@ const css = html.slice(html.indexOf('body.arena-console-open #arena-wallet { pos
 function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = slot && slot.h, coarse = true, btnTop = 52, lobby = null } = {}) {
   const go = { offsetWidth: bw, offsetHeight: bh, style: {}, title: '', getBoundingClientRect: () => ({ top: btnTop, bottom: btnTop + bh, height: bh }) };
   const panel = { style: {} };
-  const window = { innerWidth: w, innerHeight: h, BLWP_HUD_CORNER: slot, BLWP_UNITY_LOBBY: lobby, matchMedia: () => ({ matches: coarse }) };
+  const window = { innerWidth: w, innerHeight: h, ARENA_HUD_CORNER: slot, ARENA_UNITY_LOBBY: lobby, matchMedia: () => ({ matches: coarse }) };
   const classes = new Set();
   const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } },
     getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } : id === 'arena-wallet' ? panel : null) };
-  pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['window', 'document', 'go', 'consoleOpen', 'paintConsoleThumb'], body, 'window.BLWP_PLACE_CONSOLE();')(window, document, go, () => open, () => {});
+  pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['window', 'document', 'go', 'consoleOpen', 'paintConsoleThumb'], body, 'window.ARENA_PLACE_CONSOLE();')(window, document, go, () => open, () => {});
   const px = (v) => Number(String(v).replace('px', ''));
   const btn = slot ? { top: px(go.style.top), right: px(go.style.right) } : { top: btnTop, right: null };
   btn.bottom = btn.top + bh;

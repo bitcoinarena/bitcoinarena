@@ -83,14 +83,14 @@ const lncliPay = (invoice) => new Promise((done) => execFile(`${env.LND_BIN}/lnc
   { timeout: 120000 }, (err, out) => done((String(out).match(/Payment status: [A-Z_]+/) || [err ? err.message.slice(0, 80) : '?'])[0])));
 
 // THE MUTANT: the page's lock step never runs. Everything else is the page.
-const LOCK_STEP = 'if (BLWPCLIENT.roundLocks(named.round)) {\n          const depositEl';
+const LOCK_STEP = 'if (ARENACLIENT.roundLocks(named.round)) {\n          const depositEl';
 // THE RELOAD: once, when the page is about to lock - the deposit paid and
 // claimed - the tab goes away and comes back. Harness instrumentation in the
 // served page, not in the client: it wraps the page's call and throws at that
 // step, so no lock is made, then reloads.
 const RELOAD_ONCE = `<script>(function () {
-  var real = BLWPCLIENT.lockStake;
-  BLWPCLIENT.lockStake = function (o) {
+  var real = ARENACLIENT.lockStake;
+  ARENACLIENT.lockStake = function (o) {
     var step = o.onStep || function () {};
     return real(Object.assign({}, o, { onStep: function (s) {
       if (s === 'locking the stake' && !sessionStorage.getItem('arena.harness.reloaded')) {
@@ -118,8 +118,8 @@ const RELOAD_AFTER_LOCK = `<script>(function () {
 // brings no fee lock - what a client that does not mint would do. Harness instrumentation in
 // the served page: it wraps lockStake and drops the fee lock from what it returns.
 const NO_FEE_LOCK = `<script>(function () {
-  var real = BLWPCLIENT.lockStake;
-  BLWPCLIENT.lockStake = function (o) {
+  var real = ARENACLIENT.lockStake;
+  ARENACLIENT.lockStake = function (o) {
     return real(o).then(function (m) { console.log('[harness] the fee lock dropped from the join'); return Object.assign({}, m, { feeLock: null }); });
   };
 })();</script>`;
@@ -245,7 +245,7 @@ function worldFor(base, lastTick, roundRandomness) {
   throw new Error(`no world in 600 where the drive is DELIVERED by tick ${lastTick}`);
 }
 const tabView = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.ARENA_LOCK_JOIN, stakeLock: !!window.ARENA_STAKE_LOCK,
-  refused: window.BLWP_JOIN_REFUSED || null, join: window.BLWP_JOIN || null,
+  refused: window.ARENA_JOIN_REFUSED || null, join: window.ARENA_JOIN || null,
   // WHAT THE PAGE LOOKED AT (W4 / 6d): its lookOwed - nothing spent until the player's Withdraw.
   owed: window.ARENA_OWED || null,
   settled: (document.getElementById('arena-settled') || {}).textContent || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`)
@@ -385,7 +385,7 @@ const pathOf = (q) => { try { return new URL(q.url).pathname; } catch { return q
 // reload resets the globals). `depositView` is whether the invoice a player
 // must pay is on screen: something drawn, and the topmost thing at its centre.
 const STATE = `JSON.stringify({
-  deposit: window.ARENA_DEPOSIT || null, entry: !!window.BLWP_ENTRY, refused: window.BLWP_JOIN_REFUSED || null,
+  deposit: window.ARENA_DEPOSIT || null, entry: !!window.ARENA_ENTRY, refused: window.ARENA_JOIN_REFUSED || null,
   lock: window.ARENA_STAKE_LOCK ? 1 : 0, pageError: (document.getElementById('err') || {}).textContent || null,
   reloadedDoc: (performance.getEntriesByType('navigation')[0] || {}).type === 'reload',
   depositView: (() => {
@@ -477,9 +477,9 @@ async function one({ label, dir }, i) {
       if (!eid || ((view.chip || '').includes('committed') && r.every((x) => typeof x === 'number' && x > 0))) break;
     }
     if (s.lock) await b.shot(`${P}/${label}-playing.png`);
-    const entry = await b.evaluate(`(() => { const e = window.BLWP_ENTRY; if (!e) return null; const h = BLWPCLIENT.toHex;
+    const entry = await b.evaluate(`(() => { const e = window.ARENA_ENTRY; if (!e) return null; const h = ARENACLIENT.toHex;
       return { outpoint: h(e.stakeLockOutpoint.txid) + ':' + String(e.stakeLockOutpoint.outIdx) }; })()`);
-    const lock = await b.evaluate(`(() => { const l = window.ARENA_STAKE_LOCK; return l ? BLWPCLIENT.toHex(l.outpoint.txid) + ':' + String(l.outpoint.outIdx) : null; })()`);
+    const lock = await b.evaluate(`(() => { const l = window.ARENA_STAKE_LOCK; return l ? ARENACLIENT.toHex(l.outpoint.txid) + ':' + String(l.outpoint.outIdx) : null; })()`);
     let federation = null;
     if (lock) {
       const [txid, outIdx] = lock.split(':');

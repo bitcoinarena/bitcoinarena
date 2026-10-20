@@ -27,14 +27,14 @@ const row = (o = {}) => ({ id: 'd8cf7893'.repeat(8), free: false, stakeMsat: '10
 function page({ balance, rows = [row()], join } = {}) {
   const joins = [];
   const said = [];
-  const window = { ARENA_LOBBY_ROWS: rows, ARENA_WALLET_BALANCE: balance, BLWP_CONTINUE: undefined, BLWP_JOIN: join,
-    BLWP_ROUND: { id: 'played' }, BLWP_ENTRY: { id: 'entry' }, ARENA_LOBBY_BACK: '',
-    BLWP_LOBBY_ACT: { join: (id, opts) => { joins.push([id, opts]); return true; } } };
-  const BLWPCLIENT = { nextRoundAfter, lobbyStakeSats };
+  const window = { ARENA_LOBBY_ROWS: rows, ARENA_WALLET_BALANCE: balance, ARENA_CONTINUE: undefined, ARENA_JOIN: join,
+    ARENA_ROUND: { id: 'played' }, ARENA_ENTRY: { id: 'entry' }, ARENA_LOBBY_BACK: '',
+    ARENA_LOBBY_ACT: { join: (id, opts) => { joins.push([id, opts]); return true; } } };
+  const ARENACLIENT = { nextRoundAfter, lobbyStakeSats };
   const history = { replaceState: () => {} };
   const location = { pathname: '/' };
-  const fns = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'history', 'location', 'console', 'setTimeout'], [CONTINUE, CANCEL],
-    'return { continueToTheNextRound, cancelNextJoin };')(window, BLWPCLIENT, history, location, { log: (s) => said.push(s) }, () => {});
+  const fns = pageFunction(PAGE, ['window', 'ARENACLIENT', 'history', 'location', 'console', 'setTimeout'], [CONTINUE, CANCEL],
+    'return { continueToTheNextRound, cancelNextJoin };')(window, ARENACLIENT, history, location, { log: (s) => said.push(s) }, () => {});
   return { ...fns, window, joins, said };
 }
 
@@ -72,8 +72,8 @@ test('a continuing join that reaches a deposit is dropped: refused for Unity, no
   assert.equal(shown, 0, 'no deposit offer for a round nobody pressed PLAY on');
   assert.deepEqual([j.state, j.cancelled, j.why], ['refused', true, ''], 'Unity reads it refused with no reason and shows the plain lobby');
   assert.equal(p.window.ARENA_NEXT.state, 'none');
-  assert.equal(p.window.BLWP_ROUND, undefined);
-  assert.notEqual(p.window.BLWP_CONTINUE, false, 'continuing stays on for the next PLAY');
+  assert.equal(p.window.ARENA_ROUND, undefined);
+  assert.notEqual(p.window.ARENA_CONTINUE, false, 'continuing stays on for the next PLAY');
 });
 
 test('a join the player pressed PLAY on still gets its deposit offer', async () => {

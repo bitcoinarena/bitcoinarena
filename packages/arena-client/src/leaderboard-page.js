@@ -9,7 +9,7 @@ import { encodeLeaderboardPayout, leaderboardPayoutId, leaderboardVotePeriod, LB
 import { FUNDING_SCHEDULES } from '../../arena-protocol/src/funding.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
-const lbCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
+const lbCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 /** A block about every 10 minutes: the height a date falls at, from the tip now. */
 export const LB_BLOCK_MS = 600000;
 export const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.ceil((Number(dateMs) - Number(nowMs)) / LB_BLOCK_MS));

@@ -58,7 +58,7 @@
 <script src="../arena-client.js"></script>
 <script>
 (() => {
-  const C = window.BLWPCLIENT, K = window.BLWP_CURVE;
+  const C = window.ARENACLIENT, K = window.ARENA_CURVE;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');

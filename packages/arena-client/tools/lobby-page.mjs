@@ -99,10 +99,10 @@ const STATE = `(() => {
     href: location.search.slice(0, 40),
     lobby: f(() => window.ARENA_LOBBY || null),
     lobbyShown: f(() => { const l = document.getElementById('arena-lobby'); return !!l && getComputedStyle(l).display !== 'none'; }),
-    round: f(() => (window.BLWP_ROUND ? hex(BLWPCLIENT.roundId(window.BLWP_ROUND)) : null)),
-    // The page's BLWP_ENTRY is entryFor's fields - no round id or session key -
+    round: f(() => (window.ARENA_ROUND ? hex(ARENACLIENT.roundId(window.ARENA_ROUND)) : null)),
+    // The page's ARENA_ENTRY is entryFor's fields - no round id or session key -
     // so the tab is named by its player key and the signer node is found at the nodes.
-    player: f(() => { const e = window.BLWP_ENTRY; return e && e.playerPubkey ? hex(e.playerPubkey) : null; }),
+    player: f(() => { const e = window.ARENA_ENTRY; return e && e.playerPubkey ? hex(e.playerPubkey) : null; }),
     unity: f(() => !!window.unityInstance),
     deposit: f(() => window.ARENA_DEPOSIT || null),
     pageError: f(() => (document.getElementById('err') || {}).textContent || null),

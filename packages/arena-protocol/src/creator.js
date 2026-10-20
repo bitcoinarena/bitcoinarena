@@ -6,7 +6,7 @@
 // no influence over the committee either": the key says WHO published the round (whom a publication fee is paid back to),
 // and nothing else. A contract that names no creator needs no signature, and none is asked of it.
 //
-// No curve here: the verifier is the caller's (the seat's noble schnorr, the page's BLWP_CURVE), as for every signed record.
+// No curve here: the verifier is the caller's (the seat's noble schnorr, the page's ARENA_CURVE), as for every signed record.
 import { taggedHash } from './hash.js';
 import { TAG } from './constants.js';
 import { roundId } from './contracts.js';

@@ -70,8 +70,8 @@ test('the round\'s hash picks its core: under Unity\'s state and as the global t
 });
 
 test('the join takes the round\'s core before anything of the round is made, and refuses a core it does not carry', () => {
-  const a = html.indexOf('      window.BLWP_ROUND = named.round;\n');
-  const b = html.indexOf('window.ARENA_USE_CORE(BLWPCLIENT.roundCoreHex(named.round))', a);
+  const a = html.indexOf('      window.ARENA_ROUND = named.round;\n');
+  const b = html.indexOf('window.ARENA_USE_CORE(ARENACLIENT.roundCoreHex(named.round))', a);
   assert.ok(a > 0 && b > a && b - a < 800, 'the join does not hand the round\'s core hash to ARENA_USE_CORE right after naming the round');
-  assert.ok(html.slice(b, b + 500).includes("window.BLWP_JOIN_REFUSED = core.why"), 'an unknown core is not refused by name');
+  assert.ok(html.slice(b, b + 500).includes("window.ARENA_JOIN_REFUSED = core.why"), 'an unknown core is not refused by name');
 });

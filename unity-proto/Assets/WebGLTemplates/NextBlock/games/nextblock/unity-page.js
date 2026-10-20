@@ -74,7 +74,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
         // THE GUARD: Auto only, a phone only, once a visit - 10 s of play under 30 fps on average take one step down
         if (mode !== 'auto' || device === 'desktop') return;
         let frames = 0, since = 0, last = 0;
-        const playing = () => window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing === false && !window.ARENA_BENCH_RUNNING && !document.hidden;
+        const playing = () => window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing === false && !window.ARENA_BENCH_RUNNING && !document.hidden;
         await new Promise((done) => {
           const tick = (t) => {
             if (!playing()) { frames = 0; since = 0; last = 0; requestAnimationFrame(tick); return; }
@@ -154,7 +154,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       // reaches the card without a screenshot. Only on that address.
       if (new URLSearchParams(location.search).get('bench') === '1') (async () => {
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-        for (let i = 0; i < 1200 && !(window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing); i++) await sleep(250);
+        for (let i = 0; i < 1200 && !(window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing); i++) await sleep(250);
         await sleep(6000);
         try { window.unityInstance.SendMessage('Bootstrap', 'Benchmark'); } catch { return; }
         for (let i = 0; i < 600 && !window.ARENA_BENCH; i++) await sleep(500);
@@ -214,14 +214,14 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       replayNodes.set(roundHex, asked);
       return asked;
     };
-    window.BLWP_COPY_REPLAY = async (roundHex, entryHex, nodes) => {
+    window.ARENA_COPY_REPLAY = async (roundHex, entryHex, nodes) => {
       // "copied!" on the card only once the clipboard holds the link (2026-09-26 07:12): the bridge reads this
-      window.BLWP_REPLAY_COPIED = '';
+      window.ARENA_REPLAY_COPIED = '';
       const endpoints = await prefetchReplayNodes(roundHex, nodes);
-      const link = BLWPCLIENT.replayLinkFor({ endpoints, roundHex, entryHex });
+      const link = ARENACLIENT.replayLinkFor({ endpoints, roundHex, entryHex });
       if (!link.ok) { console.error('[arena] copy game replay: ' + link.why); return link; }
-      window.BLWP_REPLAY_URL = link.url;
-      try { await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url; console.log('[arena] copy game replay: copied ' + link.url); }
+      window.ARENA_REPLAY_URL = link.url;
+      try { await navigator.clipboard.writeText(link.url); window.ARENA_REPLAY_COPIED = link.url; console.log('[arena] copy game replay: copied ' + link.url); }
       catch (e) { console.error('[arena] copy game replay: the clipboard refused (' + e.message + '); the link is ' + link.url); }
       return link;
     };
@@ -231,14 +231,14 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     // it only names the fields Unity reads and writes a missing number as empty.
     let resultTimer = null;
     const readResultSummary = async (run, nodes) => {
-      const kept = window.BLWP_RESULT;
+      const kept = window.ARENA_RESULT;
       if (!kept || kept.roundHex !== run.roundHex || !window.ARENA_CARD_UP) { clearInterval(resultTimer); resultTimer = null; return; }
       for (const n of nodes) {
         try {
           const r = await fetch(`${String(n).replace(/\/+$/, '')}/api/round-result?round=${run.roundHex}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
           if (!r.ok) continue;
           const j = await r.json();
-          if (window.BLWP_RESULT !== kept) return;
+          if (window.ARENA_RESULT !== kept) return;
           // the seat's own player object first (its stake among it, forwarded as the seat wrote it), then the fields Unity
           // reads named and their nulls written empty
           kept.players = (j.players || []).map((p) => ({ ...p,
@@ -269,16 +269,16 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     let holdTimer = null;
     const startResultSummary = (run) => {
       if (!run || !run.roundHex || !run.entryHex) return;
-      if (window.BLWP_RESULT && window.BLWP_RESULT.roundHex === run.roundHex && resultTimer) return;
-      const nodes = (run.nodes && run.nodes.length ? run.nodes : window.BLWP_NODES) || [];
+      if (window.ARENA_RESULT && window.ARENA_RESULT.roundHex === run.roundHex && resultTimer) return;
+      const nodes = (run.nodes && run.nodes.length ? run.nodes : window.ARENA_NODES) || [];
       let closeMs = NaN;
-      try { if (window.BLWP_ROUND && BLWPCLIENT.toHex(BLWPCLIENT.roundId(window.BLWP_ROUND)) === run.roundHex) closeMs = Number(BLWPCLIENT.roundEndMs(window.BLWP_ROUND)); } catch { /* no close: no hold */ }
-      const kept = window.BLWP_RESULT = { roundHex: run.roundHex, entryHex: run.entryHex, text: '', reads: 0, players: [],
+      try { if (window.ARENA_ROUND && ARENACLIENT.toHex(ARENACLIENT.roundId(window.ARENA_ROUND)) === run.roundHex) closeMs = Number(ARENACLIENT.roundEndMs(window.ARENA_ROUND)); } catch { /* no close: no hold */ }
+      const kept = window.ARENA_RESULT = { roundHex: run.roundHex, entryHex: run.entryHex, text: '', reads: 0, players: [],
         holdUntil: isFinite(closeMs) ? closeMs + RESULT_HOLD_PAST_CLOSE_MS : 0 };
       writeResultSummary(kept);
       clearInterval(holdTimer);
       holdTimer = setInterval(() => {
-        if (window.BLWP_RESULT !== kept || !window.ARENA_CARD_UP) { clearInterval(holdTimer); holdTimer = null; return; }
+        if (window.ARENA_RESULT !== kept || !window.ARENA_CARD_UP) { clearInterval(holdTimer); holdTimer = null; return; }
         const was = kept.hold;
         if (was && !(Date.now() < kept.holdUntil)) { writeResultSummary(kept); console.log('[arena] result summary: the card lets go (the round closed + 20 s)'); }
       }, 500);
@@ -297,10 +297,10 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       let said = null; try { said = window.ARENA_BROWSER_STORE().getItem('arena.explorer'); } catch { /* no storage: the default */ }
       if (said === 'off') return null;
       if (said && /^https:\/\//.test(said)) return said;
-      return round && round.networkId && BLWPCLIENT.toHex(round.networkId) === '1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15' ? 'https://mempool.space/testnet4/api' : null;
+      return round && round.networkId && ARENACLIENT.toHex(round.networkId) === '1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15' ? 'https://mempool.space/testnet4/api' : null;
     };
     window.ARENA_SECURE_RUN = async (word, run, { tries = 30, everyMs = 3000 } = {}) => {
-      if (!run || !/DELIVERED/.test(String(word || '')) || !BLWPCLIENT.secureTranscript) return null;
+      if (!run || !/DELIVERED/.test(String(word || '')) || !ARENACLIENT.secureTranscript) return null;
       const M = window.unityInstance && window.unityInstance.Module;
       const n = M && (M.arenaRunNet || M.blwpRunNet || M.arenaNet || M.blwpNet);
       const finalTick = n && n.client && Number.isInteger(n.client.nextTick) ? n.client.nextTick : null;
@@ -312,7 +312,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       el.style.display = ''; el.textContent = 'Securing your run with the signer nodes … keep this tab open';
       let got = null;
       for (let i = 0; i < tries; i++) {
-        got = await BLWPCLIENT.secureTranscript({ roundId: BLWPCLIENT.fromHex(run.roundHex), entryId: BLWPCLIENT.fromHex(run.entryHex), nodes: run.nodes || [], finalTick });
+        got = await ARENACLIENT.secureTranscript({ roundId: ARENACLIENT.fromHex(run.roundHex), entryId: ARENACLIENT.fromHex(run.entryHex), nodes: run.nodes || [], finalTick });
         if (got.safe) { el.style.color = '#7ee08a'; el.textContent = 'Your run is safe: ' + got.holders.length + ' signer nodes hold all of it'; setTimeout(() => { el.style.display = 'none'; }, 4000); break; }
         el.textContent = 'Securing your run: ' + got.holders.length + ' of 2 signer nodes hold all of it … keep this tab open';
         await new Promise((r) => setTimeout(r, everyMs));
@@ -321,11 +321,11 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       if (got && !got.safe) { el.style.color = '#ff8a7a'; el.textContent = 'Your run is not yet held by two signer nodes - keep this tab open (' + got.why + ')'; }
       return got;
     };
-    window.BLWP_RUN_OVER = (word, run) => {
+    window.ARENA_RUN_OVER = (word, run) => {
       if (run) prefetchReplayNodes(run.roundHex, run.nodes);
-      window.BLWP_CHAIN = undefined;
-      window.BLWP_ADVERT = undefined;
-      const noLobby = !window.BLWP_LOBBY_ACT;
+      window.ARENA_CHAIN = undefined;
+      window.ARENA_ADVERT = undefined;
+      const noLobby = !window.ARENA_LOBBY_ACT;
       let back = typeof window.ARENA_LOBBY_BACK === 'string' ? window.ARENA_LOBBY_BACK : '';
       if (noLobby && typeof window.ARENA_LOBBY_BACK !== 'string') {
         const q = new URLSearchParams(location.search.replace(/^\?/, ''));
@@ -336,15 +336,15 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       // A NEWER JOIN KEEPS ITS ADDRESS (2026-10-03, the chained paid join): this runs twice at a run's end, and its
       // second call put the lobby's address back after the next round's join had set its round= - a reload in that round
       // then found no round to take its kept lock, key and entry back for (measured 13:43:36.667 -> 13:43:37.357Z).
-      const going = window.BLWP_JOIN;
+      const going = window.ARENA_JOIN;
       const newerJoin = !!(going && !going.cancelled && going.state === 'joining' && going.round
         && (!run || !run.roundHex || String(going.round) !== String(run.roundHex)));
       // AND A RESUMED RUN KEEPS ITS ADDRESS UNTIL IT ENDS ITSELF (2026-10-03): while it catches up, nothing else's end
       // puts the lobby's address over its round=; it may only when that run ends, or once its round has closed.
-      const resume = window.BLWP_RESUME;
+      const resume = window.ARENA_RESUME;
       const resumedEnds = !!(resume && run && String(run.roundHex) === String(resume.roundIdHex) && resume.caughtUp);
       const resuming = !!(resume && !resumedEnds && Date.now() < Number(resume.closeMs));
-      if (resumedEnds) window.BLWP_RESUME = null;
+      if (resumedEnds) window.ARENA_RESUME = null;
       if (!newerJoin && !resuming && location.search !== back) history.replaceState(null, '', location.pathname + back);
       window.ARENA_RUN_ENDED = String(word || '');
       // THE RESULT CARD IS UP FROM HERE UNTIL THE LOBBY (PRIORITIES item 3, "nothing overlaps"; measured 2026-09-26 at
@@ -364,11 +364,11 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       // CONTINUING IS THE DEFAULT (2026-09-28, option 1 of A; spec "Timing - every network, every round"): the
       // page enters the next round of the same kind for the player now - its entry is open until its start - and holds
       // it until that start, so the next run starts with everybody at start_time(i+1). "exit game" stops it.
-      if (!noLobby && window.BLWP_CONTINUE !== false && window.BLWP_ROUND) continueToTheNextRound(window.BLWP_ROUND);
+      if (!noLobby && window.ARENA_CONTINUE !== false && window.ARENA_ROUND) continueToTheNextRound(window.ARENA_ROUND);
     };
     function continueToTheNextRound(played) {
       // ONCE PER RUN: the run's end is said more than once (the core's word, then the session's close), and the first
-      // call has already entered the next round - which is BLWP_ROUND by the second. Measured: the second call looked for
+      // call has already entered the next round - which is ARENA_ROUND by the second. Measured: the second call looked for
       // the round after THAT one, found none listed, and the box said "joining next round" with no number while the page
       // was in fact joining 459d734a.
       const was = window.ARENA_NEXT;
@@ -385,24 +385,24 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       // LOOKED FOR UNTIL IT IS LISTED: a series lists round i+1 long before; a launcher that opens its next round later
       // (the Daily: about a minute before the current round's entry closes) lists it later - measured 65 s after a run.
       // Given up only when the player joins something else from the lobby, or after 10 minutes.
-      const joinAtRunOver = window.BLWP_JOIN;
+      const joinAtRunOver = window.ARENA_JOIN;
       const look = () => {
-        if (window.ARENA_NEXT !== next || next.state !== 'looking' || window.BLWP_CONTINUE === false) return;
-        if (window.BLWP_JOIN !== joinAtRunOver || Date.now() - next.runOverAt > 600000) { next.state = 'none'; return; }
-        const r = BLWPCLIENT.nextRoundAfter(played, window.ARENA_LOBBY_ROWS, Date.now());
+        if (window.ARENA_NEXT !== next || next.state !== 'looking' || window.ARENA_CONTINUE === false) return;
+        if (window.ARENA_JOIN !== joinAtRunOver || Date.now() - next.runOverAt > 600000) { next.state = 'none'; return; }
+        const r = ARENACLIENT.nextRoundAfter(played, window.ARENA_LOBBY_ROWS, Date.now());
         if (!r) { setTimeout(look, 1000); return; }
         // A NEXT PAID ROUND ONLY WITH ITS STAKE IN THE PLAYER WALLET (comment 592: measured on 0.0.2832, round
         // dcd6cbb6 - the page entered the next paid round with 73 sat for a 100 sat stake, its join waited on a deposit
         // nobody asked for, and the result card held the screen past 420 s). Nobody pressed PLAY on it, so no deposit is
         // asked: the card lets go at its hold and the lobby comes back, where PLAY asks it.
-        const bal = window.ARENA_WALLET_BALANCE; const stakeSats = r.free ? 0 : BLWPCLIENT.lobbyStakeSats(r);
+        const bal = window.ARENA_WALLET_BALANCE; const stakeSats = r.free ? 0 : ARENACLIENT.lobbyStakeSats(r);
         if (stakeSats > 0 && bal && Number.isFinite(Number(bal.sats)) && Number(bal.sats) < stakeSats) {
           next.state = 'none';
           console.log(`[arena] next round ${r.id.slice(0, 16)}: not entered - its stake is ${stakeSats} sat and the player wallet holds ${bal.sats} sat`);
           return;
         }
         Object.assign(next, { state: 'joining', round: r.id, startMs: Number(r.startTimeMs) });
-        const act = window.BLWP_LOBBY_ACT;
+        const act = window.ARENA_LOBBY_ACT;
         const took = act && act.join(r.id, { holdUntilMs: Number(r.startTimeMs), next: true });
         console.log(`[arena] next round ${r.id.slice(0, 16)}: ${took ? 'entering it now, joined at its start' : 'not joinable'} `
           + `(starts ${new Date(Number(r.startTimeMs)).toISOString()})`);
@@ -411,17 +411,17 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       look();
     }
     // "joining next round in N seconds" BESIDE "exit game", after the result card and until the next start - the words
-    // and the timing are BLWPCLIENT.nextRoundView's
+    // and the timing are ARENACLIENT.nextRoundView's
     (function paintNext() {
       const box = document.getElementById('arena-next');
-      const n = window.ARENA_NEXT; const j = window.BLWP_JOIN;
+      const n = window.ARENA_NEXT; const j = window.ARENA_JOIN;
       let v = { show: 'lobby' };
-      const waiting = n && window.BLWP_CONTINUE !== false && (n.state === 'looking'
+      const waiting = n && window.ARENA_CONTINUE !== false && (n.state === 'looking'
         || (n.state === 'joining' && j && j.round === n.round && j.state === 'joining'));
       if (waiting) {
-        v = BLWPCLIENT.nextRoundView({ runOverMs: n.runOverAt, nextStartMs: n.startMs, nowMs: Date.now() });
+        v = ARENACLIENT.nextRoundView({ runOverMs: n.runOverAt, nextStartMs: n.startMs, nowMs: Date.now() });
         // not listed yet: the words without a number, beside exit game - never a number that is not the round's start
-        if (n.state === 'looking' && v.show === 'lobby') v = { show: 'countdown', line: 'joining next round', exit: BLWPCLIENT.EXIT_GAME };
+        if (n.state === 'looking' && v.show === 'lobby') v = { show: 'countdown', line: 'joining next round', exit: ARENACLIENT.EXIT_GAME };
         // AT ONCE, beside the ending Unity keeps up (COUNTDOWN-NOW-2209): no waiting for the card
       }
       if (n && n.state === 'joining' && Date.now() >= n.startMs) n.state = 'started';
@@ -451,19 +451,19 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     // being made, or held for its start, is dropped; a stake a paying round already locked refunds by the lock's own expiry
     // (§23.1) - nothing new is sent.
     function cancelNextJoin(state) {
-      const n = window.ARENA_NEXT; const j = window.BLWP_JOIN;
+      const n = window.ARENA_NEXT; const j = window.ARENA_JOIN;
       if (n) n.state = state;
       if (j && n && n.round && j.round === n.round && j.state === 'joining') {
         // "refused" with no reason: Unity, which took this join as its own, stops waiting and shows the plain lobby
         j.cancelled = true; j.state = 'refused'; j.why = ''; j.stage = ''; j.held = false;
-        window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined;
+        window.ARENA_ROUND = undefined; window.ARENA_ENTRY = undefined;
         history.replaceState(null, '', location.pathname + (typeof window.ARENA_LOBBY_BACK === 'string' ? window.ARENA_LOBBY_BACK : ''));
       }
     }
     // A DEPOSIT IS ASKED ONLY FOR A ROUND THE PLAYER PRESSED PLAY ON: the next round the page entered by
     // itself is dropped instead - Unity shows the lobby, and PLAY there asks the deposit.
     window.ARENA_ASK_JOIN_DEPOSIT = (offer, show) => {
-      const j = window.BLWP_JOIN;
+      const j = window.ARENA_JOIN;
       if (j && j.next) {
         cancelNextJoin('none');
         console.log('[arena] next round: not entered - it needs a deposit into the player wallet, and nobody pressed PLAY on it');
@@ -478,7 +478,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     document.getElementById('arena-next-exit').addEventListener('click', () => {
       // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
       // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
-      window.BLWP_CONTINUE = false;
+      window.ARENA_CONTINUE = false;
       cancelNextJoin('exited');
       console.log('[arena] exit game: no next round');
       document.getElementById('arena-next').style.display = 'none';
@@ -617,18 +617,18 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
         // SILENT SEATS ARE SAID ONLY WHEN THEY STOP PLAY (2026-10-17 screenshot: "Signer nodes ... fed2-1 ... fed2-7 did not
         // answer in 10 s" in red over the PLAY line while the round said "5 agree (5 needed)"): with a round joinable, slow seats are
         // no error - the box is kept for when no listed round can be joined
-        unanswered: ((window.ARENA_LOBBY || []).some((x) => x && x.joinable) ? [] : unanswered).map(String), answerS: Math.round((BLWPCLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
+        unanswered: ((window.ARENA_LOBBY || []).some((x) => x && x.joinable) ? [] : unanswered).map(String), answerS: Math.round((ARENACLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
         // HOW MANY SEATS WERE ASKED, AND HOW MANY FAILED OUTRIGHT: none reached is not "no round open"
         asked: askedNodes, failed: failedNodes,
         // WHICH ROUND the join was for, by id and kind, so a refusal names the round rather than "the round"
-        join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || ''),
-          round: String(window.BLWP_JOIN.round || ''), kindKnown: !!window.BLWP_JOIN.kindKnown, free: !!window.BLWP_JOIN.free,
-          stakeSats: Number(window.BLWP_JOIN.stakeSats) || 0, next: !!window.BLWP_JOIN.next }
+        join: window.ARENA_JOIN ? { state: window.ARENA_JOIN.state, why: String(window.ARENA_JOIN.why || ''), stage: String(window.ARENA_JOIN.stage || ''),
+          round: String(window.ARENA_JOIN.round || ''), kindKnown: !!window.ARENA_JOIN.kindKnown, free: !!window.ARENA_JOIN.free,
+          stakeSats: Number(window.ARENA_JOIN.stakeSats) || 0, next: !!window.ARENA_JOIN.next }
           : { state: '', why: '', stage: '', round: '', kindKnown: false, free: false, stakeSats: 0 },
         // THE PAGE IS TAKING THE PLAYER TO THE NEXT ROUND (2026-09-29 21:58, SPECTATE-2158): from the run's end until
         // "exit game" or that round's start. Unity shows no lobby meanwhile - the result card, or WASTED, stays.
         continuing: (() => { const n = window.ARENA_NEXT;
-          return !!n && window.BLWP_CONTINUE !== false && (n.state === 'looking' || n.state === 'joining'); })(),
+          return !!n && window.ARENA_CONTINUE !== false && (n.state === 'looking' || n.state === 'joining'); })(),
         // AND WHERE ITS BOX STARTS, for the result card to end above it
         nextBoxTop: typeof window.ARENA_NEXT_BOX_TOP === 'function' ? window.ARENA_NEXT_BOX_TOP() : 0,
         // A WITHDRAWAL AVAILABLE (2026-09-14), for the lobby to say so.
@@ -636,7 +636,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
         // THE COLLECT'S LINES: another kept seed's records, a failed collect, an uncollectable record - the
         // page's words; Unity draws them under the round rows
         // AND THE TAB'S MARKET LINES after them: its picks, then their outcomes as this page checked them
-        collect: BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.ARENA_RECORDS || [], { failed: window.ARENA_COLLECT_FAILED || new Map(), held: window.ARENA_COLLECT_HELD || new Set() }).concat(marketViewLines(true)) : marketViewLines(true) });
+        collect: ARENACLIENT.collectLines ? ARENACLIENT.collectLines(window.ARENA_RECORDS || [], { failed: window.ARENA_COLLECT_FAILED || new Map(), held: window.ARENA_COLLECT_HELD || new Set() }).concat(marketViewLines(true)) : marketViewLines(true) });
     }
 
     // ---------------------------------------------------------------- the run's line in the console: the two nodes' health, the play socket, the players
@@ -683,15 +683,15 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     function paintPlayers() {
       const el = document.getElementById('arena-players');
       if (!el) return;
-      if (window.ARENA_CARD_UP && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing) window.ARENA_CARD_UP = false;
+      if (window.ARENA_CARD_UP && window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing) window.ARENA_CARD_UP = false;
       // hidden while the cargo panel is open (2026-09-26 14:02) - the pads and TRUCK FULL stay; this line does not
-      if (!window.BLWP_ROUND || window.ARENA_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }
+      if (!window.ARENA_ROUND || window.ARENA_CARD_UP || window.ARENA_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }
       consoleHas('players', true);
       el.style.display = consoleOpen() ? 'block' : 'none';
       const inst = window.unityInstance;
       const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
       const net = mod && (mod.arenaNet || mod.blwpNet);
-      const joined = !!(window.BLWP_ENTRY);
+      const joined = !!(window.ARENA_ENTRY);
       const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
       // WHETHER ANYBODY IS DRAWING THEM. A field filling with pictures nobody
       // takes reads the same as an empty round unless the line says so.
@@ -701,8 +701,8 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       // apron, and a truck drawn correctly at the far end is off screen. Read
       // this against the other tab's own position readout: the same numbers
       // mean the picture is right and the camera is pointed elsewhere.
-      const at = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.newestPose && net)
-        ? BLWPCLIENT.newestPose(net.ghosts) : null;
+      const at = (typeof ARENACLIENT !== 'undefined' && ARENACLIENT.newestPose && net)
+        ? ARENACLIENT.newestPose(net.ghosts) : null;
       const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || 'checking')).join(' · ');
       // AND WHETHER THIS TAB'S OWN INPUTS ARE LANDING. A tab whose batches the
       // node refuses keeps its socket, its player count and its driving, and
@@ -713,7 +713,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       // only, so a refused signer node read exactly like a round nobody was sent to
       // and a free round read exactly like a funded one. The hold state is the
       // NODE's word, kept by `Client.join` from the answer it already gives.
-      const joinRefused = window.BLWP_JOIN_REFUSED || null;
+      const joinRefused = window.ARENA_JOIN_REFUSED || null;
       // THE COUNT RUNS FROM THE SIGNER NODE, not only from this page's own payment: a
       // payment that lands after payStake gave up would otherwise never be
       // counted. Started once; stopped at N >= T, at the run's end, or on close.
@@ -749,19 +749,19 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
           donationPaying = true;
           window.ARENA_DONATION_PAID = { state: 'paying' };
           c.payDonation(c.joinedEntry, window.ARENA_DONATION_SET, {
-            round: window.BLWP_ROUND, payWith: window.ARENA_PLAYER_PAYER, log: spent, storage: window.sessionStorage, fetcher: donationFetch,
+            round: window.ARENA_ROUND, payWith: window.ARENA_PLAYER_PAYER, log: spent, storage: window.sessionStorage, fetcher: donationFetch,
           }).then((said) => {
-            window.ARENA_DONATION_PAID = BLWPCLIENT.donationPaidState(window.ARENA_DONATION_SET, said);
+            window.ARENA_DONATION_PAID = ARENACLIENT.donationPaidState(window.ARENA_DONATION_SET, said);
             paintWallet(); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
           }).catch((e) => { window.ARENA_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
         } else if (heldWallet.ok) {
           donationPaying = true;
           window.ARENA_DONATION_PAID = { state: 'paying' };
           c.payDonation(c.joinedEntry, window.ARENA_DONATION_SET, {
-            round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent, storage: window.sessionStorage,
+            round: window.ARENA_ROUND, connection: heldWallet, curve: window.ARENA_CURVE, log: spent, storage: window.sessionStorage,
             random: (n) => crypto.getRandomValues(new Uint8Array(n)), fetcher: donationFetch,
           }).then((said) => {
-            window.ARENA_DONATION_PAID = BLWPCLIENT.donationPaidState(window.ARENA_DONATION_SET, said);
+            window.ARENA_DONATION_PAID = ARENACLIENT.donationPaidState(window.ARENA_DONATION_SET, said);
             paintWallet();
           }).catch((e) => { window.ARENA_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
         }
@@ -769,7 +769,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       if (c && c.watchStake && c.joinedEntry && window.ARENA_STAKE && window.ARENA_STAKE.signerNodeKeys
           && !c.stakeWatch && !c.stakeCommitted && !c.ended && !c.stakeWatchStopped) {
         net.client.watchStake({
-          signerNodes: window.ARENA_STAKE.signerNodeKeys, nodes: window.ARENA_STAKE.nodes, contract: window.BLWP_ROUND,
+          signerNodes: window.ARENA_STAKE.signerNodeKeys, nodes: window.ARENA_STAKE.nodes, contract: window.ARENA_ROUND,
         }).catch((e) => console.error('[arena] stake count: ' + e.message));
       }
       const stake = window.ARENA_STAKE
@@ -777,8 +777,8 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
           seen: (net && net.client && net.client.stakeCount) || null,
         })
         : null;
-      const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ joined, others, stalled, at, refused, joinRefused, stake, names: window.ARENA_OTHER_NAMES || [] })
+      const who = (typeof ARENACLIENT !== 'undefined' && ARENACLIENT.playersLine)
+        ? ARENACLIENT.playersLine({ joined, others, stalled, at, refused, joinRefused, stake, names: window.ARENA_OTHER_NAMES || [] })
         : (joined ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not joined');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
@@ -794,30 +794,30 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     let namesBusy = false;
     const namesFetch = (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) }));
     async function exchangeNames() {
-      if (namesBusy || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.namesOf) return;
-      if (!window.BLWP_ROUND || !window.BLWP_ENTRY || !window.BLWP_CURVE) return;
+      if (namesBusy || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.namesOf) return;
+      if (!window.ARENA_ROUND || !window.ARENA_ENTRY || !window.ARENA_CURVE) return;
       namesBusy = true;
       const said = { posted: [], error: null };
       try {
-        const nodes = window.BLWP_NODES || [];
+        const nodes = window.ARENA_NODES || [];
         const left = nodes.filter((n) => !namesKept.has(n));
         if (left.length) {
           try {
-            const signed = BLWPCLIENT.nameRecordFor(window.BLWP_ROUND, { storage: window.sessionStorage,
-              random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE });
-            for (const s of await BLWPCLIENT.postName(signed, left, { fetcher: namesFetch })) {
+            const signed = ARENACLIENT.nameRecordFor(window.ARENA_ROUND, { storage: window.sessionStorage,
+              random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE });
+            for (const s of await ARENACLIENT.postName(signed, left, { fetcher: namesFetch })) {
               said.posted.push(s.node + ' ' + s.status);
               if (s.status === 201 || s.status === 200) namesKept.add(s.node);
             }
           } catch (e) { said.error = 'name: ' + e.message; console.error('[arena] name: ' + e.message); }
         }
         try {
-          const mine = window.BLWP_ENTRY.playerPubkey ? BLWPCLIENT.toHex(window.BLWP_ENTRY.playerPubkey) : null;
-          const all = await BLWPCLIENT.namesOf({ roundId: BLWPCLIENT.roundId(window.BLWP_ROUND), nodes, fetcher: namesFetch,
-            verify: (s, m, k) => !!window.BLWP_CURVE.verify(s, m, k) });
+          const mine = window.ARENA_ENTRY.playerPubkey ? ARENACLIENT.toHex(window.ARENA_ENTRY.playerPubkey) : null;
+          const all = await ARENACLIENT.namesOf({ roundId: ARENACLIENT.roundId(window.ARENA_ROUND), nodes, fetcher: namesFetch,
+            verify: (s, m, k) => !!window.ARENA_CURVE.verify(s, m, k) });
           window.ARENA_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
           // AND WHOSE NAME IS WHOSE, for the debug label over each ghost (2026-09-17 19:15).
-          window.BLWP_NAMES_BY_PLAYER = Object.fromEntries(all.map((x) => [x.player, x.name]));
+          window.ARENA_NAMES_BY_PLAYER = Object.fromEntries(all.map((x) => [x.player, x.name]));
         } catch (e) { said.error = 'names: ' + e.message; console.error('[arena] names: ' + e.message); }
       } finally {
         // WHAT THE LAST EXCHANGE DID, for a harness or a player's console.
@@ -841,7 +841,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     // from the next entry this page builds: an entry already made (the run going, or the next round's join held to its start) keeps
     // what it named, since every node replays the run from it - `from` says which.
     const addons = { owned: null, ownedFor: '', busy: '', said: '', bad: false, seq: 0, bought: null };
-    const addonsShop = () => { const chosen = window.ARENA_GAME_CHOSEN; return chosen && BLWPCLIENT.shopOf ? BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name) : null; };
+    const addonsShop = () => { const chosen = window.ARENA_GAME_CHOSEN; return chosen && ARENACLIENT.shopOf ? ARENACLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name) : null; };
     // 'after-next' when the round this page is joining - not started yet - already has its entry, else 'next': the next entry it builds
     window.ARENA_ADDONS_FROM = (join, entryRound) => (join && join.state === 'joining' && join.round && entryRound === join.round ? 'after-next' : 'next');
     async function addonsRead() {
@@ -866,7 +866,7 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       (async () => {
         const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
         if (got.ok) {
-          const from = window.ARENA_ADDONS_FROM(window.BLWP_JOIN, window.ARENA_ENTRY_ROUND);
+          const from = window.ARENA_ADDONS_FROM(window.ARENA_JOIN, window.ARENA_ENTRY_ROUND);
           addons.seq += 1; addons.bought = { seq: addons.seq, id: it.id, name: it.name, txid: String(got.txid || ''), from };
           addons.said = it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'; addons.bad = false;
           console.log('[arena] add-on bought in Unity: ' + it.id + ', tx ' + String(got.txid).slice(0, 16) + ', plays from ' + from);

@@ -80,7 +80,7 @@ test('Settings has the restore field wired to restoreSeed; the round page has no
   const card = page.slice(page.indexOf('id="arena-set-seed"'), page.indexOf('</section>', page.indexOf('id="arena-set-seed"')));
   assert.match(card, /<input id="arena-seed-restore" type="password"/);
   assert.match(card, /<button id="arena-seed-use" type="button">use my seed<\/button>/);
-  assert.match(page, /BLWPCLIENT\.restoreSeed\(\{ text, session: window\.sessionStorage, kept, now: Date\.now\(\), liveRun \}\)/);
+  assert.match(page, /ARENACLIENT\.restoreSeed\(\{ text, session: window\.sessionStorage, kept, now: Date\.now\(\), liveRun \}\)/);
   assert.match(page, /getElementById\('arena-seed-use'\)\.addEventListener\('click'/);
   const roundPage = page.slice(page.indexOf("const refundEl = document.getElementById('arena-refund')"), page.indexOf('refundEl.append(backup)') + 40);
   assert.ok(roundPage.length > 40, 'the round page block was not found');

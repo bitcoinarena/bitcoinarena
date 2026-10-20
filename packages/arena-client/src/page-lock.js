@@ -1238,7 +1238,7 @@ export function keptLockUse(kept, { entry = null, beforeStart = false, beforeClo
   if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
   // AND AFTER THE START, UNTIL THE ROUND CLOSES (2026-10-03: "a reload after the round has started ... That run must
   // not be lost"): the same entry, lock and session key, and the run is RESUMED from what the seats hold of it (the bridge
-  // replays the transcript and goes on from the adopted mark - blwp.jslib BLWP_RESUME). After the close only the collect.
+  // replays the transcript and goes on from the adopted mark - blwp.jslib ARENA_RESUME). After the close only the collect.
   if (!beforeStart && beforeClose && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: 'running' };
   return { use: 'staked', kept,
     why: `this tab's stake in this round is already locked and committed to entry ${String(kept.committedTo).slice(0, 16)}…: `

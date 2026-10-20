@@ -52,6 +52,6 @@ test('deposits, withdrawals and winnings are untouched; a donation with no stake
 
 test('the wallet history panel draws ledgerHistory, not the raw rows', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url).pathname, 'utf8');
-  assert.match(page, /const rows = BLWPCLIENT\.ledgerHistory\(BLWPCLIENT\.ledgerRows\(st, fed\)\)\.slice\(\)\.sort\(/);
-  assert.doesNotMatch(page, /const rows = BLWPCLIENT\.ledgerRows\(st, fed\)\.slice\(\)\.sort\(/);
+  assert.match(page, /const rows = ARENACLIENT\.ledgerHistory\(ARENACLIENT\.ledgerRows\(st, fed\)\)\.slice\(\)\.sort\(/);
+  assert.doesNotMatch(page, /const rows = ARENACLIENT\.ledgerRows\(st, fed\)\.slice\(\)\.sort\(/);
 });

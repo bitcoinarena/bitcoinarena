@@ -9,7 +9,7 @@
 // the second round at all, which is why neither was ever shown the other, and that is the owner's 12:02 shot.
 //
 // `arena.jslib` is the one file these suites cannot import - it is Emscripten glue, not a module - so what is checked
-// here is the same thing the ghost rules check: that the rule is written in it, and that every BLWPCLIENT function it
+// here is the same thing the ghost rules check: that the rule is written in it, and that every ARENACLIENT function it
 // leans on is actually exported by the bundle the page loads. A guard that calls an undefined function would throw in
 // the browser and nowhere else.
 import { test } from 'node:test';
@@ -24,7 +24,7 @@ test('the bridge closes a session whose round is not the one the page has joined
   // THE COMPARISON: the round the session is bound to against the round the page now names.
   assert.match(jslib, /Module\.blwpNet\.where && Module\.blwpNet\.where\.roundId/,
     'the bridge does not read which round its session is bound to');
-  assert.match(jslib, /BLWPCLIENT\.roundId\(window\.BLWP_ROUND\)/,
+  assert.match(jslib, /ARENACLIENT\.roundId\(window\.ARENA_ROUND\)/,
     'the bridge does not read which round the page has joined');
   // AND THE TEARDOWN, not a wait for a word that never comes.
   assert.match(jslib, /was\.close\(\)/, 'the bridge never closes the old client');
@@ -37,6 +37,6 @@ test('the bridge closes a session whose round is not the one the page has joined
 test('every client function that teardown leans on is exported by the bundle the page loads', () => {
   for (const name of ['roundId', 'toHex']) {
     assert.match(bundle, new RegExp(`${name}:\\s*${name}`),
-      `BLWPCLIENT.${name} is not exported, so the bridge's teardown would throw in a browser`);
+      `ARENACLIENT.${name} is not exported, so the bridge's teardown would throw in a browser`);
   }
 });

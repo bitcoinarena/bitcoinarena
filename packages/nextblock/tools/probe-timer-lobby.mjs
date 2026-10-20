@@ -12,7 +12,7 @@
 //
 // Everything is read from the page's own core - `unityInstance.Module.blwp.st.i32` - never from PhysX:
 //   i32[0]   tick        i32[19]  S_ELAPSED       i32[23]  S_STATE   0 LIVE 1 DELIVERED 2 WRECKED 3 MISSED
-// and the lobby from `window.BLWP_UNITY_LOBBY.showing`, the flag SplashScreen itself sets.
+// and the lobby from `window.ARENA_UNITY_LOBBY.showing`, the flag SplashScreen itself sets.
 //
 // The HUD clock is NOT read off the screen: it is `BlockClock.CoreSecondsLeft(elapsed)`, which after this letter
 // is `max(0, BLOCK_TICKS - elapsed) * 1092 / 65536`. That is the point of the letter - the clock IS the core's
@@ -53,11 +53,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const READ = `(function(){ var m = window.unityInstance && window.unityInstance.Module;
   var st = m && m.blwp && m.blwp.st;
-  var showing = !!(window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing);
+  var showing = !!(window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing);
   if (!st) return JSON.stringify({ core: false, showing: showing });
   var i = st.i32;
   return JSON.stringify({ core: true, tick: i[0], elapsed: i[19], state: i[23], showing: showing,
-                          assault: window.BLWP_UNITY_ASSAULT || null }); })()`;
+                          assault: window.ARENA_UNITY_ASSAULT || null }); })()`;
 
 const renderer = await ev(`(function(){var c=document.createElement('canvas');var g=c.getContext('webgl2')||c.getContext('webgl');
   if(!g) return 'none'; var e=g.getExtension('WEBGL_debug_renderer_info');
@@ -68,8 +68,8 @@ await call('Page.navigate', { url: URL_ });
 let ready = false;
 for (let i = 0; i < 45; i++) {
   await sleep(4000);
-  const showing = await ev('!!(window.BLWP_UNITY_LOBBY&&window.BLWP_UNITY_LOBBY.showing)');
-  const rows = await ev('(function(){try{var v=window.BLWP_LOBBY_VIEW&&window.BLWP_LOBBY_VIEW();return v?(v.rows||[]).length:0;}catch(e){return 0;}})()');
+  const showing = await ev('!!(window.ARENA_UNITY_LOBBY&&window.ARENA_UNITY_LOBBY.showing)');
+  const rows = await ev('(function(){try{var v=window.ARENA_LOBBY_VIEW&&window.ARENA_LOBBY_VIEW();return v?(v.rows||[]).length:0;}catch(e){return 0;}})()');
   if (showing === true && rows > 0) { console.log(`  lobby with ${rows} round(s) at t+${i * 4}s`); ready = true; break; }
 }
 if (!ready) { console.log('  NO LOBBY - stopping'); console.log(`  shot: ${await shot(TAG + '-nolobby.png')}`); process.exit(1); }

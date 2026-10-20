@@ -95,7 +95,7 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
 }
 
 /**
- * THIS ROUND'S COMMITTEES, AS THIS CLIENT DERIVES THEM. `curve`: the page's (BLWP_CURVE: bondTweakPoint, bondCombine, verify).
+ * THIS ROUND'S COMMITTEES, AS THIS CLIENT DERIVES THEM. `curve`: the page's (ARENA_CURVE: bondTweakPoint, bondCombine, verify).
  * Answers { ok, committees: { game, settlement }, beacon, census, headers: { from, agreed, firstHeight, count }, seats: [{ node,
  * agrees, why }] } or { ok: false, why }. `compare: false` skips asking the nodes' /committee.
  */

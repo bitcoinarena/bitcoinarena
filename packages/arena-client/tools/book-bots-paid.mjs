@@ -90,7 +90,7 @@ async function bot(name) {
     const took = await ev(`window.ARENA_GAME.market.order(${J(round)}, ${pick}, ${cents * TICK}, ${expiryMs}, ${stakeSat * 1000})`);
     let st = null;
     for (const stop = Date.now() + 240000; Date.now() < stop; await wait(400)) {
-      st = JSON.parse(await ev(`JSON.stringify({ join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: window.BLWP_JOIN.why } : null, picked: window.ARENA_PICKED || null, refused: window.BLWP_JOIN_REFUSED || null })`) || '{}');
+      st = JSON.parse(await ev(`JSON.stringify({ join: window.ARENA_JOIN ? { state: window.ARENA_JOIN.state, why: window.ARENA_JOIN.why } : null, picked: window.ARENA_PICKED || null, refused: window.ARENA_JOIN_REFUSED || null })`) || '{}');
       if (st.join && st.join.state === 'refused') break;
       if (st.picked && J(st.picked) !== before && st.join && st.join.state === 'picked') break;
     }

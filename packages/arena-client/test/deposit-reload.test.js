@@ -73,7 +73,7 @@ test('a reload after the start: no funding unless the kept lock answers new, the
   const { keptLockUse } = await import('../src/page-lock.js');
   assert.match(html, /if \(keptUseOf\(keptEarly\)\.use === 'new'\) funding = /, 'funding starts only for a lock made anew');
   assert.match(html, /beforeClose: Date\.now\(\) < closeMsOf\(\)/, 'the round\'s close bounds the resume');
-  assert.match(html, /if \(use\.resumed === 'running'\) \{\s*window\.BLWP_RESUME = \{ roundIdHex: named\.roundIdHex, entryIdHex: String\(use\.kept\.committedTo\)/);
+  assert.match(html, /if \(use\.resumed === 'running'\) \{\s*window\.ARENA_RESUME = \{ roundIdHex: named\.roundIdHex, entryIdHex: String\(use\.kept\.committedTo\)/);
   // a committed lock with no kept entry, running: staked - and staked is not 'new', so no funding either
   const kept = { committedTo: 'ee'.repeat(32) };
   assert.notEqual(keptLockUse(kept, { entry: null, beforeStart: false, beforeClose: true }).use, 'new');
@@ -82,10 +82,10 @@ test('a reload after the start: no funding unless the kept lock answers new, the
 
 // AND ITS ADDRESS STAYS WHILE IT CATCHES UP: the run-end handler, run on a fake tab.
 test('the run-end handler leaves a resumed round\'s address until that run ends, or its round closes', () => {
-  const a = unity.indexOf('    window.BLWP_RUN_OVER = (word, run) => {');
+  const a = unity.indexOf('    window.ARENA_RUN_OVER = (word, run) => {');
   const b = unity.indexOf('      window.ARENA_RUN_ENDED = String(word || \'\');', a);
   assert.ok(a > 0 && b > a);
-  const body = unity.slice(a, b).replace('    window.BLWP_RUN_OVER = (word, run) => {', '');
+  const body = unity.slice(a, b).replace('    window.ARENA_RUN_OVER = (word, run) => {', '');
   const runOver = (win, run) => {
     const location = { pathname: '/', search: '?round=aa&play=1' };
     const history = { replaceState: (_s, _t, url) => { const i = url.indexOf('?'); location.search = i < 0 ? '' : url.slice(i); } };
@@ -94,10 +94,10 @@ test('the run-end handler leaves a resumed round\'s address until that run ends,
     return location.search;
   };
   const later = Date.now() + 60000;
-  assert.equal(runOver({ BLWP_RESUME: { roundIdHex: 'aa', caughtUp: false, closeMs: later } }, null), '?round=aa&play=1', 'catching up: stays');
-  assert.equal(runOver({ BLWP_RESUME: { roundIdHex: 'aa', caughtUp: true, closeMs: later } }, { roundHex: 'bb' }), '?round=aa&play=1', 'another run\'s end: stays');
-  const w = { BLWP_RESUME: { roundIdHex: 'aa', caughtUp: true, closeMs: later } };
+  assert.equal(runOver({ ARENA_RESUME: { roundIdHex: 'aa', caughtUp: false, closeMs: later } }, null), '?round=aa&play=1', 'catching up: stays');
+  assert.equal(runOver({ ARENA_RESUME: { roundIdHex: 'aa', caughtUp: true, closeMs: later } }, { roundHex: 'bb' }), '?round=aa&play=1', 'another run\'s end: stays');
+  const w = { ARENA_RESUME: { roundIdHex: 'aa', caughtUp: true, closeMs: later } };
   assert.equal(runOver(w, { roundHex: 'aa' }), '', 'the resumed run itself ended: the lobby\'s address');
-  assert.equal(w.BLWP_RESUME, null, 'and the resume is over');
-  assert.equal(runOver({ BLWP_RESUME: { roundIdHex: 'aa', caughtUp: false, closeMs: Date.now() - 1 } }, null), '', 'its round closed');
+  assert.equal(w.ARENA_RESUME, null, 'and the resume is over');
+  assert.equal(runOver({ ARENA_RESUME: { roundIdHex: 'aa', caughtUp: false, closeMs: Date.now() - 1 } }, null), '', 'its round closed');
 });

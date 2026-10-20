@@ -34,6 +34,6 @@ test('the probe runs every 30 s, not every 2 s', () => {
 // in 3 min - while the player drove): the paint loop skips while joined with Unity's lobby down, until LOBBY_IN_RUN_MS since the last
 test('the lobby paint waits 30 s while the player is in a run', () => {
   assert.match(html, /const LOBBY_IN_RUN_MS = 30000;/);
-  assert.match(html, /const inRun = \(\) => !!\(window\.BLWP_JOIN && window\.BLWP_JOIN\.state === 'joined' && window\.BLWP_UNITY_LOBBY && window\.BLWP_UNITY_LOBBY\.showing === false\);/);
+  assert.match(html, /const inRun = \(\) => !!\(window\.ARENA_JOIN && window\.ARENA_JOIN\.state === 'joined' && window\.ARENA_UNITY_LOBBY && window\.ARENA_UNITY_LOBBY\.showing === false\);/);
   assert.match(html, /setInterval\(\(\) => \{ if \(painting\) return; if \(inRun\(\) && Date\.now\(\) - \(window\.ARENA_LOBBY_PAINTED_AT \|\| 0\) < LOBBY_IN_RUN_MS\) return;/);
 });

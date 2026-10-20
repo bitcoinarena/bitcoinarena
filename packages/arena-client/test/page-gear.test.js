@@ -27,10 +27,10 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
   const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 430, height: 932 }) };
   // the backup warning sits in the loading screen: it is gone with #boot
   const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'arena-backup-warn' && !boot ? null : els[id] || null) };
-  const window = { BLWP_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
-  const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
-  pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
-    document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
+  const window = { ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
+  const ARENACLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
+  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
+    document, window, ARENACLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
   return { money: els['arena-money'].style.display, warn: boot ? els['arena-backup-warn'].style.display : 'gone', balance: els['arena-lobby-balance'].style.display };
 }
 

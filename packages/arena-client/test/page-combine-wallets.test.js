@@ -54,7 +54,7 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     return JSON.stringify({ state });
   };
   const opened = [];
-  const BLWPCLIENT = {
+  const ARENACLIENT = {
     toHex: (b) => (typeof b === 'string' ? b : Buffer.from(b).toString('hex')),
     fromHex: (h) => h,
     phraseWalletEntries: (_L, h, _f, { ancestor = false } = {}) => { const w = (ancestor ? ancestors : wallets).get(h); return w ? w.entries : 0; },
@@ -64,8 +64,8 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
   const locked = [];
   const navigator = { locks: { request: async (name, _o, fn) => { locked.push(name); return fn(heldLocks.some((h) => name === 'arena.phrase.' + h.slice(0, 16)) ? null : { name }); } } };
   const sessionStorage = { getItem: (k) => (k === 'arena.player.seed' ? SEEDS.cur : null) };
-  const combineWallets = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
-    SRC, 'return combineWallets;')(() => proxy, sessionStorage, BLWPCLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
+  const combineWallets = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'sessionStorage', 'ARENACLIENT', 'window', 'navigator', 'paintMoney', 'console'],
+    SRC, 'return combineWallets;')(() => proxy, sessionStorage, ARENACLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
   const run = () => combineWallets(main, { federation: 'fed1invite' }, { federationId: FED });
   const pendingKeys = () => [...store.keys()].filter((k) => k.startsWith('arena.ecash.pending.'));
   return { run, main, wallets, ancestors, log, opened, locked, store, pendingKeys,

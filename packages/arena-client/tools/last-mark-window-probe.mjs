@@ -74,8 +74,8 @@ try {
   // A FREE ROUND'S ENTRY rolls its stake commitment first, then its world.
   let rolls = 0;
   const pageRandom = (n) => { if (n === 32) { rolls++; if (rolls === 2) return worldSecret; } return random(n); };
-  const BLWP_ENTRY = CLIENT.entryFor(withId, { seed, curve: pageCurve, playerPubkey: player.pubkey, random: pageRandom });
-  if (toHex(BLWP_ENTRY.worldSecret) !== toHex(worldSecret)) throw new Error('the page did not take the rolled world');
+  const ARENA_ENTRY = CLIENT.entryFor(withId, { seed, curve: pageCurve, playerPubkey: player.pubkey, random: pageRandom });
+  if (toHex(ARENA_ENTRY.worldSecret) !== toHex(worldSecret)) throw new Error('the page did not take the rolled world');
   say_({ step: 'round', round: named.roundIdHex.slice(0, 16), nodes: named.nodes, expected });
 
   // index.html's wrapper of Client.at: every node the round named, for delivery.
@@ -84,7 +84,7 @@ try {
     { ...opts, verify: (sig, msg, key) => !!pageCurve.verify(sig, msg, key) });
   let deliveredAt = null; let bBackAt = null;
   const hookCalls = [];
-  const win = { location: { search: new URL(round.url).search }, BLWP_RUN_OVER: (word) => {
+  const win = { location: { search: new URL(round.url).search }, ARENA_RUN_OVER: (word) => {
     hookCalls.push({ word: String(word), ms: Date.now() });
     if (deliveredAt === null) {
       deliveredAt = Date.now(); round.b.close();
@@ -95,8 +95,8 @@ try {
   Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
   const src = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
   const globals = { Module, HEAP32: heap, UTF8ToString: () => named.nodes[0], window: win, console, crypto, BLWP: coreDist,
-    BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve, BLWP_ROUND: named.round, BLWP_ENTRY, BLWP_NODES: named.nodes,
-    BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert };
+    ARENACLIENT: CLIENT, ARENA_CURVE: pageCurve, ARENA_ROUND: named.round, ARENA_ENTRY, ARENA_NODES: named.nodes,
+    ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert };
   const names = Object.keys(globals);
   const load = (helpers) => { let lib = null; const hn = Object.keys(helpers);
     new Function('mergeInto', 'LibraryManager', ...hn, ...names, src)((_t, obj) => { lib = obj; }, { library: {} },

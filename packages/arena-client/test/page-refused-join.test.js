@@ -22,7 +22,7 @@ const pageWith = (window) => pageFunction(new URL('../../../src/arena-ui/index.h
 test('a join refused while it is held to its start does not go on: cancelled, refused, and no longer the join that goes on', () => {
   const w = pageWith({ ARENA_LOBBY: [] });
   const join = { state: 'joining', round: '49a50535'.padEnd(64, '0'), held: true, loaded: true, stage: 'next round starts in 0:15' };
-  w.BLWP_JOIN = join;
+  w.ARENA_JOIN = join;
   assert.equal(w.ARENA_JOIN_GOES_ON(join), true, 'a join going on is not seen as going on');
   const back = w.ARENA_REFUSED_JOIN('the node refused the round: at census height 155088 this network\'s donation set in force is serial 3');
   assert.equal(back, join, 'the refusal is not on the join the page holds');
@@ -38,9 +38,9 @@ test('a join refused while it is held to its start does not go on: cancelled, re
 test('a join that is no longer the page\'s join, or cancelled by time, does not go on', () => {
   const w = pageWith({ ARENA_LOBBY: [] });
   const join = { state: 'joining' };
-  w.BLWP_JOIN = { state: 'joining' };
+  w.ARENA_JOIN = { state: 'joining' };
   assert.equal(w.ARENA_JOIN_GOES_ON(join), false);
-  w.BLWP_JOIN = join; join.cancelled = true;
+  w.ARENA_JOIN = join; join.cancelled = true;
   assert.equal(w.ARENA_JOIN_GOES_ON(join), false);
 });
 
@@ -52,15 +52,15 @@ test('the hold\'s release asks ARENA_JOIN_GOES_ON before it sets "joined"; the j
 });
 
 // AND A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED BEFORE ANY LOCK: the donation-set step of
-// the join refuses on "donation set in force" and returns, ahead of BLWPCLIENT.lockStake.
+// the join refuses on "donation set in force" and returns, ahead of ARENACLIENT.lockStake.
 test('the join refuses on "donation set in force" at its donation-set step, before the stake lock', () => {
   const step = PAGE.indexOf("const ds = await joinStep('fetchDonationSet'");
   const refusal = PAGE.indexOf('/donation set in force/.test(String(ds.why))', step);
-  const lock = PAGE.indexOf('await BLWPCLIENT.lockStake(', step);
+  const lock = PAGE.indexOf('await ARENACLIENT.lockStake(', step);
   assert.ok(step > 0 && lock > step, 'the join has no donation-set step ahead of its lock');
   assert.ok(refusal > step && refusal < lock, 'no refusal on "donation set in force" between the donation-set step and the lock');
   const branch = PAGE.slice(refusal, PAGE.indexOf('else { window.ARENA_DONATION_SET_WHY', refusal));
-  assert.match(branch, /window\.BLWP_JOIN_REFUSED = 'the signer nodes refuse this round: '/);
+  assert.match(branch, /window\.ARENA_JOIN_REFUSED = 'the signer nodes refuse this round: '/);
   assert.match(branch, /return;/);
 });
 

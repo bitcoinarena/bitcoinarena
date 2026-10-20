@@ -104,7 +104,7 @@ function liftSeason({ observer } = {}) {
   const setTimeout = (f, ms) => { const id = nextTimer++; timers.set(id, { f, ms }); return id; };
   const clearTimeout = (id) => { timers.delete(id); };
   const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ARENA_ROUTED_URL: (u) => u.replace('https://', 'https://r.') };
-  pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'fetch', 'setTimeout', 'clearTimeout', 'AbortSignal', 'IntersectionObserver'], SEASON)(
+  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'fetch', 'setTimeout', 'clearTimeout', 'AbortSignal', 'IntersectionObserver'], SEASON)(
     dom.document, window, BUNDLE, fetch, setTimeout, clearTimeout, { timeout: () => undefined }, observer);
   const fire = async () => { const [[id, t]] = [...timers]; timers.delete(id); t.f(); await settle(); };
   return { ...dom, window, asked, timers, fire, pending, hold };

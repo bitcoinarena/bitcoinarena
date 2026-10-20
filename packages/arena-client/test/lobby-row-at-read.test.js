@@ -31,7 +31,7 @@ test('a join held on X keeps X; a join held on nothing listed leaves the pick', 
   assert.deepEqual(paid(lobbyRowsAt(rows, NOW, 'gone')), ['X']);
 });
 
-// A JOIN HELD ON A ROUND WHOSE ENTRY HAS CLOSED (a run's end, then "exit game", leaves BLWP_JOIN "joined" on the played round)
+// A JOIN HELD ON A ROUND WHOSE ENTRY HAS CLOSED (a run's end, then "exit game", leaves ARENA_JOIN "joined" on the played round)
 // is not the row: measured on 0.0.2741 at 02:09Z, the held closed round 867446ac stayed the row ("closes in 0:00", not
 // joinable) for as long as the nodes listed it, while 28a9d681 was open.
 test('a join held on a round whose entry has closed does not keep it: the row is the round still open', () => {
@@ -60,7 +60,7 @@ test('at every instant of the series the row read is the soonest round whose ent
   }
 });
 
-// THE PAGE: the row Unity reads (BLWP_LOBBY_VIEW) and PLAY's row (ARENA_LOBBY) are picked by lobbyRowsAt at the read's own
+// THE PAGE: the row Unity reads (ARENA_LOBBY_VIEW) and PLAY's row (ARENA_LOBBY) are picked by lobbyRowsAt at the read's own
 // Date.now() - not the last paint's pick - and nothing in the pick depends on the wallet's balance (no lead).
 test('the page picks the paid row when Unity reads it, with no lead', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url).pathname, 'utf8');
@@ -68,8 +68,8 @@ test('the page picks the paid row when Unity reads it, with no lead', () => {
   const unity = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url).pathname, 'utf8');
   const view = unity.slice(unity.indexOf('function unityLobbyView('), unity.indexOf('refused: refused.map(String)', unity.indexOf('function unityLobbyView(')));
   assert.ok(view.length > 0, 'unityLobbyView not found');
-  assert.match(page, /window\.BLWP_LOBBY_VIEW = \(\) => unityLobbyView\(\{ me, lobbyNow, /, 'the lobby hands Unity\'s view its own lobbyNow');
+  assert.match(page, /window\.ARENA_LOBBY_VIEW = \(\) => unityLobbyView\(\{ me, lobbyNow, /, 'the lobby hands Unity\'s view its own lobbyNow');
   assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
-  assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
+  assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = ARENACLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
   assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');
 });

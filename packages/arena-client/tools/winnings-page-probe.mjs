@@ -209,8 +209,8 @@ try {
   let rolled = false;
   const pageRandom = (n) => { if (n === 32 && !rolled) { rolled = true; return worldSecret; } return random(n); };
   // `entryFor` rolls the stake commitment only for an unstaked entry; with a stake, its first 32-byte roll is the world.
-  const BLWP_ENTRY = CLIENT.entryFor(withId, { seed, curve: pageCurve, playerPubkey: player.pubkey, random: pageRandom, stake, claimKey, stakeLock, donationMsat: 0n });
-  if (toHex(BLWP_ENTRY.worldSecret) !== toHex(worldSecret)) throw new Error('the page did not take the rolled world');
+  const ARENA_ENTRY = CLIENT.entryFor(withId, { seed, curve: pageCurve, playerPubkey: player.pubkey, random: pageRandom, stake, claimKey, stakeLock, donationMsat: 0n });
+  if (toHex(ARENA_ENTRY.worldSecret) !== toHex(worldSecret)) throw new Error('the page did not take the rolled world');
   say_({ step: 'locked', outpoint: `${toHex(made.outpoint.txid).slice(0, 16)}:${made.outpoint.outIdx}`, feeLock: !!made.feeLock });
 
   // ---- A LOSER BESIDE IT, played directly (the probe's way), with its own lock client. ----
@@ -290,7 +290,7 @@ try {
   const hookCalls = [];
   const asks = [];
   let deliveredAt = null;
-  const pageHook = (word, runInfo) => {                       // index.html's BLWP_RUN_OVER, its winnings half
+  const pageHook = (word, runInfo) => {                       // index.html's ARENA_RUN_OVER, its winnings half
     hookCalls.push({ word: String(word), run: runInfo && { word: runInfo.word, score: runInfo.score, minScore: runInfo.minScore } });
     // W: SIGNER NODE B STOPS THE MOMENT THE CORE SAYS DELIVERED - the finish's last batches and final mark still on
     // their way - and comes back 7 s later (§10's window, ruled 2026-09-23: a 7 s outage fits inside it).
@@ -310,10 +310,10 @@ try {
     { ...opts, verify: (sig, msg, key) => !!pageCurve.verify(sig, msg, key), stakeLock });
   const heap = new Int32Array(64);
   const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
-  const win = { location: { search: new URL(round.url).search }, BLWP_RUN_OVER: pageHook };
+  const win = { location: { search: new URL(round.url).search }, ARENA_RUN_OVER: pageHook };
   const src = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
-  const globals = { Module, HEAP32: heap, UTF8ToString: () => named.nodes[0], window: win, console, crypto, BLWP: coreDist, BLWPCLIENT: CLIENT,
-    BLWP_CURVE: pageCurve, BLWP_ROUND: named.round, BLWP_ENTRY, BLWP_NODES: named.nodes, BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert };
+  const globals = { Module, HEAP32: heap, UTF8ToString: () => named.nodes[0], window: win, console, crypto, BLWP: coreDist, ARENACLIENT: CLIENT,
+    ARENA_CURVE: pageCurve, ARENA_ROUND: named.round, ARENA_ENTRY, ARENA_NODES: named.nodes, ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert };
   const names = Object.keys(globals);
   const load = (helpers) => { let lib = null; const hn = Object.keys(helpers);
     new Function('mergeInto', 'LibraryManager', ...hn, ...names, src)((_t, obj) => { lib = obj; }, { library: {} },
