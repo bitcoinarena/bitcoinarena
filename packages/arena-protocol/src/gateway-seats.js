@@ -55,7 +55,8 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
 /**
  * THE EPOCH'S GATEWAY SEATS. `candidates` [{ node (32-byte key), operatorId, seatedGuardian, registered, volumeSats, inboundSats, outboundSats, pegInSats,
  * availabilityPct, bondSats }]; `beacon` the epoch's first block hash (32 bytes); `incumbents` node keys hex seated last epoch;
- * `network`; `bondMinGuardian`. Answers { seated: [node hex], ranked: [{ node, ... }], ineligible: [{ node, why }], empty, why }.
+ * `network`; `bondMinGuardian`. Answers { seated: [node hex], ranked: [{ node, ... }], ineligible: [{ node, why }], waiting: [{ node, why }],
+ * belowMinimums: [node hex], empty, why }.
  */
 export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS }) {
   if (!(beacon instanceof Uint8Array) || beacon.length !== 32) throw new TypeError('the epoch is ranked on its first block\'s hash');
@@ -77,8 +78,12 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
     : a.availability !== b.availability ? (a.availability > b.availability ? -1 : 1) : a.bond !== b.bond ? (a.bond > b.bond ? -1 : 1)
     : a.ticket < b.ticket ? -1 : a.ticket > b.ticket ? 1 : 0);
   // one seat per operator: its best node stands for it
-  const byOp = new Map();
-  for (const c of eligible.sort(cmp)) { const op = String(c.operatorId || c.nodeHex); if (!byOp.has(op)) byOp.set(op, c); }
+  const byOp = new Map(), waiting = [];
+  for (const c of eligible.sort(cmp)) {
+    const op = String(c.operatorId || c.nodeHex);
+    if (!byOp.has(op)) byOp.set(op, c);
+    else waiting.push({ node: c.nodeHex, why: `the same operator as ${byOp.get(op).nodeHex.slice(0, 10)}, whose node stands for it (one seat per operator)` });
+  }
   const ranked = [...byOp.values()];
   // INCUMBENTS STAY unless ineligible or out-routed by 25 %: the seats are the top `seats`, then an unseated incumbent takes back the
   // place of the lowest newcomer that did not route 25 % more than it
@@ -93,7 +98,9 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
   const belowMinimums = [];
   if (!seated.length && seats >= 1 && serving.length) { const best = serving.sort(cmp)[0]; seated = [best]; belowMinimums.push(best.nodeHex); }
   const out = seated.map((c) => c.nodeHex);
-  return { seated: out, empty: Math.max(0, seats - out.length), belowMinimums,
+  // ELIGIBLE AND WAITING (kanban #552: the page lists what each gateway still waits for): behind its operator's better node, or ranked below the seats
+  for (const c of ranked) if (!out.includes(c.nodeHex)) waiting.push({ node: c.nodeHex, why: 'eligible, ranked below the seated gateways' });
+  return { seated: out, empty: Math.max(0, seats - out.length), belowMinimums, waiting,
     ranked: ranked.map(({ nodeHex, volume, capacity, availability, bond }) => ({ node: nodeHex, volume, capacity, availability, bond })), ineligible,
     why: `${out.length} of ${seats} gateway seats filled from ${ranked.length} eligible operator${ranked.length === 1 ? '' : 's'}${ineligible.length ? `, ${ineligible.length} not eligible` : ''}`
       + (belowMinimums.length ? `; ${belowMinimums[0].slice(0, 10)} holds the seat below the minimums (a federation is never without a gateway)` : '') };

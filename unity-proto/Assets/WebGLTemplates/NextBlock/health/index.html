@@ -46,6 +46,7 @@
   <div class="card"><h2>Capacity</h2><div class="facts" id="capacity"></div></div>
   <div class="card"><h2>Federations</h2><div class="scroll"><table id="feds"></table></div></div>
   <div class="card"><h2>Gateway seats</h2><div class="scroll"><table id="gateways"></table></div></div>
+  <div class="card"><h2>Pending gateways</h2><div class="scroll"><table id="gw-pending"></table></div></div>
   <div class="card"><h2>Liquidity providers</h2><div class="scroll"><table id="liquidity"></table></div></div>
   <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll"><table id="lnd"></table></div></div>
   <div class="card"><h2>Games and markets</h2><div class="scroll"><table id="games"></table></div></div>
@@ -231,7 +232,26 @@
   }
 
   async function paintGateways(feds, seats, nodes) {
-    const rows = [];
+    const rows = [], pending = [];
+    // PENDING GATEWAYS (kanban #552, the owner 2026-10-20: "display the pending gateways that still have pegins confirming (along with their
+    // confirmation) or are pending in some other way"): every gateway a federation's seat measured that is not seated, or holds its seat
+    // below the minimums, with what it waits for; a peg-in still confirming shows its confirmations against the federation's finality
+    // (as its operator's claim states them) and about when it counts, a block taken as 10 minutes
+    function pendingRows(fed, b) {
+      const out = [], gws = b.gateways || {};
+      const pegs = (node) => ((gws[node] && gws[node].pending && gws[node].pending.pegIns) || []).map((p) => {
+        const fin = Number(p.finality) || 0, conf = Number(p.confirmations) || 0, left = Math.max(0, fin + 1 - conf), pc = fin ? Math.min(100, Math.round((100 * conf) / fin)) : 0;
+        const eta = left ? (left >= 6 ? `about ${Math.round(left / 6)} h` : `about ${left * 10} min`) : 'now';
+        return `<div>peg-in ${sat(p.sats)} sat · <b>${conf} of ${fin || '?'}</b> confirmations · counts in ${eta}
+          <span class="mono muted">${short(p.txid, 8)}:${esc(p.vout)}</span>
+          <div style="height:6px;background:var(--line,#333);border-radius:3px;margin-top:3px;max-width:240px"><div style="height:6px;width:${pc}%;background:var(--warn,#e0a020);border-radius:3px"></div></div></div>`;
+      }).join('');
+      const row = (node, c, what) => out.push(`<tr><td>${dot(c)}${fedName(fed)}</td><td class="mono">${short(node, 10)}</td><td class="wrap">${what}${pegs(node)}</td></tr>`);
+      for (const n of b.belowMinimums || []) row(n, 'warn', `holds the seat below the minimums: ${esc(((b.ineligible || []).find((x) => x.node === n) || {}).why || '')}`);
+      for (const x of b.ineligible || []) if (!(b.belowMinimums || []).includes(x.node)) row(x.node, 'bad', `not eligible: ${esc(x.why)}`);
+      for (const x of b.waiting || []) row(x.node, 'warn', `waits: ${esc(x.why)}`);
+      return out;
+    }
     for (const f of feds) {
       // A GUARDIAN SEAT RANKS ITS OWN FEDERATION ONLY (gateway-watch.js; the ?federation= is not read): the answer counts only from a
       // seat whose federationId is this one - the first seat that answers may guard the other federation
@@ -239,6 +259,7 @@
       for (const s of seats) { const a = await ask(s, '/gateway-seats?federation=' + f.federation); if (a.ok && a.body && a.body.federationId === f.federation) { g = { seat: s, ...a }; break; } }
       if (!g) { rows.push(`<tr><td>${dot('bad')}${fedName(f.federation)}</td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
       const b = g.body, seated = b.seated || [], need = Number(b.seats) || 2;   // 2 seats, 1 for a draining federation (hard rule, 2026-10-20)
+      pending.push(...pendingRows(f.federation, b));
       const c = seated.length >= need ? 'ok' : seated.length ? 'warn' : 'bad';
       rows.push(`<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(b.epoch)}</td><td>${seated.length} of ${need}</td>
         <td class="mono">${seated.map((s) => short(s.node || s, 10)).join(', ') || '-'}</td><td class="wrap muted">${esc(b.why || '')}</td></tr>`
@@ -249,6 +270,7 @@
     const claims = nodes.filter((n) => n.gw && n.gw.ok).map((n) => `<span class="tag mono">${short(n.node, 10)} · LND ${short(n.gw.body.lightningPubkey, 10)}</span>`).join('');
     $('gateways').innerHTML = '<tr><th>Federation</th><th>Epoch</th><th>Seated</th><th>Seats</th><th>Why</th></tr>' + (rows.join('') || '<tr><td colspan="5" class="muted">no federation</td></tr>')
       + `<tr><td colspan="5" class="wrap"><span class="muted">Nodes that claim a gateway: </span>${claims || '<span class="muted">none</span>'}</td></tr>`;
+    $('gw-pending').innerHTML = '<tr><th>Federation</th><th>Node</th><th>Waits for</th></tr>' + (pending.join('') || '<tr><td colspan="3" class="muted">no gateway waiting</td></tr>');
   }
 
   async function paintLiquidity(feds, nodes, tip) {

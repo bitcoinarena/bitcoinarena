@@ -34,14 +34,23 @@ test('each federation\'s gateway row is its own guardians\' answer, not the firs
   const at = script.indexOf('  async function paintGateways(');
   const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
   const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
-  const answers = { a1: { federationId: A, epoch: 1090, seated: ['01'.repeat(32)], why: 'A ranked' }, b1: { federationId: B, epoch: 1090, seated: [], why: 'B ranked' } };
+  const C = 'cc'.repeat(32), D = 'dd'.repeat(32), E = 'ee'.repeat(32);
+  const answers = { a1: { federationId: A, epoch: 1090, seated: ['01'.repeat(32)], why: 'A ranked', waiting: [{ node: E, why: 'the same operator as 0101010101, whose node stands for it (one seat per operator)' }] },
+    b1: { federationId: B, epoch: 1090, seated: [], why: 'B ranked', ineligible: [{ node: C, why: 'peg-in 0 below 50000 sat' }],
+      gateways: { [C]: { pending: { pegIns: [{ txid: 'f3'.repeat(32), vout: 1, sats: 55000, confirmations: 2, finality: 100 }] } } } } };
   const ask = async (s) => ({ ok: true, body: answers[s] });
-  const el = { innerHTML: '' };
-  const fn = new Function('ask', '$', 'dot', 'short', 'esc', 'fedName', src + '\nreturn paintGateways;')(ask, () => el, (c) => `[${c}]`, (x, n) => String(x).slice(0, n), (x) => String(x), (f) => `<span class="mono">${String(f).slice(0, 12)}</span>`);
+  const els = {};
+  const fn = new Function('ask', '$', 'dot', 'short', 'esc', 'fedName', 'sat', src + '\nreturn paintGateways;')(ask, (id) => (els[id] = els[id] || { innerHTML: '' }), (c) => `[${c}]`,
+    (x, n) => String(x).slice(0, n), (x) => String(x), (f) => `<span class="mono">${String(f).slice(0, 12)}</span>`, (x) => Number(x).toLocaleString('en-US'));
   await fn([{ federation: A }, { federation: B }], ['a1', 'b1'], []);
-  const rows = el.innerHTML.split('<tr>').filter((r) => r.includes('[ok]') || r.includes('[warn]') || r.includes('[bad]'));
+  const rows = els.gateways.innerHTML.split('<tr>').filter((r) => r.includes('[ok]') || r.includes('[warn]') || r.includes('[bad]'));
   assert.match(rows[0], /aaaaaaaaaaaa.*1 of 2.*A ranked/s);
   assert.match(rows[1], /bbbbbbbbbbbb.*0 of 2.*B ranked/s, 'B is ranked by a seat of B');
+  // PENDING GATEWAYS (kanban #552): what each one waits for, a peg-in with its confirmations against the finality and about when it counts
+  const pending = els['gw-pending'].innerHTML.split('<tr>').filter((r) => r.includes('[warn]') || r.includes('[bad]'));
+  assert.equal(pending.length, 2);
+  assert.match(pending[0], /\[warn\].*aaaaaaaaaaaa.*eeeeeeeeee.*waits: the same operator as 0101010101/s);
+  assert.match(pending[1], /\[bad\].*bbbbbbbbbbbb.*cccccccccc.*not eligible: peg-in 0 below 50000 sat.*peg-in 55,000 sat · <b>2 of 100<\/b> confirmations · counts in about 17 h.*f3f3f3f3:1.*width:2%/s);
 });
 
 test('the Capacity card: each federation\'s band in words, who is below B* and by how much, and the network with the install minimum', async () => {
