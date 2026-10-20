@@ -37,7 +37,7 @@ test('each federation\'s gateway row is its own guardians\' answer, not the firs
   const answers = { a1: { federationId: A, epoch: 1090, seated: ['01'.repeat(32)], why: 'A ranked' }, b1: { federationId: B, epoch: 1090, seated: [], why: 'B ranked' } };
   const ask = async (s) => ({ ok: true, body: answers[s] });
   const el = { innerHTML: '' };
-  const fn = new Function('ask', '$', 'dot', 'short', 'esc', src + '\nreturn paintGateways;')(ask, () => el, (c) => `[${c}]`, (x, n) => String(x).slice(0, n), (x) => String(x));
+  const fn = new Function('ask', '$', 'dot', 'short', 'esc', 'fedName', src + '\nreturn paintGateways;')(ask, () => el, (c) => `[${c}]`, (x, n) => String(x).slice(0, n), (x) => String(x), (f) => `<span class="mono">${String(f).slice(0, 12)}</span>`);
   await fn([{ federation: A }, { federation: B }], ['a1', 'b1'], []);
   const rows = el.innerHTML.split('<tr>').filter((r) => r.includes('[ok]') || r.includes('[warn]') || r.includes('[bad]'));
   assert.match(rows[0], /aaaaaaaaaaaa.*1 of 2.*A ranked/s);
@@ -52,14 +52,22 @@ test('the Capacity card: each federation\'s band in words, who is below B* and b
       guardianBonds: [1, 2, 3, 4, 5, 6, 7].map((i) => ({ node: String(i), bondSats: 50000n })), gateways: [{ node: '1', pegInSats: 20000n }] },
     { federation: 'bb'.repeat(32), status: 'OPEN', nominal: 7, reserveSats: '650000', exposureCapSats: '150000', guardianBonds: [], gateways: [] },
     { federation: 'cc'.repeat(32), status: 'OPEN', nominal: 7, reserveSats: '10000', exposureCapSats: '150000', guardianBonds: [], gateways: [] }] });
-  const at = script.indexOf('  function paintCapacity(cap) {');
+  const at = script.indexOf('  function paintCapacity(cap, feds = []) {');
   const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
   const el = { innerHTML: '' }; const window = {};
   const esc = (x) => String(x == null ? '' : x); const short = (h, n = 8) => String(h).slice(0, n);
   const sat = (v) => Number(v).toLocaleString('en-US'); const dot = (c) => `[${c}]`;
-  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', src + '\nreturn paintCapacity;')(() => el, esc, short, sat, dot, window)({ body: view });
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'fedNoOf', src + '\nreturn paintCapacity;')(() => el, esc, short, sat, dot, window, () => null)({ body: view });
   assert.match(el.innerHTML, /\[warn\]<b>PRESSURE<\/b> · filling up · OPEN - Federation aaaaaaaa holds 87 % of what its bonds cover\. Deposits stop at 100 %\. 7 of 7 guardians below the bond B\* = 86,667 sat - increase your bond by 36,667 sat \(Add to bond\)\. 1 gateway\(s\) below the peg-in P\* = 50,000 sat\./);
   assert.match(el.innerHTML, /\[bad\]<b>FULL<\/b> · deposits closed · OPEN - Deposits into bbbbbbbb are closed until bonds rise or a new federation is founded\./);
+  // kanban #553: a federation that takes no deposits (draining into its successor) has no band and no plea, its status and successor said
+  const drain = capacityView({ bondMinSats: 50000n, pegInMinSats: 50000n, federations: [{ federation: 'dd'.repeat(32), status: 'CRITICAL', nominal: 7, reserveSats: '108000', exposureCapSats: '150000',
+    guardianBonds: [1, 2, 3].map((i) => ({ node: String(i), bondSats: 50000n })), gateways: [] }] });
+  assert.deepEqual([drain.federations[0].band, drain.federations[0].guardiansBelowTarget.length], ['NOT_OPEN', 0]);
+  const el2 = { innerHTML: '' };
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'fedNoOf', src + '\nreturn paintCapacity;')(() => el2, esc, short, sat, dot, window, (f) => ({ ['dd'.repeat(32)]: 2, ['ee'.repeat(32)]: 3 })[f] || null)({ body: drain }, [{ federation: 'dd'.repeat(32), successor: 'ee'.repeat(32) }]);
+  assert.match(el2.innerHTML, /\[muted\]<b>CRITICAL<\/b> · takes no deposits - Federation 2 is draining into Federation 3: new deposits and rounds go there\./);
+  assert.doesNotMatch(el2.innerHTML, /increase your bond/);
   assert.match(el.innerHTML, /\[ok\]<b>CALM<\/b> · room left · OPEN - Federation cccccccc: 7 % of what its bonds cover\./);
   assert.match(el.innerHTML, /<b>Network: CALM<\/b> - the lowest-load OPEN federation cccccccc at 7 % · new installs bond at least 180,000 sat/);
   const none = { innerHTML: '' };

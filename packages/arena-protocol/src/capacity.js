@@ -64,14 +64,17 @@ export function capacityView({ federations, bondMinSats, pegInMinSats, was = {},
   const rows = (federations || []).map((x) => {
     const reserve = BigInt(x.reserveSats || 0), cap = BigInt(x.exposureCapSats || 0);
     const load = cap > 0n ? Number((reserve * 10000n) / cap) / 10000 : null;
-    const band = capacityBand(load, was[x.federation] || 'CALM');
+    // A FEDERATION THAT TAKES NO DEPOSITS (DRAINING, CRITICAL while draining, CLOSED, HALTED; kanban #553 health, 2026-10-20: B draining into
+    // 4dc88be7 showed "PRESSURE - increase your bond by 22,000 sat"): its load says nothing about room, so no band, no B*, no plea
+    const open = !x.status || x.status === 'OPEN';
+    const band = open ? capacityBand(load, was[x.federation] || 'CALM') : 'NOT_OPEN';
     const headroom = cap > reserve ? cap - reserve : 0n;
     const bStar = targetBond({ reserveSats: reserve, nominal: x.nominal || 1, bondMinSats });
     const pStar = targetPegIn({ headroomSats: headroom, pegInMinSats, seats: gatewaySeats });
     // a node named twice (two bond outputs, kanban #544) is one guardian with their sum
     const bonds = [...(x.guardianBonds || []).reduce((m, g) => m.set(g.node, (m.get(g.node) || 0n) + BigInt(g.bondSats || 0)), new Map())].map(([node, bondSats]) => ({ node, bondSats }));
-    const below = bonds.filter((g) => BigInt(g.bondSats || 0) < bStar).map((g) => ({ node: g.node, bondSats: String(g.bondSats), addSats: String(bStar - BigInt(g.bondSats || 0)) }));
-    const gwBelow = (x.gateways || []).filter((g) => BigInt(g.pegInSats || 0) < pStar).map((g) => ({ node: g.node, pegInSats: String(g.pegInSats), addSats: String(pStar - BigInt(g.pegInSats || 0)) }));
+    const below = !open ? [] : bonds.filter((g) => BigInt(g.bondSats || 0) < bStar).map((g) => ({ node: g.node, bondSats: String(g.bondSats), addSats: String(bStar - BigInt(g.bondSats || 0)) }));
+    const gwBelow = !open ? [] : (x.gateways || []).filter((g) => BigInt(g.pegInSats || 0) < pStar).map((g) => ({ node: g.node, pegInSats: String(g.pegInSats), addSats: String(pStar - BigInt(g.pegInSats || 0)) }));
     return { federation: x.federation, status: x.status, load, band, reserveSats: String(reserve), exposureCapSats: String(cap), headroomSats: String(headroom),
       targetBondSats: String(bStar), guardians: bonds.length, guardiansBelowTarget: below,
       targetPegInSats: String(pStar), gateways: (x.gateways || []).length, gatewaysBelowTarget: gwBelow };

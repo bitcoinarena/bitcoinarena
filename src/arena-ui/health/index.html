@@ -59,6 +59,12 @@
   const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
   const satMsat = (v) => (v == null ? '-' : Math.floor(Number(v) / 1000).toLocaleString('en-US'));
   const dot = (c) => `<span class="dot ${c}"></span>`;
+  // FEDERATIONS BY NUMBER (kanban #557, the owner 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
+  // it belongs, federation 1,2,3 or more"): 1, 2, 3 ... by the oldest record first, then by id - the same number on every card of the page
+  let FED_NO = new Map();
+  const numberFeds = (list) => { FED_NO = new Map([...(list || [])].sort((a, b) => (Number(a.height) - Number(b.height)) || String(a.federation).localeCompare(String(b.federation))).map((f, i) => [String(f.federation).toLowerCase(), i + 1])); };
+  const fedNoOf = (fid) => { const k = String(fid || '').toLowerCase(); for (const [id, n] of FED_NO) if (id === k || (k.length < 64 && id.startsWith(k))) return n; return null; };
+  const fedName = (fid) => { const n = fedNoOf(fid); return n ? `Federation ${n} <span class="muted mono">${short(fid, 8)}</span>` : `<span class="mono">${short(fid, 12)}</span>`; };
   const ASK_MS = 10000, AT_ONCE = 6;
   // A SEAT'S ADDRESS THROUGH daily.json's ROUTES, as the Arena page takes it (the longest host/path key wins): a seat that
   // advertises its tailnet name is reached at its public name
@@ -118,7 +124,8 @@
       paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
       paintNodes(nodes, tip);
       const fedList = feds ? feds.body.federations : [];
-      paintCapacity(await capP);
+      numberFeds(fedList); paintNodes(nodes, tip);
+      paintCapacity(await capP, fedList);
       paintFeds(fedList);
       await paintGateways(fedList, seats, nodes);
       await paintLiquidity(fedList, nodes, tip);
@@ -160,7 +167,7 @@
       const health = !v ? 'warn' : !v.ok ? 'bad' : n.serving === false || v.ms > 3000 ? 'warn' : 'ok';
       const proto = v && v.ok ? Math.max(...(v.body.protocols || [0])) : null;
       const bd = b && b.ok && b.body.bond ? b.body.bond : null, lock = b && b.ok ? b.body.lock : null;
-      const role = (n.roles || []).map((r) => `<span class="tag">${esc(r)}</span>`).join('') + (n.guardianOf && n.guardianOf.length ? `<span class="tag">guardian of ${n.guardianOf.map((f) => short(f, 6)).join(', ')}</span>` : '')
+      const role = (n.roles || []).map((r) => `<span class="tag">${esc(r)}</span>`).join('') + (n.guardianOf && n.guardianOf.length ? `<span class="tag">${n.guardianOf.map((f) => (fedNoOf(f) ? `federation ${fedNoOf(f)}` : `guardian of ${short(f, 6)}`)).join(', ')}</span>` : '')
         + (n.liq && n.liq.ok ? '<span class="tag">liquidity</span>' : '') + (n.gw && n.gw.ok ? '<span class="tag">gateway</span>' : '');
       return `<tr><td>${dot(health)}${i + 1}</td><td class="mono">${short(n.node, 12)}</td><td class="mono">${esc((n.base || '').replace(/^https?:\/\//, ''))}</td>
         <td>${!v ? '<span class="muted">asking …</span>' : v.ok ? v.ms + ' ms' : `<span class="bad">${esc((v.status || '') + ' ' + v.why)}</span>`}</td>
@@ -174,25 +181,31 @@
   // CAPACITY PRESSURE (spec §23A.3a, kanban #543): each federation's band from the seats' GET /capacity - how full it is against what its
   // bonds cover, the bond B* each guardian would need for 50 % load and who is below it, the gateways' peg-ins against P* - and the
   // network's band (the lowest-load OPEN federation's: new deposits go there) with the installer's minimum bond
-  function paintCapacity(cap) {
+  function paintCapacity(cap, feds = []) {
     const el = $('capacity');
     if (!cap || !cap.body || !cap.body.federations) { el.innerHTML = '<div class="muted">no seat answers /capacity yet</div>'; return; }
     const pct = (x) => (typeof x === 'number' ? Math.round(x * 100) + ' %' : '-');
-    const word = { CALM: ['ok', 'room left'], PRESSURE: ['warn', 'filling up'], CRITICAL: ['bad', 'deposits close soon'], FULL: ['bad', 'deposits closed'] };
+    const word = { CALM: ['ok', 'room left'], PRESSURE: ['warn', 'filling up'], CRITICAL: ['bad', 'deposits close soon'], FULL: ['bad', 'deposits closed'], NOT_OPEN: ['muted', 'takes no deposits'] };
     const lines = cap.body.federations.map((f) => {
       const [c, w] = word[f.band] || ['muted', f.band];
-      const say = f.band === 'FULL' ? `Deposits into ${short(f.federation, 8)} are closed until bonds rise or a new federation is founded.`
-        : f.band === 'CRITICAL' ? `Deposits into ${short(f.federation, 8)} will close soon (${pct(f.load)}).`
-        : f.band === 'PRESSURE' ? `Federation ${short(f.federation, 8)} holds ${pct(f.load)} of what its bonds cover. Deposits stop at 100 %.`
-        : `Federation ${short(f.federation, 8)}: ${pct(f.load)} of what its bonds cover.`;
+      // a federation not OPEN (draining into its successor, closed): no plea, its record's status said (kanban #553)
+      const succ = (feds || []).find((x) => x.federation === f.federation && x.successor);
+      const nm = (fid) => (fedNoOf(fid) ? `Federation ${fedNoOf(fid)}` : `Federation ${short(fid, 8)}`);
+      const into = (fid) => (fedNoOf(fid) ? `Federation ${fedNoOf(fid)}` : short(fid, 8));
+      const say = f.band === 'NOT_OPEN' ? `${nm(f.federation)} is ${['DRAINING', 'CRITICAL'].includes(f.status) ? 'draining' : esc(String(f.status).toLowerCase())}${succ ? ` into ${into(succ.successor)}: new deposits and rounds go there` : ''}.`
+        : f.band === 'FULL' ? `Deposits into ${into(f.federation)} are closed until bonds rise or a new federation is founded.`
+        : f.band === 'CRITICAL' ? `Deposits into ${into(f.federation)} will close soon (${pct(f.load)}).`
+        : f.band === 'PRESSURE' ? `${nm(f.federation)} holds ${pct(f.load)} of what its bonds cover. Deposits stop at 100 %.`
+        : `${nm(f.federation)}: ${pct(f.load)} of what its bonds cover.`;
       const below = (f.guardiansBelowTarget || []).length
         ? ` ${f.guardiansBelowTarget.length} of ${f.guardians} guardians below the bond B* = ${sat(f.targetBondSats)} sat - increase your bond by ${[...new Set(f.guardiansBelowTarget.map((g) => sat(g.addSats)))].join(' / ')} sat (Add to bond).` : '';
       const gw = (f.gatewaysBelowTarget || []).length ? ` ${f.gatewaysBelowTarget.length} gateway(s) below the peg-in P* = ${sat(f.targetPegInSats)} sat.` : '';
+      if (f.band === 'NOT_OPEN') return `<div>${dot(c)}<b>${esc(f.status)}</b> · ${esc(w)} - ${say}</div>`;
       return `<div>${dot(c)}<b>${esc(f.band)}</b> · ${esc(w)} · ${esc(f.status)} - ${say}${f.band === 'CALM' ? '' : esc(below + gw)} <span class="muted">room ${sat(f.headroomSats)} sat</span></div>`;
     });
     const n = cap.body.network || {};
     const [nc] = word[n.band] || ['muted'];
-    lines.push(`<div>${dot(nc)}<b>Network: ${esc(n.band || '-')}</b> - the lowest-load OPEN federation ${short(n.lowestFederation, 8)} at ${pct(n.lowestLoad)}`
+    lines.push(`<div>${dot(nc)}<b>Network: ${esc(n.band || '-')}</b> - the lowest-load OPEN federation ${n.lowestFederation ? (fedNoOf(n.lowestFederation) ? `(Federation ${fedNoOf(n.lowestFederation)})` : short(n.lowestFederation, 8)) : '-'} at ${pct(n.lowestLoad)}`
       + `${n.band && n.band !== 'CALM' ? ` · a bond of at least ${sat(n.targetBondSats)} sat puts a node first in line for the next federation` : ''}`
       + ` · new installs bond at least ${sat(n.installMinimumBondSats)} sat</div>`);
     el.innerHTML = lines.join('');
@@ -203,7 +216,7 @@
     const rows = list.map((f) => {
       const load = f.exposureCapSats ? Number(f.load || 0) : null;
       const st = String(f.status || ''), c = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
-      return `<tr><td>${dot(c)}<span class="mono">${short(f.federation, 12)}</span></td><td>${esc(st || '-')}</td><td>${sat(f.height)}</td>
+      return `<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(st || '-')}</td><td>${sat(f.height)}</td>
         <td>${Array.isArray(f.signers) ? f.signers.length : esc(f.signers)}</td><td>${sat(f.reserveSats)}</td><td>${sat(f.exposureCapSats)}</td>
         <td>${load == null ? '-' : `<span class="${load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok'}">${(load * 100).toFixed(0)} %</span>`}</td></tr>`;
     });
@@ -217,10 +230,10 @@
       // seat whose federationId is this one - the first seat that answers may guard the other federation
       let g = null;
       for (const s of seats) { const a = await ask(s, '/gateway-seats?federation=' + f.federation); if (a.ok && a.body && a.body.federationId === f.federation) { g = { seat: s, ...a }; break; } }
-      if (!g) { rows.push(`<tr><td>${dot('bad')}<span class="mono">${short(f.federation, 12)}</span></td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
+      if (!g) { rows.push(`<tr><td>${dot('bad')}${fedName(f.federation)}</td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
       const b = g.body, seated = b.seated || [];
       const c = seated.length >= 2 ? 'ok' : seated.length ? 'warn' : 'bad';
-      rows.push(`<tr><td>${dot(c)}<span class="mono">${short(f.federation, 12)}</span></td><td>${esc(b.epoch)}</td><td>${seated.length} of 2</td>
+      rows.push(`<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(b.epoch)}</td><td>${seated.length} of 2</td>
         <td class="mono">${seated.map((s) => short(s.node || s, 10)).join(', ') || '-'}</td><td class="wrap muted">${esc(b.why || '')}</td></tr>`
         // THE RUNNING EPOCH (kanban #552): the seats rank the last whole epoch; what this one would seat, and from which block
         + (b.next ? `<tr><td></td><td class="muted">${esc(b.next.epoch)}</td><td class="muted">${(b.next.seated || []).length} of 2</td>
