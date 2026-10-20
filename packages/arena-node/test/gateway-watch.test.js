@@ -155,3 +155,46 @@ test('a draining federation needs one gateway seat: "1 of 1" seated from one ope
   const w = await o.view();
   assert.deepEqual([w.seats, w.seated.length, w.empty], [2, 1, 1]);
 });
+
+// kanban #559 (the owner 2026-10-20: "Fix all of it. and also rotate the guardians daily every 144 blocks"): the routed volume, the stream's
+// index and the seats ranked per epoch outlive a restart; the seats rotate, last epoch's holders stepping back
+test('volume, stream index and the seats of each epoch outlive a restart; the seats rotate every epoch', async () => {
+  const probes = new Map(); let state = null;
+  const keep = { load: async (f) => Object.fromEntries([...probes].filter(([k]) => k.startsWith(f)).map(([k, v]) => [k.split(':')[1], v])),
+    save: async (f, e, rows) => { probes.set(`${f}:${e}`, JSON.parse(JSON.stringify(rows))); },
+    state: { load: async () => (state ? JSON.parse(state) : null), save: async (f, st) => { state = JSON.stringify(st); } } };
+  const claims = { 0: claimOf(0), 1: claimOf(1), 2: claimOf(2), 3: claimOf(3) };
+  const mk = { 0: '02' + '10'.repeat(32), 1: '02' + '11'.repeat(32), 2: '02' + '12'.repeat(32), 3: '02' + '13'.repeat(32) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return { status: 200, json: async () => claims[seat[1]] };
+    const gw = /^https:\/\/n(\d)\.example\/gateway\/routing_info$/.exec(url);
+    return { status: 200, text: async () => JSON.stringify({ module_public_key: mk[gw[1]] }) };
+  };
+  const stream = [{ refundPk: mk[0], amountMsat: 1n }, { refundPk: mk[0], amountMsat: 40_000_000n }, { refundPk: mk[1], amountMsat: 30_000_000n }, { refundPk: mk[2], amountMsat: 2_000_000n }];
+  let shown = 1; const asked = [];
+  const incoming = async (from) => { asked.push(from); return { ok: true, contracts: stream.slice(from, shown), next: shown }; };
+  let height = 144 * 30 + 10, signed = {};
+  const make = () => createGatewayWatch({ federationId: async () => fid, seated: async () => keys.map((k) => k.hex), entries: async () => entries, tip: async () => height,
+    beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher, incoming, keep, seatingFor: async (f, e) => signed[e] || null });
+  const a = make();
+  await a.probe(); shown = 3; await a.probe();
+  const b = make();                                              // a restart within the epoch
+  shown = 4; await b.probe();
+  assert.deepEqual(asked, [0, 1, 3], 'the stream is read on from the kept index, not from 0 again');
+  const v = await b.view();
+  assert.deepEqual([v.gateways[keys[0].hex].volumeSats, v.gateways[keys[1].hex].volumeSats, v.gateways[keys[2].hex].volumeSats], ['40000', '30000', '2000'], 'the volume before the restart counted');
+  assert.deepEqual(v.seated, [keys[0].hex, keys[1].hex], 'the running epoch: the two that routed most');
+  // epoch 30 ends: ranked as a whole epoch it seats 0 and 1; in epoch 31 they step back for 2 and 3
+  height = 144 * 31 + 10; await b.probe(); await b.probe();
+  const w31 = await make().view();
+  assert.deepEqual([w31.epoch, w31.seated], [30, [keys[0].hex, keys[1].hex]]);
+  assert.deepEqual(w31.next.seated.slice().sort(), [keys[2].hex, keys[3].hex].sort(), 'the next epoch rotates: last epoch\'s holders step back');
+  // where the guardians' signed seating of epoch 30 stands, its holders step back in the ranking of 31 - not this guardian's own
+  height = 144 * 32 + 10; await b.probe();
+  signed = { 30: [keys[3].hex] };
+  const w32 = await make().view();
+  assert.equal(w32.epoch, 31);
+  assert.ok(!w32.seated.includes(keys[3].hex) && w32.seated.length === 2, 'the signed holder of epoch 30 steps back in the ranking of 31');
+});

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE TWO GATEWAY SEATS (spec §23A.9): who may stand, how the best two are ranked, one seat per operator, an incumbent kept
-// unless ineligible or out-routed by 25 %, an empty seat said.
+// THE TWO GATEWAY SEATS (spec §23A.9): who may stand, how the best two are ranked, one seat per operator, the seats rotating
+// every epoch, an empty seat said.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { seatGateways, ineligibleWhy, GATEWAY_MINIMUMS } from '../src/gateway-seats.js';
@@ -40,17 +40,23 @@ test('the best two: routed volume first, then capacity, availability, bond, the 
   assert.equal(cap.seated[0], toHex(k(7)), 'equal capacity: the one up 99 % before the one up 97 %');
 });
 
-test('an incumbent keeps its seat unless out-routed by 25 %, or ineligible; an empty seat is said', () => {
-  const inc = toHex(k(1));
-  const kept = seat([ok(1, { volumeSats: 10_000n }), ok(2, { volumeSats: 30_000n }), ok(3, { volumeSats: 12_000n })], [inc]);
-  assert.ok(kept.seated.includes(inc), 'the newcomer routed 12,000: not 25 % over 10,000');
-  const lost = seat([ok(1, { volumeSats: 10_000n }), ok(2, { volumeSats: 30_000n }), ok(3, { volumeSats: 13_000n })], [inc]);
-  assert.ok(!lost.seated.includes(inc) && lost.seated.includes(toHex(k(3))), '13,000 is more than 25 % over 10,000: the incumbent yields (volumes compare floored: 12,500 counts as 12,000)');
-  const gone = seat([ok(1, { volumeSats: 90_000n, availabilityPct: 80 }), ok(2)], [inc]);
-  assert.deepEqual([gone.seated, gone.empty], [[toHex(k(2))], 1], 'an ineligible incumbent goes; one seat empty, said');
+test('the seats rotate every epoch (the owner 2026-10-20: "rotate ... daily every 144 blocks among those that want to be gateways"); an empty seat is said', () => {
+  const c = [ok(1, { volumeSats: 50_000n }), ok(2, { volumeSats: 30_000n }), ok(3, { volumeSats: 10_000n }), ok(4, { volumeSats: 5_000n })];
+  const e1 = seat(c);
+  assert.deepEqual(e1.seated, [toHex(k(1)), toHex(k(2))], 'no epoch before: the best two');
+  const e2 = seat(c, e1.seated);
+  assert.deepEqual(e2.seated, [toHex(k(3)), toHex(k(4))], 'last epoch\'s two step back, however much they routed');
+  assert.deepEqual(e2.waiting.map((x) => x.why), ['held a seat last epoch: steps back while others take their turn', 'held a seat last epoch: steps back while others take their turn']);
+  assert.deepEqual(seat(c, e2.seated).seated, e1.seated, 'and back');
+  const three = [ok(1, { volumeSats: 50_000n }), ok(2, { volumeSats: 30_000n }), ok(3)];
+  assert.deepEqual(seat(three, [toHex(k(1)), toHex(k(2))]).seated, [toHex(k(1)), toHex(k(3))], 'three for two seats: the one who waited, and the better of last epoch\'s holders (50,000 routed against 30,000)');
+  assert.deepEqual(seat([ok(1), ok(2)], [toHex(k(1)), toHex(k(2))]).seated.length, 2, 'nobody else eligible: the holders keep their seats');
+  const one = seatGateways({ candidates: [ok(5, { operatorId: 'op1', volumeSats: 90_000n }), ok(1), ok(2)], beacon, incumbents: [toHex(k(1))], network: 'testnet4', bondMinGuardian: 50_000n, seats: 1 });
+  assert.deepEqual(one.seated, [toHex(k(2))], 'an operator steps back with all its nodes, not just the one that held the seat');
+  const gone = seat([ok(1, { volumeSats: 90_000n, availabilityPct: 80 }), ok(2)], [toHex(k(1))]);
+  assert.deepEqual([gone.seated, gone.empty], [[toHex(k(2))], 1], 'an ineligible holder goes; one seat empty, said');
   assert.match(gone.why, /1 of 2 gateway seats filled/);
 });
-
 test('at least one gateway (the owner 2026-10-20): no operator eligible, the best that can still serve holds one seat', () => {
   // the measured case: Federation 2 (draining, 1 seat), its gateway up 92 % on one guardian's probes, the other one holding no e-cash there
   const one = seatGateways({ candidates: [ok(1, { availabilityPct: 92, pegInSats: 95_393n }), ok(2, { pegInSats: 0n })], beacon, network: 'testnet4', bondMinGuardian: 50_000n, seats: 1 });

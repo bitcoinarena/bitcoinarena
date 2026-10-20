@@ -5526,9 +5526,14 @@ The flooring makes honest guardians measure the same values.
 - The top two operators are seated in the next federation record, signed
   at threshold like every record. A guardian that ranks differently is
   outvoted by the threshold.
-- **An incumbent stays** unless it becomes ineligible, or a challenger
-  ranks above it with at least **25 % more** routed volume. A busy gateway
-  is not swapped for a lucky one.
+- **The seats rotate every epoch** *(2026-10-20: "rotate the guardians daily every 144 blocks among those that want to be
+  gateways in the federation")*: the holders of the epoch before step back, with all of their operator's nodes. The eligible
+  operators that did not hold a seat take the seats first, in rank order. The holders fill what is left, in rank order, so with
+  no other eligible operator a holder keeps its seat. "The epoch before" is the seating its guardians signed for it, else the
+  guardian's own ranking of it; every guardian keeps its probes, its ranking per epoch, the routed volume and the signed
+  seatings across a restart.
+- **Clients use the seated gateways first**: a deposit into F, and each leg of a swap, tries F's seated gateways before any other
+  gateway F lists.
 - A brand-new federation has no volume yet, so its first two are ranked
   by capacity, availability, bond and ticket.
 - **A draining federation has one seat** *(2026-10-20: "those that are DRAINING only need 1, that is a hard rule. All federations
@@ -5555,7 +5560,8 @@ GUARDIAN pool (4/3 %)
   own Lightning routing fees. A gateway that is also a guardian, which every
   gateway seat is, earns both shares.
 - A seat earns its share for a round only if it was eligible in that
-  round's epoch.
+  round's epoch: the seating the guardians sign names only eligible seats. A gateway that holds its seat below the minimums
+  (never without a gateway, above) serves but is not paid; its share goes to the other seat, or to the guardians.
 - An empty or unearned gateway share goes to the other gateway seat. With no
   gateway seated, it goes to the guardians.
 - Paid like every share: one payout contract per seat in the round's

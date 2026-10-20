@@ -3786,12 +3786,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       round.db.prepare('INSERT INTO gateway_probes (federation, epoch, rows) VALUES (?, ?, ?) ON CONFLICT(federation, epoch) DO UPDATE SET rows = excluded.rows').run(String(fid), epoch, JSON.stringify(rows));
       round.db.prepare('DELETE FROM gateway_probes WHERE federation = ? AND epoch < ?').run(String(fid), epoch - 1);
     },
+    // AND THE WATCH'S OWN STATE (kanban #559): the seats it ranked per epoch, the epoch's routed volume, the contract stream's index
+    state: {
+      load: async (fid) => { const r = round.db.prepare('SELECT state FROM gateway_state WHERE federation = ?').get(String(fid)); return r ? JSON.parse(r.state) : null; },
+      save: async (fid, st) => { round.db.prepare('INSERT INTO gateway_state (federation, state) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET state = excluded.state').run(String(fid), JSON.stringify(st)); },
+    },
   };
+  round.db.exec('CREATE TABLE IF NOT EXISTS gateway_state (federation TEXT PRIMARY KEY, state TEXT NOT NULL)');
+  // THE SIGNED SEATINGS IN THIS SEAT'S DATABASE TOO (kanban #559, the owner 2026-10-20: "the fees to the gateways must be paid"): a
+  // settlement pays the gateway seats from the seating of the epoch before its round's census, which can be days back - in memory
+  // only, a restart lost it and that round paid the guardians instead; this guardian's own signed ones ('own') and the standing ones
+  round.db.exec('CREATE TABLE IF NOT EXISTS gateway_seatings (federation TEXT NOT NULL, epoch INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (federation, epoch, kind))');
+  const keepSeating = (kind, fid, epoch, body) => { try { round.db.prepare('INSERT INTO gateway_seatings (federation, epoch, kind, body) VALUES (?, ?, ?, ?) ON CONFLICT(federation, epoch, kind) DO UPDATE SET body = excluded.body').run(String(fid), Number(epoch), kind, JSON.stringify(body)); } catch { /* kept in memory */ } };
+  try {
+    for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) (r.kind === 'own' ? ownSeatings : gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
+  } catch { /* none kept */ }
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
       // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
       seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
       entries: async () => { if (fedRecords.censusNewest) { const e = fedRecords.censusNewest(); if (e.length) return e; } const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
       keep: gatewayKeep,
+      // the seating its guardians signed for an epoch, where one stands: that epoch's holders step back in the next (the rotation)
+      seatingFor: async (fid, e) => { const st = gatewaySeatings.get(`${fid}:${e}`); return st ? st.seats : null; },
       // 1 seat for a federation draining into its successor, 2 for every other (the owner 2026-10-20, hard rule)
       seatsFor: async (fid) => { const r = fedRecords.recordOf ? fedRecords.recordOf(fid) : null; return r && ['DRAINING', 'CRITICAL'].includes(r.status) ? 1 : 2; },
       tip: async () => Number(await chainTip()),
@@ -3821,38 +3837,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
   // seating its federation's guardians signed at threshold, so every signer node - guardian or not - must hold the same one: every
-  // 10 min each seat reads, for every federation it holds a record of, the last whole epoch's seatings from the seated guardians' seats
-  // (GET /gateway-seating) and keeps the one that stands. A guardian seat signs its own ranking of that epoch first.
+  // 10 min each seat reads, for every federation it holds a record of, the last four whole epochs' seatings from the seated guardians'
+  // seats (GET /gateway-seating) and keeps the one that stands, in its database too (a round's census can be days back, kanban #559).
+  // A guardian seat signs its own ranking of the last whole epoch first.
   if (fedRecords && typeof chainTip === 'function') {
     const gatherSeatings = async () => {
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
       for (const { watch } of gatewayWatches) {
         const v = await watch.view().catch(() => ({ ok: false }));
         if (v.ok && v.measuredEpoch === 'whole' && v.epoch === epoch && !ownSeatings.has(`${v.federationId}:${epoch}`))
-          ownSeatings.set(`${v.federationId}:${epoch}`, signGatewaySeating({ federationId: v.federationId, epoch, seats: v.seated }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret)));
+          // the seats it signs are the ones that earn: a gateway holding its seat below the minimums serves, but is not paid (§23A.9)
+          { const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: v.seated.filter((n) => !(v.belowMinimums || []).includes(n)) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
+            ownSeatings.set(`${v.federationId}:${epoch}`, own); keepSeating('own', v.federationId, epoch, own); }
       }
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
-      const entries = now.ok ? now.entries : [];
-      for (const { federation: fid } of fedRecords.list()) {
-        if (gatewaySeatings.has(`${fid}:${epoch}`)) continue;
+      const entries = (fedRecords.censusNewest && fedRecords.censusNewest().length) ? fedRecords.censusNewest() : now.ok ? now.entries : [];
+      for (const { federation: fid } of fedRecords.list()) for (const ep of [epoch, epoch - 1, epoch - 2, epoch - 3]) {
+        if (gatewaySeatings.has(`${fid}:${ep}`)) continue;
         const rec = fedRecords.recordOf(fid);
         const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
         if (!rec || !rec.record || !seatedHex.length) continue;
-        const signed = ownSeatings.has(`${fid}:${epoch}`) ? [ownSeatings.get(`${fid}:${epoch}`)] : [];
+        const signed = ownSeatings.has(`${fid}:${ep}`) ? [ownSeatings.get(`${fid}:${ep}`)] : [];
         for (const node of seatedHex) {
           if (node === toHex(round.pubkey)) continue;
           const e = entries.find((x) => toHex(x.pubkey) === node);
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
-            const r = await fetch(`${String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${epoch}`, { signal: AbortSignal.timeout(10000) });
+            const r = await fetch(`${String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
             if (r.status === 200) signed.push(await r.json());
           } catch { /* that guardian's signature is missing this time */ }
         }
-        const st = standingSeating({ signed, federationId: fid, epoch, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
-        if (st.ok) gatewaySeatings.set(`${fid}:${epoch}`, st.seating);
-        for (const k of [...gatewaySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) gatewaySeatings.delete(k);
+        if (!signed.length) continue;
+        const st = standingSeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+        if (st.ok) { gatewaySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('standing', fid, ep, st.seating); console.log(`[gateways] ${fid.slice(0, 12)} epoch ${ep}: seating stands, ${st.seating.seats.length} seat(s), ${st.signers} signer(s)`); }
       }
+      for (const m of [gatewaySeatings, ownSeatings]) for (const k of [...m.keys()]) if (Number(k.split(':')[1]) < epoch - 6) m.delete(k);
+      try { round.db.prepare('DELETE FROM gateway_seatings WHERE epoch < ?').run(epoch - 6); } catch { /* the next pass */ }
     };
+    const sf = setTimeout(() => { gatherSeatings().catch(() => {}); }, 90000); if (sf.unref) sf.unref();
     // THE LIQUIDITY SEATINGS (§23A.10): a guardian lists its federation's providers - every census node's liquidity claim, the
     // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch; every seat keeps the standing one
     const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await r.json() : null; } catch { return null; } };
