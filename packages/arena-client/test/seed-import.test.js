@@ -90,5 +90,5 @@ test('the page takes a pasted seed and says which kind of seed its fingerprint i
     new URL('../../../src/arena-ui/index.html', import.meta.url).pathname, 'utf8');
   // THE RESTORE IS SETTINGS': restoreSeed takes the 24 words or the 64 hex and replaces this tab's seed
   for (const call of ['restoreSeed', 'seedOrigin', 'tabSeed'])
-    assert.ok(new RegExp('BLWPCLIENT\\.' + call + '\\s*\\(').test(page), 'the page never calls ' + call);
+    assert.ok(new RegExp('ARENACLIENT\\.' + call + '\\s*\\(').test(page), 'the page never calls ' + call);
 });

@@ -108,13 +108,13 @@ test('the page draws the core\'s three objective markers', { timeout: 110000 }, 
 
     // INTO THE WORLD FIRST. The HUD draws no chart on the lobby, so a run that reads the line there measures the
     // splash screen: the first pass of this test did exactly that and reported "no chart line to read". SPECTATE is
-    // pressed at the rectangle the splash publishes for it (window.BLWP_UNITY_LOBBY), and the chart is on in
+    // pressed at the rectangle the splash publishes for it (window.ARENA_UNITY_LOBBY), and the chart is on in
     // spectate by 2026-09-17 16:38 ruling.
     for (let i = 0; i < 40; i++) {
-      if (await p.evaluate('!!window.BLWP_UNITY_LOBBY') === true) break;
+      if (await p.evaluate('!!window.ARENA_UNITY_LOBBY') === true) break;
       await wait(2000);
     }
-    const view = await p.evaluate('JSON.stringify(window.BLWP_UNITY_LOBBY || null)');
+    const view = await p.evaluate('JSON.stringify(window.ARENA_UNITY_LOBBY || null)');
     assert.ok(view && view !== 'null', 'the splash published no rectangles, so SPECTATE cannot be pressed');
     const splash = JSON.parse(view);
     // THE SPLASH'S RECTANGLES ARE IN ITS LAYOUT UNITS, NOT THE CANVAS'S PIXELS (measured on the test host's Retina

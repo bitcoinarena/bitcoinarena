@@ -210,8 +210,8 @@ const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
 });
 
 // a recipient's ballot signature (§27A.4.1): secp256k1 ECDSA over the tagged digest, by the developers' own keys - the page's curve
-// bundle (page-curve.js verifyEcdsa, window.BLWP_CURVE), as every curve operation of this client is injected
-const pageSecp256k1Verify = (sig, digest, key) => { const c = globalThis.BLWP_CURVE; try { return !!(c && c.verifyEcdsa && c.verifyEcdsa(sig, digest, key)); } catch { return false; } };
+// bundle (page-curve.js verifyEcdsa, window.ARENA_CURVE), as every curve operation of this client is injected
+const pageSecp256k1Verify = (sig, digest, key) => { const c = globalThis.ARENA_CURVE; try { return !!(c && c.verifyEcdsa && c.verifyEcdsa(sig, digest, key)); } catch { return false; } };
 
 export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false, verifySecp256k1 = pageSecp256k1Verify } = {}) {
   if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };

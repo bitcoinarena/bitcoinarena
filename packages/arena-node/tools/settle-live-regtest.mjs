@@ -200,22 +200,22 @@ async function browse(url, { profile = mkdtempSync(join(tmpdir(), 'settle-live-c
 
 /** The join state the page's own join sets for a lock round (index.html's lock branch), as one evaluated script. */
 const injectFor = (p, c, rid, urls) => `(() => {
-      window.BLWP_ROUND = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
+      window.ARENA_ROUND = ARENACLIENT.decodeRoundContract(ARENACLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
       // THE LOCK AS THE JOIN HOLDS IT - every field lockFromClient gives the page (measured:
       // amount and expiry alone did not encode, and saveCollect kept nothing).
-      window.ARENA_STAKE_LOCK = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
-        fields: { paymentImage: { kind: 'point', bytes: BLWPCLIENT.fromHex('${toHex(p.stake.fields.paymentImage.bytes)}') },
-          amountMsat: ${p.stake.fields.amountMsat}n, claimPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.claimPk)}'),
-          refundPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.refundPk)}'), expiration: ${p.stake.fields.expiration} } };
-      window.ARENA_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
+      window.ARENA_STAKE_LOCK = { outpoint: { txid: ARENACLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
+        fields: { paymentImage: { kind: 'point', bytes: ARENACLIENT.fromHex('${toHex(p.stake.fields.paymentImage.bytes)}') },
+          amountMsat: ${p.stake.fields.amountMsat}n, claimPk: ARENACLIENT.fromHex('${toHex(p.stake.fields.claimPk)}'),
+          refundPk: ARENACLIENT.fromHex('${toHex(p.stake.fields.refundPk)}'), expiration: ${p.stake.fields.expiration} } };
+      window.ARENA_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: ARENACLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
       // AND WHAT THE JOIN KEEPS for the collect - in the browser's storage, as index.html's vault() does.
-      const saved = BLWPCLIENT.saveCollect ? BLWPCLIENT.saveCollect(window.localStorage,
-        Object.assign({}, window.ARENA_LOCK_JOIN, { round: window.BLWP_ROUND, stakeLock: window.ARENA_STAKE_LOCK })) : 'no saveCollect in the bundle';
+      const saved = ARENACLIENT.saveCollect ? ARENACLIENT.saveCollect(window.localStorage,
+        Object.assign({}, window.ARENA_LOCK_JOIN, { round: window.ARENA_ROUND, stakeLock: window.ARENA_STAKE_LOCK })) : 'no saveCollect in the bundle';
       // INSTRUMENTED (the reload pair did not move on 0.0.1236): what saveCollect swallows.
       const probe = (f) => { try { f(); return 'ok'; } catch (e) { return String(e && e.message || e); } };
-      window.BLWP_HARNESS_SAVE = { saved,
-        encodeRound: probe(() => BLWPCLIENT.encodeRoundContract(window.BLWP_ROUND)),
-        encodeLock: BLWPCLIENT.lockFieldsToJson ? probe(() => BLWPCLIENT.lockFieldsToJson(window.ARENA_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
+      window.ARENA_HARNESS_SAVE = { saved,
+        encodeRound: probe(() => ARENACLIENT.encodeRoundContract(window.ARENA_ROUND)),
+        encodeLock: ARENACLIENT.lockFieldsToJson ? probe(() => ARENACLIENT.lockFieldsToJson(window.ARENA_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
         keys: Object.keys(window.localStorage) };
       return true; })()`;
 // WHAT THE PAGE LOOKED AT (W4 / 6d): ARENA_OWED, its lookOwed - nothing spent until the Withdraw.
@@ -238,7 +238,7 @@ async function withdrawWith(b, arg) {
 }
 const pageReady = async (b) => {
   for (let t = Date.now(); Date.now() - t < 90000; await wait(500))
-    if (await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.lookOwed && !!window.BLWP_CURVE`)) return true;
+    if (await b.evaluate(`typeof ARENACLIENT !== 'undefined' && !!ARENACLIENT.lookOwed && !!window.ARENA_CURVE`)) return true;
   return false;
 };
 // WHAT THE PAGE ACTUALLY HOLDS (instrumented: on 0.0.1236 the reload left 978000 + 980000 in
@@ -246,11 +246,11 @@ const pageReady = async (b) => {
 // collect records, the tab's storage keys, ARENA_COLLECT, and the harness's own save probe.
 const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.ARENA_LOCK_JOIN, owed: ${OWED},
   settled: (document.getElementById('arena-settled') || {}).textContent || '',
-  collects: (() => { try { return BLWPCLIENT.savedCollects(window.sessionStorage).map((r) => ({ round: r.roundIdHex.slice(0, 12),
-    locks: BLWPCLIENT.roundLocks(r.round), lock: !!r.stakeLock, done: !!r.done })); } catch (e) { return 'savedCollects threw: ' + e.message; } })(),
+  collects: (() => { try { return ARENACLIENT.savedCollects(window.sessionStorage).map((r) => ({ round: r.roundIdHex.slice(0, 12),
+    locks: ARENACLIENT.roundLocks(r.round), lock: !!r.stakeLock, done: !!r.done })); } catch (e) { return 'savedCollects threw: ' + e.message; } })(),
   keys: (() => { try { return Object.keys(window.sessionStorage); } catch (e) { return e.message; } })(),
   collect: window.ARENA_COLLECT ? { round: window.ARENA_COLLECT.roundIdHex.slice(0, 12), lock: !!window.ARENA_COLLECT.stakeLock } : null,
-  harnessSave: window.BLWP_HARNESS_SAVE || null },
+  harnessSave: window.ARENA_HARNESS_SAVE || null },
   (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}'));
 
 /**
@@ -284,7 +284,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
   const page = await servePage(env.PAGE_DIR);
   const open = async () => {
     const b = await browse(`http://127.0.0.1:${page.port}/`);
-    if (!(await pageReady(b))) { const logs = b.logs.slice(-5); b.close(); return { error: 'the built page never had BLWPCLIENT.lookOwed and BLWP_CURVE', logs }; }
+    if (!(await pageReady(b))) { const logs = b.logs.slice(-5); b.close(); return { error: 'the built page never had ARENACLIENT.lookOwed and ARENA_CURVE', logs }; }
     await b.evaluate(injectFor(p, c, rid, urls));
     return { b };
   };
@@ -404,7 +404,7 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
   if (ph.error) return { ...res, error: ph.error, logs: ph.logs };
   try {
     res.phone = { keptBefore: (await view(ph.b)).kept };
-    await ph.b.evaluate(`(BLWPCLIENT.importSeed('${toHex(p.seed)}', { storage: window.sessionStorage }), true)`);
+    await ph.b.evaluate(`(ARENACLIENT.importSeed('${toHex(p.seed)}', { storage: window.sessionStorage }), true)`);
     const t = Date.now();
     res.phone.found = await ph.b.evaluate(`window.ARENA_FIND_OWED(${JSON.stringify(urls)}, '${env.INVITE}')`);
     res.phone.foundMs = Date.now() - t;
@@ -429,7 +429,7 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
     // WHAT UNITY'S LOBBY DREW (SplashScreen reports it to the page twice a second): the withdrawal notice.
     const tU = Date.now(); let unity = null;
     for (; Date.now() - tU < 180000; await wait(2000)) {
-      unity = await next.b.evaluate('JSON.stringify(window.BLWP_UNITY_LOBBY || null)').then((x) => JSON.parse(x || 'null')).catch(() => null);
+      unity = await next.b.evaluate('JSON.stringify(window.ARENA_UNITY_LOBBY || null)').then((x) => JSON.parse(x || 'null')).catch(() => null);
       if (unity && unity.withdrawNotice) break;
     }
     res.unity = { ms: Date.now() - tU, drew: unity && { showing: unity.showing, lobby: unity.lobby, withdrawNotice: unity.withdrawNotice, you: unity.you, screen: unity.screen } };
@@ -696,14 +696,14 @@ async function round(stakeMsat) {
       else {
         const f = bare.stake.fields;
         await tab.evaluate(`(() => {
-          const round = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
-          const seed = BLWPCLIENT.fromHex('${toHex(bare.seed)}');
-          const lock = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(bare.stake.outpoint.txid)}'), outIdx: ${bare.stake.outpoint.outIdx}n },
-            fields: { paymentImage: { kind: 'point', bytes: BLWPCLIENT.fromHex('${toHex(f.paymentImage.bytes)}') }, amountMsat: ${f.amountMsat}n,
-              claimPk: BLWPCLIENT.fromHex('${toHex(f.claimPk)}'), refundPk: BLWPCLIENT.fromHex('${toHex(f.refundPk)}'), expiration: ${f.expiration} } };
-          BLWPCLIENT.saveLock(window.sessionStorage, { roundId: BLWPCLIENT.fromHex('${toHex(rid)}'), playerPubkey: BLWPCLIENT.fromHex('${toHex(bare.playerPubkey)}'),
-            stake: { preimage: BLWPCLIENT.fromHex('${toHex(bare.preimage)}'), body: BLWPCLIENT.fromHex('${toHex(encodeHandout(bare.handout))}') }, lock });
-          BLWPCLIENT.saveCollect(window.sessionStorage, { roundIdHex: '${toHex(rid)}', round, invite: '${env.INVITE}', nodes: ${JSON.stringify(urls)}, seed, stakeLock: lock });
+          const round = ARENACLIENT.decodeRoundContract(ARENACLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
+          const seed = ARENACLIENT.fromHex('${toHex(bare.seed)}');
+          const lock = { outpoint: { txid: ARENACLIENT.fromHex('${toHex(bare.stake.outpoint.txid)}'), outIdx: ${bare.stake.outpoint.outIdx}n },
+            fields: { paymentImage: { kind: 'point', bytes: ARENACLIENT.fromHex('${toHex(f.paymentImage.bytes)}') }, amountMsat: ${f.amountMsat}n,
+              claimPk: ARENACLIENT.fromHex('${toHex(f.claimPk)}'), refundPk: ARENACLIENT.fromHex('${toHex(f.refundPk)}'), expiration: ${f.expiration} } };
+          ARENACLIENT.saveLock(window.sessionStorage, { roundId: ARENACLIENT.fromHex('${toHex(rid)}'), playerPubkey: ARENACLIENT.fromHex('${toHex(bare.playerPubkey)}'),
+            stake: { preimage: ARENACLIENT.fromHex('${toHex(bare.preimage)}'), body: ARENACLIENT.fromHex('${toHex(encodeHandout(bare.handout))}') }, lock });
+          ARENACLIENT.saveCollect(window.sessionStorage, { roundIdHex: '${toHex(rid)}', round, invite: '${env.INVITE}', nodes: ${JSON.stringify(urls)}, seed, stakeLock: lock });
           return true; })()`);
       }
     }

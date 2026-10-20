@@ -23,10 +23,10 @@ const SEATS = {
 function run(picks, outcomes = new Map()) {
   const asked = [];
   const fetch = async (url) => { const base = url.split('/outcome')[0]; asked.push(base); const a = SEATS[base]; return { ok: !!a, json: async () => JSON.parse(JSON.stringify(a)) }; };
-  const BLWPCLIENT = { checkMarketOutcome: async () => ({ verified: true, why: 'signed by 2 of 3' }), checkAttestation: async () => ({ verified: true }) };
+  const ARENACLIENT = { checkMarketOutcome: async () => ({ verified: true, why: 'signed by 2 of 3' }), checkAttestation: async () => ({ verified: true }) };
   // OUTCOMES_READ: the rounds whose outcome the page has asked for once
-  const fn = pageFunction(PAGE, ['readPicks', 'MARKET_OUTCOMES', 'marketOfPick', 'BLWPCLIENT', 'window', 'fetch', 'AbortSignal', 'OUTCOMES_READ'], [SRC], 'return readMarketOutcomes;');
-  const read = fn(() => picks, outcomes, () => ({ name: 'btc-updown-15m' }), BLWPCLIENT, { BLWP_CURVE: {} }, fetch, { timeout: () => undefined }, new Set());
+  const fn = pageFunction(PAGE, ['readPicks', 'MARKET_OUTCOMES', 'marketOfPick', 'ARENACLIENT', 'window', 'fetch', 'AbortSignal', 'OUTCOMES_READ'], [SRC], 'return readMarketOutcomes;');
+  const read = fn(() => picks, outcomes, () => ({ name: 'btc-updown-15m' }), ARENACLIENT, { ARENA_CURVE: {} }, fetch, { timeout: () => undefined }, new Set());
   return { read, outcomes, asked };
 }
 

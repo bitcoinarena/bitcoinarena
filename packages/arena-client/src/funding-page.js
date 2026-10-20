@@ -4,7 +4,7 @@
 // where people can comment and review"; "Anyone can do a proposal to pay out"). The homepage reads the proposals the network's nodes
 // hold (GET /funding) and shows one only when at least `needed` of them hold it; it builds a proposal or a comment as the seats read
 // them (arena-protocol funding.js), signs it with the visitor's own key - an nsec, or a key kept in that browser - and hands it to
-// every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.BLWP_CURVE: pointX,
+// every node (POST /funding), which keep it and pass it on. The curve is the page's (arena-curve.js, globalThis.ARENA_CURVE: pointX,
 // signSchnorr), passed in as `curve` - this bundle carries no crypto of its own.
 import { encodeFundingProposal, fundingProposalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { bech32Encode, bech32Decode, convertBits } from '../../arena-protocol/src/bech32.js';
@@ -16,7 +16,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 const fundingBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const fundingMost = (xs) => { const c = new Map(); for (const x of xs) c.set(x, (c.get(x) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0]; };
 
-const curveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
+const curveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 /** A visitor's key: 32 random bytes the curve takes, or the one an nsec names. */
 export function newProposalKey(curve) {
   const c = curveOf(curve);

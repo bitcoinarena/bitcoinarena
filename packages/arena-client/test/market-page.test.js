@@ -87,9 +87,9 @@ function liftSheet(window, document) {
   const at = UPDOWN_PAGE.indexOf('    async function openPickSheet(');
   assert.ok(at > 0, 'market-page.js has no openPickSheet');
   const end = UPDOWN_PAGE.indexOf('\n    }\n', at);
-  const BLWPCLIENT = { marketForRound, pickSheet, roundPays: (c) => c.stakeMsat > 0n, toHex };
-  return pageFunction(UPDOWN_PAGE_URL, ['window', 'document', 'BLWPCLIENT', 'donationBps', 'fetch', 'AbortSignal'], UPDOWN_PAGE.slice(at, end + 6), 'return openPickSheet;')(
-    window, document, BLWPCLIENT, () => 500, window.fetch, { timeout: () => undefined });
+  const ARENACLIENT = { marketForRound, pickSheet, roundPays: (c) => c.stakeMsat > 0n, toHex };
+  return pageFunction(UPDOWN_PAGE_URL, ['window', 'document', 'ARENACLIENT', 'donationBps', 'fetch', 'AbortSignal'], UPDOWN_PAGE.slice(at, end + 6), 'return openPickSheet;')(
+    window, document, ARENACLIENT, () => 500, window.fetch, { timeout: () => undefined });
 }
 const buttons = (el) => el.children.flatMap((c) => (c.tag === 'button' ? [c] : buttons(c)));
 
@@ -172,16 +172,16 @@ test('a hidden move is the tab\'s once the seats took its entry: onEntries befor
 
 test('picked: the join of a pick ends \'picked\' before the session\'s globals - and Unity adopts only joining/joined', () => {
   const then = PAGE.indexOf("if (window.ARENA_PICKED && window.ARENA_PICKED.round === id) {");
-  const entryBranch = PAGE.indexOf("if (window.BLWP_ENTRY && Number(window.BLWP_ENTRY.joinTick) > 0", then);
+  const entryBranch = PAGE.indexOf("if (window.ARENA_ENTRY && Number(window.ARENA_ENTRY.joinTick) > 0", then);
   assert.ok(then > 0 && entryBranch > then, 'the picked branch does not come before the run\'s');
   const branch = PAGE.slice(then, PAGE.indexOf('\n                return;\n', then));
   assert.match(branch, /join\.state = 'picked'/);
-  assert.doesNotMatch(branch, /BLWP_ENTRY =|BLWP_CHAIN =|BLWP_ADVERT =/);
-  // the join of a pick never sets the session's globals: it returns before window.BLWP_ENTRY is written
+  assert.doesNotMatch(branch, /ARENA_ENTRY =|ARENA_CHAIN =|ARENA_ADVERT =/);
+  // the join of a pick never sets the session's globals: it returns before window.ARENA_ENTRY is written
   const pickJoin = PAGE.indexOf('const chosen = pickFor(named.roundIdHex);');
-  const pickReturn = PAGE.indexOf('\n        return;\n      }\n      if (keptEntry) window.BLWP_ENTRY = keptEntry;', pickJoin);
+  const pickReturn = PAGE.indexOf('\n        return;\n      }\n      if (keptEntry) window.ARENA_ENTRY = keptEntry;', pickJoin);
   assert.ok(pickJoin > 0 && pickReturn > pickJoin, 'the pick does not return before the entry the session opens');
-  assert.doesNotMatch(PAGE.slice(pickJoin, pickReturn), /window\.BLWP_ENTRY =|warmTheSession\(/);
+  assert.doesNotMatch(PAGE.slice(pickJoin, pickReturn), /window\.ARENA_ENTRY =|warmTheSession\(/);
   // and Unity: unchanged, it waits on "joined" and adopts only "joining"/"joined" (no C# change in slice 2)
   const lobbyCs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Arena/DailyLobby.cs', import.meta.url), 'utf8');
   const splash = readFileSync(new URL('../../../unity-proto/Assets/Scripts/SplashScreen.cs', import.meta.url), 'utf8');

@@ -32,10 +32,10 @@ function page(status, extra = {}) {
   const mine = wallet || (st ? st.federation || 'f'.repeat(64) : undefined);
   const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
   const did = [];
-  const BLWPCLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
-  const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
+  const ARENACLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
     [PAINT, OPEN], 'return { paint: window.ARENA_PAINT_FEDERATION, openMoney };');
-  const api = fn(document, window, BLWPCLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),
+  const api = fn(document, window, ARENACLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),
     () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
   return { ...api, els, classes, did, window };
 }

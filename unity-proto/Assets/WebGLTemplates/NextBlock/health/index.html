@@ -343,7 +343,11 @@
         <td class="mono">${seated.map((s) => short(s.node || s, 10)).join(', ') || '-'}</td><td class="wrap muted">${esc(b.why || '')}</td></tr>`
         // THE RUNNING EPOCH (kanban #552): the seats rank the last whole epoch; what this one would seat, and from which block
         + (b.next ? `<tr><td></td><td class="muted">${esc(b.next.epoch)}</td><td class="muted">${(b.next.seated || []).length} of ${need}</td>
-          <td class="mono muted">${(b.next.seated || []).map((s) => short(s, 10)).join(', ') || '-'}</td><td class="wrap muted">next epoch, from block ${sat(b.next.fromBlock)}: ${esc(b.next.why || '')}</td></tr>` : ''));
+          <td class="mono muted">${(b.next.seated || []).map((s) => short(s, 10)).join(', ') || '-'}</td><td class="wrap muted">next epoch, from block ${sat(b.next.fromBlock)}: ${esc(b.next.why || '')}</td></tr>` : '')
+        // PEG-IN CLAIMED AND PROVED (kanban #559/#543): what each gateway's claim states, and how much of it the federation's own coins
+        // show (its claimed outpoints that are federation coins); "not checked" while the seat runs code that does not read the coins
+        + Object.entries(b.gateways || {}).map(([node, x]) => `<tr><td></td><td></td><td></td><td class="mono muted">${short(node, 10)}</td>
+          <td class="wrap muted">peg-in ${sat(x.pegInSats || 0)} sat claimed · ${x.provedPegInSats == null ? 'not checked' : sat(x.provedPegInSats) + ' sat proved by the federation\'s coins'}</td></tr>`).join(''));
     }
     const claims = nodes.filter((n) => n.gw && n.gw.ok).map((n) => `<span class="tag mono">${short(n.node, 10)} · LND ${short(n.gw.body.lightningPubkey, 10)}</span>`).join('');
     $('gateways').innerHTML = '<tr><th>Federation</th><th>Epoch</th><th>Seated</th><th>Seats</th><th>Why</th></tr>' + (rows.join('') || '<tr><td colspan="5" class="muted">no federation</td></tr>')

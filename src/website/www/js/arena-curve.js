@@ -1,4 +1,4 @@
-var BLWP_CURVE_EXPORTS = (() => {
+var ARENA_CURVE_EXPORTS = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -2782,4 +2782,4 @@ var BLWP_CURVE_EXPORTS = (() => {
 @noble/curves/secp256k1.js:
   (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
 */
-globalThis.BLWP_CURVE=BLWP_CURVE_EXPORTS.pageCurve;
+globalThis.ARENA_CURVE=ARENA_CURVE_EXPORTS.pageCurve;

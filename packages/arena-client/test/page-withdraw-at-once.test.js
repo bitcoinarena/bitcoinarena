@@ -23,11 +23,11 @@ function page({ balanceParts, exact }) {
   const fid = new Uint8Array(32).fill(7);
   const window = { ARENA_WALLET_BALANCE: balanceParts ? { parts: balanceParts } : undefined,
     ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
-  const BLWPCLIENT = { toHex: (b) => Buffer.from(b).toString('hex'), invoiceAmountMsat: () => ({ ok: false, why: '' }),
+  const ARENACLIENT = { toHex: (b) => Buffer.from(b).toString('hex'), invoiceAmountMsat: () => ({ ok: false, why: '' }),
     playerWithdrawable: () => exact };
   const payStatus = () => ({ hide() {}, set() {} });
-  const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
-    document, window, BLWPCLIENT, payStatus, () => ({}), () => {});
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
+    document, window, ARENACLIENT, payStatus, () => ({}), () => {});
   fn({ round: { federationId: fid }, invite: 'fed1x', seed: 's', gateways: [] });
   return { el, window, fidHex: Buffer.from(fid).toString('hex') };
 }

@@ -57,8 +57,8 @@ function page({ live = false } = {}) {
   L.setItem('arena.nostr', '{"npub":"npub1x"}'); local.setItem('arena.nostr', '{"npub":"npub1x"}');
   S.setItem('arena.player.seed', A); S.setItem('arena.player.seed.from', 'imported');
   const forgot = [];
-  const window = { BLWP_UNITY_LOBBY: { showing: !live } };
-  const fn = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'BLWPCLIENT', 'console'], ACTION, 'return window.ARENA_DELETE_ACCOUNT;');
+  const window = { ARENA_UNITY_LOBBY: { showing: !live } };
+  const fn = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'ARENACLIENT', 'console'], ACTION, 'return window.ARENA_DELETE_ACCOUNT;');
   const del = fn(window, () => L, S, local, { forgetPhrase: (s, h) => { forgot.push(h); return 5; } }, { log: () => {} });
   return { del, L, S, local, forgot };
 }
