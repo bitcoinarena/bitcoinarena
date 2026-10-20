@@ -4063,6 +4063,7 @@
             const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: fixed.invite, seed: seedF, LockClient: wasm.LockClient, storage: vault(),
               gateways: window.ARENA_LEDGER_GATEWAYS || [], onClaimed: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
             window.ARENA_DEPOSIT_FIXED = String(fixed.federation);
+            if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(String(fixed.federation).toLowerCase(), offer.client);
             showDepositOffer(offer, { title: 'Deposit into federation ' + String(fixed.federation).slice(0, 8) + '\u2026 (debug)', overSettings: true });
             say(''); return { ok: true };
           } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (el) el.textContent = why; return { ok: false, why }; }
@@ -6538,8 +6539,11 @@
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
             for (const fid of missing) {
               const st = statuses.find((x) => x && x.invite && String(x.federation).toLowerCase() === fid);
-              if (!st) continue;
-              try { window.ARENA_KEEP_WALLET(fid, await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: st.invite, seed, LockClient: wasm.LockClient, storage: vault() })); }
+              // no verified status with an invite (a CRITICAL federation, or the statuses not landed yet): the invite its wallet was opened
+              // with before - a deposit pending there is resumed and its funds summed all the same (2026-10-20, 1,000 sat in b18947f0)
+              const inv = (st && st.invite) || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), fid) : null);
+              if (!inv) continue;
+              try { window.ARENA_KEEP_WALLET(fid, await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inv, seed, LockClient: wasm.LockClient, storage: vault() })); }
               catch (e) { console.log('[arena] the wallet in federation ' + fid.slice(0, 16) + ' did not open: ' + (e && e.message ? e.message : e)); }
             }
           }
