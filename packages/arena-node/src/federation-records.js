@@ -155,6 +155,18 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (b.ok) return b;
     return chainBasis(atHeight) || b;
   }
+  // A FEDERATION THE BASIS DOES NOT NAME IS READ FROM THE CHAIN'S CENSUS (kanban #549, the owner 2026-10-20 ~06:55Z: "federation shows as
+  // draining on b18947f085d4 but no new federation is created ... This needs to be fixed automatically each time a federation is shown as
+  // draining, it may not be a manual step"): measured, every round the seats held named a census frozen before the successor's guardian
+  // adverts (confirmed ~157,071), so no seat's basis named 4dc88be7 and its guardians never gathered its record. Per federation: the
+  // basis when its census names it, else the chain's census when that does - with no setting, for a successor and any new federation
+  const namesFed = (b, fidHex) => !!(b && b.ok) && federationsOf(b.census).some((f) => toHex(f) === String(fidHex).toLowerCase());
+  function basisFor(fidHex, atHeight = null) {
+    const b = basis(atHeight);
+    if (namesFed(b, fidHex)) return b;
+    const cb = chainBasis(atHeight);
+    return namesFed(cb, fidHex) ? cb : b;
+  }
   function roundBasis(atHeight = null) {
     if (newest) {
       const best = newest();
@@ -217,7 +229,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, reserveSats: r.reserveSats };
   }
   async function mySignature(federationIdHex, atHeight = null, reserveNamed = null) {
-    const b = basis(atHeight);
+    const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps);
@@ -234,7 +246,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
 
   /** GATHER: every guardian's signature for the federation; the gone are the ones whose own signed word says leaving. */
   async function gather(federationId, inviteFederationId) {
-    const b = basis();
+    const b = basisFor(toHex(federationId));
     if (!b.ok) return b;
     const eps = await epsFor(toHex(federationId));
     const first = bodyFor(b, federationId, [], 0n, eps);
@@ -363,7 +375,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
   async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = []) {
-    const b = basis(atHeight);
+    const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const eps = await epsFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps);
@@ -417,7 +429,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     async gatherAll(inviteFederationId) {
       await chainAhead();
       const b = basis();
-      if (!b.ok) return [b];
+      // every federation the basis names AND every one only the chain's census names (kanban #549: a successor named after the
+      // rounds' census was frozen), each read from the basis that names it
+      const cb = chainBasis(null);
+      const feds = new Map();
+      for (const x of [b, cb]) if (x && x.ok) for (const f of federationsOf(x.census)) if (!feds.has(toHex(f))) feds.set(toHex(f), f);
+      if (!feds.size) return [b.ok ? { ok: false, why: 'no census this seat reads names a federation' } : b];
       const out = [];
       // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (2026-10-12: "Make it happen
       // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
@@ -426,10 +443,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
       // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
       // stands against this seat's census all the same
-      for (const fid of federationsOf(b.census)) {
+      for (const fid of feds.values()) {
         try {
           let got = inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : null;
-          if (!got || got.ok === false) { const m = await mirror(fid, b, inviteFederationId); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
+          if (!got || got.ok === false) { const m = await mirror(fid, basisFor(toHex(fid)), inviteFederationId); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
           out.push({ federation: toHex(fid), ...got });
         } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); }
       }
