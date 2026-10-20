@@ -18,6 +18,7 @@
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
 import { ANCESTOR_TAG } from '../../arena-protocol/src/ancestor.js';
+import { noteInvite, wholeInvite } from './guardian-invites.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
@@ -323,8 +324,18 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
     : recover ? 'recovering the player wallet of this seed from the federation' : 'joining the federation with the player wallet');
   // AND A JOIN THAT NEVER ANSWERS IS REFUSED BY NAME after `joinWaitMs`, so PLAY can be pressed again
   let timer = null;
+  // A CONFIG NO GUARDIAN OF THE INVITE GAVE (one guardian down): once more, with an invite naming every guardian this client has seen named
+  // for the federation (guardian-invites.js)
+  const enter = (inv) => (recover ? LockClient.recover : LockClient.join).call(LockClient, inv, toHex(round.federationId), toHex(secret), store);
+  const joinOnce = () => enter(invite).catch((e) => {
+    const whole = /download client config/i.test(String((e && e.message) || e)) ? wholeInvite(invite) : null;
+    if (!whole) throw e;
+    onStep('one of the federation\'s guardians did not answer - reading its configuration from the others');
+    return enter(whole);
+  });
+  noteInvite(invite);
   const joining = Promise.race([
-    (recover ? LockClient.recover : LockClient.join).call(LockClient, invite, toHex(round.federationId), toHex(secret), store),
+    joinOnce(),
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});

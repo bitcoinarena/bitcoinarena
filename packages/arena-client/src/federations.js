@@ -14,6 +14,7 @@ import { verifyFederationRecord, newestRecord } from '../../arena-protocol/src/f
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
+import { noteRecordInvite } from './guardian-invites.js';
 
 const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
 const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
@@ -55,6 +56,7 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
       for (const f of j.federations || []) {
         const fid = String(f.federation).toLowerCase();
         if (only && fid !== only) continue;
+        noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
       }
