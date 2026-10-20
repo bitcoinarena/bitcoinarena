@@ -12,10 +12,10 @@ import { pageFunction } from './page-script.js';
 
 const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const SRC = (() => {
-  const at = PAGE.indexOf('      let combining = null;\n      function combineWallets(main, named, round) {');
+  const at = PAGE.indexOf('      const combiningBy = new Map();\n      function combineWallets(main, named, round) {');
   assert.ok(at > 0, 'index.html has no combineWallets');
-  const end = PAGE.indexOf('        return combining;\n      }\n', at);
-  return PAGE.slice(at, end + '        return combining;\n      }\n'.length);
+  const end = PAGE.indexOf('        combiningBy.set(fedHex, run);\n        return run;\n      }\n', at);
+  return PAGE.slice(at, end + '        combiningBy.set(fedHex, run);\n        return run;\n      }\n'.length);
 })();
 const hex = (n) => n.toString(16).padStart(2, '0').repeat(32);
 const SEEDS = { cur: hex(1), rich: hex(2), poor: hex(3), none: hex(4), held: hex(5) };
@@ -58,7 +58,7 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     toHex: (b) => (typeof b === 'string' ? b : Buffer.from(b).toString('hex')),
     fromHex: (h) => h,
     phraseWalletEntries: (_L, h, _f, { ancestor = false } = {}) => { const w = (ancestor ? ancestors : wallets).get(h); return w ? w.entries : 0; },
-    playerWallet: async ({ seed, ancestor }) => { const w = (ancestor ? ancestors : wallets).get(seed); opened.push(w.name); return w; },
+    openPlayerWallet: async ({ seed, ancestor }) => { const w = (ancestor ? ancestors : wallets).get(seed); opened.push(w.name); return w; },
   };
   const window = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
   const locked = [];
@@ -67,8 +67,9 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
   const combineWallets = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'sessionStorage', 'ARENACLIENT', 'window', 'navigator', 'paintMoney', 'console'],
     SRC, 'return combineWallets;')(() => proxy, sessionStorage, ARENACLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
   const run = () => combineWallets(main, { federation: 'fed1invite' }, { federationId: FED });
+  const runIn = (fed) => window.ARENA_COMBINE_IN(main, fed, 'fed1invite');
   const pendingKeys = () => [...store.keys()].filter((k) => k.startsWith('arena.ecash.pending.'));
-  return { run, main, wallets, ancestors, log, opened, locked, store, pendingKeys,
+  return { run, runIn, main, wallets, ancestors, log, opened, locked, store, pendingKeys,
     total: () => main.msat + [...wallets.values(), ...ancestors.values()].reduce((t, w) => t + w.msat, 0n) };
 }
 
@@ -161,4 +162,19 @@ test('every phrase\'s BLWP-era wallet is swept once into this tab\'s Arena walle
   await b.run();
   assert.equal(paying(), paid, 'a wallet sent e-cash a second time');
   assert.equal(b.main.msat, 291000n, 'nothing counted twice');
+});
+
+// the owner 2026-10-20 18:5xZ ("Go and find the 200"; "The wallet must be automatically be merged and be shown"): every federation is merged, not
+// only the lobby round's - and a kept e-cash copy is only ever offered to its own federation's wallet
+test('another federation is merged on its own; e-cash kept for one federation is never offered to another', async () => {
+  const OTHER = 'ab'.repeat(32);
+  const b = browser({ balances: { rich: 200000 }, pending: [{ key: 'arena.ecash.pending.' + FED.slice(0, 16) + '.1.x', rec: { ecash: 'ecash:keptfed:9000', msat: '9000', from: 'x', fed: FED } }] });
+  await b.runIn(OTHER);
+  assert.equal(b.main.msat, 200000n, 'the other phrase\'s 200 sat merged in that federation');
+  assert.ok(!b.log.some((l) => l.includes('ecash:keptfed')), 'the copy kept for ' + FED.slice(0, 8) + ' is not offered here');
+  assert.equal(b.pendingKeys().filter((k) => k.includes(FED.slice(0, 16))).length, 1, 'and stays for its own federation');
+  const kept = b.pendingKeys().find((k) => k.includes(OTHER.slice(0, 16)));
+  assert.equal(kept, undefined, 'the merged copy was received and dropped');
+  await b.run();
+  assert.ok(b.log.some((l) => l.includes('receive ecash:keptfed:9000 Success')), 'its own federation receives it');
 });
