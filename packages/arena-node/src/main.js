@@ -125,6 +125,9 @@ const ownerFiles = { store: {
   read: () => { try { return JSON.parse(readFileSync(`${path}.owner.json`, 'utf8')); } catch { return null; } },
   write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
   writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
+
+  // the claim file's full path, said on the owner page while the node has no owner (kanban #550, the owner 2026-10-20: "show the complete path")
+  codePath: resolvePath(`${path}.owner-claim`),
 } };
 // THE OPERATOR UI'S TOKENS (spec §27A.7.7): kept as hashes beside the database; the first-start pairing URI written
 // beside it too, readable by the operator only, as the claim code is. The endpoint is the node's public one (ARENA_WSS_<port>)

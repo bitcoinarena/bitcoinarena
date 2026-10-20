@@ -59,6 +59,15 @@ test('a node is claimed once, with its code, and then answers only its owner', (
   assert.ok(again.state().claimed, 'the owner survives a restart');
 });
 
+test('an unclaimed node names its claim file\'s full path; once claimed it says none (kanban #550)', () => {
+  const { m, store } = memory();
+  const o = createOwner({ store: { ...store, codePath: '/home/op/.arena/node.db.owner-claim' }, verify, node: NODE, nowMs: () => 1_000_000 });
+  assert.equal(o.state().claimFile, '/home/op/.arena/node.db.owner-claim');
+  assert.ok(o.claim(signOwnerRequest({ node: NODE, action: 'claim', args: { code: m.code }, atMs: 1_000_000, secret: ownerSecretFromSeed(seedA), sign, pubkeyOf })).ok);
+  assert.equal(o.state().claimFile, null, 'no path once the node has an owner');
+  assert.equal(createOwner({ store: memory().store, verify, node: NODE }).state().claimFile, null, 'a store that names no path: none');
+});
+
 test('the owner doors on a running node', async () => {
   const { m, store } = memory();
   const node = await serve(openStore(), { plugins: HOSTED, port: 0, owner: { store } });
