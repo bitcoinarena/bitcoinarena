@@ -5531,9 +5531,14 @@ The flooring makes honest guardians measure the same values.
   is not swapped for a lucky one.
 - A brand-new federation has no volume yet, so its first two are ranked
   by capacity, availability, bond and ticket.
-- **Fewer than two eligible:** the empty seat stays empty and the record
-  says so. The federation still runs, and clients may use any registered
-  gateway.
+- **A draining federation has one seat** *(2026-10-20: "those that are DRAINING only need 1, that is a hard rule. All federations
+  need 2 of 2 gateways, draining gateways at least 1")*: DRAINING, or CRITICAL while it drains into its successor. It takes no
+  deposits, it only pays out while its funds move on.
+- **Never without a gateway** *(2026-10-20: "There needs to be at least 1 gateway")*: when no operator is eligible, the best
+  candidate that can still serve - a seated guardian whose gateway is registered with F and holds e-cash in F - holds one seat,
+  ranked as above, and the seating names it as below the minimums. It keeps the seat only until an operator is eligible.
+- **Otherwise fewer than two eligible:** the empty seat stays empty and the seating says so. The federation still runs, and clients
+  may use any registered gateway. The operators set up the second gateway rather than leave a seat empty.
 
 ### What it earns (from the custody fee)
 
