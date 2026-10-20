@@ -107,6 +107,8 @@ test('the updater as a service: it names the node\'s own arenanode (no release),
     const cmd = readFileSync(join(home, 'arena-updater.cmd'), 'utf8');
     assert.match(cmd, /:again\r\ncall ".*arenanode\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n$/);
     const { readFileSync: rf } = await import('node:fs');
-    assert.match(rf(new URL('../src/update.js', import.meta.url), 'utf8'), /-notlike '\*arenanode\.mjs\*auto-update\*'/, 'a Windows update does not end the auto update that runs it');
+    // a Windows update does not end the auto update that runs it: its own process (#546: no longer every auto update - an old updater
+    // beside a manual update is ended with its release, and the task runs it again from the new one)
+    assert.match(rf(new URL('../src/update.js', import.meta.url), 'utf8'), /\$_\.ProcessId -ne \$\{Number\(selfPid\)\}/, 'a Windows update does not end its own process');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

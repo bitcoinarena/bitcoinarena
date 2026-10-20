@@ -125,7 +125,7 @@ export function releaseOfLauncher(text) {
  * other service of the node that names the old release (the bridge, the tunnel's cloudflared, tor, the gateway, the liquidity
  * provider) is moved to the new one - before, only the seat and the bridge moved and the rest kept running the old release.
  */
-function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
+function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
   if (platform === 'darwin') {
     const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
@@ -171,21 +171,36 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
         // arena-node-2026.1.0-windows-x64/runtime/node.exe", the release was named with backslashes, -like matched nothing, the old node
         // kept its port, the new one could not start, and the old one answered the health check - a false "updated")
         const folder = String(release).split(/[\\/]/).filter(Boolean).pop();
-        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.ProcessId -ne ${Number(selfPid)} -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
       // THE PROCESSES STILL RUNNING FROM `folders` (kanban #546): [{ pid, name, commandLine }] - every one whose command line names one of
-      // those release folders (any slashes), but the auto update running this update (it exits 75 by itself, and its loop starts the
-      // new release's). Asked after the stop and again after the start: no process of an older release may be left.
+      // those release folders (any slashes), but this update's own process (`selfPid`: an auto update exits 75 by itself, and its loop
+      // starts the new release's). Asked after the stop and again after the start: no process of an older release may be left - an
+      // updater of the old release beside a manual update included (measured 2026-10-20 04:30Z in the Windows VM: after T1 by hand,
+      // the updater's child still ran 2026.1.1, and would have updated with the old update.js).
       leftovers: async (folders) => {
         const names = [...new Set((folders || []).map((x) => String(x).split(/[\\/]/).filter(Boolean).pop()).filter(Boolean))];
         if (!names.length) return [];
         const like = names.map((n) => `$c -like '*\\${q(n)}\\*'`).join(' -or ');
-        const r = await ps(`@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' } | ForEach-Object { $c = $_.CommandLine.Replace('/', '\\'); if (${like}) { [pscustomobject]@{ pid = $_.ProcessId; name = $_.Name; commandLine = $_.CommandLine } } }) | ConvertTo-Json -Compress`);
+        const r = await ps(`@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID -and $_.ProcessId -ne ${Number(selfPid)} } | ForEach-Object { $c = $_.CommandLine.Replace('/', '\\'); if (${like}) { [pscustomobject]@{ pid = $_.ProcessId; name = $_.Name; commandLine = $_.CommandLine } } }) | ConvertTo-Json -Compress`);
         if (!r.ok) return [{ pid: null, name: '?', commandLine: `the process list could not be read: ${(r.err || '').trim().slice(0, 160)}` }];
         const t = String(r.out || '').trim();
         if (!t || t === 'null') return [];
         try { const j = JSON.parse(t); return (Array.isArray(j) ? j : [j]).map((x) => ({ pid: x.pid, name: x.name, commandLine: x.commandLine })); } catch { return []; }
+      },
+      // THE UPDATER COMES BACK (kanban #546): its child was ended with the old release (a manual update), so its loop ended with it - the
+      // task "Arena updater" is run again (schtasks /run; the launcher through WMI where no task exists). Not when an auto update runs
+      // (this update's own process among them: it exits 75 and its loop starts the new release's).
+      updater: async () => {
+        const f = join(home, 'arena-updater.cmd');
+        if (!existsSync(f)) return { ok: true, none: true };
+        const r = await ps(`@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*auto-update*' -and $_.ProcessId -ne $PID }).Count`);
+        if (r.ok && Number(String(r.out || '').trim()) > 0) return { ok: true, running: true };
+        const t = await sh('schtasks', ['/run', '/tn', task(f)]);
+        if (t.ok) return { ok: true, started: 'task', task: task(f) };
+        const w = await ps(`$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd.exe /c "${q(f)}"'; CurrentDirectory = '${q(home)}' }; if ($r.ReturnValue -ne 0) { throw "Win32_Process.Create: $($r.ReturnValue)" }`);
+        return w.ok ? { ok: true, started: 'launcher' } : { ok: false, why: `the updater was not started again: ${(w.err || t.err || '').trim().slice(0, 160)}` };
       },
       end: async (pids) => { for (const pid of pids.filter((x) => Number.isInteger(x))) await ps(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`); },
       start: async (fs) => {
@@ -371,8 +386,11 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
       if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
     } catch (e) { command = { why: e.message }; }
+    // and on Windows the updater running again - after the arenanode command names the new release, which its loop CALLs (kanban #546)
+    let updaterBack = null;
+    if (svc.updater) { try { updaterBack = await svc.updater(); } catch (e) { updaterBack = { ok: false, why: e.message }; } }
     return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local, updater,
-      ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}),
+      ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}), ...(updaterBack ? { updaterBack } : {}),
       ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }

@@ -391,3 +391,42 @@ test('Windows: the update counts only when /owner/version names the new release;
     assert.match(r.why, /^processes of an older release would not end: fedimintd\.exe 4343/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// THE UPDATER COMES BACK FROM THE NEW RELEASE (kanban #546, measured 2026-10-20 04:30Z in the Windows VM: after T1 by hand the updater's child
+// still ran 2026.1.1): the stop and the leftover check exclude only this update's own process; after the update the task runs again when
+// no auto update runs, and not while one does (an auto update exits 75 and its loop starts the new release's)
+test('Windows: an old updater beside a manual update is ended with its release, and the task "Arena updater" is run again after the arenanode command names the new release', async () => {
+  const { windowsLauncher } = await import('../src/service.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-546u-'));
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const rel = join(root, 'releases'), v1 = join(rel, 'arena-node-2026.1.1-windows-x64'), v2 = join(rel, 'arena-node-2026.1.1.901-windows-x64');
+  for (const d of [v1, v2]) mkdirSync(d, { recursive: true });
+  const fresh = () => {
+    writeFileSync(join(home, 'arena.conf'), 'network=testnet4\r\nroles=verify\r\n');
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+    writeFileSync(join(home, 'arena-node.cmd'), windowsLauncher({ node: `${v1}\\runtime\\node.exe`, release: v1, home, port: 8470 }));
+    writeFileSync(join(home, 'arena-updater.cmd'), `@echo off\r\n:again\r\ncall "${home}\\bin\\arenanode.cmd" "auto-update" >> "${home}\\updater.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n`);
+  };
+  let updaters = 0; const calls = [];
+  const sh = async (cmd, args) => { calls.push([cmd, ...args]); const script = args.at(-1);
+    if (cmd === 'powershell' && /auto-update\*'.*\.Count/.test(script)) return { ok: true, out: String(updaters), err: '' };
+    return { ok: true, out: '', err: '' }; };
+  const fetcher = async () => ({ status: 200, arrayBuffer: async () => new Uint8Array(32).fill(0xab).buffer });
+  try {
+    fresh();
+    const r = await updateNode({ home, newRelease: v2, port: 8470, node: `${v2}\\runtime\\node.exe`, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 2000 });
+    assert.equal(r.ok, true, r.why);
+    const kill = calls.find((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1)) && c.at(-1).includes('2026.1.1-windows-x64'));
+    assert.ok(kill && kill.at(-1).includes(`$_.ProcessId -ne ${process.pid}`) && !kill.at(-1).includes('notlike'), 'only its own process is spared: an old updater ends with its release');
+    assert.deepEqual(r.updaterBack, { ok: true, started: 'task', task: 'Arena updater' });
+    const runAt = calls.findIndex((c) => c[0] === 'schtasks' && c[1] === '/run'), cmdAt = calls.findIndex((c) => c.some((a) => /arenanode/.test(String(a)) && /setx|Path/i.test(String(a))));
+    assert.ok(runAt > 0, 'the task runs again');
+    // an auto update runs (this update's own process among them): no second loop
+    fresh(); updaters = 1; calls.length = 0;
+    const r2 = await updateNode({ home, newRelease: v2, port: 8470, node: `${v2}\\runtime\\node.exe`, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 2000 });
+    // (v2 is running already after the first: put the launcher back to v1 above, so this is an update again)
+    assert.equal(r2.ok, true, r2.why);
+    assert.deepEqual(r2.updaterBack, { ok: true, running: true });
+    assert.equal(calls.filter((c) => c[0] === 'schtasks' && c[1] === '/run').length, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
