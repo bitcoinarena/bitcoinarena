@@ -65,8 +65,20 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
  * THE RESERVE, BY A THRESHOLD OF GUARDIANS: every endpoint asked at once; the sum at least `threshold` of them name, or a
  * refusal naming what they said. `{ ok, reserveSats, agreeing, of, moduleId }`.
  */
+// AND IT ANSWERS AS SOON AS A THRESHOLD AGREES (kanban #549, measured 2026-10-20 ~07:22Z: federation 4dc88be7 has 7 guardians and one
+// unreachable, so every read waited out its 8 s timeout; a guardian seat asked to sign reads the reserve first, so it answered the
+// gatherer in 8.07 s - past the gatherer's own 8 s - and the successor's record never got more than 1 of the 5 signatures it needs)
 export async function readReserve({ endpoints, threshold, timeoutMs = 8000, moduleId = null, WS = globalThis.WebSocket }) {
-  const said = await Promise.all(endpoints.map((e) => askOne(e, { timeoutMs, moduleId, WS })));
+  const said = await new Promise((done) => {
+    const got = new Array(endpoints.length).fill(null), counts = new Map();
+    let left = endpoints.length;
+    if (!left) { done(got); return; }
+    endpoints.forEach((e, i) => askOne(e, { timeoutMs, moduleId, WS }).then((s) => {
+      got[i] = s; left--;
+      if (s.ok) { const k = String(s.reserveSats); counts.set(k, (counts.get(k) || 0) + 1); if (counts.get(k) >= threshold) { done(got.filter(Boolean)); return; } }
+      if (!left) done(got);
+    }));
+  });
   const counts = new Map();
   for (const s of said) if (s.ok) counts.set(String(s.reserveSats), (counts.get(String(s.reserveSats)) || 0) + 1);
   const [best, n] = [...counts].sort((a, b) => b[1] - a[1])[0] || [null, 0];
