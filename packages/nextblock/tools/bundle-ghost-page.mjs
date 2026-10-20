@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TICK TOCK'S GHOSTS, AS ITS OWN PAGE SCRIPT (§0A.2 "the engine never imports a game's code"; kanban #521/#525): page/ghost-field.js
-// is what the page does with a picture of somebody else's truck - only Tick Tock's Unity bridge (blwp.jslib) and its page part ask
+// is what the page does with a picture of somebody else's truck - only Tick Tock's Unity bridge (arena.jslib) and its page part ask
 // for it. It was walked into the engine's client bundle (arena-client.js); it is now page/ghost-page.js, a classic script the page
 // loads after the bundle, which puts its exports on BLWPCLIENT where the jslib has always called them. Its two helpers come from
 // the bundle (toHex; generatedName is displayNameFromKey). Nothing is transformed: the import lines go, `export ` goes, the rest is

@@ -40,8 +40,8 @@ public class NextRoundPlaysTests
             wrecked: false, sinceWreck: 0f, hold: 5f, sinceOutcome: 60f);
         Assert.IsTrue(ended, "precondition: without the next join, this frame is the lobby's");
         Assert.IsFalse(SplashScreen.MayReturnToLobby(continuing, nextJoin) && ended, "this frame showed the lobby");
-        var page = new Blwp.LobbyState { join = new Blwp.LobbyJoin { state = "joined", round = "r1", next = true } };
-        Assert.AreEqual("play", Blwp.DailyLobby.AfterJoin(page, sessionRunning: true, joinedForS: 0f),
+        var page = new Arena.LobbyState { join = new Arena.LobbyJoin { state = "joined", round = "r1", next = true } };
+        Assert.AreEqual("play", Arena.DailyLobby.AfterJoin(page, sessionRunning: true, joinedForS: 0f),
             "a joined next round with its session up is played");
     }
 

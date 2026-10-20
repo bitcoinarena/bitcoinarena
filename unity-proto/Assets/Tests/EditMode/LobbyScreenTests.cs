@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
 using UnityEngine;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE DAILY'S LOBBY IN UNITY, FULLY VISIBLE ON EVERY PHONE (M3.3-34, the owner

@@ -23,7 +23,7 @@ public class BlockClockIsTheCoresTests
     [Test]
     public void TheRunIsAsLongAsTheCoreSaysItIs()
     {
-        Assert.AreEqual(Blwp.Layout.BLOCK_TICKS, BlockClock.RunTicks,
+        Assert.AreEqual(Arena.Layout.BLOCK_TICKS, BlockClock.RunTicks,
             "the HUD's run length is not the core's - the clock will hit 0:00 while the round is still live, "
             + "which is exactly the bug this guards");
     }
@@ -37,11 +37,11 @@ public class BlockClockIsTheCoresTests
     [Test]
     public void ZeroOnScreenIsTheTickTheRunEnds()
     {
-        Assert.Greater(BlockClock.CoreSecondsLeft(Blwp.Layout.BLOCK_TICKS - 1), 0f,
+        Assert.Greater(BlockClock.CoreSecondsLeft(Arena.Layout.BLOCK_TICKS - 1), 0f,
             "one tick before the end the clock still has something on it");
-        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(Blwp.Layout.BLOCK_TICKS), 0.0001f,
+        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(Arena.Layout.BLOCK_TICKS), 0.0001f,
             "the clock reads 0:00 on the tick the core calls the run MISSED");
-        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(Blwp.Layout.BLOCK_TICKS + 5000), 0.0001f,
+        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(Arena.Layout.BLOCK_TICKS + 5000), 0.0001f,
             "and it never goes negative");
 
         float wholeBlock = BlockClock.CoreSecondsLeft(0);
@@ -53,9 +53,9 @@ public class BlockClockIsTheCoresTests
     [Test]
     public void TheOutcomeWordsAreTheCores()
     {
-        Assert.AreEqual(0, Blwp.Layout.RUN_LIVE);
-        Assert.AreEqual(1, Blwp.Layout.RUN_DELIVERED);
-        Assert.AreEqual(2, Blwp.Layout.RUN_WRECKED);
-        Assert.AreEqual(3, Blwp.Layout.RUN_MISSED);
+        Assert.AreEqual(0, Arena.Layout.RUN_LIVE);
+        Assert.AreEqual(1, Arena.Layout.RUN_DELIVERED);
+        Assert.AreEqual(2, Arena.Layout.RUN_WRECKED);
+        Assert.AreEqual(3, Arena.Layout.RUN_MISSED);
     }
 }

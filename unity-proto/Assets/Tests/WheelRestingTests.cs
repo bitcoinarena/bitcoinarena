@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using System.Collections;
-using Blwp;
+using Arena;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -36,7 +36,7 @@ using UnityEngine.TestTools;
 ///
 /// PlayMode, and the resting is driven directly, for the same reason
 /// `MushroomRestingTests` drives the cloud: `PoseWheels` only runs while the
-/// core is driving, and in an editor `BlwpCore` is a stub that will never
+/// core is driving, and in an editor `ArenaCore` is a stub that will never
 /// drive anything. The steer, the speed and the frame time are the core's
 /// three numbers, handed in.
 /// </summary>

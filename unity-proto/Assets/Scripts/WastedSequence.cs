@@ -119,8 +119,8 @@ public class WastedSequence : MonoBehaviour
     {
         _running = true;
         _wreckedAt = Time.unscaledTime;
-        _live = !DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed);
-        if (_live) Debug.Log($"[blwp] wasted: up, the band holds {holdSeconds:0.0} s then fades over {fadeOutSeconds:0.0} s");
+        _live = !DeliveryGate.BackToTheBay(Arena.ArenaNet.RoundSeed);
+        if (_live) Debug.Log($"[arena] wasted: up, the band holds {holdSeconds:0.0} s then fades over {fadeOutSeconds:0.0} s");
     }
 
     void End()
@@ -145,13 +145,13 @@ public class WastedSequence : MonoBehaviour
         if (_live)
         {
             float since = Time.unscaledTime - _wreckedAt;
-            bool nextRun = since > 0.5f && Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE;
+            bool nextRun = since > 0.5f && Arena.ArenaCore.Available && Arena.ArenaCore.RunState == Arena.Layout.RUN_LIVE;
             if (since >= holdSeconds + fadeOutSeconds || nextRun)
             {
                 _running = false; _live = false; Intensity = 0f;
                 LiveEndedAt = Time.unscaledTime;
                 Restore();
-                Debug.Log($"[blwp] wasted: gone {since:0.00} s after the wreck{(nextRun ? " (a new run began)" : "")}; time scale {Time.timeScale:0.00}");
+                Debug.Log($"[arena] wasted: gone {since:0.00} s after the wreck{(nextRun ? " (a new run began)" : "")}; time scale {Time.timeScale:0.00}");
                 return;
             }
             Apply(LiveIntensity(since, fadeIn, holdSeconds, fadeOutSeconds));

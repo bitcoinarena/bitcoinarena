@@ -8,7 +8,7 @@
 // renders somewhere wrong, or its health becomes its heading. A layout written
 // twice by hand drifts the first time a field is inserted.
 //
-//   node tools/gen-unity-layout.js > ../../unity-proto/Assets/Scripts/Blwp/BlwpLayout.cs
+//   node tools/gen-unity-layout.js > ../../unity-proto/Assets/Scripts/Arena/ArenaLayout.cs
 
 import { readFileSync } from 'node:fs';
 
@@ -41,7 +41,7 @@ out += '// rather than written, because C# and JavaScript index the same ArrayBu
 out += '// and a disagreement about where a field lives does not throw - the truck\n';
 out += '// just renders somewhere wrong, or its health becomes its heading.\n';
 out += '\n';
-out += 'namespace Blwp\n{\n';
+out += 'namespace Arena\n{\n';
 out += '    /// <summary>Word offsets into the core state buffer. Generated from state.js.</summary>\n';
 out += '    public static class Layout\n    {\n';
 for (const k of wanted.sort()) out += `        public const int ${k} = ${mod[k]};\n`;

@@ -6,7 +6,7 @@ using NUnit.Framework;
 /// §11.4/§11.5: a DOWNED man is laid on the dirt, not buried in it.
 ///
 /// This is the guard the pose itself could not have. `PostureDrawTests` has to Assert.Ignore because the editor
-/// has no core - `BlwpCore.Available` is a browser extern, every unit reads dead, and `ArmyRenderer` draws no men
+/// has no core - `ArenaCore.Available` is a browser extern, every unit reads dead, and `ArmyRenderer` draws no men
 /// at all - so a test that walks the draw path proves nothing there. The lift arithmetic is not like that: it is
 /// a pure function of posture and which anchor the model has, it consults no core and no scene, and it is exactly
 /// where the fault was. So it can be asserted here and it runs.

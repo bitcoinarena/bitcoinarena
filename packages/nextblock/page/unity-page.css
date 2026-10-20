@@ -3,30 +3,30 @@
 /* TICK TOCK'S PART OF THE ARENA PAGE'S STYLE (kanban #521): the next round's box, moved out of the page's <style> as it was */
 /* THE NEXT ROUND (2026-09-28, option 1 of A; spec "Timing - every network, every round"): after the result
    card, "joining next round in N seconds" beside "exit game" until the next start. */
-#blwp-next { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 35; display: none;
+#arena-next { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 35; display: none;
   align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; max-width: calc(100% - 32px); box-sizing: border-box;
   background: rgba(13,16,20,0.95); border: 2px solid #f7931a; color: #e8eaed; font: 700 16px/1.25 system-ui, sans-serif; }
 /* SIDE BY SIDE ON A PHONE, NEITHER OVER THE OTHER (SPECTATE-2158: "exit game" lay on the countdown words): the words
    take the room left of the button and wrap inside it; the button keeps its own width. */
 #arena-next-say { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-#blwp-next { width: max-content; }
+#arena-next { width: max-content; }
 /* NEVER ONE LETTER A LINE (measured 2026-10-18 on a 390 px phone: beside "Buy add-ons", "Donate" and "exit game"
    the words had no room left and stood one letter per line down the box): the words keep at least 10em, and the buttons
    that do not fit beside them wrap to a row of their own; on a phone the words take the first row whole. */
-#blwp-next { flex-wrap: wrap; justify-content: center; } #arena-next-say { min-width: min(10em, 100%); }
-@media (max-width: 520px) { #blwp-next { width: calc(100% - 32px); font-size: 15px; } #arena-next-say { flex-basis: 100%; text-align: center; } }
+#arena-next { flex-wrap: wrap; justify-content: center; } #arena-next-say { min-width: min(10em, 100%); }
+@media (max-width: 520px) { #arena-next { width: calc(100% - 32px); font-size: 15px; } #arena-next-say { flex-basis: 100%; text-align: center; } }
 /* AT THE BOTTOM EDGE IN LANDSCAPE (MF 19: at 18% up it stood over the result summary - "1 still driving",
    "YOU PENDING" - and a wreck's summary has no room above it there). Between the touch pads, which sit in the bottom
    corners; upright there is room above 18%, and on a touch screen it goes above the pads (below). Unity reads its top
    (nextBoxTop) and ends the card above it. */
-@media (orientation: landscape) { #blwp-next { bottom: max(10px, env(safe-area-inset-bottom)); } }
-@media (orientation: landscape) and (max-height: 460px) { #blwp-next { padding: 6px 10px; font-size: 14px; gap: 10px; }
+@media (orientation: landscape) { #arena-next { bottom: max(10px, env(safe-area-inset-bottom)); } }
+@media (orientation: landscape) and (max-height: 460px) { #arena-next { padding: 6px 10px; font-size: 14px; gap: 10px; }
   #arena-next-exit { padding: 5px 10px; } }
 /* on a touch screen no wider than the gap between the pads: each corner group is 2 buttons of 20% of the short side and
    1.5 margins of 3.5% (TouchPad.ButtonSize, Margin) - 45.25vh a side; the words wrap inside */
-@media (orientation: landscape) and (pointer: coarse) { #blwp-next { max-width: calc(100vw - 92vh); } }
+@media (orientation: landscape) and (pointer: coarse) { #arena-next { max-width: calc(100vw - 92vh); } }
 /* upright on a touch screen, above the pads: their top is 2 buttons and 1.5 margins up (45.25vw) */
-@media (orientation: portrait) and (pointer: coarse) { #blwp-next { bottom: max(18%, calc(45.25vw + 10px)); } }
+@media (orientation: portrait) and (pointer: coarse) { #arena-next { bottom: max(18%, calc(45.25vw + 10px)); } }
 #arena-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
   border: 1px solid #3a4a5c; border-radius: 6px; }
 #arena-next-addons { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #f7931a; color: #111;
@@ -35,7 +35,7 @@
 /* DONATE IN THE COUNTDOWN (2026-10-17: "Ticktok location accepted") */
 #arena-next-donate { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #1b1408; color: #f7931a; border: 1px solid #f7931a; border-radius: 6px; }
 @media (orientation: landscape) and (max-height: 460px) { #arena-next-donate { padding: 5px 10px; } }
-body.blwp-clean #blwp-next { display: none !important; }
+body.arena-clean #arena-next { display: none !important; }
 
 /* TICK TOCK'S LOADING SCREEN AND SETTINGS (kanban #521 step 3: the CSS goes with the game that owns it): Unity's canvas, the
    title and its line, the gold panel Unity's lobby is drawn in, the 90 -> 100 % creep and the 91 ... 99 % steps, the how-to,

@@ -53,15 +53,15 @@ public class AddonsPanel : MonoBehaviour
     public const float BannerS = 6f;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
-    [DllImport("__Internal")] static extern string BlwpAddonsState();
-    [DllImport("__Internal")] static extern int BlwpAddonsBuy(string id);
-    [DllImport("__Internal")] static extern int BlwpAddonsUse(string id, int on);
-    [DllImport("__Internal")] static extern int BlwpAddonsOpen();
+    [DllImport("__Internal")] static extern string ArenaAddonsState();
+    [DllImport("__Internal")] static extern int ArenaAddonsBuy(string id);
+    [DllImport("__Internal")] static extern int ArenaAddonsUse(string id, int on);
+    [DllImport("__Internal")] static extern int ArenaAddonsOpen();
 #else
-    static string BlwpAddonsState() => TestState ?? "";
-    static int BlwpAddonsBuy(string id) { Bought?.Invoke(id); return 1; }
-    static int BlwpAddonsUse(string id, int on) => 1;
-    static int BlwpAddonsOpen() => 1;
+    static string ArenaAddonsState() => TestState ?? "";
+    static int ArenaAddonsBuy(string id) { Bought?.Invoke(id); return 1; }
+    static int ArenaAddonsUse(string id, int on) => 1;
+    static int ArenaAddonsOpen() => 1;
 #endif
     /// <summary>The editor's stand-in for the page's view (tests).</summary>
     public static string TestState;
@@ -116,7 +116,7 @@ public class AddonsPanel : MonoBehaviour
     public void OpenAddons()
     {
         IsOpen = true;
-        BlwpAddonsOpen();
+        ArenaAddonsOpen();
         Poll();
         Debug.Log("[AddonsPanel] open");
     }
@@ -126,7 +126,7 @@ public class AddonsPanel : MonoBehaviour
     void Poll()
     {
         _polledAt = Time.unscaledTime;
-        var s = Parse(BlwpAddonsState());
+        var s = Parse(ArenaAddonsState());
         if (s == null) return;
         if (IsNewPurchase(_seenSeq, s)) { _banner = s.bought; _bannerAt = Time.unscaledTime; Debug.Log($"[AddonsPanel] bought {s.bought.id}, plays from {s.bought.from}"); }
         if (s.seq > _seenSeq) _seenSeq = s.seq;
@@ -188,7 +188,7 @@ public class AddonsPanel : MonoBehaviour
         Styles();
         GUI.depth = -300;   // over the cargo screen (-100) and the HUD
         int w = Screen.width, h = Screen.height;
-        float scale = Mathf.Max(1f, Blwp.DailyLobby.UiScale());
+        float scale = Mathf.Max(1f, Arena.DailyLobby.UiScale());
         _title.fontSize = Mathf.RoundToInt(20f * scale);
         _body.fontSize = Mathf.RoundToInt(15f * scale);
         _small.fontSize = Mathf.RoundToInt(13f * scale);
@@ -249,7 +249,7 @@ public class AddonsPanel : MonoBehaviour
                     own.normal.textColor = new Color(0.35f, 0.85f, 0.45f);
                     GUI.Label(b, "OWNED", own);
                     bool use = GUI.Toggle(new Rect(b.x, b.yMax, bw, 26f * scale), it.use, " Play with it");
-                    if (use != it.use) { BlwpAddonsUse(it.id, use ? 1 : 0); it.use = use; }
+                    if (use != it.use) { ArenaAddonsUse(it.id, use ? 1 : 0); it.use = use; }
                 }
                 else
                 {
@@ -257,7 +257,7 @@ public class AddonsPanel : MonoBehaviour
                     var buy = new GUIStyle(_buy) { fontSize = _btn.fontSize };
                     DriveHud.FitLine(buy, ButtonLabel(it, _s.busy), b.width - 12f * scale, 10);
                     if (!free) { buy.normal.background = buy.hover.background = buy.active.background = _orangeBusy; }
-                    if (GUI.Button(b, ButtonLabel(it, _s.busy), buy) && free) { BlwpAddonsBuy(it.id); _polledAt = -99f; }
+                    if (GUI.Button(b, ButtonLabel(it, _s.busy), buy) && free) { ArenaAddonsBuy(it.id); _polledAt = -99f; }
                 }
                 y += rowH + 10f * scale;
             }

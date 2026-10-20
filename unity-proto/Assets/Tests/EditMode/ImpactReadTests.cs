@@ -17,21 +17,21 @@ public class ImpactReadTests
     [Test]
     public void TheImpactWordIsClearedOnlyOutsideASignedRun()
     {
-        Assert.IsFalse(Blwp.BlwpCore.MayClearImpact(true), "the page wrote the impact word of the core the signer nodes replay");
-        Assert.IsTrue(Blwp.BlwpCore.MayClearImpact(false), "outside a signed run the mailbox stopped being emptied");
+        Assert.IsFalse(Arena.ArenaCore.MayClearImpact(true), "the page wrote the impact word of the core the signer nodes replay");
+        Assert.IsTrue(Arena.ArenaCore.MayClearImpact(false), "outside a signed run the mailbox stopped being emptied");
     }
 
     [Test]
     public void AReadOnlyWordIsFeltWhenItRisesAndOnceOnly()
     {
         int seen = 0;
-        Assert.AreEqual(0, Blwp.BlwpCore.FeltImpact(0, ref seen), "no impact was felt as one");
-        Assert.AreEqual(3 * ONE, Blwp.BlwpCore.FeltImpact(3 * ONE, ref seen), "the first crash was not felt");
-        Assert.AreEqual(0, Blwp.BlwpCore.FeltImpact(3 * ONE, ref seen), "one crash was felt twice");
-        Assert.AreEqual(5 * ONE, Blwp.BlwpCore.FeltImpact(5 * ONE, ref seen), "a harder crash was not felt");
+        Assert.AreEqual(0, Arena.ArenaCore.FeltImpact(0, ref seen), "no impact was felt as one");
+        Assert.AreEqual(3 * ONE, Arena.ArenaCore.FeltImpact(3 * ONE, ref seen), "the first crash was not felt");
+        Assert.AreEqual(0, Arena.ArenaCore.FeltImpact(3 * ONE, ref seen), "one crash was felt twice");
+        Assert.AreEqual(5 * ONE, Arena.ArenaCore.FeltImpact(5 * ONE, ref seen), "a harder crash was not felt");
         // A new world (init or restart) starts the word at zero again.
-        Assert.AreEqual(0, Blwp.BlwpCore.FeltImpact(0, ref seen));
+        Assert.AreEqual(0, Arena.ArenaCore.FeltImpact(0, ref seen));
         Assert.AreEqual(0, seen, "the next run's crashes were measured against the last run's hardest");
-        Assert.AreEqual(2 * ONE, Blwp.BlwpCore.FeltImpact(2 * ONE, ref seen), "the next run's first crash was not felt");
+        Assert.AreEqual(2 * ONE, Arena.ArenaCore.FeltImpact(2 * ONE, ref seen), "the next run's first crash was not felt");
     }
 }

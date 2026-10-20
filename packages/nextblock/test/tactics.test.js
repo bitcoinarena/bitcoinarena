@@ -910,7 +910,7 @@ test('a tank shell that connects on the courier pins the fire teams standing aro
 });
 
 // §11.4's POSTURE WORD, GUARDED. Nothing asserted this until now: posture, the pin and the pose were held up by
-// tools run by hand, which is how the 18-word BlwpLayout.cs mismatch survived three letters. This derives the
+// tools run by hand, which is how the 18-word ArenaLayout.cs mismatch survived three letters. This derives the
 // posture §11.4 defines - STAND if his own step cleared 0.01 m, COVER if he is within 0.5 m of his claimed place
 // and not stepping, PRONE otherwise - and compares it with the word the core actually wrote, every living man,
 // every tick. A wrong shift, a wrong mask, a claim pass that wipes the bits, or a pose writer that forgets the

@@ -10,13 +10,13 @@ using UnityEngine.TestTools;
 /// <summary>
 /// THE LARGER TRUCK, AS DRAWN: when the core drives the larger truck's bed (255590 = 3.9 m, 1.3 x the standard
 /// 196608), the bay is 3.9 m from the same front, 30 % more crates fit, and the body is 0.9 m longer with the cab where it was;
-/// back to the standard truck, all of it is as before. The core's answer is stood in for by BlwpCore.TruckBedOverride (the editor
-/// has no core). Each state is rendered from the side into BLWP_SHOT_DIR when that is set.
+/// back to the standard truck, all of it is as before. The core's answer is stood in for by ArenaCore.TruckBedOverride (the editor
+/// has no core). Each state is rendered from the side into ARENA_SHOT_DIR when that is set.
 /// </summary>
 public class LargeTruckTests
 {
-    [TearDown] public void ClearTheWorld() { Blwp.BlwpCore.TruckBedOverride = 0; LargeTruckView.MorphInEditor = false; LargeTruckView.CoreInEditor = false; TestWorld.TearDown(); }
-    [SetUp] public void PracticeOff() => Blwp.PracticeMode.On = false;
+    [TearDown] public void ClearTheWorld() { Arena.ArenaCore.TruckBedOverride = 0; LargeTruckView.MorphInEditor = false; LargeTruckView.CoreInEditor = false; TestWorld.TearDown(); }
+    [SetUp] public void PracticeOff() => Arena.PracticeMode.On = false;
 
     const int LargeBedQ16 = 255590;   // frozen/f0cc7b7b/items.js LARGE_TRUCK.bedLength
 
@@ -84,7 +84,7 @@ public class LargeTruckTests
 
     void Shot(string name)
     {
-        string dir = System.Environment.GetEnvironmentVariable("BLWP_SHOT_DIR");
+        string dir = System.Environment.GetEnvironmentVariable("ARENA_SHOT_DIR");
         if (string.IsNullOrEmpty(dir)) return;
         // ONLY THE TRUCK AND THE GROUND: whatever stands around it (the loading bay's frame) is hidden for the picture and shown again
         var hidden = new List<Renderer>();
@@ -129,7 +129,7 @@ public class LargeTruckTests
     {
         Assert.IsNotNull(_view, "the truck carries no LargeTruckView");
         // THE STANDARD TRUCK
-        Blwp.BlwpCore.TruckBedOverride = 0;
+        Arena.ArenaCore.TruckBedOverride = 0;
         yield return null;
         float front0 = _bay.bedFloor.z + _bay.bedLength * 0.5f;
         Assert.AreEqual(3.0f, _bay.bedLength, 1e-4f);
@@ -138,7 +138,7 @@ public class LargeTruckTests
         Shot("truck-standard");
 
         // THE LARGER TRUCK: the core drives a 3.9 m bed
-        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;
+        Arena.ArenaCore.TruckBedOverride = LargeBedQ16;
         yield return null; yield return null;
         float bed = LargeBedQ16 / 65536f;
         Assert.AreEqual(bed, _bay.bedLength, 1e-5f, "the bay is the core's bed");
@@ -154,7 +154,7 @@ public class LargeTruckTests
                   + $" | larger bed {_bay.bedLength:0.0000} m (x{_bay.bedLength / 3.0f:0.0000}), body z {span1.rear:0.000}..{span1.front:0.000} ({span1.front - span1.rear:0.000} m), {fit1} crates");
 
         // BACK TO THE STANDARD TRUCK
-        Blwp.BlwpCore.TruckBedOverride = 0;
+        Arena.ArenaCore.TruckBedOverride = 0;
         yield return null; yield return null;
         Assert.AreEqual(3.0f, _bay.bedLength, 1e-4f);
         var span2 = BodySpan();
@@ -171,7 +171,7 @@ public class LargeTruckTests
     [UnityTest]
     public IEnumerator ABedChangedBehindTheLobbyMorphsOnceTheRunIsInView()
     {
-        Blwp.BlwpCore.TruckBedOverride = 0;
+        Arena.ArenaCore.TruckBedOverride = 0;
         yield return null;
         var splash = Object.FindFirstObjectByType<SplashScreen>();
         var chase = Object.FindFirstObjectByType<ChaseCamera>();
@@ -180,7 +180,7 @@ public class LargeTruckTests
         yield return null;
         Assert.IsTrue(splash.Showing, "back in the lobby");
         LargeTruckView.CoreInEditor = true;
-        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;   // the joined round's core starts with the larger truck
+        Arena.ArenaCore.TruckBedOverride = LargeBedQ16;   // the joined round's core starts with the larger truck
         for (int i = 0; i < 10; i++) yield return null;
         Assert.IsFalse(_view.Morphing, "behind the lobby: no morph yet");
         Assert.AreEqual(3.0f, _view.AppliedBed, 1e-4f, "the old truck is kept while the lobby shows");
@@ -208,11 +208,11 @@ public class LargeTruckTests
     [UnityTest]
     public IEnumerator InALiveRoundTheTruckMorphsFromOldToNew()
     {
-        Blwp.BlwpCore.TruckBedOverride = 0;
+        Arena.ArenaCore.TruckBedOverride = 0;
         yield return null;
         var span0 = BodySpan();
         LargeTruckView.MorphInEditor = true;
-        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;
+        Arena.ArenaCore.TruckBedOverride = LargeBedQ16;
         float bed = LargeBedQ16 / 65536f, t0 = Time.unscaledTime;
         yield return null;
         Assert.IsTrue(_view.Morphing, "the change in a live round starts a morph");
@@ -243,9 +243,9 @@ public class LargeTruckTests
         Debug.Log($"[LargeTruckTests] FACTS morph {seen.Count} frames, peak {peak:0.000} m, rest {_view.AppliedBed:0.000} m, {Time.unscaledTime - t0:0.00} s");
 
         // THE PICTURES, from a second morph: back to the standard truck, then old -> new again, shot at its start, a third in, the end
-        Blwp.BlwpCore.TruckBedOverride = 0;
+        Arena.ArenaCore.TruckBedOverride = 0;
         for (int i = 0; i < 400 && (_view.Morphing || _view.AppliedBed > 3.001f); i++) yield return null;
-        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;
+        Arena.ArenaCore.TruckBedOverride = LargeBedQ16;
         yield return null;
         Shot("truck-morph-start");
         float t1 = Time.unscaledTime;

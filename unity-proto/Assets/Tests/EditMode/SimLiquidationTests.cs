@@ -20,7 +20,7 @@ public class SimLiquidationTests
 
     /// <summary>
     /// THE LIVE MARKET FEED IS HELD TO THE SAME RULE (2026-09-15): its handler in Bootstrap asks
-    /// this before `BlwpCore.Liquidation`. Measured before on the Daily (0.0.1356): four live forced
+    /// this before `ArenaCore.Liquidation`. Measured before on the Daily (0.0.1356): four live forced
     /// orders fell inside one signed run and the handler sent every one; none is in a transcript.
     /// </summary>
     [Test]

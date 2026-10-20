@@ -34,7 +34,7 @@ using UnityEngine.TestTools;
 ///
 /// Velocity is read the way `ChaseCamera.cs:380` reads it: the core when a
 /// core is answering, the kinematic body only as its fallback. In the editor
-/// `BlwpCore.Available` is false - the core is a stub outside a WebGL build -
+/// `ArenaCore.Available` is false - the core is a stub outside a WebGL build -
 /// so this measures the renderer's geometry with the PhysX velocity standing
 /// in for the core's. The geometry does not branch on where the vector came
 /// from; nothing here writes truck, army or core state.
@@ -170,8 +170,8 @@ public class CameraNoseTests
     /// </summary>
     Vector3 Velocity()
     {
-        Vector3 v = Blwp.BlwpCore.Available
-                  ? Blwp.BlwpCore.Velocity
+        Vector3 v = Arena.ArenaCore.Available
+                  ? Arena.ArenaCore.Velocity
                   : (_body != null ? _body.linearVelocity : Vector3.zero);
         v.y = 0f;
         return v;
@@ -234,19 +234,19 @@ public class CameraNoseTests
     [UnityTest]
     public IEnumerator TheCapIsForgottenWhenTheTheatreGoes()
     {
-        var theatre = Object.FindFirstObjectByType<Blwp.StrikeTheatre>();
+        var theatre = Object.FindFirstObjectByType<Arena.StrikeTheatre>();
         Assert.IsNotNull(theatre, "no StrikeTheatre");
         theatre.RaiseColumn(_truck.transform.position + _truck.transform.forward * 60f);
         for (int i = 0; i < 30; i++) { theatre.StepCloud(1f / 60f); yield return null; }
-        Assert.IsTrue(Blwp.StrikeTheatre.CapCentre.HasValue,
+        Assert.IsTrue(Arena.StrikeTheatre.CapCentre.HasValue,
             "no cap stood, so there is nothing to leave behind");
 
         Object.DestroyImmediate(theatre.gameObject);
         yield return null;
 
-        Assert.IsFalse(Blwp.StrikeTheatre.CapCentre.HasValue,
+        Assert.IsFalse(Arena.StrikeTheatre.CapCentre.HasValue,
             $"the theatre is gone and the cap is still published at "
-            + $"{Blwp.StrikeTheatre.CapCentre} - every camera after this tilts at a ghost");
+            + $"{Arena.StrikeTheatre.CapCentre} - every camera after this tilts at a ghost");
     }
 
     /// <summary>Where a world point lands in the frame, or null behind the camera.</summary>
@@ -506,7 +506,7 @@ public class CameraNoseTests
     [UnityTest]
     public IEnumerator AStrikeLeavesTheViewWhereThePlayerHadIt()
     {
-        var theatre = Object.FindFirstObjectByType<Blwp.StrikeTheatre>();
+        var theatre = Object.FindFirstObjectByType<Arena.StrikeTheatre>();
         Assert.IsNotNull(theatre, "no StrikeTheatre in the scene");
 
         // WITHOUT a cloud first, from a pose that is put back exactly.
@@ -530,7 +530,7 @@ public class CameraNoseTests
         {
             theatre.StepCloud(Time.deltaTime);
             yield return null;
-            if (!Blwp.StrikeTheatre.CapCentre.HasValue) continue;
+            if (!Arena.StrikeTheatre.CapCentre.HasValue) continue;
             stood++;
             worstMove = Mathf.Max(worstMove,
                 Vector3.Distance(_chase.transform.position, quietPos));

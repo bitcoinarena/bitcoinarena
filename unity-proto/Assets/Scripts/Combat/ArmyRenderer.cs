@@ -32,10 +32,10 @@ public class ArmyRenderer : MonoBehaviour
     /// `Army.Side` survives as an enum for the pools and tints. No `Army`
     /// instance is touched.
     /// </summary>
-    static bool CoreReady => Blwp.BlwpCore.Available;
+    static bool CoreReady => Arena.ArenaCore.Available;
 
     static Army.Side SideOf(int i) =>
-        Blwp.BlwpCore.UnitSide(i) < 0 ? Army.Side.Bull : Army.Side.Bear;
+        Arena.ArenaCore.UnitSide(i) < 0 ? Army.Side.Bull : Army.Side.Bear;
     public MempoolTerrain terrain;
 
     [Tooltip("Optional. When set, units stand on the road deck rather than on " +
@@ -92,10 +92,10 @@ public class ArmyRenderer : MonoBehaviour
     readonly List<Transform> _turrets = new List<Transform>();
     readonly List<Transform> _helis = new List<Transform>();
     // Per gunship slot, for the nose and the bank derived from its travel.
-    readonly float[] _heliYaw = new float[Blwp.Layout.MAX_HELIS];
-    readonly float[] _heliBank = new float[Blwp.Layout.MAX_HELIS];
-    readonly Vector3[] _heliWas = new Vector3[Blwp.Layout.MAX_HELIS];
-    readonly bool[] _heliFlown = new bool[Blwp.Layout.MAX_HELIS];
+    readonly float[] _heliYaw = new float[Arena.Layout.MAX_HELIS];
+    readonly float[] _heliBank = new float[Arena.Layout.MAX_HELIS];
+    readonly Vector3[] _heliWas = new Vector3[Arena.Layout.MAX_HELIS];
+    readonly bool[] _heliFlown = new bool[Arena.Layout.MAX_HELIS];
     readonly List<Transform> _bombs = new List<Transform>();
     /// <summary>Main and tail rotor per airframe, so they can be spun.</summary>
     readonly Dictionary<Transform, (Transform main, Transform tail)> _heliRotors =
@@ -442,20 +442,20 @@ public class ArmyRenderer : MonoBehaviour
     void PlaceAircraft()
     {
         if (audio == null) audio = FindFirstObjectByType<GameAudio>();
-        var ear = Blwp.BlwpCore.TruckPosition(0f);
+        var ear = Arena.ArenaCore.TruckPosition(0f);
         float nearest = float.MaxValue;
         Vector2? overhead = null;
 
         int helis = 0;
-        for (int k = 0; k < Blwp.Layout.MAX_HELIS; k++) if (Blwp.BlwpCore.HeliAlive(k)) helis++;
+        for (int k = 0; k < Arena.Layout.MAX_HELIS; k++) if (Arena.ArenaCore.HeliAlive(k)) helis++;
         Fit(_helis, helis, MakeHelicopter);
         int hn = 0;
-        for (int k = 0; k < Blwp.Layout.MAX_HELIS; k++)
+        for (int k = 0; k < Arena.Layout.MAX_HELIS; k++)
         {
             // A dead slot forgets its nose: the next sortie in it starts from
             // its own crossing direction, not from where the last one was
             // pointing when it left the field.
-            if (!Blwp.BlwpCore.HeliAlive(k)) { _heliFlown[k] = false; continue; }
+            if (!Arena.ArenaCore.HeliAlive(k)) { _heliFlown[k] = false; continue; }
             if (hn >= _helis.Count) break;
             var t = _helis[hn++];
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
@@ -479,11 +479,11 @@ public class ArmyRenderer : MonoBehaviour
             // how hard it is turning, clamped at 0.8 rad and eased at 3.5.
             // Nothing in the simulation reads either, which is why they belong
             // here and cost no layout word.
-            var where = Blwp.BlwpCore.HeliPosition(k);
+            var where = Arena.ArenaCore.HeliPosition(k);
             float yaw = _heliYaw[k];
             if (!_heliFlown[k])
             {
-                yaw = Blwp.BlwpCore.HeliDir(k) >= 0 ? 90f : -90f;
+                yaw = Arena.ArenaCore.HeliDir(k) >= 0 ? 90f : -90f;
                 _heliBank[k] = 0f;
                 _heliFlown[k] = true;
             }
@@ -507,7 +507,7 @@ public class ArmyRenderer : MonoBehaviour
             float d2 = (where.x - ear.x) * (where.x - ear.x) + (where.z - ear.z) * (where.z - ear.z);
             if (d2 < nearest) { nearest = d2; overhead = new Vector2(where.x, where.z); }
 
-            var mat = Blwp.BlwpCore.HeliSide(k) < 0 ? bullMaterial : bearMaterial;
+            var mat = Arena.ArenaCore.HeliSide(k) < 0 ? bullMaterial : bearMaterial;
             foreach (var r in t.GetComponentsInChildren<MeshRenderer>(true))
                 if (mat != null && r.sharedMaterial != mat && helicopterPrefab == null)
                     r.sharedMaterial = mat;
@@ -524,20 +524,20 @@ public class ArmyRenderer : MonoBehaviour
         if (audio != null) audio.Rotors(overhead);
 
         int bombs = 0;
-        for (int k = 0; k < Blwp.Layout.MAX_BOMBS; k++) if (Blwp.BlwpCore.BombAlive(k)) bombs++;
+        for (int k = 0; k < Arena.Layout.MAX_BOMBS; k++) if (Arena.ArenaCore.BombAlive(k)) bombs++;
         Fit(_bombs, bombs, MakeBomb);
         int bn = 0;
-        for (int k = 0; k < Blwp.Layout.MAX_BOMBS; k++)
+        for (int k = 0; k < Arena.Layout.MAX_BOMBS; k++)
         {
-            if (!Blwp.BlwpCore.BombAlive(k)) continue;
+            if (!Arena.ArenaCore.BombAlive(k)) continue;
             if (bn >= _bombs.Count) break;
             // noses along its own flight path, so it does not fall sideways
-            var vel = Blwp.BlwpCore.BombVelocity(k);
+            var vel = Arena.ArenaCore.BombVelocity(k);
             var rot = vel.sqrMagnitude > 0.01f
                 ? Quaternion.LookRotation(vel.normalized, Vector3.up) : Quaternion.identity;
             var t = _bombs[bn++];
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
-            t.SetPositionAndRotation(Blwp.BlwpCore.BombPosition(k), rot);
+            t.SetPositionAndRotation(Arena.ArenaCore.BombPosition(k), rot);
             if (bombPrefab == null)
             {
                 var mr = t.GetComponent<MeshRenderer>();
@@ -670,9 +670,9 @@ public class ArmyRenderer : MonoBehaviour
     void FitArmourSided(int total)
     {
         int bull = 0, bear = 0;
-        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+        for (int i = 0; i < Arena.Layout.UNITS; i++)
         {
-            if (!Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            if (!Arena.ArenaCore.UnitIsArmour(i) || !Arena.ArenaCore.UnitAlive(i)) continue;
             if (SideOf(i) == Army.Side.Bull) bull++; else bear++;
         }
         Fit(_hullsBull, bull, () => MakeTankFromPrefab(Army.Side.Bull));
@@ -683,9 +683,9 @@ public class ArmyRenderer : MonoBehaviour
     void FitSided(List<Transform> pool, Army.Side side)
     {
         int need = 0;
-        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+        for (int i = 0; i < Arena.Layout.UNITS; i++)
         {
-            if (Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            if (Arena.ArenaCore.UnitIsArmour(i) || !Arena.ArenaCore.UnitAlive(i)) continue;
             if (SideOf(i) == side) need++;
         }
         Fit(pool, need, () => soldierPrefab != null
@@ -732,8 +732,8 @@ public class ArmyRenderer : MonoBehaviour
         if (!CoreReady) return;
 
         int armour = 0;
-        for (int i = 0; i < Blwp.Layout.UNITS; i++)
-            if (Blwp.BlwpCore.UnitIsArmour(i) && Blwp.BlwpCore.UnitAlive(i)) armour++;
+        for (int i = 0; i < Arena.Layout.UNITS; i++)
+            if (Arena.ArenaCore.UnitIsArmour(i) && Arena.ArenaCore.UnitAlive(i)) armour++;
 
         if (tankPrefab != null)
         {
@@ -774,13 +774,13 @@ public class ArmyRenderer : MonoBehaviour
         float closest = float.MaxValue;
         var drawnAt = say ? new System.Collections.Generic.List<Vector3>() : null;
 
-        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+        for (int i = 0; i < Arena.Layout.UNITS; i++)
         {
-            if (!Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            if (!Arena.ArenaCore.UnitIsArmour(i) || !Arena.ArenaCore.UnitAlive(i)) continue;
             liveArmour++;
             var side = SideOf(i);
-            var at = Blwp.BlwpCore.UnitPosition(i, 0f);
-            float heading = Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
+            var at = Arena.ArenaCore.UnitPosition(i, 0f);
+            float heading = Arena.ArenaCore.UnitHeading(i) * Mathf.Deg2Rad;
             bool prefab = tankPrefab != null;
 
             Transform hull;
@@ -859,8 +859,8 @@ public class ArmyRenderer : MonoBehaviour
             // is not getting one for a quantity that decides nothing. The aim
             // is derived from core state and smoothed here; `LerpAngle` at
             // 2.6 per second is C#'s own rate.
-            if (_turretYaw.Length != Blwp.Layout.UNITS)
-                _turretYaw = new float[Blwp.Layout.UNITS];
+            if (_turretYaw.Length != Arena.Layout.UNITS)
+                _turretYaw = new float[Arena.Layout.UNITS];
             float aim = AimOf(i, at, heading, side);
             _turretYaw[i] = Mathf.LerpAngle(_turretYaw[i] * Mathf.Rad2Deg, aim * Mathf.Rad2Deg,
                                             1f - Mathf.Exp(-2.6f * Time.deltaTime)) * Mathf.Deg2Rad;
@@ -883,12 +883,12 @@ public class ArmyRenderer : MonoBehaviour
         }
 
         if (say && drawnArmour > 0)
-            Debug.Log($"[ground] tanks at tick {Blwp.BlwpCore.Tick}: hull bottom vs ground - "
+            Debug.Log($"[ground] tanks at tick {Arena.ArenaCore.Tick}: hull bottom vs ground - "
                       + $"under 1 m {resting[0]}, 0.3-1 m under {resting[1]}, 5-30 cm under {resting[2]}, "
                       + $"on it {resting[3]}, 5-30 cm over {resting[4]}, 0.3-1 m over {resting[5]}, "
                       + $"over 1 m {resting[6]}; deepest {deepest:F2} m, highest {highest:F2} m");
         if (say && drawnArmour > 0)
-            Debug.Log($"[ground] tank corners at tick {Blwp.BlwpCore.Tick}: track corner vs the ground "
+            Debug.Log($"[ground] tank corners at tick {Arena.ArenaCore.Tick}: track corner vs the ground "
                       + $"under it, {drawnArmour * 4} corners - under 1 m {corners[0]}, "
                       + $"0.3-1 m under {corners[1]}, 5-30 cm under {corners[2]}, on it {corners[3]}, "
                       + $"5-30 cm over {corners[4]}, 0.3-1 m over {corners[5]}, over 1 m {corners[6]}; "
@@ -902,24 +902,24 @@ public class ArmyRenderer : MonoBehaviour
 
         int bull = 0, bear = 0;
         _downDrawn = 0;                     // per frame, like bull and bear above it
-        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+        for (int i = 0; i < Arena.Layout.UNITS; i++)
         {
-            if (Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            if (Arena.ArenaCore.UnitIsArmour(i) || !Arena.ArenaCore.UnitAlive(i)) continue;
             var side = SideOf(i);
             var pool = side == Army.Side.Bull ? _soldiersBull : _soldiersBear;
             int idx = side == Army.Side.Bull ? bull++ : bear++;
             if (idx >= pool.Count) continue;
 
-            var at = Blwp.BlwpCore.UnitPosition(i, 0f);
-            float heading = Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
+            var at = Arena.ArenaCore.UnitPosition(i, 0f);
+            float heading = Arena.ArenaCore.UnitHeading(i) * Mathf.Deg2Rad;
 
             // §11.4 / §11.5: A MAN THE CORE HAS PUT DOWN IS DRAWN DOWN. The core writes STAND / PRONE / COVER
             // into TAC_COVER's high bits and pins a fire team in TAC_SUPP; until now this renderer read neither,
             // so a man crawling on his belly at 0.5 m/s was drawn walking upright and the whole of suppression
             // was invisible - the one moment the rule exists for, a shell landing beside him, looked like
             // nothing. It READS those words and poses from them; it decides nothing and writes nothing back.
-            int posture = Blwp.BlwpCore.UnitPosture(i);
-            bool down = posture != Blwp.Layout.POSTURE_STAND;
+            int posture = Arena.ArenaCore.UnitPosture(i);
+            bool down = posture != Arena.Layout.POSTURE_STAND;
             if (down) _downDrawn++;
 
             // A small bob, so a line of infantry does not read as fenceposts.
@@ -927,7 +927,7 @@ public class ArmyRenderer : MonoBehaviour
             // keeps - it keeps none, which is its own listed gap (q). This is
             // decoration, computed where decoration belongs.
             // A man on the ground does not bob: the bob is a walking cue.
-            float bob = down ? 0f : Mathf.Abs(Mathf.Sin(Blwp.BlwpCore.Tick * 0.08f + i)) * 0.16f;
+            float bob = down ? 0f : Mathf.Abs(Mathf.Sin(Arena.ArenaCore.Tick * 0.08f + i)) * 0.16f;
             float lift = SoldierLift(down, soldierPrefab != null, soldierProneDrop);
             var t = pool[idx];
             // A man stands UPRIGHT on a slope - he does not lean with the
@@ -1041,11 +1041,11 @@ public class ArmyRenderer : MonoBehaviour
     /// NOWHERE: a shot is `Random01() &lt; 0.55f` and the target is chosen by
     /// distance and heat, so the barrel's angle decides nothing. Unread state
     /// does not belong in a hashed core - it would cost `U_WORDS` 8 to 9,
-    /// every offset after it, every golden vector, `BlwpLayout.cs` and the C#
+    /// every offset after it, every golden vector, `ArenaLayout.cs` and the C#
     /// buffer, to move none of the seventy-eight numbers the core is compared
     /// on. So the aim is derived here from state the core already publishes
     /// and smoothed here, in the same class as the infantry's bob off
-    /// `BlwpCore.Tick` and the running gear. Nothing is written back.
+    /// `ArenaCore.Tick` and the running gear. Nothing is written back.
     /// </summary>
     float[] _turretYaw = new float[0];
     float _saidTanks = -99f;
@@ -1077,11 +1077,11 @@ public class ArmyRenderer : MonoBehaviour
     static float AimOf(int i, Vector3 at, float heading, Army.Side side)
     {
         float bestD2 = float.MaxValue, fx = 0f, fz = 0f;
-        for (int j = 0; j < Blwp.Layout.UNITS; j++)
+        for (int j = 0; j < Arena.Layout.UNITS; j++)
         {
-            if (j == i || !Blwp.BlwpCore.UnitIsArmour(j) || !Blwp.BlwpCore.UnitAlive(j)) continue;
+            if (j == i || !Arena.ArenaCore.UnitIsArmour(j) || !Arena.ArenaCore.UnitAlive(j)) continue;
             if (SideOf(j) == side) continue;
-            var o = Blwp.BlwpCore.UnitPosition(j, 0f);
+            var o = Arena.ArenaCore.UnitPosition(j, 0f);
             float d2 = (o.x - at.x) * (o.x - at.x) + (o.z - at.z) * (o.z - at.z);
             if (d2 < bestD2) { bestD2 = d2; fx = o.x; fz = o.z; }
         }
@@ -1090,7 +1090,7 @@ public class ArmyRenderer : MonoBehaviour
         // `v.phase += dt * 0.4f` in C#, off a per-unit draw. Off the tick and
         // the slot here, the way the bob is: no state, same slow wander, and
         // no two tanks in step.
-        float phase = Blwp.BlwpCore.Tick * (0.4f / 60f) + i * 0.7f;
+        float phase = Arena.ArenaCore.Tick * (0.4f / 60f) + i * 0.7f;
         if (bestD2 == float.MaxValue) return heading;      // nobody left to look at
         float ahead = Mathf.Sqrt(bestD2);
         return Mathf.Atan2(fx - at.x, fz - at.z)
@@ -1149,17 +1149,17 @@ public class ArmyRenderer : MonoBehaviour
     /// MEASURED BEFORE THIS (2026-09-20, 2 seeds x 40 s): 20550 man-ticks standing on a hole, 98.9% of them DOWN,
     /// each drawn 0.74 m below the surface his own feet stood on - the same 0.74 on candle lips, crater rims and
     /// wrecks alike, which is how it was known not to be the crater bowl. Unity carves no bowl: MempoolTerrain's
-    /// HeightAt returns BlwpCore.TerrainAt, and the core has already cut it.
+    /// HeightAt returns ArenaCore.TerrainAt, and the core has already cut it.
     ///
     /// Draw only. Nothing here reads combat, driving or scoring, and the core is not consulted - which is also
-    /// what lets EditMode assert it without a browser core behind BlwpCore.Available.
+    /// what lets EditMode assert it without a browser core behind ArenaCore.Available.
     /// </summary>
     public static float SoldierLift(bool down, bool hasPrefab, float proneDrop)
         => hasPrefab ? 0f : (down ? BoxStandLift - proneDrop : BoxStandLift);
 
     float Ground(float x, float z) =>
         roads != null ? roads.SurfaceHeight(x, z)
-                      : (Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
+                      : (Arena.ArenaCore.HasSurface ? Arena.ArenaCore.SurfaceAt(x, z)
                                                   : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
 
     /// <summary>Eased attitude per pooled hull, so tanks do not jitter.</summary>
@@ -1268,5 +1268,5 @@ public class ArmyRenderer : MonoBehaviour
     /// (Layout.CANDLE_H) per <see cref="FaceSeconds"/>. Pure, for the tests.
     /// </summary>
     public static float EaseRest(float drawn, float target, float dt) =>
-        Mathf.MoveTowards(drawn, target, Blwp.Layout.CANDLE_H / 65536f / FaceSeconds * Mathf.Max(0f, dt));
+        Mathf.MoveTowards(drawn, target, Arena.Layout.CANDLE_H / 65536f / FaceSeconds * Mathf.Max(0f, dt));
 }

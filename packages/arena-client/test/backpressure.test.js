@@ -321,7 +321,7 @@ test('once the run has ended, nothing leaves even though the numbers agree', asy
 // ---------------------------------------------------------------------------
 // THE RECONNECT, WHICH USED TO LIVE WHERE NOTHING COULD MEASURE IT.
 //
-// The loop was in `blwp.jslib` - the one file these suites cannot reach - so
+// The loop was in `arena.jslib` - the one file these suites cannot reach - so
 // the rule that decides whether a dropped player keeps their run had no test,
 // while the hold and the drain beside it had this file. Measured at 8c8c68a:
 // 19 lines in the client suites mention a reconnect and every one of them
@@ -556,7 +556,7 @@ test('the hold still caps at blockTicks while the socket is down, and overflow i
 // ---------------------------------------------------------------------------
 // THE SESSION'S ONE WORD.
 //
-// It was the page's, in `blwp.jslib`, which is the file `node --test` cannot
+// It was the page's, in `arena.jslib`, which is the file `node --test` cannot
 // load - and that is how it came to be wrong and to survive an audit saying
 // so. The page learned `ended` only when `reconnect` answered null, which is
 // the socket-DOWN path; a VOID with the socket still UP left it printing
@@ -727,7 +727,7 @@ test('ticks offered before the round is known do not end the run', async () => {
 // after its run the page kept recording, a batch reaching tick 9113 of a run that
 // ends at 8999 was refused whole, and the client called its own run VOID - the
 // chip read "not publishing · error ... inputs past the end". The page's tick loop
-// (blwp.jslib `net.tick`) now asks `runOver()` before it records. `record`'s own
+// (arena.jslib `net.tick`) now asks `runOver()` before it records. `record`'s own
 // overflow rule is unchanged, and the first half shows what it does on its own.
 test('a run at its last tick takes no more: the signer node holds exactly the run, nothing is refused, nothing is VOID', async () => {
   const transcriptTicks = async (node, rid, eid) => Number((await fetch(`http://127.0.0.1:${node.port}/transcript`

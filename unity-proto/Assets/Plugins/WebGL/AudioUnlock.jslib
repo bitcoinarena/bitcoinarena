@@ -23,14 +23,14 @@ mergeInto(LibraryManager.library, {
         // not expose it on `Module` at all, which is why the page captures the
         // context as it is constructed - see the template's [audio] block. If
         // that one is there, use it, so both paths kick the same object.
-        if (!ctx && typeof window !== 'undefined' && window.__blwpAudio &&
-            window.__blwpAudio.contexts.length) {
-          ctx = window.__blwpAudio.contexts[0];
+        if (!ctx && typeof window !== 'undefined' && window.__arenaAudio &&
+            window.__arenaAudio.contexts.length) {
+          ctx = window.__arenaAudio.contexts[0];
         }
         if (!AudioUnlockState.said) {
           AudioUnlockState.said = true;
           console.log('[audio] jslib WEBAudio=' + (typeof WEBAudio !== 'undefined') +
-                      ' page=' + (typeof window !== 'undefined' && !!window.__blwpAudio) +
+                      ' page=' + (typeof window !== 'undefined' && !!window.__arenaAudio) +
                       ' ctx=' + (ctx ? ctx.state : 'none'));
         }
         if (!ctx) return;

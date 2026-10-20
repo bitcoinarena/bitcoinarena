@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// WAR_TACTICS.md §0.3: the HUD's one chart, painted from the CORE'S chart words (Tests/Fixtures/chart-words.txt,
