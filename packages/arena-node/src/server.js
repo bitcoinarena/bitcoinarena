@@ -3768,9 +3768,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEDERATION'S GATEWAY SEATS (spec §23A.9gateway-watch.js): a guardian probes, every 10 min, the gateways its
   // federation's seated guardians claim, and ranks them per epoch; GET /gateway-seats says its ranking
   const capacityWas = {};   // the band each federation was in at this seat's last /capacity (§23A.3a's gap)
-  let gatewayWatch = null;
-  if (guardian && guardian.dataDir && typeof chainTip === 'function' && fedRecords) {
-    gatewayWatch = createGatewayWatch({ federationId: async () => federationOfDir(guardian.dataDir),
+  // ONE WATCH PER FEDERATION THIS NODE GUARDS (kanban #552, the owner 2026-10-20 ~07:55Z: "Gateways are still not seated" - the successor
+  // 4dc88be7: "no guardian seat of this federation answered"): its guardian's and its guardian-next's, so a successor's seats are ranked by
+  // its own guardians from the start; `gatewayWatch` stays the first (its own federation), `gatewayWatchOf(fid)` finds the one that guards fid
+  const gatewayWatches = [];
+  const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
       seated: async (fid) => (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k)),
       entries: async () => { const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
       tip: async () => Number(await chainTip()),
@@ -3780,12 +3782,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       },
       verify: schnorrVerify,
       // routed volume: this guardian's own API, the LNv2 module's incoming contracts (gateway-volume.js)
-      incoming: guardian.apiPort ? (() => { let mod = null; const url = `ws://127.0.0.1:${guardian.apiPort}`;
+      incoming: g.apiPort ? (() => { let mod = null; const url = `ws://127.0.0.1:${g.apiPort}`;
         return async (from) => { if (mod === null) mod = await lnv2ModuleId(url); return mod === null ? { ok: false } : incomingSince({ url, moduleId: mod, from }); }; })() : null,
       bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000) });
-    const gt = setInterval(() => { gatewayWatch.probe().catch(() => {}); }, 600000);
+  if (typeof chainTip === 'function' && fedRecords) for (const g of [guardian, guardianNext]) if (g && g.dataDir) gatewayWatches.push({ dir: g.dataDir, watch: watchFor(g) });
+  const gatewayWatch = gatewayWatches.length ? gatewayWatches[0].watch : null;
+  const gatewayWatchOf = (fid) => { const w = gatewayWatches.find((x) => federationOfDir(x.dir) === String(fid || '').toLowerCase()); return w ? w.watch : null; };
+  if (gatewayWatches.length) {
+    const gt = setInterval(() => { for (const w of gatewayWatches) w.watch.probe().catch(() => {}); }, 600000);
     if (gt.unref) gt.unref();
-    gatewayWatch.probe().catch(() => {});
+    for (const w of gatewayWatches) w.watch.probe().catch(() => {});
   }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
   // seating its federation's guardians signed at threshold, so every signer node - guardian or not - must hold the same one: every
@@ -3794,8 +3800,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (fedRecords && typeof chainTip === 'function') {
     const gatherSeatings = async () => {
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
-      if (gatewayWatch) {
-        const v = await gatewayWatch.view().catch(() => ({ ok: false }));
+      for (const { watch } of gatewayWatches) {
+        const v = await watch.view().catch(() => ({ ok: false }));
         if (v.ok && v.measuredEpoch === 'whole' && v.epoch === epoch && !ownSeatings.has(`${v.federationId}:${epoch}`))
           ownSeatings.set(`${v.federationId}:${epoch}`, signGatewaySeating({ federationId: v.federationId, epoch, seats: v.seated }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret)));
       }
@@ -4369,9 +4375,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const claimJson = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
       // A GATEWAY CLAIM (§23A.9): this node stands for a gateway seat of its federation - the claim its custody agent signed (file)
       if (req.method === 'GET' && url.pathname === '/gateway-claim') {
-        const f = process.env.ARENA_GATEWAY_CLAIM_FILE;
-        let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
-        return c ? claimJson(200, c) : claimJson(404, { ok: false, why: 'this node stands for no gateway seat' });
+        // ONE CLAIM PER FEDERATION (kanban #552): ARENA_GATEWAY_CLAIM_FILE names one file or several, comma-separated; ?federation= picks
+        // that federation's claim (none: 404), and without it the first, as before
+        const claims = String(process.env.ARENA_GATEWAY_CLAIM_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)
+          .map((f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } }).filter(Boolean);
+        const want = String(url.searchParams.get('federation') || '').toLowerCase();
+        const c = want ? claims.find((x) => String(x.federationId || '').toLowerCase() === want) : claims[0];
+        return c ? claimJson(200, c) : claimJson(404, { ok: false, why: want ? 'this node stands for no gateway seat of that federation' : 'this node stands for no gateway seat' });
       }
       // A LIQUIDITY CLAIM (§23A.10): this node is a liquidity provider - the claim its provider service signed (file)
       if (req.method === 'GET' && url.pathname === '/liquidity-claim') {
@@ -4389,7 +4399,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seats') {
         if (!gatewayWatch) return claimJson(404, { ok: false, why: 'this node runs no guardian, so it ranks no gateways' });
-        const v = await gatewayWatch.view();
+        // ?federation= names which of the federations this node guards (kanban #552); without it, or one it does not guard, its own
+        const v = await (gatewayWatchOf(url.searchParams.get('federation')) || gatewayWatch).view();
         return claimJson(v.ok ? 200 : 503, JSON.parse(JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? String(x) : x))));
       }
       if (req.method === 'GET' && url.pathname === '/identity') {
@@ -7656,14 +7667,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const bondMin = BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000), pegInMin = BigInt(process.env.ARENA_PEG_IN_MIN || 50000);
         const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
         const entries = now.ok ? now.entries : [];
-        const gw = gatewayWatch ? await gatewayWatch.view().catch(() => null) : null;
+        const gws = await Promise.all(gatewayWatches.map((w) => w.watch.view().catch(() => null)));
         const feds = (fedRecords ? fedRecords.list() : []).map((f) => {
           const rec = fedRecords.recordOf(f.federation);
           const seated = (fedRecords.seatedGuardians(f.federation) || []).map((k) => toHex(k));
           return { federation: f.federation, status: f.status, nominal: rec && rec.record ? rec.record.nominal : seated.length || 1,
             reserveSats: f.reserveSats || '0', exposureCapSats: f.exposureCapSats || '0',
             guardianBonds: seated.map((node) => { const n = nodeBondOf(entries, node); return { node, bondSats: n ? n.bondSats : 0n }; }),
-            gateways: gw && gw.ok && gw.federationId === f.federation ? Object.entries(gw.gateways || {}).map(([node, g]) => ({ node, pegInSats: BigInt(g.pegInSats || 0) })) : [] };
+            gateways: (() => { const gw = gws.find((x) => x && x.ok && x.federationId === f.federation); return gw ? Object.entries(gw.gateways || {}).map(([node, g]) => ({ node, pegInSats: BigInt(g.pegInSats || 0) })) : []; })() };
         });
         const v = capacityView({ federations: feds, bondMinSats: bondMin, pegInMinSats: pegInMin, was: capacityWas });
         for (const r of v.federations) capacityWas[r.federation] = r.band;

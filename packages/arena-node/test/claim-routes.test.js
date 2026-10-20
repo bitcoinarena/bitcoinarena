@@ -34,3 +34,25 @@ test('on a running seat: /gateway-claim, /liquidity-claim, /liquidity-seating, /
     await s.d.close(); rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// kanban #552: a seat that guards two federations (its own and its successor, guardian-next) stands for a gateway in each - one claim file per
+// federation, ?federation= picks it; without the question the first, as before
+test('/gateway-claim with several claim files: ?federation= answers that federation\'s claim, none for another; without it the first', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'claims2-'));
+  const was = process.env.ARENA_GATEWAY_CLAIM_FILE;
+  const a = { node: 'aa'.repeat(32), federationId: 'b1'.repeat(32), gatewayUrl: 'https://gw-b.example/' }, b = { ...a, federationId: '4d'.repeat(32) };
+  writeFileSync(join(dir, 'a.json'), JSON.stringify(a)); writeFileSync(join(dir, 'b.json'), JSON.stringify(b));
+  process.env.ARENA_GATEWAY_CLAIM_FILE = `${join(dir, 'a.json')}, ${join(dir, 'b.json')},${join(dir, 'missing.json')}`;
+  const s = await joinedWithLock({});
+  try {
+    const get = async (p) => { const r = await fetch(`http://127.0.0.1:${s.d.port}${p}`); return [r.status, await r.json()]; };
+    assert.deepEqual(await get('/gateway-claim'), [200, a]);
+    assert.deepEqual(await get(`/gateway-claim?federation=${'4D'.repeat(32)}`), [200, b]);
+    assert.deepEqual(await get(`/gateway-claim?federation=${'b1'.repeat(32)}`), [200, a]);
+    const [st, no] = await get(`/gateway-claim?federation=${'33'.repeat(32)}`);
+    assert.deepEqual([st, no.why], [404, 'this node stands for no gateway seat of that federation']);
+  } finally {
+    if (was === undefined) delete process.env.ARENA_GATEWAY_CLAIM_FILE; else process.env.ARENA_GATEWAY_CLAIM_FILE = was;
+    await s.d.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
