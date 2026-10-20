@@ -174,6 +174,20 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
         const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
+      // THE PROCESSES STILL RUNNING FROM `folders` (kanban #546): [{ pid, name, commandLine }] - every one whose command line names one of
+      // those release folders (any slashes), but the auto update running this update (it exits 75 by itself, and its loop starts the
+      // new release's). Asked after the stop and again after the start: no process of an older release may be left.
+      leftovers: async (folders) => {
+        const names = [...new Set((folders || []).map((x) => String(x).split(/[\\/]/).filter(Boolean).pop()).filter(Boolean))];
+        if (!names.length) return [];
+        const like = names.map((n) => `$c -like '*\\${q(n)}\\*'`).join(' -or ');
+        const r = await ps(`@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' } | ForEach-Object { $c = $_.CommandLine.Replace('/', '\\'); if (${like}) { [pscustomobject]@{ pid = $_.ProcessId; name = $_.Name; commandLine = $_.CommandLine } } }) | ConvertTo-Json -Compress`);
+        if (!r.ok) return [{ pid: null, name: '?', commandLine: `the process list could not be read: ${(r.err || '').trim().slice(0, 160)}` }];
+        const t = String(r.out || '').trim();
+        if (!t || t === 'null') return [];
+        try { const j = JSON.parse(t); return (Array.isArray(j) ? j : [j]).map((x) => ({ pid: x.pid, name: x.name, commandLine: x.commandLine })); } catch { return []; }
+      },
+      end: async (pids) => { for (const pid of pids.filter((x) => Number.isInteger(x))) await ps(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`); },
       start: async (fs) => {
         const failed = [];
         // THROUGH WMI (Win32_Process.Create), NOT Start-Process (measured in the Windows VM 2026-10-18): a process the update starts must not
@@ -201,6 +215,36 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
     start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
     prepare: async () => {},
   };
+}
+
+/** A release's own VERSION and COMMIT (tools/release/build-release.sh writes them at its root), or nulls for a tree without them. */
+export function releaseIdOf(dir) {
+  const read = (f) => { try { return readFileSync(join(dir, f), 'utf8').trim() || null; } catch { return null; } };
+  return { version: read('VERSION'), commit: read('COMMIT') };
+}
+
+/**
+ * THE NEW RELEASE ANSWERS AS ITSELF (kanban #546, measured 2026-10-19 in the Windows VM: the old node kept running, answered GET /identity
+ * with the same key, and the update reported ok): GET /owner/version must name `want`'s version AND commit. Polled until `waitMs`;
+ * answers { ok, version, commit, why }.
+ */
+export async function versionAnswers({ port, fetcher = fetch, want, waitMs = 90000, everyMs = 2000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
+  const until = Date.now() + waitMs;
+  let last = { version: null, commit: null, why: 'GET /owner/version did not answer' };
+  do {
+    try {
+      const r = await fetcher(`http://127.0.0.1:${port}/owner/version`, { signal: AbortSignal.timeout(5000) });
+      if (r.status === 200) {
+        const j = await r.json();
+        last = { version: j.version ?? null, commit: j.commit ?? null };
+        if (last.version === want.version && last.commit === want.commit) return { ok: true, ...last };
+        last.why = `the node answering runs ${last.version || 'no release'} (${String(last.commit || '-').slice(0, 12)}), not ${want.version} (${String(want.commit).slice(0, 12)})`;
+      }
+    } catch (e) { last.why = `GET /owner/version: ${e.message}`; }
+    if (Date.now() >= until) break;
+    await sleep(everyMs);
+  } while (Date.now() < until);
+  return { ok: false, ...last };
 }
 
 /**
@@ -241,6 +285,10 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // and the processes of those older releases (Windows ends a release's processes by its folder; elsewhere the units above stop them)
   const olders = [...new Set(moving.flatMap((f) => oldersIn(oldTexts.get(f))))];
   if (platform === 'win32') for (const o of olders) await svc.stop([], o);
+  // NOTHING OF AN OLDER RELEASE STILL RUNS (kanban #546): after the stop the process list is asked; a leftover is ended and named
+  const oldFolders = [from, ...olders];
+  const leftAfterStop = svc.leftovers ? await svc.leftovers(oldFolders) : [];
+  if (leftAfterStop.length && svc.end) await svc.end(leftAfterStop.map((x) => x.pid));
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
   // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
@@ -293,7 +341,15 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const rest = await svc.start(moving.filter((f) => !tunnels.includes(f)));
   const started = !tunnelStarted.ok ? tunnelStarted : rest;
   const after = await waitHealthy({ port, fetcher, waitMs });
-  const same = after.ok && (!before.ok || after.identity === before.identity);
+  const sameKey = after.ok && (!before.ok || after.identity === before.identity);
+  // THE NEW RELEASE, NOT THE OLD PROCESS (kanban #546): a release that names its version must answer with it and its commit
+  const want = releaseIdOf(newRelease);
+  const answered = sameKey && want.version ? await versionAnswers({ port, fetcher, want, waitMs: Math.min(waitMs, 120000) }) : { ok: sameKey };
+  // and no process of an older release left after the start: ended and named, and if one will not end, no update
+  let leftAfterStart = sameKey && answered.ok && svc.leftovers ? await svc.leftovers(oldFolders) : [];
+  if (leftAfterStart.length && svc.end) { await svc.end(leftAfterStart.map((x) => x.pid)); await sleep(3000); }
+  const stillLeft = leftAfterStart.length && svc.leftovers ? await svc.leftovers(oldFolders) : [];
+  const same = sameKey && answered.ok && !stillLeft.length;
   if (same) {
     writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, ...(reachUrl ? { reach: { ...state.reach, url: reachUrl } } : {}),
       release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
@@ -316,6 +372,8 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
     } catch (e) { command = { why: e.message }; }
     return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local, updater,
+      ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}),
+      ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
   // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows
@@ -328,6 +386,9 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   await svc.start(moving);
   const back = await waitHealthy({ port, fetcher, waitMs });
   return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir,
-    why: after.ok ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}` : `the new release did not come up: ${after.why}`,
+    why: !after.ok ? `the new release did not come up: ${after.why}`
+      : !sameKey ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}`
+        : !answered.ok ? (answered.version && answered.version === releaseIdOf(from).version ? `the old release still answers (${answered.version}): ${answered.why}` : answered.why)
+          : `processes of an older release would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}`,
     restored: back.ok, ...(put.ok ? {} : { notRestored: put.failed }) };
 }

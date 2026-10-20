@@ -333,3 +333,61 @@ test('a launcher left on an OLDER release moves too, and that release\'s process
     assert.ok(kills.some((k) => k.includes("'*\\arena-node-0.1.0-rc.25-windows-x64\\*'")), 'and the older one custody still ran');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// THE NEW RELEASE MUST ANSWER AS ITSELF, AND NOTHING OF AN OLDER ONE MAY RUN (kanban #546, measured 2026-10-19 in the Windows VM: the old node
+// kept running, answered GET /identity with the same key, and the update said ok; two node.exe of rc.25 ran through three updates)
+test('Windows: the update counts only when /owner/version names the new release; the old one answering is rolled back by name; a leftover old process is ended, one that will not end is no update', async () => {
+  const { windowsLauncher } = await import('../src/service.js');
+  const { releaseOfLauncher, releaseIdOf } = await import('../src/update.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-546-'));
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const rel = join(root, 'releases');
+  const v1 = join(rel, 'arena-node-2026.1.1-windows-x64'), v2 = join(rel, 'arena-node-2026.1.2-windows-x64');
+  for (const [d, v, c] of [[v1, '2026.1.1', 'aa'.repeat(20)], [v2, '2026.1.2', 'bb'.repeat(20)]]) { mkdirSync(d, { recursive: true }); writeFileSync(join(d, 'VERSION'), `${v}\n`); writeFileSync(join(d, 'COMMIT'), `${c}\n`); }
+  assert.deepEqual(releaseIdOf(v2), { version: '2026.1.2', commit: 'bb'.repeat(20) });
+  const fresh = () => {
+    writeFileSync(join(home, 'arena.conf'), 'network=testnet4\r\nroles=verify\r\n');
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+    writeFileSync(join(home, 'arena-node.cmd'), windowsLauncher({ node: `${v1}\\runtime\\node.exe`, release: v1, home, port: 8470 }));
+  };
+  // the node answering: its key always the same; its version the release `answering` names
+  let answering = v2;
+  const fetcher = async (url) => (String(url).endsWith('/owner/version')
+    ? { status: 200, json: async () => ({ version: releaseIdOf(answering).version, commit: releaseIdOf(answering).commit }) }
+    : { status: 200, arrayBuffer: async () => new Uint8Array(32).fill(0xab).buffer });
+  // the process list: `listed` answers the leftovers query; Stop-Process -Id ends the pid unless `stubborn`
+  let listed = [], stubborn = false;
+  const sh = async (cmd, args) => {
+    const script = args.at(-1);
+    if (cmd === 'powershell' && /ConvertTo-Json/.test(script)) return { ok: true, out: JSON.stringify(listed), err: '' };
+    if (cmd === 'powershell' && /Stop-Process -Id (\d+)/.test(script) && !stubborn) { const pid = Number(/Stop-Process -Id (\d+)/.exec(script)[1]); listed = listed.filter((x) => x.pid !== pid); }
+    return { ok: true, out: '', err: '' };
+  };
+  const run = () => updateNode({ home, newRelease: v2, port: 8470, node: `${v2}\\runtime\\node.exe`, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 2500 });
+  try {
+    // 1. the new release answers with its version and commit, nothing old left: ok
+    fresh();
+    let r = await run();
+    assert.equal(r.ok, true, r.why);
+    assert.deepEqual(r.answered, { version: '2026.1.2', commit: 'bb'.repeat(20) });
+    assert.equal(releaseOfLauncher(readFileSync(join(home, 'arena-node.cmd'), 'utf8')), v2);
+    // 2. the OLD release still answers (same key, its own version): no update, rolled back, the reason named
+    fresh(); answering = v1;
+    r = await run();
+    assert.deepEqual([r.ok, r.rolledBack], [false, true]);
+    assert.match(r.why, /^the old release still answers \(2026\.1\.1\): the node answering runs 2026\.1\.1 \(aaaaaaaaaaaa\), not 2026\.1\.2 \(bbbbbbbbbbbb\)/);
+    assert.equal(releaseOfLauncher(readFileSync(join(home, 'arena-node.cmd'), 'utf8')), v1, 'the old launcher put back');
+    // 3. a process of the old release still runs after the start: ended and named, the update stands
+    fresh(); answering = v2;
+    listed = [{ pid: 4242, name: 'node.exe', commandLine: `${v1.replace(/\\/g, '/')}/runtime/node.exe custody` }];
+    r = await run();
+    assert.equal(r.ok, true, r.why);
+    assert.deepEqual((r.endedAfterStop || []).map((x) => x.pid), [4242], 'found after the stop and ended');
+    // 4. one that will not end: no update, named
+    fresh(); stubborn = true;
+    listed = [{ pid: 4343, name: 'fedimintd.exe', commandLine: `${v1}\\runtime\\fedimintd.exe` }];
+    r = await run();
+    assert.deepEqual([r.ok, r.rolledBack], [false, true]);
+    assert.match(r.why, /^processes of an older release would not end: fedimintd\.exe 4343/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
