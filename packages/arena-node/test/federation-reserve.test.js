@@ -4,7 +4,8 @@
 // JSON-RPC WebSocket; kept only when a threshold of them name one sum. A fake WebSocket per endpoint answers as a guardian.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readReserve, reserveOfSummary } from '../src/federation-reserve.js';
+import { readReserve, reserveOfSummary, routedEndpoint } from '../src/federation-reserve.js';
+import { parseRoutes } from '../src/fetch-routes.js';
 
 const summary = (amounts) => ({ spendable_utxos: amounts.map((a, i) => ({ amount: a, outpoint: `${'00'.repeat(32)}:${i}` })),
   unconfirmed_change_utxos: [], unconfirmed_peg_out_txos: [{ amount: 999 }], unsigned_change_utxos: [{ amount: 7 }], unsigned_peg_out_txos: [] });
@@ -53,4 +54,15 @@ test('a walletv2 federation\'s reserve is its federation_wallet value, named by 
   assert.deepEqual([ok.ok, ok.reserveSats, ok.agreeing, ok.moduleId], [true, 1098919n, 7, 2]);
   const none = await readReserve({ endpoints: eps, threshold: 5, WS: v2(Object.fromEntries(eps.map((e) => [e, null]))) });
   assert.deepEqual([none.ok, none.reserveSats], [true, 0n]);
+});
+
+test('a guardian endpoint no override names is routed by the seat\'s ARENA_ROUTE_MAP, its scheme carried over (kanban #549: a successor\'s guardian-next)', () => {
+  const routes = parseRoutes('https://seat.example.com/fed2-1=http://198.51.100.7:6221,https://tn4.bitcoin-arena.io/guardian-2=https://tn4.example/g2');
+  const overrides = new Map([['wss://seat.example.com/fed2-1/guardian', 'ws://127.0.0.1:7221']]);
+  assert.equal(routedEndpoint('wss://seat.example.com/fed2-1/guardian', { overrides, routes }), 'ws://127.0.0.1:7221', 'an override still wins');
+  assert.equal(routedEndpoint('wss://seat.example.com/fed2-1/guardian-next', { overrides, routes }), 'ws://198.51.100.7:6221/guardian-next');
+  assert.equal(routedEndpoint('wss://tn4.bitcoin-arena.io/guardian-2/', { overrides, routes }), 'wss://tn4.example/g2');
+  assert.equal(routedEndpoint('wss://seat.example.com/fed2-10/guardian', { overrides, routes }), 'wss://seat.example.com/fed2-10/guardian', 'a path boundary: fed2-10 is not fed2-1');
+  assert.equal(routedEndpoint('wss://elsewhere.example/g', { overrides, routes }), 'wss://elsewhere.example/g');
+  assert.equal(routedEndpoint('wss://x/g', { overrides: new Map(), routes: [] }), 'wss://x/g');
 });
