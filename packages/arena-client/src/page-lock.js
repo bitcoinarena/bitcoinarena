@@ -709,15 +709,28 @@ function depositRowOnce(storage, federationId, d) {
  * made just before it must still be in the history): the reopened wallet waits on each kept operation; a claimed one
  * gets its row, and every ended one leaves the list. `onClaimed(d)` for each new row. Spends nothing.
  */
-export function resumeDeposits({ client, storage, federationId, onClaimed = () => {} } = {}) {
-  return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => {
-    const d = { invoice: p.invoice, amountMsat: BigInt(p.msat) };
-    if (final === 'Claimed' && depositRowOnce(storage, federationId, d)) onClaimed(d);
+export function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [] } = {}) {
+  const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat) });
+  const ended = (p, final, from = null) => {
+    if (final === 'Claimed' && depositRowOnce(storage, federationId, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
     pendingDrop(storage, federationId, p.operation);
-    return final;
-  // THE REASON A RESUME COULD NOT BE READ, said (the owner 2026-10-20 17:4xZ: "deposits an earlier page left, federation b18947f0: unknown" - the
-  // wallet refused the operation and the page dropped why); the entry stays, so the next page tries again
-  }, (e) => `unknown (operation ${String(p.operation).slice(0, 12)}: ${String((e && e.message) || e).slice(0, 160)})`)));
+    return from ? `${final} (in wallet ${from.label})` : final;
+  };
+  return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => ended(p, final),
+    // A DEPOSIT ANOTHER OF THIS BROWSER'S WALLETS MADE (the owner 2026-10-20 17:5xZ: "unknown (operation 3d41502f316a: Operation not found)" - the
+    // pending list is per federation, the wallet database per federation and phrase; the invoice was made under another phrase this browser
+    // keeps): every other kept wallet of the federation (`others()`: [{ client, label }]) is asked for it, and the one that holds it claims it
+    async (e) => {
+      const why = String((e && e.message) || e);
+      if (/operation not found/i.test(why)) {
+        let alts = []; try { alts = (await others()) || []; } catch { alts = []; }
+        for (const o of alts) {
+          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch { /* not that wallet's either */ }
+        }
+      }
+      // THE REASON A RESUME COULD NOT BE READ, said (17:4xZ: it printed only "unknown"); the entry stays, so the next page tries again
+      return `unknown (operation ${String(p.operation).slice(0, 12)}: ${why.slice(0, 160)})`;
+    })));
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
