@@ -36,6 +36,9 @@ nav.side a:hover{background:var(--card)}nav.side a.on{background:var(--card);bor
 main section h2{margin-top:4px}.lead{color:var(--dim);margin:0 0 12px}h3.sh{font-size:15px;margin:18px 0 6px}
 details.more>summary,details>summary{cursor:pointer;color:var(--st);margin:8px 0}
 .warnline{border-left:3px solid var(--gv);padding-left:10px}.answer{font-size:17px;margin:0 0 8px}.mono{font-family:ui-monospace,monospace}
+.bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden;margin:10px 0 2px}.bar>div{height:100%;background:var(--gv)}
+.steps{margin:12px 0;padding-left:20px}.steps li{margin:8px 0}.qr{background:#fff;padding:8px;border-radius:10px;width:200px;margin:8px 0}.qr svg{display:block;width:100%;height:auto}
+h3.offer{font-size:20px;color:var(--gv)}
 .confirm{display:flex;gap:10px;align-items:flex-start;margin:10px 0;color:var(--text)}.confirm input{width:auto;margin-top:4px}
 @media (max-width:820px){.layout{display:block}
   nav.side{position:sticky;top:0;z-index:5;flex-direction:row;overflow-x:auto;background:var(--bg);margin:0 -16px 8px;padding:8px 16px;border-bottom:1px solid var(--line)}
@@ -443,7 +446,8 @@ async function releasePanel() {
   try { v = await (await fetch(at('/owner/version'), { cache: 'no-store' })).json(); } catch { v = null; }
   const el = $('release');
   if (!v) { el.innerHTML = '<p class="sub">This node does not say which version it runs.</p>'; return; }
-  need('release', v.latest && v.latest.newer ? 'warn' : null, `A new release is out: ${v.latest && v.latest.latest ? v.latest.latest.version : ''}.`, 'release');
+  // a seat run from a source checkout has no release to compare (kanban #553: the Overview said "A new release is out" to every seat)
+  need('release', v.version && v.latest && v.latest.newer ? 'warn' : null, `A new release is out: ${v.latest && v.latest.latest ? v.latest.latest.version : ''}.`, 'release');
   el.innerHTML = `<div class="row"><span>Version</span><b>${v.version ? esc(v.version) : 'run from a source checkout'}</b></div>
     ${v.commit ? `<div class="row"><span>Commit</span><b><code>${esc(v.commit.slice(0, 12))}</code></b></div>` : ''}
     <div class="row"><span>Protocol versions it speaks</span><b>${esc(protoRange(v.protocols || []))}</b></div>
@@ -452,64 +456,28 @@ async function releasePanel() {
 }
 
 async function bondPanel() {
-  let b = null;
-  try { b = await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json(); } catch { b = null; }
+  const b = await readBond();
   const el = $('bond');
+  const n = (x) => Number(x).toLocaleString('en-US');
   if (!b) { el.innerHTML = '<p class="sub">This node did not answer about its bond.</p>'; return; }
-  if (!b.bond) { el.innerHTML = `<p>No bond of this node is in the census yet. Post one from the installer (or send it to the node's wallet and post it there): until then this node is not drawn for rounds.</p>`; return; }
+  if (!b.bond) { el.innerHTML = '<p>No bond yet. Until it has one, this node is not drawn for rounds.</p>'; return; }
   const l = b.lock;
-  const lockLine = !l ? 'its lock shows once this node has read the chain' : l.withdrawable
-    ? `<b>Unlocked</b> since block ${l.maturity} (now ${l.tip}): it can be withdrawn`
-    : `<b>Locked until block ${l.maturity}</b>: ${Number(l.blocksLeft).toLocaleString('en-US')} blocks from now, about ${daysHours(l.estimatedMs - Date.now())} (around ${esc(when(l.estimatedMs))}). Until then it cannot be withdrawn; the block is the rule, the time an estimate.`;
-  // EVERY OUTPUT AND THEIR SUM (kanban #544): an output added beside the first counts with it, each with its own lock
+  const lock = !l ? '' : l.withdrawable ? 'unlocked' : `locked · ${n(l.blocksLeft)} blocks (about ${daysHours(l.estimatedMs - Date.now())})`;
   const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
-  const sats = (x) => esc(Number(x).toLocaleString('en-US'));
-  el.innerHTML = `<div class="row"><span>Bond</span><b>${sats(b.total || b.bond.sats)} sat${outs ? ` (${outs.length} outputs)` : ''}</b></div>
-    ${outs ? outs.map((o, i) => `<div class="row"><span>Output ${i + 1}</span><b>${sats(o.sats)} sat · <code>${esc(o.txid)}:${o.vout}</code> · ${o.lock && !o.lock.withdrawable ? `locked until block ${esc(o.maturity)}` : o.lock ? 'unlocked' : 'block ' + esc(o.maturity)}</b></div>`).join('') : ''}
-    <p>${lockLine}</p>
-    <details><summary class="sub">Where it is on the chain</summary>
-    <div class="row"><span>Transaction</span><b><code>${esc(b.bond.txid)}:${b.bond.vout}</code></b></div>
-    <div class="row"><span>Confirmed at</span><b>${b.bond.height === null ? '?' : 'block ' + esc(b.bond.height)}</b></div></details>
-    <h3>Add to bond</h3>
-    <p class="sub">The amount is locked beside your bond and counts with it after 6 confirmations. It is paid from this node's wallet and has its own lock.</p>
-    ${b.wallet ? (b.wallet.why ? `<p class="sub">The bond wallet did not answer: ${esc(b.wallet.why)}</p>` : `<div class="row"><span>Bond wallet</span><b>${sats(b.wallet.spendableSats)} sat to spend${Number(b.wallet.confirmingSats) ? ` · ${sats(b.wallet.confirmingSats)} sat confirming` : ''}</b></div>
-    <p class="sub"><button id="ab-topup">Top-up address</button> <span id="ab-addr"></span></p>`) : ''}
-    ${b.addBond ? `<div class="row"><input id="ab-sats" type="number" min="1000" step="1000" placeholder="sat to add, e.g. 25000" value="${esc(window.OWNER_ADD_SUGGEST || '')}" style="flex:1"><button id="ab-plan">Show the plan</button></div>
-    <div id="ab-msg"></div>` : `<p class="sub">This node was set up by hand, so it adds to its bond on its own machine: <code>arena-install --add-bond &lt;sat&gt;</code> shows what it would do, <code>--yes</code> does it.</p>`}
-    <h3>Withdraw</h3><p class="sub">Once the lock has passed, the whole bond can go to an address of yours. The node then leaves the network.</p>
-    <div class="row"><input id="wd-addr" placeholder="your ${esc(b.network || 'testnet4')} address" style="flex:1"><button id="wd" ${l && l.withdrawable ? '' : 'disabled'}>Withdraw the bond</button></div>
-    <p class="sub" id="wd-msg"></p>`;
-  if ($('ab-topup')) $('ab-topup').onclick = async () => {
-    $('ab-topup').disabled = true;
-    try { const r = await post('/owner/bond-wallet/address', signed('bond-wallet/address')); $('ab-addr').innerHTML = `send testnet4 coins to <code>${esc(r.address)}</code>`; }
-    catch (e) { $('ab-addr').textContent = e.message; $('ab-topup').disabled = false; }
-  };
-  if ($('ab-plan')) $('ab-plan').onclick = async () => {
-    const add = $('ab-sats').value.trim();
-    if (!/^[0-9]+$/.test(add)) { $('ab-msg').textContent = 'Type how many sat to add, e.g. 25000.'; return; }
-    $('ab-plan').disabled = true; $('ab-msg').textContent = 'Working out the plan…';
-    try {
-      const p = (await post('/owner/add-bond', signed('add-bond', { sats: add, post: false }))).plan;
-      // THE PLAN ON THE PAGE, THEN ONE BUTTON (kanban #553: posted from within the interface)
-      $('ab-msg').innerHTML = `<div class="warn"><b>Add ${sats(p.addSats)} sat</b>: your bond becomes <b>${sats(p.totalSats)} sat</b> (now ${sats(p.bondSats)} sat). Network fees about ${sats(p.fees.total)} sat.
-        The added amount is locked until block ${esc(p.maturity)} (about ${daysHours(p.lock.estimatedMs - Date.now())}) and counts after ${esc(p.countsAfter)} confirmations (about an hour).</div>
-        <button class="primary" id="ab-post">Post it</button> <button id="ab-cancel">Cancel</button>`;
-      $('ab-cancel').onclick = () => { $('ab-msg').textContent = ''; $('ab-plan').disabled = false; };
-      $('ab-post').onclick = async () => {
-        $('ab-post').disabled = true; $('ab-post').textContent = 'Posting…';
-        try { const done = await post('/owner/add-bond', signed('add-bond', { sats: add, post: true }));
-          $('ab-msg').innerHTML = `<p class="ok"><b>Posted ✓</b> ${sats(p.addSats)} sat added: <code>${esc(done.bond.txid)}:0</code>. It counts after ${esc(p.countsAfter)} confirmations.</p>`; }
-        catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-plan').disabled = false; }
-      };
-    } catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-plan').disabled = false; }
-  };
-
+  el.innerHTML = `<div class="row"><span>Bond</span><b>${n(b.total || b.bond.sats)} sat${outs ? ` (${outs.length} parts)` : ''}</b></div>
+    <div class="row"><span>Lock</span><b>${esc(lock)}</b></div>
+    ${b.wallet && !b.wallet.why ? `<div class="row"><span>Bond wallet</span><b>${n(b.wallet.spendableSats)} sat</b></div>` : ''}
+    <details><summary class="sub">Withdraw the bond</summary>
+      <p class="sub">Only after the lock. The node then leaves the network.</p>
+      <div class="row"><input id="wd-addr" placeholder="your ${esc(b.network || 'testnet4')} address" style="flex:1"><button id="wd" ${l && l.withdrawable ? '' : 'disabled'}>Withdraw</button></div>
+      <p class="sub" id="wd-msg"></p></details>
+    <details><summary class="sub">On the chain</summary>${(outs || [b.bond]).map((o) => `<div class="row sub"><span><code>${esc(o.txid.slice(0, 16))}…:${o.vout}</code></span><b>${n(o.sats)} sat</b></div>`).join('')}</details>`;
   $('wd').onclick = async () => {
     const address = $('wd-addr').value.trim();
-    if (!address) { $('wd-msg').textContent = 'name the address the bond goes to'; return; }
-    if (!confirm(`Withdraw the whole bond to ${address}? This node leaves the census from the next census height on.`)) return;
+    if (!address) { $('wd-msg').textContent = 'Type the address the bond goes to.'; return; }
+    if (!confirm(`Withdraw the whole bond to ${address}? This node leaves the network.`)) return;
     $('wd').disabled = true;
-    try { const r = await post('/owner/bond-withdraw', signed('bond-withdraw', { address, feeRate: 2 })); $('wd-msg').textContent = `Sent: ${r.txid} (${Number(r.value).toLocaleString('en-US')} sat, fee ${r.fee})`; }
+    try { const r = await post('/owner/bond-withdraw', signed('bond-withdraw', { address, feeRate: 2 })); $('wd-msg').textContent = `Sent: ${r.txid} (${n(r.value)} sat)`; }
     catch (e) { $('wd-msg').textContent = e.message; $('wd').disabled = false; }
   };
 }
@@ -550,55 +518,68 @@ async function standingPanel() {
 // DO I NEED TO ADD TO MY BOND? (kanban #553, the owner 2026-10-20: "It is not clear if I need to increase my bond to lower the federation load
 // or not"): one answer - yes / recommended / no - with the amount and the reason, from the standing (is this node drawn?) and the
 // capacity plea (is a federation it guards full?), which are two separate questions and are said apart
+let bondRead = null;   // GET /owner/bond, read once for the offer and the card
+const readBond = () => (bondRead = bondRead || fetch(at('/owner/bond'), { cache: 'no-store' }).then((r) => r.json()).catch(() => null));
+// THE BOND, AS AN OFFER (kanban #553, the owner 2026-10-20: "The operator does not need to add a bond, he can if he wants to earn more. Less
+// text, more graphics and more direct instructions how to deposit and what is available ... I need to calculate myself"; "earn 350% more
+// e.g"): one headline, a bar from the bond now to the bond that pays most, and two steps with the numbers worked out
 async function bondAnswer() {
-  let seat = null, st = null, c = null;
-  try { [seat, st] = await (standingRead || (standingPanel(), standingRead)); } catch { /* answered below */ }
+  let st = null, c = null;
+  try { [, st] = await (standingRead || (standingPanel(), standingRead)); } catch { /* said below */ }
   try { if (!pleaRead) capacityPlea(); c = await pleaRead; } catch { c = null; }
+  const b = await readBond();
   const n = (x) => Number(x).toLocaleString('en-US');
-  const pc = (x) => `${(x * 100).toFixed(1)} %`;
-  const parts = [];
-  let suggest = 0;
-  // 1. THE FEDERATION'S LOAD (§23A.3a; kanban #553: "actively tell the owner to increase its bond to lower the load, suggest a specific
-  // amount AND also tell him the incentives"): per federation this node guards - how full it is, how much to add, what it pays
-  for (const m of (c && c.mine) || []) {
-    const name = `Federation ${esc(m.federation.slice(0, 8))}`;
-    const load = typeof m.load === 'number' ? pc(m.load) : '?';
-    const add = Number(m.addSats);
-    const pressure = ['PRESSURE', 'CRITICAL', 'FULL'].includes(m.band);
-    if (pressure && add > 0) {
-      suggest = Math.max(suggest, add);
-      const urgent = m.band !== 'PRESSURE';
-      parts.push(`<p class="answer ${urgent ? 'err' : ''}"><b>Yes - add ${n(add)} sat to lower ${name}'s load.</b></p>
-        <p>${name} holds <b>${load}</b> of what its guardians' bonds cover. ${m.band === 'FULL' ? '<b>Deposits are closed</b> until bonds rise.' : 'Deposits stop at 100 %.'}
-        Its limit rises only when the smallest bonds rise, and yours (${n(m.bondSats)} sat) is below the ${n(m.targetBondSats)} sat that would bring it to 50 %.</p>
-        <p><b>What you earn:</b> while it is this full, guardians with bigger bonds get a bigger part of its custody fees. At ${n(m.targetBondSats)} sat your part grows from <b>${pc(m.now)}</b> to up to <b>${pc(m.ifRaised)}</b> while the others have not raised (${pc(m.even)} each when all are equal).
-        ${urgent ? 'A bond added now counts after 6 confirmations (about an hour).' : ''}</p>`);
-      need('load-' + m.federation, urgent ? 'bad' : 'warn', `${name} is ${load} full: add ${n(add)} sat to your bond (your fee share grows to up to ${pc(m.ifRaised)}).`, 'bond');
-    } else if (pressure) {
-      parts.push(`<p class="answer ok"><b>${name} is ${load} full, and your bond already covers its share.</b></p><p>You get the full weight: ${pc(m.now)} of its custody fees.</p>`);
-    } else {
-      parts.push(`<p class="answer ok"><b>No need for ${name}: it holds ${load} of what its bonds cover.</b></p>
-        <p class="sub">From 70 % on, guardians with bigger bonds earn more of its custody fees${add > 0 ? `: with ${n(add)} sat more (${n(m.targetBondSats)} sat) your part would then be up to ${pc(m.underPressure)} instead of ${pc(m.even)}` : ''}. This page tells you when.</p>`);
-    }
+  const el = $('bond-answer');
+  // the federation that pays most for a bigger bond (the weighting is on while it is filling up)
+  const offers = ((c && c.mine) || []).filter((m) => Number(m.addSats) > 0 && ['PRESSURE', 'CRITICAL', 'FULL'].includes(m.band))
+    .sort((x, y) => y.ifRaised / y.now - x.ifRaised / x.now);
+  const w = st && (st.warnings || []).find((x) => x.kind === 'losing brackets');
+  const drawn = !st || st.ownBondSats === null ? '<p class="sub">Your bond is not counted yet: this node is not drawn for rounds until it is.</p>'
+    : w ? `<p class="err">⚠ Your bond is below what most rounds ask (${n(st.commonBondMinSats)} sat): add ${n(Math.max(0, Number(st.commonBondMinSats) - Number(st.ownBondSats)))} sat to be drawn again.</p>`
+    : '<p class="ok">✓ Your bond is enough: this node is drawn for rounds.</p>';
+  if (w) need('bond', 'bad', `Your bond is too small to be drawn for rounds. Add ${n(Math.max(0, Number(st.commonBondMinSats) - Number(st.ownBondSats)))} sat.`, 'bond');
+  if (!offers.length) { el.innerHTML = `<h3>Your bond</h3>${drawn}<p class="sub">No federation you guard pays extra for a bigger bond right now. This page tells you when one does.</p>`; return; }
+  const m = offers[0], add = Number(m.addSats), x = m.ifRaised / m.now;
+  const times = x >= 1.95 ? `${x.toFixed(1)}× more` : `${Math.round((x - 1) * 100)} % more`;
+  const fed = fedLabel(m.federation);
+  need('earn', 'warn', `Earn up to ${times} from ${fed}: add ${n(add)} sat to your bond.`, 'bond');
+  const now = Number(m.bondSats), target = Number(m.targetBondSats), pct = Math.max(2, Math.min(100, Math.round(now * 100 / target)));
+  const wl = b && b.wallet && !b.wallet.why ? b.wallet : null;
+  const send = wl ? Math.max(0, add + Number(wl.addOverheadSats || 0) - Number(wl.spendableSats)) : null;
+  el.innerHTML = `<h3 class="offer">💰 Earn up to ${times}</h3>
+    <p>${fed} is ${Math.round(m.load * 100)} % full and pays guardians with bigger bonds more. Optional.</p>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="row sub" style="border:0"><span>your bond ${n(now)} sat</span><span>${n(target)} sat</span></div>
+    <ol class="steps">
+      ${send === null ? '' : send > 0 ? `<li><b>Send ${n(send)} sat</b> to your bond wallet<div id="ab-addr" class="sub">getting the address…</div></li>` : '<li class="ok">✓ Your bond wallet has enough.</li>'}
+      <li><button class="primary" id="ab-go" ${send > 0 ? 'disabled' : ''}>Add ${n(add)} sat to my bond</button>${send > 0 ? '<span class="sub"> - once the coins have arrived</span>' : ''}<div id="ab-msg"></div></li>
+    </ol>
+    ${drawn}`;
+  if (wl && send > 0) {
+    try { const r = await post('/owner/bond-wallet/address', signed('bond-wallet/address'));
+      $('ab-addr').innerHTML = `<div class="path"><code>${esc(r.address)}</code><button id="ab-copy">Copy</button></div><div class="qr">${C.textQrSvg('bitcoin:' + r.address + '?amount=' + (send / 1e8).toFixed(8))}</div>
+        <p class="sub">Your bond wallet has ${n(wl.spendableSats)} sat. This adds the rest and about ${n(wl.addOverheadSats)} sat for fees.</p>`;
+      $('ab-copy').onclick = () => { navigator.clipboard.writeText(r.address).then(() => { $('ab-copy').textContent = 'Copied ✓'; }, () => {}); };
+    } catch (e) { $('ab-addr').textContent = e.message; }
   }
-  if (c && c.plea && !(c.mine || []).length) parts.push(`<p class="answer"><b>${esc(c.plea.says)}</b></p>`);
-  // 2. BEING DRAWN: the bond against the minimum the rounds ask for (a separate question from the load)
-  const w = st && (st.warnings || []).find((x) => x.kind === 'losing brackets' || x.kind === 'near the floor');
-  if (w && !(Number(w.addSats) > 0)) w.addSats = String(Math.max(0, Math.ceil(Number(st.commonBondMinSats) * 1.5) - Number(st.ownBondSats)));
-  let drawn;
-  if (!st || st.ownBondSats === null) drawn = '<p>Your bond is not in the census yet: until it is, this node is not drawn for rounds.</p>';
-  else if (w && w.kind === 'losing brackets') {
-    suggest = Math.max(suggest, Number(w.addSats));
-    drawn = `<p class="err"><b>Add ${n(w.addSats)} sat to be drawn again.</b> Your bond (${n(st.ownBondSats)} sat) is below the ${n(st.commonBondMinSats)} sat most rounds now ask for.</p>`;
-    need('bond', 'bad', `Add ${n(w.addSats)} sat to your bond: most rounds now ask for more than it.`, 'bond');
-  } else if (w) {
-    drawn = `<p>Your bond (${n(st.ownBondSats)} sat) is exactly the minimum most rounds ask for. That is enough today; if the minimum rises, this node is no longer drawn for those rounds. ${n(w.addSats)} sat more keeps a safe margin.</p>`;
-  } else drawn = `<p class="ok">Your bond (${n(st.ownBondSats)} sat) is above what the rounds ask for: this node is drawn for every round it hosts.</p>`;
-  if (suggest) { window.OWNER_ADD_SUGGEST = String(suggest); if ($('ab-sats') && !$('ab-sats').value) $('ab-sats').value = String(suggest); }
-  $('bond-answer').innerHTML = `<h3>Do I need to add to my bond?</h3>
-    ${parts.length ? parts.join('') : !c || !Array.isArray(c.federations) ? '<p class="sub">This node does not report its federations\' load yet (it runs an older version), so this page cannot say what a bigger bond would do for them.</p>'
-      : '<p class="sub">This node guards no federation, so its bond does not change any federation\'s load.</p>'}
-    <h3 class="sh">Being drawn for rounds</h3>${drawn}`;
+  $('ab-go').onclick = () => addBond(add);
+}
+const fedLabel = (fid) => `Federation ${String(fid).slice(0, 8)}`;
+// ADD TO THE BOND: the plan, then one button (kanban #553: posted from the page)
+async function addBond(add) {
+  const n = (x) => Number(x).toLocaleString('en-US');
+  $('ab-go').disabled = true; $('ab-msg').textContent = 'Working it out…';
+  try {
+    const p = (await post('/owner/add-bond', signed('add-bond', { sats: String(add), post: false }))).plan;
+    $('ab-msg').innerHTML = `<div class="warn">Bond ${n(p.bondSats)} → <b>${n(p.totalSats)} sat</b> · fees ${n(p.fees.total)} sat · locked until block ${esc(p.maturity)} (about ${daysHours(p.lock.estimatedMs - Date.now())}) · counts in about an hour</div>
+      <button class="primary" id="ab-post">Confirm</button> <button id="ab-cancel">Cancel</button>`;
+    $('ab-cancel').onclick = () => { $('ab-msg').textContent = ''; $('ab-go').disabled = false; };
+    $('ab-post').onclick = async () => {
+      $('ab-post').disabled = true;
+      try { const d = await post('/owner/add-bond', signed('add-bond', { sats: String(add), post: true })); $('ab-msg').innerHTML = `<p class="ok"><b>Done ✓</b> ${n(p.addSats)} sat added (<code>${esc(d.bond.txid.slice(0, 16))}…</code>). It counts in about an hour.</p>`; }
+      catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-go').disabled = false; }
+    };
+  } catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-go').disabled = false; }
 }
 // THE EMERGENCY CODE (spec §23A.5a, protocol 17): what it is for, the code itself when this browser holds the words (it is made from
 // them, never kept anywhere), and the page that takes the node out - on any other node, or the Arena site
@@ -669,7 +650,8 @@ async function leavePanel() {
 async function storePanel() {
   let mine = { hosted: [], installed: [], settings: { autoUpdate: false, sources: [] } };
   const reload = async () => {
-    try { mine = await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json(); } catch { /* shown as empty */ }
+    // an answer without its lists (a seat still starting) keeps the empty ones (kanban #553: the page stopped at "reading 'map'")
+    try { const got = await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json(); mine = { hosted: [], installed: [], ...got, settings: { autoUpdate: false, sources: [], ...((got && got.settings) || {}) } }; } catch { /* shown as empty */ }
     // ONE ROW PER APP, ITS NEWEST VERSION (kanban #553: "hide older app versions"); the older ones a node keeps for the rounds that still
     // name them are folded away under the row
     const one = (g) => `<div class="row"><span>${esc(g.title || g.name)} <span class="sub">v${g.version}</span></span>
@@ -805,7 +787,7 @@ const fourRows = (n) => {
 async function networkPanel() {
   let mine = { chain: null, own: null, installed: [] }, games = [];
   const reload = async () => {
-    try { mine = await (await fetch(at('/owner/network'), { cache: 'no-store' })).json(); } catch { /* shown as empty */ }
+    try { const got = await (await fetch(at('/owner/network'), { cache: 'no-store' })).json(); mine = { chain: null, own: null, installed: [], ...got, installed: (got && got.installed) || [] }; } catch { /* shown as empty */ }
     try { games = (await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json()).hosted.map((g) => g.id); } catch { games = []; }
     const inst = mine.installed.map((n) => `<div class="card"><div class="row"><span>Installed · network ${esc(n.network.slice(0, 12))}… · package ${esc(n.id.slice(0, 12))}…</span>
       <b><button data-nremove="${esc(n.network)}">Remove</button></b></div>${fourRows(n)}</div>`).join('');
