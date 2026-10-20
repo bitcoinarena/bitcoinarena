@@ -43,6 +43,7 @@
   <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>every 60 s · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span><a href="../">← Bitcoin Arena</a></div>
   <div class="card"><h2>Network</h2><div class="facts" id="network"></div></div>
   <div class="card"><h2>Nodes</h2><div class="scroll"><table id="nodes"></table></div></div>
+  <div class="card"><h2>Capacity</h2><div class="facts" id="capacity"></div></div>
   <div class="card"><h2>Federations</h2><div class="scroll"><table id="feds"></table></div></div>
   <div class="card"><h2>Gateway seats</h2><div class="scroll"><table id="gateways"></table></div></div>
   <div class="card"><h2>Liquidity providers</h2><div class="scroll"><table id="liquidity"></table></div></div>
@@ -97,7 +98,7 @@
       const nodes = roles ? roles.body.nodes.map((n) => ({ ...n, base: viaAlt(n.endpoint) })) : seats.map((s) => ({ node: null, base: s, roles: [], serving: null, guardianOf: [] }));
       // THE SEATS' OWN READS run beside the nodes' (measured: /network-games asks every seat itself and took most of the first 15 s);
       // only the tip is waited for before the nodes' rows
-      const [feesP, fedsP, gamesP, reservesP, fundingP] = ['/fees', '/federations', '/network-games', '/reserves', '/funding'].map((p) => first(seats, p));
+      const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = ['/fees', '/federations', '/network-games', '/reserves', '/funding', '/capacity'].map((p) => first(seats, p));
       const fees = await feesP;
       const tip = fees ? fees.body.tip : null;
       let feds = null, reserves = null, funding = null;
@@ -117,6 +118,7 @@
       paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
       paintNodes(nodes, tip);
       const fedList = feds ? feds.body.federations : [];
+      paintCapacity(await capP);
       paintFeds(fedList);
       await paintGateways(fedList, seats, nodes);
       await paintLiquidity(fedList, nodes, tip);
@@ -167,6 +169,34 @@
         <td>${bd ? sat(bd.sats) + ' sat' : '-'}</td><td>${lock ? (lock.blocksLeft > 0 ? `<span class="warn">matures in ${lock.blocksLeft}</span>` : 'mature') : '-'}</td></tr>`;
     });
     $('nodes').innerHTML = '<tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th></tr>' + rows.join('');
+  }
+
+  // CAPACITY PRESSURE (spec §23A.3a, kanban #543): each federation's band from the seats' GET /capacity - how full it is against what its
+  // bonds cover, the bond B* each guardian would need for 50 % load and who is below it, the gateways' peg-ins against P* - and the
+  // network's band (the lowest-load OPEN federation's: new deposits go there) with the installer's minimum bond
+  function paintCapacity(cap) {
+    const el = $('capacity');
+    if (!cap || !cap.body || !cap.body.federations) { el.innerHTML = '<div class="muted">no seat answers /capacity yet</div>'; return; }
+    const pct = (x) => (typeof x === 'number' ? Math.round(x * 100) + ' %' : '-');
+    const word = { CALM: ['ok', 'room left'], PRESSURE: ['warn', 'filling up'], CRITICAL: ['bad', 'deposits close soon'], FULL: ['bad', 'deposits closed'] };
+    const lines = cap.body.federations.map((f) => {
+      const [c, w] = word[f.band] || ['muted', f.band];
+      const say = f.band === 'FULL' ? `Deposits into ${short(f.federation, 8)} are closed until bonds rise or a new federation is founded.`
+        : f.band === 'CRITICAL' ? `Deposits into ${short(f.federation, 8)} will close soon (${pct(f.load)}).`
+        : f.band === 'PRESSURE' ? `Federation ${short(f.federation, 8)} holds ${pct(f.load)} of what its bonds cover. Deposits stop at 100 %.`
+        : `Federation ${short(f.federation, 8)}: ${pct(f.load)} of what its bonds cover.`;
+      const below = (f.guardiansBelowTarget || []).length
+        ? ` ${f.guardiansBelowTarget.length} of ${f.guardians} guardians below the bond B* = ${sat(f.targetBondSats)} sat (each needs ${[...new Set(f.guardiansBelowTarget.map((g) => sat(g.addSats)))].join(' / ')} sat more).` : '';
+      const gw = (f.gatewaysBelowTarget || []).length ? ` ${f.gatewaysBelowTarget.length} gateway(s) below the peg-in P* = ${sat(f.targetPegInSats)} sat.` : '';
+      return `<div>${dot(c)}<b>${esc(f.band)}</b> · ${esc(w)} · ${esc(f.status)} - ${say}${f.band === 'CALM' ? '' : esc(below + gw)} <span class="muted">room ${sat(f.headroomSats)} sat</span></div>`;
+    });
+    const n = cap.body.network || {};
+    const [nc] = word[n.band] || ['muted'];
+    lines.push(`<div>${dot(nc)}<b>Network: ${esc(n.band || '-')}</b> - the lowest-load OPEN federation ${short(n.lowestFederation, 8)} at ${pct(n.lowestLoad)}`
+      + `${n.band && n.band !== 'CALM' ? ` · a bond of at least ${sat(n.targetBondSats)} sat puts a node first in line for the next federation` : ''}`
+      + ` · new installs bond at least ${sat(n.installMinimumBondSats)} sat</div>`);
+    el.innerHTML = lines.join('');
+    window.ARENA_HEALTH_CAPACITY = cap.body;
   }
 
   function paintFeds(list) {
