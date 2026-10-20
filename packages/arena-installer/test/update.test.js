@@ -412,10 +412,15 @@ test('Windows: an old updater beside a manual update is ended with its release, 
     if (cmd === 'powershell' && /auto-update\*'.*\.Count/.test(script)) return { ok: true, out: String(updaters), err: '' };
     return { ok: true, out: '', err: '' }; };
   const fetcher = async () => ({ status: 200, arrayBuffer: async () => new Uint8Array(32).fill(0xab).buffer });
+  // a release no launcher names any more, whose updater still runs (measured 2026-10-20 04:41Z: .901 -> .902 left 2026.1.1's updater)
+  const v0 = join(rel, 'arena-node-2026.1.0-windows-x64'); mkdirSync(v0, { recursive: true });
   try {
     fresh();
     const r = await updateNode({ home, newRelease: v2, port: 8470, node: `${v2}\\runtime\\node.exe`, sh, fetcher, nowMs: () => 0, platform: 'win32', waitMs: 2000 });
     assert.equal(r.ok, true, r.why);
+    const asked = calls.filter((c) => c[0] === 'powershell' && /ConvertTo-Json/.test(c.at(-1))).map((c) => c.at(-1));
+    assert.ok(asked.length >= 2 && asked.every((a) => a.includes("'*\\arena-node-2026.1.0-windows-x64\\*'") && a.includes("'*\\arena-node-2026.1.1-windows-x64\\*'") && !a.includes("2026.1.1.901-windows-x64\\*'")),
+      'every release beside the new one is looked for, after the stop and after the start - one no launcher names too');
     const kill = calls.find((c) => c[0] === 'powershell' && /Stop-Process/.test(c.at(-1)) && c.at(-1).includes('2026.1.1-windows-x64'));
     assert.ok(kill && kill.at(-1).includes(`$_.ProcessId -ne ${process.pid}`) && !kill.at(-1).includes('notlike'), 'only its own process is spared: an old updater ends with its release');
     assert.deepEqual(r.updaterBack, { ok: true, started: 'task', task: 'Arena updater' });
