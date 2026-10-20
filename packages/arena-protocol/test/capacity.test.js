@@ -52,3 +52,13 @@ test('the view: per federation load, band, headroom, B* and who is below it; the
   assert.equal(v.network.targetBondSats, '50000', 'B*_net = (130,000 + 15,000) / (0.5 x (3 + 3)) = 48,334, under the floor');
   assert.equal(v.network.installMinimumBondSats, '50000');
 });
+
+// ADD TO BOND (kanban #544): a guardian named twice - two bond outputs - is one guardian with their sum
+test('the view sums one guardian\'s rows: 50,000 + 32,000 is one guardian at 82,000 against B*', () => {
+  const v = capacityView({ bondMinSats: 50000n, pegInMinSats: 50000n, federations: [{ federation: 'aa', status: 'OPEN', nominal: 7, reserveSats: '130000',
+    exposureCapSats: '150000', guardianBonds: [{ node: 'g1', bondSats: 50000n }, { node: 'g1', bondSats: 32000n }, { node: 'g2', bondSats: 50000n }], gateways: [] }] });
+  const f = v.federations[0];
+  assert.equal(f.targetBondSats, '86667');
+  assert.equal(f.guardians, 2);
+  assert.deepEqual(f.guardiansBelowTarget.map((g) => [g.node, g.bondSats, g.addSats]), [['g1', '82000', '4667'], ['g2', '50000', '36667']]);
+});

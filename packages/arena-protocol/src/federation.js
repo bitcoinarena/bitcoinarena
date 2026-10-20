@@ -16,6 +16,7 @@
 // hashing, and the known-good list or explicit confirmation is the page's.
 import { toHex } from './hash.js';
 import { GUARDIAN_KEY_BYTES } from './advert.js';
+import { nodeBonds } from './census.js';
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const isKey = (b) => b instanceof Uint8Array && b.length === GUARDIAN_KEY_BYTES;
@@ -41,9 +42,13 @@ export function federationIsBonded({ federationId, guardianKeys, threshold, cens
   const fid = toHex(federationId);
   const keysTaken = new Set();
   const nodesTaken = new Set();
+  // a node's bond is the sum of its outputs (kanban #544): an added second output counts with the first
+  const sums = new Map(nodeBonds(census.filter((e) => e && typeof e.bondSats === 'bigint')).map((g) => [`${g.pubkey}|${g.operatorId}`, g.bondSats]));
   for (const e of census) {
     if (!e || !e.advert || !Array.isArray(e.advert.guardianOf)) continue;
-    if (typeof e.bondSats !== 'bigint' || e.bondSats < bondMinSats) continue;
+    if (typeof e.bondSats !== 'bigint') continue;
+    const sum = sums.get(`${toHex(e.pubkey || e.advert.nodePubkey)}|${String(e.advert.operatorId || '')}`);
+    if (sum === undefined || sum < bondMinSats) continue;
     const node = toHex(e.pubkey || e.advert.nodePubkey);
     if (nodesTaken.has(node)) continue;
     for (const g of e.advert.guardianOf) {
