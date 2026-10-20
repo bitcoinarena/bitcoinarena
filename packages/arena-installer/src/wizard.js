@@ -29,6 +29,7 @@ import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
+import { installMinimum } from './install-minimum.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
 import { torBin, writeTorrc, TOR_PORTS } from './tor.js';
 import { LND_PORTS } from './lnd.js';
@@ -82,11 +83,14 @@ const laterCustody = (s) => Boolean(s.custodyLater && s.bond && s.bond.txid && (
  * the ring channel to the next node of its federation and the outside channel (custody-agent.js). A liquidity provider: its deposit
  * (§23A.10: 5 x L on testnet4), sent to LND's wallet by the node's agent.
  */
+// THE BOND PART is the installer's minimum (install-minimum.js, §23A.3a): the network's bond target the seats said at the bond step,
+// kept in the state as `bondMinimum`, else the floor
+export const bondMinimumOf = (s) => Math.max(Number(BOND_MIN_SATS), Number((s && s.bondMinimum && s.bondMinimum.sats) || 0));
 export function depositParts(s, pegInSats) {
   const custody = (s.roles || []).includes('custody');
   const pegIn = Math.max(0, Math.floor(Number(pegInSats) || 0));
   const parts = laterCustody(s) ? { custodyUpdate: CUSTODY_UPDATE_RESERVE_SATS, advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS }
-    : { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS } : {}) };
+    : { bond: bondMinimumOf(s), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn, outside: OUTSIDE_RESERVE_SATS, ring: RING_RESERVE_SATS } : {}) };
   if ((s.roles || []).includes('liquidity')) { parts.liquidity = Number(LIQUIDITY_TERMS.testnet4.depositSats); parts.fees = parts.fees || 2000; }
   return parts;
 }
@@ -524,9 +528,12 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const custody = (s.roles || []).includes('custody');
       const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
       if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
-      const parts = depositParts(s, pegInSats);
+      // THE MINIMUM ASKED OF THE SEATS (kanban #543): a new node bonds at least the network's target, so it is useful from the start
+      if (!laterCustody(s)) { const m = await installMinimum({ fetcher }); state.save({ bondMinimum: { sats: m.sats, from: m.from, why: m.why, atMs: nowMs() } }); }
+      const parts = depositParts(state.read(), pegInSats);
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
-      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s) };
+      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s),
+        minimum: state.read().bondMinimum || null };
     },
     'POST /api/bond/post': async (b) => {
       const s = state.read();
@@ -553,8 +560,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         await installAgent();
         return { ok: true, bond, update: txid };
       }
-      const bondSats = b.bondSats ? BigInt(b.bondSats) : BOND_MIN_SATS;
-      if (bondSats < BOND_MIN_SATS) return { ok: false, why: `a bond is at least ${BOND_MIN_SATS} sat` };
+      const minimum = BigInt(bondMinimumOf(s));
+      const bondSats = b.bondSats ? BigInt(b.bondSats) : minimum;
+      if (bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
       let built;
       try {
         built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
