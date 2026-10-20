@@ -16330,6 +16330,7 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
   if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
   if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
   const round = { federationId };
+  if (!ancestor) rememberInvite(storage, federationId, invite);
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one
   const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
@@ -16778,6 +16779,7 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
   const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
   offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
+  offer.client = client;   // the page keeps it with its other wallets: summed, and its pending deposits waited on (2026-10-20)
   return offer;
 }
 const DEPOSIT_MARGIN_PPM = 6000n;
@@ -18474,11 +18476,24 @@ async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fromFeder
 function ledgerFederations(storage) {
   const out = [];
   for (const k of storageKeys(storage)) {
-    if (!k.startsWith(LEDGER_PREFIX) || k.startsWith(LEDGER_READ_PREFIX)) continue;
-    const f = k.slice(LEDGER_PREFIX.length);
-    if (/^[0-9a-f]{64}$/.test(f)) out.push(f);
+    // AND EVERY FEDERATION A DEPOSIT IS STILL PENDING IN (the owner 2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not reflected" -
+    // the gateway funded the incoming contract, but a deposit gets its ledger row only once claimed, and a page reloaded or
+    // suspended before the claim opened wallets only where the ledger had rows: the pending deposit was never resumed, claimed or
+    // summed). A federation this browser made a deposit invoice in is one it holds a wallet in.
+    const f = k.startsWith(PENDING_PREFIX) ? k.slice(PENDING_PREFIX.length)
+      : k.startsWith(LEDGER_PREFIX) && !k.startsWith(LEDGER_READ_PREFIX) ? k.slice(LEDGER_PREFIX.length) : null;
+    if (f && /^[0-9a-f]{64}$/.test(f) && !out.includes(f)) out.push(f);
   }
   return out;
+}
+// THE INVITE EACH WALLET WAS OPENED WITH (arena.federation.invite.<fed>): a held federation's wallet opens from it when no verified
+// status names an invite (a CRITICAL or not-yet-listed federation), so its funds are still read and summed
+const INVITE_PREFIX = 'arena.federation.invite.';
+function rememberedInvite(storage, federationId) {
+  try { return (storage && storage.getItem(INVITE_PREFIX + fedHexOf(federationId))) || null; } catch { return null; }
+}
+function rememberInvite(storage, federationId, invite) {
+  try { if (storage && fedHexOf(federationId) && invite) storage.setItem(INVITE_PREFIX + fedHexOf(federationId), String(invite)); } catch { /* not kept */ }
 }
 
 // ---- arena-client/src/vendor-qrcode.js
@@ -27607,6 +27622,9 @@ const KNOWN_GOOD_FEDERATIONS = Object.freeze({
   // Bitcoin Arena testnet4 B: the second federation, seven guardians on the test host, 5 of 7 (2026-10-13: "2
   // federations", "always take the federation with less funds"); its record signed by all 7, measured on the live page 22:45Z
   'b18947f085d40df3ce4bc8ac64df9c45256223e88fe7fdbdebf3eae13fb10b73': Object.freeze({ name: 'Arena testnet4 B', network: 'testnet4', nominal: 7, threshold: 5 }),
+  // B's successor (kanban #326 step 5, 2026-10-20): seven guardians, 5 of 7 (its client config: 7 api endpoints); its record OPEN and signed by
+  // 6 at 157,128 on every seat measured, B's record names it; gw-b holds 98,999 sat of its e-cash. A CRITICAL B's funds move here by themselves
+  '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98': Object.freeze({ name: 'Arena testnet4 B2', network: 'testnet4', nominal: 7, threshold: 5 }),
   // the regtest stand-in every test and vector uses (test-federation.js) - never one that holds money
   [toHex(TEST_FEDERATION_ID)]: Object.freeze({ name: 'regtest test federation', network: 'regtest', nominal: 4, threshold: 3 }),
 });
@@ -34009,7 +34027,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
