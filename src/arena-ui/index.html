@@ -6565,8 +6565,14 @@
               let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
               if (!rec || !rec.ecash) { L.removeItem(k); continue; }
               if (rec.fed ? rec.fed !== fedHex : !legacy) continue;   // never into another federation's wallet
+              let before = null; try { before = BigInt(await main.balanceMsat()); } catch { before = null; }
               const said = JSON.parse(await main.receiveEcash(rec.ecash));
               console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
+              // THE KEPT COPY STAYS COUNTED UNTIL THE BALANCE SHOWS IT (measured on UI 268, 19:29:09Z: one sum read 0 sat between "combined ... Success"
+              // and the reissued notes landing ~3 s later): after a Success, dropped once this wallet's balance rose, or after 30 s at the latest
+              if (said.state === 'Success' && before !== null) {
+                for (let w = 0; w < 60; w++) { let now = before; try { now = BigInt(await main.balanceMsat()); } catch { now = before; } if (now > before) break; await new Promise((r) => setTimeout(r, 500)); }
+              }
               if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
             }
           };
