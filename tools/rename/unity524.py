@@ -52,7 +52,8 @@ A = os.path.join(ROOT, 'unity-proto/Assets')
 for d, _, fs in os.walk(A):
     for n in fs:
         p = os.path.join(d, n)
-        if n.endswith('.cs'): rewrite(p, sub_jslib)   # C# tests quote jslib lines (window.BLWP_*, Module.blwp*) verbatim
+        # C# tests quote jslib lines (window.BLWP_*, Module.blwp*) verbatim; a line quoting the PAGE (`, page)`) keeps the page's own names
+        if n.endswith('.cs'): rewrite(p, lambda s: '\n'.join(l if ', page)' in l else sub_jslib(l) for l in s.split('\n')))
         elif n.endswith('.jslib'): rewrite(p, sub_jslib)
 
 # tests and tools that read the jslib or name its entry points
