@@ -59,7 +59,7 @@ const newCode = () => {
 };
 
 /**
- * The node's side. `store`: { read() -> object|null, write(object), writeCode(code|null) } (files in main.js, memory in
+ * The node's side. `store`: { read() -> object|null, write(object), writeCode(code|null), codePath? (the claim file's full path) } (files in main.js, memory in
  * tests). `verify(sig, msg, key)`: BIP-340. `node`: this node's key, hex.
  */
 export function createOwner({ store, verify, node, nowMs = () => Date.now(), log = () => {} }) {
@@ -69,7 +69,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
   if (!owner) {
     code = newCode();
     store.writeCode(code);
-    log(`[owner] this node has no owner yet. Claim it at /Dashboard/owner with the code ${code}`);
+    log(`[owner] this node has no owner yet. Claim it at /Dashboard/owner with the code ${code}${store.codePath ? ` (also in ${store.codePath})` : ''}`);
   }
   // A REQUEST AS A NOSTR EVENT (above): its id, its signature, this node, this action, these arguments, and its time
   const checkEvent = (req, action) => {
@@ -106,7 +106,9 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     return { ok: true, pubkey: req.pubkey };
   };
   return {
-    state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null, leavingAtMs: owner && owner.leaving ? owner.leaving.atMs : null }),
+    // the claim file's full path while there is no owner (kanban #550): the page names the file, not "<database>.owner-claim"
+    state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null, leavingAtMs: owner && owner.leaving ? owner.leaving.atMs : null,
+      claimFile: !owner && store.codePath ? String(store.codePath) : null }),
     /** The first owner, with the claim code from the node's log. */
     claim(req) {
       if (owner) return { ok: false, status: 409, why: 'this node already has an owner' };
