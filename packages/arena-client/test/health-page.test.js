@@ -43,3 +43,26 @@ test('each federation\'s gateway row is its own guardians\' answer, not the firs
   assert.match(rows[0], /aaaaaaaaaaaa.*1 of 2.*A ranked/s);
   assert.match(rows[1], /bbbbbbbbbbbb.*0 of 2.*B ranked/s, 'B is ranked by a seat of B');
 });
+
+test('the Capacity card: each federation\'s band in words, who is below B* and by how much, and the network with the install minimum', async () => {
+  // spec §23A.3a, kanban #543: from the seats' GET /capacity (capacityView, arena-protocol)
+  const { capacityView } = await import('../../arena-protocol/src/capacity.js');
+  const view = capacityView({ bondMinSats: 50000n, pegInMinSats: 50000n, federations: [
+    { federation: 'aa'.repeat(32), status: 'OPEN', nominal: 7, reserveSats: '130000', exposureCapSats: '150000',
+      guardianBonds: [1, 2, 3, 4, 5, 6, 7].map((i) => ({ node: String(i), bondSats: 50000n })), gateways: [{ node: '1', pegInSats: 20000n }] },
+    { federation: 'bb'.repeat(32), status: 'OPEN', nominal: 7, reserveSats: '650000', exposureCapSats: '150000', guardianBonds: [], gateways: [] },
+    { federation: 'cc'.repeat(32), status: 'OPEN', nominal: 7, reserveSats: '10000', exposureCapSats: '150000', guardianBonds: [], gateways: [] }] });
+  const at = script.indexOf('  function paintCapacity(cap) {');
+  const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
+  const el = { innerHTML: '' }; const window = {};
+  const esc = (x) => String(x == null ? '' : x); const short = (h, n = 8) => String(h).slice(0, n);
+  const sat = (v) => Number(v).toLocaleString('en-US'); const dot = (c) => `[${c}]`;
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', src + '\nreturn paintCapacity;')(() => el, esc, short, sat, dot, window)({ body: view });
+  assert.match(el.innerHTML, /\[warn\]<b>PRESSURE<\/b> · filling up · OPEN - Federation aaaaaaaa holds 87 % of what its bonds cover\. Deposits stop at 100 %\. 7 of 7 guardians below the bond B\* = 86,667 sat \(each needs 36,667 sat more\)\. 1 gateway\(s\) below the peg-in P\* = 50,000 sat\./);
+  assert.match(el.innerHTML, /\[bad\]<b>FULL<\/b> · deposits closed · OPEN - Deposits into bbbbbbbb are closed until bonds rise or a new federation is founded\./);
+  assert.match(el.innerHTML, /\[ok\]<b>CALM<\/b> · room left · OPEN - Federation cccccccc: 7 % of what its bonds cover\./);
+  assert.match(el.innerHTML, /<b>Network: CALM<\/b> - the lowest-load OPEN federation cccccccc at 7 % · new installs bond at least 180,000 sat/);
+  const none = { innerHTML: '' };
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', src + '\nreturn paintCapacity;')(() => none, esc, short, sat, dot, {})(null);
+  assert.match(none.innerHTML, /no seat answers \/capacity yet/);
+});
