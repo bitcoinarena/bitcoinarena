@@ -91,6 +91,9 @@
     } catch (e) { return { ok: false, status: 0, why: e.name === 'TimeoutError' ? 'no answer in 10 s' : e.message, ms: Math.round(performance.now() - t0) }; }
     finally { free(); }
   }
+  let SERVED = new Map();   // node key -> rounds it signed in the last 24 h (any seat's)
+  // a node is ACTIVE when it answers now or signed a round in the last 24 h; one not asked yet counts as active until it is
+  const activeOf = (n) => !n.version || (n.version && n.version.ok) || (SERVED.get(n.node) || 0) > 0;
   const first = async (seats, path) => { for (const s of seats) { const a = await ask(s, path); if (a.ok) return { seat: s, ...a }; } return null; };
   // EVERY SEAT ASKED AT ONCE, THE ANSWER THAT SCORES HIGHEST KEPT (`score(body)` -> [numbers], compared in order)
   const best = async (seats, path, score) => {
@@ -121,6 +124,12 @@
       const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = [['/fees', (b) => [Number(b.tip) || 0]], ['/federations', (b) => [(b.federations || []).length, Math.max(0, ...(b.federations || []).map((f) => Number(f.height) || 0))]],
         ['/network-games', null], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]]]
         .map(([p, score]) => (score ? best(seats, p, score) : first(seats, p)));
+      // ACTIVE IN THE LAST 24 HOURS (the owner 2026-10-20: "mark it as active in the last 24 hours and inactive"): the census nodes that signed a
+      // round result in that window, from every seat's GET /served (each holds its own results, so they are merged)
+      { const to = Date.now(), from = to - 86400000;
+        const got = await Promise.all(seats.map((s) => ask(s, `/served?to=${to}&from=${from}`)));
+        SERVED = new Map();
+        for (const a of got) if (a.ok && a.body) for (const x of a.body.nodes || []) SERVED.set(x.key, Math.max(SERVED.get(x.key) || 0, Number(x.rounds) || 0)); }
       const fees = await feesP;
       const tip = fees ? fees.body.tip : null;
       let feds = null, reserves = null, funding = null;
@@ -163,10 +172,10 @@
     const bonds = nodes.reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : Number(n.bondSats || 0)), 0);
     const facts = [
       ['Bitcoin tip (testnet4)', tip == null ? '-' : sat(tip), tip == null ? 'bad' : ''],
-      ['Census nodes', nodes.length + (roles ? ' (census at ' + sat(roles.body.censusHeight) + ')' : ''), roles ? '' : 'bad'],
-      ['Answering', up + ' of ' + nodes.length, up === nodes.length ? 'ok' : up >= nodes.length * 0.7 ? 'warn' : 'bad'],
+      ['Census nodes', `${nodes.filter(activeOf).length} active of ${nodes.length}` + (roles ? ' (census at ' + sat(roles.body.censusHeight) + ')' : ''), roles ? '' : 'bad'],
+      ['Answering (active nodes)', up + ' of ' + nodes.filter(activeOf).length, up >= nodes.filter(activeOf).length ? 'ok' : up >= nodes.filter(activeOf).length * 0.7 ? 'warn' : 'bad'],
       ['Newest protocol run', [...protos].sort((a, b) => b[0] - a[0]).map(([p, c]) => p + ' on ' + c).join(', ') || '-', protos.size > 1 ? 'warn' : 'ok'],
-      ['Bonds proven', sat(bonds) + ' sat', ''],
+      ['Bonds proven (active nodes)', sat(nodes.filter(activeOf).reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : Number(n.bondSats || 0)), 0)) + ' sat · all ' + sat(bonds), ''],
       ['Federations', feds ? feds.body.federations.length : '-', feds ? '' : 'bad'],
       ['Protocol reserves', reserves ? satMsat(reserves.body.totalMsat) + ' sat' : '-', ''],
       ['Seats in daily.json', seats.length, ''],
@@ -181,7 +190,9 @@
   }
 
   function paintNodes(nodes, tip) {
-    const rows = nodes.map((n, i) => {
+    const act = nodes.filter(activeOf), idle = nodes.filter((n) => !activeOf(n));
+    const rowsOf = (list, from) => list.map((n, k) => {
+      const i = from + k;
       const v = n.version, b = n.bond;
       const health = !v ? 'warn' : !v.ok ? 'bad' : n.serving === false || v.ms > 3000 ? 'warn' : 'ok';
       const proto = v && v.ok ? Math.max(...(v.body.protocols || [0])) : null;
@@ -196,9 +207,16 @@
         <td>${!v ? '<span class="muted">asking …</span>' : v.ok ? v.ms + ' ms' : `<span class="bad">${esc((v.status || '') + ' ' + v.why)}</span>`}</td>
         <td>${v && v.ok ? esc(v.body.version || 'checkout') + (v.body.commit ? ' <span class="mono muted">' + short(v.body.commit, 7) + '</span>' : '') : '-'}</td>
         <td>${proto == null ? '-' : proto}</td><td class="wrap">${role || '-'}</td><td>${n.serving == null ? '-' : n.serving ? '<span class="ok">yes</span>' : '<span class="warn">no</span>'}</td>
-        <td>${bd ? sat(bd.sats) + ' sat' : '-'}</td><td>${lock ? (lock.blocksLeft > 0 ? `<span class="warn">matures in ${lock.blocksLeft}</span>` : 'mature') : '-'}</td></tr>`;
+        <td>${bd ? sat(bd.sats) + ' sat' : '-'}</td><td>${lock ? (lock.blocksLeft > 0 ? `<span class="warn">matures in ${lock.blocksLeft}</span>` : 'mature') : '-'}</td>
+        <td>${!v ? '<span class="muted">-</span>' : activeOf(n) ? `<span class="ok">active</span>${SERVED.get(n.node) ? ` <span class="muted">· ${SERVED.get(n.node)} round${SERVED.get(n.node) === 1 ? '' : 's'} in 24 h</span>` : ''}` : '<span class="muted">inactive</span>'}</td></tr>`;
     });
-    $('nodes').innerHTML = '<tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th></tr>' + rows.join('');
+    const head = '<tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th><th>Last 24 h</th></tr>';
+    const open = document.getElementById('idle-open'), shown = open ? open.dataset.open === '1' : false;
+    $('nodes').innerHTML = head + rowsOf(act, 0).join('')
+      + (idle.length ? `<tr><td colspan="11"><button id="idle-open" type="button" data-open="${shown ? 1 : 0}" style="font-size:12px">${shown ? '▾' : '▸'} ${idle.length} inactive node${idle.length === 1 ? '' : 's'} - bonded, not answering and no round signed in 24 h</button></td></tr>`
+        + (shown ? rowsOf(idle, act.length).join('') : '') : '');
+    const btn = document.getElementById('idle-open');
+    if (btn) btn.onclick = () => { btn.dataset.open = btn.dataset.open === '1' ? '0' : '1'; paintNodes(nodes, tip); };
   }
 
   // CAPACITY PRESSURE (spec §23A.3a, kanban #543): each federation's band from the seats' GET /capacity - how full it is against what its
