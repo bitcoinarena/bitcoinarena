@@ -66,3 +66,13 @@ test('at least one gateway (the owner 2026-10-20): no operator eligible, the bes
   const eligibleThere = seat([ok(6), ok(7, { availabilityPct: 50 })]);
   assert.deepEqual([eligibleThere.seated, eligibleThere.belowMinimums], [[toHex(k(6))], []], 'with an eligible operator nothing below the minimums is seated');
 });
+
+test('who waits and why (kanban #552): behind the same operator\'s better node, or ranked below the seats', () => {
+  const r = seat([ok(1, { volumeSats: 9_000n }), ok(2, { operatorId: 'op1' }), ok(3, { volumeSats: 5_000n }), ok(4)]);
+  assert.deepEqual(r.seated, [toHex(k(1)), toHex(k(3))]);
+  assert.deepEqual(r.waiting.map((x) => [x.node, x.why]), [
+    [toHex(k(2)), 'the same operator as 0101010101, whose node stands for it (one seat per operator)'],
+    [toHex(k(4)), 'eligible, ranked below the seated gateways'],
+  ]);
+  assert.deepEqual(seat([ok(5)]).waiting, [], 'nobody waits when every eligible operator is seated');
+});
