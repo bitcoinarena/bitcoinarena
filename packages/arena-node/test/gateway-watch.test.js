@@ -29,7 +29,7 @@ test('the watch: seated guardians\' claims probed per epoch, ranked; a foreign f
   let height = 144 * 10 + 5;
   const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
   const fetcher = async (url, o = {}) => {
-    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim$/.exec(url);
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
     if (seat) return { status: 200, json: async () => claims[seat[1]] };
     const gw = /^https:\/\/n(\d)\.example\/gateway\/routing_info$/.exec(url);
     if (gw) { assert.equal(o.body, JSON.stringify(fid)); return { status: 200, text: async () => (up[gw[1]] ? '{"lightning_public_key":"02.."}' : 'null') }; }
@@ -57,7 +57,7 @@ test('a seat that advertises its endpoint as wss:// is read over https (the live
   const fetcher = async (url) => {
     asked.push(url);
     if (/^wss?:/.test(url)) throw new TypeError('fetch failed: unknown scheme');
-    const seat = /^https:\/\/seat(\d)\.example\/guardian-\d\/gateway-claim$/.exec(url);
+    const seat = /^https:\/\/seat(\d)\.example\/guardian-\d\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
     if (seat) return { status: 200, json: async () => claimOf(Number(seat[1])) };
     if (/^https:\/\/n\d\.example\/gateway\/routing_info$/.test(url)) return { status: 200, text: async () => '{"lightning_public_key":"02.."}' };
     throw new Error(`unexpected ${url}`);
@@ -65,7 +65,9 @@ test('a seat that advertises its endpoint as wss:// is read over https (the live
   const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries,
     tip: async () => 144 * 10 + 5, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher });
   await w.probe();
-  assert.ok(asked.includes('https://seat0.example/guardian-0/gateway-claim'), asked.join(' '));
+  assert.ok(asked.some((u) => u.startsWith('https://seat0.example/guardian-0/gateway-claim?federation=')), asked.join(' '));
+  // kanban #552: it asks for its own federation's claim - a seat may stand for a gateway in each federation it guards
+  assert.ok(asked.filter((u) => u.includes('/gateway-claim')).every((u) => /\?federation=[0-9a-f]{64}$/.test(u)));
   const v = await w.view();
   assert.deepEqual(Object.keys(v.gateways).sort(), [keys[0].hex, keys[1].hex].sort(), 'both claims read and probed');
   assert.equal(v.seated.length, 2);
@@ -84,7 +86,7 @@ test('routed volume: incoming contracts credited to the gateway whose module key
   const height = 144 * 20 + 3;
   const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
   const fetcher = async (url) => {
-    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim$/.exec(url);
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
     if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => null };
     const gw = /^https:\/\/n(\d)\.example\/gateway\/routing_info$/.exec(url);
     return { status: 200, text: async () => JSON.stringify({ module_public_key: mk[gw[1]] }) };

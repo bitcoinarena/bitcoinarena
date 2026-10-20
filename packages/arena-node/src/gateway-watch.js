@@ -35,7 +35,8 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       if (!e || !e.advert || !e.advert.endpoint) continue;
       let claim = null;
       try {
-        const r = await fetcher(`${baseOf(e.advert.endpoint)}/gateway-claim`, { signal: AbortSignal.timeout(timeoutMs) });
+        // its claim FOR THIS FEDERATION (kanban #552: a seat may stand for a gateway in each federation it guards; an older seat answers its one)
+        const r = await fetcher(`${baseOf(e.advert.endpoint)}/gateway-claim?federation=${fid}`, { signal: AbortSignal.timeout(timeoutMs) });
         if (r.status === 200) { const c = await r.json(); if (checkGatewayClaim(c, verify).ok && c.node === node && c.federationId === fid) claim = c; }
       } catch { claim = null; }
       if (!claim) continue;                 // no claim: this node does not stand
