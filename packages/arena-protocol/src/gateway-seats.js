@@ -12,6 +12,9 @@
 //             ticket H('BLWP/v1/GATEWAY' || beacon || node key), lowest first
 //   seated    the top `seats` operators (one seat per operator); an incumbent keeps its seat unless it is ineligible or a challenger it
 //             would yield to routed at least 25 % more
+//   at least one  a federation is never without a gateway (the owner 2026-10-20: "There needs to be at least 1 gateway"): when no operator
+//             is eligible, the best candidate that can still serve - a seated guardian, its gateway registered, holding e-cash in the
+//             federation - takes one seat, ranked as above and named in `belowMinimums`
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { tagAt, TAG_PAIRS } from './tag-switch.js';
@@ -58,12 +61,17 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
   if (!(beacon instanceof Uint8Array) || beacon.length !== 32) throw new TypeError('the epoch is ranked on its first block\'s hash');
   const minimums = GATEWAY_MINIMUMS[network];
   if (!minimums) throw new Error(`no gateway minimums for ${network}`);
-  const ineligible = [], eligible = [];
+  const ineligible = [], eligible = [], serving = [];
+  const rankable = (c) => ({ ...c, nodeHex: toHex(c.node), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats || 0) < BigInt(c.outboundSats || 0) ? c.inboundSats || 0 : c.outboundSats || 0, 100_000n),
+    availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats || 0), ticket: gatewayTicket(beacon, c.node, epoch) });
   for (const c of candidates) {
     const why = ineligibleWhy(c, { minimums, bondMinGuardian });
-    if (why) { ineligible.push({ node: toHex(c.node), why }); continue; }
-    eligible.push({ ...c, nodeHex: toHex(c.node), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats) < BigInt(c.outboundSats) ? c.inboundSats : c.outboundSats, 100_000n),
-      availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats), ticket: gatewayTicket(beacon, c.node, epoch) });
+    if (why) {
+      ineligible.push({ node: toHex(c.node), why });
+      if (c.seatedGuardian && c.registered && BigInt(c.pegInSats || 0) > 0n) serving.push(rankable(c));
+      continue;
+    }
+    eligible.push(rankable(c));
   }
   const cmp = (a, b) => (a.volume !== b.volume ? (a.volume > b.volume ? -1 : 1) : a.capacity !== b.capacity ? (a.capacity > b.capacity ? -1 : 1)
     : a.availability !== b.availability ? (a.availability > b.availability ? -1 : 1) : a.bond !== b.bond ? (a.bond > b.bond ? -1 : 1)
@@ -81,8 +89,12 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
     const weakest = newcomers[newcomers.length - 1];
     if (weakest && weakest.volume * 100n < inc.volume * (100n + UNSEAT_MARGIN_PCT)) seated = seated.map((c) => (c === weakest ? inc : c)).sort(cmp);
   }
+  // AT LEAST ONE: no eligible operator, so the best one that can still serve holds a seat until one clears the minimums
+  const belowMinimums = [];
+  if (!seated.length && seats >= 1 && serving.length) { const best = serving.sort(cmp)[0]; seated = [best]; belowMinimums.push(best.nodeHex); }
   const out = seated.map((c) => c.nodeHex);
-  return { seated: out, empty: Math.max(0, seats - out.length),
+  return { seated: out, empty: Math.max(0, seats - out.length), belowMinimums,
     ranked: ranked.map(({ nodeHex, volume, capacity, availability, bond }) => ({ node: nodeHex, volume, capacity, availability, bond })), ineligible,
-    why: `${out.length} of ${seats} gateway seats filled from ${ranked.length} eligible operator${ranked.length === 1 ? '' : 's'}${ineligible.length ? `, ${ineligible.length} not eligible` : ''}` };
+    why: `${out.length} of ${seats} gateway seats filled from ${ranked.length} eligible operator${ranked.length === 1 ? '' : 's'}${ineligible.length ? `, ${ineligible.length} not eligible` : ''}`
+      + (belowMinimums.length ? `; ${belowMinimums[0].slice(0, 10)} holds the seat below the minimums (a federation is never without a gateway)` : '') };
 }
