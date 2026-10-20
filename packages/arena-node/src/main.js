@@ -278,13 +278,18 @@ if (url) {
   // roster keeps a round's), keyed by the network, the height and that block's hash - another block at the height is another key, never
   // a stale answer, at any depth. Three days kept; one derivation in flight per key.
   const chainCensusInFlight = new Map();
+  // A BLOCK READ THAT FAILED HOLDS EVERY CENSUS READ FOR A MINUTE, as it holds the round's view (below): the records' first gathering
+  // 45 s after start read the whole census window from a bitcoind whose block reads had just failed (main-process (c), since f554a896)
+  let blocksFailedAtMs = 0;
   const chainCensusKept = async (kind, networkIdHex, height, contract) => {
     const hash = String(await call('getblockhash', [height]));
     const key = `chain:${kind}:${networkIdHex}:${height}:${hash}`;
     try { const row = db.prepare('SELECT body FROM census_kept WHERE key = ?').get(key); if (row) return JSON.parse(row.body, censusReviver); } catch { /* derived below */ }
     if (chainCensusInFlight.has(key)) return chainCensusInFlight.get(key);
+    if (Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
-      const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
+      let view;
+      try { view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; }
       const census = censusOfView(view, contract);
       if (census.ok) {
         try {
@@ -461,7 +466,7 @@ if (url) {
           .catch((e) => {
             const why = String((e && e.message) || e);
             if (!failed || failed.why !== why) console.error(`[chain] view ${key} did not read: ${why}`);
-            viewFailed.set(key, { atMs: Date.now(), why });
+            viewFailed.set(key, { atMs: Date.now(), why }); blocksFailedAtMs = Date.now();
           })
           .finally(() => reading.delete(key)));
       return undefined;
