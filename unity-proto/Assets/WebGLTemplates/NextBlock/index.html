@@ -6311,7 +6311,46 @@
             + '#back,button.back{display:none!important}';
           d.head.appendChild(st);
         } catch (e) { console.log('[arena] the client frame could not be made to scroll: ' + (e && e.message ? e.message : e)); }
+        if (game.kind === 'market' || game.name === 'btc-updown-15m') expectedLine(frame);
       });
+      // WHEN THE NEXT ROUND COMES (the owner 2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
+      // expected at a specific time or blocks"): under the client's "No window is open on these nodes right now." the page says when the
+      // next window opens - a listed one, else one its publisher put on chain (window.ARENA_EXPECTED) - and, while the grid waits for its
+      // draw block, which block: the first whose median time passes the committee time, then 6 deep. The client's bytes are unchanged.
+      function expectedLine(fr) {
+        const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
+        const inMin = (ms) => { const m = Math.round((Number(ms) - Date.now()) / 60000); return m >= 60 ? `in ${Math.floor(m / 60)} h ${m % 60} min` : m > 0 ? `in ${m} min` : 'soon'; };
+        const paint = async () => {
+          let d = null; try { d = fr.contentDocument; } catch (e) { d = null; }
+          if (!d || !d.body) return;
+          const q = d.getElementById('q');
+          let el = d.getElementById('arena-expected');
+          const empty = q && /^No window is open/.test(q.textContent || '');
+          if (!empty) { if (el) el.remove(); return; }
+          if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
+          const now = Date.now();
+          // the listed rounds of this game still to come (the lobby keeps only ones whose committee can be drawn); a grid's window is the
+          // gap between two closes, 15 min when one is listed
+          const mineRows = (window.ARENA_LOBBY_ROWS || []).filter((r) => { try { return r && r.contract && BLWPCLIENT.toHex(r.contract.gameId) === String(game.id).toLowerCase() && Number(r.entryCloseMs) > now; } catch (e) { return false; } })
+            .sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
+          const gaps = mineRows.slice(1).map((r, i) => Number(r.entryCloseMs) - Number(mineRows[i].entryCloseMs)).filter((g) => g > 0);
+          const windowMs = gaps.length ? Math.min(...gaps) : 15 * 60000;
+          const listed = mineRows[0];
+          let text = '';
+          if (listed) { const opens = Number(listed.entryCloseMs) - windowMs; text = opens > now ? `Next round: entry opens ${hhmm(opens)} (${inMin(opens)}).` : `Next round: entry open until ${hhmm(listed.entryCloseMs)}.`; }
+          else {
+            const x = window.ARENA_EXPECTED ? await window.ARENA_EXPECTED() : null;
+            const e = x && (x.expected || []).filter((v) => v.game === game.name).sort((a, b) => Number(a.firstWindowMs) - Number(b.firstWindowMs))[0];
+            if (e) {
+              const opens = Number(e.firstWindowMs) > now ? `entry opens ${hhmm(e.firstWindowMs)} (${inMin(e.firstWindowMs)})` : 'entry opens with the next window';
+              text = `Next round expected: ${opens}. It starts once its draw block is in: a block after ${hhmm(e.committeeTimeMs)}, then 6 confirmations (~1 h).`
+                + (e.publication && e.publication.height ? ` Published in block ${Number(e.publication.height).toLocaleString('en-US')}.` : '');
+            } else text = 'No round is scheduled on these nodes yet.';
+          }
+          if (el.textContent !== text) el.textContent = text;
+        };
+        paint(); const t = setInterval(() => { if (!fr.isConnected) { clearInterval(t); return; } paint().catch(() => {}); }, 15000);
+      }
       document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
       // THE DEPOSIT BOX OUTLIVES THE LOADING SCREEN HERE TOO (measured on the paid Up/Down series: no deposit
@@ -6702,6 +6741,28 @@
         })().catch((e) => { console.log('[arena] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.ARENA_WALLET_EARLY = null; });
       };
       window.ARENA_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
+      // ROUNDS ON THEIR WAY (the owner 2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is expected
+      // at a specific time or blocks"): what the seats' publishers put on chain and the seats do not list yet (GET /expected), asked once a minute
+      {
+        const bases = [...new Set([...((testnet && testnet.named && testnet.named.nodes) || []), ...((named && named.nodes) || [])]
+          .map((u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')).filter(Boolean))];
+        let kept = null;
+        window.ARENA_EXPECTED = async () => {
+          if (kept && Date.now() - kept.at < 60000) return kept.v;
+          // the first seat whose publisher names something; a seat with nothing on its way answers an empty list, and the next is asked
+          let empty = null;
+          for (const base of bases) {
+            try {
+              const r = await fetch(base + '/expected', { signal: AbortSignal.timeout(2500) }); if (!r.ok) continue;
+              const v = await r.json();
+              if (v && Array.isArray(v.expected) && v.expected.length) { kept = { at: Date.now(), v }; return v; }
+              empty = empty || v;
+            } catch (e) { /* the next seat */ }
+          }
+          kept = { at: Date.now(), v: empty };
+          return empty;
+        };
+      }
       // THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559): a deposit into a federation, and
       // each leg of a swap, tries the gateways that federation's guardians seated before the named and listed ones. Asked of the seats
       // (GET /gateway-seats?federation=, answered only by a seat that guards it), kept 10 minutes per federation

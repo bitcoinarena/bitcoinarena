@@ -621,7 +621,12 @@ if (env.PAID_UPDOWN_GRID === '1') {
         donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fedPick.federationId) }, stakeMsat,
         stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
         { slots, tables: 1, windowMs: period, entryAfterStartMs: 0n, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
-          onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `updown-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ updownGrid: 'published', ...p }); },
+          onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `updown-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ updownGrid: 'published', ...p });
+            // AND WHAT IS ON ITS WAY, for the seats' GET /expected (kanban #559 aside, the owner 2026-10-20: "Add an estimated message to markets
+            // when it's currently no rounds but a new round is expected"): the market's page says when the first window opens and which block it waits for
+            if (env.ARENA_EXPECTED_FILE) { try { writeFileSync(env.ARENA_EXPECTED_FILE, JSON.stringify({ game: UPDOWN.manifest.name || 'btc-updown-15m', gameId: toHex(UPDOWN.gameId),
+              firstWindowMs: firstClose - Number(period), firstCloseMs: firstClose, lastCloseMs: firstClose + (slots - 1) * Number(period), slots, committeeTimeMs: committee,
+              publication: { txid: p.txid, height: p.height ?? null }, federation: fedPick.federationId }) + '\n'); } catch (e) { say({ expectedNotWritten: e.message }); } } },
           onPosted: (p) => say({ updownGrid: 'posted', ...p }) });
       if (got.dry) { say({ updownGrid: 'dry', ...got }); return; }
       say({ updownGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, beacon: got.beacon, rounds: got.rounds, posted: got.posted,
