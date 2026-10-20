@@ -61,7 +61,7 @@ import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../arena-protocol/src/chain.js';
 import { publicationPayload } from '../../arena-protocol/src/publication.js';
 import { seriesId, seriesRound, seriesLeadIsValid, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
-import { seriesLineOf } from '../src/series-line.js';
+import { seriesLineOf, parseSeriesLine } from '../src/series-line.js';
 import { hash256, parseTransaction } from '../../arena-protocol/src/tx.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../arena-protocol/tools/bond.js';
@@ -1284,6 +1284,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       t.rules = buildRules({ claimWindowDays: 1, bondMinGameVerifySats: BigInt(t.bondMinSats), bondMinSettlementSats: BigInt(t.bondMinSats) });
     // THE CREATOR: `kind.creatorSecret` names this publisher in every template (2026.0.3) and signs each series id
     if (kind.creatorSecret) for (const t of templates) t.creatorPubkey = schnorr.getPublicKey(kind.creatorSecret);
+    // FRESH OBJECTS BEFORE THE IDS (measured 2026-10-20 ~14:00Z: Up/Down grids 7fd7df5c and 7d3f16e7 published series 5c639e9b /
+    // ... while every seat derives 0752f64f... from the same line - "that signature is not the named creator's over this series' id"):
+    // seriesId() keeps one id per template object (series.js, kanban #468), and censusRootFor(seriesRound(...)) above asked for one
+    // before the census root, the rules and the creator were set - so the ids, the publication and the creator's signature named the
+    // template as it was then. Copied here, each template's id is worked out from what it is now.
+    for (let k = 0; k < templates.length; k++) templates[k] = { ...templates[k] };
     const ids = templates.map((t) => seriesId(t));
     if (kind.creatorSecret) templates.forEach((t, k) => { t.creatorSignature = schnorr.sign(seriesCreatorMessage(ids[k]), kind.creatorSecret); });
     const grid = [];
@@ -1298,6 +1304,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // "Mach das deutlich sparsamer"); the wallet signs
     const { hex: signed, vsize, fee } = await fundAtRate(chainRpc, outs, feeRate);
     const lines = templates.map((t) => seriesLineOf(t, encodeRoundContract));
+    // AND NOTHING IS PUBLISHED THAT A SEAT WOULD READ AS ANOTHER SERIES: each line, read back as a seat reads it, must name the id published
+    lines.forEach((line, k) => { const back = toHex(seriesId(parseSeriesLine(line))); if (back !== toHex(ids[k])) throw new Error(`series line ${k} reads back as ${back.slice(0, 16)}, not ${toHex(ids[k]).slice(0, 16)}: nothing published`); });
     // ARENA_GRID_DRY=1: the transaction built, signed and asked of the node's mempool (testmempoolaccept) - not sent
     if (process.env.ARENA_GRID_DRY === '1') {
       const [acc] = await chainRpc('testmempoolaccept', [[signed]]);
