@@ -136,3 +136,39 @@ test('backfill: a try counts only when the round\'s last counted try is 6 h old;
   assert.equal((await pass(t0 + 30 * H)).checked, 0, 'asked again after it was marked');
   assert.equal(out.length, 0);
 });
+
+// A MARKET'S PROTOCOL RESERVE IN THE RESERVES' BOOK (the owner 2026-10-20 #502, measured on round 6c68396b: its settlement paid 333 msat
+// to 337ae01a's reserve key and GET /reserves never listed it - only an entry's reserve output at its lock was kept as a row)
+const RESERVE_PK = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x33)]);
+const MARKET_PLAN = { claims: [lockAt(1), lockAt(2)], payouts: [
+  { kind: 'qualifier', msat: 198334n, payoutPk: new Uint8Array(32).fill(7) },
+  { kind: 'reserve', msat: 333n, payoutPk: RESERVE_PK },
+  { kind: 'signer node', msat: 95n, payoutPk: new Uint8Array(32).fill(5) },
+  { kind: 'donation key', msat: 446n, payoutPk: new Uint8Array(32).fill(8), donation: { id: new Uint8Array(32).fill(0x11) } } ] };
+const MARKET_MOVES = { ...MOVES, payouts: 4 };
+
+test('a market\'s settlement keeps its reserve payout as a row under the reserve key (entry id zeros), beside its donation keys', async () => {
+  const { round, out } = storeWith(new Map([[toHex(RID), { kept: { txid: TXID, state: SUBMITTING, message: new Uint8Array(32), signature: new Uint8Array(64) }, moves: MARKET_MOVES }]]));
+  const got = await seat(round, { plan: MARKET_PLAN }).settle(RID);
+  assert.equal(got.state, ACCEPTED);
+  const rows = out.map((r) => ({ at: `${toHex(r.outpoint.txid)}:${r.outpoint.outIdx}`, to: toHex(r.recipientPk).slice(0, 4), msat: String(r.amountMsat), entry: toHex(r.entryId).slice(0, 4) }));
+  assert.deepEqual(rows, [{ at: `${TXID}:1`, to: '0233', msat: '333', entry: '0000' }, { at: `${TXID}:3`, to: '0808', msat: '446', entry: '1111' }]);
+});
+
+test('the backfill of markets settled before: a market round with no reserve row is indexed from its matched plan once; one with it is left', async () => {
+  const R2 = new Uint8Array(32).fill(0x55);
+  const rows = new Map([
+    [toHex(RID), { kept: { txid: TXID, state: ACCEPTED, why: 'claimed 2 lock(s)' }, moves: MARKET_MOVES }],
+    [toHex(R2), { kept: { txid: TXID, state: ACCEPTED, why: 'claimed 2 lock(s)' }, moves: MARKET_MOVES }],
+  ]);
+  const { round, out } = storeWith(rows);
+  // the store's market rounds (outcome attestations) and its reserve rows: R2 already holds one
+  round.db = { prepare: (sql) => (/outcome_attestations/.test(sql)
+    ? { all: () => [{ round_id: Buffer.from(RID) }, { round_id: Buffer.from(R2) }] }
+    : { get: (rid) => ({ n: Buffer.from(rid).equals(Buffer.from(R2)) ? 1 : out.filter((r) => toHex(r.roundId) === toHex(rid) && toHex(r.entryId) === '00'.repeat(32)).length }) }) };
+  const s = seat(round, { plan: MARKET_PLAN });
+  const r1 = await s.backfillMarketReserves({ paceMs: 0 });
+  assert.deepEqual(r1, { checked: 1, indexed: 1 });
+  assert.ok(out.some((r) => toHex(r.recipientPk) === toHex(RESERVE_PK) && String(r.amountMsat) === '333'), 'the reserve row was not kept');
+  assert.deepEqual(await s.backfillMarketReserves({ paceMs: 0 }), { checked: 0, indexed: 0 }, 'a round was asked twice');
+});

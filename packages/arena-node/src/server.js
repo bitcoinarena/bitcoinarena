@@ -2979,7 +2979,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // indexed, by the same matched rebuild - two minutes in (after the start's catch-up and the recoveries above), paced.
   const donationBackfillTimer = setTimeout(() => {
     if (shuttingDown || typeof settlements.backfillDonationKeys !== 'function') return;
-    recoveringSettlements.then(() => settlements.backfillDonationKeys()).catch((e) => console.error(`[settle] donation-key backfill: ${e.message}`));
+    recoveringSettlements.then(() => settlements.backfillDonationKeys()).catch((e) => console.error(`[settle] donation-key backfill: ${e.message}`))
+      .then(() => settlements.backfillMarketReserves()).catch((e) => console.error(`[settle] market reserve backfill: ${e.message}`));
   }, 120000);
   donationBackfillTimer.unref();
   // AND AGAIN ON A SLOW CLOCK: a recovered round whose plan could not be rebuilt yet is left unmarked; this
