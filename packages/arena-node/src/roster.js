@@ -112,8 +112,8 @@ const whereOf = new WeakMap();                 // chain view -> its txid index (
 const TXIDS_OF_VIEW = new WeakMap();
 
 // A CENSUS AS STORED: JSON, its bytes and bigints marked (the page keeps an entry the same way)
-const censusReplacer = (k, v) => (v instanceof Uint8Array ? { u8: toHex(v) } : typeof v === 'bigint' ? { big: String(v) } : v);
-const censusReviver = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' && Object.keys(v).length === 1 ? Uint8Array.from(Buffer.from(v.u8, 'hex'))
+export const censusReplacer = (k, v) => (v instanceof Uint8Array ? { u8: toHex(v) } : typeof v === 'bigint' ? { big: String(v) } : v);
+export const censusReviver = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' && Object.keys(v).length === 1 ? Uint8Array.from(Buffer.from(v.u8, 'hex'))
   : v && typeof v === 'object' && typeof v.big === 'string' && Object.keys(v).length === 1 ? BigInt(v.big) : v);
 function readKeptCensus(round, key) {
   const db = round && round.db;
