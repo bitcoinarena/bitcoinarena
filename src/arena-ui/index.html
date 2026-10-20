@@ -6367,7 +6367,10 @@
             // census the page checks counts federation A's 7 only - a v2 round's counts both federations' 14): up to 6 candidates read,
             // the highest protocol version taken, the newest committee among those
             const read = [];
-            for (const r of (rows.rounds || []).filter((x) => !x.free && x.phase === 'open' && Number(x.signerNodes) > 0)
+            // A ROUND WITH ITS COMMITTEE DRAWN (playtest 2026-10-20 05:02Z, the owner: the balance popup said "Not checked yet" for 337ae01a): from
+            // protocol 2 a contract no longer names its draw, so every round's signerNodes is 0 and this filter found no round at all - the
+            // federations' records were never checked from the games screen
+            for (const r of (rows.rounds || []).filter((x) => !x.free && x.phase === 'open' && (Number(x.signerNodes) > 0 || (x.committee && x.committee.drawn)))
               .sort((x, y) => Number(y.committeeTimeMs || 0) - Number(x.committeeTimeMs || 0)).slice(0, 6)) {
               try {
                 const got = await BLWPCLIENT.fetchRound(r.id, nodes);
@@ -6747,11 +6750,17 @@
         // federation than the round's b18947f0") - a B deposit has no gateway liquidity yet. Shown again once the page knows it.
         const paysHere = (r) => { const f = r.contract && r.contract.federationId instanceof Uint8Array ? BLWPCLIENT.toHex(r.contract.federationId) : null;
           return !f || !/[1-9a-f]/.test(f) || !!BLWPCLIENT.knownFederation(f); };
+        // A PAID ROUND THAT CAN NEVER BE ENTERED IS NOT OFFERED (playtest 2026-10-20 05:04Z, the owner: "Pressing buy up or down doesn't do
+        // anything, after 10-20 seconds" - "Order not placed: this round is no longer listed in the lobby"): its committee still not drawn
+        // two hours after its committee time (the seat says why, e.g. a census with no node hosting its game) - the game picked it as the
+        // soonest open window, and every order in it was refused
+        const drawable = (r) => { const said = (r.said || []).map((c) => c.committee).filter(Boolean); const at = Number(r.committeeTimeMs);
+          return r.free || !said.length || said.some((c) => c.drawn) || !Number.isFinite(at) || now < at + 2 * 3600000; };
         const kept = window.ARENA_LOBBY_KEPT = window.ARENA_LOBBY_KEPT || { mine: [], theirs: [] };
         const mine = kept.mine = BLWPCLIENT.lobbyKeepWhenUnanswered(kept.mine,
-          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || paysHere(r)) }, now);
+          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || (paysHere(r) && drawable(r))) }, now);
         const theirs = kept.theirs = got2 ? BLWPCLIENT.lobbyKeepWhenUnanswered(kept.theirs,
-          { ...got2, rows: got2.rows.filter((r) => !r.free && paysHere(r)) }, now) : [];
+          { ...got2, rows: got2.rows.filter((r) => !r.free && paysHere(r) && drawable(r)) }, now) : [];
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.ARENA_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
