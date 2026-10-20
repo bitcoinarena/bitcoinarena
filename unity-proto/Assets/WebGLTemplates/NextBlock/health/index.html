@@ -101,7 +101,9 @@
       const seats = [...new Set((net.node || []).map(viaAlt))];
       // EVERY NODE OF THE CENSUS, from the first seat that answers /roles
       const roles = await first(seats, '/roles');
-      const nodes = roles ? roles.body.nodes.map((n) => ({ ...n, base: viaAlt(n.endpoint) })) : seats.map((s) => ({ node: null, base: s, roles: [], serving: null, guardianOf: [] }));
+      // the federations a node guards: from the records it signed (custody), then its advertisement - the census the seat reads can be older
+      // than an advertisement that added a federation (kanban #557, 10-20: the fed2 seats guard Federation 3 too, the census at 156,968 said 2 only)
+      const nodes = roles ? roles.body.nodes.map((n) => ({ ...n, guardianOf: [...new Set([...(n.custody || []).map((c) => c.federation), ...(n.guardianOf || [])])], base: viaAlt(n.endpoint) })) : seats.map((s) => ({ node: null, base: s, roles: [], serving: null, guardianOf: [] }));
       // THE SEATS' OWN READS run beside the nodes' (measured: /network-games asks every seat itself and took most of the first 15 s);
       // only the tip is waited for before the nodes' rows
       const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = ['/fees', '/federations', '/network-games', '/reserves', '/funding', '/capacity'].map((p) => first(seats, p));
