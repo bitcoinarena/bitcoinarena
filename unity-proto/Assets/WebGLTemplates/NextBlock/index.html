@@ -6530,9 +6530,36 @@
         window.ARENA_WALLETS.set(k, client);
         if (RESUMED.has(k) || !ARENACLIENT.resumeDeposits) return;
         RESUMED.add(k);
-        ARENACLIENT.resumeDeposits({ client, storage: vault(), federationId: ARENACLIENT.fromHex(k),
-          onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat');
-            if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); if (typeof paintHistory === 'function') paintHistory(); } })
+        // THE OTHER PHRASES THIS BROWSER KEEPS with a wallet in this federation: a deposit one of them made is claimed there (resumeDeposits), then
+        // swept into this tab's wallet as e-cash - kept in the browser before it is received, as combineWallets does
+        const others = async () => {
+          const L = vault(); const cur = (window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '';
+          let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
+          const inv = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(L, k) : null;
+          if (!inv || !ARENACLIENT.openPlayerWallet) return [];
+          const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+          const out = [];
+          for (const x of kept.filter((y) => /^[0-9a-f]{64}$/i.test(y.hex) && y.hex !== cur && ARENACLIENT.phraseWalletEntries(L, y.hex, k) > 0)) {
+            try { out.push({ label: x.hex.slice(0, 8), client: await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(k), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }) }); }
+            catch (e) { console.log('[arena] wallet ' + x.hex.slice(0, 8) + ' in federation ' + k.slice(0, 8) + ' did not open: ' + (e && e.message ? e.message : e)); }
+          }
+          return out;
+        };
+        const sweep = async (from) => {
+          if (!from || typeof from.client.sendAllEcash !== 'function' || typeof client.receiveEcash !== 'function') return;
+          const L = vault();
+          const sent = JSON.parse(await from.client.sendAllEcash());
+          if (!sent.ecash) return;
+          const key = 'arena.ecash.pending.' + Date.now() + '.' + from.label;
+          L.setItem(key, JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: from.label }));
+          const said = JSON.parse(await client.receiveEcash(sent.ecash));
+          console.log('[arena] the deposit claimed in wallet ' + from.label + ' moved into this wallet: ' + sent.msat + ' msat, ' + said.state);
+          if (said.state === 'Success' || said.state === 'AlreadyReceived') L.removeItem(key);
+        };
+        ARENACLIENT.resumeDeposits({ client, storage: vault(), federationId: ARENACLIENT.fromHex(k), others,
+          onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat' + (d.from ? ' (in wallet ' + d.from.label + ')' : ''));
+            Promise.resolve(d.from ? sweep(d.from) : null).catch((e) => console.log('[arena] the claimed deposit stays in wallet ' + d.from.label + ': ' + (e && e.message ? e.message : e)))
+              .then(() => { if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); if (typeof paintHistory === 'function') paintHistory(); }); } })
           .then((finals = []) => { finals = finals || []; window.ARENA_DEPOSITS_RESUMED = (window.ARENA_DEPOSITS_RESUMED || []).concat(finals.map((f) => k.slice(0, 8) + ' ' + f));
             if (finals.length) console.log('[arena] deposits an earlier page left, federation ' + k.slice(0, 8) + ': ' + finals.join(', ')); },
           () => { RESUMED.delete(k); });

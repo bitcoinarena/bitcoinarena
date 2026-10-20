@@ -36,3 +36,19 @@ test('the invite a wallet was opened with is remembered, and the page falls back
   const src = readFileSync(new URL('../src/page-lock.js', import.meta.url), 'utf8');
   assert.match(src, /if \(!ancestor\) rememberInvite\(storage, federationId, invite\);/, 'openPlayerWallet remembers it');
 });
+
+test('a deposit the current wallet does not hold ("Operation not found") is claimed in the other kept wallet that made it', async () => {
+  const { resumeDeposits, pendingDeposits } = await import('../src/page-lock.js');
+  const s = store();
+  s.setItem('arena.deposit.pending.' + B, JSON.stringify([{ operation: '3d41502f316a', invoice: 'lntb10u1x', msat: '1000000' }]));
+  const claimed = [];
+  const notHere = { awaitReceive: async () => { throw new Error('Operation not found'); } };
+  const otherEmpty = { label: 'aaaa0000', client: { awaitReceive: async () => { throw new Error('Operation not found'); } } };
+  const otherMade = { label: 'b1e00767', client: { awaitReceive: async (op) => (op === '3d41502f316a' ? 'Claimed' : 'Failure') } };
+  const finals = await resumeDeposits({ client: notHere, storage: s, federationId: B, onClaimed: (d) => claimed.push(d), others: async () => [otherEmpty, otherMade] });
+  assert.deepEqual(finals, ['Claimed (in wallet b1e00767)']);
+  assert.equal(claimed.length, 1); assert.equal(claimed[0].from.label, 'b1e00767', 'the page sweeps from that wallet');
+  assert.deepEqual(pendingDeposits(s, B), [], 'the entry is done');
+  const none = await resumeDeposits({ client: notHere, storage: (() => { const t = store(); t.setItem('arena.deposit.pending.' + B, JSON.stringify([{ operation: 'zz', invoice: 'x', msat: '1' }])); return t; })(), federationId: B, others: async () => [otherEmpty] });
+  assert.match(none[0], /^unknown \(operation zz: Operation not found\)$/, 'no wallet holds it: said, and the entry stays for the next page');
+});
