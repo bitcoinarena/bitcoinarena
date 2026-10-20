@@ -209,6 +209,21 @@ test('positions backed by locks: placement, an agreed match, a failed one (void)
     const body = { roundId: w.rid, outcome: YES, observedAtMs: w.c.entryCloseMs + 1n };
     await Promise.all(w.nodes.map((d) => fetch(`${base(d)}/outcome?round=${rid}`, { method: 'POST', body: encodeAttestation({ ...body, signatures: [A0, A1].map((a) => attestorSign(a, body)) }) })));
     const o = await (await fetch(`${base(w.nodes[0])}/outcome?round=${rid}`)).json();
+    // LIMIT ORDERS IN THE WALLET'S PENDING LINE (the owner 2026-10-20: "Also verify if limit orders leave a pending"): a filled order's
+    // /standing is its line of the book's settlement - winnings plus the rest of its budget it did not spend; an order with no fill
+    // names no figure (kind refund) - its locks come back whole by the return door, which the page counts as a stake owed back
+    {
+      const T = bookSettlement({ positions: w.nodes[0].orderBook.ledger(w.rid).positions, outcome: YES });
+      const lines = [];
+      for (const [name, e] of Object.entries({ A, Bo, C, D, E, F, G, H, I, J, X })) {
+        const st = await (await fetch(`${base(w.nodes[0])}/standing?entry=${toHex(e.eid)}`)).json();
+        const r = T.claimed.find((x) => x.entry === toHex(e.eid));
+        lines.push(`| ${name} | ${r ? 'filled' : 'no fill'} | ${st.kind} | ${st.pendingMsat} |`);
+        if (r) assert.deepEqual([st.kind, st.pendingMsat, st.provisional], ['payout', String(r.outMsat), true], `${name}'s pending line`);
+        else assert.deepEqual([st.kind, st.pendingMsat], ['refund', null], `${name}'s pending line`);
+      }
+      console.log(['  PENDING LINES:', '| order | book | kind | pending msat |', ...lines].join('\n'));
+    }
     skipTo(Number(o.finalAtMs) + 100);
     mark('final');
     let got;
