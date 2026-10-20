@@ -306,7 +306,11 @@
       // A GUARDIAN SEAT RANKS ITS OWN FEDERATION ONLY (gateway-watch.js; the ?federation= is not read): the answer counts only from a
       // seat whose federationId is this one - the first seat that answers may guard the other federation
       let g = null;
-      for (const s of seats) { const a = await ask(s, '/gateway-seats?federation=' + f.federation); if (a.ok && a.body && a.body.federationId === f.federation) { g = { seat: s, ...a }; break; } }
+      // EVERY SEAT OF THE FEDERATION ASKED, THE ONE WITH THE MOST SEATED KEPT (the owner 2026-10-20 "is this correct?": the first seat had just
+      // restarted and judged with no census); a seat that has read no census yet answers 503 and is left out
+      { const got = (await Promise.all(seats.map(async (s) => { const a = await ask(s, '/gateway-seats?federation=' + f.federation); return a.ok && a.body && a.body.federationId === f.federation ? { seat: s, ...a } : null; }))).filter(Boolean);
+        got.sort((x, y) => ((y.body.seated || []).length - (x.body.seated || []).length) || ((x.body.ineligible || []).length - (y.body.ineligible || []).length));
+        g = got[0] || null; }
       if (!g) { rows.push(`<tr><td>${dot('bad')}${fedName(f.federation)}</td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
       const b = g.body, seated = b.seated || [], need = Number(b.seats) || 2;   // 2 seats, 1 for a draining federation (hard rule, 2026-10-20)
       pending.push(...pendingRows(f.federation, b));
