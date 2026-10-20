@@ -50,3 +50,19 @@ test('an incumbent keeps its seat unless out-routed by 25 %, or ineligible; an e
   assert.deepEqual([gone.seated, gone.empty], [[toHex(k(2))], 1], 'an ineligible incumbent goes; one seat empty, said');
   assert.match(gone.why, /1 of 2 gateway seats filled/);
 });
+
+test('at least one gateway (the owner 2026-10-20): no operator eligible, the best that can still serve holds one seat', () => {
+  // the measured case: Federation 2 (draining, 1 seat), its gateway up 92 % on one guardian's probes, the other one holding no e-cash there
+  const one = seatGateways({ candidates: [ok(1, { availabilityPct: 92, pegInSats: 95_393n }), ok(2, { pegInSats: 0n })], beacon, network: 'testnet4', bondMinGuardian: 50_000n, seats: 1 });
+  assert.deepEqual(one.seated, [toHex(k(1))]);
+  assert.deepEqual(one.belowMinimums, [toHex(k(1))]);
+  assert.equal(one.empty, 0);
+  assert.match(one.why, /1 of 1 gateway seats filled from 0 eligible operators, 2 not eligible; 0101010101 holds the seat below the minimums/);
+  const best = seat([ok(3, { availabilityPct: 80 }), ok(4, { availabilityPct: 90 })]);
+  assert.deepEqual(best.seated, [toHex(k(4))], 'ranked as the eligible are: the one up 90 % before the one up 80 %');
+  assert.equal(best.empty, 1, 'one seat only: the second stays empty until an operator clears the minimums');
+  for (const cannot of [{ seatedGuardian: false }, { registered: false }, { pegInSats: 0n }])
+    assert.deepEqual(seat([ok(5, { availabilityPct: 50, ...cannot })]).seated, [], `a candidate that cannot serve is never seated (${Object.keys(cannot)[0]})`);
+  const eligibleThere = seat([ok(6), ok(7, { availabilityPct: 50 })]);
+  assert.deepEqual([eligibleThere.seated, eligibleThere.belowMinimums], [[toHex(k(6))], []], 'with an eligible operator nothing below the minimums is seated');
+});
