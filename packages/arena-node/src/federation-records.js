@@ -73,7 +73,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   chainTip = null,
   // THE CHAIN'S CENSUS FIRST: a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
   // with 14 nodes, before T2's own bonds, so they never built T2's record - takes the chain's census before any held round's
-  chainFirst = false }) {
+  chainFirst = false,
+  // THE RECORDS OUTLIVE A RESTART (kanban #552/#557, the owner 2026-10-20: "Federation 337ae01a is missing now" - a seat held its records in
+  // memory only, and after a roll of all seats the first gathering found too few of A's guardians up to sign): `store` { load() ->
+  // [{ federation, record hex }], save(federation, record hex) }; restore() checks each saved record against the census at its own
+  // height before it is kept again, as a mirrored one is
+  store = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -83,6 +88,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const had = kept.get(fid);
     if (had && had.height > v.record.height) return;
     kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
+    if (store) { try { store.save(fid, toHex(bytes)); } catch { /* kept in memory */ } }
     if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
     if (v.status !== 'HALTED') halted.delete(fid);
     else if (!halted.has(fid) || halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
@@ -331,6 +337,25 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** MIRROR: the newest signed record of `federationId` its guardians' nodes hold, checked against this seat's census `b`. */
+  async function restore(inviteFederationId) {
+    if (!store) return { restored: 0 };
+    let rows = []; try { rows = (await store.load()) || []; } catch { rows = []; }
+    const verify = (s2, m, k) => { try { return schnorr.verify(s2, m, k); } catch { return false; } };
+    let restored = 0;
+    for (const r of rows) {
+      const fid = String(r.federation).toLowerCase();
+      if (kept.has(fid)) continue;
+      try {
+        const bytes = fromHex(String(r.record));
+        const h = decodeFederationRecord(splitSignedRecord(bytes).body).height;
+        const b = basisFor(fid);
+        let v = b && b.ok ? verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId }) : { ok: false };
+        if (!v.ok && typeof censusAt === 'function') { const entries = await Promise.resolve(censusAt(h)).catch(() => null); if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId }); }
+        if (v.ok) { keep(fid, bytes, v); restored++; }
+      } catch { /* not restored: gathered again */ }
+    }
+    return { restored, of: rows.length };
+  }
   async function mirror(federationId, b, inviteFederationId) {
     const fid = toHex(federationId);
     const censusKept = new Map();          // record height -> its census (one read per height in a pass)
@@ -439,7 +464,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   return {
-    mySignature, mySignatureWithGone, gather,
+    mySignature, mySignatureWithGone, gather, restore,
     async gatherAll(inviteFederationId) {
       await chainAhead();
       const b = basis();

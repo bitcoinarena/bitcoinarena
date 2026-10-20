@@ -3664,7 +3664,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // here shadowed it in all of serve() and every head-to-head close threw (measured 2026-10-15 11:38Z)
   const fedEndpointsOf = createEndpointsOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
     inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null) });
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
+  // THE SIGNED RECORDS IN THIS SEAT'S DATABASE (kanban #552/#557): restored, each checked again, 20 s after start
+  round.db.exec('CREATE TABLE IF NOT EXISTS federation_records (federation TEXT PRIMARY KEY, record TEXT NOT NULL)');
+  const recordStore = {
+    load: async () => round.db.prepare('SELECT federation, record FROM federation_records').all(),
+    save: (fid, hex) => { round.db.prepare('INSERT INTO federation_records (federation, record) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET record = excluded.record').run(String(fid), hex); },
+  };
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
@@ -3955,6 +3961,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (recordTimer.unref) recordTimer.unref();
   // THE RECORDS ONCE 45 s AFTER START (kanban #552, measured 2026-10-20 ~10:42Z: a restarted seat held no federation record for its first
   // 10 min - the timer's first run - so its gateway probes read no seated guardian and every health page said "0 of 2")
+  const restoreSoon = setTimeout(() => { fedRecords.restore(inviteFedId).then((r) => { if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records restored`); }, () => {}); }, 20000);
+  if (restoreSoon.unref) restoreSoon.unref();
   const recordSoon = setTimeout(() => { fedRecords.gatherAll(inviteFedId).catch(() => {}); }, 45000);
   if (recordSoon.unref) recordSoon.unref();
   const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true) => {

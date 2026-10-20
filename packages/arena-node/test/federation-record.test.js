@@ -520,3 +520,40 @@ test('a guardian seat asked at a chain census height it has not read yet reads i
   await seat.mySignature(toHex(SUCC), 157086);
   assert.equal(reads, 1, 'read once, kept');
 });
+
+test('the records outlive a restart: a seat with a store keeps what it gathered, and a new seat on the same store restores it, checked again (kanban #557)', async () => {
+  const SUCC = new Uint8Array(32).fill(0x4d);
+  const nodes = Array.from({ length: 4 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 61) }));
+  for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.oldKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x90 + i)]); n.nextKey = Uint8Array.from([3, ...new Uint8Array(32).fill(0xa0 + i)]); n.endpoint = `wss://s549-${i}.example`; }
+  const entry = (n, i, guardianOf) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xd0 + i), vout: 0, bondSats: 50000n,
+    advert: { operatorId: `op549-${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g549-${i}.example`, guardianOf } });
+  const roundCensus = { ok: true, entries: nodes.map((n, i) => entry(n, i, [{ federationId: FED, guardianKey: n.oldKey }])) };
+  const chainCensus = nodes.map((n, i) => entry(n, i, [{ federationId: FED, guardianKey: n.oldKey }, { federationId: SUCC, guardianKey: n.nextKey }]));
+  const stores = nodes.map(() => { const m = new Map(); return { m, load: async () => [...m].map(([federation, record]) => ({ federation, record })), save: (f, r) => { m.set(f, r); } }; });
+  const seats = nodes.map((n, si) => federationRecords({ store: stores[si],
+    round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(7), contract: { censusHeight: 156873, networkId: NET } }),
+    roster: { censusFor: () => roundCensus }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,
+    successorOf: (fid) => (fid === toHex(FED) ? toHex(SUCC) : null),
+    censusAt: async () => chainCensus, chainTip: async () => 157090,
+    fetcher: async (url) => { const u = new URL(url); if (!u.pathname.endsWith('/federation-record')) return new Response('{}', { status: 404 });
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))]; const hp = u.searchParams.get('height');
+      const body = await j.mySignature(u.searchParams.get('federation'), hp === null ? null : Number(hp), u.searchParams.get('reserve'));
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 }); } }));
+  for (let pass = 0; pass < 2; pass++) for (const s of seats) await s.gatherAll(inviteFederationId);
+  assert.ok(stores[0].m.has(toHex(SUCC)) && stores[0].m.has(toHex(FED)), 'both records saved');
+  const n0 = nodes[0];
+  const fresh = federationRecords({ store: stores[0], round: { pubkey: n0.pubkey, identity: { secret: n0.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(7), contract: { censusHeight: 156873, networkId: NET } }),
+    roster: { censusFor: () => roundCensus }, inviteFor: (fid) => `fed:${fid}`, networkId: NET, successorOf: (fid) => (fid === toHex(FED) ? toHex(SUCC) : null),
+    censusAt: async () => chainCensus, chainTip: async () => 157090, fetcher: async () => { throw new Error('no network after the restart'); } });
+  assert.equal(fresh.list().length, 0, 'nothing in memory after the restart');
+  const r = await fresh.restore(inviteFederationId);
+  assert.deepEqual([r.restored, r.of], [2, 2]);
+  assert.deepEqual(fresh.list().map((x) => x.federation).sort(), [toHex(FED), toHex(SUCC)].sort());
+  // a saved record altered is not taken back
+  const orig = stores[0].m.get(toHex(SUCC));
+  const bad = new Map([[toHex(SUCC), orig.slice(0, 80) + (orig[80] === '0' ? '1' : '0') + orig.slice(81)]]);   // one hex digit of the signed body
+  const fresh2 = federationRecords({ store: { load: async () => [...bad].map(([federation, record]) => ({ federation, record })), save: () => {} }, round: { pubkey: n0.pubkey, identity: { secret: n0.secret } },
+    newest: () => ({ rid: new Uint8Array(32).fill(7), contract: { censusHeight: 156873, networkId: NET } }), roster: { censusFor: () => roundCensus }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,
+    censusAt: async () => chainCensus, chainTip: async () => 157090 });
+  assert.equal((await fresh2.restore(inviteFederationId)).restored, 0);
+});
