@@ -113,3 +113,17 @@ test('a seated-first node running two guardians: B\'s record keeps /guardian, th
     assert.deepEqual(endpointsIn(before[0], S), { s0: 'wss://g0.example/guardian', s1: 'wss://g1.example/guardian', s2: 'wss://g2.example/guardian', s4: 'wss://g4.example/guardian' });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('configInvite: every guardian in peer order from the federation\'s configuration - one invite, whichever guardian builds it (kanban #549)', async () => {
+  const { configInvite } = await import('../src/federation-endpoints.js');
+  const { readInvite } = await import('../src/invite.js');
+  const F = '4d'.repeat(32);
+  const a = { api_endpoints: { 2: { url: 'wss://g/2', name: 'c' }, 0: { url: 'wss://g/0', name: 'a' }, 1: { url: 'wss://g/1', name: 'b' } } };
+  const b = { global: { api_endpoints: { 1: { url: 'wss://g/1' }, 0: 'wss://g/0', 2: { url: 'wss://g/2' } } } };
+  const ia = configInvite(F, a);
+  assert.equal(ia, configInvite(F, b), 'the same invite from either shape and order');
+  const r = readInvite(ia);
+  assert.deepEqual([r.federationId, r.guardians.map((g) => `${g.peer}:${g.url}`)], [F, ['0:wss://g/0', '1:wss://g/1', '2:wss://g/2']]);
+  assert.equal(configInvite(F, {}), null);
+  assert.equal(configInvite('xyz', a), null);
+});
