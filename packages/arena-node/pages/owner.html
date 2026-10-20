@@ -195,6 +195,7 @@ async function area() {
       <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Services</h2><div class="card" id="services"><p class="sub">reading this node's services…</p></div>
+    <div id="capacity-plea"></div>
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Bond</h2><div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
     <h2>Custody</h2><div class="card" id="custody"><p class="sub">reading whether this node holds custody…</p></div>
@@ -238,6 +239,7 @@ async function area() {
   devClients();
   ballotsPanel();
   standingPanel();
+  capacityPlea();
   servicesPanel();
   emergencyPanel();
   bondPanel();
@@ -391,6 +393,15 @@ async function bondPanel() {
     try { const r = await post('/owner/bond-withdraw', signed('bond-withdraw', { address, feeRate: 2 })); $('wd-msg').textContent = `Sent: ${r.txid} (${Number(r.value).toLocaleString('en-US')} sat, fee ${r.fee})`; }
     catch (e) { $('wd-msg').textContent = e.message; $('wd').disabled = false; }
   };
+}
+
+// THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much
+// to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM
+async function capacityPlea() {
+  let c = null;
+  try { c = await (await fetch(at('/capacity?node=me'), { cache: 'no-store' })).json(); } catch { c = null; }
+  const p = c && c.plea;
+  $('capacity-plea').innerHTML = p ? `<h2>Capacity</h2><div class="card"><p class="warn">${esc(p.says)}</p>${p.addSats ? '<p class="sub">Add to bond is in the Bond card below.</p>' : ''}</div>` : '';
 }
 
 async function standingPanel() {
