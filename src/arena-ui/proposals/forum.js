@@ -16,7 +16,7 @@
   var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, replyTo: null, reserves: null, names: {} };
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
-  function npub(hex) { return BLWPCLIENT.npubOfKey(hex); }
+  function npub(hex) { return ARENACLIENT.npubOfKey(hex); }
   function short(n) { return n.slice(0, 10) + '…' + n.slice(-4); }
   function sats(n) { return Number(n).toLocaleString('en-US') + ' sat'; }
   function title(p) { var t = parts(p.purpose).title; return t.length > 90 ? t.slice(0, 88) + '…' : t; }
@@ -74,10 +74,10 @@
   }
   window.ARENA_FORUM_MD = markdown;
   function colour(hex) { var h = parseInt(hex.slice(0, 6), 16) % 360; return 'hsl(' + h + ' 70% 62%)'; }
-  function who(hex) { return BLWPCLIENT.forumNameOf(hex, state.names); }
+  function who(hex) { return ARENACLIENT.forumNameOf(hex, state.names); }
   function pip(p) { return 'PIP-' + p.pip; }
   function avatar(hex) { var a = el('div', 'ava', (who(hex).match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase()); a.style.background = colour(hex); a.title = npub(hex); return a; }
-  function mine() { return state.key ? BLWPCLIENT.toHex(window.BLWP_CURVE.pointX(state.key)) : null; }
+  function mine() { return state.key ? ARENACLIENT.toHex(window.BLWP_CURVE.pointX(state.key)) : null; }
   function load(src) { return new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = function () { bad(new Error('could not load ' + src)); }; document.head.appendChild(s); }); }
   // THE IN-GAME KEY: the wallet phrases this browser keeps for the Arena page (arena.seeds); the one whose wallet holds the most here,
   // as the page itself picks it - its identity key, the one the lobby, the board and the player's name go by
@@ -85,9 +85,9 @@
     try {
       var list = JSON.parse(localStorage.getItem('arena.seeds') || '[]').filter(function (x) { return x && /^[0-9a-f]{64}$/i.test(x.hex); });
       if (!list.length) return null;
-      var n = function (x) { try { return BLWPCLIENT.phraseWalletEntries ? BLWPCLIENT.phraseWalletEntries(localStorage, x.hex) : 0; } catch (e) { return 0; } };
+      var n = function (x) { try { return ARENACLIENT.phraseWalletEntries ? ARENACLIENT.phraseWalletEntries(localStorage, x.hex) : 0; } catch (e) { return 0; } };
       var best = list.map(function (x, i) { return { x: x, i: i, n: n(x) }; }).sort(function (a, b) { return (b.n - a.n) || (a.i - b.i); })[0].x;
-      return BLWPCLIENT.forumIdentity(best.hex, window.BLWP_CURVE).secret;   // the in-game identity key (PIP)
+      return ARENACLIENT.forumIdentity(best.hex, window.BLWP_CURVE).secret;   // the in-game identity key (PIP)
     } catch (e) { return null; }
   }
   // ONLY THE IN-GAME KEY (the owner 2026-10-17: "Proposals always use the ingame key and name, no other options"): no nsec, no other key
@@ -98,7 +98,7 @@
   }
   function showKey() {
     var id = $('.key .id'); id.textContent = '';
-    if (state.key) { var b = el('b', null, who(mine())); b.title = BLWPCLIENT.npubOf(state.key);
+    if (state.key) { var b = el('b', null, who(mine())); b.title = ARENACLIENT.npubOf(state.key);
       id.append(document.createTextNode('Signed in as '), b, document.createTextNode(' · your in-game key and name')); }
     else id.textContent = 'Read freely. To post, open the Arena once: the forum signs with the key and the name you play with.';
   }
@@ -193,9 +193,9 @@
     form.addEventListener('submit', function (e) {
       e.preventDefault(); if (!ta.value.trim()) return;
       if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
-      var c = BLWPCLIENT.signedComment({ secretKey: state.key, proposalId: p.id, parentId: state.replyTo, atHeight: state.tip, text: ta.value });
+      var c = ARENACLIENT.signedComment({ secretKey: state.key, proposalId: p.id, parentId: state.replyTo, atHeight: state.tip, text: ta.value });
       say(out, 'Sending…');
-      BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'comment', hex: c.hex }).then(function (r) {
+      ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'comment', hex: c.hex }).then(function (r) {
         if (!r.ok) { say(out, 'Not taken: ' + r.why, true); return; }
         say(out, 'Posted to ' + r.took + ' of ' + r.asked + ' nodes.'); ta.value = ''; state.replyTo = null; setTimeout(function () { refresh().then(route); }, 1500);
       });
@@ -246,11 +246,11 @@
       if (!check() || !f.lnurl.value.trim()) { if (!f.lnurl.value.trim()) say(out, 'Name the Lightning address to pay.', true); return; }
       var amount = Number(f.amount.value);
       say(out, 'Signing…');
-      (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+      (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
         if (!net) throw new Error('the nodes did not agree on their network');
         state.network = net;
-        var p = BLWPCLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: Math.floor(amount), lnurl: f.lnurl.value, purpose: purposeOf(f.title.value, f.content.value, f.improves.value) });
-        return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'proposal', hex: p.hex }).then(function (r) { return { r: r, id: p.id }; });
+        var p = ARENACLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: Math.floor(amount), lnurl: f.lnurl.value, purpose: purposeOf(f.title.value, f.content.value, f.improves.value) });
+        return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'proposal', hex: p.hex }).then(function (r) { return { r: r, id: p.id }; });
       }).then(function (x) {
         if (!x.r.ok) { say(out, 'Not taken: ' + x.r.why, true); return; }
         say(out, 'Published to ' + x.r.took + ' of ' + x.r.asked + ' nodes. Its 1-week signal starts now.');
@@ -268,36 +268,36 @@
   var FEE_NAMES = { roundNodeBps: 'Game round: node fee', roundDonationBps: 'Game round: developers\' donation', roundReserveBps: 'Game round: protocol reserve',
     itemNodesPct: 'Item: nodes', itemReservesPct: 'Item: protocol reserve', itemDevsPct: 'Item: developers', marketNodeBps: 'Market: node fee',
     marketDonationBps: 'Market: developers\' donation', marketReserveBps: 'Market: protocol reserve', websitePct: 'Website share of the nodes\' fee' };
-  function feeVal(k, v) { return BLWPCLIENT.FEE_UNITS[k] === 'bps' ? (Number(v) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %' : v + ' %'; }
+  function feeVal(k, v) { return ARENACLIENT.FEE_UNITS[k] === 'bps' ? (Number(v) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %' : v + ' %'; }
   function feesView() {
     view.textContent = '';
     var back = el('a', 'btn', '← All proposals'); back.href = '#';
     var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'Change fees'));
     var box = el('div', 'empty', 'Reading the fees from the nodes…'); view.append(box);
-    BLWPCLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
+    ARENACLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
       box.remove();
       if (!r.ok) { view.append(el('div', 'empty', r.why)); return; }
       state.fees = r;
       var f = el('form', 'compose fees');
-      var rows = Object.keys(BLWPCLIENT.FEES).map(function (k) {
-        var lim = r.limits[k], unit = BLWPCLIENT.FEE_UNITS[k];
+      var rows = Object.keys(ARENACLIENT.FEES).map(function (k) {
+        var lim = r.limits[k], unit = ARENACLIENT.FEE_UNITS[k];
         return '<tr><td>' + esc(FEE_NAMES[k] || k) + (lim.donation ? ' <span class="hint">donation</span>' : '') + '</td><td>' + feeVal(k, r.fees[k]) + '</td><td>' + feeVal(k, lim.min) + ' – ' + feeVal(k, lim.max)
           + '</td><td><input name="' + k + '" type="number" step="1" min="' + lim.min + '" max="' + lim.max + '" placeholder="' + r.fees[k] + '"> ' + (unit === 'bps' ? 'bps' : '%') + '</td></tr>';
       }).join('');
-      var earliest = BLWPCLIENT.earliestActivation(Number(r.tip), r.schedule);
+      var earliest = ARENACLIENT.earliestActivation(Number(r.tip), r.schedule);
       f.innerHTML = '<p class="reserves-line">Fees in force at block ' + r.tip + ' (' + r.agreeing + ' of ' + r.asked + ' nodes agree). Fill in only the fees to change; leave the others empty. A round takes at most '
         + r.sums.roundMaxBps / 100 + ' %, an item\'s parts add up to ' + r.sums.itemPct + ' %, a market takes at most ' + r.sums.marketMaxBps / 100 + ' %. A donation is never 0, and a change to one needs most of the protocol developers.</p>'
         + '<div class="tbl"><table><thead><tr><th>Fee</th><th>In force</th><th>Limit</th><th>New value</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
         + '<div class="row"><label>Applies from block<input name="activation" type="number" step="1" min="' + earliest + '" value="' + earliest + '"></label></div>'
         + '<label>Why <span class="hint">what the change does and for whom</span><textarea name="purpose" rows="5" maxlength="4000"></textarea></label>'
         + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
-      var typed = function () { var t = {}; Object.keys(BLWPCLIENT.FEES).forEach(function (k) { t[k] = f[k].value; }); return t; };
+      var typed = function () { var t = {}; Object.keys(ARENACLIENT.FEES).forEach(function (k) { t[k] = f[k].value; }); return t; };
       var check = function () {
         var out = f.querySelector('.out'), ch;
-        try { ch = BLWPCLIENT.feeChangesFrom(r.fees, typed()); } catch (e) { say(out, e.message, true); return null; }
+        try { ch = ARENACLIENT.feeChangesFrom(r.fees, typed()); } catch (e) { say(out, e.message, true); return null; }
         if (!ch.length) { say(out, 'Change at least one fee.'); return null; }
         var p = { networkId: new Uint8Array(32), author: new Uint8Array(32), publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch, purpose: f.purpose.value };
-        var st = BLWPCLIENT.feeProposalStands(p, { current: r.fees, schedule: r.schedule });
+        var st = ARENACLIENT.feeProposalStands(p, { current: r.fees, schedule: r.schedule });
         if (!st.ok) { say(out, st.why, true); return null; }
         say(out, ch.length + ' fee' + (ch.length === 1 ? '' : 's') + ' in one proposal' + (st.donations.length ? ' · changes a donation: most of the protocol developers must approve' : '') + '.');
         return ch;
@@ -308,13 +308,13 @@
         if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
         var ch = check(); if (!ch) return;
         say(out, 'Signing…');
-        (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+        (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
           if (!net) throw new Error('the nodes did not agree on their network');
           state.network = net;
-          var p = BLWPCLIENT.signedFeeProposal({ secretKey: state.key, networkId: net, publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch,
+          var p = ARENACLIENT.signedFeeProposal({ secretKey: state.key, networkId: net, publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch,
             purpose: f.purpose.value, current: r.fees, schedule: r.schedule, curve: window.BLWP_CURVE });
           if (!p.ok) throw new Error(p.why);
-          return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'fee', hex: p.hex }).then(function (x) { return { x: x, id: p.id }; });
+          return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'fee', hex: p.hex }).then(function (x) { return { x: x, id: p.id }; });
         }).then(function (y) {
           if (!y.x.ok) { say(out, 'Not taken: ' + y.x.why, true); return; }
           window.ARENA_FEE_PROPOSAL = { id: y.id, took: y.x.took, asked: y.x.asked };
@@ -350,7 +350,7 @@
     var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'Leaderboard payout'));
     var box = el('div', 'empty', 'Reading the nodes…'); view.append(box);
     var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-    Promise.all([BLWPCLIENT.fetchLeaderboards({ nodes: state.nodes }), fetch(base + '/reserves').then(function (r) { return r.json(); }).catch(function () { return { federations: [] }; })]).then(function (x) {
+    Promise.all([ARENACLIENT.fetchLeaderboards({ nodes: state.nodes }), fetch(base + '/reserves').then(function (r) { return r.json(); }).catch(function () { return { federations: [] }; })]).then(function (x) {
       box.remove();
       var lbs = x[0], feds = (x[1].federations || []).filter(function (f) { return f.key || f.reserveKey; });
       var tip = Number(lbs.tip || state.tip || 0);
@@ -359,19 +359,19 @@
       var day = new Date(Date.now() + 15 * 86400000); day.setUTCHours(0, 0, 0, 0);
       f.innerHTML = '<p class="reserves-line">Pays the best players of a season by P&L from one federation\'s protocol reserves, as e-cash into their Arena wallets. Its vote runs 2 weeks from publication, weighted by bond, with no signal; it passes when YES is at least 25 % of the voting weight. At most 10 % of that federation\'s reserves.</p>'
         + '<div class="row"><label>Leaderboard<select name="scope"><option value="0">All games and markets</option><option value="1">One game</option><option value="2">One market</option></select></label><label>Game or market name<input name="game" placeholder="e.g. btc-updown-15m" disabled></label></div>'
-        + '<div class="row"><label>Top<input name="top" type="number" min="1" max="' + BLWPCLIENT.LB_TOP_MAX + '" value="10"></label><label>Amount (sat)<input name="amount" type="number" min="1" step="1"></label></div>'
-        + '<div class="row"><label>Paid from<select name="fed">' + (fedOpts || '<option value="">no federation with a reserve key answered</option>') + '</select></label><label>Period<select name="period">' + BLWPCLIENT.LB_PERIOD_DAYS.map(function (d) { return '<option value="' + d + '">' + (d === 30 ? 'last month (30 days)' : 'last ' + d + ' days') + '</option>'; }).join('') + '</select></label></div>'
+        + '<div class="row"><label>Top<input name="top" type="number" min="1" max="' + ARENACLIENT.LB_TOP_MAX + '" value="10"></label><label>Amount (sat)<input name="amount" type="number" min="1" step="1"></label></div>'
+        + '<div class="row"><label>Paid from<select name="fed">' + (fedOpts || '<option value="">no federation with a reserve key answered</option>') + '</select></label><label>Period<select name="period">' + ARENACLIENT.LB_PERIOD_DAYS.map(function (d) { return '<option value="' + d + '">' + (d === 30 ? 'last month (30 days)' : 'last ' + d + ' days') + '</option>'; }).join('') + '</select></label></div>'
         + '<div class="row"><label>Split per place <span class="hint">empty: equal; or percents, one per place, e.g. 50, 30, 20</span><input name="split" placeholder="equal"></label><label>Payment date (UTC)<input name="date" type="date" value="' + day.toISOString().slice(0, 10) + '"></label></div>'
         + '<label>Why <span class="hint">optional</span><textarea name="purpose" rows="3" maxlength="4000"></textarea></label>'
         + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
       f.scope.addEventListener('change', function () { f.game.disabled = f.scope.value === '0'; });
       var built = function () {
-        var sp = BLWPCLIENT.splitFromPercents(f.split.value, Number(f.top.value));
+        var sp = ARENACLIENT.splitFromPercents(f.split.value, Number(f.top.value));
         if (!sp.ok) return sp;
         var dateMs = Date.parse(f.date.value + 'T00:00:00Z');
         if (!(dateMs > Date.now())) return { ok: false, why: 'the payment date is in the future' };
         return { ok: true, scope: Number(f.scope.value), gameName: f.game.value.trim(), top: Number(f.top.value), amountSats: f.amount.value ? Math.floor(Number(f.amount.value)) : 0,
-          federationId: f.fed.value, splitBps: sp.splitBps, periodDays: Number(f.period.value), paymentHeight: BLWPCLIENT.heightAtDate({ tip: tip, nowMs: Date.now(), dateMs: dateMs }), purpose: f.purpose.value };
+          federationId: f.fed.value, splitBps: sp.splitBps, periodDays: Number(f.period.value), paymentHeight: ARENACLIENT.heightAtDate({ tip: tip, nowMs: Date.now(), dateMs: dateMs }), purpose: f.purpose.value };
       };
       var check = function () {
         var out = f.querySelector('.out'), b = built();
@@ -388,12 +388,12 @@
         var b = check(); if (!b) return;
         if (!b.amountSats) { say(out, 'Name the amount.', true); return; }
         say(out, 'Signing…');
-        (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+        (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
           if (!net) throw new Error('the nodes did not agree on their network');
           state.network = net;
-          var p = BLWPCLIENT.signedLeaderboardPayout(Object.assign({ secretKey: state.key, networkId: net, publishedHeight: tip, curve: window.BLWP_CURVE }, b));
+          var p = ARENACLIENT.signedLeaderboardPayout(Object.assign({ secretKey: state.key, networkId: net, publishedHeight: tip, curve: window.BLWP_CURVE }, b));
           if (!p.ok) throw new Error(p.why);
-          return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'leaderboard', hex: p.hex }).then(function (y) { return { y: y, id: p.id }; });
+          return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'leaderboard', hex: p.hex }).then(function (y) { return { y: y, id: p.id }; });
         }).then(function (z) {
           if (!z.y.ok) { say(out, 'Not taken: ' + z.y.why, true); return; }
           window.ARENA_LEADERBOARD_PAYOUT = { id: z.id, took: z.y.took, asked: z.y.asked };
@@ -427,13 +427,13 @@
     window.ARENA_FORUM = { balance: (document.querySelector('#balance') || {}).textContent, view: h || '#', keyFrom: state.keyFrom, me: mine(), name: mine() ? who(mine()) : null, pips: (state.list || []).map(function (p) { return pip(p); }), reserves: state.reserves, proposals: state.list ? state.list.length : null, comments: state.list ? state.list.reduce(function (t, p) { return t + p.comments.length; }, 0) : null, agreeing: state.agreeing, tip: state.tip };
   }
   function refresh() {
-    BLWPCLIENT.fetchReservesTotal({ nodes: state.nodes }).then(function (r) {
+    ARENACLIENT.fetchReservesTotal({ nodes: state.nodes }).then(function (r) {
       if (r.ok) { state.reserves = { sats: Number(r.totalMsat / 1000n), agreeing: r.agreeing, asked: r.asked }; state.reservesWhy = null; } else state.reservesWhy = r.why;
       showBalance();
       var typed = document.querySelector('.compose input[name=amount]');
       if (location.hash === '#new' && !(typed && typed.value)) newView();
     }).catch(function (e) { state.reservesWhy = e.message; showBalance(); });
-    return BLWPCLIENT.fetchProposals({ nodes: state.nodes, verify: window.BLWP_CURVE.verify }).then(function (r) {
+    return ARENACLIENT.fetchProposals({ nodes: state.nodes, verify: window.BLWP_CURVE.verify }).then(function (r) {
       if (!r.ok) { state.list = []; state.agreeing = 0; state.asked = r.asked; return; }
       state.list = r.proposals; state.tip = r.tip; state.agreeing = r.agreeing; state.asked = r.asked; state.names = r.names || {};
     });

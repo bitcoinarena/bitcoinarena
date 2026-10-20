@@ -235,25 +235,25 @@ test('the page ships the client it is written against, and one consumer of onGho
   // so what is checked here is that it calls the module that CAN be measured -
   // not that it reimplements the rule beside it.
   const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/arena.jslib', 'utf8');
-  assert.match(jslib, /BLWPCLIENT\.watchGhosts\(net\.client, net\.where\)/,
+  assert.match(jslib, /ARENACLIENT\.watchGhosts\(net\.client, net\.where\)/,
     'the page never asks to be shown the other trucks');
   assert.equal(/onGhost\s*=/.test(jslib), false,
     'the page sets onGhost itself, so the rule for what is kept lives in the one file no test can load');
 
   // AND EVERYTHING THE PAGE CALLS IS IN THE BUNDLE'S EXPORTS. `tools/bundle.js` writes that list by hand, so a new
   // function can be in the file and not on the table: measured while wiring the ghost label (2026-09-17 19:15),
-  // `BLWPCLIENT.tickClock` was undefined in the page although `tickClock` was bundled. The page would have carried a
+  // `ARENACLIENT.tickClock` was undefined in the page although `tickClock` was bundled. The page would have carried a
   // label that never appeared, and nothing but a browser would have said so.
   const exported = new Set(Object.keys(await import(root + 'packages/arena-client/dist/arena-client.js')
     .then(() => ({})).catch(() => ({}))));
   const { createRequire: requireFrom } = await import('node:module');
   // AS THE PAGE HAS IT: the engine's bundle, then Tick Tock's ghost page, which puts the ghosts on it (§0A.2, kanban #525)
-  const window = { BLWPCLIENT: { ...requireFrom(import.meta.url)(root + 'packages/arena-client/dist/arena-client.js') } };
+  const window = { ARENACLIENT: { ...requireFrom(import.meta.url)(root + 'packages/arena-client/dist/arena-client.js') } };
   new Function('window', readFileSync(root + 'packages/nextblock/page/ghost-page.js', 'utf8'))(window);
-  const bundle = window.BLWPCLIENT;
-  for (const name of new Set([...jslib.matchAll(/BLWPCLIENT\.([A-Za-z0-9_]+)/g)].map((m) => m[1])))
+  const bundle = window.ARENACLIENT;
+  for (const name of new Set([...jslib.matchAll(/ARENACLIENT\.([A-Za-z0-9_]+)/g)].map((m) => m[1])))
     assert.ok(bundle[name] !== undefined || exported.has(name),
-      `arena.jslib calls BLWPCLIENT.${name} and neither the bundle nor Tick Tock's ghost page puts it there`);
+      `arena.jslib calls ARENACLIENT.${name} and neither the bundle nor Tick Tock's ghost page puts it there`);
 
   // ONE CONSUMER OF onGhost IN THE SOURCE, and it is the measured one.
   // the client's source and Tick Tock's page part (packages/nextblock/page, where the field lives since kanban #521)

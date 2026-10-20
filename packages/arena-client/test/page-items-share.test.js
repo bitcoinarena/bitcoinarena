@@ -44,7 +44,7 @@ test('the price at the share: 500 sat at the default 50 %, 250 sat at 0 %, kept 
   const kept = new Map();
   const localStorage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => kept.set(k, String(v)) };
   const window = { ARENA_BROWSER_STORE: () => localStorage };   // the page's one door to the browser's store
-  pageFunction(PAGE, ['window', 'localStorage', 'BLWPCLIENT'], src, '')(window, localStorage, { itemPriceFor, ITEM_DEV_SHARES });
+  pageFunction(PAGE, ['window', 'localStorage', 'ARENACLIENT'], src, '')(window, localStorage, { itemPriceFor, ITEM_DEV_SHARES });
   assert.equal(window.ARENA_ITEMS_SHARE(), 50);
   assert.equal(window.ARENA_ITEM_PRICE(500), 500n);
   for (const [pct, sat] of [[40, 450n], [30, 400n], [20, 350n], [10, 300n], [0, 250n]]) {
@@ -59,7 +59,7 @@ test('every buy screen prices at the share: the shop sheet, its paying line, the
   assert.equal((shipped.match(/String\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\)/g) || []).length, 5);
   assert.match(shipped, /const need = window\.ARENA_ITEM_PRICE\(it\.priceSat\) \* 1000n;/);
   assert.match(shipped, /priceSat: Number\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\), listSat: Number\(it\.priceSat\)/);
-  assert.match(shipped, /BLWPCLIENT\.buyItem\(\{ manifest: shop\.game\.manifest, itemId: it\.id, networkSet: ds\.target\.network, gameSet: ds\.target\.game, wallet, federationId, devsPct,/);
+  assert.match(shipped, /ARENACLIENT\.buyItem\(\{ manifest: shop\.game\.manifest, itemId: it\.id, networkSet: ds\.target\.network, gameSet: ds\.target\.game, wallet, federationId, devsPct,/);
   assert.equal((shipped.match(/String\(it\.priceSat\)/g) || []).length, 0, 'no list price shown as the price anywhere');
 });
 
@@ -75,7 +75,7 @@ test('with no game chosen the share and the price are the newest selling version
     { name: 'rock-paper-scissors', manifest: { gameName: 'rock-paper-scissors', version: 3, requiredProtocolVersion: 2, items: [] } },
     { name: 'nextblock', manifest: { gameName: 'nextblock', version: 3, requiredProtocolVersion: 10, items } },
     { name: 'nextblock', manifest: { gameName: 'nextblock', version: 4, requiredProtocolVersion: 11, items } }] };
-  pageFunction(PAGE, ['window', 'localStorage', 'BLWPCLIENT'], src, '')(window, localStorage, { itemTermsOf, itemShareOn, itemPriceOn, shopOf, ITEM_DEV_SHARES });
+  pageFunction(PAGE, ['window', 'localStorage', 'ARENACLIENT'], src, '')(window, localStorage, { itemTermsOf, itemShareOn, itemPriceOn, shopOf, ITEM_DEV_SHARES });
   const t = window.ARENA_ITEMS_TERMS();
   assert.deepEqual([t.reserves, t.shares, t.nodesPct, t.reservesPct], [true, [40, 30, 20, 10, 0], 40, 20]);
   assert.equal(window.ARENA_ITEMS_SHARE(), 40, 'the default share on the reserves\' terms');

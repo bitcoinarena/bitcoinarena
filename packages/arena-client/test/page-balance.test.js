@@ -22,9 +22,9 @@ function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 93
     'arena-lobby-confirmed', 'arena-bal-confirmed', 'arena-lobby-pending', 'arena-bal-pending', 'arena-balance-line', 'arena-money-why']) el(id);
   const document = { getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => canvas } : id === 'boot' ? null : els[id] || null) };
   const window = { BLWP_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: balance, unityInstance: {} };
-  const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
-  pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], SRC, 'return paintMoney();')(
-    document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => false);
+  const ARENACLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
+  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], SRC, 'return paintMoney();')(
+    document, window, ARENACLIENT, () => driving, () => ({}), () => 'seed', () => false, () => false);
   return els;
 }
 

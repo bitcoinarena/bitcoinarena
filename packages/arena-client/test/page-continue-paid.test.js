@@ -30,11 +30,11 @@ function page({ balance, rows = [row()], join } = {}) {
   const window = { ARENA_LOBBY_ROWS: rows, ARENA_WALLET_BALANCE: balance, BLWP_CONTINUE: undefined, BLWP_JOIN: join,
     BLWP_ROUND: { id: 'played' }, BLWP_ENTRY: { id: 'entry' }, ARENA_LOBBY_BACK: '',
     BLWP_LOBBY_ACT: { join: (id, opts) => { joins.push([id, opts]); return true; } } };
-  const BLWPCLIENT = { nextRoundAfter, lobbyStakeSats };
+  const ARENACLIENT = { nextRoundAfter, lobbyStakeSats };
   const history = { replaceState: () => {} };
   const location = { pathname: '/' };
-  const fns = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'history', 'location', 'console', 'setTimeout'], [CONTINUE, CANCEL],
-    'return { continueToTheNextRound, cancelNextJoin };')(window, BLWPCLIENT, history, location, { log: (s) => said.push(s) }, () => {});
+  const fns = pageFunction(PAGE, ['window', 'ARENACLIENT', 'history', 'location', 'console', 'setTimeout'], [CONTINUE, CANCEL],
+    'return { continueToTheNextRound, cancelNextJoin };')(window, ARENACLIENT, history, location, { log: (s) => said.push(s) }, () => {});
   return { ...fns, window, joins, said };
 }
 

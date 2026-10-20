@@ -48,13 +48,13 @@ function page({ storage = memStorage(), status = null, checked = null } = {}) {
   // the browser's store through the page's one door, window.ARENA_BROWSER_STORE: the same fake as `localStorage`
   const window = { ARENA_FED_STATUS: status, BLWP_CURVE: {}, ARENA_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, ARENA_BROWSER_STORE: () => storage };
   const asked = [];
-  const BLWPCLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
+  const ARENACLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
     depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => ({}) };
   const did = [];
-  const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'localStorage', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'localStorage', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
     [GATE, CONFIRMED, OPEN], 'return { gate: window.ARENA_FEDERATION_GATE, paintConfirmed: window.ARENA_PAINT_CONFIRMED, openMoney };');
   let ctx = null;
-  const api = fn(document, window, BLWPCLIENT, storage, () => ctx, () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
+  const api = fn(document, window, ARENACLIENT, storage, () => ctx, () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
   const shown = () => !!els['arena-fed-confirm'] && els['arena-fed-confirm'].style.display === 'flex';
   const answer = async (trust) => { for (let i = 0; i < 50 && !shown(); i++) await new Promise((r) => setImmediate(r)); assert.ok(shown(), 'the modal is open'); els[trust ? 'afc-trust' : 'afc-cancel'].onclick(); };
   return { ...api, els, window, storage, did, asked, shown, answer, setCtx: (c) => { ctx = c; } };

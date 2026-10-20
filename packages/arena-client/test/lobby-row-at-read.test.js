@@ -70,6 +70,6 @@ test('the page picks the paid row when Unity reads it, with no lead', () => {
   assert.ok(view.length > 0, 'unityLobbyView not found');
   assert.match(page, /window\.BLWP_LOBBY_VIEW = \(\) => unityLobbyView\(\{ me, lobbyNow, /, 'the lobby hands Unity\'s view its own lobbyNow');
   assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
-  assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
+  assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = ARENACLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
   assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');
 });

@@ -952,7 +952,7 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   // WINNINGS-AUTO (RULED 2026-10-01): the timed look collects what is owed into the player wallet by itself - and
   // that one call is the only money it moves: it redeems, never withdraws (the spends below stay off every timer)
   const look = page.slice(page.search(/function lookThePayout\(/), page.indexOf('\n    }\n', page.search(/function lookThePayout\(/)));
-  assert.match(look, /BLWPCLIENT\.collectIntoPlayerWallet\(/, 'the look does not collect into the player wallet by itself');
+  assert.match(look, /ARENACLIENT\.collectIntoPlayerWallet\(/, 'the look does not collect into the player wallet by itself');
   for (const name of timed) {
     const at = page.search(new RegExp(`function ${name}\\(`));
     if (at < 0) continue;
@@ -960,14 +960,14 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
     assert.doesNotMatch(body, spends, `${name}, on a timer, spends`);
   }
   for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'withdrawCollected', 'collectOwed'])
-    assert.ok(!page.includes(`BLWPCLIENT.${f}(`), `the page calls ${f} itself`);
-  const calls = [...page.matchAll(/BLWPCLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
+    assert.ok(!page.includes(`ARENACLIENT.${f}(`), `the page calls ${f} itself`);
+  const calls = [...page.matchAll(/ARENACLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
   const withdrawAt = page.indexOf('window.ARENA_WITHDRAW = async function');
   assert.equal(calls.length, 1);
   assert.ok(calls[0] > withdrawAt && calls[0] < page.indexOf('\n    };\n', withdrawAt), 'collect-and-withdraw is called outside the Withdraw action');
   // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called only inside a Withdraw press: the lobby's Withdraw action, and
   // Settings' Withdraw button with its round tabs (GROSS-INVOICE-2053) - never on a timer (above).
-  const fromWallet = [...page.matchAll(/BLWPCLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
+  const fromWallet = [...page.matchAll(/ARENACLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
   const settingsAt = page.indexOf("document.getElementById('arena-wd-go').onclick = async () => {");
   const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
   // AND A ZAP OR A TIP: the zap box's pay(), reached only from its Zap press - one call, inside it

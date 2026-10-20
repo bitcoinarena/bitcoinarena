@@ -60,7 +60,7 @@ test('the round\'s stakes open at 2 of 2 and 5 of 7, and nothing else is a thres
 });
 
 test('the bundle the page loads hands it that rule, and the template carries that bundle', async () => {
-  // THE PAGE CALLS `BLWPCLIENT.sharesNeededFor`. The bundle's namespace is a
+  // THE PAGE CALLS `ARENACLIENT.sharesNeededFor`. The bundle's namespace is a
   // hand list, and the first build left the rule off it - the page would have
   // thrown at the deal. So the built file is loaded and asked.
   const { runInThisContext } = await import('node:vm');
@@ -68,8 +68,8 @@ test('the bundle the page loads hands it that rule, and the template carries tha
   const template = new URL('../../../src/arena-ui/arena-client.js', import.meta.url);
   const bundle = readFileSync(dist, 'utf8');
   assert.equal(readFileSync(template, 'utf8'), bundle, 'the WebGL template carries a different bundle from dist');
-  const B = runInThisContext(`${bundle}\n;BLWPCLIENT`, { filename: 'arena-client.js' });
-  assert.equal(typeof B.sharesNeededFor, 'function', 'the bundle the page loads has no BLWPCLIENT.sharesNeededFor');
+  const B = runInThisContext(`${bundle}\n;ARENACLIENT`, { filename: 'arena-client.js' });
+  assert.equal(typeof B.sharesNeededFor, 'function', 'the bundle the page loads has no ARENACLIENT.sharesNeededFor');
   assert.equal(B.sharesNeededFor({ settlementSlots: 2 }), 2);
   assert.equal(B.sharesNeededFor({ settlementSlots: 7 }), 5);
 });
@@ -77,7 +77,7 @@ test('the bundle the page loads hands it that rule, and the template carries tha
 test('the page deals and posts at that rule, not at its slot count or a default', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.ok(!/needed: named\.round\.settlementSlots/.test(page), 'the page still deals every signer node a vote on its own stake');
-  assert.match(page, /needed: BLWPCLIENT\.sharesNeededFor\(named\.round\),/, 'the page does not deal at the round\'s threshold');
-  assert.match(page, /postHandout\(stake, named\.nodes, \{ needed: BLWPCLIENT\.sharesNeededFor\(named\.round\) \}\)/,
+  assert.match(page, /needed: ARENACLIENT\.sharesNeededFor\(named\.round\),/, 'the page does not deal at the round\'s threshold');
+  assert.match(page, /postHandout\(stake, named\.nodes, \{ needed: ARENACLIENT\.sharesNeededFor\(named\.round\) \}\)/,
     'the page posts the handout at a default that is not this round\'s');
 });

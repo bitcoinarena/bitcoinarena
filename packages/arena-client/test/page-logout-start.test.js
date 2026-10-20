@@ -46,9 +46,9 @@ test('the start screen is decided right after the seed keeper: no phrase in the 
 test('nothing mints a phrase behind the start screen: the wallet bar\'s and the collect\'s seed reads answer none', () => {
   for (const [name, src, ret] of [['walletSeed', WALLET_SEED, 'return walletSeed;'], ['collectSeed', COLLECT_SEED, 'return collectSeed;']]) {
     let minted = 0;
-    const BLWPCLIENT = { tabSeed: () => { minted++; return new Uint8Array(32); } };
+    const ARENACLIENT = { tabSeed: () => { minted++; return new Uint8Array(32); } };
     const window = { ARENA_START_PENDING: () => true };
-    const read = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'crypto'], src, ret)(window, BLWPCLIENT, { getRandomValues: (a) => a });
+    const read = pageFunction(PAGE, ['window', 'ARENACLIENT', 'crypto'], src, ret)(window, ARENACLIENT, { getRandomValues: (a) => a });
     assert.equal(read(), null, `${name} behind the start screen`);
     assert.equal(minted, 0, `${name} minted a phrase behind the start screen`);
     window.ARENA_START_PENDING = () => false;
@@ -67,7 +67,7 @@ test('logout: the tab has no account until its reload, and the Nostr login and i
   window.ARENA_WALLET_SCREEN = { shown: false, done: true };
   assert.equal(window.ARENA_START_PENDING(), false, 'a player with an account');
   window.ARENA_BROWSER_STORE = () => local;   // the page's one door to the browser's store
-  const del = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'BLWPCLIENT', 'console'], DELETE, 'return window.ARENA_DELETE_ACCOUNT;')(
+  const del = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'ARENACLIENT', 'console'], DELETE, 'return window.ARENA_DELETE_ACCOUNT;')(
     window, () => L, S, local, { forgetPhrase: () => 3 }, { log: () => {} });
   assert.deepEqual(del(), { ok: true, forgot: 3 });
   assert.equal(window.ARENA_START_PENDING(), true, 'from the delete to the reload nothing may mint a new account');

@@ -18,7 +18,7 @@ const run = async (liquidations) => {
   const calls = [];
   const window = { ARENA_LEDGER_LOBBY: { nodes: ['https://seat-1'] }, BLWP_CURVE: {}, ARENA_FED_LOADS: new Map([[FED, { federation: FED, invite: 'inv-a' }], [SAFE, { federation: SAFE, invite: 'inv-safe' }]]),
     ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_READ_BALANCE: () => calls.push('balance') };
-  const BLWPCLIENT = { presentNotes: async (o) => { calls.push(['present', o.liquidations[0].federation, o.payoutPk, (await o.walletFor(FED)).invite]); return [{ federation: FED, ok: true, accepted: [1] }]; },
+  const ARENACLIENT = { presentNotes: async (o) => { calls.push(['present', o.liquidations[0].federation, o.payoutPk, (await o.walletFor(FED)).invite]); return [{ federation: FED, ok: true, accepted: [1] }]; },
     collectLiquidationPayouts: async (o) => { calls.push(['collect', o.listed.payouts.length, (await o.clientFor(SAFE)).invite]); return [{ ok: true, msat: '768000' }]; },
     liquidationKeyFor: () => ({ payoutPk: '02' + '11'.repeat(32) }), ledgerFederations: () => [FED],
     openPlayerWallet: async (o) => ({ invite: o.invite }), fromHex: (h) => h };
@@ -26,8 +26,8 @@ const run = async (liquidations) => {
     if (url.endsWith('/liquidations')) return { ok: true, json: async () => ({ liquidations }) };
     if (url.endsWith('/liquidation-payouts')) return { ok: true, json: async () => ({ payouts: [{}, {}] }) };
     return { ok: false }; };
-  const fn = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'walletSeed', 'vault', 'fetch', 'console'], [slice], 'return claimLiquidations;');
-  await fn(window, BLWPCLIENT, () => new Uint8Array(32), () => ({}), fetch, { log: () => {}, warn: () => {} })();
+  const fn = pageFunction(PAGE, ['window', 'ARENACLIENT', 'walletSeed', 'vault', 'fetch', 'console'], [slice], 'return claimLiquidations;');
+  await fn(window, ARENACLIENT, () => new Uint8Array(32), () => ({}), fetch, { log: () => {}, warn: () => {} })();
   return calls;
 };
 

@@ -8,7 +8,7 @@
 //   1. THE BLWP PLAYER: a seed's player wallet as the BLWP page made it - phase0's own walletSecretFor and its store
 //      (blwp.walletdb.*), the page's lock client, a real deposit through gateway A.
 //   2. THE BROWSER MOVES: the page's own first script (index.html arena-storage-move) over that browser's storage.
-//   3. THE SWEEP, PICK (a): the page's own combineWallets (lifted from index.html), the Arena bundle as BLWPCLIENT, the real
+//   3. THE SWEEP, PICK (a): the page's own combineWallets (lifted from index.html), the Arena bundle as ARENACLIENT, the real
 //      lock client: the seed's BLWP-tag wallet is opened and its e-cash moved once into the seed's Arena wallet. A second
 //      page sweeps nothing.
 //   4. THE SEATS' BONDS: two bonds posted by phase0's own code (the BLWP marker, layout and id), then re-affirmed and
@@ -86,20 +86,20 @@ out({ step: '2. the storage move', blwpLeft: [...L.m.keys(), ...S.m.keys()].filt
   arenaWalletKeys: [...L.m.keys()].filter((k) => k.startsWith('arena.walletdb.')).length, seed: S.getItem('arena.player.seed') === seedHex });
 
 // ---- 3. THE SWEEP, BY THE PAGE'S OWN combineWallets AND THE ARENA BUNDLE ----
-const BLWPCLIENT = createRequire(import.meta.url)(join(HERE, '../../arena-client/dist/arena-client.js'));
+const ARENACLIENT = createRequire(import.meta.url)(join(HERE, '../../arena-client/dist/arena-client.js'));
 const round = { custody: 'FEDERATION', stakeMsat: 100000n, federationId: fid, stakeExpiryBlocks: STAKE_EXPIRY_BLOCKS, publicationRelays: ['wss://r.example'] };
-const main = await BLWPCLIENT.playerWallet({ round, invite: env.INVITE, seed: SEED, LockClient, storage: L });
-const before = { arena: BigInt(await main.balanceMsat()), blwpEntries: BLWPCLIENT.phraseWalletEntries(L, seedHex, fidHex, { ancestor: true }) };
+const main = await ARENACLIENT.playerWallet({ round, invite: env.INVITE, seed: SEED, LockClient, storage: L });
+const before = { arena: BigInt(await main.balanceMsat()), blwpEntries: ARENACLIENT.phraseWalletEntries(L, seedHex, fidHex, { ancestor: true }) };
 const at = page.indexOf('      let combining = null;\n      function combineWallets(main, named, round) {');
 const end = page.indexOf('        return combining;\n      }\n', at);
 const SRC = page.slice(at, end + '        return combining;\n      }\n'.length);
 const logs = [];
 const pageWindow = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient }) };
-const combineWallets = pageFunction(PAGE, ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
-  SRC, 'return combineWallets;')(() => L, S, BLWPCLIENT, pageWindow, {}, () => {}, { log: (s) => logs.push(String(s)) });
+const combineWallets = pageFunction(PAGE, ['vault', 'sessionStorage', 'ARENACLIENT', 'window', 'navigator', 'paintMoney', 'console'],
+  SRC, 'return combineWallets;')(() => L, S, ARENACLIENT, pageWindow, {}, () => {}, { log: (s) => logs.push(String(s)) });
 const t0 = Date.now();
 await combineWallets(main, { federation: env.INVITE }, round);
-const afterOld = await BLWPCLIENT.playerWallet({ round, invite: env.INVITE, seed: SEED, LockClient, storage: L, ancestor: true });
+const afterOld = await ARENACLIENT.playerWallet({ round, invite: env.INVITE, seed: SEED, LockClient, storage: L, ancestor: true });
 // THE RECEIVED E-CASH IS REISSUED BY THE FEDERATION: measured on the first run, the Arena balance read 0 at once after
 // "Success" - so it is read until it moves, for up to 120 s, and the time it took is said
 let arenaNow = BigInt(await main.balanceMsat()); const tr = Date.now();

@@ -78,7 +78,7 @@ test('the website names only the current configuration; the proposals forum is i
   const JS = readFileSync(new URL('../../../src/arena-ui/proposals/forum.js', import.meta.url), 'utf8');
   for (const t of ['bonds at least 3 months old that stay locked at least 3 months after the vote', '60% of the votes say YES, and YES is at least 20% of everyone who could vote',
     'at most 10% of the reserves per proposal, 25% per 3 months', 'Project improvement proposals', 'ALWAYS THE IN-GAME KEY AND NAME', '<script src="/proposals/forum.js" defer></script>']) assert.ok(FORUM.includes(t), t);
-  assert.match(JS, /BLWPCLIENT\.forumIdentity\(best\.hex/, 'signs with the in-game identity key of the kept wallet phrase (PIP)');
+  assert.match(JS, /ARENACLIENT\.forumIdentity\(best\.hex/, 'signs with the in-game identity key of the kept wallet phrase (PIP)');
   assert.match(JS, /'PIP-' \+ p\.pip/, 'every proposal is a PIP');
   // only the in-game key and name (2026-10-17: "Proposals always use the ingame key and name, no other options")
   for (const gone of ['nsec', 'Use a new key', 'Forget this key', 'Save name']) assert.ok(!FORUM.includes(gone), gone);

@@ -87,9 +87,9 @@ function liftSheet(window, document) {
   const at = UPDOWN_PAGE.indexOf('    async function openPickSheet(');
   assert.ok(at > 0, 'market-page.js has no openPickSheet');
   const end = UPDOWN_PAGE.indexOf('\n    }\n', at);
-  const BLWPCLIENT = { marketForRound, pickSheet, roundPays: (c) => c.stakeMsat > 0n, toHex };
-  return pageFunction(UPDOWN_PAGE_URL, ['window', 'document', 'BLWPCLIENT', 'donationBps', 'fetch', 'AbortSignal'], UPDOWN_PAGE.slice(at, end + 6), 'return openPickSheet;')(
-    window, document, BLWPCLIENT, () => 500, window.fetch, { timeout: () => undefined });
+  const ARENACLIENT = { marketForRound, pickSheet, roundPays: (c) => c.stakeMsat > 0n, toHex };
+  return pageFunction(UPDOWN_PAGE_URL, ['window', 'document', 'ARENACLIENT', 'donationBps', 'fetch', 'AbortSignal'], UPDOWN_PAGE.slice(at, end + 6), 'return openPickSheet;')(
+    window, document, ARENACLIENT, () => 500, window.fetch, { timeout: () => undefined });
 }
 const buttons = (el) => el.children.flatMap((c) => (c.tag === 'button' ? [c] : buttons(c)));
 
