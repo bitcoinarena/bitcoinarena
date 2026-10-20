@@ -22,7 +22,14 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // a seat's advert names its endpoint as wss://... (the guardian socket's address); its HTTP doors are the same address over https
   // (measured 2026-10-19 21:1xZ: fetch refused every wss:// claim URL - "unknown scheme" - so no claim stood and no gateway was seated)
   const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  // THE LAST PROBE, SAID (kanban #552, 2026-10-20 10:35Z: after a restart the seats' view stayed "0 of 2" for 30 min while the same probe
+  // run by hand seated the claim at once - nothing said where it stopped): when, the seated guardians it read, how many had an endpoint
+  // in the census and a claim for this federation, and an error
+  let lastProbe = null;
   async function probe() {
+    try { return await probeOnce(); } catch (e) { lastProbe = { atMs: Date.now(), why: String(e && e.message || e).slice(0, 200) }; throw e; }
+  }
+  async function probeOnce() {
     const fid = await federationId();
     if (!fid) return { ok: false, why: 'this node guards no federation' };
     const h = await tip();
@@ -30,9 +37,12 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (!epochs.has(epoch)) { epochs.set(epoch, new Map()); for (const e of [...epochs.keys()]) if (e < epoch - 1) { epochs.delete(e); volumes.delete(e); } }
     const rows = epochs.get(epoch);
     const all = (await entries()) || [];
-    for (const node of (await seated(fid)) || []) {
+    const seatedList = (await seated(fid)) || [];
+    const said = { atMs: Date.now(), epoch, seated: seatedList.length, census: all.length, withEndpoint: 0, claims: 0 };
+    for (const node of seatedList) {
       const e = all.find((x) => toHex(x.pubkey) === node);
       if (!e || !e.advert || !e.advert.endpoint) continue;
+      said.withEndpoint++;
       let claim = null;
       try {
         // its claim FOR THIS FEDERATION (kanban #552: a seat may stand for a gateway in each federation it guards; an older seat answers its one)
@@ -40,6 +50,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         if (r.status === 200) { const c = await r.json(); if (checkGatewayClaim(c, verify).ok && c.node === node && c.federationId === fid) claim = c; }
       } catch { claim = null; }
       if (!claim) continue;                 // no claim: this node does not stand
+      said.claims++;
       const row = rows.get(node) || { probes: 0, up: 0, claim };
       row.probes++; row.claim = claim;
       try {
@@ -63,6 +74,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         }
       } catch { /* the guardian's API did not answer: next probe */ }
     }
+    lastProbe = { ...said, standing: rows.size };
     return { ok: true, epoch, standing: rows.size, credited };
   }
   /** The seats as this guardian ranks them now. */
@@ -97,7 +109,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     // said why): what the running epoch would seat at its end, and the block it ends at
     let next = null;
     if (at < epoch) { const r = await rank(epoch, w.s.seated); if (r.ok) next = { epoch, fromBlock: (epoch + 1) * epochBlocks, seated: r.s.seated, why: r.s.why, gateways: r.gateways }; }
-    return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...w.s, gateways: w.gateways, ...(next ? { next } : {}) };
+    return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...w.s, gateways: w.gateways, ...(next ? { next } : {}), lastProbe };
   }
   return { probe, view };
 }

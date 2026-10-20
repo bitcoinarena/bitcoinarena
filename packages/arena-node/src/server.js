@@ -3792,6 +3792,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const gt = setInterval(() => { for (const w of gatewayWatches) w.watch.probe().catch(() => {}); }, 600000);
     if (gt.unref) gt.unref();
     for (const w of gatewayWatches) w.watch.probe().catch(() => {});
+    // AND ONCE MORE 120 s AFTER START, after the records' first gathering at 45 s (kanban #552): the first probe runs before this seat holds its federations' records, so it reads no
+    // seated guardian, and the next one was 10 min away - every restart left the gateway seats "0 of 2" for 10-20 min
+    const again = setTimeout(() => { for (const w of gatewayWatches) w.watch.probe().catch(() => {}); }, 120000);
+    if (again.unref) again.unref();
   }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
   // seating its federation's guardians signed at threshold, so every signer node - guardian or not - must hold the same one: every
@@ -3935,6 +3939,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const recordTimer = setInterval(() => { fedRecords.gatherAll(inviteFedId).then((r) => { for (const x of r) if (x.ok === false) console.log(`[federations] ${String(x.federation || '').slice(0, 16)}: ${x.why}`); }, () => {}); },
     Number(process.env.ARENA_FEDERATION_RECORD_MS || 600000));
   if (recordTimer.unref) recordTimer.unref();
+  // THE RECORDS ONCE 45 s AFTER START (kanban #552, measured 2026-10-20 ~10:42Z: a restarted seat held no federation record for its first
+  // 10 min - the timer's first run - so its gateway probes read no seated guardian and every health page said "0 of 2")
+  const recordSoon = setTimeout(() => { fedRecords.gatherAll(inviteFedId).catch(() => {}); }, 45000);
+  if (recordSoon.unref) recordSoon.unref();
   const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true) => {
     if (!oldFed || oldFed === successor || drainingFeds.has(oldFed)) return;
     drainingFeds.set(oldFed, { successor, sinceMs });
