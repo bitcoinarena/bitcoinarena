@@ -218,8 +218,12 @@
   function paintFeds(list) {
     const rows = list.map((f) => {
       const load = f.exposureCapSats ? Number(f.load || 0) : null;
-      const st = String(f.status || ''), c = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
-      return `<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(st || '-')}</td><td>${sat(f.height)}</td>
+      // the dot is the worse of its status and its load (the owner 2026-10-20: "Why is Federation 1 green when the load is 433 %?"): an OPEN
+      // federation at 100 % or more takes no deposits, so it is red and says FULL, as the capacity card does; from 70 % it is yellow
+      const st = String(f.status || ''), byStatus = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
+      const byLoad = load == null ? 'ok' : load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok';
+      const RANK = { ok: 0, warn: 1, bad: 2 }, c = RANK[byLoad] > RANK[byStatus] ? byLoad : byStatus;
+      return `<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(st || '-')}${st === 'OPEN' && load != null && load >= 1 ? ' · <span class="bad">FULL</span>' : ''}</td><td>${sat(f.height)}</td>
         <td>${Array.isArray(f.signers) ? f.signers.length : esc(f.signers)}</td><td>${sat(f.reserveSats)}</td><td>${sat(f.exposureCapSats)}</td>
         <td>${load == null ? '-' : `<span class="${load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok'}">${(load * 100).toFixed(0)} %</span>`}</td></tr>`;
     });
