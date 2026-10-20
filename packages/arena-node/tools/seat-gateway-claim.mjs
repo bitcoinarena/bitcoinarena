@@ -9,9 +9,16 @@
 //   node tools/seat-gateway-claim.mjs --lnd <lnd dir> --rest <host:port> --key <node key file> --federation <hex> --gateway-url <url ending />
 //       --out <claim file> [--lightning-addr host:port] [--members <seat url>,...]
 //       [--peg-in <sat> | --gateway-cli <path> --gateway-addr <url> --gateway-password <file>]
+//       [--peg-in-pending <txid>:<vout>,... --bitcoin-rpc <url> --bitcoin-cookie <file>]
 //
 // The peg-in is the gateway's own e-cash in the federation (what it pegged in), read from its gatewayd (`gateway-cli info`) when
 // --gateway-cli is named - measured 22:0xZ: gateway A held 248,999 sat in federation A while the hand-signed claim said 0.
+//
+// PEG-INS STILL CONFIRMING (kanban #552, the owner 2026-10-20: "display the pending gateways that still have pegins confirming (along with
+// their confirmation)"): --peg-in-pending names the outputs paid to the gateway's peg-in addresses in this federation; each one not yet
+// final is listed in the claim's `pending` with its confirmations and the federation's finality (its client config's finality_delay, read
+// from the gatewayd). `pending` is what the operator states, beside the signed fields and not under the signature (the claim's format
+// stays as it is): a page shows it as stated, and the seating counts only the e-cash the gateway holds.
 //
 // Inbound from OUTSIDE the federation counts the public, active channels whose peer is not one of the federation's own gateways' LND
 // (the Lightning keys the other guardians' claims name, read at --members): the ring's channels do not take deposits from the wider network.
@@ -54,6 +61,30 @@ if (arg('gateway-cli')) {
   if (!f) { console.error('the gateway does not serve that federation'); process.exit(1); }
   pegInSats = Math.floor(Number(f.balance_msat || 0) / 1000);
 }
+const pegIns = [];
+if (arg('peg-in-pending')) {
+  const cookie = readFileSync(need('bitcoin-cookie'), 'utf8').trim();
+  const rpc = async (method, params) => (await (await fetch(need('bitcoin-rpc'), { method: 'POST', headers: { authorization: 'Basic ' + Buffer.from(cookie).toString('base64') },
+    body: JSON.stringify({ jsonrpc: '1.0', id: 'arena', method, params }), signal: AbortSignal.timeout(15000) })).json()).result;
+  let finality = null;
+  if (arg('gateway-cli')) {
+    try {
+      const cfg = JSON.parse(execFileSync(arg('gateway-cli'), ['--address', need('gateway-addr'), '--rpcpassword', readFileSync(need('gateway-password'), 'utf8').trim(), 'cfg', 'client-config'],
+        { encoding: 'utf8', timeout: 30000 }));
+      const mine = Object.entries(cfg.federations || cfg).find(([k]) => k.toLowerCase() === federationId);
+      const m = mine && JSON.stringify(mine[1]).match(/"finality_delay":\s*(\d+)/);
+      if (m) finality = Number(m[1]);
+    } catch { finality = null; }
+  }
+  for (const o of String(arg('peg-in-pending')).split(',').map((x) => x.trim()).filter(Boolean)) {
+    const [txid, vout] = o.split(':');
+    const u = await rpc('gettxout', [txid, Number(vout), true]);
+    if (!u) continue;   // spent (the federation claimed it) or unknown: nothing pending
+    const confirmations = Number(u.confirmations || 0);
+    if (finality != null && confirmations > finality) continue;   // final: it is in the e-cash now, or will be at the next claim
+    pegIns.push({ txid, vout: Number(vout), sats: Math.round(Number(u.value) * 1e8), confirmations, finality });
+  }
+}
 const sum = (list, k) => list.reduce((a, c) => a + Number(c[k] || 0), 0);
 const active = channels.filter((c) => c.active);
 const outsideIn = sum(active.filter((c) => !inside.has(c.remote_pubkey)), 'remote_balance');
@@ -62,7 +93,8 @@ const claim = signGatewayClaim({ node, federationId, gatewayUrl, lightningPubkey
   lightningAddr: arg('lightning-addr', ''), outsideInboundSats: outsideIn }, (h) => schnorr.sign(h, secret));
 const ok = checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k));
 if (!ok.ok) { console.error(`the claim does not check: ${ok.why}`); process.exit(1); }
-writeFileSync(`${out}.tmp`, JSON.stringify(claim, null, 2) + '\n');
+writeFileSync(`${out}.tmp`, JSON.stringify(pegIns.length ? { ...claim, pending: { pegIns } } : claim, null, 2) + '\n');
 renameSync(`${out}.tmp`, out);
 console.log(`${new Date().toISOString()} gateway claim for ${node.slice(0, 16)}: ${active.length} active public channel(s), inbound ${claim.inboundSats} sat `
-  + `(${claim.outsideInboundSats} from outside the federation, ${inside.size} member gateway(s) left out), outbound ${claim.outboundSats} sat, peg-in ${claim.pegInSats} sat`);
+  + `(${claim.outsideInboundSats} from outside the federation, ${inside.size} member gateway(s) left out), outbound ${claim.outboundSats} sat, peg-in ${claim.pegInSats} sat`
+  + (pegIns.length ? `, confirming: ${pegIns.map((p) => `${p.sats} sat ${p.confirmations}/${p.finality ?? '?'}`).join(', ')}` : ''));

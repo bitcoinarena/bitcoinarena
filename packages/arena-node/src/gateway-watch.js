@@ -121,7 +121,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       if (!beacon) return { ok: false, why: `the epoch's first block ${e * epochBlocks} is not in this seat's chain` };
       const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats });
       return { ok: true, s, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
-        inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
+        inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '',
+        // what the operator states is still on its way (peg-ins confirming, kanban #552): beside the signed claim, shown as stated
+        pending: rows.get(toHex(c.node)).claim.pending || null }])) };
     };
     const w = await rank(at, incumbents);
     if (!w.ok) return w;
