@@ -32,13 +32,13 @@ function load(store, roundWalletState, { collect } = {}) {
   const lookOwed = async ({ client }) => ({ payout: { state: 'waiting' }, stake: { state: 'waiting' }, payoutMsat: 0n, stakeMsat: 0n, refundMsat: 0n,
     owedMsat: 0n, final: false, settled: false,
     inTabMsat: client !== player && typeof client.withdrawableMsat === 'function' ? BigInt(await client.withdrawableMsat()) : 0n });
-  const BLWPCLIENT = { toHex: (x) => x, lookOwed, withdrawLine: () => '',
+  const ARENACLIENT = { toHex: (x) => x, lookOwed, withdrawLine: () => '',
     collectAndWithdraw: async (a) => { collects.push(BigInt(await a.client.withdrawableMsat())); return collect(roundWalletState); },
     withdrawPlayerWallet: async () => ({ ok: false, why: 'nothing in the player wallet to withdraw' }) };
   const roundWallet = async () => { joins.push(1); return { LockClient: 'LC', client: roundClient }; };
-  const page = pageFunction(PAGE, ['vault', 'window', 'BLWPCLIENT', 'roundAsk', 'roundWallet', 'newestKept', 'wallet', 'paintWallet', 'payoutAsking', 'performance'],
+  const page = pageFunction(PAGE, ['vault', 'window', 'ARENACLIENT', 'roundAsk', 'roundWallet', 'newestKept', 'wallet', 'paintWallet', 'payoutAsking', 'performance'],
     [LOOK, WITHDRAW], 'return { lookRound, withdraw: window.ARENA_WITHDRAW };')(
-    vault, window, BLWPCLIENT, () => ({}), roundWallet, () => round, null, () => {}, false, { now: () => 6000 });
+    vault, window, ARENACLIENT, () => ({}), roundWallet, () => round, null, () => {}, false, { now: () => 6000 });
   return { ...page, window, joins, collects };
 }
 // the pay fails after the collect: the round's wallet keeps what was collected

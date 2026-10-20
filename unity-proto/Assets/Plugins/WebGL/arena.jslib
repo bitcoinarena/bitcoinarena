@@ -410,7 +410,7 @@ mergeInto(LibraryManager.library, {
   // Everything below is fire-and-forget with a status to poll, because a jslib
   // function returns an int and the client's work is asynchronous.
   ArenaNetStart: function (urlPtr, batchEvery, markEvery) {
-    if (typeof BLWPCLIENT === 'undefined') {
+    if (typeof ARENACLIENT === 'undefined') {
       console.error('[arena] client bundle not loaded - check the WebGL template');
       return 0;
     }
@@ -434,8 +434,8 @@ mergeInto(LibraryManager.library, {
       // keeps its trucks through a stall, which is the 0.0.1595 rule.
       var bound = Module.arenaNet.where && Module.arenaNet.where.roundId;
       var joined = null;
-      try { joined = window.ARENA_ROUND ? BLWPCLIENT.roundId(window.ARENA_ROUND) : null; } catch (e) { joined = null; }
-      var elsewhere = !!(bound && joined && BLWPCLIENT.toHex(bound) !== BLWPCLIENT.toHex(joined));
+      try { joined = window.ARENA_ROUND ? ARENACLIENT.roundId(window.ARENA_ROUND) : null; } catch (e) { joined = null; }
+      var elsewhere = !!(bound && joined && ARENACLIENT.toHex(bound) !== ARENACLIENT.toHex(joined));
       // AND A NEW JOIN IS A NEW RUN, on this round or another (2026-09-26 14:08, reproduced: a run that never rolled
       // out left its session open and not over; the next PLAY joined again, no session could open beside it, and that
       // run's card copied the session before's link). A session is its page join's (ARENA_ENTRY); another join replaces it.
@@ -451,7 +451,7 @@ mergeInto(LibraryManager.library, {
         // can drain on the old client in the background.
       } else {
         console.log('[arena] another join: closing the session on '
-          + (bound ? BLWPCLIENT.toHex(bound).slice(0, 8) : '?') + ' before opening ' + (joined ? BLWPCLIENT.toHex(joined).slice(0, 8) : '?'));
+          + (bound ? ARENACLIENT.toHex(bound).slice(0, 8) : '?') + ' before opening ' + (joined ? ARENACLIENT.toHex(joined).slice(0, 8) : '?'));
         try { if (was && was.close) was.close(); } catch (e) { /* already gone */ }
         try { Module.arenaNet.ghosts = null; } catch (e) { /* nothing held */ }
         Module.arenaNet.client = null;
@@ -461,8 +461,8 @@ mergeInto(LibraryManager.library, {
     var base = UTF8ToString(urlPtr);
     // THE TICK CLOCK THIS BROWSER'S TABS SHARE, for the debug label over a ghost (2026-09-17 19:15): one per
     // page, kept across rounds.
-    if (!Module.arenaTickClock && BLWPCLIENT.tickClock) {
-      try { Module.arenaTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.arenaTickClock = null; }
+    if (!Module.arenaTickClock && ARENACLIENT.tickClock) {
+      try { Module.arenaTickClock = ARENACLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.arenaTickClock = null; }
     }
     // THE RUN THAT ENDED, kept when it is this run's session that ended it (see ArenaRunStarts)
     var keepEndedRun = function (n) {
@@ -530,7 +530,7 @@ mergeInto(LibraryManager.library, {
       var b = Module.arenaCore;
       if (!b || !net.where || !net.contract) return null;
       return {
-        roundHex: BLWPCLIENT.toHex(net.where.roundId), entryHex: BLWPCLIENT.toHex(net.where.entryId),
+        roundHex: ARENACLIENT.toHex(net.where.roundId), entryHex: ARENACLIENT.toHex(net.where.entryId),
         word: b.st.i32[18 + 5] | 0, score: b.st.i32[18 + 4] | 0, minScore: Number(net.contract.minScore || 0),
         nodes: (typeof ARENA_NODES !== 'undefined' && ARENA_NODES) ? ARENA_NODES.slice() : [], signAddress: signAddress,
       };
@@ -544,16 +544,16 @@ mergeInto(LibraryManager.library, {
     var sessionKeyFor = function () {
       var slot = null, store = null, kept = null;
       // arena.session.key.<round> since kanban #524; a key kept under the old blwp.session.key.<round> (a run across the update) is still read
-      try { slot = (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) ? 'arena.session.key.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(ARENA_ROUND)) : null; } catch (e) { slot = null; }
+      try { slot = (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) ? 'arena.session.key.' + ARENACLIENT.toHex(ARENACLIENT.roundId(ARENA_ROUND)) : null; } catch (e) { slot = null; }
       try { store = window.sessionStorage; kept = slot ? JSON.parse(store.getItem(slot) || store.getItem(slot.replace(/^arena\./, 'blwp.')) || 'null') : null; } catch (e) { kept = null; }
       if (kept && kept.pkcs8 && kept.raw)
-        return crypto.subtle.importKey('pkcs8', BLWPCLIENT.fromHex(kept.pkcs8), { name: 'Ed25519' }, false, ['sign'])
-          .then(function (privateKey) { console.log('[arena] the session key of this round kept from before the reload'); return { privateKey: privateKey, raw: BLWPCLIENT.fromHex(kept.raw) }; });
+        return crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(kept.pkcs8), { name: 'Ed25519' }, false, ['sign'])
+          .then(function (privateKey) { console.log('[arena] the session key of this round kept from before the reload'); return { privateKey: privateKey, raw: ARENACLIENT.fromHex(kept.raw) }; });
       return crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']).then(function (pair) {
         return Promise.all([crypto.subtle.exportKey('pkcs8', pair.privateKey), crypto.subtle.exportKey('raw', pair.publicKey)])
           .then(function (x) {
             var raw = new Uint8Array(x[1]);
-            try { if (slot && store) store.setItem(slot, JSON.stringify({ pkcs8: BLWPCLIENT.toHex(new Uint8Array(x[0])), raw: BLWPCLIENT.toHex(raw) })); } catch (e) { /* kept for this page only */ }
+            try { if (slot && store) store.setItem(slot, JSON.stringify({ pkcs8: ARENACLIENT.toHex(new Uint8Array(x[0])), raw: ARENACLIENT.toHex(raw) })); } catch (e) { /* kept for this page only */ }
             return { privateKey: pair.privateKey, raw: raw };
           });
       });
@@ -589,7 +589,7 @@ mergeInto(LibraryManager.library, {
     // make them reachable from the page, where nothing should be able to sign
     // on the player's behalf.
     net.open = function (base, signer) {
-      var C = BLWPCLIENT;
+      var C = ARENACLIENT;
       // The round and the entry the page was told to play. Both contracts are
       // built HERE and their ids computed here, so the node is never asked what
       // this round is called.
@@ -609,7 +609,7 @@ mergeInto(LibraryManager.library, {
         // puts the lobby's address back, and a chained join's round= was gone by its session open (2026-10-03 13:33Z)
         var q = (typeof window.ARENA_GIVEN_ROUND === 'string' && /^[0-9a-f]{64}$/.test(window.ARENA_GIVEN_ROUND))
           ? window.ARENA_GIVEN_ROUND : new URLSearchParams(window.location.search).get('round');
-        if (q) given = BLWPCLIENT.fromHex(q);
+        if (q) given = ARENACLIENT.fromHex(q);
       } catch (e) { given = null; }
       var entry = Object.assign({}, signerNode, {
         roundId: C.roundId(contract), sessionPubkey: net.sessionPubkey,
@@ -684,7 +684,7 @@ mergeInto(LibraryManager.library, {
     };
 
     net.opened = function (contract, entry) {
-      var C = BLWPCLIENT;
+      var C = ARENACLIENT;
 
       // THE RECONNECT LIVES IN THE CLIENT NOW, for the same reason the hold
       // and the drain moved there: this file is the one place the JS suites
@@ -748,14 +748,14 @@ mergeInto(LibraryManager.library, {
           // recorded meanwhile), the core enters the same world and is stepped through the transcript as a seat replays
           // it, and the run goes on from the tick the seats are owed, its next mark after the one five carried.
           var R = (typeof window !== 'undefined') ? window.ARENA_RESUME : null;
-          if (R && R.entryIdHex === BLWPCLIENT.toHex(net.where.entryId)) {
+          if (R && R.entryIdHex === ARENACLIENT.toHex(net.where.entryId)) {
             net.resuming = true;
             return net.client.resumeAfterReload({ roundId: net.where.roundId, entryId: net.where.entryId, blockTicks: contract.blockTicks | 0 })
               .then(function (r) {
                 b.st = b.core.init(net.seedWord, arenaWithItems((net.contract && typeof net.contract.blockTicks === 'number')
                   ? { runTicks: net.contract.blockTicks } : {}));
                 b.reliefEpoch = (b.reliefEpoch | 0) + 1;
-                net.seen = BLWPCLIENT.catchUpCore(b.core, b.st, r.transcript);
+                net.seen = ARENACLIENT.catchUpCore(b.core, b.st, r.transcript);
                 // what Unity handed over before this is the lobby's market: the run's own tape, load and samples are in
                 // the transcript, at their ticks
                 net.queued = [];
@@ -765,7 +765,7 @@ mergeInto(LibraryManager.library, {
                 R.caughtUp = true; R.tick = net.seen;
                 console.log('[arena] resumed at tick ' + net.seen + ' after the reload: ' + r.batches + ' batches, mark head '
                   + (r.live ? 'carried by ' + r.witnessed : 'none') + ', ' + r.receipts + ' receipts');
-                try { net.ghosts = BLWPCLIENT.watchGhosts(net.client, net.where); }
+                try { net.ghosts = ARENACLIENT.watchGhosts(net.client, net.where); }
                 catch (e) { console.error('[arena] ghosts unavailable: ' + (e && e.message)); net.ghosts = null; }
               }, function (e) { net.resuming = false; throw e; });
           }
@@ -789,7 +789,7 @@ mergeInto(LibraryManager.library, {
           // its ticks are counted from that join tick - the HUD's time left is then the round's, and the last tick everybody's.
           var joinTick = (entry && typeof entry.joinTick === 'number' && entry.joinTick > 0) ? (entry.joinTick | 0) : 0;
           b.st = b.core.init(net.seedWord, arenaWithItems((net.contract && typeof net.contract.blockTicks === 'number')
-            ? { runTicks: BLWPCLIENT.runTicksForEntry(joinTick, net.contract.blockTicks) } : {}));
+            ? { runTicks: ARENACLIENT.runTicksForEntry(joinTick, net.contract.blockTicks) } : {}));
           // A NEW WORLD IS A NEW RELIEF: the seed names the hills. Counted here, where C# never
           // hears about it, so the drawn terrain knows to rebuild (ArenaCore.ReliefEpoch).
           b.reliefEpoch = (b.reliefEpoch | 0) + 1;
@@ -828,7 +828,7 @@ mergeInto(LibraryManager.library, {
           // `Module.arenaCore`: the core is driven by this player's own inputs and
           // by nothing else.
           try {
-            net.ghosts = BLWPCLIENT.watchGhosts(net.client, net.where);
+            net.ghosts = ARENACLIENT.watchGhosts(net.client, net.where);
           } catch (e) {
             // A page that cannot be shown the others still plays its own run.
             console.error('[arena] ghosts unavailable: ' + (e && e.message));
@@ -893,11 +893,11 @@ mergeInto(LibraryManager.library, {
       // HOW FAR BEHIND THE OTHER TRUCKS ARE, measured on the page (2026-09-17 17:12: "the ghost must be realtime"):
       // every 300 ticks, this run's own round tick against the newest picture of another truck - the same round clock.
       if (net.ghosts && net.seen % 300 === 0) {
-        var pose = BLWPCLIENT.newestPose(net.ghosts), own = net.client.offered | 0;
+        var pose = ARENACLIENT.newestPose(net.ghosts), own = net.client.offered | 0;
         // AND THE AGE THE PLAYER IS SHOWN, BESIDE THE LAG ON THE WIRE (2026-09-17 19:15: the truck reads
         // 300-600 ms while the wire says ~100). The label's own number, computed the way the overlay computes it, so
         // the two can be read against each other from one console. Nothing on screen changes.
-        var shown = BLWPCLIENT.ghostLabels ? BLWPCLIENT.ghostLabels(net.ghosts, { clock: Module.arenaTickClock }) : [];
+        var shown = ARENACLIENT.ghostLabels ? ARENACLIENT.ghostLabels(net.ghosts, { clock: Module.arenaTickClock }) : [];
         var oldest = shown.reduce(function (a, l) { return a === null || l.ageMs > a.ageMs ? l : a; }, null);
         console.log('[ghost] own tick ' + own + ' newest other picture tick ' + (pose ? pose.tick : '-')
           + (pose ? ' behind ' + (own - pose.tick) + ' ticks' : '')
@@ -926,7 +926,7 @@ mergeInto(LibraryManager.library, {
       if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) {
         // WHEN THIS TICK WAS DRIVEN, told to the other tabs: the newest recorded tick and now.
         if (Module.arenaTickClock && net.where) {
-          if (!net.entryHex) net.entryHex = BLWPCLIENT.toHex(net.where.entryId);
+          if (!net.entryHex) net.entryHex = ARENACLIENT.toHex(net.where.entryId);
           Module.arenaTickClock.post(net.entryHex, net.client.offered - 1);
         }
         net.client.drain();
@@ -982,9 +982,9 @@ mergeInto(LibraryManager.library, {
   // page checked off the nodes. Returns the bytes written, 0 for none.
   ArenaGhostLabels: function (ptr, cap) {
     var net = Module.arenaNet;
-    if (!net || !net.ghosts || !BLWPCLIENT.ghostLabels) return 0;
+    if (!net || !net.ghosts || !ARENACLIENT.ghostLabels) return 0;
     var names = (typeof window !== 'undefined' && window.ARENA_NAMES_BY_PLAYER) || {};
-    var text = BLWPCLIENT.ghostLabelText(BLWPCLIENT.ghostLabels(net.ghosts, {
+    var text = ARENACLIENT.ghostLabelText(ARENACLIENT.ghostLabels(net.ghosts, {
       nameOf: function (player) { return names[player] || null; }, clock: Module.arenaTickClock }));
     // AND THE SAME STRING IS LEFT WHERE A HEADLESS CLIENT CAN READ IT (2026-09-18 09:00, the two-tab gate).
     // C# draws these two lines over each truck through OnGUI, and no browser automation can read a GUI back. This is
@@ -1035,14 +1035,14 @@ mergeInto(LibraryManager.library, {
   },
   ArenaKeepCargo: function (textPtr) {
     var slot = null;
-    try { slot = (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) ? 'arena.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(ARENA_ROUND)) : null; } catch (e) { slot = null; }
+    try { slot = (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) ? 'arena.cargo.' + ARENACLIENT.toHex(ARENACLIENT.roundId(ARENA_ROUND)) : null; } catch (e) { slot = null; }
     try { if (slot) window.sessionStorage.setItem(slot, UTF8ToString(textPtr)); } catch (e) { slot = null; }
     return slot ? 1 : 0;
   },
   ArenaKeptCargo: function (outPtr, cap) {
     var v = null;
     // arena.cargo.<round> since kanban #524; cargo kept under the old blwp.cargo.<round> (a run across the update) is still read
-    try { if (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) { var id = BLWPCLIENT.toHex(BLWPCLIENT.roundId(ARENA_ROUND)); v = window.sessionStorage.getItem('arena.cargo.' + id) || window.sessionStorage.getItem('blwp.cargo.' + id); } } catch (e) { v = null; }
+    try { if (typeof ARENA_ROUND !== 'undefined' && ARENA_ROUND) { var id = ARENACLIENT.toHex(ARENACLIENT.roundId(ARENA_ROUND)); v = window.sessionStorage.getItem('arena.cargo.' + id) || window.sessionStorage.getItem('blwp.cargo.' + id); } } catch (e) { v = null; }
     if (!v || v.length >= (cap | 0)) { Module.HEAPU8[outPtr] = 0; return 0; }
     for (var i = 0; i < v.length; i++) Module.HEAPU8[outPtr + i] = v.charCodeAt(i) & 255;
     Module.HEAPU8[outPtr + v.length] = 0;
@@ -1143,7 +1143,7 @@ mergeInto(LibraryManager.library, {
     // THE PROVIDERS ARE FUNCTIONS THE PAGE SUPPLIES, and that is the whole
     // shape of this: the client speaks Bitcoin's own bytes - 80-byte headers
     // and a merkle branch of 32-byte hashes - and never an explorer's JSON.
-    // EACH ONE MUST CARRY A `tag` NAMING ITS SOURCE - `BLWPCLIENT.httpProvider`
+    // EACH ONE MUST CARRY A `tag` NAMING ITS SOURCE - `ARENACLIENT.httpProvider`
     // sets it from the URL - or the door refuses it: two functions closing over
     // one address are one source, not two.
     // Translating a real chain API into these functions is an adapter and it
@@ -1159,7 +1159,7 @@ mergeInto(LibraryManager.library, {
     return {
       headers: c.headers,
       bonds: c.bonds,
-      signedAdvert: (d && d.signedAdvert) ? BLWPCLIENT.fromHex(d.signedAdvert) : undefined,
+      signedAdvert: (d && d.signedAdvert) ? ARENACLIENT.fromHex(d.signedAdvert) : undefined,
       committee: round ? round.nodes : null,
     };
   },

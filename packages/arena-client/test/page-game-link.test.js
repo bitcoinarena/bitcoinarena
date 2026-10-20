@@ -15,9 +15,9 @@ const lift = (search, daily = { nodes: ['https://a.example'] }) => {
   let asked = 0;
   const location = { search };
   const fetch = async (u) => { asked++; assert.equal(u, 'daily.json'); return { ok: true, json: async () => daily }; };
-  const BLWPCLIENT = { dailyLobbySearch: (d) => `?nodes=${d.nodes.join(',')}` };
-  const body = pageFunction(PAGE, ['location', 'fetch', 'BLWPCLIENT'], [SRC, FN], ' return dailySearch;');
-  return { run: () => body(location, fetch, BLWPCLIENT)(), asked: () => asked };
+  const ARENACLIENT = { dailyLobbySearch: (d) => `?nodes=${d.nodes.join(',')}` };
+  const body = pageFunction(PAGE, ['location', 'fetch', 'ARENACLIENT'], [SRC, FN], ' return dailySearch;');
+  return { run: () => body(location, fetch, ARENACLIENT)(), asked: () => asked };
 };
 
 test('?game=<name> reads daily.json, as the bare root and ?rps-demo do; a link naming its own lobby does not', async () => {

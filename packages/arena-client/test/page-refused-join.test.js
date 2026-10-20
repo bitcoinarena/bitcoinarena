@@ -52,11 +52,11 @@ test('the hold\'s release asks ARENA_JOIN_GOES_ON before it sets "joined"; the j
 });
 
 // AND A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED BEFORE ANY LOCK: the donation-set step of
-// the join refuses on "donation set in force" and returns, ahead of BLWPCLIENT.lockStake.
+// the join refuses on "donation set in force" and returns, ahead of ARENACLIENT.lockStake.
 test('the join refuses on "donation set in force" at its donation-set step, before the stake lock', () => {
   const step = PAGE.indexOf("const ds = await joinStep('fetchDonationSet'");
   const refusal = PAGE.indexOf('/donation set in force/.test(String(ds.why))', step);
-  const lock = PAGE.indexOf('await BLWPCLIENT.lockStake(', step);
+  const lock = PAGE.indexOf('await ARENACLIENT.lockStake(', step);
   assert.ok(step > 0 && lock > step, 'the join has no donation-set step ahead of its lock');
   assert.ok(refusal > step && refusal < lock, 'no refusal on "donation set in force" between the donation-set step and the lock');
   const branch = PAGE.slice(refusal, PAGE.indexOf('else { window.ARENA_DONATION_SET_WHY', refusal));

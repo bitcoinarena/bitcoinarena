@@ -109,8 +109,8 @@ const j = (v) => JSON.stringify(v);
 const INJECT = `
 <script>
   window.BLWP_CHAIN = {
-    headers: [BLWPCLIENT.httpProvider('http://127.0.0.1:${a.port}/'),
-              BLWPCLIENT.httpProvider('http://127.0.0.1:${b.port}/')],
+    headers: [ARENACLIENT.httpProvider('http://127.0.0.1:${a.port}/'),
+              ARENACLIENT.httpProvider('http://127.0.0.1:${b.port}/')],
     bonds: [(function () {
       // A DECLARED TAG, like the header providers. The door refuses an
       // untagged provider by name - measured on the first run of this
@@ -120,8 +120,8 @@ const INJECT = `
       var get = function () {
         return fetch('http://127.0.0.1:${bondApi.port}/').then(function (r) { return r.json(); })
           .then(function (o) {
-            return { transaction: BLWPCLIENT.fromHex(o.hex),
-                     branch: o.merkle.map(BLWPCLIENT.fromHex), position: o.pos };
+            return { transaction: ARENACLIENT.fromHex(o.hex),
+                     branch: o.merkle.map(ARENACLIENT.fromHex), position: o.pos };
           });
       };
       get.tag = 'http://127.0.0.1:${bondApi.port}';
@@ -139,10 +139,10 @@ const INJECT = `
   BLWP_ROUND.startTimeMs = 1000n; BLWP_ROUND.entryCloseMs = 2000n;
   BLWP_ROUND.objectionWindowMs = 600000n;
   BLWP_ROUND.stakeMsat = 100000n; BLWP_ROUND.bondMinSats = 50000n;
-  BLWP_ROUND.simCoreHash = BLWPCLIENT.fromHex(BLWP_ROUND.simCoreHash);
-  BLWP_ROUND.censusRoot = BLWPCLIENT.fromHex(BLWP_ROUND.censusRoot);
-  BLWP_ROUND.committeeSeed = BLWPCLIENT.fromHex(BLWP_ROUND.committeeSeed);
-  BLWP_ROUND.nodes = BLWP_ROUND.nodes.map(BLWPCLIENT.fromHex);
+  BLWP_ROUND.simCoreHash = ARENACLIENT.fromHex(BLWP_ROUND.simCoreHash);
+  BLWP_ROUND.censusRoot = ARENACLIENT.fromHex(BLWP_ROUND.censusRoot);
+  BLWP_ROUND.committeeSeed = ARENACLIENT.fromHex(BLWP_ROUND.committeeSeed);
+  BLWP_ROUND.nodes = BLWP_ROUND.nodes.map(ARENACLIENT.fromHex);
   // HARNESS INSTRUMENTATION, in the page and not in the shipped client:
   // Unity's Module lives inside the loader closure, so the only handle on the
   // session from out here is the page global the jslib calls into. Wrapped,
@@ -150,14 +150,14 @@ const INJECT = `
   // (No backticks in here: this whole block is a template literal, and a
   // backtick closes it. Third time in this repo.)
   (function () {
-    var real = BLWPCLIENT.Client.at;
-    BLWPCLIENT.Client.at = function () {
+    var real = ARENACLIENT.Client.at;
+    ARENACLIENT.Client.at = function () {
       return real.apply(this, arguments).then(function (c) { window.__client = c; return c; });
     };
   })();
   window.BLWP_ENTRY = {
-    playerPubkey: BLWPCLIENT.fromHex('${hex(b32(5))}'),
-    stakeCommitment: BLWPCLIENT.fromHex('${hex(b32(7))}'),
+    playerPubkey: ARENACLIENT.fromHex('${hex(b32(5))}'),
+    stakeCommitment: ARENACLIENT.fromHex('${hex(b32(7))}'),
     stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
   };
 </script>

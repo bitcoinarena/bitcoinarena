@@ -300,11 +300,11 @@ test('the page joins a named round and still invents none', () => {
   const page = [new URL('../../../src/arena-ui/index.html', import.meta.url), ...parts].map((u) => readFileSync(u.pathname, 'utf8')).join('\n');
 
   for (const call of ['joinFromQuery', 'entryFor', 'tabSeed', 'playerFor'])
-    assert.ok(new RegExp('BLWPCLIENT\\.' + call + '\\s*\\(').test(page),
+    assert.ok(new RegExp('ARENACLIENT\\.' + call + '\\s*\\(').test(page),
       'the page never calls ' + call + ', so the round in the URL reaches nothing');
 
   for (const global of ['BLWP_ROUND', 'BLWP_CHAIN', 'BLWP_ADVERT', 'BLWP_ENTRY'])
-    assert.ok(new RegExp('window\\.' + global + '\\s*=\\s*(named|BLWPCLIENT)').test(page),
+    assert.ok(new RegExp('window\\.' + global + '\\s*=\\s*(named|ARENACLIENT)').test(page),
       global + ' is not filled from what the URL named');
 
   // AND IT WRITES NO CONTRACT. A page that carried its own fields could name
@@ -355,7 +355,7 @@ test('the page joins a named round and still invents none', () => {
   // 32 zero bytes where the shares belong - and `stakeFor` was compiled into
   // the bundle with ZERO CALLERS. The daemon accepts those zeros on purpose
   // for M2, so nothing refused and nothing said anything.
-  assert.ok(page.includes('BLWPCLIENT.stakeFor('),
+  assert.ok(page.includes('ARENACLIENT.stakeFor('),
     'the page joins without dealing a stake');
   assert.ok(page.includes('fetchSettlementSignerNodes'),
     'the page deals a stake without asking who settles the round');
@@ -366,7 +366,7 @@ test('the page joins a named round and still invents none', () => {
   // The posting and the five-signer node threshold are `postHandout` now - a handout
   // three of seven signer nodes hold is a stake nobody can open - so what is pinned
   // is the call and the branch that refuses on it.
-  assert.match(page, /BLWPCLIENT\.postHandout\(/,
+  assert.match(page, /ARENACLIENT\.postHandout\(/,
     'the page deals a handout and never posts it, so no signer node can accept it');
   assert.match(page, /if \(!put\.ok\)/,
     'the page publishes the handout and ignores how many signer nodes took it');
@@ -388,7 +388,7 @@ test('the page joins a named round and still invents none', () => {
   // money is a rule, so it lives in the client where a test can drive it - the
   // page asks `roundPays` rather than reading `stakeMsat` off the contract,
   // which is the same discipline the loop above enforces.
-  assert.ok(page.includes('BLWPCLIENT.roundPays('),
+  assert.ok(page.includes('ARENACLIENT.roundPays('),
     'the page decides for itself whether a round pays');
 });
 

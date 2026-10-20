@@ -25,7 +25,7 @@ function rig({ samples = [], tape = null, feed, status = 200, gate = null } = {}
     submitAttestedTape: (x) => { client.got.push(['tape', x.tick, x.prices.length, x.sigs.length]); return true; } };
   const window = { ARENA_CORES: { a: core }, unityInstance: { Module: { blwpNet: { inWorld: true, client } } } };
   const fetch = async () => { if (gate) await gate; return { ok: status === 200, status, json: async () => ({ samples, tape, ...(feed === undefined ? {} : { feed }) }) }; };
-  pageFunction(PAGE, ['window', 'BLWPCLIENT', 'fetch', 'setInterval', 'clearInterval', 'console', 'AbortSignal'], BLOCK)(
+  pageFunction(PAGE, ['window', 'ARENACLIENT', 'fetch', 'setInterval', 'clearInterval', 'console', 'AbortSignal'], BLOCK)(
     window, { centsToTapeUnits }, fetch, () => 1, () => {}, { log: () => {} }, { timeout: () => undefined });
   return { P: window.ARENA_PRICES, core, client, calls };
 }

@@ -312,7 +312,7 @@ try {
   const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
   const win = { location: { search: new URL(round.url).search }, BLWP_RUN_OVER: pageHook };
   const src = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
-  const globals = { Module, HEAP32: heap, UTF8ToString: () => named.nodes[0], window: win, console, crypto, BLWP: coreDist, BLWPCLIENT: CLIENT,
+  const globals = { Module, HEAP32: heap, UTF8ToString: () => named.nodes[0], window: win, console, crypto, BLWP: coreDist, ARENACLIENT: CLIENT,
     BLWP_CURVE: pageCurve, BLWP_ROUND: named.round, BLWP_ENTRY, BLWP_NODES: named.nodes, BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert };
   const names = Object.keys(globals);
   const load = (helpers) => { let lib = null; const hn = Object.keys(helpers);

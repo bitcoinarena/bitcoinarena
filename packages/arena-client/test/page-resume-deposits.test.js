@@ -15,9 +15,9 @@ const SRC = HTML.slice(at, HTML.indexOf('\n      };\n', at) + 9);
 function page() {
   const resumed = [], reads = [];
   const window = { ARENA_WALLETS: new Map(), ARENA_READ_BALANCE: () => reads.push(1) };
-  const BLWPCLIENT = { fromHex: (h) => Buffer.from(h, 'hex'),
+  const ARENACLIENT = { fromHex: (h) => Buffer.from(h, 'hex'),
     resumeDeposits: (o) => { resumed.push(o); return Promise.resolve([]); } };
-  new Function('window', 'BLWPCLIENT', 'vault', 'paintHistory', SRC)(window, BLWPCLIENT, () => 'store', () => {});
+  new Function('window', 'ARENACLIENT', 'vault', 'paintHistory', SRC)(window, ARENACLIENT, () => 'store', () => {});
   return { window, resumed, reads };
 }
 
@@ -42,6 +42,6 @@ test('a deposit claimed this way reads the balance again', () => {
 });
 
 test('the lobby\'s wallet is kept through the same door (no second resume of its own)', () => {
-  assert.equal((HTML.match(/BLWPCLIENT\.resumeDeposits\(/g) || []).length, 1, 'one place resumes deposits');
+  assert.equal((HTML.match(/ARENACLIENT\.resumeDeposits\(/g) || []).length, 1, 'one place resumes deposits');
   assert.match(HTML, /if \(window\.ARENA_KEEP_WALLET\) window\.ARENA_KEEP_WALLET\(fed, client\);/);
 });

@@ -54,7 +54,7 @@ test('the page hands the lines to Unity in its lobby view, from its records and 
   // the view is Tick Tock's page part (kanban #521)
   const unity = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
   const view = unity.slice(unity.indexOf('function unityLobbyView('));
-  assert.match(view, /collect: BLWPCLIENT\.collectLines \? BLWPCLIENT\.collectLines\(window\.ARENA_RECORDS \|\| \[\], \{ failed: window\.ARENA_COLLECT_FAILED/);
+  assert.match(view, /collect: ARENACLIENT\.collectLines \? ARENACLIENT\.collectLines\(window\.ARENA_RECORDS \|\| \[\], \{ failed: window\.ARENA_COLLECT_FAILED/);
   assert.match(html, /const collectFailed = window\.ARENA_COLLECT_FAILED = new Map\(\);/);
   assert.match(html, /collectFailed\.set\(older\.roundIdHex, e\.message\)/);
 });

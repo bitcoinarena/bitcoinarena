@@ -124,7 +124,7 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
         console,
         crypto,
         BLWP: wrapped,
-        BLWPCLIENT: CLIENT,
+        ARENACLIENT: CLIENT,
         BLWP_CURVE: pageCurve,
         ARENA_ROUND: named.round,
         ARENA_ENTRY: signerNode,
@@ -247,7 +247,7 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
     const library = shippedBridge({
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
-      console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
+      console, crypto, BLWP: core, ARENACLIENT: CLIENT, BLWP_CURVE: pageCurve,
       ARENA_ROUND: named.round, ARENA_ENTRY: signerNode, ARENA_NODES: named.nodes,
       ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert,
     });
@@ -298,7 +298,7 @@ test('with no round the bridge names no seed, which is what holds the daily on b
   const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
   const library = shippedBridge({
     Module, HEAP32: heap, UTF8ToString: () => '', window: { location: { search: '' } },
-    console, crypto, BLWP: core, BLWPCLIENT: CLIENT,
+    console, crypto, BLWP: core, ARENACLIENT: CLIENT,
   });
   assert.equal(library.ArenaRoundSeed(), 0, 'a page with no round named a round seed');
   assert.equal(spawnBay(SOLO_SEED), 13, 'the harness seed left the solo bay');
@@ -400,7 +400,7 @@ test('a join held open while the game steps publishes from the tick the core is 
     const library = shippedBridge({
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
-      console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
+      console, crypto, BLWP: core, ARENACLIENT: CLIENT, BLWP_CURVE: pageCurve,
       ARENA_ROUND: named.round, ARENA_ENTRY: signerNode, ARENA_NODES: named.nodes,
       ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert,
     });

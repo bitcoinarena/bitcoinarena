@@ -16,11 +16,11 @@ const PAYOUT = cut('    let payoutAskingSince = 0;', '\n      payoutAsking = fal
 function page(records, lookRound) {
   const collectFailed = new Map(), collectHeld = new Set();
   const window = { sessionStorage: { getItem: () => null } };
-  const BLWPCLIENT = { savedCollects: () => records, roundLocks: () => true, owedToLine: () => 'line', toHex: () => 'ab'.repeat(32), markCollectDone: () => {}, collectIntoPlayerWallet: async () => ({ collected: false }) };
+  const ARENACLIENT = { savedCollects: () => records, roundLocks: () => true, owedToLine: () => 'line', toHex: () => 'ab'.repeat(32), markCollectDone: () => {}, collectIntoPlayerWallet: async () => ({ collected: false }) };
   const vault = () => ({ length: 0, key: () => null, getItem: () => null, setItem: () => {}, removeItem: () => {} });
-  const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'BLWPCLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
+  const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'ARENACLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
     'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld'], [PAYOUT], 'return { lookThePayout };')(
-    window, { getElementById: () => null }, vault, BLWPCLIENT, lookRound, () => ({}), () => records[records.length - 1], () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
+    window, { getElementById: () => null }, vault, ARENACLIENT, lookRound, () => ({}), () => records[records.length - 1], () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
     async () => { throw new Error('no fetch'); }, () => ({ collectable: records, uncollectable: [] }), (r, fn) => fn(), collectFailed, collectHeld);
   return { ...fns, collectFailed, collectHeld };
 }

@@ -14,7 +14,7 @@ const from = '    function withMarketTerms(round) {';
 const at = HTML.indexOf(from); assert.ok(at > 0);
 const SLICE = HTML.slice(at, HTML.indexOf('\n    }\n', HTML.indexOf('function roundAsk(r, LockClient) {', at)) + '\n    }\n'.length);
 
-const ask = (marketTerms) => pageFunction(PAGE, ['BLWPCLIENT', 'window', 'vault'], SLICE, 'return roundAsk;')(
+const ask = (marketTerms) => pageFunction(PAGE, ['ARENACLIENT', 'window', 'vault'], SLICE, 'return roundAsk;')(
   { marketForRound: (r) => (r.market ? { terms: marketTerms } : null), fromHex: (h) => h }, { BLWP_CURVE: {} }, () => ({}));
 
 test('a market round\'s collect asks with its market\'s terms; a game round\'s with its contract as it is', () => {

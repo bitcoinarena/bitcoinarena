@@ -38,7 +38,7 @@ test('3 kept phrases, 7 signer nodes: one /settled read per node; a round owed t
   };
   const BL = { ...PL, findOwedRounds: PL.findOwedRounds, tabSeed: () => seeds[0], toHex, fromHex };
   const window = { BLWP_CURVE: curve, sessionStorage: null };
-  const scan = pageFunction(PAGE, ['BLWPCLIENT', 'vault', 'collectSeed', 'window', 'lookThePayout', 'crypto'], [SCAN], 'return findTheRoundsOwed;')(
+  const scan = pageFunction(PAGE, ['ARENACLIENT', 'vault', 'collectSeed', 'window', 'lookThePayout', 'crypto'], [SCAN], 'return findTheRoundsOwed;')(
     BL, () => L, () => seeds[0], window, () => {}, { getRandomValues: (a) => a });
   const found = await scan({ nodes, federation: 'fed1invite' });
   const settled = asked.filter((u) => u.includes('/settled?')).length;
@@ -63,7 +63,7 @@ test('a fresh browser behind the start screen: the scan waits for the wallet, th
   const window = { BLWP_CURVE: pageCurve, sessionStorage: null };
   const errors = []; const was = console.error; console.error = (m) => errors.push(String(m));
   try {
-    const scan = pageFunction(PAGE, ['BLWPCLIENT', 'vault', 'collectSeed', 'window', 'lookThePayout', 'crypto'], [SCAN], 'return findTheRoundsOwed;')(
+    const scan = pageFunction(PAGE, ['ARENACLIENT', 'vault', 'collectSeed', 'window', 'lookThePayout', 'crypto'], [SCAN], 'return findTheRoundsOwed;')(
       BL, () => L, collect, window, () => {}, { getRandomValues: (a) => a });
     const found = await scan({ nodes, federation: 'fed1invite' });
     assert.deepEqual(found, []);

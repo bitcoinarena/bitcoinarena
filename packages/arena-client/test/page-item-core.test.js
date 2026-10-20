@@ -53,11 +53,11 @@ test('the core file is the bundle pinned for nextblock, and the page loads it on
 test('the shop, the run\'s items and their unlocks are wired into the page', () => {
   assert.match(html, /id="arena-shop-go"/);
   assert.match(html, /id="arena-shop"/);
-  assert.match(html, /BLWPCLIENT\.buyItem\(/);
-  assert.match(html, /BLWPCLIENT\.entryItemsFor\(/);
+  assert.match(html, /ARENACLIENT\.buyItem\(/);
+  assert.match(html, /ARENACLIENT\.entryItemsFor\(/);
   assert.match(html, /frontendPk: pageFrontendPk\(\), items: runItems,/);
-  assert.match(html, /window\.BLWP_ITEM_UNLOCKS = roundManifest \? BLWPCLIENT\.entryUnlocks\(window\.BLWP_ENTRY, roundManifest\) : \[\];/);
-  assert.match(html, /await window\.ARENA_LOAD_CORE\(BLWPCLIENT\.roundCoreHex\(named\.round\)\)/);
+  assert.match(html, /window\.BLWP_ITEM_UNLOCKS = roundManifest \? ARENACLIENT\.entryUnlocks\(window\.BLWP_ENTRY, roundManifest\) : \[\];/);
+  assert.match(html, /await window\.ARENA_LOAD_CORE\(ARENACLIENT\.roundCoreHex\(named\.round\)\)/);
   const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   assert.equal((jslib.match(/b\.core\.init\(net\.seedWord, arenaWithItems\(/g) || []).length, 2, 'both run starts take the unlocks');
   assert.match(jslib, /ArenaTruckBed: function/);

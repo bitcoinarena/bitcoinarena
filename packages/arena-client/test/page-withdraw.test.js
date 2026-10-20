@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE WITHDRAW PANEL'S EARLY STOP AND ITS WORDS (plan comment 298, Go 2026-10-05). index.html's
 // openWithdraw is lifted out of the page by its text and run as it is, against a fake panel, a fake status bar and fake
-// BLWPCLIENT readers. The page refuses an invoice above the readable balance before the wallet spends - the library checks
+// ARENACLIENT readers. The page refuses an invoice above the readable balance before the wallet spends - the library checks
 // too, but the page's own stop and the words the player sees are what is measured here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,15 +19,15 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
   const els = Object.fromEntries(['arena-withdraw-panel', 'arena-wd-amount', 'arena-wd-invoice', 'arena-wd-chosen', 'arena-money-why', 'arena-wd-go'].map((id) => [id, el(id)]));
   const status = { shown: [], set(step, words, kind) { this.shown.push({ step, words, kind }); }, hide() { this.shown.push({ hidden: true }); } };
   const calls = { withdraw: [] };
-  const BLWPCLIENT = {
+  const ARENACLIENT = {
     invoiceAmountMsat: (text) => (text && invoiceMsat !== null ? { ok: true, msat: invoiceMsat } : { ok: false, why: 'Paste a Lightning invoice.' }),
     playerWithdrawable: async () => { if (can instanceof Error) throw can; return can; },
     withdrawPlayerWallet: async (o) => { calls.withdraw.push(o); return withdraw(o); },
   };
   const window = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
   const document = { getElementById: (id) => els[id] };
-  const openWithdraw = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
-    document, window, BLWPCLIENT, () => status, () => ({}), () => {});
+  const openWithdraw = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'ARENACLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
+    document, window, ARENACLIENT, () => status, () => ({}), () => {});
   openWithdraw({ round: {}, invite: 'fed1', seed: new Uint8Array(32), gateways: [] });
   const type = (text) => { els['arena-wd-invoice'].value = text; els['arena-wd-invoice'].oninput(); };
   const go = () => els['arena-wd-go'].onclick();

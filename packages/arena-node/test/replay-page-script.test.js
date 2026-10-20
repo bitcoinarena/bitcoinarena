@@ -26,9 +26,9 @@ async function run(search, answer) {
   const asked = [];
   const fetch = async (url) => { asked.push(String(url)); const r = answer(String(url)); if (!r) throw new Error('refused'); return r; };
   const location = { search, origin: 'https://node.example', pathname: '/blwp-a/replay' };
-  const BLWPCLIENT = { decodeRoundContract: () => { throw new Error('not a round contract'); }, decodeEntryContract: () => ({}) };
-  await pageFunction(PAGE, ['document', 'fetch', 'location', 'BLWPCLIENT', 'window', 'console'], SCRIPT, '', 'return ')(
-    document, fetch, location, BLWPCLIENT, {}, { log: () => {} });
+  const ARENACLIENT = { decodeRoundContract: () => { throw new Error('not a round contract'); }, decodeEntryContract: () => ({}) };
+  await pageFunction(PAGE, ['document', 'fetch', 'location', 'ARENACLIENT', 'window', 'console'], SCRIPT, '', 'return ')(
+    document, fetch, location, ARENACLIENT, {}, { log: () => {} });
   return { said, asked };
 }
 const json = (v) => new Response(JSON.stringify(v), { status: 200 });

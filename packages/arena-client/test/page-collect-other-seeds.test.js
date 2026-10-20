@@ -17,11 +17,11 @@ import { pageFunction } from './page-script.js';
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const html = readFileSync(PAGE, 'utf8');
 const kFrom = html.indexOf('function arenaSeedKeeper('), kTo = html.indexOf('\n    try {\n      window.ARENA_SEED_KEEPER', kFrom);
-globalThis.BLWPCLIENT = { phraseWalletEntries: PL.phraseWalletEntries };
+globalThis.ARENACLIENT = { phraseWalletEntries: PL.phraseWalletEntries };
 const Keeper = pageFunction(PAGE, [], html.slice(kFrom, kTo), '; return arenaSeedKeeper;')();
 // the page's readers, lifted as they are
 const slice = (start, end) => { const a = html.indexOf(start), b = html.indexOf(end, a); assert.ok(a > 0 && b > a, `no slice ${start}`); return html.slice(a, b); };
-const readers = pageFunction(PAGE, ['BLWPCLIENT', 'vault', 'collectSeed', 'sessionStorage', 'navigator', 'window'], [
+const readers = pageFunction(PAGE, ['ARENACLIENT', 'vault', 'collectSeed', 'sessionStorage', 'navigator', 'window'], [
   slice('    function withMarketTerms(round) {', '    // ONE TAB AT A TIME USES A KEPT ROUND'),   // roundAsk calls withMarketTerms
   slice('    function keptRecords() {', '    function newestKept() {'),
 ], '; return { roundAsk, keptRecords, withRecordPhrase };');
