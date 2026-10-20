@@ -9978,6 +9978,40 @@
   "needsAuth": "none",
   "pathParams": []
  },
+ {
+  "method": "POST",
+  "path": "/expected",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {ok, series, publication, firstCloseMs, slots}; 400 not a series line / not a grid / not a transaction; 403 the creator signature does not stand; 409 an invalid lead; 410 its last round closed; 422 the transaction does not publish the series",
+  "purpose": "A publisher announces a grid it put on chain: body JSON {line, tx} - its signed series line and its publication transaction, hex. The node checks the creator's signature over the series id and that the transaction carries the series' publication output, then names the grid at GET /expected and GET /pending until its last round closes. Anyone may post it.",
+  "audience": "public",
+  "line": 4324,
+  "summary": "Announce a published grid",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The ranking; amounts are decimal strings."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no guardian, so it ranks no gateways\"}."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "The view could not be read now."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
 {
   "method": "GET",
   "path": "/capacity",
