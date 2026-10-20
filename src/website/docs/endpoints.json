@@ -9824,6 +9824,40 @@
   "needsAuth": "none",
   "pathParams": []
  },
+{
+  "method": "GET",
+  "path": "/capacity",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {ok, node, censusHeight, federations[{federation, status, load, band, reserveSats, exposureCapSats, headroomSats, targetBondSats, guardians, guardiansBelowTarget[{node, bondSats, addSats}], targetPegInSats, gateways, gatewaysBelowTarget[{node, pegInSats, addSats}]}], network{lowestLoad, lowestFederation, band, targetBondSats, installMinimumBondSats}}",
+  "purpose": "Capacity pressure (spec §23A.3a): how full each federation is against what its bonds cover - its band (CALM; PRESSURE from 70 %, CRITICAL from 90 %, FULL at 100 %, each left only below 60 / 80 / 100 %), the bond B* each guardian would need for 50 % load and who is below it with the sats to add, the peg-in P* its gateways should hold - and the network's band (the lowest-load OPEN federation's), B*_net and the installer's minimum bond.",
+  "audience": "public",
+  "line": null,
+  "summary": "Capacity pressure: bands, the bonds and peg-ins that relieve it",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The ranking; amounts are decimal strings."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no guardian, so it ranks no gateways\"}."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "The view could not be read now."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
  {
   "method": "POST",
   "path": "/owner/services",

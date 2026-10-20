@@ -81,8 +81,9 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
   log(`${name} checked and unpacked: updating the node ${node.version} -> ${v}`);
   // the auto update service comes with the update where the node has none yet (a node updated by `arenanode update` keeps updating itself)
   const installUpdaterFn = async (o) => {
-    const [{ installUpdater }, { installProgram }, { serviceFile }] = await Promise.all([import('./launchers.js'), import('./service.js'), import('./node-services.js')]);
-    return existsSync(serviceFile('updater', { home, platform, env: process.env })) ? { ok: true, already: true } : installUpdater({ ...o, installProgram });
+    const [{ installUpdater, updaterLauncherStale }, { installProgram }, { serviceFile }] = await Promise.all([import('./launchers.js'), import('./service.js'), import('./node-services.js')]);
+    const file = serviceFile('updater', { home, platform, env: process.env });
+    return existsSync(file) && !updaterLauncherStale(file, platform) ? { ok: true, already: true } : installUpdater({ ...o, installProgram });
   };
   const r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn });
   const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack };

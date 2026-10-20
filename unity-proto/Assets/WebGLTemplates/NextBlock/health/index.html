@@ -183,8 +183,11 @@
   async function paintGateways(feds, seats, nodes) {
     const rows = [];
     for (const f of feds) {
-      const g = await first(seats, '/gateway-seats?federation=' + f.federation);
-      if (!g) { rows.push(`<tr><td>${dot('bad')}<span class="mono">${short(f.federation, 12)}</span></td><td colspan="4" class="bad">no seat answered</td></tr>`); continue; }
+      // A GUARDIAN SEAT RANKS ITS OWN FEDERATION ONLY (gateway-watch.js; the ?federation= is not read): the answer counts only from a
+      // seat whose federationId is this one - the first seat that answers may guard the other federation
+      let g = null;
+      for (const s of seats) { const a = await ask(s, '/gateway-seats?federation=' + f.federation); if (a.ok && a.body && a.body.federationId === f.federation) { g = { seat: s, ...a }; break; } }
+      if (!g) { rows.push(`<tr><td>${dot('bad')}<span class="mono">${short(f.federation, 12)}</span></td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
       const b = g.body, seated = b.seated || [];
       const c = seated.length >= 2 ? 'ok' : seated.length ? 'warn' : 'bad';
       rows.push(`<tr><td>${dot(c)}<span class="mono">${short(f.federation, 12)}</span></td><td>${esc(b.epoch)}</td><td>${seated.length} of 2</td>

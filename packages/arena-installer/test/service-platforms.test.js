@@ -6,7 +6,7 @@
 // the plist was read back by Python's plistlib on 2026-10-18 (Label, RunAtLoad, KeepAlive, ProgramArguments as written).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installService, LAUNCHD_LABEL, WINDOWS_TASK } from '../src/service.js';
@@ -76,6 +76,17 @@ test('Windows without administrator rights: the logon task is refused, the Start
     const p = await installProgram({ id: 'bitcoind-testnet4', description: 'Core', args: ['C:\\b\\bitcoind.exe'], home: root, platform: 'win32', env, sh });
     assert.equal(p.ok, true, p.why);
     assert.ok(existsSync(join(startup, 'Arena bitcoind-testnet4.vbs')), 'the same for a program (Bitcoin Core, LND, Tor...)');
+    // A BATCH FILE IS CALLED (2026-10-19 22:43Z in the VM: the updater's exit 75 never looped - a .cmd run from a .cmd without `call` never returns)
+    const u = await installProgram({ id: 'updater', description: 'update', args: ['C:\\h\\bin\\arenanode.cmd', 'auto-update'], home: root, platform: 'win32', env, sh, againOn: 75 });
+    assert.equal(u.ok, true, u.why);
+    const text = readFileSync(join(root, 'arena-updater.cmd'), 'utf8');
+    assert.match(text, /:again\r\ncall "C:\\h\\bin\\arenanode\.cmd" "auto-update" >> /);
+    assert.match(text, /if %errorlevel%==75 goto again/);
+    assert.match(readFileSync(join(root, 'arena-bitcoind-testnet4.cmd'), 'utf8'), /^"C:\\b\\bitcoind\.exe" >> /m, 'a program (.exe) is not called');
+    const { updaterLauncherStale } = await import('../src/launchers.js');
+    assert.equal(updaterLauncherStale(join(root, 'arena-updater.cmd'), 'win32'), false);
+    writeFileSync(join(root, 'old-updater.cmd'), text.replace('call "', '"'));
+    assert.equal(updaterLauncherStale(join(root, 'old-updater.cmd'), 'win32'), true, 'a launcher written before is written again by the next update');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
