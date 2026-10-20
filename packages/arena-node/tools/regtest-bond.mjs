@@ -178,12 +178,16 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
    * carries at least `bondSats`. Null when there is none, and then - only then - a bond is posted.
    */
   function findBond(nodeSecret, { endpoint, guardianOf = [], guardianCapable = false, guardianEndpoint = '', bondSats = 0n } = {}) {
-    const guards = (list) => (list || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).sort().join(',');
+    // EVERY FEDERATION ASKED FOR, AND MAYBE MORE (kanban #502, measured 2026-10-20 ~10:00Z: fed2's nodes A-F advertise, since their update
+    // at 157,071, B AND its successor 4dc88be7; a runner that names B alone found "no confirmed unspent bond ... says what node(s) A, B, C,
+    // D, E, F say now" and stopped): a bond whose advertisement guards every federation wanted - and others besides - says what is wanted
+    const guards = (list) => new Set((list || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`));
+    const covers = (have, want) => [...guards(want)].every((k) => guards(have).has(k));
     for (const b of bondsOf(nodeSecret)) {
       if (BigInt(b.sats) < BigInt(bondSats)) continue;
       const { advert } = b;
       if (advert.endpoint !== endpoint || !!advert.guardianCapable !== !!guardianCapable
-        || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || guards(advert.guardianOf) !== guards(guardianOf)) continue;
+        || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || !covers(advert.guardianOf, guardianOf)) continue;
       return b;
     }
     return null;
