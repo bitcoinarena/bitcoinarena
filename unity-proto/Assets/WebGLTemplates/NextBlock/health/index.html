@@ -272,10 +272,11 @@
   // every seat's GET /pending, merged - a grid by its publication, a peg-in by its outpoint, the furthest reading of each kept
   async function paintPending(seats) {
     const answers = (await Promise.all(seats.map((s) => ask(s, '/pending')))).filter((a) => a && a.ok && a.body && a.body.ok).map((a) => a.body);
-    const grids = new Map(), pegs = new Map();
+    const grids = new Map(), pegs = new Map(), ads = new Map();
     for (const a of answers) {
       for (const g of a.grids || []) { const k = g.publication.txid, was = grids.get(k); if (!was || (g.beacon.depth || 0) > (was.beacon.depth || 0) || (g.publication.confirmations || 0) > (was.publication.confirmations || 0)) grids.set(k, { ...g, tip: a.tip }); }
       for (const p of a.pegIns || []) { const k = p.txid + ':' + p.vout, was = pegs.get(k); if (!was || (p.confirmations || 0) > (was.confirmations || 0)) pegs.set(k, p); }
+      for (const x of a.adverts || []) if (!ads.has(x.node)) ads.set(x.node, { ...x, tip: a.tip });
     }
     const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
     const bar = (have, need) => { const pc = need ? Math.min(100, Math.round((100 * have) / need)) : 0;
@@ -294,6 +295,11 @@
       const waits = !p.onChain ? 'not found unspent on this node\'s chain (spent: counted, or not confirmed yet)'
         : left ? `${p.confirmations} of ${p.finality} confirmations: counts as the gateway's e-cash in about ${left >= 6 ? Math.round(left / 6) + ' h' : left * 10 + ' min'}` : 'final: counted';
       rows.push(`<tr><td>${dot(left === 0 ? 'ok' : 'warn')}peg-in ${sat(p.sats)} sat to ${short(p.node, 10)}'s gateway in ${fedName(p.federation)}</td><td class="mono">${short(p.txid, 10)}</td><td>${sat(p.confirmations)}</td><td>${bar(p.confirmations || 0, p.finality || 0)}</td><td class="wrap">${waits}</td></tr>`);
+    }
+    for (const x of ads.values()) {
+      const left = Math.max(0, Number(x.takenByTip) - Number(x.tip));
+      rows.push(`<tr><td>${dot('warn')}advertisement of ${short(x.node, 10)} <span class="muted">${esc(String(x.endpoint).replace(/^wss?:\/\//, ''))}</span></td><td class="mono">-</td><td>-</td><td></td>
+        <td class="wrap">${esc(x.changes.join('; '))} - the census takes it by block ${sat(x.takenByTip)} (${left ? `in ${left} block${left === 1 ? '' : 's'}` : 'now'})</td></tr>`);
     }
     $('pending').innerHTML = '<tr><th>What</th><th>Tx</th><th>Confirmations</th><th></th><th>Waits for</th></tr>'
       + (rows.join('') || `<tr><td colspan="5" class="muted">${answers.length ? 'nothing pending on ' + answers.length + ' node(s)' : 'no node answers GET /pending yet'}</td></tr>`);

@@ -42,7 +42,7 @@ import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/ga
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityView, capacityPlea, bondIncentive } from '../../arena-protocol/src/capacity.js';
+import { capacityView, capacityPlea, bondIncentive, guardianWeights as capacityGuardianWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -127,7 +127,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -1950,8 +1950,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const ls = liquiditySeatings.get(`${toHex(contract.federationId)}:${Math.floor(Number(contract.censusHeight) / GATEWAY_EPOCH_BLOCKS) - 1}`);
         if (ls) { liquidity = ls.providers.map((p) => fromHex(p.node)); liquidityWeights = new Map(ls.providers.map((p) => [p.node, BigInt(p.weight)])); }
       }
+      // AND UNDER CAPACITY PRESSURE THE GUARDIANS' WEIGHTS (2026.0.20, §23A.3a part 1): each guardian's bond from the round's census, the
+      // reserve, cap and nominal from the record in force at its census height - the same inputs on every signer node
+      let guardianWeights = null;
+      if (Number(contract.protocolVersion) >= PRESSURE_WEIGHT_VERSION && contract.federationId && guardian.length && fedRecords && fedRecords.recordAt) {
+        try {
+          const rec = fedRecords.recordAt(toHex(contract.federationId), Number(contract.censusHeight));
+          const census = roster.censusFor(rid);
+          if (rec && census && census.ok) guardianWeights = capacityGuardianWeights({ bonds: guardian.map((k) => ({ node: toHex(k), bondSats: (nodeBondOf(census.entries, k) || { bondSats: 0n }).bondSats })),
+            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, nominal: rec.nominal, bondMinSats: contract.bondMinSats || 50000n });
+        } catch { guardianWeights = null; }
+      }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
-        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian, gateway, liquidity, ...(liquidityWeights ? { liquidityWeights } : {}),
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian, gateway, liquidity, ...(liquidityWeights ? { liquidityWeights } : {}), ...(guardianWeights ? { guardianWeights } : {}),
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
     },
   });
@@ -3073,6 +3084,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const ownBondNow = () => {
     const me = toHex(round.pubkey);
+    // THE CHAIN'S CENSUS FIRST (the owner 2026-10-20, the owner page after a roll: "This is very wrong since the last update" - "No bond yet"):
+    // the newest rounds' censuses are read over minutes after a restart, the chain's in seconds (kept across a restart since 5777ec70)
+    const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+    if (cn && cn.entries.length) {
+      const bond = ownBondOf(cn.entries, me);
+      if (bond) { let network = 'testnet4'; try { const id = chainNetworkId(); if (id) network = networkOf(fromHex(String(id))); } catch { /* testnet4 */ }
+        return { bond, all: ownBondsOf(cn.entries, me), network }; }
+    }
     for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
       let census; try { census = roster.censusFor(new Uint8Array(r.round_id)); } catch { continue; }
       if (!census || !census.ok) continue;
@@ -3669,9 +3688,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null) });
   // THE SIGNED RECORDS IN THIS SEAT'S DATABASE (kanban #552/#557): restored, each checked again, 20 s after start
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_records (federation TEXT PRIMARY KEY, record TEXT NOT NULL)');
+  round.db.exec('CREATE TABLE IF NOT EXISTS federation_record_history (federation TEXT NOT NULL, height INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY (federation, height))');
   const recordStore = {
     load: async () => round.db.prepare('SELECT federation, record FROM federation_records').all(),
     save: (fid, hex) => { round.db.prepare('INSERT INTO federation_records (federation, record) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET record = excluded.record').run(String(fid), hex); },
+    // and every one by its height (the record in force at a round's census height, §23A.3a)
+    saveAt: (fid, height, hex) => { round.db.prepare('INSERT OR IGNORE INTO federation_record_history (federation, height, record) VALUES (?, ?, ?)').run(String(fid), Number(height), hex); },
+    loadAt: (fid) => round.db.prepare('SELECT height, record FROM federation_record_history WHERE federation = ? ORDER BY height').all(String(fid)),
   };
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
@@ -3913,7 +3936,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           confirmations: out ? Number(out.confirmations || 0) : null, finality: Number(pg.finality) || null, onChain: !!out });
       }
     }
-    const r = { ok: true, node: toHex(round.pubkey), tip, nowMs: String(now), grids, pegIns };
+    // ADVERTS THE CENSUS HAS NOT TAKEN (kanban #560): the census at this node's tip against the one its seats use now (the chain's, at its
+    // height step) - a node new to it, or whose advertisement changed; the seats take it once their step reaches its block, by the tip named
+    const adverts = [];
+    try {
+      const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+      if (cn && cn.entries.length && ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId() && tip > cn.height) {
+        const atTip = (await ballot.censusEntriesAt(chainNetworkId(), tip)) || [];
+        const sum = (e) => { const a = e.advert || {}; return { operator: String(a.operatorId || ''), roles: [...(a.roles || [])].sort().join(','), custody: !!a.guardianCapable,
+          serving: a.serving !== false, endpoint: String(a.endpoint || ''), guards: ((a.guardianOf || []).map((g) => toHex(g.federationId).slice(0, 8))).sort().join(','),
+          protocols: Math.max(0, ...(a.protocolVersions || [0])) }; };
+        const was = new Map(cn.entries.filter((e) => e && e.pubkey).map((e) => [toHex(e.pubkey), sum(e)]));
+        const seen = new Set();
+        const takesBy = (Math.ceil(tip / 6) * 6) + 6;   // the seats' step (6 below the tip, in 6s) reaches this tip's block by then
+        for (const e of atTip) {
+          if (!e || !e.pubkey) continue;
+          const k = toHex(e.pubkey); if (seen.has(k)) continue; seen.add(k);
+          const now2 = sum(e), before = was.get(k);
+          const changes = !before ? ['new bond'] : Object.keys(now2).filter((f) => String(now2[f]) !== String(before[f])).map((f) => `${f}: ${before[f] || '-'} -> ${now2[f] || '-'}`);
+          if (changes.length) adverts.push({ node: k, endpoint: now2.endpoint, changes, censusHeight: cn.height, takenByTip: takesBy });
+        }
+      }
+    } catch { /* none said */ }
+    const r = { ok: true, node: toHex(round.pubkey), tip, nowMs: String(now), grids, pegIns, adverts };
     pendingKept = { tip, at: Date.now(), r };
     return r;
   }
@@ -4705,6 +4750,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             rows.push({ atMs: Number(c.committeeTimeMs), bondMinSats: c.bondMinSats, entries: (census.entries || []).map(pick),
               excluded: (census.excluded || []).filter((e) => e.pubkey && e.bondSats !== undefined).map(pick),
               censusHeight: Number(c.censusHeight), full: census.entries || [], network: networkOf(c.networkId) });
+          }
+          // NONE READ YET (a seat just restarted): the chain's census as the one row (the owner 2026-10-20: "This is very wrong since the last update")
+          if (!rows.length) {
+            const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+            if (cn && cn.entries.length) {
+              let network = 'testnet4'; try { const id = chainNetworkId(); if (id) network = networkOf(fromHex(String(id))); } catch { /* testnet4 */ }
+              const pick = (e) => ({ pubkey: toHex(e.pubkey), bondSats: e.bondSats });
+              rows.push({ atMs: Date.now(), bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), entries: cn.entries.map(pick), excluded: [],
+                censusHeight: cn.height, full: cn.entries, network });
+            }
           }
           rows.sort((a, b) => b.atMs - a.atMs);
           const standing = nodeStanding({ me, rounds: rows });
