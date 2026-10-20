@@ -14,7 +14,7 @@
 // neither keeps the advert's endpoint (federation-records.js) - which is what every record carried before.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readInvite } from './invite.js';
+import { readInvite, inviteForGuardians } from './invite.js';
 
 /** peer key hex -> API URL, from a client configuration (client.json, or the `client_config` answer; flat or under `global`). */
 export function configEndpoints(config) {
@@ -27,6 +27,20 @@ export function configEndpoints(config) {
     if (url && /^[0-9a-f]{66}$/i.test(String(key))) out.set(String(key).toLowerCase(), String(url));
   }
   return out;
+}
+
+/**
+ * THE ONE INVITE A FEDERATION'S GUARDIAN SEATS AGREE ON (kanban #549, measured 2026-10-20 ~07:35Z: the successor 4dc88be7's six
+ * guardian seats each signed its record with their own guardian's invite-code - one guardian's URL each - so no two signed the same
+ * body and the gatherer counted 1 of the 5 signatures it needs): every guardian, in peer order, from the federation's own
+ * configuration, which every guardian holds alike. Null when the configuration names none.
+ */
+export function configInvite(federationIdHex, config) {
+  const urls = (config && ((config.global && config.global.api_endpoints) || config.api_endpoints)) || {};
+  const guardians = Object.entries(urls).map(([peer, e]) => ({ peer: Number(peer), url: String(e && (typeof e === 'string' ? e : e.url) || '') }))
+    .filter((g) => Number.isInteger(g.peer) && g.url).sort((a, b) => a.peer - b.peer);
+  if (!guardians.length || !/^[0-9a-f]{64}$/i.test(String(federationIdHex))) return null;
+  try { return inviteForGuardians(Uint8Array.from(String(federationIdHex).match(/../g).map((x) => parseInt(x, 16))), guardians); } catch { return null; }
 }
 
 /** The stock `client_config` over the guardian API's WebSocket. */
