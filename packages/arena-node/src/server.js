@@ -4438,6 +4438,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: want ? 'this node stands for no gateway seat of that federation' : 'this node stands for no gateway seat' });
       }
       // A LIQUIDITY CLAIM (§23A.10): this node is a liquidity provider - the claim its provider service signed (file)
+      // ROUNDS ON THEIR WAY (the owner 2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
+      // expected at a specific time or blocks"): a grid its publisher put on chain is posted to the seats only once its beacon block is 6
+      // deep, so until then no seat lists it and a market said only "No window is open". The publisher (run-testnet4-paid.mjs) writes what
+      // it published - the game, the first window, the committee time its beacon block must pass, the publication - to the files
+      // ARENA_EXPECTED_FILE names (comma-separated); this door serves the ones not over yet, as the operator states them
+      if (req.method === 'GET' && url.pathname === '/expected') {
+        const now = Date.now(), out = [];
+        for (const f of String(process.env.ARENA_EXPECTED_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+          let e = null; try { e = JSON.parse(readFileSync(f, 'utf8')); } catch { e = null; }
+          if (!e || !e.game || !Number.isFinite(Number(e.lastCloseMs)) || Number(e.lastCloseMs) < now) continue;
+          out.push({ game: String(e.game), gameId: String(e.gameId || ''), firstWindowMs: String(e.firstWindowMs), firstCloseMs: String(e.firstCloseMs), lastCloseMs: String(e.lastCloseMs),
+            slots: Number(e.slots) || 0, committeeTimeMs: String(e.committeeTimeMs), publication: e.publication ? { txid: String(e.publication.txid || ''), height: e.publication.height ?? null } : null,
+            federation: String(e.federation || '') });
+        }
+        let tip = null; try { tip = typeof chainTip === 'function' ? Number(await chainTip()) : null; } catch { tip = null; }
+        return claimJson(200, { nowMs: String(now), tip, expected: out });
+      }
       if (req.method === 'GET' && url.pathname === '/liquidity-claim') {
         const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE;
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
