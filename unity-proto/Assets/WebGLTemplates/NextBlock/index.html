@@ -257,6 +257,9 @@
       /* CENTRED AND SCROLLABLE (measured at 800x437: anchored to the bottom it grew over the top edge, its close and tabs cut off) */
       top: 50%; bottom: auto; transform: translate(-50%, -50%); max-height: 94vh; overflow-y: auto; box-sizing: border-box; }
     #arena-deposit.over-settings { z-index: 44 !important; }
+    /* THE DEPOSIT WINDOW ON THE OVERLAY LEVEL (the owner 2026-10-20 17:3xZ: "the deposit modal is not clickable"; measured in Chrome at UI 262: a press
+       on its buttons landed on #arena-ov-scrim): the scrim lies at 41, under the overlays (44); the window stood at 38, under the scrim */
+    body > #arena-deposit.deposit-modal:not(:empty) { z-index: 44; }
     /* WITHDRAW IN ITS OWN OVERLAY, AS DEPOSIT (2026-10-17: "make withdrawals an overlay like deposits. withdrawals and
        gear opening the same settings overlay is confusing and redundant. do not touch deposit or withdrawal in the settings overlay"):
        the wallet bar's Withdraw and a game's own client open this box, centred like the deposit modal, with Settings' own withdraw
