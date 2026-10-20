@@ -434,11 +434,13 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
   // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
-    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null } = {}) {
+    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null, slackBlocks = 6 } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     // A NEW BOND IS TEMPLATE 2: its maturity is the next block, a few of slack and this network's offset
     // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
-    const maturity = template === BOND_TEMPLATE_V2 ? maturityHeightFor(height(), network) : g.bondMaturity;
+    // `slackBlocks` (kanban #495, 2026-10-20: the n495 bonds and their first re-bonds confirmed past their slack - 23 and 3 blocks
+    // short of confirmation + 144 - and never counted): how many blocks the bond may wait for a miner
+    const maturity = template === BOND_TEMPLATE_V2 ? maturityHeightFor(height(), network, { slackBlocks }) : g.bondMaturity;
     const built = keyAt(nodeKey, maturity);
 
     // ADD TO BOND (kanban #544): `advert` - a node's own newest advertisement (bondsOf) - posted as this bond's body, with the

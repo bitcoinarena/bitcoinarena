@@ -8,7 +8,7 @@
 // Paid from the bond wallet: one funding transaction to the carrier (walletcreatefundedpsbt, include_unsafe), then the bond
 // transaction. Without --publish both are built and checked with testmempoolaccept, nothing broadcast.
 //
-//   ARENA_ADD_BOND_NODE=1 ARENA_ADD_BOND_SATS=32000 node tools/testnet4-add-bond.mjs [--publish]
+//   ARENA_ADD_BOND_NODE=1 ARENA_ADD_BOND_SATS=32000 [ARENA_ADD_BOND_SLACK=6] node tools/testnet4-add-bond.mjs [--publish]
 //
 // --census <height>: the measurement - the census at <height> derived from this bitcoind's blocks (from the node's oldest
 // template-2 bond on, or ARENA_ADD_BOND_FROM), scanned as a seat scans it (no candidate list), under protocol 18 and protocol 19,
@@ -78,7 +78,8 @@ const newest = bonds[0];
 let fundingHex = null;
 // the versions it speaks: the newest advertisement's and this build's (protocol 19 counts the sum only for a node that speaks 19)
 const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
-const made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: SATS, utxo: (spk) => {
+// ARENA_ADD_BOND_SLACK: the blocks the new bond may wait for a miner and still count (default 6; kanban #495 used 144)
+const made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: SATS, slackBlocks: Number(env.ARENA_ADD_BOND_SLACK || 6), utxo: (spk) => {
   const address = JSON.parse(cli('decodescript', toHex(spk))).address;
   const value = SATS + 330n + CARRIER_FEE + 1000n;
   const funded = JSON.parse(cli('-named', 'walletcreatefundedpsbt', 'inputs=[]', `outputs=${JSON.stringify([{ [address]: Number(value) / 1e8 }])}`,
