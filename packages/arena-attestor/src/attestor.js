@@ -20,6 +20,7 @@ import { attestationBodyId, encodeAttestation } from '../../arena-protocol/src/a
 import { upDownOutcome, upDownPrices, UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { valueAttestationBodyId, encodeValueAttestation } from '../../arena-protocol/src/scalar.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeManifest, gameIdOf, isScalar, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
 
@@ -94,6 +95,30 @@ export function wordFromJson(j) {
   }
   if (!Number.isInteger(j.body.outcome)) return null;
   return { body: { roundId: at.roundId, outcome: j.body.outcome, observedAtMs: at.observedAtMs }, key: j.key, signature: j.signature };
+}
+
+/**
+ * THE MARKETS THIS ATTESTOR SIGNS FOR (the owner 2026-10-20: "Prediction market outcomes and balance changes were working last week, so
+ * something broke. Write tests to make sure it can never break again" - the units named their markets by a hand-kept --game-id
+ * list, v1 and v2; versions 3 to 14 went live beside them, their rounds were never attested, and no order on them was ever decided
+ * or paid): the ids given, and every market a seat hosts (its /games rows, { id, manifest hex }) of this game's name whose manifest
+ * names this attestor's key - an attested outcome market for --mode outcome, a scalar one for --mode value - so a new version of
+ * the market is attested from the first listing that carries it. A row whose id is not its manifest's is not taken.
+ */
+export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids = [] }) {
+  const out = new Set(ids.map((x) => String(x).toLowerCase()));
+  const keyHex = String(key).toLowerCase();
+  for (const g of games) {
+    let m;
+    try { m = decodeManifest(fromHex(String(g.manifest))); } catch { continue; }
+    if (m.resultType !== RESULT_TYPE.ATTESTED || m.gameName !== name) continue;
+    if (isScalar(m) !== (mode === 'value')) continue;
+    if (!m.attestors.some((a) => toHex(a) === keyHex)) continue;
+    const id = toHex(gameIdOf(m));
+    if (String(g.id).toLowerCase() !== id) continue;
+    out.add(id);
+  }
+  return out;
 }
 
 export { UP_DOWN_OUTCOMES };
