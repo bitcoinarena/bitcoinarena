@@ -12,6 +12,7 @@ h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin:22px 0 8px;color:var(-
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:10px 0}
 .card h3{margin:0 0 8px;font-size:16px}.card p{margin:0 0 10px}
 .row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 10px;padding:4px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.row b{overflow-wrap:anywhere;text-align:right}
+.path{display:flex;gap:8px;align-items:center;margin:6px 0 12px}.path code{flex:1;min-width:0;overflow-wrap:anywhere;user-select:all;padding:6px 8px;border:1px solid var(--line);border-radius:6px}.path button{flex:none;width:auto;margin:0}
 button{font:600 15px system-ui;border-radius:10px;padding:11px 16px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;margin:4px 6px 4px 0}
 button.primary{background:var(--gv);border-color:var(--gv);color:#1a1200}button:disabled{opacity:.5;cursor:default}
 input,textarea{width:100%;font:15px ui-monospace,monospace;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
@@ -168,12 +169,15 @@ function restore() {
   };
 }
 // 2. THE NODE HAS NO OWNER: claim it with the code from its log
-function claim(mine) {
+// (kanban #550, the owner 2026-10-20: "show the complete path to the file instead of showing it cryptic"): the node names the file's full path
+function claim(mine, file) {
   view(`<div class="card"><h3>Claim this node</h3>
-    <p>This node has no owner yet. Its claim code is in the node's log and in the file <code>&lt;database&gt;.owner-claim</code> on its machine.</p>
+    <p>This node has no owner yet. Its claim code is in the node's log and in this file on its machine:</p>
+    ${file ? `<div class="path"><code id="cfile">${esc(file)}</code><button id="cfcopy">Copy</button></div>` : '<p><code>&lt;database&gt;.owner-claim</code>, beside the node\'s database</p>'}
     <label>Claim code</label><input id="code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" autocapitalize="characters">
     <div class="err" id="err"></div><button class="primary" id="ok">Become the owner</button></div>
     <div class="card"><div class="row"><span>Your owner key</span><b>${esc(mine)}</b></div></div>`);
+  if (file) $('cfcopy').onclick = () => { try { navigator.clipboard.writeText(file); $('cfcopy').textContent = 'Copied'; } catch { /* no clipboard: the path is selectable */ } };
   $('ok').onclick = async () => {
     $('ok').disabled = true;
     try { await post('/owner/claim', signed('claim', { code: $('code').value })); start(); }
@@ -801,7 +805,7 @@ async function start() {
   try { id = await identity(); } catch (e) { view(`<div class="card"><h3>Your Nostr login did not answer</h3><p class="err">${esc(e.message)}</p><button id="again">Try again</button> <button id="out">Sign out on this browser</button></div>`); $('again').onclick = () => { me = null; start(); }; $('out').onclick = forget; return; }
   if (!id) return welcome();
   const mine = id.pubkey;
-  if (!state.claimed) return claim(mine);
+  if (!state.claimed) return claim(mine, state.claimFile);
   if (state.owner !== mine) {
     view(`<div class="card"><h3>This key is not this node's owner</h3><p>This node belongs to another key. Sign in with the right 24 words or Nostr key, or forget this one.</p>
       <button id="forget">Sign out on this browser</button></div>`);
