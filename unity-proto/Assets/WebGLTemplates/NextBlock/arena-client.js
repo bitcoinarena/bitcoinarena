@@ -16754,7 +16754,9 @@ function resumeDeposits({ client, storage, federationId, onClaimed = () => {} } 
     if (final === 'Claimed' && depositRowOnce(storage, federationId, d)) onClaimed(d);
     pendingDrop(storage, federationId, p.operation);
     return final;
-  }, () => 'unknown')));
+  // THE REASON A RESUME COULD NOT BE READ, said (the owner 2026-10-20 17:4xZ: "deposits an earlier page left, federation b18947f0: unknown" - the
+  // wallet refused the operation and the page dropped why); the entry stays, so the next page tries again
+  }, (e) => `unknown (operation ${String(p.operation).slice(0, 12)}: ${String((e && e.message) || e).slice(0, 160)})`)));
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {

@@ -2765,7 +2765,14 @@
       // seat that did not answer). Before the round's other steps and beside them: the player wallet opened and read; short of the stake,
       // the deposit is shown now, and the round's funding below waits on this same offer (page-lock.js earlyDepositOffer).
       let earlyDeposit = null;
-      if (pays && ARENACLIENT.roundLocks(named.round) && ARENACLIENT.earlyDepositOffer
+      // NOT WHEN ANOTHER FEDERATION OF THE PLAYER'S HOLDS THE STAKE (the owner 2026-10-20 17:3xZ: 200 sat in 4dc88be7, a 100 sat Up/Down order in
+      // 337ae01a asked "Not enough sats ... Deposit with Lightning?" at the press): the swap below moves the shortfall in first; only when
+      // it does not, the deposit is asked (fundPlayerWallet's askDeposit)
+      const roundFedHex = Array.from(named.round.federationId || [], (b) => b.toString(16).padStart(2, '0')).join('');
+      const elsewhereSats = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((x) => x && x.federation !== roundFedHex).reduce((a, x) => a + Number(x.sats || 0), 0);
+      const coveredElsewhere = elsewhereSats * 1000 >= Number(named.round.stakeMsat || 0);
+      if (coveredElsewhere) console.log('[arena] join step: ' + elsewhereSats + ' sat in other federations cover the stake - swapped in before any deposit is asked');
+      if (pays && !coveredElsewhere && ARENACLIENT.roundLocks(named.round) && ARENACLIENT.earlyDepositOffer
           && !ARENACLIENT.savedLock(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })) {
         earlyDeposit = (async () => {
           try {
@@ -2960,8 +2967,15 @@
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
             for (const other of ARENACLIENT.ledgerFederations(vault()).filter((f) => f !== here)) {
               const st = loads.get(other);
-              if (!st || st.status !== 'OPEN' || !st.invite || !ARENACLIENT.swapPlayerWalletForRound) continue;
-              const r = await ARENACLIENT.swapPlayerWalletForRound({ round: named.round, toInvite: named.federation, fromInvite: st.invite, fromFederationId: other,
+              // AN UNVERIFIED SOURCE ON THE KNOWN-GOOD LIST MAY PAY (the owner 2026-10-20 17:3xZ: 200 sat in 4dc88be7, an Up/Down order in 337ae01a showed
+              // "Not enough sats ... Deposit with Lightning?" - 4dc88be7 read "Not checked yet" because today's rounds name a census older than its
+              // guardians' adverts, and only an OPEN source was swapped from). Moving notes OUT is allowed for an unverified federation
+              // (FEDERATION_ALLOWS.unverified.move); the client's own known-good list vouches for it, its invite the status's or the one its wallet opened with
+              const known = ARENACLIENT.federationIsKnown ? ARENACLIENT.federationIsKnown(other) : false;
+              const fromInvite = (st && st.invite) || (known && ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), other) : null);
+              const mayPay = st ? (st.status === 'OPEN' || (st.status === 'unverified' && known)) : known;
+              if (!mayPay || !fromInvite || !ARENACLIENT.swapPlayerWalletForRound) continue;
+              const r = await ARENACLIENT.swapPlayerWalletForRound({ round: named.round, toInvite: named.federation, fromInvite, fromFederationId: other,
                 seed, LockClient: wasm.LockClient, storage: vault(), needMsat, gateways: wallet.gateways,
                 confirm: (q) => (window.ARENA_SWAP_CONFIRM ? window.ARENA_SWAP_CONFIRM(q, other, here) : Promise.resolve(false)),
                 onState: (m) => onStep(m.state === 'swapping' ? `swapping ${Math.ceil(Number(m.amountMsat) / 1000)} sat from federation ${other.slice(0, 8)} into this round's`
