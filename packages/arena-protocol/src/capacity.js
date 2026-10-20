@@ -156,3 +156,23 @@ export function guardianWeights({ bonds, reserveSats, exposureCapSats, nominal, 
   const star = targetBond({ reserveSats, nominal, bondMinSats });
   return new Map(bonds.map((g) => { const x = BigInt(g.bondSats || 0) < star ? BigInt(g.bondSats || 0) : star; return [String(g.node).toLowerCase(), x * x]; }));
 }
+
+/**
+ * THE GATEWAYS UNDER PEG-IN PRESSURE (2026.0.20, §23A.3a part 2): while the federation is in PRESSURE or worse and its seated
+ * gateways' proved peg-ins fall short (Σ min(pegin, P*) < seats × P*), the gateways' part is split by (min(pegin, P*))^2 - the
+ * spec's v_g = (min(pegin, P*) / P*)^2 times a constant P*^2. `pegIns` [{ node, pegInSats }] the seated gateways' proved peg-ins
+ * from the signed seating (a seat without one counts 0); null when CALM, under no peg-in pressure, or when the seating proves
+ * none - the part is split evenly then.
+ */
+export function gatewayWeights({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null }) {
+  const cap = BigInt(exposureCapSats || 0), reserve = BigInt(reserveSats || 0);
+  if (cap <= 0n || !(pegIns || []).length) return null;
+  const load = Number(reserve * 1000000n / cap) / 1000000;
+  const b = band || capacityBand(load, 'CALM');
+  if (!['PRESSURE', 'CRITICAL', 'FULL'].includes(b)) return null;
+  const star = targetPegIn({ headroomSats: cap > reserve ? cap - reserve : 0n, pegInMinSats, seats });
+  const held = pegIns.map((g) => { const x = BigInt(g.pegInSats || 0); return [String(g.node).toLowerCase(), x < star ? x : star]; });
+  if (held.reduce((a, [, x]) => a + x, 0n) >= BigInt(seats) * star) return null;   // no peg-in pressure
+  if (!held.some(([, x]) => x > 0n)) return null;
+  return new Map(held.map(([n, x]) => [n, x * x]));
+}

@@ -11,17 +11,38 @@ import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
 
 export const GATEWAY_SEATING_TAG = TAG_PAIRS.gatewaySeating[0];   // the tag before the switch (tag-switch.js, kanban #525)
 
-/** The 32 bytes a seating's signatures cover: the federation, the epoch, the seats (node keys, sorted). */
-export function gatewaySeatingHash({ federationId, epoch, seats }, tag = tagAt('gatewaySeating', { epoch })) {
+/**
+ * THE PROVED PEG-INS A SEATING NAMES (kanban #559/#543, §23A.3a part 2): { node hex: sat string } for its seats whose peg-in the
+ * guardian proved from the federation's own coins, sorted by node; [] when it names none.
+ */
+export function seatingPegInsOf(seating) {
+  const p = (seating && seating.pegIns) || {};
+  const seats = new Set(((seating && seating.seats) || []).map((x) => String(x).toLowerCase()));
+  return Object.entries(p).map(([n, v]) => [String(n).toLowerCase(), BigInt(v)]).filter(([n]) => seats.has(n)).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+}
+
+/**
+ * The 32 bytes a seating's signatures cover: the federation, the epoch, the seats (node keys, sorted) - and, only when it names
+ * them, its seats' proved peg-ins (count, then node and sats each), so a seating that names none hashes as before.
+ */
+export function gatewaySeatingHash(seating, tag = tagAt('gatewaySeating', { epoch: seating.epoch })) {
+  const { federationId, epoch, seats } = seating;
   const w = new Writer();
   w.bytes32(fromHex(federationId)); w.u32(epoch);
   w.vec([...seats].map((s) => String(s).toLowerCase()).sort(), (s, ww) => ww.bytes32(fromHex(s)));
+  const pegs = seatingPegInsOf(seating);
+  if (pegs.length) { w.u32(pegs.length); for (const [n, v] of pegs) { w.bytes32(fromHex(n)); w.u64(v); } }
   return taggedHash(tag, w.finish());
+}
+
+function pegInsBody(seating) {
+  const pegs = seatingPegInsOf(seating);
+  return pegs.length ? { pegIns: Object.fromEntries(pegs.map(([n, v]) => [n, String(v)])) } : {};
 }
 
 /** One guardian's signature on a seating. */
 export function signGatewaySeating(seating, guardianNode, sign) {
-  return { federationId: seating.federationId.toLowerCase(), epoch: seating.epoch, seats: [...seating.seats].map((s) => s.toLowerCase()).sort(),
+  return { federationId: seating.federationId.toLowerCase(), epoch: seating.epoch, seats: [...seating.seats].map((s) => s.toLowerCase()).sort(), ...pegInsBody(seating),
     guardian: String(guardianNode).toLowerCase(), signature: toHex(sign(gatewaySeatingHash(seating))) };
 }
 
@@ -38,14 +59,16 @@ export function standingSeating({ signed = [], federationId, epoch, seated, thre
     let good = false;
     try { good = tagsAccepted('gatewaySeating', { epoch: s.epoch }).some((t) => verify(fromHex(s.signature), gatewaySeatingHash(s, t), fromHex(s.guardian))); } catch { good = false; }
     if (!good) continue;
-    const key = [...s.seats].map((x) => String(x).toLowerCase()).sort().join(',');
-    const row = byBody.get(key) || { seats: key ? key.split(',') : [], signers: new Set() };
+    // the same seats with the same proved peg-ins are one body: a guardian that proved another amount signs a different one
+    const seatsKey = [...s.seats].map((x) => String(x).toLowerCase()).sort().join(',');
+    const key = seatsKey + '|' + seatingPegInsOf(s).map(([n, v]) => n + '=' + v).join(',');
+    const row = byBody.get(key) || { seats: seatsKey ? seatsKey.split(',') : [], ...pegInsBody(s), signers: new Set() };
     row.signers.add(String(s.guardian).toLowerCase());
     byBody.set(key, row);
   }
   const best = [...byBody.values()].sort((a, b) => b.signers.size - a.signers.size)[0];
   if (!best || best.signers.size < threshold)
     return { ok: false, signers: best ? best.signers.size : 0, why: `no seating for epoch ${epoch} is signed by ${threshold} of the federation's seated guardians (at most ${best ? best.signers.size : 0}): no gateway seats in it` };
-  return { ok: true, seating: { federationId: String(federationId).toLowerCase(), epoch, seats: best.seats }, signers: best.signers.size,
+  return { ok: true, seating: { federationId: String(federationId).toLowerCase(), epoch, seats: best.seats, ...(best.pegIns ? { pegIns: best.pegIns } : {}) }, signers: best.signers.size,
     why: `${best.signers.size} of the seated guardians signed ${best.seats.length} gateway seat${best.seats.length === 1 ? '' : 's'} for epoch ${epoch}` };
 }

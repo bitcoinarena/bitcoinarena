@@ -4981,6 +4981,15 @@ while peg-in pressure lasts, so a gateway that can take the deposits is seated a
   current seat;
 - the counted peg-in is their sum.
 
+*Implemented from protocol 2026.0.20 (kanban #559/#543).* A claim names its outpoints (`pegInOutpoints`, signed with the claim; a claim
+naming none hashes as before). Each guardian reads F's own coins from its guardian's API at most every 10 minutes (the original wallet
+module's spendable coins, or wallet v2's unspent outputs) and proves a gateway's claimed outpoints that are among them; an outpoint two
+claims name counts for neither. The guardian signs each paid seat's proved peg-in into the epoch's gateway seating (§23A.9; a seating
+that names none hashes as before), so a seating stands only on the same seats **and** the same proved amounts. A 2026.0.20 round
+splits the gateways' part by `(min(proved, P*))^2` from the seating of its census epoch, with the record in force at its census height
+and `peg_in_min` the network's gateway peg-in minimum (§23A.9 table); CALM, no peg-in pressure, or nothing proved - evenly. Not yet
+checked: "not older than the gateway's current seat", and the ranking by peg-in before volume.
+
 **Open.** A peg-in proves money went in, not that the gateway still holds it as e-cash. A balance proof needs a guardian-side check
 of the gateway's notes, which stock Fedimint does not offer. Until there is one, the proved peg-in is the weight, and a seated gateway
 that fails a receive in the epoch (§23A.9's probes, extended with a receive test of `min(P*, 10,000 sat)`) is unseated as before.
