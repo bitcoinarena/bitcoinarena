@@ -34,7 +34,7 @@ import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/t
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
-import { ownBondOf, lockAt, withdrawSpend } from './bond-withdraw.js';
+import { ownBondOf, ownBondsOf, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, incomingSince } from './gateway-volume.js';
@@ -79,7 +79,7 @@ import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { advertInTransaction } from '../../arena-protocol/src/census.js';
+import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
 
 /**
  * WHOSE BOND A PROOF IS: the node key of the advertisement a bond proof's transaction commits to, hex - or null when
@@ -197,6 +197,7 @@ import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync, appendFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../arena-protocol/src/rerun.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigFault, SIGNED_FINAL_SIG_BYTES } from '../../arena-protocol/src/final-sig.js';
@@ -3075,7 +3076,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const bond = ownBondOf(census.entries || [], me);
       if (!bond) continue;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
-      return { bond, network: networkOf(c.networkId) };
+      return { bond, all: ownBondsOf(census.entries || [], me), network: networkOf(c.networkId) };
     }
     return null;
   };
@@ -4501,6 +4502,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
           if (!found) return answer(200, { node: toHex(round.pubkey), bond: null, tip, says: 'no census this seat holds names a bond of this node' });
           return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip),
+            // every output of this node and their sum (kanban #544), each with its own lock
+            total: found.all ? found.all.sats : found.bond.sats, outputs: (found.all ? found.all.outputs : [found.bond]).map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })),
+            addBond: !!process.env.ARENA_HOME,
             says: 'a withdrawn bond takes this node out of the census from the next census height on' });
         }
         if (req.method === 'GET' && url.pathname === '/owner/standing') {
@@ -4714,6 +4718,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               services: v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })),
               command: v.instance ? `arenanode-${v.instance}` : 'arenanode' });
           } catch (e) { return answer(500, { ok: false, why: `the services could not be read: ${e.message}` }); }
+        }
+        // ADD TO BOND (kanban #544): signed by the owner, { sats, post } - the plan of a second bond output beside the first (the amount,
+        // the fees, the new total, the maturity), and with post: true the funding and bond transactions broadcast. The wallet is the
+        // installer's (add-bond.js on its home), so a seat not started from an installer's arena.conf has none to add from
+        if (url.pathname === '/owner/add-bond') {
+          const a = owner.authorize(body, 'add-bond');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not installed by the Arena installer: add to its bond with its operator\'s own wallet' });
+          try {
+            const { addBondOnNode } = await import('../../arena-installer/src/add-bond.js');
+            const args = body.args || {};
+            const r = await addBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), addSats: args.sats, post: args.post === true });
+            if (!r.ok) return answer(400, r);
+            const { funding, bondTx, ...plan } = r.plan;   // the transactions' bytes stay on the machine
+            if (r.bond) console.log(`[bond] added ${plan.addSats} sat beside the bond: ${r.bond.txid}:0 (total ${plan.totalSats} sat)`);
+            return answer(200, { ok: true, plan, bond: r.bond || null });
+          } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
         }
         // SET UP, WITHDRAW, REMOVE: signed by the owner like every owner door
         // A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (2026-10-18: "a button generate a new address for
@@ -7635,7 +7657,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const seated = (fedRecords.seatedGuardians(f.federation) || []).map((k) => toHex(k));
           return { federation: f.federation, status: f.status, nominal: rec && rec.record ? rec.record.nominal : seated.length || 1,
             reserveSats: f.reserveSats || '0', exposureCapSats: f.exposureCapSats || '0',
-            guardianBonds: seated.map((node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return { node, bondSats: e ? BigInt(e.bondSats) : 0n }; }),
+            guardianBonds: seated.map((node) => { const n = nodeBondOf(entries, node); return { node, bondSats: n ? n.bondSats : 0n }; }),
             gateways: gw && gw.ok && gw.federationId === f.federation ? Object.entries(gw.gateways || {}).map(([node, g]) => ({ node, pegInSats: BigInt(g.pegInSats || 0) })) : [] };
         });
         const v = capacityView({ federations: feds, bondMinSats: bondMin, pegInMinSats: pegInMin, was: capacityWas });

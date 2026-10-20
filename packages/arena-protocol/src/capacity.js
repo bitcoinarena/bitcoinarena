@@ -68,10 +68,12 @@ export function capacityView({ federations, bondMinSats, pegInMinSats, was = {},
     const headroom = cap > reserve ? cap - reserve : 0n;
     const bStar = targetBond({ reserveSats: reserve, nominal: x.nominal || 1, bondMinSats });
     const pStar = targetPegIn({ headroomSats: headroom, pegInMinSats, seats: gatewaySeats });
-    const below = (x.guardianBonds || []).filter((g) => BigInt(g.bondSats || 0) < bStar).map((g) => ({ node: g.node, bondSats: String(g.bondSats), addSats: String(bStar - BigInt(g.bondSats || 0)) }));
+    // a node named twice (two bond outputs, kanban #544) is one guardian with their sum
+    const bonds = [...(x.guardianBonds || []).reduce((m, g) => m.set(g.node, (m.get(g.node) || 0n) + BigInt(g.bondSats || 0)), new Map())].map(([node, bondSats]) => ({ node, bondSats }));
+    const below = bonds.filter((g) => BigInt(g.bondSats || 0) < bStar).map((g) => ({ node: g.node, bondSats: String(g.bondSats), addSats: String(bStar - BigInt(g.bondSats || 0)) }));
     const gwBelow = (x.gateways || []).filter((g) => BigInt(g.pegInSats || 0) < pStar).map((g) => ({ node: g.node, pegInSats: String(g.pegInSats), addSats: String(pStar - BigInt(g.pegInSats || 0)) }));
     return { federation: x.federation, status: x.status, load, band, reserveSats: String(reserve), exposureCapSats: String(cap), headroomSats: String(headroom),
-      targetBondSats: String(bStar), guardians: (x.guardianBonds || []).length, guardiansBelowTarget: below,
+      targetBondSats: String(bStar), guardians: bonds.length, guardiansBelowTarget: below,
       targetPegInSats: String(pStar), gateways: (x.gateways || []).length, gatewaysBelowTarget: gwBelow };
   });
   const open = rows.filter((r) => r.status === 'OPEN' && typeof r.load === 'number');

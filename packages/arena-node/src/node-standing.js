@@ -7,7 +7,9 @@
 //   headroom        own bond / bond_min of the largest bracket now common
 // and warns "while headroom is still above 1 - at a configured margin, reference 1.5x - and state plainly what would restore it: how
 // much more capital". Two warnings apart: FALLING SHARE (the network grows; not a fault, not urgent) and LOSING BRACKETS (bond_min of
-// the brackets commonly played has passed, or is near, this node's bond; a bond cannot be topped up - a second bond and 30 days).
+// the brackets commonly played has passed, or is near, this node's bond; the warning names the sat to add as a second bond output,
+// counted with the first - kanban #544).
+import { nodeBondOf } from '../../arena-protocol/src/census.js';
 
 /** The bracket "now common": the bond_min most of the recent rounds name; on a tie the larger. */
 export function commonBracket(rounds) {
@@ -25,8 +27,12 @@ export function commonBracket(rounds) {
  */
 export function nodeStanding({ me, rounds, margin = 1.5 }) {
   const mine = (list) => (list || []).find((e) => String(e.pubkey).toLowerCase() === me);
+  // THIS NODE'S BOND IS THE SUM OF ITS OUTPUTS (kanban #544): an added second output counts with the first
   let own = null;
-  for (const r of rounds) { const e = mine(r.entries) || mine(r.excluded); if (e && e.bondSats !== undefined) { own = BigInt(e.bondSats); break; } }
+  for (const r of rounds) {
+    const n = nodeBondOf(r.entries, me) || nodeBondOf(r.excluded, me);
+    if (n && n.outputs.some((o) => o.bondSats > 0n)) { own = n.bondSats; break; }
+  }
   const weightIn = (r) => {
     const total = (r.entries || []).reduce((t, e) => t + BigInt(e.bondSats || 0n), 0n);
     if (own === null) return null;
@@ -44,9 +50,9 @@ export function nodeStanding({ me, rounds, margin = 1.5 }) {
     warnings.push({ kind: headroom < 1 ? 'losing brackets' : 'near the floor', headroom, urgent: true,
       says: headroom < 1
         ? `this node's bond (${own} sat) is under the bond_min of the rounds now commonly played (${common} sat): it is no longer eligible for them, and its fee income will not lift on its own. `
-          + `${need} sat more in a second bond restores ${margin}x headroom - a bond cannot be topped up, and the first stays locked until its maturity.`
+          + `Increase your bond by ${need} sat (Add to bond: a second output beside the first, counted with it) to restore ${margin}x headroom.`
         : `headroom ${headroom.toFixed(2)}x, under the ${margin}x margin: the bond_min now common is ${common} sat and this node's bond ${own} sat. `
-          + `${need} sat more in a second bond restores ${margin}x, before the floor passes it.` });
+          + `Increase your bond by ${need} sat (Add to bond) to restore ${margin}x, before the floor passes it.`, addSats: String(need) });
   }
   if (ownWeight !== null && oldest !== null && oldest > 0 && ownWeight < oldest * 0.75)
     warnings.push({ kind: 'falling share', urgent: false, from: oldest, to: ownWeight,

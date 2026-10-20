@@ -8,6 +8,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
+import { bondsOf } from './state.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 
 /** Plan (and with `post`, broadcast) the larger bond. Answers { ok, plan } / { ok, bond } or { ok: false, why }. */
@@ -41,6 +42,7 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
   const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
     lock: plan.lock, atMs: Date.now(), replaced: { txid: old.txid, sats: String(old.sats), maturity: old.maturity } };
-  state.save({ bond });
+  // the first output is the one replaced; outputs added beside it (add-bond.js) stay as they are
+  state.save({ bond, bonds: [bond, ...bondsOf(s).slice(1)] });
   return { ok: true, plan, bond };
 }

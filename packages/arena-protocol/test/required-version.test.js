@@ -26,7 +26,8 @@ test('this build writes its version and reads the versions it lists', () => {
   assert.equal(speaksVersion(12), true, '2026.0.12: the leaderboard payout');
   assert.equal(speaksVersion(16), true);
   assert.equal(speaksVersion(17), true, 'the owner\'s emergency key (spec §23A.5a)');
-  assert.equal(speaksVersion(19), false);
+  assert.equal(speaksVersion(19), true, 'add to bond: a node\'s outputs summed (kanban #544)');
+  assert.equal(speaksVersion(20), false);
 });
 
 test('every live manifest keeps its bytes and its game id: none names a required version', () => {
@@ -80,7 +81,8 @@ test('a protocol version is shown as its number (2026-10-19: "Protocol is just p
   assert.equal(protocolVersionName(12), '12', 'the leaderboard payout');
   assert.equal(protocolVersionName(17), '17', 'a protocol version is shown as its number (2026-10-19)');
   assert.deepEqual(readProtocolVersionName('2026.0.1'), { ok: true, version: 1, known: true });
-  assert.deepEqual(readProtocolVersionName('2027.0.19'), { ok: true, version: 19, known: false });
+  assert.deepEqual(readProtocolVersionName('2027.0.20'), { ok: true, version: 20, known: false });
+  assert.deepEqual(readProtocolVersionName('19'), { ok: true, version: 19, known: true });
   assert.equal(protocolVersionName(18), '18', 'the tag switch');
   assert.deepEqual(readProtocolVersionName('2026.0.17'), { ok: true, version: 17, known: true });
   assert.deepEqual(readProtocolVersionName('1'), { ok: true, version: 1, known: true });
