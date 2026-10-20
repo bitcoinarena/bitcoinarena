@@ -300,8 +300,12 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // and the processes of those older releases (Windows ends a release's processes by its folder; elsewhere the units above stop them)
   const olders = [...new Set(moving.flatMap((f) => oldersIn(oldTexts.get(f))))];
   if (platform === 'win32') for (const o of olders) await svc.stop([], o);
-  // NOTHING OF AN OLDER RELEASE STILL RUNS (kanban #546): after the stop the process list is asked; a leftover is ended and named
-  const oldFolders = [from, ...olders];
+  // NOTHING OF AN OLDER RELEASE STILL RUNS (kanban #546): after the stop the process list is asked; a leftover is ended and named. Every
+  // release beside the new one counts, named by a launcher or not (measured 2026-10-20 04:41Z in the Windows VM, .901 -> .902 by hand:
+  // the updater's child still ran 2026.1.1, which no launcher named any more, so a check of the release updated from missed it)
+  const newFolder = String(newRelease).split(/[\\/]/).filter(Boolean).pop();
+  const besides = (() => { try { return readdirSync(releasesDir).filter((d) => /^arena-node-/.test(d) && d !== newFolder).map((d) => join(releasesDir, d)); } catch { return []; } })();
+  const oldFolders = [...new Set([from, ...olders, ...besides])];
   const leftAfterStop = svc.leftovers ? await svc.leftovers(oldFolders) : [];
   if (leftAfterStop.length && svc.end) await svc.end(leftAfterStop.map((x) => x.pid));
   const backup = backupNode(home);
