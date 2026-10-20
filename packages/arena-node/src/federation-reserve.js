@@ -5,6 +5,8 @@
 // `wallet_summary` over its JSON-RPC WebSocket (the API the stock client uses), and kept only when at least `threshold`
 // guardians answer the same sum - one guardian cannot move the number. The reserve is the federation's own coins: the
 // spendable UTXOs and its change not yet confirmed or signed; peg-outs on their way out are not.
+import { parseRoutes, routed } from './fetch-routes.js';
+
 const sumOf = (list) => (list || []).reduce((t, u) => t + BigInt(u.amount || 0), 0n);
 export const reserveOfSummary = (s) => sumOf(s.spendable_utxos) + sumOf(s.unconfirmed_change_utxos) + sumOf(s.unsigned_change_utxos);
 
@@ -21,7 +23,21 @@ const V2 = 100;   // a federation_wallet request's JSON-RPC id is V2 + the modul
 const OVERRIDES = new Map(String(process.env.FM_WS_API_CONNECT_OVERRIDES || '').split(',').filter((x) => x.includes('=')).map((x) => {
   const i = x.indexOf('='); return [x.slice(0, i).replace(/\/+$/, ''), x.slice(i + 1).replace(/\/+$/, '')];
 }));
-export const routedEndpoint = (endpoint) => OVERRIDES.get(String(endpoint).replace(/\/+$/, '')) || endpoint;
+// AND THE SEAT'S OWN ROUTES (kanban #549, measured 2026-10-20 ~07:20Z: federation B drained into 4dc88be7, whose guardians are B's
+// seats' guardian-next at wss://seat.example.com/fed2-N/guardian-next; the overrides named /fed2-N and /fed2-N/guardian only,
+// so every read went out to the Funnel the test host cannot reach - "0 of 7 guardians named one reserve", no record, no successor
+// listed): an endpoint no override names is routed by ARENA_ROUTE_MAP (fetch-routes.js), its scheme carried over (wss <-> https,
+// ws <-> http) - every path under a seat's public prefix, a successor's guardian-next too, with nothing added by hand
+const ROUTES = parseRoutes(process.env.ARENA_ROUTE_MAP);
+export function routedEndpoint(endpoint, { overrides = OVERRIDES, routes = ROUTES } = {}) {
+  const e = String(endpoint).replace(/\/+$/, '');
+  if (overrides.has(e)) return overrides.get(e);
+  const m = /^(wss?):\/\//.exec(e);
+  if (!m || !routes.length) return endpoint;
+  const asHttp = (m[1] === 'wss' ? 'https://' : 'http://') + e.slice(m[0].length);
+  const to = routed(asHttp, routes);
+  return to === asHttp ? endpoint : to.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
+}
 
 async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
   endpoint = routedEndpoint(endpoint);
