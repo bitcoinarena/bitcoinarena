@@ -134,10 +134,10 @@
     view.textContent = '';
     var bar = el('div', 'bar');
     var st = el('span', 'say', state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…');
+    // ONE NEW PROPOSAL (kanban #548, the owner 2026-10-20: "instead of buttons "Change fees" "Leaderboard payout" and "New Proposal" it is
+    // all grouped under new proposal - there is a type option which can be switched"): the type is chosen in the form
     var nw = el('a', 'btn primary grow', 'New proposal'); nw.href = '#new';
-    var fz = el('a', 'btn', 'Change fees'); fz.href = '#fees';
-    var lp = el('a', 'btn', 'Leaderboard payout'); lp.href = '#payout';
-    bar.append(st, fz, lp, nw); view.append(bar);
+    bar.append(st, nw); view.append(bar);
     var t = el('div', 'topics');
     var th = el('div', 'th'); th.append(el('span', null, 'Proposal'), el('span', 'n', 'Amount'), el('span', 'n', 'Replies'), el('span', 'n', 'Stage')); t.append(th);
     if (state.list && !state.list.length) t.append(el('div', 'empty', 'No proposals yet. Start the first one.'));
@@ -203,10 +203,20 @@
     view.append(form);
   }
 
-  function newView() {
+  // THE TYPE OF A NEW PROPOSAL (kanban #548): payout to a Lightning address (the default), a leaderboard payout, or a change of fees -
+  // one form, its fields following the type; the Why is never optional
+  var TYPES = [['#new', 'Payout to Lightning address'], ['#new-leaderboard', 'Leaderboard payout'], ['#new-fees', 'Change fees']];
+  function composeHead(hash) {
     view.textContent = '';
     var back = el('a', 'btn', '← All proposals'); back.href = '#';
     var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'New proposal'));
+    var sw = el('div', 'types'); sw.setAttribute('role', 'radiogroup'); sw.setAttribute('aria-label', 'Type');
+    sw.append(el('span', 'types-label', 'Type'));
+    TYPES.forEach(function (t) { var a = el('a', 'type' + (t[0] === hash ? ' on' : ''), t[1]); a.href = t[0]; a.setAttribute('role', 'radio'); a.setAttribute('aria-checked', t[0] === hash ? 'true' : 'false'); sw.append(a); });
+    view.append(sw);
+  }
+  function newView() {
+    composeHead('#new');
     var f = el('form', 'compose');
     var r = state.reserves, max = r ? Math.floor(r.sats * CAP_PCT / 100) : null;
     var reservesLine = r ? 'The protocol reserves hold <b>' + r.sats.toLocaleString('en-US') + ' sat</b> (' + r.agreeing + ' of ' + r.asked + ' nodes agree). A proposal may ask at most <b>' + CAP_PCT + '%: ' + max.toLocaleString('en-US') + ' sat</b>.'
@@ -270,9 +280,7 @@
     marketDonationBps: 'Market: developers\' donation', marketReserveBps: 'Market: protocol reserve', websitePct: 'Website share of the nodes\' fee' };
   function feeVal(k, v) { return BLWPCLIENT.FEE_UNITS[k] === 'bps' ? (Number(v) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %' : v + ' %'; }
   function feesView() {
-    view.textContent = '';
-    var back = el('a', 'btn', '← All proposals'); back.href = '#';
-    var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'Change fees'));
+    composeHead('#new-fees');
     var box = el('div', 'empty', 'Reading the fees from the nodes…'); view.append(box);
     BLWPCLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
       box.remove();
@@ -289,7 +297,7 @@
         + r.sums.roundMaxBps / 100 + ' %, an item\'s parts add up to ' + r.sums.itemPct + ' %, a market takes at most ' + r.sums.marketMaxBps / 100 + ' %. A donation is never 0, and a change to one needs most of the protocol developers.</p>'
         + '<div class="tbl"><table><thead><tr><th>Fee</th><th>In force</th><th>Limit</th><th>New value</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
         + '<div class="row"><label>Applies from block<input name="activation" type="number" step="1" min="' + earliest + '" value="' + earliest + '"></label></div>'
-        + '<label>Why <span class="hint">what the change does and for whom</span><textarea name="purpose" rows="5" maxlength="4000"></textarea></label>'
+        + '<label>Why <span class="hint">required: what the change does and for whom</span><textarea name="purpose" rows="5" maxlength="4000" required></textarea></label>'
         + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
       var typed = function () { var t = {}; Object.keys(BLWPCLIENT.FEES).forEach(function (k) { t[k] = f[k].value; }); return t; };
       var check = function () {
@@ -307,6 +315,7 @@
         e.preventDefault(); var out = f.querySelector('.out');
         if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
         var ch = check(); if (!ch) return;
+        if (!f.purpose.value.trim()) { say(out, 'Say why: a proposal always gives its reason.', true); f.purpose.focus(); return; }
         say(out, 'Signing…');
         (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
           if (!net) throw new Error('the nodes did not agree on their network');
@@ -345,15 +354,27 @@
   // publication, bond-weighted, no signal; it passes at YES >= 25 % of the voting weight. The winners' payouts land in their wallets as
   // zaps do. Below, every request with its vote.
   function payoutView() {
-    view.textContent = '';
-    var back = el('a', 'btn', '← All proposals'); back.href = '#';
-    var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'Leaderboard payout'));
+    composeHead('#new-leaderboard');
     var box = el('div', 'empty', 'Reading the nodes…'); view.append(box);
     var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
     Promise.all([BLWPCLIENT.fetchLeaderboards({ nodes: state.nodes }), fetch(base + '/reserves').then(function (r) { return r.json(); }).catch(function () { return { federations: [] }; })]).then(function (x) {
       box.remove();
       var lbs = x[0], feds = (x[1].federations || []).filter(function (f) { return f.key || f.reserveKey; });
       var tip = Number(lbs.tip || state.tip || 0);
+      // WHAT EACH FEDERATION HOLDS, PROMINENTLY (kanban #548: "The leaderboard payouts must also more prominently how much is available in
+      // each federation and the max amounts"): its protocol reserves now and the most one payout may take from them (10 %)
+      var avail = el('div', 'avail');
+      if (!feds.length) avail.append(el('div', 'empty', 'No federation with a reserve key answered: nothing can be paid out now.'));
+      feds.forEach(function (fd) {
+        var held = Math.floor(Number(fd.heldMsat || 0) / 1000);
+        var c = el('div', 'avail-fed');
+        c.append(el('div', 'avail-name', 'Federation ' + fd.federationId.slice(0, 8)),
+          el('div', 'avail-row', ''), el('div', 'avail-row', ''));
+        c.children[1].append(el('span', null, 'Reserves now'), el('b', null, held.toLocaleString('en-US') + ' sat'));
+        c.children[2].append(el('span', null, 'Max for one payout (10 %)'), el('b', 'max', Math.floor(held / 10).toLocaleString('en-US') + ' sat'));
+        avail.append(c);
+      });
+      view.append(avail);
       var f = el('form', 'compose payout');
       var fedOpts = feds.map(function (fd) { var held = Math.floor(Number(fd.heldMsat || 0) / 1000); return '<option value="' + esc(fd.federationId) + '">' + esc(fd.federationId.slice(0, 8)) + ' · reserves ' + held.toLocaleString('en-US') + ' sat · up to ' + Math.floor(held / 10).toLocaleString('en-US') + ' sat</option>'; }).join('');
       var day = new Date(Date.now() + 15 * 86400000); day.setUTCHours(0, 0, 0, 0);
@@ -362,7 +383,7 @@
         + '<div class="row"><label>Top<input name="top" type="number" min="1" max="' + BLWPCLIENT.LB_TOP_MAX + '" value="10"></label><label>Amount (sat)<input name="amount" type="number" min="1" step="1"></label></div>'
         + '<div class="row"><label>Paid from<select name="fed">' + (fedOpts || '<option value="">no federation with a reserve key answered</option>') + '</select></label><label>Period<select name="period">' + BLWPCLIENT.LB_PERIOD_DAYS.map(function (d) { return '<option value="' + d + '">' + (d === 30 ? 'last month (30 days)' : 'last ' + d + ' days') + '</option>'; }).join('') + '</select></label></div>'
         + '<div class="row"><label>Split per place <span class="hint">empty: equal; or percents, one per place, e.g. 50, 30, 20</span><input name="split" placeholder="equal"></label><label>Payment date (UTC)<input name="date" type="date" value="' + day.toISOString().slice(0, 10) + '"></label></div>'
-        + '<label>Why <span class="hint">optional</span><textarea name="purpose" rows="3" maxlength="4000"></textarea></label>'
+        + '<label>Why <span class="hint">required: why these players, this amount</span><textarea name="purpose" rows="3" maxlength="4000" required></textarea></label>'
         + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
       f.scope.addEventListener('change', function () { f.game.disabled = f.scope.value === '0'; });
       var built = function () {
@@ -387,6 +408,7 @@
         if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
         var b = check(); if (!b) return;
         if (!b.amountSats) { say(out, 'Name the amount.', true); return; }
+        if (!b.purpose.trim()) { say(out, 'Say why: a proposal always gives its reason.', true); f.purpose.focus(); return; }
         say(out, 'Signing…');
         (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
           if (!net) throw new Error('the nodes did not agree on their network');
@@ -418,8 +440,9 @@
 
   function route() {
     var h = location.hash;
-    if (h === '#payout') payoutView();
-    else if (h === '#fees') feesView();
+    if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
+    if (h === '#new-leaderboard') payoutView();
+    else if (h === '#new-fees') feesView();
     else if (h === '#new') newView();
     else if (h.indexOf('#pip=') === 0) { var q = (state.list || []).find(function (x) { return String(x.pip) === h.slice(5); }); threadView(q ? q.id : ''); }
     else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();
