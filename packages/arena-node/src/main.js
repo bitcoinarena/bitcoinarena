@@ -396,6 +396,13 @@ if (url) {
     chainBlockTxids: async (h) => (await call('getblock', [await call('getblockhash', [h]), 1])).tx,
     // AND WHETHER ONE WAITS IN THIS NODE'S MEMPOOL
     chainInMempool: async (txid) => { try { await call('getmempoolentry', [txid]); return true; } catch { return false; } },
+    // THE NETWORK'S TRANSACTIONS ON THEIR WAY (the owner 2026-10-20: "Make sure that both show the same number of transactions at all
+    // times"): this node's mempool, a transaction in it, its unconfirmed ancestors, and the last blocks' transactions - GET /pending
+    // lists from them every transaction that pays the bond marker (bonds, advert updates) with the parents it waits on
+    chainMempoolIds: async () => (await call('getrawmempool', [])).map(String),
+    chainRawTx: async (txid) => fromHex(String(await call('getrawtransaction', [txid]))),
+    chainMempoolAncestors: async (txid) => { try { return (await call('getmempoolancestors', [txid])).map(String); } catch { return []; } },
+    chainRecentBlocks: async (from, to) => { const v = await blocksOver(call, from, to, { cache: blocksKept }); return v.blocks.map((b, i) => ({ height: from + i, transactions: b.transactions })); },
     // THE CHAIN'S TIPS NEAR THE TOP (the owner 2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133
     // while the public explorer followed another miner's of the same work): the active tip, and every other tip within 12 blocks of it
     // with its work against the active one's and the height it forks from - a tie is decided by the next block, not by this node

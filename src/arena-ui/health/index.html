@@ -48,6 +48,7 @@
   <div class="card"><h2>Gateway seats</h2><div class="scroll"><table id="gateways"></table></div></div>
   <div class="card"><h2>Pending gateways</h2><div class="scroll"><table id="gw-pending"></table></div></div>
   <div class="card"><h2>What the network waits for</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll"><table id="pending"></table></div></div>
+  <div class="card"><h2>Transactions on their way <span id="txs-count" class="muted"></span></h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">every grid publication, peg-in, bond and advertisement update the nodes see in their mempool or last 12 blocks, with the unconfirmed or same-block parents they spent - the same list the mining view tracks (GET /pending, txs)</div><div class="scroll"><table id="pending-txs"></table></div></div>
   <div class="card"><h2>Liquidity providers</h2><div class="scroll"><table id="liquidity"></table></div></div>
   <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll"><table id="lnd"></table></div></div>
   <div class="card"><h2>Games and markets</h2><div class="scroll"><table id="games"></table></div></div>
@@ -315,6 +316,25 @@
       rows.push(`<tr><td>${dot('warn')}advertisement of ${short(x.node, 10)} <span class="muted">${esc(String(x.endpoint).replace(/^wss?:\/\//, ''))}</span></td><td class="mono">-</td><td>-</td><td></td>
         <td class="wrap">${esc(x.changes.join('; '))} - the census takes it by block ${sat(x.takenByTip)} (${left ? `in ${left} block${left === 1 ? '' : 's'}` : 'now'})</td></tr>`);
     }
+    // THE ONE TRANSACTION LIST (the owner 2026-10-20: "Make sure that both show the same number of transactions at all times"): every
+    // node's txs, one row per transaction, its furthest confirmation kept, and how many of the answering nodes name it
+    { const all = new Map();
+      for (const a of answers) for (const t of a.txs || []) {
+        const was = all.get(t.txid);
+        if (!was) all.set(t.txid, { ...t, seenBy: 1 });
+        else { was.seenBy++; if ((t.confirmations || 0) > (was.confirmations || 0)) Object.assign(was, { ...t, seenBy: was.seenBy }); }
+      }
+      const label = (t) => t.kind === 'advert update' ? `advertisement update of ${short(t.node, 10)}${t.protocols ? ` (protocols to ${t.protocols})` : ''}`
+        : t.kind === 'bond' ? `bond of ${short(t.node, 10)}${t.maturity ? ` (matures ${sat(t.maturity)})` : ''}`
+        : t.kind === 'grid publication' ? `${esc(t.game)} grid publication, ${t.slots} rounds`
+        : t.kind === 'peg-in' ? `peg-in ${(t.outputs || []).map((o) => `:${esc(o.vout)} ${sat(o.sats)} sat to ${short(o.node, 8)} in ${fedName(o.federation)}`).join('; ')}`
+        : t.kind === 'funding' ? `funding of ${short(t.parentOf, 10)}` : esc(t.kind);
+      const list = [...all.values()].sort((x, y) => (x.confirmations || 0) - (y.confirmations || 0) || String(x.kind).localeCompare(String(y.kind)));
+      $('txs-count').textContent = `(${list.length})`;
+      $('pending-txs').innerHTML = '<tr><th>Tx</th><th>What</th><th>Confirmations</th><th>Nodes</th></tr>'
+        + (list.map((t) => `<tr><td class="mono">${short(t.txid, 10)}</td><td class="wrap">${label(t)}</td>
+          <td>${t.inMempool ? 'in the mempool' : `${sat(t.confirmations)}${t.height ? ` (block ${sat(t.height)})` : ''}`}</td><td>${t.seenBy} of ${answers.length}</td></tr>`).join('')
+          || `<tr><td colspan="4" class="muted">${answers.length ? 'no transaction on its way' : 'no node answers GET /pending yet'}</td></tr>`); }
     $('pending').innerHTML = '<tr><th>What</th><th>Tx</th><th>Confirmations</th><th></th><th>Waits for</th></tr>'
       + (rows.join('') || `<tr><td colspan="5" class="muted">${answers.length ? 'nothing pending on ' + answers.length + ' node(s)' : 'no node answers GET /pending yet'}</td></tr>`);
   }
