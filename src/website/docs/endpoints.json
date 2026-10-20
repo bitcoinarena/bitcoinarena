@@ -9581,6 +9581,92 @@
   "pathParams": []
  },
  {
+  "method": "POST",
+  "path": "/owner/add-bond",
+  "params": "body JSON signed request, action \"add-bond\", args {sats, post}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, plan: {addSats, bondSats, totalSats, fees, maturity, lock, countsAfter}, bond: {txid} or null}; 400 with why; 401/403 when not the owner; 501 without an installer home or a bond wallet (ARENA_BOND_CLI)",
+  "purpose": "Add to this node's bond: a second bond output beside the first, its body the node's own newest advertisement, counted with it from protocol 19 (kanban #544). Without post: the plan (amount, new total, fees, maturity, about when) checked with testmempoolaccept; with post: true, the funding and bond transactions broadcast. Paid from the installer's wallet, or on a seat set up by hand from the bond wallet it names (kanban #553).",
+  "audience": "operator/monitoring",
+  "line": 4744,
+  "summary": "Add to the bond (a second output)",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"liquidity/new-address\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, address:\"tb1p…\"}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no liquidity provider service."
+   },
+   {
+    "status": "502",
+    "contentType": "application/json",
+    "description": "The provider service did not answer or failed."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/bond-wallet/address",
+  "params": "body JSON signed request, action \"bond-wallet/address\"",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, address}; 401/403 when not the owner; 501 without a bond wallet (ARENA_BOND_CLI); 500 when the wallet does not answer",
+  "purpose": "A new top-up address of the bond wallet a seat set up by hand names (ARENA_BOND_CLI), for the owner page's \"Top-up address\" button beside Add to bond (kanban #553).",
+  "audience": "operator/monitoring",
+  "line": 4775,
+  "summary": "A top-up address for the bond wallet",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"liquidity/new-address\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, address:\"tb1p…\"}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no liquidity provider service."
+   },
+   {
+    "status": "502",
+    "contentType": "application/json",
+    "description": "The provider service did not answer or failed."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
   "method": "GET",
   "path": "/owner/version",
   "params": "none",
