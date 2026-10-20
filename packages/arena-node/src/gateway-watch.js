@@ -10,7 +10,8 @@
 // credited to the gateway whose module key (its routing_info's module_public_key) funded it, in the epoch of the probe that first
 // saw it. The first probe only takes the index (history before the watch is not credited to any epoch). Outgoing is not counted.
 import { checkGatewayClaim, pegInOutpointsOf } from '../../arena-protocol/src/gateway-claim.js';
-import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS } from '../../arena-protocol/src/gateway-seats.js';
+import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
+import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
 
@@ -22,7 +23,10 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // among them is a proved peg-in (§23A.3a); none given: no peg-in is proved
   federationCoins = async () => null,
   // THE SEATS A FEDERATION NEEDS (the owner 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"): async (fid) -> n
-  seatsFor = async () => GATEWAY_SEATS }) {
+  seatsFor = async () => GATEWAY_SEATS,
+  // THE FEDERATION'S RESERVE AND CAP from its record (§23A.3a part 2): async (fid) -> { reserveSats, exposureCapSats } | null; with them,
+  // under peg-in pressure the proved peg-in ranks before volume
+  pressureFor = async () => null }) {
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
@@ -147,8 +151,18 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const provedOf = (node, r) => (coins ? pegInOutpointsOf(r.claim).filter((o) => coins.has(o) && named.get(o).length === 1).reduce((a, o) => a + coins.get(o), 0n) : null);
       const beacon = await beaconAt(e * epochBlocks);
       if (!beacon) return { ok: false, why: `the epoch's first block ${e * epochBlocks} is not in this seat's chain` };
-      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats });
-      return { ok: true, s, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
+      for (const c of candidates) { const v = provedOf(toHex(c.node), rows.get(toHex(c.node))); c.provedPegInSats = v === null ? 0n : v; }
+      // PEG-IN PRESSURE, judged on the gateways holding the seats now (the epoch before's): their proved peg-ins against P*
+      let pegInStarSats = null;
+      try {
+        const rec = await pressureFor(fid);
+        const holders = candidates.filter((c) => (inc || []).includes(toHex(c.node)));
+        const p = rec && holders.length ? pegInPressure({ pegIns: holders.map((c) => ({ node: toHex(c.node), pegInSats: c.provedPegInSats })),
+          reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, pegInMinSats: (GATEWAY_MINIMUMS[network] || GATEWAY_MINIMUMS.mainnet).pegInSats, seats }) : null;
+        if (p) pegInStarSats = p.targetPegInSats;
+      } catch { pegInStarSats = null; }
+      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats, pegInStarSats });
+      return { ok: true, s: { ...s, ...(pegInStarSats !== null ? { pegInPressure: { targetPegInSats: String(pegInStarSats) } } : {}) }, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '',
         // what the operator states is still on its way (peg-ins confirming, kanban #552): beside the signed claim, shown as stated
         pending: rows.get(toHex(c.node)).claim.pending || null,

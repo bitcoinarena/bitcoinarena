@@ -58,12 +58,17 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
  * `network`; `bondMinGuardian`. Answers { seated: [node hex], ranked: [{ node, ... }], ineligible: [{ node, why }], waiting: [{ node, why }],
  * belowMinimums: [node hex], empty, why }.
  */
-export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS }) {
+// `pegInStarSats`: P* while the federation is under peg-in pressure (capacity.js pegInPressure), else null - then a candidate's proved
+// peg-in up to P* (`provedPegInSats`) ranks before its routed volume (§23A.3a part 2: "a gateway that can take the deposits is seated
+// ahead of one that has routed more but cannot")
+export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS, pegInStarSats = null }) {
   if (!(beacon instanceof Uint8Array) || beacon.length !== 32) throw new TypeError('the epoch is ranked on its first block\'s hash');
   const minimums = GATEWAY_MINIMUMS[network];
   if (!minimums) throw new Error(`no gateway minimums for ${network}`);
   const ineligible = [], eligible = [], serving = [];
-  const rankable = (c) => ({ ...c, nodeHex: toHex(c.node), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats || 0) < BigInt(c.outboundSats || 0) ? c.inboundSats || 0 : c.outboundSats || 0, 100_000n),
+  const star = pegInStarSats === null || pegInStarSats === undefined ? null : BigInt(pegInStarSats);
+  const pegOf = (c) => { if (star === null) return 0n; const x = BigInt(c.provedPegInSats || 0); return x < star ? x : star; };
+  const rankable = (c) => ({ ...c, nodeHex: toHex(c.node), pegin: pegOf(c), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats || 0) < BigInt(c.outboundSats || 0) ? c.inboundSats || 0 : c.outboundSats || 0, 100_000n),
     availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats || 0), ticket: gatewayTicket(beacon, c.node, epoch) });
   for (const c of candidates) {
     const why = ineligibleWhy(c, { minimums, bondMinGuardian });
@@ -74,7 +79,7 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
     }
     eligible.push(rankable(c));
   }
-  const cmp = (a, b) => (a.volume !== b.volume ? (a.volume > b.volume ? -1 : 1) : a.capacity !== b.capacity ? (a.capacity > b.capacity ? -1 : 1)
+  const cmp = (a, b) => (a.pegin !== b.pegin ? (a.pegin > b.pegin ? -1 : 1) : a.volume !== b.volume ? (a.volume > b.volume ? -1 : 1) : a.capacity !== b.capacity ? (a.capacity > b.capacity ? -1 : 1)
     : a.availability !== b.availability ? (a.availability > b.availability ? -1 : 1) : a.bond !== b.bond ? (a.bond > b.bond ? -1 : 1)
     : a.ticket < b.ticket ? -1 : a.ticket > b.ticket ? 1 : 0);
   // one seat per operator: its best node stands for it
