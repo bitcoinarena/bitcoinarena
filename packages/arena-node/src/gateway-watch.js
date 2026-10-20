@@ -122,6 +122,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const epoch = Math.floor(h / epochBlocks);
     const at = epochs.has(epoch - 1) ? epoch - 1 : epoch;
     const all = (await entries()) || [];
+    // NO CENSUS READ, NO RANKING (the owner 2026-10-20 "is this correct?" - a seat right after its restart ranked with no census and said both of
+    // Federation 1's gateways had a "bond below bond_min_guardian"): a seat that holds no census yet says so, and judges nothing
+    if (!all.length) return { ok: false, federationId: fid, why: 'this seat has not read its census yet (just restarted): ask again in a few minutes' };
     const seatedNow = new Set((await seated(fid)) || []);
     let seats = GATEWAY_SEATS; try { const n = Number(await seatsFor(fid)); if (Number.isInteger(n) && n >= 1) seats = n; } catch { /* two */ }
     // ONE EPOCH RANKED: its probes' candidates, by gateway-seats.js, the epoch before's holders (`inc`) stepping back
