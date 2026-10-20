@@ -50,6 +50,8 @@ import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from '
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+// the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
+const SETTLEMENT_ROW_KINDS = new Set(['donation key', 'reserve']);
 
 // WHO THE FEE LOCKS PAID: the signer nodes, and a market's donation keys - named apart
 const feeLine = (payouts) => {
@@ -1362,8 +1364,12 @@ export class LockSettlement {
     if (!plan || !Array.isArray(plan.payouts) || !this.round.putDonationOutputs || !/^[0-9a-f]{64}$/.test(String(txid))) return 0;
     const row = this.round.get(roundIdBytes);
     const federationId = row ? decodeRoundContract(new Uint8Array(row.contract)).federationId : new Uint8Array(32);
-    const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p, i }) => p.kind === 'donation key' && (!only || only.has(i))).map(({ p, i }) => ({
-      outpoint: { txid: fromHex(String(txid)), outIdx: BigInt(i) }, entryId: p.donation.id, roundId: roundIdBytes, federationId,
+    // AND A MARKET'S PROTOCOL RESERVE (the owner 2026-10-20 #502, measured on round 6c68396b: its settlement paid 333 msat to
+    // 337ae01a's reserve key - 20 % of the 1,666 msat of fees due - and GET /reserves never listed it: the reserves' book held only
+    // the reserve outputs a game entry makes at its lock; a market pays its reserve at settlement): each 'reserve' payout is a
+    // row under the reserve key too, its entry id zeros (it is the round's, no one entry's)
+    const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p, i }) => SETTLEMENT_ROW_KINDS.has(p.kind) && (!only || only.has(i))).map(({ p, i }) => ({
+      outpoint: { txid: fromHex(String(txid)), outIdx: BigInt(i) }, entryId: p.donation ? p.donation.id : new Uint8Array(32), roundId: roundIdBytes, federationId,
       recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}` }));
     if (rows.length) this.round.putDonationOutputs(rows);
     return rows.length;
@@ -1396,7 +1402,7 @@ export class LockSettlement {
           + `${signed.length} and pays ${moves.payouts}: nothing is indexed from a plan that was not signed`), { mismatched: true });
       plan = got.plan;
     }
-    const keys = plan.payouts.map((p, i) => ({ p, i })).filter(({ p }) => p.kind === 'donation key').map(({ i }) => i);
+    const keys = plan.payouts.map((p, i) => ({ p, i })).filter(({ p }) => SETTLEMENT_ROW_KINDS.has(p.kind)).map(({ i }) => i);
     if (!keys.length) return { indexed: 0, why: 'its plan pays no donation key' };
     let only = null, redeemed = 0;
     if (onlyStored) {
@@ -1420,6 +1426,36 @@ export class LockSettlement {
    * checked after BACKFILL_TRIES counted tries. Paced: one round per
    * `paceMs`, so a seat with hundreds of them is not held at a core.
    */
+  /**
+   * THE MARKETS' RESERVES SETTLED BEFORE THEY WERE KEPT AS ROWS (2026-10-20, #502): every market round (one holding an outcome
+   * attestation) whose settlement this seat holds ACCEPTED and that has no reserve row yet (a 'settlement:' row with entry id zeros)
+   * is indexed again from its matched plan - only payouts the guardians still hold. Once per round per process; the backfill of
+   * donation keys skips these rounds when their donation keys were indexed, so it never reached their reserve.
+   */
+  async backfillMarketReserves({ paceMs = 3000 } = {}) {
+    const out = { checked: 0, indexed: 0 };
+    if (!this.round.db || !this.round.lockSettlement) return out;
+    const seen = this.reservesBackfilled || (this.reservesBackfilled = new Set());
+    let ids = [];
+    try { ids = this.round.db.prepare('SELECT DISTINCT round_id FROM outcome_attestations').all().map((r) => new Uint8Array(r.round_id)); } catch { return out; }
+    const zero = Buffer.alloc(32);
+    for (const rid of ids) {
+      const key = toHex(rid);
+      if (seen.has(key)) continue;
+      const kept = this.round.lockSettlement(rid);
+      if (!kept || kept.state !== ACCEPTED || !kept.txid) continue;
+      seen.add(key);
+      const has = this.round.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND entry_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(rid), zero).n;
+      if (has > 0) continue;
+      out.checked++;
+      const r = await this.indexRecovered(rid, kept.txid, { onlyStored: true });
+      if (r.indexed) out.indexed++;
+      if (paceMs) await new Promise((ok) => setTimeout(ok, paceMs));
+    }
+    if (out.checked) console.log(`[settle] markets' reserves backfilled: ${out.indexed} of ${out.checked} settled market round(s) indexed`);
+    return out;
+  }
+
   async backfillDonationKeys({ paceMs = 3000 } = {}) {
     const out = { checked: 0, indexed: 0, outputs: 0, mismatched: 0, redeemed: 0, noKeys: 0, failed: 0, gaveUp: 0 };
     if (!this.round.lockSettlementsIn || !this.round.donationBackfilled) return out;
