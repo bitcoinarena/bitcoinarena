@@ -3931,7 +3931,8 @@
       // THE SPLIT, ONLY WHEN THERE IS ONE: the sum above is every federation's; this line says where it sits (2026-10-13)
       const split = known && Array.isArray(bal.parts) && bal.parts.length > 1
         ? 'Across ' + bal.parts.length + ' federations: ' + bal.parts.map((x) => x.federation.slice(0, 8) + ' ' + sat(x.sats)).join(' · ') : '';
-      document.getElementById('arena-balance-line').textContent = known ? split : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
+      const mergingLine = known && bal.merging > 0 ? ' (' + sat(bal.merging) + ' of it still merging in from your other wallets in this browser)' : '';
+      document.getElementById('arena-balance-line').textContent = known ? (split || (mergingLine ? 'Total' : '')) + mergingLine : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
       const why = document.getElementById('arena-money-why');
       if (why && !isBackedUp()) why.textContent = '';
     }
@@ -4216,6 +4217,7 @@
       document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
         : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
       document.getElementById('arena-wb-pending').textContent = (bal && bal.arriving ? ' · ' + Number(bal.arriving).toLocaleString('en-US') + ' arriving' : '')
+        + (bal && bal.merging ? ' · ' + Number(bal.merging).toLocaleString('en-US') + ' merging' : '')
         + (bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '');
       // THE PAYING ROUND'S SETTLEMENT FACTS: the part of its lobby line from "signer nodes" / "selected nodes" on
       const ap = document.getElementById('arena-approval');
@@ -6588,11 +6590,18 @@
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
                 new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
               if (typeof other.sendAllEcash !== 'function') return;
-              const noteEmpty = () => L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor)));
-              if (BigInt(await other.balanceMsat()) === 0n) { noteEmpty(); return; }
+              // WHAT IT HOLDS, REMEMBERED UNTIL IT IS EMPTIED (the owner 2026-10-20 19:3xZ: "The total balance should always show the full balance even if
+              // it's not merged yet. The merge is a kind of slow process"): the sum counts it from the next read on, a next page from its first
+              const knownKey = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
+              const noteEmpty = () => { L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor))); L.removeItem(knownKey); };
+              const holds = BigInt(await other.balanceMsat());
+              if (holds === 0n) { noteEmpty(); return; }
+              L.setItem(knownKey, String(holds)); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
               const sent = JSON.parse(await other.sendAllEcash());
               if (!sent.ecash) { noteEmpty(); return; }
+              // from here the kept e-cash is what is counted (the sum reads it), not the remembered balance
               L.setItem('arena.ecash.pending.' + fedHex.slice(0, 16) + '.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from, fed: fedHex }));
+              L.removeItem(knownKey);
               await receiveKept();
               if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
             };
@@ -6690,11 +6699,33 @@
           let sum = 0n, arriving = 0n; const parts = [];
           for (const [fid, c] of window.ARENA_WALLETS) {
             try { const m = BigInt(await c.balanceMsat()); const i = ARENACLIENT.issuingMsat ? await ARENACLIENT.issuingMsat(c) : 0n; sum += m; arriving += i;
-              parts.push({ federation: fid, sats: Number(m / 1000n), arriving: Number(i / 1000n) }); }
+              parts.push({ federation: fid, sats: Number(m / 1000n), arriving: Number(i / 1000n) });
+              // remembered for this phrase too: should a tab later use another phrase, this money counts in its total from the first read
+              try { const ph = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16);
+                if (/^[0-9a-f]{16}$/.test(ph)) { const kk = 'arena.wallet.known.' + fid.slice(0, 16) + '.' + ph; if (m > 0n) vault().setItem(kk, String(m)); else vault().removeItem(kk); } } catch { /* not kept */ } }
             catch (e) { console.log('[arena] the balance in federation ' + fid.slice(0, 16) + ' could not be read: ' + (e && e.message ? e.message : e)); }
           }
+          // THE OTHER WALLETS' MONEY IN THE TOTAL BEFORE IT IS MERGED (the owner 19:3xZ: "The total balance should always show the full balance even if
+          // it's not merged yet"): each other kept phrase's balance as the merge last read it (arena.wallet.known.<fed>.<phrase>) and every e-cash
+          // copy kept between a send and its receive (arena.ecash.pending.*), per federation; this tab's own phrase is never counted twice
+          let merging = 0n;
+          { const L2 = vault(); const curHex = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16);
+            const by = new Map();
+            for (const k of Object.keys(L2)) {
+              let f = null, m = 0n;
+              if (k.startsWith('arena.wallet.known.')) { const seg = k.split('.'); if (!seg[5] && seg[4] === curHex) continue; f = seg[3]; try { m = BigInt(L2.getItem(k) || 0); } catch { m = 0n; } }
+              else if (k.startsWith('arena.ecash.pending.')) { try { const r = JSON.parse(L2.getItem(k)); f = String(r.fed || '').slice(0, 16) || null; m = BigInt(r.msat || 0); } catch { f = null; } }
+              if (f && m > 0n) by.set(f, (by.get(f) || 0n) + m);
+            }
+            for (const [f, m] of by) {
+              merging += m;
+              const part = parts.find((x) => x.federation.slice(0, 16) === f);
+              if (part) { part.sats += Number(m / 1000n); part.merging = Number(m / 1000n); }
+              else parts.push({ federation: f, sats: Number(m / 1000n), arriving: 0, merging: Number(m / 1000n) });
+            }
+            sum += merging; }
           if (parts.length) {
-            window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), parts,
+            window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), parts,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
             if (arriving > 0n) { console.log('[arena] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 3000); }
             if (parts.length > 1) console.log('[arena] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
