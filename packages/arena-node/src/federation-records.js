@@ -14,6 +14,7 @@
 // is DRAINING, CRITICAL or CLOSED makes the federation draining at this seat (no new round names it).
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof } from '../../arena-protocol/src/absence.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
@@ -26,11 +27,13 @@ import { buildFederationRecord, encodeFederationRecord, federationRecordId, join
 export function guardiansOf(census, federationId) {
   const fid = toHex(federationId);
   const out = [];
-  for (const e of census.entries || []) {
-    const g = ((e.advert && e.advert.guardianOf) || []).find((x) => toHex(x.federationId) === fid);
-    if (!g) continue;
+  // ONE ROW PER NODE, ITS BOND THE SUM OF ITS OUTPUTS (kanban #544): an added second output names the same guardian, not a second one;
+  // the row's bond outpoint is the node's lowest
+  for (const n of nodeBonds((census.entries || []).filter((e) => ((e.advert && e.advert.guardianOf) || []).some((x) => toHex(x.federationId) === fid)))) {
+    const e = n.entry, g = e.advert.guardianOf.find((x) => toHex(x.federationId) === fid);
     out.push({ peerKey: g.guardianKey, nodePubkey: e.pubkey, operatorId: (e.advert && e.advert.operatorId) || '', bondTxid: e.txid, bondVout: e.vout,
-      endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: e.bondSats, advertEndpoint: (e.advert && e.advert.endpoint) || '' });
+      endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: typeof e.bondSats === 'bigint' ? n.bondSats : String(n.bondSats),
+      advertEndpoint: (e.advert && e.advert.endpoint) || '' });
   }
   return out;
 }

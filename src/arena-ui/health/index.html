@@ -186,7 +186,7 @@
         : f.band === 'PRESSURE' ? `Federation ${short(f.federation, 8)} holds ${pct(f.load)} of what its bonds cover. Deposits stop at 100 %.`
         : `Federation ${short(f.federation, 8)}: ${pct(f.load)} of what its bonds cover.`;
       const below = (f.guardiansBelowTarget || []).length
-        ? ` ${f.guardiansBelowTarget.length} of ${f.guardians} guardians below the bond B* = ${sat(f.targetBondSats)} sat (each needs ${[...new Set(f.guardiansBelowTarget.map((g) => sat(g.addSats)))].join(' / ')} sat more).` : '';
+        ? ` ${f.guardiansBelowTarget.length} of ${f.guardians} guardians below the bond B* = ${sat(f.targetBondSats)} sat - increase your bond by ${[...new Set(f.guardiansBelowTarget.map((g) => sat(g.addSats)))].join(' / ')} sat (Add to bond).` : '';
       const gw = (f.gatewaysBelowTarget || []).length ? ` ${f.gatewaysBelowTarget.length} gateway(s) below the peg-in P* = ${sat(f.targetPegInSats)} sat.` : '';
       return `<div>${dot(c)}<b>${esc(f.band)}</b> · ${esc(w)} · ${esc(f.status)} - ${say}${f.band === 'CALM' ? '' : esc(below + gw)} <span class="muted">room ${sat(f.headroomSats)} sat</span></div>`;
     });

@@ -110,7 +110,11 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   entries.sort((x, y) => { const a = toHex(x.federationId) + toHex(x.guardianKey), b = toHex(y.federationId) + toHex(y.guardianKey); return a < b ? -1 : a > b ? 1 : 0; });
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) throw new Error(`node ${n} (${toHex(pubkey).slice(0, 8)}) has no confirmed unspent bond: nothing to update, and no bond is posted`);
-  const bond = bonds[0];
+  // THE NODE'S MAIN BOND, not its newest output (kanban #544): with an output added beside it (add-bond), the newest by height is
+  // the small added one - below protocol 19 the census reads each output's own advertisement and counts only an output above the
+  // floor, so the update goes to the largest - the newest on a tie, as before (seat 1 still holds its template-1 genesis output of
+  // the same 50,000 sat, which no census counts); from 19 the node's newest advertisement decides for all of them
+  const bond = [...bonds].sort((x, y) => (y.sats - x.sats) || (y.height - x.height))[0];
   const now = (bond.advert.guardianOf || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`);
   const want = entries.map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).join(',');
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,

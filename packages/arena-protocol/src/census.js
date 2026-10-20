@@ -10,7 +10,7 @@ import { reaffirmedBonds } from './reaffirm.js';
 import { protocolVersionName } from './protocol-version.js';
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
-import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './constants.js';
+import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, BOND_SUM_VERSION, networkOf } from './constants.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf, blockMerkleRoot } from './tx.js';
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
@@ -1020,7 +1020,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     facts = chainFactsAt(chain.blocks, depth.censusHeight);
   }
 
-  const eligible = [];
+  let eligible = [];
   const excluded = [];
 
   for (const e of entries) {
@@ -1122,7 +1122,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
 
     // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
     // Contract, not global... a node is eligible for THAT ROUND or not."
-    if (bondSats < contract.bondMinSats) {
+    if (!sumsBonds(contract) && bondSats < contract.bondMinSats) {
       excluded.push({
         ...e,
         bondSats,
@@ -1178,6 +1178,14 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     });
   }
 
+  // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544): each output was checked on its own above, and here a node's
+  // outputs (same key, same operator) stand or fall together by their sum
+  if (sumsBonds(contract)) {
+    const f = floorOnSums(eligible, contract);
+    eligible = f.kept;
+    excluded.push(...f.out);
+  }
+
   return {
     ok: true,
     eligible,
@@ -1203,6 +1211,78 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
         + 'census_height (no chain view was given, so the entry was believed)']),
     ],
   };
+}
+
+// ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, the owner 2026-10-19: "this is also the default way. E.g increase your
+// bond by 32000 sats"): a node raises its bond by posting a second bond output beside the first, each valid on its own; from
+// protocol 19 the census counts them as their sum.
+const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;
+const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x) : '');
+/** A node is its key AND its operator: two operators never merge, even under one key. */
+const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;
+/** Another output's advertisement, with this output's own maturity and template (each output keeps its own lock). */
+const ownMaturity = (advert, own) => (own ? { ...advert, bondMaturityHeight: own.bondMaturityHeight, bondScriptTemplateVersion: own.bondScriptTemplateVersion } : advert);
+
+/**
+ * A NODE'S BONDS, SUMMED: census entries grouped by node key and operator id into { pubkey (hex), operatorId, bondSats (bigint, their
+ * sum), outputs: [{ txid (hex), vout, bondSats, maturity }], entry (the lowest outpoint's), advert }. Entries may carry keys and txids
+ * as bytes or hex, and bondSats as bigint, number or string - the census's own entries and the JSON a seat serves alike.
+ */
+export function nodeBonds(entries) {
+  const groups = new Map();
+  for (const e of entries || []) {
+    if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
+    const k = nodeKeyOf(e), sats = BigInt(e.bondSats || 0);
+    const maturity = e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : (e.maturity ?? null);
+    const out = { txid: bondHexOf(e.txid), vout: e.vout, bondSats: sats, maturity };
+    const g = groups.get(k);
+    if (!g) {
+      const [pubkey, operatorId] = k.split('|');
+      groups.set(k, { pubkey, operatorId, bondSats: sats, outputs: [out], entry: e, advert: e.advert || null });
+      continue;
+    }
+    g.bondSats += sats;
+    g.outputs.push(out);
+    if (e.txid instanceof Uint8Array && g.entry.txid instanceof Uint8Array && compareEntries(e, g.entry) < 0) { g.entry = e; g.advert = e.advert || g.advert; }
+  }
+  return [...groups.values()];
+}
+
+/** The summed bond of the node `pubkey` (hex or bytes) in `entries` - the operator of its first entry - or null when it has none. */
+export function nodeBondOf(entries, pubkey) {
+  const want = bondHexOf(pubkey);
+  const first = (entries || []).find((e) => e && bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey)) === want);
+  if (!first) return null;
+  return nodeBonds((entries || []).filter((e) => e && nodeKeyOf(e) === nodeKeyOf(first)))[0];
+}
+
+/** Protocol 19's floor: every output of a node whose outputs sum below the round's bond_min is excluded, by that sum. */
+function floorOnSums(eligible, contract) {
+  const sums = new Map(nodeBonds(eligible).map((g) => [`${g.pubkey}|${g.operatorId}`, g]));
+  const kept = [], out = [];
+  for (const e of eligible) {
+    const g = sums.get(nodeKeyOf(e));
+    if (g && g.bondSats >= BigInt(contract.bondMinSats)) { kept.push(e); continue; }
+    out.push({ ...e, why: `that node's bonds sum to ${g ? g.bondSats : e.bondSats} (${g ? g.outputs.length : 1} output(s)) where this round's floor is ${contract.bondMinSats}` });
+  }
+  return { kept, out };
+}
+
+/**
+ * THE NEWEST ADVERTISEMENT OF EACH NODE over all its outputs: per node key, { u } (an update, as newestUpdates gives it) or { own } (an
+ * output's own advertisement, at its bond's height) - the higher block wins, then the later position (an update beats a bond in one
+ * block), then the larger txid, so every seat picks the same one.
+ */
+export function newestPerNode(eligible, updates) {
+  const best = new Map();
+  for (const e of eligible) {
+    const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+    const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid) }
+      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid) };
+    const k = nodeKeyOf(e), b = best.get(k);
+    if (!b || c.height > b.height || (c.height === b.height && (c.pos > b.pos || (c.pos === b.pos && c.tie > b.tie)))) best.set(k, c);
+  }
+  return best;
 }
 
 /**
@@ -1321,10 +1401,23 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   const updatedOut = [];
   if (typeof verifyUpdate === 'function') {
     const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
+    const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates) : null;
     const before = eligible;
     eligible = [];
-    for (const e of before) {
-      const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+    for (const raw of before) {
+      let e = raw;
+      let u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+      // FROM PROTOCOL 19 THE NODE'S NEWEST ADVERTISEMENT, over all its outputs, decides for each of them (kanban #544): an update
+      // of another output, or another output's own (newer) advertisement - each output keeping its own maturity
+      if (deciders) {
+        const d = deciders.get(nodeKeyOf(e));
+        if (d && d.u) u = d.u;
+        else if (d && d.own && d.own !== e) {
+          u = null;
+          e = { ...e, advert: ownMaturity(d.own.advert, e.advert), advertId: d.own.advertId, roles: d.own.roles, hostedGames: d.own.hostedGames,
+            decidedBy: { txid: d.own.txid, vout: d.own.vout } };
+        }
+      }
       if (!u) {
         if (e.advert && e.advert.serving === false) {
           updatedOut.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
@@ -1357,9 +1450,17 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
         continue;
       }
       // the update's games replace the bond's first advertisement's (a hosted-games change is an update)
-      eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
+      eligible.push({ ...e, advert: sumsBonds(contract) ? ownMaturity(u.advert, e.advert) : u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
         updatedBy: { txid: u.txid, height: u.height, position: u.position } });
     }
+  }
+
+  // AND THE FLOOR ON THE SUMS AGAIN (protocol 19): an output the re-affirmation or the update left out no longer counts toward its node
+  const sumOut = [];
+  if (sumsBonds(contract)) {
+    const f = floorOnSums(eligible, contract);
+    eligible = f.kept;
+    sumOut.push(...f.out);
   }
 
   let census;
@@ -1382,6 +1483,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
       ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
       ...updatedOut.map((e) => ({ ...e, step: 'update' })),
+      ...sumOut.map((e) => ({ ...e, step: 'sum' })),
     ],
     unchecked: resolved.unchecked,
     chainChecked: resolved.chainChecked,

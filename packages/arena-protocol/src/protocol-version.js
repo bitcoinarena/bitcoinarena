@@ -48,6 +48,9 @@ export const PROTOCOL_RELEASES = Object.freeze([
   // the tag switch: the last eleven BLWP/v1 tags (duty, guardian, gateway, liquidity, founding) become ARENA/v1 at one point per
   // network - a height H and its block's time - both accepted until it, the new one only from it (tag-switch.js)
   Object.freeze({ version: 18, year: 2026, x: 0 }),
+  // add to bond: a node's bond outputs (same node key, same operator) count as one entry whose bond is their sum - the round's floor
+  // is applied to the sum, and the node's newest advertisement over all its outputs decides version, serving and endpoint (§5A, #544)
+  Object.freeze({ version: 19, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

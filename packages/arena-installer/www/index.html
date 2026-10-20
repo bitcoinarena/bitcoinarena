@@ -566,7 +566,10 @@ const needText = (need, parts) => `${Number(need).toLocaleString('en')}${parts &
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
   if (r.parts && Object.keys(r.parts).length > 2) $(r.update ? 'b-need2' : 'b-need').textContent = needText(r.needSats, r.parts);
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
-  m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
+  // THE NETWORK'S MINIMUM FOR A NEW NODE (§23A.3a, kanban #543): said when it is above the floor
+  const minLine = r.minimum && r.minimum.sats > 50000 ? ` The network asks a new node to bond at least ${Number(r.minimum.sats).toLocaleString('en')} sat now (its federations are filling up), so your node is useful from the start.` : '';
+  m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).'
+  m.textContent += minLine;
   $('b-lock').textContent = r.lock ? lockText(r.lock) : ''; $('b-post').disabled = !r.enough; };
 $('b-post').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/post'); if (!r.ok) { e.target.disabled = false; return say('b-msg', r); } load(); };
 $('b-later').onclick = async () => { const r = await post('/api/bond/later'); if (r.ok) load(); };

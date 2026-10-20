@@ -179,7 +179,7 @@ h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 8px;color:var(-
 #chartbox{position:relative}#tip{position:absolute;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;white-space:normal;max-width:calc(100% - 8px);font-variant-numeric:tabular-nums}.profit{border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
 .tabs button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 10px;margin-right:4px;cursor:pointer}.tabs button.on{border-color:var(--gv)}
 svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.ok{color:var(--ok)}.bad{color:var(--bad)}.scroll{overflow-x:auto}
+th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:#d9a400}.scroll{overflow-x:auto}
 .legend span{display:inline-block;margin-right:12px;color:var(--dim)}tr.rr{cursor:pointer}tr.rr:hover td{background:rgba(127,127,127,.08)}tr.pl>td{background:rgba(127,127,127,.05);padding:6px 6px 10px 22px}tr.pl table{font-size:12px}a{color:var(--st)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 </style></head><body>
 <h1>Bitcoin Arena · Node Dashboard</h1><div class="sub" id="who">loading…</div><div class="sub"><a href="Dashboard/owner" id="ownerlink">Owner area →</a></div>
@@ -188,7 +188,7 @@ th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:t
 <h2>Rounds checked</h2><div class="card scroll"><table id="rounds"></table></div>
 <h2>Settlements</h2><div class="card scroll"><div id="sstate" class="sub"></div><table id="settle"></table></div>
 <h2>Federations</h2><div class="card scroll"><table id="feds"></table></div>
-<div id="liqbox"></div>
+<div id="capbox"></div><div id="liqbox"></div>
 <script>
 const sat=(m)=>{const n=Number(m)/1000;return (n<10?n.toFixed(3):n.toFixed(n<1000?1:0)).replace(/\\.0+$/,'')+' sat'};
 const t=(ms)=>ms?new Date(ms).toISOString().replace('T',' ').slice(0,19)+' UTC':'-';
@@ -252,7 +252,8 @@ el('settle').innerHTML='<tr><th>Round</th><th>Made</th><th>State</th><th>What</t
 el('feds').innerHTML='<tr><th>Federation</th><th class="n">Paid rounds</th><th>First</th><th>Last</th></tr>'+D.federations.map(f=>'<tr><td>'+f.federation.slice(0,16)+'…</td><td class="n">'+f.rounds+'</td><td>'+t(f.firstMs)+'</td><td>'+t(f.lastMs)+'</td></tr>').join('')}
 // THE LIQUIDITY CARD (§23A.10): a provider's free coins against the deposit minimum, the channels it gave, the top-up address
 async function liquidity(){let c=null;try{const r=await fetch('liquidity-claim',{cache:'no-store'});c=r.ok?await r.json():null}catch{c=null}if(!c){el('liqbox').innerHTML='';return}const min=500000,free=Number(c.freeSats),g=c.channels||[],held=free+g.reduce((a,x)=>a+Number(x.capacitySats),0);const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';el('liqbox').innerHTML='<h2>Liquidity provider</h2><div class="card">'+r('Free for new channels',free.toLocaleString('en')+' sat')+r('Deposit minimum (free + channels given)',min.toLocaleString('en')+' sat')+(held<min?'<p class="bad">Below the deposit minimum: no share of the liquidity pool until topped up.</p>':'<p class="ok">Above the deposit minimum: earning its share of the liquidity pool.</p>')+r('Channels given',g.length+' ('+g.reduce((a,x)=>a+Number(x.capacitySats),0).toLocaleString('en')+' sat)')+r('Top up (LND wallet)','<code>'+String(c.depositAddress||'-').replace(/[&<>"]/g,'')+'</code>')+'</div>'}
-async function load(){liquidity();D=await (await fetch('dashboard.json',{cache:'no-store'})).json();
+async function capacity(){let c=null;try{const r=await fetch('capacity?node=me',{cache:'no-store'});c=r.ok?await r.json():null}catch{c=null}const p=c&&c.plea;if(!p){el('capbox').innerHTML='';return}el('capbox').innerHTML='<h2>Capacity</h2><div class="card"><p class="'+(p.level==='bad'?'bad':'warn')+'">'+String(p.says).replace(/[&<>"]/g,'')+'</p></div>'}
+async function load(){liquidity();capacity();D=await (await fetch('dashboard.json',{cache:'no-store'})).json();
 el('who').textContent='node '+D.node+' · active since '+t(D.sinceMs)+' · '+D.roundsChecked+' rounds checked · as of '+t(D.nowMs);totals();chart();tables()}
 load().catch(e=>{el('who').textContent='could not read dashboard.json: '+e.message});setInterval(()=>load().catch(()=>{}),60000);
 </script></body></html>`;
