@@ -118,7 +118,7 @@ import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departure
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup } from './founding-seat.js';
-import { createEndpointsOf, federationOfDir } from './federation-endpoints.js';
+import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
@@ -3628,9 +3628,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // live on 10-15 and 7 of 7 in consensus, yet no seat ever built its record - its guardians (B1-B6 through their guardian-next, node 15
   // through its guardian) held its invite only in their guardian directories, and a record is built and signed only by a seat that names
   // the federation's invite ("none of its guardians holds a record"). The invite-code of this seat's guardian and guardian-next now counts
+  // A FEDERATION THIS SEAT GUARDS AND NO SHARED INVITE NAMES (a successor): the invite every one of its guardians builds alike from
+  // the federation's configuration (configInvite, kanban #549), not this guardian's own invite-code - one guardian's URL, so each
+  // guardian seat signed another body; the invite-code still stands before the configuration is written
   const guardedInvites = () => [guardian, guardianNext].map((g) => {
     if (!g || !g.dataDir) return null;
-    try { return readFileSync(joinPath(g.dataDir, 'invite-code'), 'utf8').trim() || null; } catch { return null; }
+    let own = null; try { own = readFileSync(joinPath(g.dataDir, 'invite-code'), 'utf8').trim() || null; } catch { return null; }
+    let fid = null; try { fid = readInvite(own).federationId; } catch { return own; }
+    try { return configInvite(fid, JSON.parse(readFileSync(joinPath(g.dataDir, 'client.json'), 'utf8'))) || own; } catch { return own; }
   });
   const inviteOfFed = (fidHex) => {
     const all = [federationInvite, ...[...networksHeld.values()].map((h) => h.pkg.invite), ...guardedInvites()].filter(Boolean);
