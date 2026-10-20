@@ -62,12 +62,12 @@ test('the bundle exports what a page needs to open a round', () => {
 });
 
 // EVERY NAME THE PAGE CALLS ON THE BUNDLE IS IN IT (measured on preview UI 149: the page's balance sum called
-// BLWPCLIENT.issuingMsat, which the export list did not name - undefined in the page while every node test passed)
-test('every BLWPCLIENT.<name> the page uses is exported by the bundle', async () => {
+// ARENACLIENT.issuingMsat, which the export list did not name - undefined in the page while every node test passed)
+test('every ARENACLIENT.<name> the page uses is exported by the bundle', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8')
     .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  const used = [...new Set([...html.matchAll(/BLWPCLIENT\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))];
+  const used = [...new Set([...html.matchAll(/ARENACLIENT\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))];
   assert.ok(used.length > 100, `only ${used.length} names found`);
   assert.deepEqual(used.filter((n) => bundled[n] === undefined), [], 'used by the page, missing from the bundle');
 });

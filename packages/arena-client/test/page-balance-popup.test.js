@@ -24,7 +24,7 @@ function fakeDom() {
   const split = mk('div'); split.style.display = 'none';
   return { split, document: { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, createTextNode: (t) => ({ textContent: t }) } };
 }
-const BLWPCLIENT = { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor };
+const ARENACLIENT = { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor };
 const A = 'aa'.repeat(32), H = 'bb'.repeat(32), C = 'cc'.repeat(32);
 const loads = new Map([
   [A, { status: 'OPEN', federation: A, load: 0.72, reserveSats: '108000', exposureCapSats: '150000', signers: 7, invite: 'fed1a', network: 'testnet4' }],
@@ -38,7 +38,7 @@ function run({ debug }) {
     ARENA_BROWSER_STORE: () => ({ getItem: (k) => (k === 'arena.debugFederations' && debug ? '1' : null) }) };
   const fetch = async (u) => (u.endsWith('/blocks/tip/height') ? { text: async () => '157070' } : { json: async () => [5000, 3800, 2600, 1400].map((timestamp) => ({ timestamp })) });
   const openMoney = (...a) => { opened.push(a); return Promise.resolve({ ok: true }); };
-  new Function('document', 'window', 'BLWPCLIENT', 'fetch', 'openMoney', 'AbortSignal', SRC)(document, window, BLWPCLIENT, fetch, openMoney, { timeout: () => undefined });
+  new Function('document', 'window', 'ARENACLIENT', 'fetch', 'openMoney', 'AbortSignal', SRC)(document, window, ARENACLIENT, fetch, openMoney, { timeout: () => undefined });
   return { split, window, opened };
 }
 const flat = (n) => [n, ...(n.children || []).flatMap(flat)];
@@ -76,5 +76,5 @@ test('the page wires it: the toggle in Advanced settings, and openMoney\'s depos
   assert.match(HTML, /<input type="checkbox" id="arena-debug-feds">/);
   assert.match(HTML, /setItem\('arena\.debugFederations', dbg\.checked \? '1' : '0'\)/);
   assert.match(HTML, /if \(which === 'deposit' && opts\.federation && opts\.federation\.invite\) \{/);
-  assert.match(HTML, /BLWPCLIENT\.walletDepositOffer\(\{ federationId, invite: fixed\.invite,/);
+  assert.match(HTML, /ARENACLIENT\.walletDepositOffer\(\{ federationId, invite: fixed\.invite,/);
 });

@@ -53,7 +53,7 @@ async function tab(round, named, { pageNodes }) {
   const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
   const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
   // `nodes` is what the page's wrapper of `Client.at` adds (`index.html`): the
-  // round's node list, `window.BLWP_NODES`. Without it, the Daily before this.
+  // round's node list, `window.ARENA_NODES`. Without it, the Daily before this.
   const client = await Client.at({
     headers: named.chain.headers, bonds: named.chain.bonds,
     signedAdvert: fromHexHere(named.advert.signedAdvert),

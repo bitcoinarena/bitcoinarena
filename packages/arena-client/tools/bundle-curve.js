@@ -4,7 +4,7 @@
 //
 // The client bundle itself still carries no crypto. This file is the
 // injection: the same `@noble/curves` secp256k1 the daemons use, assigned to
-// `BLWP_CURVE` so `playerFor` can name a real key.
+// `ARENA_CURVE` so `playerFor` can name a real key.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -19,8 +19,8 @@ const bin = resolve(here, '../node_modules/esbuild/bin/esbuild');
 
 const r = spawnSync(bin, [
   src, '--bundle', '--format=iife', '--platform=browser',
-  '--global-name=BLWP_CURVE_EXPORTS',
-  '--footer:js=globalThis.BLWP_CURVE=BLWP_CURVE_EXPORTS.pageCurve;',
+  '--global-name=ARENA_CURVE_EXPORTS',
+  '--footer:js=globalThis.ARENA_CURVE=ARENA_CURVE_EXPORTS.pageCurve;',
   // THE SAME BYTES WHEREVER THE CHECKOUT IS (2026-09-25): esbuild writes each module's path, relative to its working
   // directory, into the bundle - so it runs from this package, and keeps a symlinked node_modules' own path. Measured
   // before: dist was built from the repository root ("packages/arena-client/src/..."), bundle-fresh builds from this

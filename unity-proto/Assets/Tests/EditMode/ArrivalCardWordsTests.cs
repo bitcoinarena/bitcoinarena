@@ -355,7 +355,7 @@ public class ArrivalCardWordsTests
         string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
         StringAssert.Contains("c === window.ARENA_REPLAY_URL", lib);
         string page = PageText();
-        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
+        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.ARENA_REPLAY_COPIED = link.url;", page);
     }
 
     // THE CARD STANDS AT FULL STRENGTH AND NOTHING IS UNDER IT (PRIORITIES item 3: "nothing overlaps", "stays up ... 8 s";
@@ -376,7 +376,7 @@ public class ArrivalCardWordsTests
         string page = PageText();
         StringAssert.Contains("window.ARENA_CARD_UP = true;", page);
         // the node strip still steps aside under the card; since the console (427bab76) it also tells the Console button so
-        StringAssert.Contains("if (!window.BLWP_ROUND || window.ARENA_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
+        StringAssert.Contains("if (!window.ARENA_ROUND || window.ARENA_CARD_UP || window.ARENA_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
     }
 
     // THE COPIED REPLAY IS THE CARD'S RUN (2026-09-26 14:08): a session is its page join's (ARENA_ENTRY); another

@@ -33,7 +33,7 @@ await wait(30000);
 for (let i = 0; i < 60; i++) { if (await ev('!!(window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwp)') === true) break; await wait(2000); }
 let play = null;
 for (let i = 0; i < 40 && !play; i++) {
-  const l = await ev('JSON.stringify(window.BLWP_UNITY_LOBBY||null)');
+  const l = await ev('JSON.stringify(window.ARENA_UNITY_LOBBY||null)');
   const o = l ? JSON.parse(l) : null;
   if (o && o.playEnabled && o.play) play = o; else await wait(3000);
 }

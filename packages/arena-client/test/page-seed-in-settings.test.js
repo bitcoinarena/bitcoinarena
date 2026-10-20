@@ -20,9 +20,9 @@ test('Create makes the wallet and goes straight on: no 24-word dialog is opened'
   const box = $('arena-wallet-start'); box.style.display = 'flex';
   const window = { ARENA_WALLET_SCREEN: { shown: true }, sessionStorage: {}, ARENA_SEED_KEEPER: { beat: () => clicked.push('beat') } };
   let minted = 0;
-  const BLWPCLIENT = { tabSeed: () => { minted++; return new Uint8Array(32); } };
+  const ARENACLIENT = { tabSeed: () => { minted++; return new Uint8Array(32); } };
   const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
-  pageFunction(PAGE, ['$', 'window', 'BLWPCLIENT', 'crypto', 'busy', 'done'], CREATE, 'return 0;')($, window, BLWPCLIENT, { getRandomValues: (a) => a }, () => {}, done);
+  pageFunction(PAGE, ['$', 'window', 'ARENACLIENT', 'crypto', 'busy', 'done'], CREATE, 'return 0;')($, window, ARENACLIENT, { getRandomValues: (a) => a }, () => {}, done);
   els['ws-new'].onclick();
   assert.equal(minted, 1, 'the wallet is made');
   assert.equal(box.style.display, 'none', 'the start screen is done');

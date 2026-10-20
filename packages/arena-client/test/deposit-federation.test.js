@@ -53,13 +53,13 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   assert.ok(a > 0 && m > a, 'depositPick comes before moneyContext');
   const slice = HTML.slice(a, HTML.indexOf('\n    }\n', m) + 7);
   const run = (held, which = 'deposit', parts = []) => {
-    const fn = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'walletSeed', 'moneyRound', 'vault', 'localStorage'], [slice], 'return moneyContext;');
+    const fn = pageFunction(PAGE, ['window', 'ARENACLIENT', 'walletSeed', 'moneyRound', 'vault', 'localStorage'], [slice], 'return moneyContext;');
     const window = { ARENA_LOBBY: [{ id: 'r1', free: false, raw: { contract: { stakeMsat: 100000n } } }], ARENA_LEDGER_LOBBY: { federation: inviteOf(A) },
       ARENA_FED_LOADS: new Map([[A, st(A, 4.3333)], [B, st(B, 0.0002)]]), ARENA_WALLET_BALANCE: { parts } };
-    const BLWPCLIENT = { depositFederation, withdrawFederation, ledgerFederations: () => held, federationIsKnown: () => true, federationConfirmed: () => false,
+    const ARENACLIENT = { depositFederation, withdrawFederation, ledgerFederations: () => held, federationIsKnown: () => true, federationConfirmed: () => false,
       inviteNamesFederation: sameFederation, marketForRound: () => null, lobbyStakeSats: () => 100,
       fromHex: (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16))) };
-    const ctx = fn(window, BLWPCLIENT, () => 'seed', () => null, () => ({}), {})(which);
+    const ctx = fn(window, ARENACLIENT, () => 'seed', () => null, () => ({}), {})(which);
     return { ctx, picked: window.ARENA_DEPOSIT_FEDERATION };
   };
   const first = run([]);

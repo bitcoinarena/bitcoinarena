@@ -7,15 +7,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');   // Tick Tock's page part (kanban #521)
-const body = HTML.slice(HTML.indexOf('    window.ARENA_SECURE_RUN = async'), HTML.indexOf('    window.BLWP_RUN_OVER = (word, run) => {'));
+const body = HTML.slice(HTML.indexOf('    window.ARENA_SECURE_RUN = async'), HTML.indexOf('    window.ARENA_RUN_OVER = (word, run) => {'));
 
 function page(answers) {
   const els = new Map();
   const document = { getElementById: (id) => els.get(id) || null, createElement: () => ({ style: {} }), body: { appendChild: (e) => els.set(e.id, e) } };
   const asked = [];
   const window = { unityInstance: { Module: { blwpRunNet: { client: { nextTick: 4920 } } } } };
-  const BLWPCLIENT = { fromHex: (h) => h, secureTranscript: async (o) => { asked.push(o); return answers[Math.min(asked.length - 1, answers.length - 1)]; } };
-  new Function('window', 'document', 'BLWPCLIENT', 'setTimeout', body)(window, document, BLWPCLIENT, (f) => { Promise.resolve().then(f); return 0; });
+  const ARENACLIENT = { fromHex: (h) => h, secureTranscript: async (o) => { asked.push(o); return answers[Math.min(asked.length - 1, answers.length - 1)]; } };
+  new Function('window', 'document', 'ARENACLIENT', 'setTimeout', body)(window, document, ARENACLIENT, (f) => { Promise.resolve().then(f); return 0; });
   return { window, els, asked };
 }
 const run = { roundHex: 'ab'.repeat(32), entryHex: 'cd'.repeat(32), nodes: ['https://n1', 'https://n2', 'https://n3'] };

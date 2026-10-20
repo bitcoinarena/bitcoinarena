@@ -9,7 +9,7 @@ import { FEES, FEES_TODAY, feeProposalStands, encodeFeeProposal, feeProposalId, 
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-const feesCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
+const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
 /**
  * THE FEES AS THE NODES ANSWER THEM: every node asked GET /fees (with ?height=H when `height` is given); the set most of them name, kept

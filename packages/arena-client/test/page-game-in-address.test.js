@@ -37,17 +37,17 @@ test('PLAY writes the round address with the game, and every way back to the lob
 
 test('a round link held to its start tells Unity not to drive on its play=1; any other outcome tells it to drive', () => {
   const held = PAGE.slice(PAGE.indexOf('async function heldRoundLink()'), PAGE.indexOf('const joinOrBackToTheLobby'));
-  const hold = held.indexOf("window.BLWP_LINK_AUTOPLAY = false;");
+  const hold = held.indexOf("window.ARENA_LINK_AUTOPLAY = false;");
   assert.ok(hold > held.indexOf('if (!(startMs - Date.now() > 5000)) return false;'), 'held: no drive, once the round is known to be ahead');
-  assert.ok(hold < held.indexOf('BLWP_LOBBY_ACT.join(id'), '... before the lobby\'s join writes play=1 into the address again');
-  const init = /window\.BLWP_LINK_AUTOPLAY = (.+) \? null : true;/.exec(PAGE);
+  assert.ok(hold < held.indexOf('ARENA_LOBBY_ACT.join(id'), '... before the lobby\'s join writes play=1 into the address again');
+  const init = /window\.ARENA_LINK_AUTOPLAY = (.+) \? null : true;/.exec(PAGE);
   assert.ok(init, 'undecided while the address names a round with play=1');
   const undecided = new Function('location', `return ${init[1]};`);
   assert.equal(undecided({ search: '?node=a&round=ab&play=1&game=nextblock' }), true);
   assert.equal(undecided({ search: '?game=nextblock' }), false);
   assert.equal(undecided({ search: '?round=ab&play=10' }), false);
   const after = PAGE.slice(PAGE.indexOf('const joinOrBackToTheLobby'), PAGE.indexOf('const joinOrBackToTheLobby') + 600);
-  assert.match(after, /window\.BLWP_LINK_AUTOPLAY = !held;\n {6}if \(held\) return;/, 'decided as soon as the link is held or not');
+  assert.match(after, /window\.ARENA_LINK_AUTOPLAY = !held;\n {6}if \(held\) return;/, 'decided as soon as the link is held or not');
   const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
-  assert.match(jslib, /ArenaLinkAutoPlay: function \(\) \{\n {4}var v = window\.BLWP_LINK_AUTOPLAY;\n {4}return v === null \? -1 : v === false \? 0 : v === true \? 1 : 2;/);
+  assert.match(jslib, /ArenaLinkAutoPlay: function \(\) \{\n {4}var v = window\.ARENA_LINK_AUTOPLAY;\n {4}return v === null \? -1 : v === false \? 0 : v === true \? 1 : 2;/);
 });

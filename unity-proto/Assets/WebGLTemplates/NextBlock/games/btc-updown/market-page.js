@@ -38,11 +38,11 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // a pick's market: the one this page pins, or the manifest the player confirmed (kept with the pick)
     function marketOfPick(p) {
       // its round as the pick kept it: a template's round asks its own question and a scalar template's names its bounds
-      const round = BLWPCLIENT.roundOfPick ? BLWPCLIENT.roundOfPick(p) : { gameId: BLWPCLIENT.fromHex(p.gameId) };
-      return BLWPCLIENT.marketForRound(round, p.manifestHex ? { manifestBytes: BLWPCLIENT.fromHex(p.manifestHex) } : {});
+      const round = ARENACLIENT.roundOfPick ? ARENACLIENT.roundOfPick(p) : { gameId: ARENACLIENT.fromHex(p.gameId) };
+      return ARENACLIENT.marketForRound(round, p.manifestHex ? { manifestBytes: ARENACLIENT.fromHex(p.manifestHex) } : {});
     }
     // THE OUTCOMES OF THE TAB'S PICKS, read from the seats every 10 s once a pick's entries have closed, each checked by this
-    // page against the attestors it pinned (BLWPCLIENT.checkAttestation) - a seat's word alone is shown unverified
+    // page against the attestors it pinned (ARENACLIENT.checkAttestation) - a seat's word alone is shown unverified
     const MARKET_OUTCOMES = new Map();
     window.ARENA_MARKET_OUTCOMES = MARKET_OUTCOMES;
     // THE ROUNDS WHOSE OUTCOME THIS PAGE HAS ASKED THE SEATS FOR AT LEAST ONCE
@@ -76,16 +76,16 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
           try {
             // EVERY KIND CHECKED HERE: an outcome attestation, a scalar market's value attestation, or a market on a
             // game's source result - whose committee this page derives from the chain itself (clientCommittee), never the seats' list
-            if (o.attestation || o.gameOutcome) o.check = BLWPCLIENT.checkMarketOutcome ? await BLWPCLIENT.checkMarketOutcome({ outcome: o, market,
+            if (o.attestation || o.gameOutcome) o.check = ARENACLIENT.checkMarketOutcome ? await ARENACLIENT.checkMarketOutcome({ outcome: o, market,
               roundIdHex: p.roundIdHex, sourceRoundIdHex: p.sourceRoundIdHex || null, entryCloseMs: p.entryCloseMs,
-              verifySchnorr: (sig, msg, key) => window.BLWP_CURVE.verify(sig, msg, key),
+              verifySchnorr: (sig, msg, key) => window.ARENA_CURVE.verify(sig, msg, key),
               // a series source round (Tick Tock's): its series' template from the seats, believed once it hashes to the series id
-              sourceSeries: (sid) => BLWPCLIENT.fetchSeriesTemplate({ seriesIdHex: sid, nodes: p.nodes || [], fetcher: (u, o) => fetch(u, o),
+              sourceSeries: (sid) => ARENACLIENT.fetchSeriesTemplate({ seriesIdHex: sid, nodes: p.nodes || [], fetcher: (u, o) => fetch(u, o),
                 timeout: (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined) }),
               sourceCommittee: async (sourceHex, source) => {
-                const got = await BLWPCLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.BLWP_CURVE, compare: false, roles: ['settlement'] });
-                return got && got.ok ? got.committees.settlement.map((k) => BLWPCLIENT.toHex(k)) : null;
-              } }) : (o.attestation ? await BLWPCLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex }) : undefined);
+                const got = await ARENACLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.ARENA_CURVE, compare: false, roles: ['settlement'] });
+                return got && got.ok ? got.committees.settlement.map((k) => ARENACLIENT.toHex(k)) : null;
+              } }) : (o.attestation ? await ARENACLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex }) : undefined);
             MARKET_OUTCOMES.set(p.roundIdHex, o);
             break;
           } catch { /* the next seat */ }
@@ -116,37 +116,37 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       const ids = new Set(said.flatMap((x) => (x && Array.isArray(x.rounds) ? x.rounds.map((r) => String(r.round)) : [])).filter((id) => /^[0-9a-f]{64}$/.test(id)));
       for (const id of ids) {
         if (MARKET_ROUNDS.has(id)) continue;
-        try { MARKET_ROUNDS.set(id, (await BLWPCLIENT.fetchRound(id, nodes)).contract || null); } catch { MARKET_ROUNDS.set(id, null); }
+        try { MARKET_ROUNDS.set(id, (await ARENACLIENT.fetchRound(id, nodes)).contract || null); } catch { MARKET_ROUNDS.set(id, null); }
       }
     }
     window.ARENA_RESTORED_ORDERS = [];
     async function restoreOrdersFromSeats() {
       const G = window.ARENA_GAME;
-      if (!G || !G.market || !BLWPCLIENT.myOrdersFromEntries || !window.BLWP_CURVE) return;
+      if (!G || !G.market || !ARENACLIENT.myOrdersFromEntries || !window.ARENA_CURVE) return;
       let seed = null;
-      try { if (window.sessionStorage.getItem('arena.player.seed')) seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { seed = null; }
+      try { if (window.sessionStorage.getItem('arena.player.seed')) seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { seed = null; }
       if (!seed) return;                                  // no wallet in this tab yet: nothing is minted for this
       const known = new Set(readPicks().map((x) => x.entryIdHex));
       // the rounds the lobby lists, and those just closed that the seats still list (an order there has its result to show)
       const listed = [...(window.ARENA_LOBBY_ROWS || []), ...(window.ARENA_LOBBY_CLOSED || []).map((c) => ({ id: c.id, contract: c.contract, free: false }))];
       // the seats of this game's side (those of a round of it listed now), and the rounds that took orders on them lately
-      const sideRow = listed.find((r) => r && r.contract && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
-      const sideNodes = sideRow && window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(sideRow.id) : [];
+      const sideRow = listed.find((r) => r && r.contract && ARENACLIENT.toHex(r.contract.gameId) === String(G.game.id));
+      const sideNodes = sideRow && window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(sideRow.id) : [];
       if (sideNodes.length) {
         try { await recentMarketRounds(sideNodes); } catch { /* the next minute */ }
         const have = new Set(listed.map((r) => r && r.id));
         for (const [id, contract] of MARKET_ROUNDS) if (contract && !have.has(id)) listed.push({ id, contract, free: false, nodes: sideNodes });
       }
-      const rows = listed.filter((r) => r && !r.free && r.contract && BLWPCLIENT.roundPays && BLWPCLIENT.roundPays(r.contract) !== false
-        && BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(r.contract) && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
+      const rows = listed.filter((r) => r && !r.free && r.contract && ARENACLIENT.roundPays && ARENACLIENT.roundPays(r.contract) !== false
+        && ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(r.contract) && ARENACLIENT.toHex(r.contract.gameId) === String(G.game.id));
       // THE ROUNDS SIDE BY SIDE, THEIR ENTRIES TOO (measured live 2026-10-17 ~21:10Z, UI 210: a wallet's 14 orders in 9
       // rounds appeared 15-35 s after the page loaded - every round's book, then every entry in it, each player's, was read after the
       // one before, each from the first seat that answered): every round at once, and a round's entries at once, each asked first of a
       // different seat of the round's
       await Promise.all(rows.map(async (r) => {
-        const round = Object.assign({}, r.contract, { id: BLWPCLIENT.fromHex(r.id) });
+        const round = Object.assign({}, r.contract, { id: ARENACLIENT.fromHex(r.id) });
         const keys = new Map();
-        for (let i = 0; i < ORDER_KEYS; i++) { try { keys.set(BLWPCLIENT.toHex(BLWPCLIENT.playerFor(round, { seed, curve: window.BLWP_CURVE, order: i }).pubkey), i); } catch { /* no key */ } }
+        for (let i = 0; i < ORDER_KEYS; i++) { try { keys.set(ARENACLIENT.toHex(ARENACLIENT.playerFor(round, { seed, curve: window.ARENA_CURVE, order: i }).pubkey), i); } catch { /* no key */ } }
         let book = null;
         if (r.nodes) {   // a round from the seats' recent list: its book from those seats, the fullest answer
           const got = (await Promise.all(r.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + r.id, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
@@ -158,7 +158,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         const ids = [...new Set([...(book.positions || []).map((x) => x.entry), ...((book.resting && book.resting.buys) || [])])]
           .filter((id) => id && !known.has(id) && !ENTRIES_SEEN.has(r.id + id));
         if (!ids.length) return;
-        const nodes = r.nodes || (window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(r.id) : []);
+        const nodes = r.nodes || (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(r.id) : []);
         const entries = [];
         await Promise.all(ids.map(async (id, k) => {
           for (let j = 0; j < nodes.length; j++) {
@@ -168,9 +168,9 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
           }
           ENTRIES_SEEN.add(r.id + id);
         }));
-        const mine = BLWPCLIENT.myOrdersFromEntries({ entries, keys });
+        const mine = ARENACLIENT.myOrdersFromEntries({ entries, keys });
         for (const m of mine) {
-          rememberPick(Object.assign(BLWPCLIENT.pickRecord({ roundIdHex: r.id, entryIdHex: m.entryIdHex, pick: m.pick, round, nodes, confirmed: false }),
+          rememberPick(Object.assign(ARENACLIENT.pickRecord({ roundIdHex: r.id, entryIdHex: m.entryIdHex, pick: m.pick, round, nodes, confirmed: false }),
             { stakeMsat: m.stakeMsat, order: { limitPrice: m.limitPrice, orderExpiryMs: m.orderExpiryMs, sessionKeyPkcs8: null, placedMs: Date.now(), index: m.orderIndex, restored: true } }));
           window.ARENA_RESTORED_ORDERS.push({ round: r.id, entry: m.entryIdHex, pick: m.pick, index: m.orderIndex });
           try { const k = 'arena.order.next.' + r.id; if ((Number(window.sessionStorage.getItem(k)) || 0) <= m.orderIndex) window.sessionStorage.setItem(k, String(m.orderIndex + 1)); } catch { /* this tab's only */ }
@@ -183,13 +183,13 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // player under none): each order of this wallet - placed here or read back from the seats - gets the signed name record of its
     // own key (nameRecordFor with its order number) at its round's seats, once a seat keeps it
     async function nameOrders() {
-      if (!window.BLWP_CURVE || !BLWPCLIENT.nameRecordFor || !BLWPCLIENT.postName) return;
+      if (!window.ARENA_CURVE || !ARENACLIENT.nameRecordFor || !ARENACLIENT.postName) return;
       try { if (!window.sessionStorage.getItem('arena.player.seed')) return; } catch { return; }
       for (const p of readPicks().filter((x) => x.order && !x.named && x.entryIdHex)) {
         try {
-          const signed = BLWPCLIENT.nameRecordFor({ id: BLWPCLIENT.fromHex(p.roundIdHex) }, { storage: window.sessionStorage,
-            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE, order: Number(p.order.index) || 0 });
-          const said = await BLWPCLIENT.postName(signed, p.nodes || [], { fetcher: (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) })) });
+          const signed = ARENACLIENT.nameRecordFor({ id: ARENACLIENT.fromHex(p.roundIdHex) }, { storage: window.sessionStorage,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE, order: Number(p.order.index) || 0 });
+          const said = await ARENACLIENT.postName(signed, p.nodes || [], { fetcher: (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) })) });
           if (said.some((x) => x.status === 201 || x.status === 200)) rememberPick(Object.assign({}, p, { named: true }));
         } catch (e) { console.warn('[arena] naming an order: ' + e.message); }
       }
@@ -203,7 +203,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
     let QUIET_ORDERS = new Set();
     function marketViewLines(onlyThisGame = false) {
-      if (!BLWPCLIENT.marketLines) return [];
+      if (!ARENACLIENT.marketLines) return [];
       // THE GAME SHOWN ONLY, in a lobby (2026-10-17: "Btc orders showing up in tick tock"): Tick Tock's lobby listed
       // Up/Down's orders - every market pick of the tab, whatever game is open
       const ids = onlyThisGame ? new Set((window.ARENA_GAME_IDS || [window.ARENA_GAME_ID]).filter(Boolean).map((x) => String(x).toLowerCase())) : null;
@@ -218,7 +218,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       const quiet = new Set(picks.filter((p) => p.order && p.order.restored && Date.now() > Number(p.entryCloseMs) + 600000
         && Date.now() - Number(p.order.placedMs || 0) < 60000).map((p) => p.entryIdHex));
       try {
-        const all = BLWPCLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() });
+        const all = ARENACLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() });
         const held = new Set(all.filter((l) => quiet.has(l.entry) && (l.state === 'waiting' || l.state === 'unknown')).map((l) => l.entry));
         QUIET_ORDERS = held;        // the client's order list (market.orders) leaves them out too
         return all.filter((l) => !held.has(l.entry));
@@ -229,7 +229,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // join and makes nothing. An unpinned market's manifest is read from the round's seats (GET /game-manifest), shown with
     // its developer key and manifest id, and staked on only after the second confirmation.
     async function openPickSheet(contract, id, nodes, onPick) {
-      let market = BLWPCLIENT.marketForRound(contract);
+      let market = ARENACLIENT.marketForRound(contract);
       let manifestHex = null;
       if (!market) {
         for (const n of nodes || []) {
@@ -237,19 +237,19 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
             const r = await fetch(String(n).replace(/\/+$/, '') + '/game-manifest?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
             if (!r.ok) continue;
             const bytes = new Uint8Array(await r.arrayBuffer());
-            market = BLWPCLIENT.marketForRound(contract, { manifestBytes: bytes });
-            if (market) { manifestHex = BLWPCLIENT.toHex(bytes); break; }
+            market = ARENACLIENT.marketForRound(contract, { manifestBytes: bytes });
+            if (market) { manifestHex = ARENACLIENT.toHex(bytes); break; }
           } catch { /* the next seat */ }
         }
       }
       if (!market) throw new Error('that round is not a market this page can read');
-      const sheet = BLWPCLIENT.pickSheet({ market, contract });
+      const sheet = ARENACLIENT.pickSheet({ market, contract });
       const el = document.getElementById('arena-pick');
       const box = el.querySelector('.sheet');
       box.textContent = '';
       const h = document.createElement('h3'); h.textContent = sheet.title;
       const lines = document.createElement('div'); lines.className = 'lines';
-      for (const t of BLWPCLIENT.roundPays(contract) ? [sheet.lines.stake, sheet.lines.fee, sheet.lines.net, sheet.attestors] : ['free - nothing at stake', sheet.attestors]) {
+      for (const t of ARENACLIENT.roundPays(contract) ? [sheet.lines.stake, sheet.lines.fee, sheet.lines.net, sheet.attestors] : ['free - nothing at stake', sheet.attestors]) {
         const d = document.createElement('div'); d.textContent = t; lines.append(d);
       }
       const outs = document.createElement('div'); outs.className = 'outcomes';

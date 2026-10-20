@@ -130,7 +130,7 @@ try { chain = await window.CHAIN_READ; }
 catch (e) { $('status').textContent = 'Bitcoin could not be read just now: ' + e.message; throw e; }
 timing.chainMs = ms();
 const c0 = performance.now();
-const found = nodesFromChain(chain, { verify: (s, m, k) => globalThis.BLWP_CURVE.verify(s, m, k) });
+const found = nodesFromChain(chain, { verify: (s, m, k) => globalThis.ARENA_CURVE.verify(s, m, k) });
 timing.checkMs = Math.round(performance.now() - c0); timing.nodes = found.nodes.length;
 window.GAMES_NODES = found.nodes.map((n) => ({ key: n.key, bond: n.bond, endpoint: n.endpoint, hostedGames: n.hostedGames }));
 $('status').innerHTML = `<b>${found.nodes.length} nodes</b> found on Bitcoin (testnet4, block ${esc(chain.tip)}), every proof and signature checked here · asking them…`;

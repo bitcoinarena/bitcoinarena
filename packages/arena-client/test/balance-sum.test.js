@@ -20,10 +20,10 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
   const window = { ARENA_FED_LOADS: new Map([[A, { federation: A, invite: 'invA' }], [B, { federation: B, invite: 'invB' }]]),
     ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_PENDING_SATS: 0 };
   const client = (f) => ({ balanceMsat: async () => String(bal[f] || 0n) });
-  const BLWPCLIENT = { ledgerFederations: () => [A, B, C], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
+  const ARENACLIENT = { ledgerFederations: () => [A, B, C], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
     openPlayerWallet: async ({ federationId }) => { const f = Buffer.from(federationId).toString('hex'); opened.push(f.slice(0, 2)); return client(f); } };
-  const run = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', src + '\nreturn window.ARENA_SUM_BALANCES;');
-  const sum = run(window, BLWPCLIENT, () => new Uint8Array(32), () => ({}));
+  const run = new Function('window', 'ARENACLIENT', 'walletSeed', 'vault', src + '\nreturn window.ARENA_SUM_BALANCES;');
+  const sum = run(window, ARENACLIENT, () => new Uint8Array(32), () => ({}));
   window.ARENA_KEEP_WALLET(A, client(A));            // the round's wallet, kept as the page keeps it
   await sum();
   const got = window.ARENA_WALLET_BALANCE;
@@ -39,9 +39,9 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
 test('a sum asked before the wallet opens does not stop every later sum; notes still arriving are said and read again', async () => {
   const A = 'aa'.repeat(32);
   const window = { ARENA_FED_LOADS: new Map(), ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_PENDING_SATS: 0 };
-  const BLWPCLIENT = { ledgerFederations: () => [], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')), openPlayerWallet: async () => null,
+  const ARENACLIENT = { ledgerFederations: () => [], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')), openPlayerWallet: async () => null,
     issuingMsat: async (c) => BigInt(await c.issuingMsat()) };
-  const sum = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', 'setTimeout', src + '\nreturn window.ARENA_SUM_BALANCES;')(window, BLWPCLIENT, () => null, () => ({}), () => 0);
+  const sum = new Function('window', 'ARENACLIENT', 'walletSeed', 'vault', 'setTimeout', src + '\nreturn window.ARENA_SUM_BALANCES;')(window, ARENACLIENT, () => null, () => ({}), () => 0);
   await sum();                                   // the restore's first sum: no wallet yet
   assert.equal(window.ARENA_WALLET_BALANCE, undefined);
   const w = { held: 3000000n, issuing: 1000000n, balanceMsat: async () => String(w.held), issuingMsat: async () => String(w.issuing) };
@@ -68,7 +68,7 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
   const window = { ARENA_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
     ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };
   // the popup says each federation's health in words (kanban #545, balance-view.js)
-  new Function('window', 'document', 'BLWPCLIENT', src2)(window, document, { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor });
+  new Function('window', 'document', 'ARENACLIENT', src2)(window, document, { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor });
   bars['#arena-wallet-bar .wb-bal'].listeners.click({ stopPropagation: () => {} });
   const text = split.textContent;
   console.log('  SPLIT:', text);
@@ -88,9 +88,9 @@ test('when the statuses land, a held federation with no wallet open is summed ag
   const window = { ARENA_FED_LOADS: new Map(), ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), ARENA_PENDING_SATS: 0 };
   const client = (f) => ({ balanceMsat: async () => String(bal[f] || 0n) });
   let opens = 0;
-  const BLWPCLIENT = { ledgerFederations: () => [A, B], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
+  const ARENACLIENT = { ledgerFederations: () => [A, B], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
     openPlayerWallet: async ({ federationId }) => { opens += 1; return client(Buffer.from(federationId).toString('hex')); } };
-  new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', src)(window, BLWPCLIENT, () => new Uint8Array(32), () => ({}));
+  new Function('window', 'ARENACLIENT', 'walletSeed', 'vault', src)(window, ARENACLIENT, () => new Uint8Array(32), () => ({}));
   window.ARENA_KEEP_WALLET(A, client(A));
   await window.ARENA_SUM_BALANCES();               // the page's first sum: no statuses yet, B cannot open
   assert.equal(window.ARENA_WALLET_BALANCE.sats, 53);

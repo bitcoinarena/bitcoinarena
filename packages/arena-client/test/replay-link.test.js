@@ -37,8 +37,8 @@ test('no endpoint, or ids that are not 32-byte hex, is no link, said by name', (
 test('the page copies the link the bundle builds: its hook, and the bundle carrying replayLinkFor and decodeEntryContract', () => {
   // the hook is the run's end, Tick Tock's page part (kanban #521)
   const page = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
-  assert.match(page, /window\.BLWP_COPY_REPLAY = async \(roundHex, entryHex, nodes\)/);
-  assert.match(page, /BLWPCLIENT\.replayLinkFor\(/);
+  assert.match(page, /window\.ARENA_COPY_REPLAY = async \(roundHex, entryHex, nodes\)/);
+  assert.match(page, /ARENACLIENT\.replayLinkFor\(/);
   assert.match(page, /navigator\.clipboard\.writeText\(link\.url\)/);
   const bundle = createRequire(import.meta.url)('../dist/arena-client.js');
   assert.equal(typeof bundle.replayLinkFor, 'function');

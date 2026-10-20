@@ -309,7 +309,7 @@ export const FUNDED_JOIN_LEAD_MS = 15000;
 // 45 sekunden in einer Runde bereits joinen"): the paid row is the soonest series round whose entry is still open, funded
 // or not. A series opens a round every 90 s and its entry closes 45 s after its start, so the row's "closes in" is never
 // over 90 s. Measured on 0.0.2527: an empty wallet's 90 s lead showed "closes in 1:41" for a round starting in 0:56.
-// A join whose deposit misses the entry close moves on to the next round (the page, BLWP_LOBBY_ACT.join).
+// A join whose deposit misses the entry close moves on to the next round (the page, ARENA_LOBBY_ACT.join).
 export const JOIN_LEAD_MS = 0;
 export const LOBBY_PER_SERIES = 8;
 /**

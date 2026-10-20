@@ -3,7 +3,7 @@
 // WHERE A WINNER'S WINNINGS ARE SENT (RULED 2026-09-23: winnings are always sent; a qualifier who names no
 // address is not paid, its share pooled over those who did).
 //
-// ONCE, AT THE RUN'S END, AND ONLY TO A QUALIFIER. On the existing BLWP_RUN_OVER hook the page asks the player one
+// ONCE, AT THE RUN'S END, AND ONLY TO A QUALIFIER. On the existing ARENA_RUN_OVER hook the page asks the player one
 // question, and only when its own core says DELIVERED with a score at or above the round's min_score. The key
 // `arena.winnings.asked.<round>.<entry>` is written BEFORE the prompt, so a reload - or the hook firing twice, which
 // it does - never asks again. A wreck, a forfeit or a score below min_score is asked nothing and posts nothing.
