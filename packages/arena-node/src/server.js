@@ -5152,10 +5152,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nodes = now.entries.filter((e) => e && e.pubkey && e.advert).map((e) => ({ node: toHex(e.pubkey), endpoint: String(e.advert.endpoint || ''),
           roles: [...(e.advert.roles || [])], guardianCapable: !!e.advert.guardianCapable, serving: e.advert.serving !== false,
           custody: custody.get(toHex(e.pubkey)) || [],
+          // ITS BOND AS THE CENSUS COUNTS IT (the owner 2026-10-20: "the bonds take a long time to show up, if they show up at all" - the health page
+          // asked each node's /owner/bond, which a node right after a restart answers without one): every output summed, the latest maturity
+          ...(() => { try { const nb = nodeBondOf(now.entries, e.pubkey); if (!nb) return {};
+            const mats = (nb.outputs || []).map((o) => o.maturity).filter((m) => Number.isInteger(m));
+            return { bondSats: String(nb.bondSats), bondMaturity: mats.length ? Math.max(...mats) : null }; } catch { return {}; } })(),
           // the federations its advertisement says it guards - before any record is held (a seat right after its start)
           guardianOf: ((e.advert.guardianOf) || []).map((g) => toHex(g.federationId)) }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), censusHeight: now.height, nodes }));
+        let tipNow = null; try { tipNow = typeof chainTip === 'function' ? Number(await chainTip()) : null; } catch { tipNow = null; }
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), censusHeight: now.height, tip: tipNow, nodes }));
       }
       if (req.method === 'GET' && url.pathname === '/census') {
         const got = roster.censusEvidenceFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
