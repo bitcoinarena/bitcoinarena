@@ -148,6 +148,8 @@
     #arena-donate .custom { display: flex; align-items: center; gap: 8px; } #arena-donate .custom input { flex: 1; min-width: 0; background: #0d1014; color: #e6edf3; border: 1px solid #2a3442; border-radius: 9px; padding: 8px 10px; font: inherit; }
     #arena-donate .row { margin-top: 10px; } #arena-donate .go { width: 100%; background: #f7931a; color: #111; border-color: #f7931a; } #arena-donate .go:disabled { opacity: .45; cursor: default; }
     #arena-donate .say { min-height: 1.4em; margin: 8px 0 0; } #arena-donate .say.bad { color: #f85149; }
+    /* kanban #551: the shares line holds two lines and the balance line one from the start, so the box keeps its size while they are read */
+    #arena-donate .split { min-height: calc(2 * 1.45em); } #arena-donate .bal { min-height: 1.45em; }
     #arena-donate-go { display: none; }
     /* AN ORDER'S PROGRESS OVER A GAME'S OWN CLIENT (2026-10-17: "When I press buy up nothing happens no order no error.
        There needs to be feedback and some sort of progress indicator while we wait for the result"): the page's join, said as it goes */
@@ -7531,10 +7533,12 @@
       const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) || null) : null;
       const who = gameName ? 'the developers of ' + ((game && (game.title || game.manifest && game.manifest.title)) || gameName) : 'the Bitcoin Arena protocol developers';
       el.innerHTML = '<div class="box"><div class="top"><h3>Donate to the developers</h3><button type="button" class="x" aria-label="Close">&times;</button></div>'
-        + '<p class="to"></p><p class="split muted">Reading the donation set …</p>'
+        // THE SAME LINES WHILE THE SET AND THE BALANCE ARE READ (kanban #551, the owner 2026-10-20: "the donate overlay changes dimension because it
+        // does not have the wallet amount when opening. use a placeholder while loading the balance"; as #510 for withdraw)
+        + '<p class="to"></p><p class="split muted">Shares: reading the donation set …</p>'
         + '<div class="amounts" role="group" aria-label="amount"></div>'
         + '<label class="custom">Custom <input inputmode="numeric" placeholder="sat" autocomplete="off"></label>'
-        + '<p class="bal muted"></p><div class="row"><button type="button" class="go primary" disabled>Donate</button></div><p class="say" role="status"></p></div>';
+        + '<p class="bal muted">Your wallet: … sat (checking)</p><div class="row"><button type="button" class="go primary" disabled>Donate</button></div><p class="say" role="status"></p></div>';
       el.querySelector('.to').textContent = 'To ' + who + ', in e-cash from your wallet, split by the shares of their donation set.';
       const say = (t, bad) => { const n = el.querySelector('.say'); n.textContent = t; n.classList.toggle('bad', !!bad); };
       const close = () => { el.classList.remove('show'); };
