@@ -198,3 +198,23 @@ test('volume, stream index and the seats of each epoch outlive a restart; the se
   assert.equal(w32.epoch, 31);
   assert.ok(!w32.seated.includes(keys[3].hex) && w32.seated.length === 2, 'the signed holder of epoch 30 steps back in the ranking of 31');
 });
+
+// kanban #559/#543 (spec §23A.3a "What counts as the peg-in"): a claimed peg-in outpoint that is one of the federation's own coins is proved
+test('proved peg-ins: claimed outpoints among the federation\'s coins count, an outpoint two claims name counts for neither', async () => {
+  const o1 = 'aa'.repeat(32) + ':1', o2 = 'bb'.repeat(32) + ':0', shared = 'cc'.repeat(32) + ':2', stranger = 'dd'.repeat(32) + ':0';
+  const claims = { 0: claimOf(0, { pegInOutpoints: [o1, shared] }), 1: claimOf(1, { pegInOutpoints: [o2, shared, stranger] }) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
+    return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
+  };
+  const coins = new Map([[o1, 60_000n], [o2, 25_000n], [shared, 99_000n]]);
+  const make = (federationCoins) => createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => 144 * 40 + 5,
+    beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher, federationCoins });
+  const w = make(async () => coins); await w.probe();
+  const v = await w.view();
+  assert.deepEqual([v.gateways[keys[0].hex].provedPegInSats, v.gateways[keys[1].hex].provedPegInSats], ['60000', '25000'], 'its own outpoint counts; the shared one for neither; one not among the coins not at all');
+  const none = make(undefined); await none.probe();
+  assert.equal((await none.view()).gateways[keys[0].hex].provedPegInSats, null, 'no coins read: nothing is proved');
+});

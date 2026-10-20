@@ -37,7 +37,7 @@ import { createReachCheck } from './reach-check.js';
 import { ownBondOf, ownBondsOf, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
-import { lnv2ModuleId, incomingSince } from './gateway-volume.js';
+import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
 import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
@@ -3845,6 +3845,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // routed volume: this guardian's own API, the LNv2 module's incoming contracts (gateway-volume.js)
       incoming: g.apiPort ? (() => { let mod = null; const url = `ws://127.0.0.1:${g.apiPort}`;
         return async (from) => { if (mod === null) mod = await lnv2ModuleId(url); return mod === null ? { ok: false } : incomingSince({ url, moduleId: mod, from }); }; })() : null,
+      // the federation's own coins, for the gateways' proved peg-ins (§23A.3a), read at most every 10 min
+      federationCoins: g.apiPort ? (() => { const url = `ws://127.0.0.1:${g.apiPort}`; let kept = null;
+        return async () => { if (kept && Date.now() - kept.at < 600000) return kept.coins; const coins = await federationCoins({ url }); if (coins) kept = { at: Date.now(), coins }; return coins; }; })() : undefined,
       bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000) });
   if (typeof chainTip === 'function' && fedRecords) for (const g of [guardian, guardianNext]) if (g && g.dataDir) gatewayWatches.push({ dir: g.dataDir, watch: watchFor(g) });
   const gatewayWatch = gatewayWatches.length ? gatewayWatches[0].watch : null;

@@ -50,3 +50,34 @@ export async function incomingSince({ url, moduleId, from = 0, timeoutMs = 5000,
   }
   return { ok: true, contracts, next: at };
 }
+
+/**
+ * THE FEDERATION'S OWN COINS (spec §23A.3a "What counts as the peg-in", kanban #559/#543): outpoint (txid:vout as an explorer prints it)
+ * -> sat, from its wallet module - the original wallet's summary (its spendable coins: a claimed peg-in is one of them), or wallet v2's
+ * outputs (each deposit it took, while unspent). A gateway's claimed peg-in outpoint found here went into this federation. Null when
+ * the guardian's API does not answer.
+ */
+export async function federationCoins({ url, timeoutMs = 8000, WS = globalThis.WebSocket }) {
+  const cc = await rpc(url, 'client_config', null, { timeoutMs, WS });
+  const mods = Object.entries((cc.result && cc.result.modules) || {});
+  const coins = new Map();
+  const v1 = mods.find(([, m]) => m && m.kind === 'wallet');
+  if (v1) {
+    const s = await rpc(url, `module_${v1[0]}_wallet_summary`, null, { timeoutMs, WS });
+    if (!s.result) return null;
+    for (const u of [...(s.result.spendable_utxos || []), ...(s.result.unsigned_change_utxos || []), ...(s.result.unconfirmed_change_utxos || [])])
+      if (u && u.outpoint) coins.set(String(u.outpoint).toLowerCase(), BigInt(u.amount || 0));
+    return coins;
+  }
+  const v2 = mods.find(([, m]) => m && m.kind === 'walletv2');
+  if (v2) {
+    for (let from = 0; ; from += 500) {
+      const r = await rpc(url, `module_${v2[0]}_output_info_slice`, [from, from + 500], { timeoutMs, WS });
+      if (!Array.isArray(r.result)) return coins.size ? coins : null;
+      for (const o of r.result) if (o && o.outpoint && !o.spent) coins.set(String(o.outpoint).toLowerCase(), BigInt(o.value || 0));
+      if (r.result.length < 500) break;
+    }
+    return coins;
+  }
+  return null;
+}
