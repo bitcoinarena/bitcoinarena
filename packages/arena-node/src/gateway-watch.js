@@ -11,6 +11,7 @@
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { seatGateways, GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { nodeBondOf } from '../../arena-protocol/src/census.js';
 
 export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = fetch, network = 'testnet4', bondMinGuardian = 50000n,
   epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null }) {
@@ -77,7 +78,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const e = all.find((x) => toHex(x.pubkey) === node);
       return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (e && e.advert && e.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
         registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(at) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
-        availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: e ? BigInt(e.bondSats) : 0n, gatewayUrl: r.claim.gatewayUrl };
+        availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: e ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl };
     });
     const beacon = await beaconAt(at * epochBlocks);
     if (!beacon) return { ok: false, why: `the epoch's first block ${at * epochBlocks} is not in this seat's chain` };

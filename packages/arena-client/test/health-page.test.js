@@ -58,7 +58,7 @@ test('the Capacity card: each federation\'s band in words, who is below B* and b
   const esc = (x) => String(x == null ? '' : x); const short = (h, n = 8) => String(h).slice(0, n);
   const sat = (v) => Number(v).toLocaleString('en-US'); const dot = (c) => `[${c}]`;
   new Function('$', 'esc', 'short', 'sat', 'dot', 'window', src + '\nreturn paintCapacity;')(() => el, esc, short, sat, dot, window)({ body: view });
-  assert.match(el.innerHTML, /\[warn\]<b>PRESSURE<\/b> · filling up · OPEN - Federation aaaaaaaa holds 87 % of what its bonds cover\. Deposits stop at 100 %\. 7 of 7 guardians below the bond B\* = 86,667 sat \(each needs 36,667 sat more\)\. 1 gateway\(s\) below the peg-in P\* = 50,000 sat\./);
+  assert.match(el.innerHTML, /\[warn\]<b>PRESSURE<\/b> · filling up · OPEN - Federation aaaaaaaa holds 87 % of what its bonds cover\. Deposits stop at 100 %\. 7 of 7 guardians below the bond B\* = 86,667 sat - increase your bond by 36,667 sat \(Add to bond\)\. 1 gateway\(s\) below the peg-in P\* = 50,000 sat\./);
   assert.match(el.innerHTML, /\[bad\]<b>FULL<\/b> · deposits closed · OPEN - Deposits into bbbbbbbb are closed until bonds rise or a new federation is founded\./);
   assert.match(el.innerHTML, /\[ok\]<b>CALM<\/b> · room left · OPEN - Federation cccccccc: 7 % of what its bonds cover\./);
   assert.match(el.innerHTML, /<b>Network: CALM<\/b> - the lowest-load OPEN federation cccccccc at 7 % · new installs bond at least 180,000 sat/);
