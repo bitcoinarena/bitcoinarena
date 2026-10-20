@@ -19,7 +19,7 @@ using L = Arena.Layout;
 /// </summary>
 public class ChartHud : MonoBehaviour
 {
-    public const string Symbol = "BTCUSD · 10s · BLWP";
+    public const string Symbol = "BTCUSD · 10s · ARENA";
 
     /// <summary>The live range, `L.CHART_GROUND` or `L.CHART_ROUND`. GROUND in the cab.</summary>
     public int Range { get; private set; } = L.CHART_GROUND;
