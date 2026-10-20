@@ -332,13 +332,40 @@ if (env.PAID_DUTY_DAILY === '1') {
     if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
     return idOfDonationSet(forced.recipients);
   };
+  // A DRAINING FEDERATION'S DAYS GO TO ITS SUCCESSOR (kanban #502/#549, the owner 2026-10-20: "it may not be a manual step"): before each
+  // posting the seats' signed records are read (GET /federations, the first seat that answers); a federation named here whose record is
+  // DRAINING (or CRITICAL while draining) and names an OPEN successor is posted as that successor - no round names a draining one
+  // the seats' public addresses through ARENA_ROUTE_MAP when it is set (a machine that cannot reach its own Funnel)
+  const { parseRoutes, routed } = await import('../src/fetch-routes.js');
+  const routes = parseRoutes(env.ARENA_ROUTE_MAP);
+  const fedsNow = async () => {
+    for (const n of round.nodes || []) {
+      try {
+        const base = String(n).replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/+$/, '');
+        const r = await fetch(routed(base + '/federations', routes), { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) continue;
+        const list = (await r.json()).federations || [];
+        const rec = new Map(list.map((x) => [String(x.federation).toLowerCase(), x]));
+        const out = [];
+        for (const f of feds) {
+          const x = rec.get(f), succ = x && x.successor ? String(x.successor).toLowerCase() : null;
+          const to = x && ['DRAINING', 'CRITICAL'].includes(x.status) && succ && rec.get(succ) && rec.get(succ).status === 'OPEN' ? succ : f;
+          if (to !== f) console.log(JSON.stringify({ at: new Date().toISOString(), dutyDay: 'successor', item, from: f.slice(0, 16), to: to.slice(0, 16), why: `${f.slice(0, 8)} is ${x.status}` }));
+          if (!out.includes(to)) out.push(to);
+        }
+        return out;
+      } catch { /* the next seat */ }
+    }
+    return feds;
+  };
   const post = async (slot) => {
+    const postFeds = await fedsNow();
     const UPDOWN = UPDOWN_CHOSEN && slot >= UPDOWN_FROM_SLOT ? UPDOWN_CHOSEN : UPDOWN_BASE;
     const { startMs, endMs } = targetDay(slot);
     const committee = BigInt(startMs - DUTY_COMMITTEE_LEAD_MS);
     const ds = donationSet();
     const common = { feeRate, maxFeeRate, committeeTimeMs: committee, extraOutputs: [dutyMarkerOutput(slot, item)], waitBeacon: false };
-    const per = (extra) => feds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
+    const per = (extra) => postFeds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
     // DUTY_NEXTBLOCK_V3=1: Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
     // need protocol 10 (ARENA_PROTOCOL_VERSION=10) and seats whose census advertisements name its game id
     const NB_FIELDS = env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
