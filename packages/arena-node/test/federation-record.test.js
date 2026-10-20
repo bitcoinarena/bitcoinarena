@@ -549,6 +549,10 @@ test('the records outlive a restart: a seat with a store keeps what it gathered,
   const r = await fresh.restore(inviteFederationId);
   assert.deepEqual([r.restored, r.of], [2, 2]);
   assert.deepEqual(fresh.list().map((x) => x.federation).sort(), [toHex(FED), toHex(SUCC)].sort());
+  // THE RECORD IN FORCE AT A HEIGHT (kanban #559/#543, §23A.3a): the newest at or below it; before the first one, none
+  const at = fresh.recordAt(toHex(SUCC), 9_999_999);
+  assert.ok(at && Number(at.height) > 0, 'the record in force at a later height is the newest');
+  assert.equal(fresh.recordAt(toHex(SUCC), Number(at.height) - 1), null, 'below its height this seat holds none');
   // a saved record altered is not taken back
   const orig = stores[0].m.get(toHex(SUCC));
   const bad = new Map([[toHex(SUCC), orig.slice(0, 80) + (orig[80] === '0' ? '1' : '0') + orig.slice(81)]]);   // one hex digit of the signed body
