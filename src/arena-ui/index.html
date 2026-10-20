@@ -4206,7 +4206,10 @@
     function paintWalletBar() {
       // a game's own header (Unity's, the leaderboard's, the shop's) shows the same balance
       { const hb = window.ARENA_WALLET_BALANCE; const he = document.getElementById('arena-hdr-sats');
-        if (he) { const t = hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat'; if (he.textContent !== t) he.textContent = t; } }
+        // MERGING, AS AN ICON (the owner 2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
+        // it; a ⇄ beside it says part of it is still coming in from this browser's other wallets, the sentence on hover / long press
+        const mergeTip = hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
+        if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) he.textContent = t; he.title = mergeTip; } }
       const bar = document.getElementById('arena-wallet-bar');
       if (!bar || !(document.body.classList.contains('arena-own-client') || document.body.classList.contains('arena-picking'))) return;
       const bal = window.ARENA_WALLET_BALANCE;
@@ -4217,8 +4220,9 @@
       document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
         : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
       document.getElementById('arena-wb-pending').textContent = (bal && bal.arriving ? ' · ' + Number(bal.arriving).toLocaleString('en-US') + ' arriving' : '')
-        + (bal && bal.merging ? ' · ' + Number(bal.merging).toLocaleString('en-US') + ' merging' : '')
+        + (bal && bal.merging ? ' \u21c4' : '')
         + (bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '');
+      document.getElementById('arena-wb-pending').title = bal && bal.merging ? Number(bal.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
       // THE PAYING ROUND'S SETTLEMENT FACTS: the part of its lobby line from "signer nodes" / "selected nodes" on
       const ap = document.getElementById('arena-approval');
       if (ap) {
