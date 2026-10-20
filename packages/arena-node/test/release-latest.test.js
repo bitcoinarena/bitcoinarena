@@ -52,3 +52,14 @@ test('release versions 2026.xx.yy and a fix 2026.xx.yy.zz (2026-10-19) compare p
     assert.equal(newerVersion(a, b), want, `${a} newer than ${b}: ${want}`);
   }
 });
+
+// THE TEST UPDATE CHANNEL (kanban #546): ARENA_LATEST_URL or arena.conf latest_url, only a latest.json on https://testnet.bitcoin-arena.io/
+test('the update source: production by default; a test channel only on the Arena testnet site; anything else refused; empty turns checks off', async () => {
+  const { latestUrlFrom } = await import('../src/release-latest.js');
+  assert.deepEqual(latestUrlFrom({}), { url: 'https://testnet.bitcoin-arena.io/release/latest.json', why: null });
+  assert.equal(latestUrlFrom({ ARENA_LATEST_URL: 'https://testnet.bitcoin-arena.io/release-test/latest.json' }).url, 'https://testnet.bitcoin-arena.io/release-test/latest.json');
+  assert.equal(latestUrlFrom({}, { latest_url: 'https://testnet.bitcoin-arena.io/release-test/latest.json' }).url, 'https://testnet.bitcoin-arena.io/release-test/latest.json', 'from arena.conf');
+  for (const bad of ['https://evil.example/latest.json', 'http://testnet.bitcoin-arena.io/release-test/latest.json', 'https://testnet.bitcoin-arena.io.evil.example/latest.json', 'https://testnet.bitcoin-arena.io/release-test/other.json'])
+    { const r = latestUrlFrom({ ARENA_LATEST_URL: bad }); assert.equal(r.url, 'https://testnet.bitcoin-arena.io/release/latest.json', bad); assert.match(r.why, /refused, the production release read/); }
+  assert.equal(latestUrlFrom({ ARENA_RELEASE_LATEST_URL: '' }).url, '');
+});
