@@ -556,4 +556,17 @@ test('the records outlive a restart: a seat with a store keeps what it gathered,
     newest: () => ({ rid: new Uint8Array(32).fill(7), contract: { censusHeight: 156873, networkId: NET } }), roster: { censusFor: () => roundCensus }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,
     censusAt: async () => chainCensus, chainTip: async () => 157090 });
   assert.equal((await fresh2.restore(inviteFederationId)).restored, 0);
+  // NO CENSUS YET (the owner 2026-10-20, measured 12:48Z: six restarted seats held no record for minutes, their chain view not built): the
+  // seat's own kept records come back at once, checked against their own guardian lists - every signature and the threshold
+  const blind = (store) => federationRecords({ store, round: { pubkey: n0.pubkey, identity: { secret: n0.secret } }, newest: () => null,
+    roster: { censusFor: () => ({ ok: false, why: 'no census yet' }) }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,
+    censusAt: () => new Promise(() => {}), chainTip: async () => 157090, fetcher: async () => { throw new Error('no network'); } });
+  const early = blind(stores[0]);
+  const t0 = Date.now();
+  const e = await early.restore(inviteFederationId);
+  assert.deepEqual([e.restored, e.of], [2, 2], 'both back with no census');
+  assert.ok(Date.now() - t0 < 12000, 'a census that never answers holds the restore 5 s per record at most');
+  assert.deepEqual(early.list().map((x) => x.federation).sort(), [toHex(FED), toHex(SUCC)].sort());
+  assert.equal((await blind({ load: async () => [...bad].map(([federation, record]) => ({ federation, record })), save: () => {} }).restore(inviteFederationId)).restored, 0,
+    'an altered record is refused here too: its signatures do not check');
 });
