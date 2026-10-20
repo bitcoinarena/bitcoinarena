@@ -6416,7 +6416,24 @@
       // a wallet is opened for every federation this browser holds notes in whose invite a verified record names, and the
       // balance the page shows is their sum - `parts` the split.
       window.ARENA_WALLETS = window.ARENA_WALLETS || new Map();
-      window.ARENA_KEEP_WALLET = (fid, client) => { if (fid && client) window.ARENA_WALLETS.set(String(fid).toLowerCase(), client); };
+      // A DEPOSIT AN EARLIER PAGE LEFT, FINISHED WHEREVER THE WALLET OPENS (kanban #547, measured 2026-10-20 01:0xZ on UI 251: 99 sat paid
+      // while the page that made the invoice was closed never arrived - the pending deposits were resumed only by the lobby's own wallet,
+      // and a page that opened the wallet any other way, the Up/Down market's balance among them, never claimed them): each kept wallet
+      // waits on its federation's pending deposits once per page, writes each claimed one's history row once, and reads the balance again
+      const RESUMED = new Set();
+      window.ARENA_KEEP_WALLET = (fid, client) => {
+        if (!fid || !client) return;
+        const k = String(fid).toLowerCase();
+        window.ARENA_WALLETS.set(k, client);
+        if (RESUMED.has(k) || !BLWPCLIENT.resumeDeposits) return;
+        RESUMED.add(k);
+        BLWPCLIENT.resumeDeposits({ client, storage: vault(), federationId: BLWPCLIENT.fromHex(k),
+          onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat');
+            if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); if (typeof paintHistory === 'function') paintHistory(); } })
+          .then((finals) => { window.ARENA_DEPOSITS_RESUMED = (window.ARENA_DEPOSITS_RESUMED || []).concat(finals.map((f) => k.slice(0, 8) + ' ' + f));
+            if (finals.length) console.log('[arena] deposits an earlier page left, federation ' + k.slice(0, 8) + ': ' + finals.join(', ')); },
+          () => { RESUMED.delete(k); });
+      };
       let summing = null;
       // ONE SUM AT A TIME, AND NEVER A STALE ONE (measured on preview UI 150 in the test host's Chrome, pinned seed
       // 6b360bd8 restored in a fresh profile: the lock client held 4000000 msat and the page said 0 sat for 512 s and on): asked
@@ -6809,11 +6826,7 @@
           window.ARENA_READ_BALANCE = () => (window.ARENA_SUM_BALANCES ? window.ARENA_SUM_BALANCES() : Promise.resolve());
           await window.ARENA_READ_BALANCE();
           combineWallets(client, named, r.raw.contract).catch((e) => console.log('[arena] wallets not combined: ' + (e && e.message ? e.message : e)));
-          // A DEPOSIT AN EARLIER PAGE LEFT (a reload between the payment and the claim): finished here, its history row
-          // written once, the balance read again
-          BLWPCLIENT.resumeDeposits({ client, storage: vault(), federationId: r.raw.contract.federationId,
-            onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat'); window.ARENA_READ_BALANCE(); paintHistory(); } })
-            .catch(() => {});
+          // (a deposit an earlier page left is finished by ARENA_KEEP_WALLET above, for this wallet as for every other)
           return client;
         })().catch((e) => { window.ARENA_WALLET_WARM = null; console.log('[arena] player wallet not opened in the lobby: ' + (e && e.message ? e.message : e)); });
       }
