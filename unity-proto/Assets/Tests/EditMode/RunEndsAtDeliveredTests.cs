@@ -30,21 +30,21 @@ public class RunEndsAtDeliveredTests
 
     /// <summary>
     /// A SECOND PLAY IN THE SAME TAB STARTS A NEW ROUND (2026-09-15 16:14, hole 1). Measured
-    /// before: `BlwpNet.Running` never went false and the page refused a second session, so after a
+    /// before: `ArenaNet.Running` never went false and the page refused a second session, so after a
     /// run ended the lobby's next PLAY could never open one; and the truck, handed back at the end,
     /// was never driven by the core again.
     /// </summary>
     [Test]
     public void AfterARunIsOverTheNextSessionMayOpenAndTheCoreDrivesAgain()
     {
-        Assert.IsTrue(Blwp.BlwpNet.MayStart(false, false), "the first session could not open");
-        Assert.IsFalse(Blwp.BlwpNet.MayStart(true, false), "a second session opened beside a live run");
-        Assert.IsTrue(Blwp.BlwpNet.MayStart(true, true), "after the run was over no new session could open");
+        Assert.IsTrue(Arena.ArenaNet.MayStart(false, false), "the first session could not open");
+        Assert.IsFalse(Arena.ArenaNet.MayStart(true, false), "a second session opened beside a live run");
+        Assert.IsTrue(Arena.ArenaNet.MayStart(true, true), "after the run was over no new session could open");
 
-        Assert.IsTrue(Blwp.CoreDrivenTruck.ResumesDriving(false, true, true), "a new live session found a truck the core no longer drives");
-        Assert.IsFalse(Blwp.CoreDrivenTruck.ResumesDriving(false, true, false), "the core took the truck back with no live session");
-        Assert.IsFalse(Blwp.CoreDrivenTruck.ResumesDriving(false, false, true), "a truck handed away (not ended) was taken back");
-        Assert.IsFalse(Blwp.CoreDrivenTruck.ResumesDriving(true, true, true), "a truck already driven was taken again");
+        Assert.IsTrue(Arena.CoreDrivenTruck.ResumesDriving(false, true, true), "a new live session found a truck the core no longer drives");
+        Assert.IsFalse(Arena.CoreDrivenTruck.ResumesDriving(false, true, false), "the core took the truck back with no live session");
+        Assert.IsFalse(Arena.CoreDrivenTruck.ResumesDriving(false, false, true), "a truck handed away (not ended) was taken back");
+        Assert.IsFalse(Arena.CoreDrivenTruck.ResumesDriving(true, true, true), "a truck already driven was taken again");
     }
 
     [Test]
@@ -78,7 +78,7 @@ public class RunEndsAtDeliveredTests
     [Test]
     public void TheRunClockIsTheCoresOwnCount()
     {
-        const int block = Blwp.Layout.BLOCK_TICKS;
+        const int block = Arena.Layout.BLOCK_TICKS;
         Assert.AreEqual(block * 1092f / 65536f, BlockClock.CoreSecondsLeft(0), 1e-3f, "a run that has not rolled out has all of it");
         Assert.AreEqual(179.96f, BlockClock.CoreSecondsLeft(0), 0.01f, "10800 ticks at 65536/1092 a second - three minutes");
         Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(block), "the tick the core says MISSED shows 0:00");

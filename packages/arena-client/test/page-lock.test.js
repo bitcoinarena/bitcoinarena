@@ -1781,7 +1781,7 @@ test('a committed lock is reused before the start, and resumed until the close, 
   const entry = Object.assign(entryFor(round, { seed: b32(0x5e), curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)),
     claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
     stakeLock: { outpoint: { txid: b32(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: Uint8Array.of(2, ...b32(0x6c)) } } } }),
-    { roundId: round.id, sessionPubkey: b32(0x55) });   // as the bridge sends it (blwp.jslib net.open)
+    { roundId: round.id, sessionPubkey: b32(0x55) });   // as the bridge sends it (arena.jslib net.open)
   const kept = { stake: { preimage: b32(1) }, lock: { outpoint: { txid: b32(0xd8), outIdx: 0n } }, committedTo: toHex(entryId(entry)) };
   const r = keptLockUse(kept, { entry, beforeStart: true });
   assert.equal(r.use, 'reuse'); assert.equal(r.resumed, true); assert.equal(r.kept, kept);

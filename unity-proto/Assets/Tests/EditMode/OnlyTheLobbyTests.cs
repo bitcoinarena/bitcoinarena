@@ -11,6 +11,17 @@ using UnityEngine;
 /// </summary>
 public class OnlyTheLobbyTests
 {
+    // THE PAGE AS IT RUNS (kanban #521): index.html and the game page parts it loads from games/<game>/, which hold the
+    // lines that once sat in index.html itself.
+    static string PageText()
+    {
+        string dir = System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock");
+        var sb = new System.Text.StringBuilder(System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "index.html")));
+        foreach (string g in System.IO.Directory.GetDirectories(System.IO.Path.Combine(dir, "games")))
+            foreach (string f in System.IO.Directory.GetFiles(g, "*.js")) sb.Append('\n').Append(System.IO.File.ReadAllText(f));
+        return sb.ToString();
+    }
+
     [Test]
     public void InAPageNoLobbyYetIsTheLobbyBeingReadNotTheTitle()
     {
@@ -24,7 +35,7 @@ public class OnlyTheLobbyTests
     [Test]
     public void APolledLobbyIsKeptAndNoPageKeepsTheTitle()
     {
-        var polled = new Blwp.LobbyState { mode = "lobby", from = "daily.json" };
+        var polled = new Arena.LobbyState { mode = "lobby", from = "daily.json" };
         Assert.AreSame(polled, SplashScreen.LobbyOrReading(polled, inAPage: true));
         Assert.IsNull(SplashScreen.LobbyOrReading(null, inAPage: false), "the editor and a page-less build keep their title");
     }
@@ -34,7 +45,7 @@ public class OnlyTheLobbyTests
     {
         string src = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/SplashScreen.cs"));
         int gui = src.IndexOf("void OnGUI()");
-        int made = src.IndexOf("_lobby = LobbyOrReading(_lobby, Blwp.DailyLobby.Compiled);", gui);
+        int made = src.IndexOf("_lobby = LobbyOrReading(_lobby, Arena.DailyLobby.Compiled);", gui);
         int depth = src.IndexOf("GUI.depth = -200", gui);
         Assert.IsTrue(gui >= 0 && made > gui && made < depth, "OnGUI can draw the title before the lobby is made");
     }
@@ -49,10 +60,10 @@ public class OnlyTheLobbyTests
         Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("refused", sessionLive: false, atTheRamp: false), "a rolled-out truck is not taken away");
         Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("joined", sessionLive: false, atTheRamp: true));
         Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("", sessionLive: false, atTheRamp: true), "no page lobby, no refusal");
-        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        StringAssert.Contains("window.BLWP_ENTRY_REFUSED(net.error)", lib);
+        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
+        StringAssert.Contains("window.ARENA_ENTRY_REFUSED(net.error)", lib);
         StringAssert.Contains("if (n && !n.client && n.state === 'error') return 1;", lib);
-        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
+        string page = PageText();
         StringAssert.Contains("window.BLWP_ENTRY_REFUSED = async (why) =>", page);
     }
 
@@ -62,10 +73,10 @@ public class OnlyTheLobbyTests
     public void TheNodeStripHidesDuringLoadoutAndCutsNoName()
     {
         string panel = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
-        StringAssert.Contains("if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);", panel);
-        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        StringAssert.Contains("window.BLWP_LOADOUT_OPEN = open !== 0;", lib);
-        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
+        StringAssert.Contains("if (_isOpen != value) Arena.ArenaCore.LoadoutOpen(value);", panel);
+        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
+        StringAssert.Contains("window.ARENA_LOADOUT_OPEN = open !== 0;", lib);
+        string page = PageText();
         // and the Console is told the strip is gone (427bab76, the console collapse: the strip lives behind its button)
         StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
         int a = page.IndexOf("const nodeHealth = {};"), b = page.IndexOf("function paintPlayers()");

@@ -206,13 +206,13 @@ public class CoinMarginedFeedTests
 /// <summary>
 /// AND WHAT THE CORE IS TOLD, which is the only part that changes the game.
 ///
-/// `Bootstrap` hands every accepted liquidation to `BlwpCore.Liquidation(usd)`
+/// `Bootstrap` hands every accepted liquidation to `ArenaCore.Liquidation(usd)`
 /// and nothing else decides a strike: the C# side gets the SIDE and the venue
 /// for the renderer, while the size, the crater, its depth and its lifetime
 /// are the core's. So the question this letter has to answer about the two
 /// engines is not "do they agree" - there is no second engine sizing a strike
 /// any more - it is whether the new book reaches the core in the SAME units as
-/// the old one. `BlwpCore.Scale` is the whole conversion and is readable
+/// the old one. `ArenaCore.Scale` is the whole conversion and is readable
 /// outside a WebGL player, so it can be measured here rather than argued.
 /// </summary>
 public class CoinMarginedCoreUnitsTests
@@ -226,8 +226,8 @@ public class CoinMarginedCoreUnitsTests
         // A coin-margined liquidation of a given dollar value and a USDT-M one
         // of the same value are the same input. They go through one `Raise`,
         // one `OnLiquidation` and one `Scale`, and this says so in numbers.
-        Assert.AreEqual(Blwp.BlwpCore.Scale(CapturedUsd),
-                        Blwp.BlwpCore.Scale(19700.0),
+        Assert.AreEqual(Arena.ArenaCore.Scale(CapturedUsd),
+                        Arena.ArenaCore.Scale(19700.0),
                         "the core must see one liquidation rule, not one per book");
     }
 
@@ -235,8 +235,8 @@ public class CoinMarginedCoreUnitsTests
     public void TheCapturedOrderIsRealSizeToTheCore()
     {
         // millions of USD in Q16.16: 0.0197 * 65536 = 1291.06, rounded.
-        Assert.AreEqual(1291, Blwp.BlwpCore.Scale(CapturedUsd));
-        Assert.AreEqual(0, Blwp.BlwpCore.Scale(0),
+        Assert.AreEqual(1291, Arena.ArenaCore.Scale(CapturedUsd));
+        Assert.AreEqual(0, Arena.ArenaCore.Scale(0),
             "and before this letter that is what the core was told: nothing");
     }
 
@@ -249,8 +249,8 @@ public class CoinMarginedCoreUnitsTests
     [Test]
     public void TheUsdtMarginedReadingWouldHaveBeenAnotherStrikeEntirely()
     {
-        int right = Blwp.BlwpCore.Scale(CapturedUsd);
-        int wrong = Blwp.BlwpCore.Scale(197 * 79288.0);
+        int right = Arena.ArenaCore.Scale(CapturedUsd);
+        int wrong = Arena.ArenaCore.Scale(197 * 79288.0);
         Assert.AreEqual(1291, right);
         Assert.AreEqual(1023655, wrong);
         Assert.Greater(wrong / (double)right, 700.0);
@@ -267,6 +267,6 @@ public class CoinMarginedCoreUnitsTests
     {
         double oneContract = MarketFeed.CoinMarginedUsd("BTCUSD_PERP", 1);
         Assert.AreEqual(100.0, oneContract, 0.001);
-        Assert.AreEqual(7, Blwp.BlwpCore.Scale(oneContract));
+        Assert.AreEqual(7, Arena.ArenaCore.Scale(oneContract));
     }
 }

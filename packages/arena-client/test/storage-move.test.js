@@ -41,8 +41,8 @@ function oldBrowser() {
   const local = mem(), session = mem();
   session.setItem('blwp.player.seed', SEED); session.setItem('blwp.player.seed.from', 'minted'); session.setItem('blwp.tab.id', 'tab-1');
   session.setItem('blwp.wallet', NWC);
-  session.setItem('blwp.session.key.' + '01'.repeat(32), '{"k":"pkcs8"}');   // Unity's (blwp.jslib)
-  session.setItem('blwp.cargo.' + '01'.repeat(32), '[1,2]');                   // Unity's (blwp.jslib)
+  session.setItem('blwp.session.key.' + '01'.repeat(32), '{"k":"pkcs8"}');   // Unity's (arena.jslib)
+  session.setItem('blwp.cargo.' + '01'.repeat(32), '[1,2]');                   // Unity's (arena.jslib)
   local.setItem('blwp.seeds', JSON.stringify([{ hex: SEED, from: 'minted', at: 1 }]));
   local.setItem('blwp.vault', '1');
   local.setItem('blwp.collect.' + '02'.repeat(8), '{"owed":900000}');
@@ -83,7 +83,7 @@ test('an old browser keeps its seed, its kept phrases, its vault and its wallet 
         assert.equal(store.getItem('arena.' + k.slice(5)), v, `${k} did not move`);
         assert.equal(store.getItem(k), null, `${k} was left behind`);
       }
-  // Unity's keys stay where blwp.jslib reads them; a key not ours is not touched
+  // Unity's keys stay where arena.jslib reads them; a key not ours is not touched
   assert.equal(session.getItem('blwp.session.key.' + '01'.repeat(32)), '{"k":"pkcs8"}');
   assert.equal(session.getItem('blwp.cargo.' + '01'.repeat(32)), '[1,2]');
   assert.equal(session.getItem('arena.session.key.' + '01'.repeat(32)), null);

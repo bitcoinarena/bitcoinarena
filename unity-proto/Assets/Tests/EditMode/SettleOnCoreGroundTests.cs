@@ -7,7 +7,7 @@ using UnityEngine;
 /// <summary>
 /// SETTLE ON CORE GROUND (no test named SettleOnCoreGround.cs). Something held at a point and a lift is set
 /// down at the ground's height there plus that lift whenever the drawn terrain rebuilds (`MempoolTerrain.Version`).
-/// In EditMode no deterministic core answers (`BlwpCore.HasSurface` false), so the ground is the terrain's own analytic
+/// In EditMode no deterministic core answers (`ArenaCore.HasSurface` false), so the ground is the terrain's own analytic
 /// relief, `SampleWorld` - the same one Bootstrap.BuildBoundary placed the walls from.
 /// </summary>
 public class SettleOnCoreGroundTests
@@ -38,11 +38,11 @@ public class SettleOnCoreGroundTests
     [Test]
     public void AHeldThingIsSetDownAtTheGroundsHeightPlusItsLift()
     {
-        Assert.IsFalse(Blwp.BlwpCore.HasSurface, "a core answers in EditMode: not the case this test names");
+        Assert.IsFalse(Arena.ArenaCore.HasSurface, "a core answers in EditMode: not the case this test names");
         var terrain = Terrain();
         Assert.Greater(terrain.Version, 0, "the terrain did not build");
         _settle = new GameObject("settle");
-        var settle = _settle.AddComponent<Blwp.SettleOnCoreGround>();
+        var settle = _settle.AddComponent<Arena.SettleOnCoreGround>();
         settle.terrain = terrain;
         _thing = new GameObject("wall");
         _thing.transform.position = new Vector3(0f, 999f, 0f);
@@ -59,7 +59,7 @@ public class SettleOnCoreGroundTests
     {
         var terrain = Terrain();
         _settle = new GameObject("settle");
-        var settle = _settle.AddComponent<Blwp.SettleOnCoreGround>();
+        var settle = _settle.AddComponent<Arena.SettleOnCoreGround>();
         settle.terrain = terrain;
         _thing = new GameObject("wall");
         settle.Hold(_thing.transform, 5f, 5f, 0.5f);
@@ -77,7 +77,7 @@ public class SettleOnCoreGroundTests
     public void WithNoTerrainNothingIsMovedAndTheSurfaceIsZero()
     {
         _settle = new GameObject("settle");
-        var settle = _settle.AddComponent<Blwp.SettleOnCoreGround>();
+        var settle = _settle.AddComponent<Arena.SettleOnCoreGround>();
         _thing = new GameObject("wall");
         _thing.transform.position = new Vector3(1f, 2f, 3f);
         settle.Hold(_thing.transform, 1f, 3f, 0.5f);

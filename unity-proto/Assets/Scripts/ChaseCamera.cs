@@ -505,7 +505,7 @@ public class ChaseCamera : MonoBehaviour
             if (_cam == null) _cam = GetComponent<Camera>();
             if (_cam != null)
             {
-                Vector3 vo = Blwp.BlwpCore.Available ? Blwp.BlwpCore.Velocity
+                Vector3 vo = Arena.ArenaCore.Available ? Arena.ArenaCore.Velocity
                            : (targetBody != null ? targetBody.linearVelocity : Vector3.zero);
                 vo.y = 0f;
                 float lensO = Mathf.Pow(Mathf.Clamp01(vo.magnitude / Mathf.Max(1f, fovAtSpeed)), 1.3f);
@@ -533,8 +533,8 @@ public class ChaseCamera : MonoBehaviour
         // no direction at all, so it could not feed the Atan2 below.
         // `linearVelocity` was the planar body velocity; that is
         // `T_VX`/`T_VZ`.
-        Vector3 v = Blwp.BlwpCore.Available
-                  ? Blwp.BlwpCore.Velocity
+        Vector3 v = Arena.ArenaCore.Available
+                  ? Arena.ArenaCore.Velocity
                   : (targetBody != null ? targetBody.linearVelocity : Vector3.zero);
         v.y = 0f;
         float speed01 = Mathf.Clamp01(v.magnitude / topSpeed);

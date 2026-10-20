@@ -263,7 +263,7 @@ public class CombatFx : MonoBehaviour
 
     float Ground(float x, float z) =>
         roads != null ? roads.SurfaceHeight(x, z)
-                      : (Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
+                      : (Arena.ArenaCore.HasSurface ? Arena.ArenaCore.SurfaceAt(x, z)
                                                   : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
 
     /* ------------------------------------------------------------- effects */
@@ -1001,7 +1001,7 @@ public class CombatFx : MonoBehaviour
 
     void Update()
     {
-        if (Blwp.BlwpCore.Available) PollCore();
+        if (Arena.ArenaCore.Available) PollCore();
         Step(Time.deltaTime);
     }
 
@@ -1042,15 +1042,15 @@ public class CombatFx : MonoBehaviour
 
     void PollCore()
     {
-        int n = Blwp.Layout.UNITS;
+        int n = Arena.Layout.UNITS;
         if (_wasAlive == null || _wasAlive.Length != n)
         {
             _wasAlive = new int[n]; _wasClock = new int[n]; _wasHp = new float[n];
             for (int i = 0; i < n; i++)
             {
-                _wasAlive[i] = Blwp.BlwpCore.UnitAlive(i) ? 1 : 0;
-                _wasClock[i] = Blwp.BlwpCore.UnitReloadClock(i);
-                _wasHp[i] = Blwp.BlwpCore.UnitHealth(i);
+                _wasAlive[i] = Arena.ArenaCore.UnitAlive(i) ? 1 : 0;
+                _wasClock[i] = Arena.ArenaCore.UnitReloadClock(i);
+                _wasHp[i] = Arena.ArenaCore.UnitHealth(i);
             }
             return;                       // first frame is the baseline, not an event
         }
@@ -1059,10 +1059,10 @@ public class CombatFx : MonoBehaviour
 
         for (int i = 0; i < n; i++)
         {
-            bool alive = Blwp.BlwpCore.UnitAlive(i);
-            int clock = Blwp.BlwpCore.UnitReloadClock(i);
-            float hp = Blwp.BlwpCore.UnitHealth(i);
-            bool armour = Blwp.BlwpCore.UnitIsArmour(i);
+            bool alive = Arena.ArenaCore.UnitAlive(i);
+            int clock = Arena.ArenaCore.UnitReloadClock(i);
+            float hp = Arena.ArenaCore.UnitHealth(i);
+            bool armour = Arena.ArenaCore.UnitIsArmour(i);
             bool wasAlive = _wasAlive[i] != 0;
 
             if (wasAlive && !alive)
@@ -1071,19 +1071,19 @@ public class CombatFx : MonoBehaviour
                 if (armour)
                 {
                     TankExplosion(new Vector3(at.x, Ground(at.x, at.z), at.z),
-                                  Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad);
+                                  Arena.ArenaCore.UnitHeading(i) * Mathf.Deg2Rad);
                     if (audio != null) audio.Destroyed(new Vector2(at.x, at.z));
                 }
                 else
                 {
-                    DrawCorpse(at.x, at.z, Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad,
-                               Blwp.BlwpCore.UnitSide(i) < 0, Vector2.zero);
+                    DrawCorpse(at.x, at.z, Arena.ArenaCore.UnitHeading(i) * Mathf.Deg2Rad,
+                               Arena.ArenaCore.UnitSide(i) < 0, Vector2.zero);
                     if (audio != null) audio.Hit(new Vector2(at.x, at.z));
                 }
             }
             else if (alive && wasAlive)
             {
-                var at = Blwp.BlwpCore.UnitPosition(i, 0f);
+                var at = Arena.ArenaCore.UnitPosition(i, 0f);
 
                 if (hp < _wasHp[i] - 0.001f)
                 {
@@ -1102,20 +1102,20 @@ public class CombatFx : MonoBehaviour
             _wasHp[i] = hp;
         }
 
-        int bombs = Blwp.Layout.MAX_BOMBS;
+        int bombs = Arena.Layout.MAX_BOMBS;
         if (_wasBomb == null || _wasBomb.Length != bombs)
         {
             _wasBomb = new bool[bombs];
-            for (int b = 0; b < bombs; b++) _wasBomb[b] = Blwp.BlwpCore.BombAlive(b);
+            for (int b = 0; b < bombs; b++) _wasBomb[b] = Arena.ArenaCore.BombAlive(b);
         }
         else
         {
             for (int b = 0; b < bombs; b++)
             {
-                bool live = Blwp.BlwpCore.BombAlive(b);
+                bool live = Arena.ArenaCore.BombAlive(b);
                 if (_wasBomb[b] && !live)
                 {
-                    var at = Blwp.BlwpCore.BombPosition(b);
+                    var at = Arena.ArenaCore.BombPosition(b);
                     // the same burst `army.Bombed` drew, at the slot's last place
                     DrawBombBurst(new Vector3(at.x, Ground(at.x, at.z), at.z));
                     if (audio != null) audio.Destroyed(new Vector2(at.x, at.z));
@@ -1133,7 +1133,7 @@ public class CombatFx : MonoBehaviour
     /// coordinates - the core does not clear them - so this is the corpse's
     /// place rather than the origin.
     /// </summary>
-    Vector3 LastSeen(int i) => Blwp.BlwpCore.UnitPosition(i, 0f);
+    Vector3 LastSeen(int i) => Arena.ArenaCore.UnitPosition(i, 0f);
 
     /// <summary>
     /// The courier's own reach against each arm, in metres: `COURIER_RANGE` for
@@ -1169,14 +1169,14 @@ public class CombatFx : MonoBehaviour
     void Muzzle(int i, Vector3 at, bool armour)
     {
         float range = armour ? 46f : 26f;
-        int side = Blwp.BlwpCore.UnitSide(i);
+        int side = Arena.ArenaCore.UnitSide(i);
         float bestD2 = range * range; float tx = 0f, tz = 0f; bool found = false;
-        for (int j = 0; j < Blwp.Layout.UNITS; j++)
+        for (int j = 0; j < Arena.Layout.UNITS; j++)
         {
-            if (j == i || !Blwp.BlwpCore.UnitAlive(j)) continue;
-            if (Blwp.BlwpCore.UnitIsArmour(j) != armour) continue;
-            if (Blwp.BlwpCore.UnitSide(j) == side) continue;
-            var o = Blwp.BlwpCore.UnitPosition(j, 0f);
+            if (j == i || !Arena.ArenaCore.UnitAlive(j)) continue;
+            if (Arena.ArenaCore.UnitIsArmour(j) != armour) continue;
+            if (Arena.ArenaCore.UnitSide(j) == side) continue;
+            var o = Arena.ArenaCore.UnitPosition(j, 0f);
             float d2 = (o.x - at.x) * (o.x - at.x) + (o.z - at.z) * (o.z - at.z);
             if (d2 < bestD2) { bestD2 = d2; tx = o.x; tz = o.z; found = true; }
         }
@@ -1196,7 +1196,7 @@ public class CombatFx : MonoBehaviour
         // picked when it is inside the courier reach AND nearer than that
         // enemy. Nothing is decided here - the core has already spent the
         // shell - this only points the barrel where it went.
-        var truck = Blwp.BlwpCore.TruckPosition(0f);
+        var truck = Arena.ArenaCore.TruckPosition(0f);
         float dtx = truck.x - at.x, dtz = truck.z - at.z;
         float toTruck2 = dtx * dtx + dtz * dtz;
         if (ShotGoesAtTheCourier(armour, toTruck2, found, bestD2))
@@ -1208,7 +1208,7 @@ public class CombatFx : MonoBehaviour
         // after it, so now and then the man it shot has moved out of reach.
         // The round still left the barrel: it goes down the unit's heading.
         float yaw = found ? Mathf.Atan2(tx - at.x, tz - at.z)
-                          : Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
+                          : Arena.ArenaCore.UnitHeading(i) * Mathf.Deg2Rad;
         float reach = found ? Mathf.Sqrt(bestD2) : range;
         float lift = armour ? 2.1f : 1.5f;
         float out_ = armour ? 4.6f : 0f;      // `Bind` put the rifle's flash on the man

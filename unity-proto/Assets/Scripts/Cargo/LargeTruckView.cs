@@ -10,7 +10,7 @@ using UnityEngine;
 /// The core decides the truck: a run whose entry plays with the item is started with its unlock and drives a bed of 255590
 /// (3.9 m, 1.3 x the standard 196608) - and its own drive acceleration, which reaches the screen by itself, since the view
 /// follows the core's pose. What is left to draw is the length. Read off the core every frame
-/// (<see cref="Blwp.BlwpCore.TruckBedMeters"/>), never chosen here:
+/// (<see cref="Arena.ArenaCore.TruckBedMeters"/>), never chosen here:
 ///
 ///   - THE BAY takes the core's bed: the same front (behind the cab), the bed 0.9 m longer towards the tail, so 30 % more room
 ///     and the crates packed over all of it;
@@ -36,7 +36,7 @@ public class LargeTruckView : MonoBehaviour
     public const float MorphS = 1.6f;
     /// <summary>A test's switch: morph in the editor too, where no core runs.</summary>
     public static bool MorphInEditor;
-    /// <summary>A test's switch: act as if a core ran (BlwpCore.Available), so the hold behind the lobby and the fly-in is tested.</summary>
+    /// <summary>A test's switch: act as if a core ran (ArenaCore.Available), so the hold behind the lobby and the fly-in is tested.</summary>
     public static bool CoreInEditor;
 
     CargoBay _bay;
@@ -81,7 +81,7 @@ public class LargeTruckView : MonoBehaviour
 
     void Update()
     {
-        float want = Blwp.BlwpCore.TruckBedMeters;
+        float want = Arena.ArenaCore.TruckBedMeters;
         if (want <= 0f) want = StandardBed;
         var body = transform.Find("Body") ?? transform.Find("BodyProxy");   // the model, or the box before it streams in
         if (body != _body) { Restore(); _body = body; _meshes.Clear(); _applied = StandardBed; _target = StandardBed; _morphAt = -1f; }
@@ -94,7 +94,7 @@ public class LargeTruckView : MonoBehaviour
             // and it morphs once the splash has hidden and PLAY's 4.2 s fly-in has brought the camera to the truck - in view. Without
             // a core (the editor's tests) - at once, as before.
             if (_chase == null) _chase = FindFirstObjectByType<ChaseCamera>();
-            bool core = Blwp.BlwpCore.Available || CoreInEditor;
+            bool core = Arena.ArenaCore.Available || CoreInEditor;
             bool held = !MorphInEditor && core && _splash != null && _body != null && Mathf.Abs(want - _applied) > 0.05f
                 && (_splash.Showing || (_chase != null && _chase.Flying));
             if (!held)

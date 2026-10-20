@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE HEADER ABOVE THE ROUNDS AND THE LINE UNDER THEM (follow-up, 2026-10-06, plan comment 430): one
