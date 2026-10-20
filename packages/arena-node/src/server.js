@@ -42,7 +42,7 @@ import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/ga
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityView, capacityPlea } from '../../arena-protocol/src/capacity.js';
+import { capacityView, capacityPlea, bondIncentive } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -4520,7 +4520,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip),
             // every output of this node and their sum (kanban #544), each with its own lock
             total: found.all ? found.all.sats : found.bond.sats, outputs: (found.all ? found.all.outputs : [found.bond]).map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })),
-            addBond: !!process.env.ARENA_HOME,
+            addBond: !!process.env.ARENA_HOME || !!process.env.ARENA_BOND_CLI,   // kanban #553: a seat set up by hand adds from its bond wallet
+            ...(await (async () => { if (process.env.ARENA_HOME || !process.env.ARENA_BOND_CLI) return {};
+              try { const { bondCliFrom, walletOf } = await import('./add-bond-wallet.js'); const w = walletOf(bondCliFrom().cli);
+                return { wallet: { spendableSats: String(w.spendableSats), confirmingSats: String(w.confirmingSats) } }; } catch (e) { return { wallet: { why: e.message.split('\n')[0] } }; } })()),
             says: 'a withdrawn bond takes this node out of the census from the next census height on' });
         }
         if (req.method === 'GET' && url.pathname === '/owner/standing') {
@@ -4742,7 +4745,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'add-bond');
           if (!a.ok) return answer(a.status || 401, a);
           const home = process.env.ARENA_HOME;
-          if (!home) return answer(501, { ok: false, why: 'this node was not installed by the Arena installer: add to its bond with its operator\'s own wallet' });
+          // A SEAT SET UP BY HAND (kanban #553, the owner 2026-10-20: "Add bond needs to be posted from within the interface"): from the bond
+          // wallet it names in ARENA_BOND_CLI (add-bond-wallet.js), the same plan and the same post
+          if (!home) {
+            const { bondCliFrom, addBondFromWallet } = await import('./add-bond-wallet.js');
+            const w = bondCliFrom();
+            if (!w) return answer(501, { ok: false, why: 'this node names no bond wallet (ARENA_BOND_CLI), so it cannot add to its bond from here' });
+            const args = body.args || {};
+            try {
+              const net = chainNetworkId() ? (toHex(fromHex(chainNetworkId())) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'regtest') : 'testnet4';
+              const r = await addBondFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, addSats: args.sats, post: args.post === true,
+                blockMs: net === 'testnet4' ? 600000 : 1000 });
+              if (!r.ok) return answer(400, r);
+              if (r.bond) console.log(`[bond] added ${r.plan.addSats} sat beside the bond from the bond wallet: ${r.bond.txid}:0 (total ${r.plan.totalSats} sat)`);
+              return answer(200, { ok: true, plan: r.plan, bond: r.bond || null });
+            } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
+          }
           try {
             const { addBondOnNode } = await import('../../arena-installer/src/add-bond.js');
             const args = body.args || {};
@@ -4752,6 +4770,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (r.bond) console.log(`[bond] added ${plan.addSats} sat beside the bond: ${r.bond.txid}:0 (total ${plan.totalSats} sat)`);
             return answer(200, { ok: true, plan, bond: r.bond || null });
           } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
+        }
+        // A TOP-UP ADDRESS OF THE BOND WALLET (kanban #553): signed by the owner, for a seat that adds to its bond from ARENA_BOND_CLI
+        if (url.pathname === '/owner/bond-wallet/address') {
+          const a = owner.authorize(body, 'bond-wallet/address');
+          if (!a.ok) return answer(a.status || 401, a);
+          try { const { bondCliFrom, walletAddress } = await import('./add-bond-wallet.js'); const w = bondCliFrom();
+            if (!w) return answer(501, { ok: false, why: 'this node names no bond wallet' });
+            return answer(200, { ok: true, address: walletAddress(w.cli) }); } catch (e) { return answer(500, { ok: false, why: e.message.split('\n')[0] }); }
         }
         // SET UP, WITHDRAW, REMOVE: signed by the owner like every owner door
         // A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (2026-10-18: "a button generate a new address for
@@ -4861,7 +4887,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const r = owner.authorize(body, 'login');
           if (!r.ok) return answer(r.status, r);
           return answer(200, { ok: true, node: toHex(round.pubkey), guardian: guardian ? guardian.endpoint || true : null,
-            games: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name })) });
+            games: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title || null, version: g.manifest && g.manifest.version != null ? Number(g.manifest.version) : null })) });
         }
         return text(res, 404, 'no such owner door');
       }
@@ -7681,7 +7707,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ?node=<hex> (or me: this seat's own key): the plea to that node (capacity.js capacityPlea) - the dashboard's and owner page's warning
         const asked = url.searchParams.get('node');
         const pleaFor = asked === 'me' ? toHex(round.pubkey) : (asked && /^[0-9a-f]{64}$/i.test(asked) ? asked.toLowerCase() : null);
-        return claimJson(200, { ok: true, node: toHex(round.pubkey), censusHeight: now.ok ? now.height : null, ...v, ...(pleaFor ? { plea: capacityPlea(v, pleaFor) } : {}) });
+        // AND WHAT RAISING PAYS THAT NODE (kanban #553): per federation it guards, its share now and at B* (capacity.js bondIncentive)
+        const incentives = pleaFor ? feds.map((f) => { const r = v.federations.find((x) => x.federation === f.federation) || {};
+          const i = bondIncentive({ bonds: f.guardianBonds, targetBondSats: r.targetBondSats, node: pleaFor, pressure: ['PRESSURE', 'CRITICAL', 'FULL'].includes(r.band) });
+          return i ? { federation: f.federation, band: r.band, load: r.load, ...i } : null; }).filter(Boolean) : null;
+        return claimJson(200, { ok: true, node: toHex(round.pubkey), censusHeight: now.ok ? now.height : null, ...v, ...(pleaFor ? { plea: capacityPlea(v, pleaFor), mine: incentives } : {}) });
       }
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }

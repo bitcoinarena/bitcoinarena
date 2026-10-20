@@ -113,3 +113,26 @@ export function capacityPlea(view, node) {
       says: `The network is under capacity pressure (${n.band}, the lowest-load federation at ${pct(n.lowestLoad)}). A bond of at least ${sat(n.targetBondSats)} sat puts a node first in line for the next federation.` };
   return null;
 }
+
+/**
+ * WHAT RAISING THE BOND PAYS ONE GUARDIAN (§23A.3a "Bigger bonds earn a far larger custody share"; kanban #553, the owner page: "suggest a
+ * specific amount AND also tell him the incentives"). `bonds` [{ node, bondSats }] the federation's seated guardians (a node twice is one,
+ * its sum); `targetBondSats` B*; `pressure` whether the weighting applies (PRESSURE, CRITICAL, FULL). Shares of the guardians' part, 0..1:
+ * `even` (CALM), `now` (this node's share as the bonds stand), `ifRaised` (this node at B*, the others as they stand, under the weighting
+ * only when `pressure`), `underPressure` (the same, were the weighting in force); `addSats` to B*.
+ */
+export function bondIncentive({ bonds, targetBondSats, node, pressure }) {
+  const me = String(node).toLowerCase();
+  const by = new Map();
+  for (const g of bonds || []) by.set(String(g.node).toLowerCase(), (by.get(String(g.node).toLowerCase()) || 0n) + BigInt(g.bondSats || 0));
+  if (!by.has(me) || !by.size) return null;
+  const bStar = BigInt(targetBondSats || 0);
+  const w = (b) => { if (bStar <= 0n) return 1; const x = Number(b < bStar ? b : bStar) / Number(bStar); return x * x; };
+  const mine = by.get(me);
+  const others = [...by].filter(([k]) => k !== me).reduce((a, [, b]) => a + w(b), 0);
+  const even = 1 / by.size;
+  const now = pressure ? w(mine) / (w(mine) + others || 1) : even;
+  const ifRaised = pressure ? 1 / (1 + others) : even;
+  // underPressure: what raising would pay once the weighting applies (shown while CALM, so the owner knows before it does)
+  return { guardians: by.size, bondSats: String(mine), targetBondSats: String(bStar), addSats: String(mine < bStar ? bStar - mine : 0n), even, now, ifRaised, underPressure: 1 / (1 + others) };
+}

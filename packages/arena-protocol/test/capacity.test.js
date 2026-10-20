@@ -81,3 +81,20 @@ test('the plea: the node below B* in a filling federation is told how much to ad
   const full = capacityPlea({ federations: [fed('FULL', 1.02, [{ node: 'g1', addSats: '50000' }])], network: { band: 'FULL' } }, 'g1');
   assert.equal(full.level, 'bad'); assert.match(full.says, /\(FULL: deposits are closed\)/);
 });
+
+// kanban #553: the owner page names the amount AND the incentive - §23A.3a's own example: 7 guardians at 50,000 sat, B* 86,667 sat
+test('bondIncentive: the spec\'s example - the raiser takes 33.3 % instead of 14.3 % under pressure; even while CALM', async () => {
+  const { bondIncentive } = await import('../src/capacity.js');
+  const bonds = [1, 2, 3, 4, 5, 6, 7].map((i) => ({ node: `0${i}`, bondSats: '50000' }));
+  const p = bondIncentive({ bonds, targetBondSats: '86667', node: '01', pressure: true });
+  assert.equal(p.addSats, '36667');
+  assert.equal(p.even.toFixed(3), '0.143'); assert.equal(p.now.toFixed(3), '0.143'); assert.equal(p.ifRaised.toFixed(3), '0.334');
+  const calm = bondIncentive({ bonds, targetBondSats: '86667', node: '01', pressure: false });
+  assert.deepEqual([calm.now.toFixed(3), calm.ifRaised.toFixed(3), calm.underPressure.toFixed(3)], ['0.143', '0.143', '0.334']);
+  // three raised (the table's third row): the others' weight falls, a raiser has 23.1 %
+  const three = bonds.map((b, i) => (i < 2 ? { ...b, bondSats: '86667' } : b));
+  assert.equal(bondIncentive({ bonds: three, targetBondSats: '86667', node: '07', pressure: true }).ifRaised.toFixed(3), '0.231');
+  // two outputs of one node are one guardian; a node not among them gets nothing
+  assert.equal(bondIncentive({ bonds: [...bonds, { node: '01', bondSats: '36667' }], targetBondSats: '86667', node: '01', pressure: true }).addSats, '0');
+  assert.equal(bondIncentive({ bonds, targetBondSats: '86667', node: 'ff', pressure: true }), null);
+});

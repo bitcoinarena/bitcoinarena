@@ -9,14 +9,15 @@ import { nodeStanding } from '../src/node-standing.js';
 import { seatingWarning } from '../src/seatings.js';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
-const a = HTML.indexOf('async function standingPanel() {');
-const body = HTML.slice(a, HTML.indexOf('\n}\n', a) + 2);
+// from the shared read (kanban #553: the Bond answer reads the same) to the end of standingPanel
+const a = HTML.indexOf('let standingRead = null;');
+const body = HTML.slice(a, HTML.indexOf('\n}\n', HTML.indexOf('async function standingPanel() {')) + 2);
 const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 
 async function render(seatings, standing) {
   const el = { innerHTML: '' };
   const fetch = async (u) => ({ json: async () => (u.endsWith('/owner/seatings') ? seatings : standing) });
-  const fn = new Function('$', 'at', 'fetch', 'esc', `${body}; return standingPanel;`)(() => el, (p) => `https://seat${p}`, fetch, esc);
+  const fn = new Function('$', 'at', 'fetch', 'esc', 'need', `${body}; return standingPanel;`)(() => el, (p) => `https://seat${p}`, fetch, esc, () => {});
   await fn();
   return el.innerHTML;
 }
@@ -26,9 +27,10 @@ const rounds = (bondMin, bonds) => [{ atMs: 2, bondMinSats: bondMin, entries: bo
 test('three seatings missed and a bond under the common bracket: both warnings, the update named', async () => {
   const st = nodeStanding({ me, rounds: rounds(200000n, [[me, 150000n], ['bb'.repeat(32), 300000n]]) });
   const html = await render({ missedInARow: 3, warning: seatingWarning(3) }, st);
-  assert.match(html, /Seatings missed in a row<\/span><b>3/);
-  assert.match(html, /MISSED SEATINGS/); assert.match(html, /serving = false/); assert.match(html, /ARENA_ADVERT_SERVING=false/);
-  assert.match(html, /LOSING BRACKETS/); assert.match(html, /0\.75x the bond_min now common \(200,000 sat\)/);
+  // kanban #553: plain names for each figure and warning
+  assert.match(html, /Draws missed in a row<\/span><b>3/);
+  assert.match(html, /Missed draws/); assert.match(html, /serving = false/); assert.match(html, /ARENA_ADVERT_SERVING=false/);
+  assert.match(html, /Bond below the minimum/); assert.match(html, /0\.75× of 200,000 sat/);
   assert.match(html, /Bond<\/span><b>150,000 sat/);
 });
 
@@ -42,14 +44,14 @@ test('the bond_min in force and a pending rise, with its escalation in the warni
   const st = { ...nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) }), bondMin: { inForce: '50000', noticeBlocks: 144, pending: { value: '80000', crossedAt: 300, effectiveAt: 444 } } };
   st.warnings = [{ kind: 'bond_min rise (T-3d)', urgent: true, says: 'bond_min rises to 80000 sat at block 444' }];
   const html = await render({ missedInARow: 0, warning: null }, st);
-  assert.match(html, /bond_min in force<\/span><b>50,000 sat · rising to 80,000 sat at block 444 if it holds \(notice 144 blocks\)/);
-  assert.match(html, /BOND_MIN RISE \(T-3D\)/);
+  assert.match(html, /Network minimum bond now<\/span><b>50,000 sat · rising to 80,000 sat at block 444 if it holds \(notice 144 blocks\)/);
+  assert.match(html, /bond_min rise \(T-3d\)/);
 });
 
 // THE CAPACITY PLEA (kanban #543): the page's own capacityPlea, run on GET /capacity?node=me - the seat's words shown, nothing while CALM
+const fnOf = (start, name) => { const c = HTML.indexOf(start); return HTML.slice(c, HTML.indexOf('\n}\n', HTML.indexOf(`async function ${name}() {`)) + 2); };
 test('the capacity plea: the seat\'s words for this node when a federation fills; nothing when the seat says no plea', async () => {
-  const c = HTML.indexOf('async function capacityPlea() {');
-  const fnBody = HTML.slice(c, HTML.indexOf('\n}\n', c) + 2);
+  const fnBody = fnOf('let pleaRead = null;', 'capacityPlea');
   const show = async (answer) => {
     const el = { innerHTML: '' }, asked = [];
     const fetch = async (u) => { asked.push(u); return { json: async () => answer }; };
@@ -58,8 +60,33 @@ test('the capacity plea: the seat\'s words for this node when a federation fills
   };
   const { html, asked } = await show({ ok: true, plea: { level: 'warn', band: 'PRESSURE', addSats: '36667', says: 'Federation aaaaaaaa holds 87 % of what its bonds cover (PRESSURE). Increase your bond by 36,667 sat (Add to bond) to bring it to 86,667 sat.' } });
   assert.deepEqual(asked, ['https://seat/capacity?node=me']);
-  assert.match(html, /<h2>Capacity<\/h2>.*Increase your bond by 36,667 sat \(Add to bond\)/s);
-  assert.match(html, /Add to bond is in the Bond card below/);
+  assert.match(html, /filling up.*Increase your bond by 36,667 sat \(Add to bond\)/s);
+  assert.match(html, /lowers its load/);
   assert.equal((await show({ ok: true, plea: null })).html, '');
   assert.equal((await show({ ok: true })).html, '');
+});
+
+// DO I NEED TO ADD TO MY BOND? (kanban #553, the owner 2026-10-20: "actively tell the owner to increase its bond to lower the load, it will
+// suggest an specific amount AND also tell him the incentives"): the answer from GET /capacity?node=me's `mine` and the standing
+test('the bond answer: under pressure the amount to B* and the share it pays; while CALM no need, with what it would pay; drawn apart', async () => {
+  const all = fnOf('let standingRead = null;', 'standingPanel') + fnOf('let pleaRead = null;', 'capacityPlea') + fnOf('async function bondAnswer() {', 'bondAnswer');
+  const answer = async (capacity, standing) => {
+    const els = {}, needs = [];
+    const $ = (id) => (els[id] = els[id] || { innerHTML: '', value: '' });
+    const fetch = async (u) => ({ json: async () => (u.includes('/capacity') ? capacity : u.endsWith('/owner/seatings') ? { missedInARow: 0, warning: null } : standing) });
+    await new Function('$', 'at', 'fetch', 'esc', 'need', 'window', `${all}; return bondAnswer;`)($, (p) => `https://seat${p}`, fetch, esc, (...a) => needs.push(a), {})();
+    return { html: els['bond-answer'].innerHTML, needs, suggest: els['ab-sats'] && els['ab-sats'].value };
+  };
+  const st = nodeStanding({ me, rounds: rounds(50000n, [[me, 50000n]]) });
+  const m = { federation: 'b18947f085d40df3' + '0'.repeat(48), band: 'PRESSURE', load: 0.87, guardians: 7, bondSats: '50000', targetBondSats: '86667', addSats: '36667', even: 1 / 7, now: 1 / 7, ifRaised: 0.3337, underPressure: 0.3337 };
+  const p = await answer({ ok: true, plea: null, mine: [m] }, st);
+  assert.match(p.html, /Yes - add 36,667 sat to lower Federation b18947f0's load/);
+  assert.match(p.html, /holds <b>87\.0 %<\/b>/); assert.match(p.html, /from <b>14\.3 %<\/b> to up to <b>33\.4 %<\/b>/);
+  assert.match(p.html, /Being drawn for rounds/); assert.match(p.html, /exactly the minimum most rounds ask for/);
+  assert.equal(p.suggest, '36667', 'the Add to bond field is filled with the amount');
+  assert.ok(p.needs.some(([k, l, t]) => k.startsWith('load-') && l === 'warn' && /add 36,667 sat/.test(t)));
+  const calm = await answer({ ok: true, plea: null, mine: [{ ...m, band: 'CALM', load: 0.42, ifRaised: 1 / 7 }] }, st);
+  assert.match(calm.html, /No need for Federation b18947f0: it holds 42\.0 %/); assert.match(calm.html, /up to 33\.4 % instead of 14\.3 %/);
+  const critical = await answer({ ok: true, plea: null, mine: [{ ...m, band: 'CRITICAL', load: 0.93 }] }, st);
+  assert.match(critical.html, /counts after 6 confirmations/); assert.ok(critical.needs.some(([, l]) => l === 'bad'));
 });
