@@ -23,7 +23,17 @@ export function gatewayClaimHash(c, tag = tagAt('gatewayClaim', { ms: c.atMs }))
   w.str(String(c.gatewayUrl)); w.bytes(fromHex(c.lightningPubkey), 33);
   w.u64(BigInt(c.capacitySats)); w.u64(BigInt(c.pegInSats)); w.u64(BigInt(c.atMs));
   w.u64(BigInt(c.inboundSats)); w.u64(BigInt(c.outboundSats)); w.str(String(c.lightningAddr || '')); w.u64(BigInt(c.outsideInboundSats || 0));
+  // ITS PEG-IN OUTPOINTS, WHEN IT NAMES ANY (spec §23A.3a "What counts as the peg-in"; kanban #559/#543): signed with the rest; a claim that
+  // names none hashes as before, so the claims already out keep their signatures
+  const outs = pegInOutpointsOf(c);
+  if (outs.length) { w.u32(outs.length); for (const o of outs) w.str(o); }
   return taggedHash(tag, w.finish());
+}
+
+/** A claim's peg-in outpoints, `txid:vout` as an explorer prints them, sorted and once each ([] when it names none). */
+export function pegInOutpointsOf(c) {
+  const list = Array.isArray(c && c.pegInOutpoints) ? c.pegInOutpoints.map((x) => String(x).toLowerCase()) : [];
+  return [...new Set(list.filter((x) => /^[0-9a-f]{64}:\d{1,6}$/.test(x)))].sort();
 }
 
 /** A claim, signed with `sign(hash32) -> signature64` by the node key `node` (hex). */
@@ -31,7 +41,7 @@ export function signGatewayClaim(fields, sign) {
   const c = { node: String(fields.node).toLowerCase(), federationId: String(fields.federationId).toLowerCase(), gatewayUrl: String(fields.gatewayUrl),
     lightningPubkey: String(fields.lightningPubkey).toLowerCase(), capacitySats: String(fields.capacitySats), pegInSats: String(fields.pegInSats), atMs: String(fields.atMs),
     inboundSats: String(fields.inboundSats ?? 0), outboundSats: String(fields.outboundSats ?? 0), lightningAddr: String(fields.lightningAddr || ''),
-    outsideInboundSats: String(fields.outsideInboundSats ?? 0) };
+    outsideInboundSats: String(fields.outsideInboundSats ?? 0), ...(pegInOutpointsOf(fields).length ? { pegInOutpoints: pegInOutpointsOf(fields) } : {}) };
   return { ...c, signature: toHex(sign(gatewayClaimHash(c))) };
 }
 
@@ -42,6 +52,8 @@ export function checkGatewayClaim(c, verify) {
   if (!/^0[23][0-9a-f]{64}$/.test(c.lightningPubkey || '')) return { ok: false, why: 'a claim names its Lightning node key' };
   if (!/^(|([a-z0-9-]+\.)*[a-z0-9-]+:\d{1,5}|\[[0-9a-f:]+\]:\d{1,5})$/i.test(String(c.lightningAddr ?? ''))) return { ok: false, why: 'a claim\'s Lightning address is host:port, or empty' };
   for (const k of ['capacitySats', 'pegInSats', 'atMs', 'inboundSats', 'outboundSats', 'outsideInboundSats']) if (!/^\d+$/.test(String(c[k] || ''))) return { ok: false, why: `a claim's ${k} is a whole number` };
+  if (c.pegInOutpoints !== undefined && (!Array.isArray(c.pegInOutpoints) || pegInOutpointsOf(c).length !== c.pegInOutpoints.length))
+    return { ok: false, why: 'a claim\'s peg-in outpoints are txid:vout, each once' };
   if (!/^[0-9a-f]{128}$/.test(c.signature || '')) return { ok: false, why: 'a claim is signed' };
   let good = false;
   try { good = tagsAccepted('gatewayClaim', { ms: c.atMs }).some((t) => verify(fromHex(c.signature), gatewayClaimHash(c, t), fromHex(c.node))); } catch { good = false; }

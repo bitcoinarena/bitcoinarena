@@ -10,6 +10,8 @@
 //       --out <claim file> [--lightning-addr host:port] [--members <seat url>,...]
 //       [--peg-in <sat> | --gateway-cli <path> --gateway-addr <url> --gateway-password <file>]
 //       [--peg-in-pending <txid>:<vout>,... --bitcoin-rpc <url> --bitcoin-cookie <file>]
+//       [--peg-in-outpoints <txid>:<vout>,...]   the gateway's peg-ins into this federation, signed in the claim: the guardians count
+//                                                 each that is one of the federation's own coins as its proved peg-in (§23A.3a)
 //
 // The peg-in is the gateway's own e-cash in the federation (what it pegged in), read from its gatewayd (`gateway-cli info`) when
 // --gateway-cli is named - measured 22:0xZ: gateway A held 248,999 sat in federation A while the hand-signed claim said 0.
@@ -90,7 +92,8 @@ const active = channels.filter((c) => c.active);
 const outsideIn = sum(active.filter((c) => !inside.has(c.remote_pubkey)), 'remote_balance');
 const claim = signGatewayClaim({ node, federationId, gatewayUrl, lightningPubkey: info.identity_pubkey, capacitySats: sum(channels, 'capacity'),
   pegInSats, atMs: Date.now(), inboundSats: sum(active, 'remote_balance'), outboundSats: sum(active, 'local_balance'),
-  lightningAddr: arg('lightning-addr', ''), outsideInboundSats: outsideIn }, (h) => schnorr.sign(h, secret));
+  lightningAddr: arg('lightning-addr', ''), outsideInboundSats: outsideIn,
+  ...(arg('peg-in-outpoints') ? { pegInOutpoints: String(arg('peg-in-outpoints')).split(',').map((x) => x.trim()).filter(Boolean) } : {}) }, (h) => schnorr.sign(h, secret));
 const ok = checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k));
 if (!ok.ok) { console.error(`the claim does not check: ${ok.why}`); process.exit(1); }
 writeFileSync(`${out}.tmp`, JSON.stringify(pegIns.length ? { ...claim, pending: { pegIns } } : claim, null, 2) + '\n');

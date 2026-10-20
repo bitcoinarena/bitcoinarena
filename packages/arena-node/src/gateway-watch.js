@@ -9,7 +9,7 @@
 // ROUTED VOLUME (gateway-volume.js): `incoming(from)` streams the federation's LNv2 incoming contracts after a stream index; each one is
 // credited to the gateway whose module key (its routing_info's module_public_key) funded it, in the epoch of the probe that first
 // saw it. The first probe only takes the index (history before the watch is not credited to any epoch). Outgoing is not counted.
-import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { checkGatewayClaim, pegInOutpointsOf } from '../../arena-protocol/src/gateway-claim.js';
 import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS } from '../../arena-protocol/src/gateway-seats.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
@@ -18,6 +18,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null, keep = null,
   // THE SIGNED SEATING OF AN EPOCH (gateway-seating.js), where one stands: async (fid, epoch) -> [node hex] | null
   seatingFor = async () => null,
+  // THE FEDERATION'S OWN COINS (gateway-volume.js federationCoins): async () -> Map(outpoint -> sat) | null - a claim's peg-in outpoint found
+  // among them is a proved peg-in (§23A.3a); none given: no peg-in is proved
+  federationCoins = async () => null,
   // THE SEATS A FEDERATION NEEDS (the owner 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"): async (fid) -> n
   seatsFor = async () => GATEWAY_SEATS }) {
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
@@ -136,13 +139,20 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
           registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(e) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
           availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: x ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl };
       });
+      // PROVED PEG-INS: each claimed outpoint that is one of the federation's own coins, counted once - an outpoint two claims name counts
+      // for neither (kanban #559/#543)
+      let coins = null; try { coins = await federationCoins(); } catch { coins = null; }
+      const named = new Map();
+      for (const [node, r] of rows) for (const o of pegInOutpointsOf(r.claim)) named.set(o, [...(named.get(o) || []), node]);
+      const provedOf = (node, r) => (coins ? pegInOutpointsOf(r.claim).filter((o) => coins.has(o) && named.get(o).length === 1).reduce((a, o) => a + coins.get(o), 0n) : null);
       const beacon = await beaconAt(e * epochBlocks);
       if (!beacon) return { ok: false, why: `the epoch's first block ${e * epochBlocks} is not in this seat's chain` };
       const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats });
       return { ok: true, s, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '',
         // what the operator states is still on its way (peg-ins confirming, kanban #552): beside the signed claim, shown as stated
-        pending: rows.get(toHex(c.node)).claim.pending || null }])) };
+        pending: rows.get(toHex(c.node)).claim.pending || null,
+        provedPegInSats: (() => { const v = provedOf(toHex(c.node), rows.get(toHex(c.node))); return v === null ? null : String(v); })() }])) };
     };
     // THE HOLDERS OF THE EPOCH BEFORE: the seating its guardians signed, else this guardian's own ranking of it
     let held = null; try { held = await seatingFor(fid, at - 1); } catch { held = null; }
