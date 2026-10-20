@@ -62,7 +62,7 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock } from '../../arena-protocol/src/ballot-chain.js';
 import { PROTOCOL_VERSION } from '../../arena-protocol/src/constants.js';
-import { censusOfView } from './roster.js';
+import { censusOfView, censusReplacer, censusReviver } from './roster.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
@@ -272,6 +272,31 @@ if (url) {
   // synchronously, and the signer nodes' addresses are in it.
   const views = new Map();                     // view key -> the view
   const blocksKept = blockCache();             // block hash -> its one parsed copy, shared by every view
+  // THE CHAIN'S CENSUS AT A HEIGHT, KEPT ACROSS A RESTART (the owner 2026-10-20: "the bonds take a long time to show up, if they show up at all";
+  // measured all day: a restarted seat read 2,017 blocks again for every census height it was asked - minutes under load, while its
+  // federation records, gateway operators and bonds waited): the census a height gives, kept in this node's store (census_kept, as the
+  // roster keeps a round's), keyed by the network, the height and that block's hash - another block at the height is another key, never
+  // a stale answer, at any depth. Three days kept; one derivation in flight per key.
+  const chainCensusInFlight = new Map();
+  const chainCensusKept = async (kind, networkIdHex, height, contract) => {
+    const hash = String(await call('getblockhash', [height]));
+    const key = `chain:${kind}:${networkIdHex}:${height}:${hash}`;
+    try { const row = db.prepare('SELECT body FROM census_kept WHERE key = ?').get(key); if (row) return JSON.parse(row.body, censusReviver); } catch { /* derived below */ }
+    if (chainCensusInFlight.has(key)) return chainCensusInFlight.get(key);
+    const p = (async () => {
+      const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
+      const census = censusOfView(view, contract);
+      if (census.ok) {
+        try {
+          db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now());
+          db.prepare("DELETE FROM census_kept WHERE key LIKE 'chain:%' AND kept_ms < ?").run(Date.now() - 3 * 86400000);
+        } catch { /* in memory only */ }
+      }
+      return census;
+    })().finally(() => chainCensusInFlight.delete(key));
+    chainCensusInFlight.set(key, p);
+    return p;
+  };
   const reading = new Map();                   // view key -> its one read in flight
   const keyOfRound = new Map();                // round id hex -> the view key it was asked under
   const viewFailed = new Map();                // view key -> { atMs, why } of its last failed read
@@ -330,8 +355,7 @@ if (url) {
       censusAt: async (networkIdHex, height) => {
         const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
           bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION };
-        const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
-        const census = censusOfView(view, contract);
+        const census = await chainCensusKept('ballot', networkIdHex, height, contract);
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
         // each bond's confirmation height and CLTV maturity: the funding vote's age (rules 1, 2) and lock (rule 1), §27A.9.5
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats,
@@ -345,8 +369,7 @@ if (url) {
       censusEntriesAt: async (networkIdHex, height) => {
         const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
           bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION };
-        const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
-        const census = censusOfView(view, contract);
+        const census = await chainCensusKept('ballot', networkIdHex, height, contract);
         if (!census.ok) { console.error(`[founding] no census at ${height}: ${census.why}`); return null; }
         return census.entries;
       },
