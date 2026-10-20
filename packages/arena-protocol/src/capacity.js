@@ -83,3 +83,33 @@ export function capacityView({ federations, bondMinSats, pegInMinSats, was = {},
     network: { lowestLoad: lowest ? lowest.load : null, lowestFederation: lowest ? lowest.federation : null, band: lowest ? lowest.band : 'CALM',
       targetBondSats: String(bNet), installMinimumBondSats: String(installMinimumBond({ bondMinSats, networkTarget: bNet })) } };
 }
+
+/**
+ * THE PLEA TO ONE NODE (§23A.3a "Warnings ... a plea to increase the bond", kanban #543): what the node dashboard and the owner page
+ * say to node `node` (hex) from a capacityView - null while every federation it is below target in is CALM and the network is CALM.
+ * { level: 'warn' | 'bad', band, says, addSats?, pegInAddSats?, federation? }. The amount is what to ADD (Add to bond, #544).
+ */
+export function capacityPlea(view, node) {
+  if (!view || !node) return null;
+  const me = String(node).toLowerCase();
+  const rank = { CALM: 0, PRESSURE: 1, CRITICAL: 2, FULL: 3 };
+  const pct = (l) => (typeof l === 'number' ? `${Math.round(l * 100)} %` : '-');
+  const sat = (x) => Number(x).toLocaleString('en-US');
+  const mine = (view.federations || []).filter((f) => (rank[f.band] || 0) > 0).map((f) => ({ f,
+    bond: (f.guardiansBelowTarget || []).find((g) => String(g.node).toLowerCase() === me),
+    gw: (f.gatewaysBelowTarget || []).find((g) => String(g.node).toLowerCase() === me) })).filter((x) => x.bond || x.gw)
+    .sort((a, b) => (rank[b.f.band] || 0) - (rank[a.f.band] || 0));
+  if (mine.length) {
+    const { f, bond, gw } = mine[0];
+    const level = rank[f.band] >= 2 ? 'bad' : 'warn';
+    const parts = [`Federation ${f.federation.slice(0, 8)} holds ${pct(f.load)} of what its bonds cover (${f.band}${f.band === 'FULL' ? ': deposits are closed' : ''}).`];
+    if (bond) parts.push(`Increase your bond by ${sat(bond.addSats)} sat (Add to bond) to bring it to ${sat(f.targetBondSats)} sat: the federation can then take more deposits, and a larger bond earns a larger share.`);
+    if (gw) parts.push(`Raise your gateway's peg-in by ${sat(gw.addSats)} sat, to ${sat(f.targetPegInSats)} sat.`);
+    return { level, band: f.band, federation: f.federation, says: parts.join(' '), ...(bond ? { addSats: String(bond.addSats) } : {}), ...(gw ? { pegInAddSats: String(gw.addSats) } : {}) };
+  }
+  const n = view.network || {};
+  if ((rank[n.band] || 0) > 0)
+    return { level: rank[n.band] >= 2 ? 'bad' : 'warn', band: n.band,
+      says: `The network is under capacity pressure (${n.band}, the lowest-load federation at ${pct(n.lowestLoad)}). A bond of at least ${sat(n.targetBondSats)} sat puts a node first in line for the next federation.` };
+  return null;
+}

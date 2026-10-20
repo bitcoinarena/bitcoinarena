@@ -3,7 +3,7 @@
 // CAPACITY PRESSURE (spec §23A.3a, kanban #543): the bands with their gap, B*, B*_net, P*, the installer's minimum, and the view.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capacityBand, targetBond, networkTargetBond, targetPegIn, installMinimumBond, capacityView } from '../src/capacity.js';
+import { capacityBand, targetBond, networkTargetBond, targetPegIn, installMinimumBond, capacityView, capacityPlea } from '../src/capacity.js';
 
 test('bands: entered at 70 / 90 / 100 %, left only below 60 / 80 / 100 % (no flapping at a boundary)', () => {
   assert.equal(capacityBand(0.69), 'CALM');
@@ -61,4 +61,23 @@ test('the view sums one guardian\'s rows: 50,000 + 32,000 is one guardian at 82,
   assert.equal(f.targetBondSats, '86667');
   assert.equal(f.guardians, 2);
   assert.deepEqual(f.guardiansBelowTarget.map((g) => [g.node, g.bondSats, g.addSats]), [['g1', '82000', '4667'], ['g2', '50000', '36667']]);
+});
+
+// THE PLEA (kanban #543): what the node dashboard and the owner page say to one node - how much to ADD, for the worst band it is below
+// target in; the network's plea when only the network is under pressure; nothing while all is CALM
+test('the plea: the node below B* in a filling federation is told how much to add; a calm network says nothing', () => {
+  const fed = (band, load, below = [], gw = []) => ({ federation: 'aa'.repeat(32), band, load, targetBondSats: '86667', targetPegInSats: '50000',
+    guardiansBelowTarget: below, gatewaysBelowTarget: gw });
+  const calm = { federations: [fed('CALM', 0.4, [{ node: 'g1', addSats: '36667' }])], network: { band: 'CALM' } };
+  assert.equal(capacityPlea(calm, 'g1'), null);
+  const v = { federations: [fed('PRESSURE', 0.87, [{ node: 'g1', addSats: '36667' }], [{ node: 'g1', addSats: '12000' }])], network: { band: 'PRESSURE', lowestLoad: 0.87, targetBondSats: '86667' } };
+  const p = capacityPlea(v, 'G1');
+  assert.deepEqual([p.level, p.band, p.addSats, p.pegInAddSats], ['warn', 'PRESSURE', '36667', '12000']);
+  assert.match(p.says, /^Federation aaaaaaaa holds 87 % of what its bonds cover \(PRESSURE\)\. Increase your bond by 36,667 sat \(Add to bond\) to bring it to 86,667 sat/);
+  assert.match(p.says, /Raise your gateway's peg-in by 12,000 sat, to 50,000 sat\./);
+  const other = capacityPlea(v, 'g9');
+  assert.equal(other.addSats, undefined);
+  assert.match(other.says, /The network is under capacity pressure \(PRESSURE, the lowest-load federation at 87 %\)\. A bond of at least 86,667 sat/);
+  const full = capacityPlea({ federations: [fed('FULL', 1.02, [{ node: 'g1', addSats: '50000' }])], network: { band: 'FULL' } }, 'g1');
+  assert.equal(full.level, 'bad'); assert.match(full.says, /\(FULL: deposits are closed\)/);
 });
