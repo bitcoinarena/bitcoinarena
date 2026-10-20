@@ -14731,6 +14731,285 @@ async function stakeFor(round, { signerNodes, curve, random, playerPubkey, neede
   };
 }
 
+// ---- arena-node/src/invite.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A FEDIMINT INVITE THAT NAMES EVERY GUARDIAN (item 5, 2026-09-28: the testnet invite named guardian 1 alone, and while
+// guardian 1 was down every player join failed "Failed to download client config" though six of seven were up).
+//
+// The stock invite code is bech32m, hrp "fed1", over a consensus-encoded Vec<InviteCodePart>: a Url part is variant 0,
+// its length, then (url string, peer id); the FederationId part is variant 1, length 32, the id. A client downloads the
+// config from any peer the invite names, so an invite naming all of them survives any one being down. The byte layout
+// is the one `fedimint-cli invite-code` writes, measured on this federation's own invite, and an invite built here was
+// joined by the stock client (fedimint-cli join-federation) while guardian 1 was down.
+const CHARSET_invite = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+const BECH32M = 0x2bc830a3;
+const polymod_invite = (values) => {
+  let chk = 1;
+  for (const v of values) {
+    const b = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((b >>> i) & 1) chk ^= GEN[i];
+  }
+  return chk >>> 0;
+};
+const hrpExpand_invite = (h) => [...[...h].map((c) => c.charCodeAt(0) >> 5), 0, ...[...h].map((c) => c.charCodeAt(0) & 31)];
+const toWords = (bytes) => {
+  let acc = 0, bits = 0; const out = [];
+  for (const x of bytes) { acc = (acc << 8) | x; bits += 8; while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); } acc &= (1 << bits) - 1; }
+  if (bits) out.push((acc << (5 - bits)) & 31);
+  return out;
+};
+const fromWords = (words) => {
+  let acc = 0, bits = 0; const out = [];
+  for (const w of words) { acc = (acc << 5) | w; bits += 5; while (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); } acc &= (1 << bits) - 1; }
+  return Uint8Array.from(out);
+};
+const HRP = 'fed1';
+
+/** The invite naming `guardians` ([{ url, peer }], each url its API endpoint) of federation `federationId` (32 bytes). */
+function inviteForGuardians(federationId, guardians) {
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new TypeError('a federation id is 32 bytes');
+  if (!guardians.length || guardians.length > 250) throw new Error('an invite names 1 to 250 guardians');
+  const parts = [];
+  for (const { url, peer } of guardians) {
+    const u = new TextEncoder().encode(url);
+    if (u.length > 127 || !Number.isInteger(peer) || peer < 0 || peer > 127) throw new Error(`guardian ${peer} at ${url} does not fit a one-byte length and peer id`);
+    const body = [u.length, ...u, peer];
+    parts.push(0, body.length, ...body);
+  }
+  parts.push(1, 32, ...federationId);
+  const words = toWords(Uint8Array.from([guardians.length + 1, ...parts]));
+  const pm = polymod_invite([...hrpExpand_invite(HRP), ...words, 0, 0, 0, 0, 0, 0]) ^ BECH32M;
+  const check = Array.from({ length: 6 }, (_, i) => (pm >>> (5 * (5 - i))) & 31);
+  return `${HRP}1${[...words, ...check].map((w) => CHARSET_invite[w]).join('')}`;
+}
+
+/** What an invite names: its guardians' urls and peer ids, and its federation id (hex). Throws on a bad checksum. */
+function readInvite(invite) {
+  const s = String(invite).trim().replace(/"/g, '').toLowerCase();
+  const at = s.lastIndexOf('1');
+  if (s.slice(0, at) !== HRP) throw new Error('not a fedimint invite (hrp fed1)');
+  const words = [...s.slice(at + 1)].map((c) => CHARSET_invite.indexOf(c));
+  if (words.some((w) => w < 0) || polymod_invite([...hrpExpand_invite(HRP), ...words]) !== BECH32M) throw new Error('the invite\'s checksum does not hold');
+  const b = fromWords(words.slice(0, -6));
+  const guardians = []; let federationId = null;
+  let i = 1;
+  for (let n = 0; n < b[0]; n++) {
+    const variant = b[i], len = b[i + 1], body = b.subarray(i + 2, i + 2 + len);
+    if (variant === 0) guardians.push({ url: new TextDecoder().decode(body.subarray(1, 1 + body[0])), peer: body[1 + body[0]] });
+    if (variant === 1) federationId = Array.from(body, (x) => x.toString(16).padStart(2, '0')).join('');   // no Buffer: the owner page reads invites too
+    i += 2 + len;
+  }
+  return { guardians, federationId };
+}
+
+// ---- arena-protocol/src/federation-record.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A FEDERATION'S RECORD (spec §23A.4): what its guardians say about it, signed by at least its threshold.
+//
+// The status bands are §23A.1's, counted in guardians that are SEATED - not gone (DEPARTED by notice, or ABANDONED by
+// 2f + 1 absence attestations for abandon_blocks):
+//     reserve = seated - (2f + 1)
+//     OPEN       reserve >= min(2, f)   rounds may name it; deposits accepted
+//     DRAINING   reserve == 1           no new round names it; the client refuses deposits into it; succession has begun
+//     CRITICAL   reserve == 0           one more loss halts it: the client shows Withdraw and Move only
+//     HALTED     seated < 2f + 1        every note and lock frozen (§22)
+//     CLOSED                            its successor holds everything (§23A.6)
+// The record is the only source a client believes about a federation: "trusts nothing about a federation that has no
+// record it can verify". Its signatures are by the guardians' NODE keys (one node is one guardian, §23A.2), each a census
+// node whose bond advertisement names this federation and this guardian key in guardian_of[] - so the bonds stand behind
+// every signature. No curve here: `verify` (BIP-340) is the caller's.
+
+
+
+
+const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
+const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
+const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
+const cmp = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i]; return a.length - b.length; };
+
+/** n guardians tolerate f = floor((n - 1) / 3); the stock threshold n - f, which is 2f + 1 wherever §23A writes it. */
+const faultsOf = (n) => Math.floor((n - 1) / 3);
+const thresholdOf = (n) => n - faultsOf(n);
+
+/** §23A.1's band for `seated` of `nominal` guardians - and the reserve it is read from. CLOSED is the successor's word, not a count. */
+function statusFor({ nominal, seated, closed = false }) {
+  if (!Number.isInteger(nominal) || nominal < 1 || !Number.isInteger(seated) || seated < 0 || seated > nominal)
+    throw new Error('a federation has 1 or more guardians, and 0 to all of them seated');
+  const f = faultsOf(nominal), min = 2 * f + 1, reserve = seated - min;
+  const status = closed ? 'CLOSED' : seated < min ? 'HALTED' : reserve >= Math.min(2, f) ? 'OPEN' : reserve === 1 ? 'DRAINING' : 'CRITICAL';
+  return { status, reserve, f, min, threshold: thresholdOf(nominal) };
+}
+
+function encodeFederationRecord(r) {
+  const w = new Writer();
+  w.u8(TYPE_FEDERATION_RECORD);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(r.federationId);
+  w.bytes32(r.networkId);
+  w.str(r.invite);
+  w.u8(r.nominal);
+  w.u8(r.threshold);
+  if (r.threshold !== thresholdOf(r.nominal)) throw new Error(`a federation of ${r.nominal} signs with ${thresholdOf(r.nominal)}, not ${r.threshold}`);
+  w.vec(r.guardians, (g, ww) => { ww.bytes(g.peerKey, 33); ww.bytes32(g.nodePubkey); ww.str(g.operatorId || ''); ww.bytes32(g.bondTxid); ww.u32(g.bondVout); ww.str(g.endpoint || ''); },
+    { sortedBy: (a, b) => cmp(a.nodePubkey, b.nodePubkey) });
+  if (!nameOf(FEDERATION_STATUS, r.status)) throw new Error(`status ${r.status} is not one of ${Object.keys(FEDERATION_STATUS).join(', ')}`);
+  w.u8(r.status);
+  w.bytes32(r.successorId || new Uint8Array(32));
+  w.vec(r.gone || [], (g, ww) => { ww.bytes(g.peerKey, 33); ww.u32(g.sinceHeight); ww.u8(g.kind); ww.bytes32(g.proofRef || new Uint8Array(32)); },
+    { sortedBy: (a, b) => cmp(a.peerKey, b.peerKey) });
+  w.u64(r.exposureCapSats);
+  w.u64(r.reserveSats);
+  w.u32(r.height);
+  return w.finish();
+}
+
+function decodeFederationRecord(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FEDERATION_RECORD) throw new Error('not a federation record');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const out = {
+    federationId: r.bytes32(), networkId: r.bytes32(), invite: r.str(), nominal: r.u8(), threshold: r.u8(),
+    guardians: r.vec((rr) => ({ peerKey: rr.bytes(33), nodePubkey: rr.bytes32(), operatorId: rr.str(), bondTxid: rr.bytes32(), bondVout: rr.u32(), endpoint: rr.str() })),
+    status: r.u8(), successorId: r.bytes32(),
+    gone: r.vec((rr) => ({ peerKey: rr.bytes(33), sinceHeight: rr.u32(), kind: rr.u8(), proofRef: rr.bytes32() })),
+    exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
+  encodeFederationRecord(out);                       // held to the encoder's rules
+  return out;
+}
+
+/** The bytes its guardians sign. */
+const federationRecordId = (r) => taggedHash(TAG.federationRecord, encodeFederationRecord(r));
+
+/**
+ * THE BODY A GUARDIAN SEAT BUILDS, from what every seat reads the same: the census nodes guarding the federation (their
+ * adverts' guardian_of[]), the guardians gone, the height. `bondsSats` is each guardian's bond, by node key hex.
+ */
+function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height }) {
+  const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
+  const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
+  const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
+  const cap = seatedGuardians.length ? exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f }) : { ok: false };
+  return {
+    federationId, networkId, invite, nominal, threshold: band.threshold,
+    guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
+      .sort((a, b) => cmp(a.nodePubkey, b.nodePubkey)),
+    // A SUCCESSOR NAMED IS A DRAIN (§23A.6 step 2: "The old federation's guardians sign a record with status = DRAINING and
+    // successor_id"): OPEN becomes DRAINING; a worse band (CRITICAL, HALTED) and CLOSED stay what they are
+    status: FEDERATION_STATUS[!closed && successorId && successorId.some((x) => x) && band.status === 'OPEN' ? 'DRAINING' : band.status],
+    successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
+    exposureCapSats: cap.ok ? cap.cap : 0n, reserveSats, height,
+    seated: seatedGuardians.length, band,
+  };
+}
+
+/** Signed bytes: the body, then (u8 count) of (node key 32 || signature 64), sorted by key. */
+function joinSignedRecord(bodyBytes, signatures) {
+  const sigs = [...signatures].sort((a, b) => cmp(a.nodePubkey, b.nodePubkey));
+  const out = new Uint8Array(bodyBytes.length + 1 + sigs.length * 96);
+  out.set(bodyBytes, 0); out[bodyBytes.length] = sigs.length;
+  sigs.forEach((s, i) => { out.set(s.nodePubkey, bodyBytes.length + 1 + i * 96); out.set(s.signature, bodyBytes.length + 33 + i * 96); });
+  return out;
+}
+
+function splitSignedRecord(bytes) {
+  // the body's own length: decode tolerates no trailing bytes, so find the split by the count byte at the end of the body
+  for (let n = 0; n <= 32; n++) {
+    const at = bytes.length - 1 - n * 96;
+    if (at < 1 || bytes[at] !== n) continue;
+    try {
+      const record = decodeFederationRecord(bytes.subarray(0, at));
+      const signatures = [];
+      for (let i = 0; i < n; i++) signatures.push({ nodePubkey: bytes.slice(at + 1 + i * 96, at + 33 + i * 96), signature: bytes.slice(at + 33 + i * 96, at + 97 + i * 96) });
+      return { record, body: bytes.subarray(0, at), signatures };
+    } catch { /* not this split */ }
+  }
+  throw new Error('that is not a signed federation record');
+}
+
+/**
+ * IS THIS A RECORD A CLIENT MAY BELIEVE? `census` is a census this client checked (entries with `pubkey` and `advert`);
+ * a signature counts only from a census node whose advertisement names this federation with the guardian key the record
+ * lists for that node. `inviteFederationId(invite)` reads the invite's federation id (the caller's parser). Answers
+ * { ok, record, status, signers } or { ok: false, why }.
+ */
+function verifyFederationRecord(bytes, { census, verify, inviteFederationId, networkId = null }) {
+  let s; try { s = splitSignedRecord(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  const r = s.record;
+  if (networkId && toHex(networkId) !== toHex(r.networkId)) return { ok: false, why: 'that record is of another network' };
+  let named; try { named = inviteFederationId(r.invite); } catch (e) { return { ok: false, why: `its invite does not read: ${e.message}` }; }
+  if (!named || toHex(named) !== toHex(r.federationId)) return { ok: false, why: 'its invite names another federation than the record' };
+  const fid = toHex(r.federationId);
+  const guarding = new Map();
+  for (const e of census || []) {
+    for (const g of (e.advert && e.advert.guardianOf) || []) if (toHex(g.federationId) === fid) guarding.set(toHex(e.pubkey), toHex(g.guardianKey));
+  }
+  const listed = new Map(r.guardians.map((g) => [toHex(g.nodePubkey), toHex(g.peerKey)]));
+  const id = federationRecordId(r);
+  const signers = new Set();
+  for (const sig of s.signatures) {
+    const k = toHex(sig.nodePubkey);
+    if (!guarding.has(k) || listed.get(k) !== guarding.get(k)) continue;           // not a bonded guardian of this federation
+    let good = false; try { good = verify(sig.signature, id, sig.nodePubkey) === true; } catch { good = false; }
+    if (good) signers.add(k);
+  }
+  if (signers.size < r.threshold)
+    return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${r.threshold}` };
+  return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id };
+}
+
+/** Of several verified records of one federation, the newest by height (§23A.4: "newest height with valid signatures wins"). */
+const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b) => b.record.height - a.record.height)[0] || null;
+
+// ---- arena-client/src/guardian-invites.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (the owner 2026-10-20 18:0xZ: "Fix the issue that it
+// connects to a wallet/guardian that is offline" - federation 4dc88be7's invite named only fed2-8, whose guardian had stopped at 07:56Z, so
+// every new wallet there failed with "Failed to download client config" while 6 of its 7 guardians ran). Every invite this client sees -
+// a round's, a remembered one, each seat's federation record (read here even before the record can be verified: only the config is
+// fetched with it, and the wallet checks that config against the federation id, its hash) - adds its guardians; a join that cannot read
+// the config is tried once more with an invite naming all of them, so one guardian down no longer keeps a player out.
+
+
+const seen = new Map();   // federation id hex -> Map(peer id -> url), the first url named for a peer kept
+
+function noteInvite(invite) {
+  let r; try { r = readInvite(invite); } catch { return false; }
+  if (!r.federationId) return false;
+  const m = seen.get(r.federationId) || new Map();
+  for (const g of r.guardians) if (!m.has(g.peer)) m.set(g.peer, g.url);
+  seen.set(r.federationId, m);
+  return true;
+}
+
+/** A seat's signed federation record (hex), verified or not: its invite's guardians are noted. */
+function noteRecordInvite(recordHex) {
+  try {
+    const bytes = Uint8Array.from(String(recordHex).match(/../g).map((x) => parseInt(x, 16)));
+    return noteInvite(splitSignedRecord(bytes).record.invite);
+  } catch { return false; }
+}
+
+/** An invite naming every guardian noted for `invite`'s federation, when that is more than `invite` names - else null. */
+function wholeInvite(invite) {
+  let r; try { r = readInvite(invite); } catch { return null; }
+  if (!r.federationId) return null;
+  noteInvite(invite);
+  const m = seen.get(r.federationId);
+  if (!m || m.size <= new Set(r.guardians.map((g) => g.peer)).size) return null;
+  const guardians = [...m].map(([peer, url]) => ({ peer, url })).sort((a, b) => a.peer - b.peer);
+  const id = Uint8Array.from(r.federationId.match(/../g).map((x) => parseInt(x, 16)));
+  try { return inviteForGuardians(id, guardians); } catch { return null; }
+}
+
+const forgetGuardianInvites = () => seen.clear();   // tests
+
 // ---- arena-client/src/lock-result.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -16071,6 +16350,7 @@ function decodeBolt11(invoice) {
 
 
 
+
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 /**
@@ -16362,8 +16642,18 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
     : recover ? 'recovering the player wallet of this seed from the federation' : 'joining the federation with the player wallet');
   // AND A JOIN THAT NEVER ANSWERS IS REFUSED BY NAME after `joinWaitMs`, so PLAY can be pressed again
   let timer = null;
+  // A CONFIG NO GUARDIAN OF THE INVITE GAVE (one guardian down): once more, with an invite naming every guardian this client has seen named
+  // for the federation (guardian-invites.js)
+  const enter = (inv) => (recover ? LockClient.recover : LockClient.join).call(LockClient, inv, toHex(round.federationId), toHex(secret), store);
+  const joinOnce = () => enter(invite).catch((e) => {
+    const whole = /download client config/i.test(String((e && e.message) || e)) ? wholeInvite(invite) : null;
+    if (!whole) throw e;
+    onStep('one of the federation\'s guardians did not answer - reading its configuration from the others');
+    return enter(whole);
+  });
+  noteInvite(invite);
   const joining = Promise.race([
-    (recover ? LockClient.recover : LockClient.join).call(LockClient, invite, toHex(round.federationId), toHex(secret), store),
+    joinOnce(),
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});
@@ -27375,241 +27665,6 @@ function newestCheckedCensus() {
   return { height: best.height || null, nodes: keys.size, entries: best.entries };
 }
 
-// ---- arena-protocol/src/federation-record.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION'S RECORD (spec §23A.4): what its guardians say about it, signed by at least its threshold.
-//
-// The status bands are §23A.1's, counted in guardians that are SEATED - not gone (DEPARTED by notice, or ABANDONED by
-// 2f + 1 absence attestations for abandon_blocks):
-//     reserve = seated - (2f + 1)
-//     OPEN       reserve >= min(2, f)   rounds may name it; deposits accepted
-//     DRAINING   reserve == 1           no new round names it; the client refuses deposits into it; succession has begun
-//     CRITICAL   reserve == 0           one more loss halts it: the client shows Withdraw and Move only
-//     HALTED     seated < 2f + 1        every note and lock frozen (§22)
-//     CLOSED                            its successor holds everything (§23A.6)
-// The record is the only source a client believes about a federation: "trusts nothing about a federation that has no
-// record it can verify". Its signatures are by the guardians' NODE keys (one node is one guardian, §23A.2), each a census
-// node whose bond advertisement names this federation and this guardian key in guardian_of[] - so the bonds stand behind
-// every signature. No curve here: `verify` (BIP-340) is the caller's.
-
-
-
-
-const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
-const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
-const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
-const cmp = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i]; return a.length - b.length; };
-
-/** n guardians tolerate f = floor((n - 1) / 3); the stock threshold n - f, which is 2f + 1 wherever §23A writes it. */
-const faultsOf = (n) => Math.floor((n - 1) / 3);
-const thresholdOf = (n) => n - faultsOf(n);
-
-/** §23A.1's band for `seated` of `nominal` guardians - and the reserve it is read from. CLOSED is the successor's word, not a count. */
-function statusFor({ nominal, seated, closed = false }) {
-  if (!Number.isInteger(nominal) || nominal < 1 || !Number.isInteger(seated) || seated < 0 || seated > nominal)
-    throw new Error('a federation has 1 or more guardians, and 0 to all of them seated');
-  const f = faultsOf(nominal), min = 2 * f + 1, reserve = seated - min;
-  const status = closed ? 'CLOSED' : seated < min ? 'HALTED' : reserve >= Math.min(2, f) ? 'OPEN' : reserve === 1 ? 'DRAINING' : 'CRITICAL';
-  return { status, reserve, f, min, threshold: thresholdOf(nominal) };
-}
-
-function encodeFederationRecord(r) {
-  const w = new Writer();
-  w.u8(TYPE_FEDERATION_RECORD);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(r.federationId);
-  w.bytes32(r.networkId);
-  w.str(r.invite);
-  w.u8(r.nominal);
-  w.u8(r.threshold);
-  if (r.threshold !== thresholdOf(r.nominal)) throw new Error(`a federation of ${r.nominal} signs with ${thresholdOf(r.nominal)}, not ${r.threshold}`);
-  w.vec(r.guardians, (g, ww) => { ww.bytes(g.peerKey, 33); ww.bytes32(g.nodePubkey); ww.str(g.operatorId || ''); ww.bytes32(g.bondTxid); ww.u32(g.bondVout); ww.str(g.endpoint || ''); },
-    { sortedBy: (a, b) => cmp(a.nodePubkey, b.nodePubkey) });
-  if (!nameOf(FEDERATION_STATUS, r.status)) throw new Error(`status ${r.status} is not one of ${Object.keys(FEDERATION_STATUS).join(', ')}`);
-  w.u8(r.status);
-  w.bytes32(r.successorId || new Uint8Array(32));
-  w.vec(r.gone || [], (g, ww) => { ww.bytes(g.peerKey, 33); ww.u32(g.sinceHeight); ww.u8(g.kind); ww.bytes32(g.proofRef || new Uint8Array(32)); },
-    { sortedBy: (a, b) => cmp(a.peerKey, b.peerKey) });
-  w.u64(r.exposureCapSats);
-  w.u64(r.reserveSats);
-  w.u32(r.height);
-  return w.finish();
-}
-
-function decodeFederationRecord(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_FEDERATION_RECORD) throw new Error('not a federation record');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const out = {
-    federationId: r.bytes32(), networkId: r.bytes32(), invite: r.str(), nominal: r.u8(), threshold: r.u8(),
-    guardians: r.vec((rr) => ({ peerKey: rr.bytes(33), nodePubkey: rr.bytes32(), operatorId: rr.str(), bondTxid: rr.bytes32(), bondVout: rr.u32(), endpoint: rr.str() })),
-    status: r.u8(), successorId: r.bytes32(),
-    gone: r.vec((rr) => ({ peerKey: rr.bytes(33), sinceHeight: rr.u32(), kind: rr.u8(), proofRef: rr.bytes32() })),
-    exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
-  };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
-  encodeFederationRecord(out);                       // held to the encoder's rules
-  return out;
-}
-
-/** The bytes its guardians sign. */
-const federationRecordId = (r) => taggedHash(TAG.federationRecord, encodeFederationRecord(r));
-
-/**
- * THE BODY A GUARDIAN SEAT BUILDS, from what every seat reads the same: the census nodes guarding the federation (their
- * adverts' guardian_of[]), the guardians gone, the height. `bondsSats` is each guardian's bond, by node key hex.
- */
-function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height }) {
-  const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
-  const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
-  const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
-  const cap = seatedGuardians.length ? exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f }) : { ok: false };
-  return {
-    federationId, networkId, invite, nominal, threshold: band.threshold,
-    guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
-      .sort((a, b) => cmp(a.nodePubkey, b.nodePubkey)),
-    // A SUCCESSOR NAMED IS A DRAIN (§23A.6 step 2: "The old federation's guardians sign a record with status = DRAINING and
-    // successor_id"): OPEN becomes DRAINING; a worse band (CRITICAL, HALTED) and CLOSED stay what they are
-    status: FEDERATION_STATUS[!closed && successorId && successorId.some((x) => x) && band.status === 'OPEN' ? 'DRAINING' : band.status],
-    successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
-    exposureCapSats: cap.ok ? cap.cap : 0n, reserveSats, height,
-    seated: seatedGuardians.length, band,
-  };
-}
-
-/** Signed bytes: the body, then (u8 count) of (node key 32 || signature 64), sorted by key. */
-function joinSignedRecord(bodyBytes, signatures) {
-  const sigs = [...signatures].sort((a, b) => cmp(a.nodePubkey, b.nodePubkey));
-  const out = new Uint8Array(bodyBytes.length + 1 + sigs.length * 96);
-  out.set(bodyBytes, 0); out[bodyBytes.length] = sigs.length;
-  sigs.forEach((s, i) => { out.set(s.nodePubkey, bodyBytes.length + 1 + i * 96); out.set(s.signature, bodyBytes.length + 33 + i * 96); });
-  return out;
-}
-
-function splitSignedRecord(bytes) {
-  // the body's own length: decode tolerates no trailing bytes, so find the split by the count byte at the end of the body
-  for (let n = 0; n <= 32; n++) {
-    const at = bytes.length - 1 - n * 96;
-    if (at < 1 || bytes[at] !== n) continue;
-    try {
-      const record = decodeFederationRecord(bytes.subarray(0, at));
-      const signatures = [];
-      for (let i = 0; i < n; i++) signatures.push({ nodePubkey: bytes.slice(at + 1 + i * 96, at + 33 + i * 96), signature: bytes.slice(at + 33 + i * 96, at + 97 + i * 96) });
-      return { record, body: bytes.subarray(0, at), signatures };
-    } catch { /* not this split */ }
-  }
-  throw new Error('that is not a signed federation record');
-}
-
-/**
- * IS THIS A RECORD A CLIENT MAY BELIEVE? `census` is a census this client checked (entries with `pubkey` and `advert`);
- * a signature counts only from a census node whose advertisement names this federation with the guardian key the record
- * lists for that node. `inviteFederationId(invite)` reads the invite's federation id (the caller's parser). Answers
- * { ok, record, status, signers } or { ok: false, why }.
- */
-function verifyFederationRecord(bytes, { census, verify, inviteFederationId, networkId = null }) {
-  let s; try { s = splitSignedRecord(bytes); } catch (e) { return { ok: false, why: e.message }; }
-  const r = s.record;
-  if (networkId && toHex(networkId) !== toHex(r.networkId)) return { ok: false, why: 'that record is of another network' };
-  let named; try { named = inviteFederationId(r.invite); } catch (e) { return { ok: false, why: `its invite does not read: ${e.message}` }; }
-  if (!named || toHex(named) !== toHex(r.federationId)) return { ok: false, why: 'its invite names another federation than the record' };
-  const fid = toHex(r.federationId);
-  const guarding = new Map();
-  for (const e of census || []) {
-    for (const g of (e.advert && e.advert.guardianOf) || []) if (toHex(g.federationId) === fid) guarding.set(toHex(e.pubkey), toHex(g.guardianKey));
-  }
-  const listed = new Map(r.guardians.map((g) => [toHex(g.nodePubkey), toHex(g.peerKey)]));
-  const id = federationRecordId(r);
-  const signers = new Set();
-  for (const sig of s.signatures) {
-    const k = toHex(sig.nodePubkey);
-    if (!guarding.has(k) || listed.get(k) !== guarding.get(k)) continue;           // not a bonded guardian of this federation
-    let good = false; try { good = verify(sig.signature, id, sig.nodePubkey) === true; } catch { good = false; }
-    if (good) signers.add(k);
-  }
-  if (signers.size < r.threshold)
-    return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${r.threshold}` };
-  return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id };
-}
-
-/** Of several verified records of one federation, the newest by height (§23A.4: "newest height with valid signatures wins"). */
-const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b) => b.record.height - a.record.height)[0] || null;
-
-// ---- arena-node/src/invite.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDIMINT INVITE THAT NAMES EVERY GUARDIAN (item 5, 2026-09-28: the testnet invite named guardian 1 alone, and while
-// guardian 1 was down every player join failed "Failed to download client config" though six of seven were up).
-//
-// The stock invite code is bech32m, hrp "fed1", over a consensus-encoded Vec<InviteCodePart>: a Url part is variant 0,
-// its length, then (url string, peer id); the FederationId part is variant 1, length 32, the id. A client downloads the
-// config from any peer the invite names, so an invite naming all of them survives any one being down. The byte layout
-// is the one `fedimint-cli invite-code` writes, measured on this federation's own invite, and an invite built here was
-// joined by the stock client (fedimint-cli join-federation) while guardian 1 was down.
-const CHARSET_invite = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-const BECH32M = 0x2bc830a3;
-const polymod_invite = (values) => {
-  let chk = 1;
-  for (const v of values) {
-    const b = chk >>> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i++) if ((b >>> i) & 1) chk ^= GEN[i];
-  }
-  return chk >>> 0;
-};
-const hrpExpand_invite = (h) => [...[...h].map((c) => c.charCodeAt(0) >> 5), 0, ...[...h].map((c) => c.charCodeAt(0) & 31)];
-const toWords = (bytes) => {
-  let acc = 0, bits = 0; const out = [];
-  for (const x of bytes) { acc = (acc << 8) | x; bits += 8; while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); } acc &= (1 << bits) - 1; }
-  if (bits) out.push((acc << (5 - bits)) & 31);
-  return out;
-};
-const fromWords = (words) => {
-  let acc = 0, bits = 0; const out = [];
-  for (const w of words) { acc = (acc << 5) | w; bits += 5; while (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); } acc &= (1 << bits) - 1; }
-  return Uint8Array.from(out);
-};
-const HRP = 'fed1';
-
-/** The invite naming `guardians` ([{ url, peer }], each url its API endpoint) of federation `federationId` (32 bytes). */
-function inviteForGuardians(federationId, guardians) {
-  if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new TypeError('a federation id is 32 bytes');
-  if (!guardians.length || guardians.length > 250) throw new Error('an invite names 1 to 250 guardians');
-  const parts = [];
-  for (const { url, peer } of guardians) {
-    const u = new TextEncoder().encode(url);
-    if (u.length > 127 || !Number.isInteger(peer) || peer < 0 || peer > 127) throw new Error(`guardian ${peer} at ${url} does not fit a one-byte length and peer id`);
-    const body = [u.length, ...u, peer];
-    parts.push(0, body.length, ...body);
-  }
-  parts.push(1, 32, ...federationId);
-  const words = toWords(Uint8Array.from([guardians.length + 1, ...parts]));
-  const pm = polymod_invite([...hrpExpand_invite(HRP), ...words, 0, 0, 0, 0, 0, 0]) ^ BECH32M;
-  const check = Array.from({ length: 6 }, (_, i) => (pm >>> (5 * (5 - i))) & 31);
-  return `${HRP}1${[...words, ...check].map((w) => CHARSET_invite[w]).join('')}`;
-}
-
-/** What an invite names: its guardians' urls and peer ids, and its federation id (hex). Throws on a bad checksum. */
-function readInvite(invite) {
-  const s = String(invite).trim().replace(/"/g, '').toLowerCase();
-  const at = s.lastIndexOf('1');
-  if (s.slice(0, at) !== HRP) throw new Error('not a fedimint invite (hrp fed1)');
-  const words = [...s.slice(at + 1)].map((c) => CHARSET_invite.indexOf(c));
-  if (words.some((w) => w < 0) || polymod_invite([...hrpExpand_invite(HRP), ...words]) !== BECH32M) throw new Error('the invite\'s checksum does not hold');
-  const b = fromWords(words.slice(0, -6));
-  const guardians = []; let federationId = null;
-  let i = 1;
-  for (let n = 0; n < b[0]; n++) {
-    const variant = b[i], len = b[i + 1], body = b.subarray(i + 2, i + 2 + len);
-    if (variant === 0) guardians.push({ url: new TextDecoder().decode(body.subarray(1, 1 + body[0])), peer: body[1 + body[0]] });
-    if (variant === 1) federationId = Array.from(body, (x) => x.toString(16).padStart(2, '0')).join('');   // no Buffer: the owner page reads invites too
-    i += 2 + len;
-  }
-  return { guardians, federationId };
-}
-
 // ---- arena-protocol/src/test-federation.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -27668,6 +27723,7 @@ const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowe
 
 
 
+
 const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
 const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? hexToBytes(f) : null; };
@@ -27708,6 +27764,7 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
       for (const f of j.federations || []) {
         const fid = String(f.federation).toLowerCase();
         if (only && fid !== only) continue;
+        noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
       }
