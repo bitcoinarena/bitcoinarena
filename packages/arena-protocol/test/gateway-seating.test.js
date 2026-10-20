@@ -27,3 +27,18 @@ test('below the threshold, another epoch, a stranger or a forgery: no seating', 
   const r = standingSeating({ signed: [sign(0, [B]), sign(1, [B]), forged], federationId: fid, epoch: 7, seated, threshold: 3, verify });
   assert.match(r.why, /at most 2/);
 });
+
+// kanban #559/#543 (spec §23A.3a part 2): the seating carries its seats' proved peg-ins, signed; one that names none hashes as before
+test('proved peg-ins in the seating: signed with the seats, the same amounts make one body, a seating naming none hashes as before', async () => {
+  const { gatewaySeatingHash } = await import('../src/gateway-seating.js');
+  const plain = { federationId: fid, epoch: 7, seats: [A, B] };
+  assert.equal(toHex(gatewaySeatingHash(plain)), toHex(gatewaySeatingHash({ ...plain, pegIns: {} })), 'none named: the hash as before');
+  assert.notEqual(toHex(gatewaySeatingHash(plain)), toHex(gatewaySeatingHash({ ...plain, pegIns: { [A]: '50000' } })));
+  const withP = (i, p) => signGatewaySeating({ ...plain, pegIns: p }, g[i].hex, (h) => schnorr.sign(h, g[i].secret));
+  const r = standingSeating({ signed: [withP(0, { [A]: '50000', [B]: '25000' }), withP(1, { [B]: '25000', [A]: '50000' }), withP(2, { [A]: '50000', [B]: '25000' })], federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.deepEqual([r.ok, r.seating.pegIns], [true, { [A]: '50000', [B]: '25000' }]);
+  const split = standingSeating({ signed: [withP(0, { [A]: '50000' }), withP(1, { [A]: '50000' }), withP(2, { [A]: '40000' })], federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.equal(split.ok, false, 'another proved amount is another body');
+  const forged = { ...withP(2, { [A]: '50000' }), pegIns: { [A]: '90000' } };
+  assert.equal(standingSeating({ signed: [withP(0, { [A]: '90000' }), withP(1, { [A]: '90000' }), forged], federationId: fid, epoch: 7, seated, threshold: 3, verify }).ok, false, 'the amounts are signed');
+});
