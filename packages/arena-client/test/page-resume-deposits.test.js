@@ -16,7 +16,7 @@ function page() {
   const resumed = [], reads = [];
   const window = { ARENA_WALLETS: new Map(), ARENA_READ_BALANCE: () => reads.push(1) };
   const BLWPCLIENT = { fromHex: (h) => Buffer.from(h, 'hex'),
-    resumeDeposits: (o) => { resumed.push(o); return Promise.resolve(); } };
+    resumeDeposits: (o) => { resumed.push(o); return Promise.resolve([]); } };
   new Function('window', 'BLWPCLIENT', 'vault', 'paintHistory', SRC)(window, BLWPCLIENT, () => 'store', () => {});
   return { window, resumed, reads };
 }
