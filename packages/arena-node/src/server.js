@@ -487,6 +487,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A BLOCK'S TRANSACTION IDS, and whether a transaction waits in this node's mempool (GET /pending, kanban #560)
   chainBlockTxids = null,
   chainInMempool = null,
+  chainTips = null,
   expiry = {},
   // WHERE EVERY CORE A STORED ROUND NAMES IS KEPT FOR ITS REPLAY (2026-09-26 13:28: "the copied replay link must
   // keep working. Always ... Keep every core a stored round names, and serve it. Do not drop it when HEAD moves"): a
@@ -3921,7 +3922,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function pendingNow() {
     if (typeof chainTip !== 'function') return { ok: false, why: 'this node reads no chain' };
     const tip = Number(await chainTip());
-    if (pendingKept && pendingKept.tip === tip && Date.now() - pendingKept.at < 60000) return pendingKept.r;
+    let chain = null; try { chain = typeof chainTips === 'function' ? await chainTips() : null; } catch { chain = null; }
+    if (pendingKept && pendingKept.tip === tip && (!chain || pendingKept.hash === chain.hash) && Date.now() - pendingKept.at < 60000) return pendingKept.r;
+    // ANOTHER BRANCH TAKEN (a reorganisation): the blocks read near the top may be the old branch's - read them again
+    if (chain && pendingKept && pendingKept.hash && pendingKept.hash !== chain.hash) for (const m of [blockIds, blockMtp]) for (const k of [...m.keys()]) if (k > tip - 13) m.delete(k);
     const now = Date.now(), grids = [], pegIns = [];
     // the grids its publishers named (ARENA_EXPECTED_FILE) - each checked here on this node's own chain
     for (const e of expectedEntries()) {
@@ -3970,8 +3974,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
       }
     } catch { /* none said */ }
-    const r = { ok: true, node: toHex(round.pubkey), tip, nowMs: String(now), grids, pegIns, adverts };
-    pendingKept = { tip, at: Date.now(), r };
+    const r = { ok: true, node: toHex(round.pubkey), tip, ...(chain ? { tipHash: chain.hash } : {}), nowMs: String(now),
+      // the tips beside this node's own within 12 blocks: "same" work is a split the next block decides; "more" work this node has
+      // not taken (its blocks not here, or invalid to it) - what this node reads below is its own branch's
+      chain: chain ? { hash: chain.hash, height: chain.height, rivals: chain.rivals.filter((x) => x.work !== 'less' || x.height >= chain.height) } : null,
+      grids, pegIns, adverts };
+    pendingKept = { tip, hash: chain ? chain.hash : null, at: Date.now(), r };
     return r;
   }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
