@@ -384,8 +384,41 @@ async function rolesPanel() {
   ];
   $('roles').innerHTML = ROWS.map(([t, on, does, how]) => `<div class="role"><div class="row"><span><b>${t}</b></span><b class="${on ? 'ok' : 'sub'}">${on ? 'On' : 'Off'}</b></div>
       <p class="sub" style="margin:2px 0 4px">${does}</p><p class="sub" style="margin:0 0 8px">How to change: ${how}</p></div>`).join('')
-    + (installed ? `<p class="sub">Roles chosen at install: ${esc((svc.roles || []).join(', ') || 'none')} (settings in arena.conf on the node's machine).</p>`
-      : '<p class="sub">This node was set up by hand, without the Arena installer (no arena.conf), so its roles are set in how it is started, not here.</p>');
+    + (installed ? `<p class="sub">Roles chosen at install: ${esc((svc.roles || []).join(', ') || 'none')} (settings in arena.conf on the node's machine).</p>` : '')
+    + rolesChooser(mine);
+  wireRoles(mine);
+}
+// CHANGE WHAT THE NODE ADVERTISES (kanban #553, the owner 2026-10-20: "I should be still able to setup the roles"): the roles its bond's
+// advertisement names - each a switch - saved as an advertisement update paid from the bond wallet (POST /owner/roles): first the plan,
+// then Confirm. Gateway and liquidity are services of their own and keep their setup above.
+const ROLE_SWITCHES = [['play', ['game', 'verify'], 'Play and check rounds'], ['settlement', ['settlement'], 'Pay out winners'], ['relay', ['relay'], 'Relay for other nodes']];
+function rolesChooser(mine) {
+  if (!mine) return '<p class="sub">This node is not in the census yet: its roles can be changed once its bond counts.</p>';
+  const on = new Set(mine.roles || []);
+  return `<div class="card" style="margin-top:10px"><b>Change this node's roles</b>
+    <p class="sub" style="margin:4px 0 8px">Saved on Bitcoin as an update of your bond's advertisement (no bond is spent). Counts 6 blocks later (about 1 hour).</p>
+    ${ROLE_SWITCHES.map(([k, rs, t]) => `<label style="display:block;margin:4px 0"><input type="checkbox" id="rl-${k}" ${rs.some((r) => on.has(r)) ? 'checked' : ''}> ${t}</label>`).join('')}
+    <label style="display:block;margin:4px 0"><input type="checkbox" id="rl-custody" ${mine.guardianCapable ? 'checked' : ''}> Willing to be a guardian (custody)</label>
+    <button id="rl-save" type="button" style="margin-top:6px">Save roles</button><div id="rl-msg" style="margin-top:8px"></div></div>`;
+}
+function wireRoles(mine) {
+  const btn = $('rl-save'); if (!btn || !mine) return;
+  const chosen = () => ({ roles: ROLE_SWITCHES.filter(([k]) => $('rl-' + k).checked).flatMap(([, rs]) => rs), custody: $('rl-custody').checked });
+  btn.onclick = async () => {
+    const c = chosen(); btn.disabled = true; $('rl-msg').innerHTML = '<p class="sub">Checking…</p>';
+    try {
+      const p = await post('/owner/roles', await signed('roles', { ...c, post: false }));
+      if (!p.ok) { $('rl-msg').innerHTML = `<p class="warn">${esc(p.why || 'not possible')}</p>`; btn.disabled = false; return; }
+      $('rl-msg').innerHTML = `<p>Fee: <b>${Number(p.plan.feeSats).toLocaleString('en-US')} sat</b> from your bond wallet. Counts after 6 blocks.</p><button id="rl-go" type="button">Confirm</button>`;
+      $('rl-go').onclick = async () => {
+        $('rl-go').disabled = true;
+        try { const d = await post('/owner/roles', await signed('roles', { ...c, post: true }));
+          $('rl-msg').innerHTML = d.ok ? `<p class="ok"><b>Sent ✓</b> update <code>${esc(String(d.update.txid).slice(0, 16))}</code>: the new roles count after 6 blocks.</p>` : `<p class="warn">${esc(d.why)}</p>`;
+        } catch (e) { $('rl-msg').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
+      };
+    } catch (e) { $('rl-msg').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
+    btn.disabled = false;
+  };
 }
 // CUSTODY, ADDED LATER (2026-10-18: "if custody is setup later in the UI we need the same screens"): on its own
 // machine the installer's custody screens open again - what custody is, Lightning and the gateway, the federation, the bond's rules -

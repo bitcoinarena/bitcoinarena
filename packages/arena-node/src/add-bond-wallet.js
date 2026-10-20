@@ -91,3 +91,51 @@ export function walletOf(cli) {
 }
 /** A NEW ADDRESS of the bond wallet, to top it up (bech32m). */
 export const walletAddress = (cli) => cli('getnewaddress', 'add-bond', 'bech32m');
+
+/** WHAT AN ADVERTISEMENT CAN SAY THE NODE DOES (constants.js ROLES), and custody: its guardian_capable flag. */
+export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay']);
+const UPDATE_CARRIER_SATS = 3000n;
+/**
+ * THE NODE'S ROLES CHANGED FROM THE OWNER PAGE (kanban #553, the owner 2026-10-20: "It also offers no options to setup the role of the node";
+ * "I should be still able to setup the roles"): an advertisement update (§5A.2) of the node's newest bond - its advertisement as it stands,
+ * with `roles` (a subset of ADVERT_ROLES) and `custody` (guardian_capable) as asked and a new timestamp - its carrier funded from the bond
+ * wallet. No bond is spent and no maturity clock starts. Without `post` both transactions are built and checked (testmempoolaccept);
+ * with it, sent. The census reads the new roles once the update is 6 deep.
+ */
+export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, roles, custody, post = false }) {
+  const want = [...new Set((roles || []).map(String))];
+  const bad = want.filter((r) => !ADVERT_ROLES.includes(r));
+  if (bad.length) return { ok: false, why: `${bad.join(', ')}: not a role an advertisement names (${ADVERT_ROLES.join(', ')})` };
+  if (!want.length && !custody) return { ok: false, why: 'a node with no role at all serves nothing: keep at least one' };
+  const { regtest } = await import('../tools/regtest-bond.mjs');
+  const rt = regtest(cli, { network, wallet: wallet || 'arena' });
+  const bonds = rt.bondsOf(secret);
+  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
+  const bond = bonds[0];
+  const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
+  const before = { roles: [...(now.roles || [])].sort(), custody: !!now.guardianCapable };
+  const after = { roles: want.sort(), custody: custody === undefined ? before.custody : !!custody };
+  if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
+  const advert = { ...now, roles: after.roles, guardianCapable: after.custody, timestamp: BigInt(Date.now()) };
+  const prepared = rt.prepareAdvertUpdate(secret, advert);
+  const address = JSON.parse(cli('decodescript', toHex(prepared.spk))).address;
+  let funded;
+  try { funded = JSON.parse(cli('-named', 'walletcreatefundedpsbt', 'inputs=[]', `outputs=${JSON.stringify([{ [address]: Number(UPDATE_CARRIER_SATS) / 1e8 }])}`,
+    `options=${JSON.stringify({ include_unsafe: true, fee_rate: 2 })}`)); }
+  catch (e) {
+    if (!/Insufficient funds/i.test(String(e.stderr || e.message))) throw e;
+    return { ok: false, why: `the bond wallet holds ${walletOf(cli).spendableSats} sat that can be spent, and the update needs about ${UPDATE_CARRIER_SATS + 500n} sat: top it up first` };
+  }
+  const final = JSON.parse(cli('finalizepsbt', JSON.parse(cli('walletprocesspsbt', funded.psbt)).psbt));
+  if (!final.complete) return { ok: false, why: 'the bond wallet did not sign the funding transaction' };
+  const d = JSON.parse(cli('decoderawtransaction', final.hex));
+  const out = d.vout.find((o) => o.scriptPubKey.hex === toHex(prepared.spk));
+  const update = rt.postAdvertUpdate(prepared, { txid: bond.txid, vout: bond.vout }, { utxo: { txid: d.txid, vout: out.n, value: UPDATE_CARRIER_SATS }, feeSats: 1200n });
+  const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([final.hex, update.hex])));
+  if (!accept.every((a) => a.allowed)) return { ok: false, why: `the network would refuse it (${accept.map((a) => a['reject-reason']).filter(Boolean).join(', ')}); nothing was sent` };
+  const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: String(BigInt(Math.round(Number(funded.fee) * 1e8)) + 1200n), countsAfter: 6 };
+  if (!post) return { ok: true, plan };
+  cli('sendrawtransaction', final.hex);
+  cli('sendrawtransaction', update.hex);
+  return { ok: true, plan, update: { txid: update.txid } };
+}
