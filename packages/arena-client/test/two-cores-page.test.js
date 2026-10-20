@@ -60,7 +60,7 @@ test('the round\'s hash picks its core: under Unity\'s state and as the global t
   const hexBytes = Uint8Array.from(Buffer.from(OLD, 'hex'));
   assert.equal(w.ARENA_USE_CORE(hexBytes).ok, true);
   assert.equal(w.unityInstance.Module.blwp.core, cores[OLD], 'Unity still runs the current core for a 2069b4c2 round');
-  assert.equal(w.BLWP, cores[OLD], 'the jslib\'s BlwpInit would make the round\'s world on the current core');
+  assert.equal(w.BLWP, cores[OLD], 'the jslib\'s ArenaInit would make the round\'s world on the current core');
   assert.equal(w.ARENA_USE_CORE(NEW).ok, true);
   assert.equal(w.unityInstance.Module.blwp.core, cores[NEW]);
   const no = w.ARENA_USE_CORE('ab'.repeat(32));

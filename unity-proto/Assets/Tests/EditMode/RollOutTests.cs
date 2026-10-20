@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// WHETHER A ROLL-OUT MAY RESTART THE CORE, WHICH IS A RULE AND NOT A HABIT.
 ///
 /// `LoadoutPanel` calls `CoreDrivenTruck.StartRound` when the bay shuts, and
-/// that called `BlwpCore.Restart` unconditionally. On the daily it must: one
+/// that called `ArenaCore.Restart` unconditionally. On the daily it must: one
 /// core plays many rounds and `outcome` latches, so a second round on a state
 /// still holding the first is unplayable - the fault that reset was written
 /// for.

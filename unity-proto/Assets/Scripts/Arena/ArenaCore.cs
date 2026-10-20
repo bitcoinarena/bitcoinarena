@@ -4,13 +4,13 @@ using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// The deterministic core, as Unity sees it.
     ///
     /// In a WebGL build these calls cross into the JavaScript core through
-    /// Assets/Plugins/WebGL/blwp.jslib. Everywhere else - the editor, play mode
+    /// Assets/Plugins/WebGL/arena.jslib. Everywhere else - the editor, play mode
     /// tests, a standalone build - there is no JavaScript, so the calls are
     /// stubbed and <see cref="Available"/> is false.
     ///
@@ -19,85 +19,85 @@ namespace Blwp
     /// would be a second implementation to keep in step, and the entire point
     /// of the core is that there is exactly one.
     /// </summary>
-    public static class BlwpCore
+    public static class ArenaCore
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
-        [DllImport("__Internal")] private static extern int BlwpInit(int seed);
-        [DllImport("__Internal")] private static extern int BlwpStep(int throttle, int steer, int brake, int handbrake, int practice);
-        [DllImport("__Internal")] private static extern int BlwpReadState(IntPtr ptr, int wordCount);
-        [DllImport("__Internal")] private static extern int BlwpStateHash(IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpFrontlineZ(int x);
-        [DllImport("__Internal")] private static extern int BlwpSurfaceAt(int x, int z);
-        [DllImport("__Internal")] private static extern int BlwpLiquidation(int size);
-        [DllImport("__Internal")] private static extern int BlwpRunScore();
-        [DllImport("__Internal")] private static extern int BlwpStateWords();
-        [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
-        [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
-        [DllImport("__Internal")] private static extern int BlwpReliefEpoch();
-        [DllImport("__Internal")] private static extern int BlwpRunTicks();
-        [DllImport("__Internal")] private static extern int BlwpTruckBed();
-        [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
-        [DllImport("__Internal")] private static extern int BlwpTakeImpact();
-        [DllImport("__Internal")] private static extern int BlwpReadImpact();
-        [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths, IntPtr vsizes);
-        [DllImport("__Internal")] private static extern int BlwpBedFill(IntPtr vsizes);
-        [DllImport("__Internal")] private static extern int BlwpSubmitSample(int price);
-        [DllImport("__Internal")] private static extern int BlwpSubmitTape(IntPtr ptr, int n);
-        [DllImport("__Internal")] private static extern int BlwpChartView(int range, IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpChartPoint(int range, int x, int z, IntPtr ptr);
-        [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpTerrainAt(int x, int z);
-        [DllImport("__Internal")] private static extern int BlwpCopyReplay();
-        [DllImport("__Internal")] private static extern int BlwpReplayCopied();
-        [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
-        [DllImport("__Internal")] private static extern int BlwpResumedRun();
-        [DllImport("__Internal")] private static extern int BlwpRoundStartsInMs();
-        [DllImport("__Internal")] private static extern int BlwpKeepCargo(IntPtr text);
-        [DllImport("__Internal")] private static extern int BlwpResultSummary(IntPtr outp, int cap);
-        [DllImport("__Internal")] private static extern void BlwpHudCorner(IntPtr json);
-        [DllImport("__Internal")] private static extern int BlwpKeptCargo(IntPtr outp, int cap);
-        [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
-        [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
-        [DllImport("__Internal")] private static extern void BlwpRunStarts();
+        [DllImport("__Internal")] private static extern int ArenaInit(int seed);
+        [DllImport("__Internal")] private static extern int ArenaStep(int throttle, int steer, int brake, int handbrake, int practice);
+        [DllImport("__Internal")] private static extern int ArenaReadState(IntPtr ptr, int wordCount);
+        [DllImport("__Internal")] private static extern int ArenaStateHash(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaFrontlineZ(int x);
+        [DllImport("__Internal")] private static extern int ArenaSurfaceAt(int x, int z);
+        [DllImport("__Internal")] private static extern int ArenaLiquidation(int size);
+        [DllImport("__Internal")] private static extern int ArenaRunScore();
+        [DllImport("__Internal")] private static extern int ArenaStateWords();
+        [DllImport("__Internal")] private static extern int ArenaQueryParam(IntPtr name, IntPtr outp, int cap);
+        [DllImport("__Internal")] private static extern int ArenaRestart(int seed);
+        [DllImport("__Internal")] private static extern int ArenaReliefEpoch();
+        [DllImport("__Internal")] private static extern int ArenaRunTicks();
+        [DllImport("__Internal")] private static extern int ArenaTruckBed();
+        [DllImport("__Internal")] private static extern int ArenaTeleport(int x, int z, int heading);
+        [DllImport("__Internal")] private static extern int ArenaTakeImpact();
+        [DllImport("__Internal")] private static extern int ArenaReadImpact();
+        [DllImport("__Internal")] private static extern int ArenaSubmitLoad(int feeSats, int btcHundredths, IntPtr vsizes);
+        [DllImport("__Internal")] private static extern int ArenaBedFill(IntPtr vsizes);
+        [DllImport("__Internal")] private static extern int ArenaSubmitSample(int price);
+        [DllImport("__Internal")] private static extern int ArenaSubmitTape(IntPtr ptr, int n);
+        [DllImport("__Internal")] private static extern int ArenaChartView(int range, IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaChartPoint(int range, int x, int z, IntPtr ptr);
+        [DllImport("__Internal")] private static extern int ArenaCandleView(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaTerrainAt(int x, int z);
+        [DllImport("__Internal")] private static extern int ArenaCopyReplay();
+        [DllImport("__Internal")] private static extern int ArenaReplayCopied();
+        [DllImport("__Internal")] private static extern void ArenaLoadoutOpen(int open);
+        [DllImport("__Internal")] private static extern int ArenaResumedRun();
+        [DllImport("__Internal")] private static extern int ArenaRoundStartsInMs();
+        [DllImport("__Internal")] private static extern int ArenaKeepCargo(IntPtr text);
+        [DllImport("__Internal")] private static extern int ArenaResultSummary(IntPtr outp, int cap);
+        [DllImport("__Internal")] private static extern void ArenaHudCorner(IntPtr json);
+        [DllImport("__Internal")] private static extern int ArenaKeptCargo(IntPtr outp, int cap);
+        [DllImport("__Internal")] private static extern int ArenaSolids(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int ArenaReplayForThisRun();
+        [DllImport("__Internal")] private static extern void ArenaRunStarts();
         public const bool Compiled = true;
 #else
-        private static int BlwpInit(int seed) => 0;
-        private static int BlwpStep(int t, int s, int b, int h, int p) => 0;
-        private static int BlwpReadState(IntPtr ptr, int wordCount) => 0;
-        private static int BlwpStateHash(IntPtr ptr, int cap) => 0;
-        private static int BlwpFrontlineZ(int x) => 0;
-        private static int BlwpSurfaceAt(int x, int z) => 0;
-        private static int BlwpLiquidation(int size) => 0;
-        private static int BlwpRunScore() => 0;
-        private static int BlwpStateWords() => 0;
-        private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
-        private static int BlwpRestart(int seed) => 0;
-        private static int BlwpReliefEpoch() => 0;
-        private static int BlwpRunTicks() => 0;
-        private static int BlwpTruckBed() => 0;
-        private static int BlwpTeleport(int x, int z, int h) => 0;
-        private static int BlwpTakeImpact() => 0;
-        private static int BlwpCopyReplay() => 0;
-        private static int BlwpReplayCopied() => 0;
-        private static void BlwpLoadoutOpen(int open) { }
-        private static int BlwpResumedRun() => 0;
-        private static int BlwpRoundStartsInMs() => -1;
-        private static int BlwpKeepCargo(IntPtr t) => 0;
-        private static int BlwpResultSummary(IntPtr o, int cap) => 0;
-        private static void BlwpHudCorner(IntPtr j) { }
-        private static int BlwpKeptCargo(IntPtr o, int cap) => 0;
-        private static int BlwpSolids(IntPtr ptr, int cap) => 0;
-        private static int BlwpReplayForThisRun() => 0;
-        private static void BlwpRunStarts() { }
-        private static int BlwpReadImpact() => 0;
-        private static int BlwpSubmitLoad(int f, int b, IntPtr v) => 0;
-        private static int BlwpBedFill(IntPtr v) => 0;
-        private static int BlwpSubmitSample(int price) => 0;
-        private static int BlwpSubmitTape(IntPtr ptr, int n) => 0;
-        private static int BlwpChartView(int r, IntPtr ptr, int cap) => 0;
-        private static int BlwpChartPoint(int r, int x, int z, IntPtr ptr) => 0;
-        private static int BlwpCandleView(IntPtr ptr, int cap) => 0;
-        private static int BlwpTerrainAt(int x, int z) => 0;
+        private static int ArenaInit(int seed) => 0;
+        private static int ArenaStep(int t, int s, int b, int h, int p) => 0;
+        private static int ArenaReadState(IntPtr ptr, int wordCount) => 0;
+        private static int ArenaStateHash(IntPtr ptr, int cap) => 0;
+        private static int ArenaFrontlineZ(int x) => 0;
+        private static int ArenaSurfaceAt(int x, int z) => 0;
+        private static int ArenaLiquidation(int size) => 0;
+        private static int ArenaRunScore() => 0;
+        private static int ArenaStateWords() => 0;
+        private static int ArenaQueryParam(IntPtr n, IntPtr o, int cap) => 0;
+        private static int ArenaRestart(int seed) => 0;
+        private static int ArenaReliefEpoch() => 0;
+        private static int ArenaRunTicks() => 0;
+        private static int ArenaTruckBed() => 0;
+        private static int ArenaTeleport(int x, int z, int h) => 0;
+        private static int ArenaTakeImpact() => 0;
+        private static int ArenaCopyReplay() => 0;
+        private static int ArenaReplayCopied() => 0;
+        private static void ArenaLoadoutOpen(int open) { }
+        private static int ArenaResumedRun() => 0;
+        private static int ArenaRoundStartsInMs() => -1;
+        private static int ArenaKeepCargo(IntPtr t) => 0;
+        private static int ArenaResultSummary(IntPtr o, int cap) => 0;
+        private static void ArenaHudCorner(IntPtr j) { }
+        private static int ArenaKeptCargo(IntPtr o, int cap) => 0;
+        private static int ArenaSolids(IntPtr ptr, int cap) => 0;
+        private static int ArenaReplayForThisRun() => 0;
+        private static void ArenaRunStarts() { }
+        private static int ArenaReadImpact() => 0;
+        private static int ArenaSubmitLoad(int f, int b, IntPtr v) => 0;
+        private static int ArenaBedFill(IntPtr v) => 0;
+        private static int ArenaSubmitSample(int price) => 0;
+        private static int ArenaSubmitTape(IntPtr ptr, int n) => 0;
+        private static int ArenaChartView(int r, IntPtr ptr, int cap) => 0;
+        private static int ArenaChartPoint(int r, int x, int z, IntPtr ptr) => 0;
+        private static int ArenaCandleView(IntPtr ptr, int cap) => 0;
+        private static int ArenaTerrainAt(int x, int z) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -117,7 +117,7 @@ namespace Blwp
         /// 2181. `Init`'s own guard caught it and refused, which means
         /// `Available` was false in every browser build: the truck fell back
         /// to PhysX and nothing of M1 ever ran on a screen. No editor test
-        /// could see it - `BlwpCore` is stubbed outside WebGL - and it took a
+        /// could see it - `ArenaCore` is stubbed outside WebGL - and it took a
         /// headless browser against a real build to find.
         /// </summary>
         static int[] _state = new int[Layout.WORDS];
@@ -129,7 +129,7 @@ namespace Blwp
         {
             // A fresh core is a flat one until somebody uploads the relief.
             HasRelief = false;
-            Available = BlwpInit(seed) == 1;
+            Available = ArenaInit(seed) == 1;
             // A CORE ALWAYS HAS A RELIEF NOW. `HasRelief` used to mean "a host
             // has uploaded one" and was false until it did; `init` makes the
             // round's own, so the surface is worth asking about the moment the
@@ -138,15 +138,15 @@ namespace Blwp
             if (Available) _reliefEpoch++;
             if (Available)
             {
-                int words = BlwpStateWords();
+                int words = ArenaStateWords();
                 if (words > 0 && words != _state.Length)
                 {
                     // The layout is generated from state.js, so a mismatch means
                     // the bundle and this build came from different commits -
                     // which would show up as a truck rendering from whatever
                     // word happens to sit where x used to be.
-                    Debug.LogError($"[blwp] core reports {words} state words, this build expects " +
-                                   $"{_state.Length}. Regenerate BlwpLayout.cs and rebuild the bundle.");
+                    Debug.LogError($"[arena] core reports {words} state words, this build expects " +
+                                   $"{_state.Length}. Regenerate ArenaLayout.cs and rebuild the bundle.");
                     Available = false;
                 }
             }
@@ -173,7 +173,7 @@ namespace Blwp
         public static bool Restart(int seed)
         {
             if (!Available) return false;
-            bool ok = BlwpRestart(seed) == 1;
+            bool ok = ArenaRestart(seed) == 1;
             // A RESTART BRINGS THE RELIEF ITS SEED NAMES (sim.js restart -> init), so whatever was drawn
             // from the last round's ground is now a different map.
             if (ok) _reliefEpoch++;
@@ -183,7 +183,7 @@ namespace Blwp
         public static void Step(int throttle, int steer, int brake, int handbrake, int practice)
         {
             if (!Available) return;
-            BlwpStep(throttle, steer, brake, handbrake, practice);
+            ArenaStep(throttle, steer, brake, handbrake, practice);
             Pull();
         }
 
@@ -193,7 +193,7 @@ namespace Blwp
         static void Pull()
         {
             var handle = GCHandle.Alloc(_state, GCHandleType.Pinned);
-            try { BlwpReadState(handle.AddrOfPinnedObject(), _state.Length); }
+            try { ArenaReadState(handle.AddrOfPinnedObject(), _state.Length); }
             finally { handle.Free(); }
         }
 
@@ -206,7 +206,7 @@ namespace Blwp
         {
             if (!Available || into == null || into.Length < Layout.CH_WORDS) return 0;
             var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
-            try { return BlwpChartView(range, handle.AddrOfPinnedObject(), into.Length); }
+            try { return ArenaChartView(range, handle.AddrOfPinnedObject(), into.Length); }
             finally { handle.Free(); }
         }
 
@@ -224,20 +224,20 @@ namespace Blwp
         /// Whether the session on hand was opened for the run on screen (2026-09-26 14:08): a session kept from the
         /// run before names the run before, and its replay is not this card's.
         /// </summary>
-        public static bool ReplayForThisRun => BlwpReplayForThisRun() == 1;
+        public static bool ReplayForThisRun => ArenaReplayForThisRun() == 1;
 
         /// <summary>
         /// ROLL OUT: the bridge notes the session this run is played on and forgets the run before (2026-09-27
         /// 13:19: copy game replay copies the run that just ended, never the one before). Only that session's end is kept
         /// as the run to copy.
         /// </summary>
-        public static void RunStarts() => BlwpRunStarts();
+        public static void RunStarts() => ArenaRunStarts();
 
         public static int Solids(int[] into)
         {
             if (!Available || into == null || into.Length < 6) return 0;
             var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
-            try { return BlwpSolids(handle.AddrOfPinnedObject(), into.Length); }
+            try { return ArenaSolids(handle.AddrOfPinnedObject(), into.Length); }
             finally { handle.Free(); }
         }
 
@@ -245,7 +245,7 @@ namespace Blwp
         {
             if (!Available || into == null || into.Length < Layout.CV_TOTAL) return 0;
             var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
-            try { return BlwpCandleView(handle.AddrOfPinnedObject(), into.Length); }
+            try { return ArenaCandleView(handle.AddrOfPinnedObject(), into.Length); }
             finally { handle.Free(); }
         }
 
@@ -254,37 +254,37 @@ namespace Blwp
         /// it. Anything standing on the world reads <see cref="SurfaceAt"/>.
         /// </summary>
         public static float TerrainAt(float x, float z) =>
-            Available ? BlwpTerrainAt(Mathf.RoundToInt(x * ONE), Mathf.RoundToInt(z * ONE)) / (float)ONE : 0f;
+            Available ? ArenaTerrainAt(Mathf.RoundToInt(x * ONE), Mathf.RoundToInt(z * ONE)) / (float)ONE : 0f;
 
         /// <summary>A ground point (Q16.16 metres) on that chart: [0] t, [1] price, [2] 1 inside the range.</summary>
         public static bool ChartPoint(int range, int x, int z, int[] into)
         {
             if (!Available || into == null || into.Length < Layout.CH_POINT_WORDS) return false;
             var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
-            try { return BlwpChartPoint(range, x, z, handle.AddrOfPinnedObject()) == Layout.CH_POINT_WORDS; }
+            try { return ArenaChartPoint(range, x, z, handle.AddrOfPinnedObject()) == Layout.CH_POINT_WORDS; }
             finally { handle.Free(); }
         }
 
-        public static int RunScore() => Available ? BlwpRunScore() : 0;
+        public static int RunScore() => Available ? ArenaRunScore() : 0;
 
         /// <summary>
         /// COPY GAME REPLAY (2026-09-25 18:39): the page copies one https link to this run's replay - a random
         /// committee node of the round, from its advertisement endpoints, /replay?round=&lt;hex&gt;&amp;entry=&lt;hex&gt;. 1 when the
         /// page was handed the run, 0 when there is no networked run (or no page) to copy a replay of.
         /// </summary>
-        public static int CopyReplay() => BlwpCopyReplay();
+        public static int CopyReplay() => ArenaCopyReplay();
 
         /// <summary>Whether the page's clipboard now holds the link the last copy was handed (its write resolved).</summary>
-        public static bool ReplayCopied => BlwpReplayCopied() == 1;
+        public static bool ReplayCopied => ArenaReplayCopied() == 1;
 
         /// <summary>Tells the page the cargo panel opened or closed, so it hides its node strip meanwhile.</summary>
-        public static void LoadoutOpen(bool open) => BlwpLoadoutOpen(open ? 1 : 0);
+        public static void LoadoutOpen(bool open) => ArenaLoadoutOpen(open ? 1 : 0);
 
-        /// <summary>A run resumed after a reload has caught up to the tick the seats hold (the page's BLWP_RESUME).</summary>
-        public static bool ResumedRun() => BlwpResumedRun() != 0;
+        /// <summary>A run resumed after a reload has caught up to the tick the seats hold (the page's ARENA_RESUME).</summary>
+        public static bool ResumedRun() => ArenaResumedRun() != 0;
 
         /// <summary>Ms until the joined round starts (its contract's start against this device's clock), or -1.</summary>
-        public static int RoundStartsInMs() => Compiled ? BlwpRoundStartsInMs() : -1;
+        public static int RoundStartsInMs() => Compiled ? ArenaRoundStartsInMs() : -1;
 
         /// <summary>Keeps this round's bed with the page (ASCII), so a run resumed after a reload gets its parcels back.</summary>
         public static void KeepCargo(string text)
@@ -292,7 +292,7 @@ namespace Blwp
             if (!Compiled || text == null) return;
             var bytes = System.Text.Encoding.ASCII.GetBytes(text + "\0");
             var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            try { BlwpKeepCargo(h.AddrOfPinnedObject()); }
+            try { ArenaKeepCargo(h.AddrOfPinnedObject()); }
             finally { h.Free(); }
         }
 
@@ -302,11 +302,11 @@ namespace Blwp
             if (!Compiled || json == null) return;
             var bytes = System.Text.Encoding.ASCII.GetBytes(json + "\0");
             var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            try { BlwpHudCorner(h.AddrOfPinnedObject()); }
+            try { ArenaHudCorner(h.AddrOfPinnedObject()); }
             finally { h.Free(); }
         }
 
-        /// <summary>The round result the page read for the end card (index.html BLWP_RESULT.text), or null before its first answer.</summary>
+        /// <summary>The round result the page read for the end card (index.html ARENA_RESULT.text), or null before its first answer.</summary>
         public static string ResultSummary()
         {
             if (!Compiled) return null;
@@ -314,7 +314,7 @@ namespace Blwp
             var h = GCHandle.Alloc(outBytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpResultSummary(h.AddrOfPinnedObject(), outBytes.Length);
+                int n = ArenaResultSummary(h.AddrOfPinnedObject(), outBytes.Length);
                 return n > 0 ? System.Text.Encoding.ASCII.GetString(outBytes, 0, n) : null;
             }
             finally { h.Free(); }
@@ -328,7 +328,7 @@ namespace Blwp
             var h = GCHandle.Alloc(outBytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpKeptCargo(h.AddrOfPinnedObject(), outBytes.Length);
+                int n = ArenaKeptCargo(h.AddrOfPinnedObject(), outBytes.Length);
                 return n > 0 ? System.Text.Encoding.ASCII.GetString(outBytes, 0, n) : null;
             }
             finally { h.Free(); }
@@ -354,17 +354,17 @@ namespace Blwp
         /// </summary>
         ///
         /// AND THE PAGE'S OWN COUNT. A signed round's session start re-creates the core in the round's
-        /// world from JavaScript (blwp.jslib, `b.core.init(net.seedWord)`), and C# is never told: measured
+        /// world from JavaScript (arena.jslib, `b.core.init(net.seedWord)`), and C# is never told: measured
         /// live on 0.0.1385, the tick went 234 -> 32 with no rebuild, and two seeds' reliefs differ by up
         /// to 5.59 m. Both counts only ever go up, so their sum moves whenever either does.
-        public static int ReliefEpoch => _reliefEpoch + BlwpReliefEpoch();
+        public static int ReliefEpoch => _reliefEpoch + ArenaReliefEpoch();
 
         /// <summary>
         /// THE TICKS THE RUN IN PLAY ENDS AT - its round's own run length (the 82/90 fork, 2026-10-01: "The round
         /// length must be part of the contract, not a fixed constant"), read from the core that runs it; the core's
         /// default (`Layout.BLOCK_TICKS`) where no run says otherwise (the editor, a run with no round).
         /// </summary>
-        public static int RunTicks { get { int t = BlwpRunTicks(); return t > 0 ? t : Layout.BLOCK_TICKS; } }
+        public static int RunTicks { get { int t = ArenaRunTicks(); return t > 0 ? t : Layout.BLOCK_TICKS; } }
 
         /// <summary>
         /// THE BED OF THE TRUCK THIS RUN DRIVES, in Q16.16 metres: the larger truck's 255590 (3.9 m, the core's
@@ -372,7 +372,7 @@ namespace Blwp
         /// with the entry's unlocks, so the view is the truck the signer nodes replay; <see cref="TruckBedOverride"/> stands in
         /// for it where there is no core (the editor's tests).
         /// </summary>
-        public static int TruckBedQ16 => TruckBedOverride > 0 ? TruckBedOverride : BlwpTruckBed();
+        public static int TruckBedQ16 => TruckBedOverride > 0 ? TruckBedOverride : ArenaTruckBed();
         /// <summary>The same in metres; 0 for the standard truck.</summary>
         public static float TruckBedMeters => TruckBedQ16 / 65536f;
         /// <summary>A test's stand-in for the core's answer (Q16.16); 0 asks the core.</summary>
@@ -413,7 +413,7 @@ namespace Blwp
         {
             if (!Available) return false;
             int h = Mathf.RoundToInt(Mathf.Repeat(headingDegrees, 360f) * 65536f / 360f) & 0xFFFF;
-            return BlwpTeleport(Mathf.RoundToInt(at.x * ONE),
+            return ArenaTeleport(Mathf.RoundToInt(at.x * ONE),
                                 Mathf.RoundToInt(at.z * ONE), h) != 0;
         }
 
@@ -431,8 +431,8 @@ namespace Blwp
         public static float TakeImpact()
         {
             if (!Available) return 0f;
-            if (MayClearImpact(BlwpNet.Live)) return BlwpTakeImpact() / (float)ONE;
-            return FeltImpact(BlwpReadImpact(), ref _impactFelt) / (float)ONE;
+            if (MayClearImpact(ArenaNet.Live)) return ArenaTakeImpact() / (float)ONE;
+            return FeltImpact(ArenaReadImpact(), ref _impactFelt) / (float)ONE;
         }
 
         static int _impactFelt;
@@ -487,12 +487,12 @@ namespace Blwp
 
         /// <summary>
         /// A LIVE PRICE SAMPLE into the core before the next tick, and into the run's transcript beside that tick (jslib
-        /// BlwpSubmitSample). 2026-09-17 16:01: the chart was frozen - nothing had ever submitted one.
+        /// ArenaSubmitSample). 2026-09-17 16:01: the chart was frozen - nothing had ever submitted one.
         /// </summary>
         public static bool SubmitSample(double usd)
         {
             int word = PriceWord(usd);
-            return Available && word > 0 && BlwpSubmitSample(word) == 1;
+            return Available && word > 0 && ArenaSubmitSample(word) == 1;
         }
 
         /// <summary>
@@ -503,7 +503,7 @@ namespace Blwp
         {
             if (!Available || words == null || words.Length != 64) return false;
             var h = GCHandle.Alloc(words, GCHandleType.Pinned);
-            try { return BlwpSubmitTape(h.AddrOfPinnedObject(), 64) == 1; }
+            try { return ArenaSubmitTape(h.AddrOfPinnedObject(), 64) == 1; }
             finally { h.Free(); }
         }
 
@@ -526,7 +526,7 @@ namespace Blwp
                      : (feeSats > int.MaxValue ? int.MaxValue : feeSats);
             var bytes = System.Text.Encoding.ASCII.GetBytes((vsizes ?? "") + "\0");
             var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            try { return BlwpSubmitLoad((int)fee, btcHundredths < 0 ? 0 : btcHundredths, h.AddrOfPinnedObject()) == 1; }
+            try { return ArenaSubmitLoad((int)fee, btcHundredths < 0 ? 0 : btcHundredths, h.AddrOfPinnedObject()) == 1; }
             finally { h.Free(); }
         }
 
@@ -536,7 +536,7 @@ namespace Blwp
             if (!Compiled) return 0;
             var bytes = System.Text.Encoding.ASCII.GetBytes((vsizes ?? "") + "\0");
             var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            try { return BlwpBedFill(h.AddrOfPinnedObject()); }
+            try { return ArenaBedFill(h.AddrOfPinnedObject()); }
             finally { h.Free(); }
         }
 
@@ -579,7 +579,7 @@ namespace Blwp
             var oh = GCHandle.Alloc(outBytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpQueryParam(nh.AddrOfPinnedObject(), oh.AddrOfPinnedObject(), outBytes.Length);
+                int n = ArenaQueryParam(nh.AddrOfPinnedObject(), oh.AddrOfPinnedObject(), outBytes.Length);
                 return n > 0 ? System.Text.Encoding.ASCII.GetString(outBytes, 0, n) : null;
             }
             finally { nh.Free(); oh.Free(); }
@@ -592,7 +592,7 @@ namespace Blwp
             var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                int n = BlwpStateHash(handle.AddrOfPinnedObject(), bytes.Length);
+                int n = ArenaStateHash(handle.AddrOfPinnedObject(), bytes.Length);
                 return n > 0 ? System.Text.Encoding.ASCII.GetString(bytes, 0, n) : null;
             }
             finally { handle.Free(); }
@@ -638,7 +638,7 @@ namespace Blwp
         public static bool Liquidation(double usd)
         {
             if (!Available || !(usd > 0)) return false;
-            return BlwpLiquidation(Scale(usd)) != 0;
+            return ArenaLiquidation(Scale(usd)) != 0;
         }
 
         /// <summary>
@@ -745,7 +745,7 @@ namespace Blwp
         public static int LiquidationCount => _state[Layout.O_LIQ + Layout.L_SERIAL];
 
         public static float FrontlineZ(float x) =>
-            Available ? BlwpFrontlineZ(Mathf.RoundToInt(x * ONE)) / (float)ONE : 0f;
+            Available ? ArenaFrontlineZ(Mathf.RoundToInt(x * ONE)) / (float)ONE : 0f;
 
         /// <summary>
         /// The surface at a world point, in metres: the relief the host handed
@@ -765,7 +765,7 @@ namespace Blwp
         /// author of a thing it does not simulate.
         /// </summary>
         public static float SurfaceAt(float x, float z) =>
-            Available ? BlwpSurfaceAt(Mathf.RoundToInt(x * ONE),
+            Available ? ArenaSurfaceAt(Mathf.RoundToInt(x * ONE),
                                       Mathf.RoundToInt(z * ONE)) / (float)ONE : 0f;
 
         public static float TruckHeading => Degrees(_state[Layout.O_TRUCK + Layout.T_HEADING]);

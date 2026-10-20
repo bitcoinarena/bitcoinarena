@@ -16,7 +16,7 @@ using UnityEngine.TestTools;
 /// was never the point.
 ///
 /// So this drives the real scene rather than a rig, and watches the rigidbody.
-/// `BlwpNet` is a stub outside a WebGL player and will never answer `true`,
+/// `ArenaNet` is a stub outside a WebGL player and will never answer `true`,
 /// which is why the effect is exercised directly: `HandBack(lockControls:
 /// true)` is what `StopDriving` does, and what is measured here is what that
 /// does to a truck the player is holding the throttle down on.
@@ -27,14 +27,14 @@ public class RunStoppedTests
 
     GameObject _boot;
     TruckController _truck;
-    Blwp.CoreDrivenTruck _core;
+    Arena.CoreDrivenTruck _core;
     Rigidbody _rb;
     Vector3 _spawn;
 
     [UnitySetUp]
     public IEnumerator SetUp()
     {
-        Blwp.PracticeMode.On = false;
+        Arena.PracticeMode.On = false;
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
         yield return null;
@@ -48,7 +48,7 @@ public class RunStoppedTests
         yield return new WaitForSeconds(1.5f);
         LoadAndRelease();
         _truck = Object.FindFirstObjectByType<TruckController>();
-        _core = Object.FindFirstObjectByType<Blwp.CoreDrivenTruck>();
+        _core = Object.FindFirstObjectByType<Arena.CoreDrivenTruck>();
         _rb = _truck != null ? _truck.GetComponent<Rigidbody>() : null;
         _spawn = _rb != null ? _rb.position : Vector3.zero;
     }

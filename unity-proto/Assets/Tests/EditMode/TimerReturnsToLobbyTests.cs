@@ -11,7 +11,7 @@ using NUnit.Framework;
 ///
 /// What failed was the client's half, and it was an asymmetry left in SplashScreen earlier the same day: the
 /// hold CLOCK was started from `RunHasEnded` - the core's word OR the client's - while the lobby GATE was still
-/// handed `BlwpNet.Ended` alone. A round the core had ended with no session word to go with it therefore started
+/// handed `ArenaNet.Ended` alone. A round the core had ended with no session word to go with it therefore started
 /// its five seconds and then never took them, and the truck sat in a finished world.
 ///
 /// These pin the whole decision, not the halves, because a unit test cannot see a wrong argument at a call site -

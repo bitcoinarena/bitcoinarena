@@ -4,7 +4,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE COLOURED BOXES ARE THE CORE'S (2026-09-25 20:56/20:57: visible collisions on the miner and the post office).
@@ -29,10 +29,10 @@ public class CollisionBoxViewTests
         var src = Core("rules/solids.js");
         StringAssert.Contains("if (yLow > add(floor, BODY_HEIGHT)) continue;", src);
         StringAssert.Contains("if (yHigh < floor) continue;", src);
-        int floor = 10 * BlwpCore.ONE;
-        Assert.IsTrue(CollisionBoxView.TruckCanHit(floor - 20 * BlwpCore.ONE, floor + 52 * BlwpCore.ONE, floor), "a post office pillar");
-        Assert.IsFalse(CollisionBoxView.TruckCanHit(floor + 602931, floor + 52 * BlwpCore.ONE, floor), "a lintel 9.2 m up is driven under");
-        Assert.IsTrue(CollisionBoxView.TruckCanHit(floor + CollisionBoxView.BodyHeight, floor + 20 * BlwpCore.ONE, floor), "a box at roof height is met");
+        int floor = 10 * ArenaCore.ONE;
+        Assert.IsTrue(CollisionBoxView.TruckCanHit(floor - 20 * ArenaCore.ONE, floor + 52 * ArenaCore.ONE, floor), "a post office pillar");
+        Assert.IsFalse(CollisionBoxView.TruckCanHit(floor + 602931, floor + 52 * ArenaCore.ONE, floor), "a lintel 9.2 m up is driven under");
+        Assert.IsTrue(CollisionBoxView.TruckCanHit(floor + CollisionBoxView.BodyHeight, floor + 20 * ArenaCore.ONE, floor), "a box at roof height is met");
     }
 
     [Test]
@@ -48,9 +48,9 @@ public class CollisionBoxViewTests
     [Test]
     public void TheBridgeCopiesTheCoresSolidsAndNotUnitysColliders()
     {
-        var lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
+        var lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/arena.jslib"));
         StringAssert.Contains("var s = b.st.solids;", lib);
-        var view = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Blwp/CollisionBoxView.cs"));
+        var view = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Arena/CollisionBoxView.cs"));
         StringAssert.DoesNotContain("Collider", Regex.Replace(view, @"///.*|//.*", ""));
         StringAssert.DoesNotContain(".bounds", view);
     }

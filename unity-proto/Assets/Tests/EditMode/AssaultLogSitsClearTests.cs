@@ -90,7 +90,7 @@ public class AssaultLogSitsClearTests
     {
         var hud = Hud();
         var before = hud.AssaultLogBox(1280, 800);
-        ChartHud.Watch.Observe(new int[Blwp.Layout.CH_WORDS], System.DateTime.Now, 1f);
+        ChartHud.Watch.Observe(new int[Arena.Layout.CH_WORDS], System.DateTime.Now, 1f);
         var after = hud.AssaultLogBox(1280, 800);
         Assert.AreEqual(before, after, "the log's box is the screen's, not the war's");
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE WAR DOES NOT RACE TO CATCH UP, AND IT DOES NOT LIVE IN THE PAST EITHER.

@@ -63,15 +63,15 @@ public class WantedStarsTests
     /// <summary>
     /// A core that is not answering shows nothing rather than something made
     /// up. This is the single-source rule stated as a fact about the build: in
-    /// the editor `BlwpCore.Available` is false because the core is a stub
+    /// the editor `ArenaCore.Available` is false because the core is a stub
     /// outside a WebGL player, and the overlay has no second opinion to fall
     /// back on - so the heat it reads is zero and the stars stay off.
     /// </summary>
     [Test]
     public void WithNoCoreAnsweringThereAreNoStarsToInvent()
     {
-        Assert.AreEqual(0f, Blwp.BlwpCore.Heat, 0.0001f);
-        Assert.AreEqual(0, DriveHud.StarsFor(Blwp.BlwpCore.Heat));
+        Assert.AreEqual(0f, Arena.ArenaCore.Heat, 0.0001f);
+        Assert.AreEqual(0, DriveHud.StarsFor(Arena.ArenaCore.Heat));
     }
 }
 

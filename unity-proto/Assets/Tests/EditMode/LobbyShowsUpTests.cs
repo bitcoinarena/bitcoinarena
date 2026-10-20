@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE LOBBY SHOWS UP, AND A LOBBY WITH NO ROUNDS IS NOT MISTAKEN FOR ONE (2026-09-20).
@@ -17,7 +17,7 @@ using Blwp;
 /// nothing said which one was on screen. These tests pin both shapes apart, from the payload the live Daily
 /// actually returns rather than an invented one.
 ///
-/// The sample below is `window.BLWP_LOBBY_VIEW()` read off btc-logistics-core.pages.dev at build 0.0.1812 over
+/// The sample below is `window.ARENA_LOBBY_VIEW()` read off btc-logistics-core.pages.dev at build 0.0.1812 over
 /// CDP, with the two round ids and the tunnel hostnames left exactly as they came.
 /// </summary>
 public class LobbyShowsUpTests

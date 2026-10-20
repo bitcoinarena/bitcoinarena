@@ -17,8 +17,11 @@ using UnityEngine;
 /// </summary>
 public static class GameSettings
 {
-    const string SoundKey = "blwp.sound";
-    const string DebugKey = "blwp.debug";
+    const string SoundKey = "arena.sound";
+    const string DebugKey = "arena.debug";
+    // the names before kanban #524: a player's setting kept under them is read once and carried over
+    const string OldSoundKey = "blwp.sound";
+    const string OldDebugKey = "blwp.debug";
 
     static bool _loaded, _sound = true, _debug;
 
@@ -26,8 +29,8 @@ public static class GameSettings
     {
         if (_loaded) return;
         _loaded = true;
-        _sound = PlayerPrefs.GetInt(SoundKey, 1) != 0;
-        _debug = PlayerPrefs.GetInt(DebugKey, 0) != 0;
+        _sound = PlayerPrefs.GetInt(SoundKey, PlayerPrefs.GetInt(OldSoundKey, 1)) != 0;
+        _debug = PlayerPrefs.GetInt(DebugKey, PlayerPrefs.GetInt(OldDebugKey, 0)) != 0;
         Apply();
     }
 

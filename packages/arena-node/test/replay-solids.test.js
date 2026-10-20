@@ -34,13 +34,13 @@ test('no daemon hands a replay a collision world, and no page can send one', () 
     'something in src/ hands a replay a collision world - it should come from the map');
 
   const jslib = readFileSync(
-    new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+    new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const core = readFileSync(
-    new URL('../../../unity-proto/Assets/Scripts/Blwp/BlwpCore.cs', import.meta.url), 'utf8');
+    new URL('../../../unity-proto/Assets/Scripts/Arena/ArenaCore.cs', import.meta.url), 'utf8');
   const truck = readFileSync(
-    new URL('../../../unity-proto/Assets/Scripts/Blwp/CoreDrivenTruck.cs', import.meta.url), 'utf8');
-  assert.equal(/BlwpSetSolids\s*:/.test(jslib), false, 'the bridge still exports a solids door');
-  assert.equal(/bool\s+SetSolids\s*\(/.test(core), false, 'BlwpCore still offers SetSolids');
+    new URL('../../../unity-proto/Assets/Scripts/Arena/CoreDrivenTruck.cs', import.meta.url), 'utf8');
+  assert.equal(/ArenaSetSolids\s*:/.test(jslib), false, 'the bridge still exports a solids door');
+  assert.equal(/bool\s+SetSolids\s*\(/.test(core), false, 'ArenaCore still offers SetSolids');
   assert.equal(/void\s+UploadSolids\s*\(/.test(truck), false, 'the truck still uploads a collision world');
   console.log('  files in the daemon that hand a replay a collision world: 0');
   console.log('  doors a page could send one through: 0');

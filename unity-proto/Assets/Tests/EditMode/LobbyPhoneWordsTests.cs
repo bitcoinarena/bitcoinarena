@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using NUnit.Framework;
-using Blwp;
+using Arena;
 
 /// <summary>
 /// THE LOBBY'S LINES ON A PHONE (measured on UI 133 at 390 px: the header cut to "ROUNDS · JOIN NEEDS 5 OF 7 SIGNER NC"

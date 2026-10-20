@@ -339,7 +339,7 @@ test('the page joins a named round and still invents none', () => {
   assert.match(page, /function vault\(\) \{\n\s+try \{ const s = window\.localStorage;/, 'localStorage is not the kept rounds\' vault()');
   for (const call of ['tabSeed', 'seedOrigin', 'importSeed', 'tabIdentity', 'setPlayerName', 'nameRecordFor'])
     assert.ok(!new RegExp(`${call}\\([^)]*vault\\(\\)`).test(page), `the page keeps the player (${call}) in storage every tab shares`);
-  assert.ok(page.includes('id="blwp-players"'),
+  assert.ok(page.includes('id="arena-players"'),
     'the page has no on-screen count of who is in the round');
   assert.ok(page.includes('probeNodes'),
     'the page never checks whether both nodes answer');

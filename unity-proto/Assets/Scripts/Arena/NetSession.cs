@@ -2,14 +2,14 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// THE CALL SITE: a session that opens when a round rolls out, and a status
     /// the debug panel can read.
     ///
     /// It publishes nothing itself. The inputs go to the network from inside
-    /// `BlwpStep`, where the core is stepped, so the transcript is the words
+    /// `ArenaStep`, where the core is stepped, so the transcript is the words
     /// the core consumed; the checkpoints go on the same tick counter. What
     /// this component does is decide WHEN a session should exist, which is a
     /// question about the game, and it is the only part of that question Unity
@@ -59,12 +59,12 @@ namespace Blwp
         void SayWhyNotYet()
         {
             var why = string.IsNullOrEmpty(nodeUrl) ? "the page has named no node"
-                : !BlwpCore.Available ? "the core is not driving here"
-                : BlwpCore.Tick < settleTicks ? $"the world is still settling ({BlwpCore.Tick} of {settleTicks} ticks)"
+                : !ArenaCore.Available ? "the core is not driving here"
+                : ArenaCore.Tick < settleTicks ? $"the world is still settling ({ArenaCore.Tick} of {settleTicks} ticks)"
                 : "nothing is left to wait for, and no session was asked for";
             if (why == _saidWhy) return;
             _saidWhy = why;
-            Debug.Log($"[blwp] no session yet: {why}");
+            Debug.Log($"[arena] no session yet: {why}");
         }
         string _saidWhy = "";
 
@@ -75,7 +75,7 @@ namespace Blwp
         /// a session is wanted once, only when a node has been named, only
         /// while the core is actually driving, and only after the world has
         /// settled. `Update` reads it; a test reads it too, which is the only
-        /// way any of this can be checked in an editor - `BlwpNet` is a stub
+        /// way any of this can be checked in an editor - `ArenaNet` is a stub
         /// there and will never open anything.
         /// </summary>
         public static bool ShouldOpen(string url, bool coreDriving, bool alreadyRunning,
@@ -88,7 +88,7 @@ namespace Blwp
             // The page names the node, so a build carries no address of its own
             // and a player who was given none plays exactly the game that
             // shipped before any of this existed.
-            if (string.IsNullOrEmpty(nodeUrl)) nodeUrl = BlwpNet.NodeUrl();
+            if (string.IsNullOrEmpty(nodeUrl)) nodeUrl = ArenaNet.NodeUrl();
         }
 
         float _nextAsk;
@@ -100,16 +100,16 @@ namespace Blwp
             // is no longer reloaded, so a round named later has to be seen here.
             // AND ONCE A RUN IS OVER THE ROUND IS NOT ASKED FOR AGAIN (hole 1): the page lets go of the
             // finished round, so the address is asked afresh and answers only for the next join.
-            if (BlwpNet.Ended) nodeUrl = "";
+            if (ArenaNet.Ended) nodeUrl = "";
             if (string.IsNullOrEmpty(nodeUrl) && Time.unscaledTime >= _nextAsk)
             {
                 _nextAsk = Time.unscaledTime + 0.5f;
-                nodeUrl = BlwpNet.NodeUrl();
+                nodeUrl = ArenaNet.NodeUrl();
             }
-            if (ShouldOpen(nodeUrl, BlwpCore.Available, BlwpNet.Live,
-                           BlwpCore.Tick, settleTicks))
-                BlwpNet.Start(nodeUrl);
-            else if (!BlwpNet.Live) SayWhyNotYet();
+            if (ShouldOpen(nodeUrl, ArenaCore.Available, ArenaNet.Live,
+                           ArenaCore.Tick, settleTicks))
+                ArenaNet.Start(nodeUrl);
+            else if (!ArenaNet.Live) SayWhyNotYet();
 
             // Polled rather than pushed, and not every frame: the status is a
             // string built in the page, and building it sixty times a second to
@@ -121,12 +121,12 @@ namespace Blwp
             // the line, bayok-27.png and bayfull-29.png are the same state with nothing on screen.
             // (The HUD no longer prints it - NO-STOPPED-LINE-2103 - but the ending's reason is still the session's.)
             // Fetched once, the moment the run ends; the poll below carries on as before.
-            if (BlwpNet.Ended && string.IsNullOrEmpty(Ending)) Ending = BlwpNet.Ending();
+            if (ArenaNet.Ended && string.IsNullOrEmpty(Ending)) Ending = ArenaNet.Ending();
             if (Time.unscaledTime < _nextPoll) return;
             _nextPoll = Time.unscaledTime + 0.5f;
-            Status = BlwpNet.Running ? BlwpNet.Status() : "off";
-            Marks = BlwpNet.Marks;
-            Ending = BlwpNet.Ending();
+            Status = ArenaNet.Running ? ArenaNet.Status() : "off";
+            Marks = ArenaNet.Marks;
+            Ending = ArenaNet.Ending();
         }
     }
 }

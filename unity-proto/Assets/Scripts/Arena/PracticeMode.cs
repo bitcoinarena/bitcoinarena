@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// Practice: the army fires, and nothing lands.
@@ -33,7 +33,7 @@ namespace Blwp
         public static string Source { get; private set; } = "default";
 
         /// <summary>What the core wants: Q16.16, so one or nothing.</summary>
-        public static int Input => On ? BlwpCore.ONE : 0;
+        public static int Input => On ? ArenaCore.ONE : 0;
 
         /// <summary>
         /// THE INPUT A RUN SENDS (2026-10-04): never practice in a signed run. Practice was on by default and its
@@ -63,13 +63,13 @@ namespace Blwp
             On = sceneDefault;
             Source = "scene";
 
-            string q = BlwpCore.QueryParam("practice");
+            string q = ArenaCore.QueryParam("practice");
             if (string.IsNullOrEmpty(q)) return;
 
             q = q.Trim().ToLowerInvariant();
             if (q == "0" || q == "off" || q == "false" || q == "no") { On = false; Source = "url"; }
             else if (q == "1" || q == "on" || q == "true" || q == "yes") { On = true; Source = "url"; }
-            else Debug.LogWarning("[blwp] ?practice=" + q + " not understood, keeping the scene default");
+            else Debug.LogWarning("[arena] ?practice=" + q + " not understood, keeping the scene default");
         }
     }
 }

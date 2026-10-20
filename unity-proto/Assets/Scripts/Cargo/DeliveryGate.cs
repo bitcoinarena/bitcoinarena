@@ -145,7 +145,7 @@ public class DeliveryGate : MonoBehaviour
         // The strike counts as the ground moving. A crater does not touch
         // terrain.Version, so a building keyed to that alone went on standing
         // over its own hole.
-        int rev = (terrain != null ? terrain.Version : 0) + Blwp.BlwpCore.StrikeCount * 100003;
+        int rev = (terrain != null ? terrain.Version : 0) + Arena.ArenaCore.StrikeCount * 100003;
         if (rev == _seenGround) return;
         _seenGround = rev;
 
@@ -193,7 +193,7 @@ public class DeliveryGate : MonoBehaviour
         bay.Clear();
         // INSIDE A LIVE ROUND A MISSED BLOCK ENDS THE RUN WHERE IT STANDS (2026-09-15): the
         // page finishes it off the core's word; a teleport would be a core write in no transcript.
-        if (!BackToTheBay(Blwp.BlwpNet.RoundSeed)) return;
+        if (!BackToTheBay(Arena.ArenaNet.RoundSeed)) return;
         if (truck != null) truck.Respawn();
         _reopenAt = Time.unscaledTime + Mathf.Max(0f, scoreHoldSeconds * 0.55f);
     }
@@ -228,7 +228,7 @@ public class DeliveryGate : MonoBehaviour
         // the core's `RUN_DELIVERED` had no reader at all: only `RunState == 2`
         // was ever looked at, for the wreck. Now the core's verdict is the
         // verdict, and the geometry below is what the editor falls back on,
-        // where `BlwpCore` is stubbed and there is nothing to ask.
+        // where `ArenaCore` is stubbed and there is nothing to ask.
         //
         // AND IT IS AN EDGE, NOT A LEVEL. `outcome` latches: the core returns
         // RUN_DELIVERED for every tick after the arrival, not just the one it
@@ -256,9 +256,9 @@ public class DeliveryGate : MonoBehaviour
         // carrying freight, but it is the same shape as the bug above and it
         // is gone from the core's path. The fallback keeps it: without a core
         // there is nothing else to ask.
-        if (Blwp.BlwpCore.Available)
+        if (Arena.ArenaCore.Available)
         {
-            int state = Blwp.BlwpCore.RunState;
+            int state = Arena.ArenaCore.RunState;
             if (state != 1 && state != 3) { _settled = false; return; }
             if (_settled) return;
             _settled = true;
@@ -301,7 +301,7 @@ public class DeliveryGate : MonoBehaviour
         // 108, and the whole run home is over the fighting with the post
         // office ahead.
         // INSIDE A LIVE ROUND THE RUN IS OVER HERE (2026-09-15 16:14): no fly home, no bay.
-        bool home = BackToTheBay(Blwp.BlwpNet.RoundSeed);
+        bool home = BackToTheBay(Arena.ArenaNet.RoundSeed);
         var chase = home ? FindFirstObjectByType<ChaseCamera>() : null;
         var post = FindFirstObjectByType<PostOffice>();
         if (chase != null)
@@ -352,7 +352,7 @@ public class DeliveryGate : MonoBehaviour
     /// </summary>
     public void OnBlockClosed()
     {
-        if (Blwp.BlwpCore.Available) return;
+        if (Arena.ArenaCore.Available) return;
         MissTheBlock();
     }
 
@@ -369,7 +369,7 @@ public class DeliveryGate : MonoBehaviour
     public Vector3 Mouth => new Vector3(gateX, GateGround(), 0f);
 
     float GateGround() =>
-        Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(gateX, 0f)
+        Arena.ArenaCore.HasSurface ? Arena.ArenaCore.SurfaceAt(gateX, 0f)
                                  : (terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f);
 
     /// <summary>The far end of the run: the miner, or two posts if it is absent.</summary>

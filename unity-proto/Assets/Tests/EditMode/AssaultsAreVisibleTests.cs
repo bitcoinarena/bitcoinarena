@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using System;
 using NUnit.Framework;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// AN ASSAULT MUST BE PERCEPTIBLE (2026-09-20 16:22, 16:26).
@@ -111,7 +111,7 @@ public class AssaultsAreVisibleTests
     /// The page is told what was drawn, so a browser run can be asked instead of guessed at.
     ///
     /// This is the same idea as the lobby's own `Shown`: measurement plumbing, never an input. It is pinned
-    /// because `assaultsee.mjs` reads exactly these three fields off `window.BLWP_UNITY_ASSAULT`.
+    /// because `assaultsee.mjs` reads exactly these three fields off `window.ARENA_UNITY_ASSAULT`.
     /// </summary>
     [Test]
     public void ThePageIsToldWhatTheHudDrew()

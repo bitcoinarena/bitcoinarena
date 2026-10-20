@@ -117,7 +117,7 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     float Ground()
     {
-        if (terrain == null && !Blwp.BlwpCore.HasSurface) return 0f;
+        if (terrain == null && !Arena.ArenaCore.HasSurface) return 0f;
         float low = float.MaxValue;
         for (int i = 0; i <= 8; i++)
         {
@@ -146,7 +146,7 @@ public class PostOffice : MonoBehaviour
     /// The terrain stays as the fallback where no core answers - the Editor.
     /// </summary>
     float Surface(float x, float z) =>
-        Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
+        Arena.ArenaCore.HasSurface ? Arena.ArenaCore.SurfaceAt(x, z)
                                  : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
 
     public Vector3 BayFor(int bay)

@@ -115,7 +115,7 @@ public class CraterWipeTests
     public IEnumerator TheTheatreCanReachTheWreckage()
     {
         yield return Rig();
-        var theatre = Object.FindFirstObjectByType<Blwp.StrikeTheatre>();
+        var theatre = Object.FindFirstObjectByType<Arena.StrikeTheatre>();
         Assert.IsNotNull(theatre, "no StrikeTheatre in the scene");
         Assert.IsNotNull(theatre.fx,
             "the theatre cannot wipe a crater it has no CombatFx to wipe it with");

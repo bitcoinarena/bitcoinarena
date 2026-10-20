@@ -12,25 +12,25 @@ public class PracticeInSignedRunTests
     [Test]
     public void ASignedRunSendsNoPracticeWhateverTheSwitchSays()
     {
-        bool was = Blwp.PracticeMode.On;
+        bool was = Arena.PracticeMode.On;
         try
         {
-            Blwp.PracticeMode.On = true;
-            Assert.AreEqual(0, Blwp.PracticeMode.InputFor(true));
-            Assert.AreEqual(Blwp.BlwpCore.ONE, Blwp.PracticeMode.InputFor(false), "outside a signed run the switch rules");
-            Blwp.PracticeMode.On = false;
-            Assert.AreEqual(0, Blwp.PracticeMode.InputFor(true));
-            Assert.AreEqual(0, Blwp.PracticeMode.InputFor(false));
+            Arena.PracticeMode.On = true;
+            Assert.AreEqual(0, Arena.PracticeMode.InputFor(true));
+            Assert.AreEqual(Arena.ArenaCore.ONE, Arena.PracticeMode.InputFor(false), "outside a signed run the switch rules");
+            Arena.PracticeMode.On = false;
+            Assert.AreEqual(0, Arena.PracticeMode.InputFor(true));
+            Assert.AreEqual(0, Arena.PracticeMode.InputFor(false));
         }
-        finally { Blwp.PracticeMode.On = was; }
+        finally { Arena.PracticeMode.On = was; }
     }
 
     [Test]
     public void ThePracticeBoxSaysLiveFireInASignedRun()
     {
-        Assert.AreEqual("live fire  ·  in a signed run", Blwp.PracticeMode.Words(true, true));
-        Assert.AreEqual("live fire  ·  in a signed run", Blwp.PracticeMode.Words(false, true));
-        Assert.AreEqual("no damage  ·  tap to arm", Blwp.PracticeMode.Words(true, false));
-        Assert.AreEqual("live fire  ·  tap for practice", Blwp.PracticeMode.Words(false, false));
+        Assert.AreEqual("live fire  ·  in a signed run", Arena.PracticeMode.Words(true, true));
+        Assert.AreEqual("live fire  ·  in a signed run", Arena.PracticeMode.Words(false, true));
+        Assert.AreEqual("no damage  ·  tap to arm", Arena.PracticeMode.Words(true, false));
+        Assert.AreEqual("live fire  ·  tap for practice", Arena.PracticeMode.Words(false, false));
     }
 }

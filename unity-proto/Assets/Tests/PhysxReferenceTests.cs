@@ -30,7 +30,7 @@ public class PhysxReferenceTests
     [UnitySetUp]
     public IEnumerator SetUp()
     {
-        Blwp.PracticeMode.On = true;               // nothing may shoot the subject
+        Arena.PracticeMode.On = true;               // nothing may shoot the subject
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
         yield return new WaitForSeconds(1.5f);
@@ -39,7 +39,7 @@ public class PhysxReferenceTests
         Assert.IsNotNull(_truck, "kein Truck");
 
         // PhysX drives, not the core - this is the reference, not the copy.
-        var core = _truck.GetComponent<Blwp.CoreDrivenTruck>();
+        var core = _truck.GetComponent<Arena.CoreDrivenTruck>();
         if (core != null) { core.enabled = false; _truck.externallyDriven = false; }
 
         _rb = _truck.GetComponent<Rigidbody>();
@@ -287,7 +287,7 @@ public class PhysxReferenceTests
 
         // The frontage: every static box the world is made of, as the core
         // will see it.
-        var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
+        var boxes = Arena.WorldSolids.Gather(_truck.transform, out int n);
         sb.AppendLine($"PHYSXWALL solids {n}");
 
         // Find the nearest wall face straight down +X from the spawn, which is

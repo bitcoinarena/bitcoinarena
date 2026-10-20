@@ -85,7 +85,7 @@ public class TruckHealth : MonoBehaviour
     /// protection outright.
     /// </summary>
     public bool IsInvulnerable =>
-        Blwp.PracticeMode.On || !_leftSpawn || (loadout != null && loadout.IsOpen);
+        Arena.PracticeMode.On || !_leftSpawn || (loadout != null && loadout.IsOpen);
 
     /// <summary>Raised when the truck is written off.</summary>
     public System.Action Wrecked;
@@ -129,8 +129,8 @@ public class TruckHealth : MonoBehaviour
     /// divisor is written against the same 1.5. Neither is used to work out
     /// what a hit costs any more.
     ///
-    /// The host calls this every frame with `BlwpCore.TruckHealth` and
-    /// `BlwpCore.RunState`. A test stands in for the core and calls it too -
+    /// The host calls this every frame with `ArenaCore.TruckHealth` and
+    /// `ArenaCore.RunState`. A test stands in for the core and calls it too -
     /// that is stubbing the view's INPUT, not giving the view a second pool.
     /// </summary>
     public void ApplySnapshot(float health, bool wrecked)
@@ -227,14 +227,14 @@ public class TruckHealth : MonoBehaviour
         // THE SNAPSHOT. Condition and the wrecked flag are read straight off
         // the core every frame; this class decides neither. When there is no
         // core answering - the editor, PlayMode, a standalone build, where
-        // `BlwpCore` is stubbed - nothing is read and the value stays as it
+        // `ArenaCore` is stubbed - nothing is read and the value stays as it
         // was last set, which is how a test stands in for the core through
         // `ApplySnapshot`. Stubbing the view's input, not a second pool.
-        if (Blwp.BlwpCore.Available)
-            ApplySnapshot(Blwp.BlwpCore.TruckHealth,
-                          Blwp.BlwpCore.RunState == 2);      // RUN_WRECKED
+        if (Arena.ArenaCore.Available)
+            ApplySnapshot(Arena.ArenaCore.TruckHealth,
+                          Arena.ArenaCore.RunState == 2);      // RUN_WRECKED
 
-        float rammed = Blwp.BlwpCore.TakeImpact();
+        float rammed = Arena.ArenaCore.TakeImpact();
         if (rammed > 0.5f && !IsDestroyed && !IsInvulnerable)
         {
             if (chase != null) chase.Shake(Mathf.Min(1.2f, rammed * 0.09f));
@@ -290,7 +290,7 @@ public class TruckHealth : MonoBehaviour
         // comes back ... the cargo panel is up, and WASD steers it"). Nothing is reset here: no health, no truck, no
         // `Respawned` - that opened the cargo panel and ended WASTED over a run the core had called WRECKED. The wreck
         // burns on under WASTED until the lobby; PLAY brings the truck back for the next round (`Revive`).
-        if (!DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)) { _burningFor = respawnSeconds; return; }
+        if (!DeliveryGate.BackToTheBay(Arena.ArenaNet.RoundSeed)) { _burningFor = respawnSeconds; return; }
 
         ClearWreck();
         if (truck != null) truck.Respawn();
@@ -326,7 +326,7 @@ public class TruckHealth : MonoBehaviour
         // the rest of the session. Without a core, PhysX drives and gets it
         // back, which is the editor's correct behaviour rather than a
         // degraded one.
-        if (_rb != null) _rb.isKinematic = Blwp.BlwpCore.Available;
+        if (_rb != null) _rb.isKinematic = Arena.ArenaCore.Available;
         // INSIDE A LIVE ROUND THE WRECK IS THE END OF THE RUN (2026-09-15): the page finishes it off the core's
         // WRECKED and the lobby comes back; a respawn would teleport the core's truck, a write in no transcript. The
         // next round's core starts it afresh.

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using UnityEngine;
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>
     /// Drives the truck from the deterministic core instead of from PhysX.
@@ -108,14 +108,14 @@ namespace Blwp
             if (roads == null) roads = FindFirstObjectByType<RoadNetwork>();
 
             if (!useCore) return;
-            if (!BlwpCore.Init(seed))
+            if (!ArenaCore.Init(seed))
             {
                 // Not an error in the editor: there is no JavaScript there, and
                 // the fallback to PhysX is the correct behaviour rather than a
                 // degraded one.
-                Debug.Log(BlwpCore.Compiled
-                    ? "[blwp] no core answered - falling back to PhysX"
-                    : "[blwp] not a WebGL build - PhysX drives, as expected");
+                Debug.Log(ArenaCore.Compiled
+                    ? "[arena] no core answered - falling back to PhysX"
+                    : "[arena] not a WebGL build - PhysX drives, as expected");
                 return;
             }
 
@@ -123,7 +123,7 @@ namespace Blwp
             if (_rb != null) { _wasKinematic = _rb.isKinematic; _rb.isKinematic = true; }
             if (_truck != null) _truck.externallyDriven = true;
             CollectWheels();
-            Debug.Log("[blwp] core is driving");
+            Debug.Log("[arena] core is driving");
         }
 
         /// <summary>
@@ -131,7 +131,7 @@ namespace Blwp
         ///
         /// Here rather than at the three endings, because the score card is
         /// read out of the core AFTER a run finishes - `RunScore.Score` asks
-        /// `BlwpCore.RunScore()` - and resetting on arrival would blank the
+        /// `ArenaCore.RunScore()` - and resetting on arrival would blank the
         /// card the player is looking at. Roll-out is the first moment nobody
         /// is still reading the last round.
         ///
@@ -142,15 +142,15 @@ namespace Blwp
         public void StartRound()
         {
             if (!Driving) return;
-            if (!RollOutRestarts(BlwpNet.RoundSeed, seed, out int world))
+            if (!RollOutRestarts(ArenaNet.RoundSeed, seed, out int world))
             {
                 // A LIVE ROUND IS ALREADY RUNNING and roll-out is inside it.
-                Debug.Log("[blwp] roll-out inside a live round: the core keeps its run");
+                Debug.Log("[arena] roll-out inside a live round: the core keeps its run");
                 return;
             }
-            if (!BlwpCore.Restart(world)) return;
-            _prevHeading = BlwpCore.TruckHeading;
-            Debug.Log("[blwp] round restarted in the core");
+            if (!ArenaCore.Restart(world)) return;
+            _prevHeading = ArenaCore.TruckHeading;
+            Debug.Log("[arena] round restarted in the core");
         }
 
         /// <summary>
@@ -175,7 +175,7 @@ namespace Blwp
         /// truck being driven.
         ///
         /// A pure rule with no core in it, so it can be measured without one.
-        /// `roundSeed` is `BlwpNet.RoundSeed`: zero means no round.
+        /// `roundSeed` is `ArenaNet.RoundSeed`: zero means no round.
         /// </summary>
         public static bool RollOutRestarts(int roundSeed, int dailySeed, out int world)
         {
@@ -192,7 +192,7 @@ namespace Blwp
         /// nobody could pay out.
         ///
         /// Its own function because it is a RULE, and rules here are measured.
-        /// `BlwpNet` is a stub outside a WebGL player, so nothing in an editor
+        /// `ArenaNet` is a stub outside a WebGL player, so nothing in an editor
         /// will ever answer `true` - which is exactly why the rule has to be
         /// readable without one. Unity decides no outcome: the word and the
         /// reason are the client's, and this only says when to stop presenting
@@ -225,7 +225,7 @@ namespace Blwp
             if (!Driving) return;
             HandBack(lockControls: true);
             _stoppedAtEnd = true;
-            Debug.Log($"[blwp] the core stopped driving: {why}");
+            Debug.Log($"[arena] the core stopped driving: {why}");
         }
 
         /// <summary>The core stopped driving because a run was over, not because it was handed away.</summary>
@@ -247,7 +247,7 @@ namespace Blwp
             if (_truck != null) _truck.externallyDriven = true;
             _havePrev = false;
             Driving = true;
-            Debug.Log("[blwp] the core drives again: a new round's session is live");
+            Debug.Log("[arena] the core drives again: a new round's session is live");
         }
 
         /// <summary>
@@ -482,7 +482,7 @@ namespace Blwp
         ///
         /// The steer angle, the road speed and the frame time are handed in
         /// rather than read here, so the resting can be run - unchanged - in
-        /// an editor where `BlwpCore` is a stub and would answer nothing but
+        /// an editor where `ArenaCore` is a stub and would answer nothing but
         /// zero. The Update call site passes the core's own three numbers.
         /// </summary>
         public void PoseWheels(float steer, float speed, float dt)
@@ -560,8 +560,8 @@ namespace Blwp
                                     : e.y <= e.z ? "Y" : "Z";
                         float localR = Mathf.Max(e.x, Mathf.Max(e.y, e.z));
 
-                        float core = BlwpCore.HasSurface
-                            ? BlwpCore.SurfaceAt(at.x, at.z) : float.NaN;
+                        float core = ArenaCore.HasSurface
+                            ? ArenaCore.SurfaceAt(at.x, at.z) : float.NaN;
                         float drawn = terrain != null
                             ? terrain.SampleSurface(at.x, at.z) : float.NaN;
                         float deck = roads != null ? roads.Lift(at.x, at.z) : 0f;
@@ -577,7 +577,7 @@ namespace Blwp
                                   + $"lane {(roads != null && roads.Model != null && roads.Model.LaneAt(at.x, at.z, 8.6f).HasValue ? roads.Model.LaneAt(at.x, at.z, 8.6f).Value.ToString() : "none")} "
                                   + $"| local extents {e.x:F3},{e.y:F3},{e.z:F3} "
                                   + $"-> axle {axle}, local radius {localR:F3}, "
-                                  + $"moving {BlwpCore.TruckSpeed:F1} m/s "
+                                  + $"moving {ArenaCore.TruckSpeed:F1} m/s "
                                   // THE TWO CRATER COUNTS. `restart` carries
                                   // craters into the next round one round
                                   // older, and the mesh reveals one only after
@@ -586,7 +586,7 @@ namespace Blwp
                                   // truck is standing in one that is not there
                                   // to look at - which is the shape of "after
                                   // round one or two, in the depot".
-                                  + $"| craters core {BlwpCore.CraterCount}, "
+                                  + $"| craters core {ArenaCore.CraterCount}, "
                                   + $"drawn {(terrain != null ? terrain.DrawnCraters.Count : -1)}");
                     }
                 }
@@ -615,8 +615,8 @@ namespace Blwp
 
         void Update()
         {
-            if (ShouldStop(Driving, BlwpNet.Ended)) { StopDriving(BlwpNet.Ending()); return; }
-            if (ResumesDriving(Driving, _stoppedAtEnd, BlwpNet.Live)) TakeBack();
+            if (ShouldStop(Driving, ArenaNet.Ended)) { StopDriving(ArenaNet.Ending()); return; }
+            if (ResumesDriving(Driving, _stoppedAtEnd, ArenaNet.Live)) TakeBack();
             if (!Driving) return;
             FreshTape();
 
@@ -635,19 +635,19 @@ namespace Blwp
                 // multiple of the tick rate means some frames advance it twice
                 // and some not at all. That is the stutter: the simulation was
                 // smooth all along and the drawing was not.
-                _prevX = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_X]);
-                _prevZ = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_Z]);
-                _prevHeading = BlwpCore.TruckHeading;
+                _prevX = ArenaCore.Metres(ArenaCore.State[Layout.O_TRUCK + Layout.T_X]);
+                _prevZ = ArenaCore.Metres(ArenaCore.State[Layout.O_TRUCK + Layout.T_Z]);
+                _prevHeading = ArenaCore.TruckHeading;
                 _havePrev = true;
 
                 // THE LIVE PRICE, every 300 ticks, before the tick it belongs to (2026-09-17 16:01: the chart was
                 // frozen - no sample had ever reached the core). The feed's last price; none while it is not live.
-                if (BlwpCore.SampleDue(BlwpCore.State))
+                if (ArenaCore.SampleDue(ArenaCore.State))
                 {
                     if (_feed == null) _feed = FindFirstObjectByType<MarketFeed>();
-                    if (_feed != null && _feed.Fresh && BlwpCore.SubmitSample(_feed.Price)) SamplesSubmitted++;
+                    if (_feed != null && _feed.Fresh && ArenaCore.SubmitSample(_feed.Price)) SamplesSubmitted++;
                 }
-                BlwpCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.InputFor(BlwpNet.Live));
+                ArenaCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.InputFor(ArenaNet.Live));
             }
             Apply(Mathf.Clamp01(_accumulator / step));
         }
@@ -665,7 +665,7 @@ namespace Blwp
 
         void FreshTape()
         {
-            int tick = BlwpCore.Tick;
+            int tick = ArenaCore.Tick;
             if (_lastTick < 0 || tick < _lastTick)
             {
                 _life++; _tapeWords = null;
@@ -675,12 +675,12 @@ namespace Blwp
             if (_tapeWords != null && _tapeLife == _life)
             {
                 var words = _tapeWords; _tapeWords = null;
-                if (BlwpCore.SamplesTaken == 0 && BlwpCore.SubmitTape(words))
+                if (ArenaCore.SamplesTaken == 0 && ArenaCore.SubmitTape(words))
                 {
                     TapesSubmitted++;
-                    Debug.Log($"[tape] live tape handed to the core at tick {tick}: ${words[0] / (double)BlwpCore.PriceUnit:0.00} .. ${words[63] / (double)BlwpCore.PriceUnit:0.00}");
+                    Debug.Log($"[tape] live tape handed to the core at tick {tick}: ${words[0] / (double)ArenaCore.PriceUnit:0.00} .. ${words[63] / (double)ArenaCore.PriceUnit:0.00}");
                 }
-                else Debug.Log($"[tape] live tape not taken at tick {tick} (samples {BlwpCore.SamplesTaken}): the live samples carry on");
+                else Debug.Log($"[tape] live tape not taken at tick {tick} (samples {ArenaCore.SamplesTaken}): the live samples carry on");
             }
         }
 
@@ -776,7 +776,7 @@ namespace Blwp
             _droppedS += dropped;
             if (Time.unscaledTime - _droppedSaidAt < 10f) return;
             _droppedSaidAt = Time.unscaledTime;
-            Debug.Log($"[blwp] the page is slower than the core: {_droppedS:F2} s ({Mathf.RoundToInt(_droppedS / step)} ticks) "
+            Debug.Log($"[arena] the page is slower than the core: {_droppedS:F2} s ({Mathf.RoundToInt(_droppedS / step)} ticks) "
                       + $"let go so far, {_jumpedTicks} ticks jumped to stay in the round's own time; "
                       + $"this frame {Time.deltaTime * 1000f:F0} ms");
         }
@@ -788,7 +788,7 @@ namespace Blwp
         /// rounding rule could differ between the recorded transcript and the
         /// replay, so it happens once and is easy to audit.
         /// </summary>
-        bool Locked => LocksControls(_truck != null && _truck.controlsLocked, BlwpNet.Ended);
+        bool Locked => LocksControls(_truck != null && _truck.controlsLocked, ArenaNet.Ended);
 
         int Throttle() => Q(Locked ? 0f : DriveInput.Throttle);
         int Steer() => Q(Locked ? 0f : DriveInput.Steer);
@@ -797,9 +797,9 @@ namespace Blwp
         // only ever had one. Reverse throttle brakes, as it does today, and the
         // handbrake maps straight across.
         int Brake() => 0;
-        int Handbrake() => Locked || !DriveInput.Handbrake ? 0 : BlwpCore.ONE;
+        int Handbrake() => Locked || !DriveInput.Handbrake ? 0 : ArenaCore.ONE;
 
-        static int Q(float v) => Mathf.RoundToInt(Mathf.Clamp(v, -1f, 1f) * BlwpCore.ONE);
+        static int Q(float v) => Mathf.RoundToInt(Mathf.Clamp(v, -1f, 1f) * ArenaCore.ONE);
 
         /// <summary>
         /// How the truck lies on four contact points.
@@ -886,7 +886,7 @@ namespace Blwp
         public float Ground(float x, float z)
         {
             if (roads != null) return roads.SurfaceHeight(x, z);
-            if (BlwpCore.HasSurface) return BlwpCore.SurfaceAt(x, z);
+            if (ArenaCore.HasSurface) return ArenaCore.SurfaceAt(x, z);
             return terrain != null ? terrain.SampleSurface(x, z) : 0f;
         }
 
@@ -897,9 +897,9 @@ namespace Blwp
         /// </summary>
         void Apply(float alpha)
         {
-            float x = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_X]);
-            float z = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_Z]);
-            float heading = BlwpCore.TruckHeading;
+            float x = ArenaCore.Metres(ArenaCore.State[Layout.O_TRUCK + Layout.T_X]);
+            float z = ArenaCore.Metres(ArenaCore.State[Layout.O_TRUCK + Layout.T_Z]);
+            float heading = ArenaCore.TruckHeading;
 
             if (_havePrev)
             {
@@ -938,22 +938,22 @@ namespace Blwp
                 {
                     var bb = rs[0].bounds;
                     for (int k = 1; k < rs.Length; k++) bb.Encapsulate(rs[k].bounds);
-                    Debug.Log($"[ground] truck at tick {BlwpCore.Tick}: bottom "
+                    Debug.Log($"[ground] truck at tick {ArenaCore.Tick}: bottom "
                               + $"{(bb.min.y - LastSurface):+0.00;-0.00} m vs the ground, "
                               + $"ride {ride:F2}, surface {LastSurface:F2}, "
                               + $"body offset {_bodyAboveGround:F2}"
                               // AND THE TERRAIN AS DRAWN under the truck against the core's surface there: a
                               // truck on the core's ground inside a mesh drawn higher looks buried, and
                               // nothing above could see it.
-                              + (terrain != null && BlwpCore.HasSurface
+                              + (terrain != null && ArenaCore.HasSurface
                                   ? $"; under the truck the drawn terrain {terrain.DrawnHeightAt(x, z):F2} vs the core "
-                                    + $"{BlwpCore.SurfaceAt(x, z):F2} ({terrain.DrawnHeightAt(x, z) - BlwpCore.SurfaceAt(x, z):+0.00;-0.00} m)"
+                                    + $"{ArenaCore.SurfaceAt(x, z):F2} ({terrain.DrawnHeightAt(x, z) - ArenaCore.SurfaceAt(x, z):+0.00;-0.00} m)"
                                   : ""));
                 }
             }
 
             if (_rb != null) _rb.position = transform.position;
-            PoseWheels(BlwpCore.TruckSteerDegrees, BlwpCore.TruckSpeed, Time.deltaTime);
+            PoseWheels(ArenaCore.TruckSteerDegrees, ArenaCore.TruckSpeed, Time.deltaTime);
         }
     }
 }

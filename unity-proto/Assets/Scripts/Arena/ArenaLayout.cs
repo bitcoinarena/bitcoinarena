@@ -7,7 +7,7 @@
 // and a disagreement about where a field lives does not throw - the truck
 // just renders somewhere wrong, or its health becomes its heading.
 
-namespace Blwp
+namespace Arena
 {
     /// <summary>Word offsets into the core state buffer. Generated from state.js.</summary>
     public static class Layout

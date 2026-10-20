@@ -18,8 +18,8 @@ public class CollectLinesTests
     [Test]
     public void TheThreeLinesAreDrawnAsThePageWroteThem()
     {
-        var s = JsonUtility.FromJson<Blwp.LobbyState>(Three);
-        var lines = Blwp.DailyLobby.CollectLines(s);
+        var s = JsonUtility.FromJson<Arena.LobbyState>(Three);
+        var lines = Arena.DailyLobby.CollectLines(s);
         Assert.AreEqual(3, lines.Length);
         Assert.AreEqual("Other kept seed 839b67a6: round 5718b249 open, collected too", lines[0].text);
         Assert.AreEqual("Collect failed for round 5718b249: the federation did not answer - tried again", lines[1].text);
@@ -30,7 +30,7 @@ public class CollectLinesTests
     [Test]
     public void EachKindHasItsOwnColour()
     {
-        Color other = Blwp.DailyLobby.CollectColour("other"), failed = Blwp.DailyLobby.CollectColour("failed"), lost = Blwp.DailyLobby.CollectColour("uncollectable");
+        Color other = Arena.DailyLobby.CollectColour("other"), failed = Arena.DailyLobby.CollectColour("failed"), lost = Arena.DailyLobby.CollectColour("uncollectable");
         Assert.Greater(failed.r, failed.g + 0.3f, "failed is red");
         Assert.Greater(lost.r, lost.b + 0.5f, "uncollectable is orange");
         Assert.Greater(lost.g, failed.g, "orange is not the same red");
@@ -40,17 +40,17 @@ public class CollectLinesTests
     [Test]
     public void NothingIsDrawnWhenThePageWroteNoLine()
     {
-        Assert.AreEqual(0, Blwp.DailyLobby.CollectLines(JsonUtility.FromJson<Blwp.LobbyState>("{\"mode\":\"lobby\"}")).Length, "no collect field");
-        Assert.AreEqual(0, Blwp.DailyLobby.CollectLines(JsonUtility.FromJson<Blwp.LobbyState>("{\"mode\":\"lobby\",\"collect\":[]}")).Length, "an empty list");
-        Assert.AreEqual(0, Blwp.DailyLobby.CollectLines(JsonUtility.FromJson<Blwp.LobbyState>("{\"collect\":[{\"text\":\"\",\"kind\":\"other\"}]}")).Length, "an empty string");
-        Assert.AreEqual(0, Blwp.DailyLobby.CollectLines(null).Length, "no lobby");
+        Assert.AreEqual(0, Arena.DailyLobby.CollectLines(JsonUtility.FromJson<Arena.LobbyState>("{\"mode\":\"lobby\"}")).Length, "no collect field");
+        Assert.AreEqual(0, Arena.DailyLobby.CollectLines(JsonUtility.FromJson<Arena.LobbyState>("{\"mode\":\"lobby\",\"collect\":[]}")).Length, "an empty list");
+        Assert.AreEqual(0, Arena.DailyLobby.CollectLines(JsonUtility.FromJson<Arena.LobbyState>("{\"collect\":[{\"text\":\"\",\"kind\":\"other\"}]}")).Length, "an empty string");
+        Assert.AreEqual(0, Arena.DailyLobby.CollectLines(null).Length, "no lobby");
     }
 
     [Test]
     public void AtMostThreeLines()
     {
-        var s = JsonUtility.FromJson<Blwp.LobbyState>(Three.Replace("]}", ",{\"text\":\"a fourth\",\"kind\":\"other\"}]}"));
+        var s = JsonUtility.FromJson<Arena.LobbyState>(Three.Replace("]}", ",{\"text\":\"a fourth\",\"kind\":\"other\"}]}"));
         Assert.AreEqual(4, s.collect.Length);
-        Assert.AreEqual(3, Blwp.DailyLobby.CollectLines(s).Length);
+        Assert.AreEqual(3, Arena.DailyLobby.CollectLines(s).Length);
     }
 }

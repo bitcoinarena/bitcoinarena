@@ -36,5 +36,5 @@ test('the page loads the curve before it joins', () => {
   assert.ok(joinCall > curveTag, 'the curve script is not in front of the join');
   assert.ok(!page.includes('so it is not joining'),
     'a named round still refuses the signer node in silence');
-  assert.ok(page.includes('id="blwp-players"'), 'the page never shows who is in the round');
+  assert.ok(page.includes('id="arena-players"'), 'the page never shows who is in the round');
 });

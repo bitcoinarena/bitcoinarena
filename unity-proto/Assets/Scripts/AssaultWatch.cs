@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 using System;
 using System.Collections.Generic;
-using L = Blwp.Layout;
+using L = Arena.Layout;
 
 /// <summary>
 /// WHAT THE WAR IS DOING, IN WORDS (2026-09-20 16:22 and 16:26: "assaults are not perceptible. the owner

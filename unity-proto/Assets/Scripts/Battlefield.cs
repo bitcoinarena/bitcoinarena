@@ -106,7 +106,7 @@ public class Battlefield : MonoBehaviour
         // the two are 49.14 m apart at worst. Every drawn use of the front runs
         // through here - TerritoryMap:102, RunScore:268, DriveHud:1115 and
         // RoadNetwork:74 - so one line fixes all four.
-        if (Blwp.BlwpCore.Available) return Blwp.BlwpCore.FrontlineZ(x);
+        if (Arena.ArenaCore.Available) return Arena.ArenaCore.FrontlineZ(x);
         if (History == null || terrain == null) return 0f;
         return History.FrontlineZ(x, terrain.width, terrain.depth);
     }

@@ -21,7 +21,7 @@ public class TruckHealthTests
     /// back deliberately rather than assumed.
     /// </summary>
     [SetUp]
-    public void PracticeOffSoDamageIsReal() => Blwp.PracticeMode.On = false;
+    public void PracticeOffSoDamageIsReal() => Arena.PracticeMode.On = false;
 
     GameObject _boot;
     TruckController _truck;
@@ -56,7 +56,7 @@ public class TruckHealthTests
     /// only that a core was answering, because a run with no core prints one
     /// flat hundred beside one flat zero and looks like a disagreement.
     ///
-    /// AND IN THE EDITOR THERE IS NO CORE. `BlwpCore` compiles its calls to
+    /// AND IN THE EDITOR THERE IS NO CORE. `ArenaCore` compiles its calls to
     /// stubs unless `UNITY_WEBGL && !UNITY_EDITOR`, so `Available` is false
     /// here, `_state` stays zeroed, and every reading below is a zero that
     /// means "not asked" rather than "no health left". Run it against a WebGL
@@ -78,32 +78,32 @@ public class TruckHealthTests
         _truck.externalThrottle = 1f;
 
         float coreZero = -1f, gameZero = -1f, stateAt = -1f;
-        int lastState = Blwp.BlwpCore.RunState;
+        int lastState = Arena.ArenaCore.RunState;
         Debug.Log($"TWOOWNERS RUN maxHealth={_health.maxHealth} armour={_health.armour} " +
-                  $"coreStart={Blwp.BlwpCore.TruckHealth:0.00}");
+                  $"coreStart={Arena.ArenaCore.TruckHealth:0.00}");
 
         for (int i = 1; i <= 120; i++)          // 60 s at half-second samples
         {
             yield return new WaitForSeconds(0.5f);
             float t = i * 0.5f;
-            float core = Blwp.BlwpCore.TruckHealth, game = _health.Health;
-            int state = Blwp.BlwpCore.RunState;
+            float core = Arena.ArenaCore.TruckHealth, game = _health.Health;
+            int state = Arena.ArenaCore.RunState;
 
             if (coreZero < 0f && core <= 0f) coreZero = t;
             if (gameZero < 0f && game <= 0f) gameZero = t;
             if (state != lastState) { stateAt = t; lastState = state; }
 
             Debug.Log($"TWOOWNERS t={t:0.0} core={core:0.00} game={game:0.00} " +
-                      $"runState={state} tick={Blwp.BlwpCore.Tick} " +
+                      $"runState={state} tick={Arena.ArenaCore.Tick} " +
                       $"x={_truck.transform.position.x:0.0} z={_truck.transform.position.z:0.0}");
         }
 
         Debug.Log($"TWOOWNERS END coreHitZero={coreZero:0.0} gameHitZero={gameZero:0.0} " +
                   $"runStateChangedAt={stateAt:0.0}");
-        Assert.IsTrue(Blwp.BlwpCore.Available,
-            "kein Core in diesem Lauf - BlwpCore ist ausserhalb von WebGL gestubbt, " +
+        Assert.IsTrue(Arena.ArenaCore.Available,
+            "kein Core in diesem Lauf - ArenaCore ist ausserhalb von WebGL gestubbt, " +
             "die core-Spalte ist dann durchgehend 0 und vergleicht nichts");
-        Assert.Greater(Blwp.BlwpCore.Tick, 600, "der Lauf ist gar nicht angelaufen");
+        Assert.Greater(Arena.ArenaCore.Tick, 600, "der Lauf ist gar nicht angelaufen");
     }
 
     /// <summary>
@@ -151,9 +151,9 @@ public class TruckHealthTests
         _truck.externalThrottle = 1f;
         var army = _field.Army;
         var body = _truck.GetComponent<Rigidbody>();
-        var driver = _truck.GetComponent<Blwp.CoreDrivenTruck>();
+        var driver = _truck.GetComponent<Arena.CoreDrivenTruck>();
 
-        Debug.Log($"RUNOVER RUN coreAvailable={Blwp.BlwpCore.Available} " +
+        Debug.Log($"RUNOVER RUN coreAvailable={Arena.ArenaCore.Available} " +
                   $"driving={(driver != null && driver.Driving)} " +
                   $"kinematic={(body != null && body.isKinematic)}");
 
@@ -214,7 +214,7 @@ public class TruckHealthTests
             if (inside > insidePeak) insidePeak = inside;
 
             var v = driver != null && driver.Driving
-                ? Blwp.BlwpCore.Velocity
+                ? Arena.ArenaCore.Velocity
                 : (body != null ? body.linearVelocity : Vector3.zero);
             Debug.Log($"RUNOVER t={i * 0.5f:0.0} runDown={_field.RunDown} " +
                       $"speed={v.magnitude:0.00} corridor={corridor} within3.6m={inside} " +

@@ -66,7 +66,7 @@ async function rig() {
   };
   const eid = await client.join(mine);
   assumeStakeSeen(node.round, mine);
-  // AS THE PAGE DOES IT (blwp.jslib net.opened): the socket opens beside the round and the entry, the reconnect is wired
+  // AS THE PAGE DOES IT (arena.jslib net.opened): the socket opens beside the round and the entry, the reconnect is wired
   // with the page's own `where`, and setRound waits for the round's start
   const where = { roundId: rid, entryId: eid };
   client.onDrop = () => { client.reconnect(where).then((r) => { if (r) reconnects.push(r.nextTick); }); };

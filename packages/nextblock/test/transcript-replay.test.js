@@ -95,7 +95,7 @@ test('replaying the transcript lands where the inputs landed', () => {
 
 test('the load is in it - without it the replay is hunted at zero', () => {
   // THE FAULT LETTER 40 CLOSED, in this file's own terms. Heat was written
-  // into the page's core by `BlwpSetHeat` and travelled nowhere, so every
+  // into the page's core by `ArenaSetHeat` and travelled nowhere, so every
   // verifier stepped the run with an empty bed while the player was being
   // hunted for a full one.
   const t = played(20, 60);

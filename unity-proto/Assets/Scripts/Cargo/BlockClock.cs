@@ -41,7 +41,7 @@ public class BlockClock : MonoBehaviour
 
     /// <summary>
     /// The ticks a core run lasts before it is MISSED - the core's own `BLOCK_TICKS`, GENERATED into
-    /// `Blwp.Layout` rather than written here.
+    /// `Arena.Layout` rather than written here.
     ///
     /// IT WAS WRITTEN HERE, AND IT DRIFTED. This was a hand-typed 9000 while `packages/nextblock/src/rules/gate.js`
     /// had moved to 10800 (c01cc655, "a round is three minutes"). Nothing threw: the HUD clock simply counted
@@ -52,7 +52,7 @@ public class BlockClock : MonoBehaviour
     /// </summary>
     /// SINCE THE 82/90 FORK (2026-10-01) the run's own length, from the core running it - its round's blockTicks -
     /// not the generated constant, which is now only the default a run with no round gets.
-    public static int RunTicks => Blwp.BlwpCore.RunTicks;
+    public static int RunTicks => Arena.ArenaCore.RunTicks;
 
     /// <summary>
     /// Seconds of a core run left after `elapsed` of its ticks, at the core's own rate - 65536/1092 ticks a second
@@ -132,12 +132,12 @@ public class BlockClock : MonoBehaviour
         // BEFORE A JOINED ROUND STARTS, THE ROUND'S OWN COUNTDOWN (measured 2026-10-04 11:36Z: two devices in one
         // paid round read 107 s and 119 s left at the same instant - the core then is the lobby's practice run, counted from
         // each page's load). The start is the contract's, so every device shows the same.
-        int startsIn = Blwp.BlwpCore.RoundStartsInMs();
+        int startsIn = Arena.ArenaCore.RoundStartsInMs();
         StartsIn = startsIn > 0;
         if (StartsIn) { Remaining = startsIn / 1000f; return; }
-        if (Blwp.BlwpCore.Available)
+        if (Arena.ArenaCore.Available)
         {
-            Remaining = CoreSecondsLeft(Blwp.BlwpCore.State[Blwp.Layout.O_SCORE + Blwp.Layout.S_ELAPSED]);
+            Remaining = CoreSecondsLeft(Arena.ArenaCore.State[Arena.Layout.O_SCORE + Arena.Layout.S_ELAPSED]);
             return;
         }
 

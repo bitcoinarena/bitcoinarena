@@ -67,7 +67,7 @@ public class RoadNetwork : MonoBehaviour
 
     /// <summary>How far the chart has scrolled, metres: the holes in the ribbon move with it.</summary>
     static float CandleShift() =>
-        CandleTerrain.LiveWords != null ? CandleTerrain.LiveWords[Blwp.Layout.CV_SHIFT] / 65536f : 0f;
+        CandleTerrain.LiveWords != null ? CandleTerrain.LiveWords[Arena.Layout.CV_SHIFT] / 65536f : 0f;
 
     public float SurfaceHeight(float x, float z)
     {
@@ -132,7 +132,7 @@ public class RoadNetwork : MonoBehaviour
     /// </summary>
     public float DeckGround(float x, float z)
     {
-        if (Blwp.BlwpCore.HasSurface) return Blwp.BlwpCore.TerrainAt(x, z);
+        if (Arena.ArenaCore.HasSurface) return Arena.ArenaCore.TerrainAt(x, z);
         return terrain != null ? terrain.SampleSurface(x, z) : 0f;
     }
 
@@ -156,7 +156,7 @@ public class RoadNetwork : MonoBehaviour
     /// </summary>
     public float Ground(float x, float z)
     {
-        if (Blwp.BlwpCore.HasSurface) return Blwp.BlwpCore.SurfaceAt(x, z);
+        if (Arena.ArenaCore.HasSurface) return Arena.ArenaCore.SurfaceAt(x, z);
         return terrain != null ? terrain.SampleSurface(x, z) : 0f;
     }
 
@@ -266,7 +266,7 @@ public class RoadNetwork : MonoBehaviour
         // a ribbon whose fingerprint ignored the strike would go on bridging it
         // until something else happened to move. A serial and a count catch both
         // ends - a crater arriving, and a crater expiring after its 10-20 rounds.
-        s += Blwp.BlwpCore.StrikeCount * 1e3f + Blwp.BlwpCore.CraterCount;
+        s += Arena.ArenaCore.StrikeCount * 1e3f + Arena.ArenaCore.CraterCount;
 
         // AND THE CHART'S OWN SCROLL: the holes the ribbon leaves for the candles move with the bodies, so a lane
         // whose shift has changed is stale. Rounded to a tenth of a metre, which is a third of the 0.576 m/s slide
@@ -292,11 +292,11 @@ public class RoadNetwork : MonoBehaviour
         float x0 = Mathf.Max(Model.PlazaX + 4f, Model.PlazaPavedTo);
         // AND NOT INSIDE THE MINER EITHER (2026-09-19 13:09, miner-entrance-covered-1309.jpg). DepotX - 4 is
         // x 114, which is the facade - the model's origin - and the building stands on the ground from x 53.8 m, so
-        // the last 24 m of ribbon was drawn inside it. The end is the core's own door now (Blwp.Layout
+        // the last 24 m of ribbon was drawn inside it. The end is the core's own door now (Arena.Layout
         // MINER_DOOR_X, 90.4 m), the same number the candle field is refitted to: Unity draws what the core says and
         // does not keep a second idea of where the world ends. The truck still reaches the miner - the approach past
         // the door is the building's own apron, as the post office's is at the other end.
-        float x1 = Blwp.Layout.MINER_DOOR_X / 65536f;
+        float x1 = Arena.Layout.MINER_DOOR_X / 65536f;
         var verts = new List<Vector3>(n * 2 + 2);
         var uvs = new List<Vector2>(n * 2 + 2);
         var tris = new List<int>(n * 6);

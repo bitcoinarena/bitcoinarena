@@ -34,7 +34,7 @@ public class SplashScreen : MonoBehaviour
     // THE DAILY'S LOBBY (M3.3-34, 2026-09-12 22:11-22:16): this screen is
     // the lobby when the page is one - the rounds, who you are, PLAY and
     // SPECTATE. Null when the page is not a lobby (offline, or a round).
-    Blwp.LobbyState _lobby;
+    Arena.LobbyState _lobby;
     float _polledAt = -10f, _shownAt = -10f;
     // _pickId: the round PLAY joins now. _tapId: the round the player tapped, if any - only a tap is
     // kept across refreshes; with none, PLAY's target is worked out afresh, a free round first.
@@ -64,8 +64,8 @@ public class SplashScreen : MonoBehaviour
     string _lastSilent = "";
     Rect _lastSilentRect;
     string _lastHint = "";
-    readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)> _drawnRows =
-        new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)>();
+    readonly System.Collections.Generic.List<(Arena.LobbyRow row, Rect rect, string words)> _drawnRows =
+        new System.Collections.Generic.List<(Arena.LobbyRow row, Rect rect, string words)>();
 
     void Awake()
     {
@@ -90,7 +90,7 @@ public class SplashScreen : MonoBehaviour
         if (chase != null && chase.View != ChaseCamera.Mode.God) chase.Toggle();
 
         // SENT HERE BY PLAY IN THE LOBBY: the round starts, with no second PLAY.
-        _autoPlay = Blwp.DailyLobby.AutoPlay();
+        _autoPlay = Arena.DailyLobby.AutoPlay();
     }
 
     void Update()
@@ -101,23 +101,23 @@ public class SplashScreen : MonoBehaviour
         // run the next PLAY opened the cargo panel and the lobby came straight back over it - the core's word, left from
         // the run before until roll-out restarts it, read as this run's end and its hold long spent; a WRECKED before read
         // as this run's wreck). Until roll-out this run has no core word of its own; its session's end still counts.
-        int runStateNow = RunStateOfThisRun(Blwp.BlwpCore.RunState, loadout != null && loadout.IsOpen);
-        bool wrecked = Blwp.BlwpCore.Available && runStateNow == 2;       // RUN_WRECKED
+        int runStateNow = RunStateOfThisRun(Arena.ArenaCore.RunState, loadout != null && loadout.IsOpen);
+        bool wrecked = Arena.ArenaCore.Available && runStateNow == 2;       // RUN_WRECKED
         if (!wrecked) _wreckedAt = -1f;
         else if (_wreckedAt < 0f) _wreckedAt = Time.unscaledTime;
         if (_health == null) _health = FindFirstObjectByType<TruckHealth>();
         float hold = _health != null ? _health.respawnSeconds : 5f;
         // WHEN THE CORE NAMED THE OUTCOME - the same instant the result card is drawn from, not the later one when
         // the client has finished draining the wire.
-        bool ended = RunHasEnded(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended);
+        bool ended = RunHasEnded(Arena.ArenaCore.Available, runStateNow, Arena.ArenaNet.Ended);
         if (!ended) { _endedRawAt = -1f; _endedAt = -1f; }
         else
         {
             if (_endedRawAt < 0f) _endedRawAt = Time.unscaledTime;
             if (_endedAt < 0f)
             {
-                bool coreNamed = Blwp.BlwpCore.Available && runStateNow != 0;
-                bool haveReason = !coreNamed && !string.IsNullOrEmpty(Blwp.BlwpNet.Ending());
+                bool coreNamed = Arena.ArenaCore.Available && runStateNow != 0;
+                bool haveReason = !coreNamed && !string.IsNullOrEmpty(Arena.ArenaNet.Ending());
                 if (HoldMayStart(coreNamed, haveReason, Time.unscaledTime - _endedRawAt))
                     _endedAt = Time.unscaledTime;
             }
@@ -129,7 +129,7 @@ public class SplashScreen : MonoBehaviour
         if (!Showing && Time.unscaledTime - _continuingPolledAt > 0.5f)
         {
             _continuingPolledAt = Time.unscaledTime;
-            var page = Blwp.DailyLobby.Poll();
+            var page = Arena.DailyLobby.Poll();
             Continuing = page != null && page.continuing;
             NextBoxTop = page != null ? page.nextBoxTop : 0f;
             if (FollowsThePage(Continuing, _nextJoin) && page != null) _lobby = page;
@@ -138,7 +138,7 @@ public class SplashScreen : MonoBehaviour
         // AND WHILE THE RESULT SUMMARY HOLDS (2026-10-04): on a wreck too, which draws no card - the page's hold to the
         // round's close + 20 s (DriveHud.ResultHolding), so the signed names stand on WASTED as on the card
         bool cardUp = _hud != null && (_hud.ArrivalShowing || _hud.ResultHolding);
-        if (!Showing && MayReturnToLobby(Continuing, _nextJoin) && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
+        if (!Showing && MayReturnToLobby(Continuing, _nextJoin) && LobbyMayCover(cardUp) && ShouldReturnToLobby(Arena.ArenaCore.Available, runStateNow, Arena.ArenaNet.Ended,
                                            _fromLobby, wrecked,
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                            _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
@@ -151,8 +151,8 @@ public class SplashScreen : MonoBehaviour
         if (!Showing && Time.unscaledTime - _refusedPolledAt > 0.5f)
         {
             _refusedPolledAt = Time.unscaledTime;
-            var page = Blwp.DailyLobby.Poll();
-            if (JoinRefusedBeforeLive(page != null && page.join != null ? page.join.state : "", Blwp.BlwpNet.Live,
+            var page = Arena.DailyLobby.Poll();
+            if (JoinRefusedBeforeLive(page != null && page.join != null ? page.join.state : "", Arena.ArenaNet.Live,
                                       loadout != null && loadout.IsOpen))
             {
                 if (loadout != null) loadout.Dismiss();
@@ -163,7 +163,7 @@ public class SplashScreen : MonoBehaviour
         }
         if (!Showing)
         {
-            if (!_hiddenTold && Blwp.DailyLobby.Compiled) { _hiddenTold = true; Blwp.DailyLobby.Shown("{\"showing\":false}"); }
+            if (!_hiddenTold && Arena.DailyLobby.Compiled) { _hiddenTold = true; Arena.DailyLobby.Shown("{\"showing\":false}"); }
             return;
         }
         // held here, whatever else thinks it should be driveable
@@ -172,7 +172,7 @@ public class SplashScreen : MonoBehaviour
         if (_autoPlay && Time.frameCount > 3)
         {
             if (_autoPlayAskedAt < 0f) _autoPlayAskedAt = Time.realtimeSinceStartup;
-            string step = Blwp.DailyLobby.LinkAutoPlayStep(Blwp.DailyLobby.LinkAutoPlay(), Time.realtimeSinceStartup - _autoPlayAskedAt);
+            string step = Arena.DailyLobby.LinkAutoPlayStep(Arena.DailyLobby.LinkAutoPlay(), Time.realtimeSinceStartup - _autoPlayAskedAt);
             if (step == "play") { _autoPlay = false; Play(fromAddress: true); return; }
             if (step == "no") { _autoPlay = false; Debug.Log("[SplashScreen] the round link is held to its start: no drive on play=1"); }
         }
@@ -181,15 +181,15 @@ public class SplashScreen : MonoBehaviour
         if (Time.unscaledTime - _polledAt > 0.75f)
         {
             _polledAt = Time.unscaledTime;
-            _lobby = LobbyOrReading(Blwp.DailyLobby.Poll(), Blwp.DailyLobby.Compiled);
-            // A ROUND LINK THE PAGE COULD NOT JOIN comes back to this lobby with its reason (the page's BLWP_JOIN).
+            _lobby = LobbyOrReading(Arena.DailyLobby.Poll(), Arena.DailyLobby.Compiled);
+            // A ROUND LINK THE PAGE COULD NOT JOIN comes back to this lobby with its reason (the page's ARENA_JOIN).
             if (_lobby != null && !_joining && string.IsNullOrEmpty(_joinWhy) && _lobby.join.state == "refused")
                 _joinWhy = _lobby.join.why;
             if (_lobby != null)
             {
                 // THE PLAYER'S TAP IS KEPT, A DEFAULT IS NOT (2026-09-15, free first): keeping
                 // the last default made a paying round picked once stay picked through every rollover.
-                int k = Blwp.DailyLobby.Keep(_lobby.rows, _tapId);
+                int k = Arena.DailyLobby.Keep(_lobby.rows, _tapId);
                 _pickId = k >= 0 ? _lobby.rows[k].id : "";
             }
         }
@@ -240,7 +240,7 @@ public class SplashScreen : MonoBehaviour
     {
         if (!_joining || _lobby == null) return false;
         if (_lobby.join.state == "joined" && _joinedAt < 0f) _joinedAt = Time.unscaledTime;
-        string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Live,
+        string next = Arena.DailyLobby.AfterJoin(_lobby, Arena.ArenaNet.Live,
                                                 _joinedAt < 0f ? 0f : Time.unscaledTime - _joinedAt);
         if (next == "play") { _joining = false; _nextJoin = false; Continuing = false; Play(); return true; }
         if (next == "refused") { _joining = false; _nextJoin = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }
@@ -272,7 +272,7 @@ public class SplashScreen : MonoBehaviour
 
 #if UNITY_WEBGL && !UNITY_EDITOR
     [DllImport("__Internal")] static extern void UnlockAudio();
-    [DllImport("__Internal")] static extern void BlwpBenchmark();
+    [DllImport("__Internal")] static extern void ArenaBenchmark();
 #endif
 
     /// <summary>
@@ -352,7 +352,7 @@ public class SplashScreen : MonoBehaviour
     /// braked from the start reaches RUN_MISSED at elapsed 10800 - `gate.js` returns RUN_MISSED once
     /// `tickInBlock >= BLOCK_TICKS`. What failed was the client's half, and it was an asymmetry left here
     /// earlier the same day: the hold CLOCK was started from `RunHasEnded` - the core's word OR the client's -
-    /// while this gate was still handed `BlwpNet.Ended` alone. So a round the CORE had ended, with no session
+    /// while this gate was still handed `ArenaNet.Ended` alone. So a round the CORE had ended, with no session
     /// word to go with it, started its five seconds and then never took them: the truck sat in a finished world.
     ///
     /// Both halves now ask the same question. The result hold is unchanged and still separate, so a run that ends
@@ -369,7 +369,7 @@ public class SplashScreen : MonoBehaviour
     /// WHEN THE RESULT HOLD MAY START TICKING.
     ///
     /// For a run the core named, the instant it named it - unchanged. For a run that ended without a core word,
-    /// the instant the REASON is known, and this was measured the hard way. `BlwpNet.Ended` flips when the client
+    /// the instant the REASON is known, and this was measured the hard way. `ArenaNet.Ended` flips when the client
     /// gives up, but the line that says why only arrives after it has resynced and been refused again. Timed from
     /// the flip, the whole hold is spent before there is anything to show: in the BAY the gap between the VOID
     /// and the lobby was 0.6 s, against a 0.5 s reason poll, so whether the player was told depended on which
@@ -398,8 +398,8 @@ public class SplashScreen : MonoBehaviour
     /// first read, or a round link it could not join on its way back to the lobby - it is the lobby still being read, not
     /// the title screen (LOAD / DRIVE / DELIVER), which is left for the editor and a build with no page.
     /// </summary>
-    public static Blwp.LobbyState LobbyOrReading(Blwp.LobbyState polled, bool inAPage) =>
-        polled != null || !inAPage ? polled : new Blwp.LobbyState { mode = "lobby", from = Reading };
+    public static Arena.LobbyState LobbyOrReading(Arena.LobbyState polled, bool inAPage) =>
+        polled != null || !inAPage ? polled : new Arena.LobbyState { mode = "lobby", from = Reading };
 
     /// <summary>The lobby's `from` while the page has none to hand over yet.</summary>
     public const string Reading = "reading";
@@ -587,13 +587,13 @@ public class SplashScreen : MonoBehaviour
         // drawn from the next frame on, that work leaves the hold.
         if (FirstGuiFrame.Now()) return;
         if (!Showing) return;
-        _lobby = LobbyOrReading(_lobby, Blwp.DailyLobby.Compiled);     // never the title screen in a page, not even a frame
+        _lobby = LobbyOrReading(_lobby, Arena.DailyLobby.Compiled);     // never the title screen in a page, not even a frame
         if (!LobbyMayCover(_hud != null && _hud.ArrivalShowing)) return;   // the result card is up: not over it
         // LAID OUT IN CSS PIXELS, DRAWN AT THE SCREEN'S SCALE. A phone's canvas is
         // 2-3x its CSS size, and a title screen laid out in device pixels showed an
         // iPhone text about 8 points high (measured, M3.3-34). IMGUI's matrix
         // scales the drawing and the touches alike.
-        float scale = Blwp.DailyLobby.UiScale();
+        float scale = Arena.DailyLobby.UiScale();
         var screenMatrix = GUI.matrix;
         GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
         int w = Mathf.RoundToInt(Screen.width / scale), h = Mathf.RoundToInt(Screen.height / scale);
@@ -692,7 +692,7 @@ public class SplashScreen : MonoBehaviour
     void Lobby(Rect copy)
     {
         float font = _sub.fontSize;
-        var l = Blwp.DailyLobby.MeasureLobby(copy, font, Screen.height > Screen.width);
+        var l = Arena.DailyLobby.MeasureLobby(copy, font, Screen.height > Screen.width);
         _lastName = l.name; _lastKey = l.key; _lastMore = l.more; _lastHowTo = l.howTo; _lastHowToCells = l.howToCells;
         _lastHowToCarousel = l.howToCarousel; _lastHowToPrev = l.howToPrev; _lastHowToNext = l.howToNext;
         var you = _lobby.you;
@@ -704,23 +704,23 @@ public class SplashScreen : MonoBehaviour
         // EACH FROM THE OWNER'S WHOLE, BY ITS OWN BOX: the tiles that came with it
         // were cut at half height and split panels 1 and 2 (measured, 1280x800).
         // A cell is exactly its panel's shape, so nothing is stretched.
-        if (!_howToAsked) { _howToAsked = true; _howToWhole = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToWhole); }
+        if (!_howToAsked) { _howToAsked = true; _howToWhole = Resources.Load<Texture2D>(Arena.DailyLobby.HowToWhole); }
         // A PHONE UPRIGHT TURNS PAGES (2026-09-15 11:57, option B): only the page shown is
         // drawn - one panel, 1 to 4 - and the arrows turn back and on, round.
         _howToShown.Clear();
         if (_howToWhole != null && l.howToCells != null)
             for (int i = 0; i < l.howToCells.Length; i++)
             {
-                if (l.howToCarousel && Blwp.DailyLobby.HowToPageOf(i) != _howToPage) continue;
+                if (l.howToCarousel && Arena.DailyLobby.HowToPageOf(i) != _howToPage) continue;
                 var cell = l.howToCells[i];
                 if (cell.width <= 0f || cell.height <= 0f) continue;
-                GUI.DrawTextureWithTexCoords(cell, _howToWhole, Blwp.DailyLobby.PanelUv(i));
+                GUI.DrawTextureWithTexCoords(cell, _howToWhole, Arena.DailyLobby.PanelUv(i));
                 _howToShown.Add(i + 1);
             }
         if (l.howToCarousel)
         {
             var arrow = new GUIStyle(GUI.skin.button) { fontSize = Mathf.RoundToInt(font * 1.6f), alignment = TextAnchor.MiddleCenter };
-            int pages = Blwp.DailyLobby.HowToPages;
+            int pages = Arena.DailyLobby.HowToPages;
             if (GUI.Button(l.howToPrev, "<", arrow)) _howToPage = (_howToPage + pages - 1) % pages;
             if (GUI.Button(l.howToNext, ">", arrow)) _howToPage = (_howToPage + 1) % pages;
         }
@@ -730,7 +730,7 @@ public class SplashScreen : MonoBehaviour
         youStyle.normal.textColor = Color.white;
         // A WITHDRAWAL AVAILABLE (2026-09-14) takes the key's line until it is withdrawn;
         // a name the page refused still comes first, and KEY still shows the key.
-        _lastNotice = Blwp.DailyLobby.WithdrawNotice(_lobby);
+        _lastNotice = Arena.DailyLobby.WithdrawNotice(_lobby);
         string second = !string.IsNullOrEmpty(_nameWhy) ? $"<color=#ff7b72>{Escape(_nameWhy)}</color>"
             : !string.IsNullOrEmpty(_lastNotice) ? $"<color=#3fb950><b>{Escape(_lastNotice)}</b></color>"
             : $"<color=#9fb3c8>key {Escape(you.fingerprint)}</color>";
@@ -759,7 +759,7 @@ public class SplashScreen : MonoBehaviour
             { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, wordWrap = false };
         head.normal.textColor = PanelSkin.Gold;
         // each kind listed with its own signer numbers, from its rows (follow-up) - no fixed 2
-        GUI.Label(l.head, FitWords(head, Blwp.DailyLobby.HeaderWordings(rows), l.head.width), head);   // the longest that fits
+        GUI.Label(l.head, FitWords(head, Arena.DailyLobby.HeaderWordings(rows), l.head.width), head);   // the longest that fits
         if (_offset >= rows.Length) _offset = 0;
         if (l.rows > 0 && rows.Length > l.rows)
         {
@@ -786,14 +786,14 @@ public class SplashScreen : MonoBehaviour
             rowStyle.fontSize = Mathf.RoundToInt(font);
             rowStyle.normal.textColor = r.joinable ? (picked ? PanelSkin.Gold : Color.white) : new Color(1f, 1f, 1f, 0.5f);
             var inner = new Rect(rect.x + 8f, rect.y, rect.width - 16f, rect.height);
-            string words = FitWords(rowStyle, Blwp.DailyLobby.RowWords(r, namedRows), inner.width);
+            string words = FitWords(rowStyle, Arena.DailyLobby.RowWords(r, namedRows), inner.width);
             GUI.Label(inner, words, rowStyle);
             if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) { _tapId = r.id; _pickId = r.id; }
             _drawnRows.Add((r, rect, words));
         }
         // A SILENT SIGNER NODE IS SAID HERE, ON THE LIST THE PLAYER IS READING, in red and bold - under the rows it has, or in
         // place of "No round is open" when it has none. Not the hint line's grey.
-        _lastSilent = Blwp.DailyLobby.LobbyError(_lobby, _joining ? "" : _joinWhy);
+        _lastSilent = Arena.DailyLobby.LobbyError(_lobby, _joining ? "" : _joinWhy);
         _lastSilentRect = new Rect();
         if (!string.IsNullOrEmpty(_lastSilent) && l.list.height > 0)
         {
@@ -817,7 +817,7 @@ public class SplashScreen : MonoBehaviour
         // one - inside the list, each set smaller until it fits its width, never past the list's foot (so never over the hint,
         // PLAY or SPECTATE); nothing when the page wrote none. The words and their kind are the page's.
         _lastCollect.Clear();
-        var collectLines = Blwp.DailyLobby.CollectLines(_lobby);
+        var collectLines = Arena.DailyLobby.CollectLines(_lobby);
         if (collectLines.Length > 0 && l.list.height > 0)
         {
             int drawnRows = Mathf.Clamp(rows.Length - _offset, 0, l.rows);
@@ -832,7 +832,7 @@ public class SplashScreen : MonoBehaviour
                 var said = new GUIContent(c.text);
                 cs.fontSize = Mathf.RoundToInt(font * 0.85f);
                 while (cs.fontSize > 9 && cs.CalcSize(said).x > rect.width) cs.fontSize--;
-                cs.normal.textColor = Blwp.DailyLobby.CollectColour(c.kind);
+                cs.normal.textColor = Arena.DailyLobby.CollectColour(c.kind);
                 GUI.Label(rect, said, cs);
                 _lastCollect.Add((c.text, c.kind, rect, cs.fontSize));
                 top += lineH;
@@ -843,7 +843,7 @@ public class SplashScreen : MonoBehaviour
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
             none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
             GUI.Label(l.list, _lobby.from == Reading ? "Reading the rounds from the signer nodes …"
-                : Blwp.DailyLobby.EmptyListLine(_lobby), none);   // none reached is said so
+                : Arena.DailyLobby.EmptyListLine(_lobby), none);   // none reached is said so
         }
     }
 
@@ -857,18 +857,18 @@ public class SplashScreen : MonoBehaviour
         // SAID ONCE (2026-09-26 16:56: "The same sentence is repeated under the card"): a refusal the red box on the
         // list says is not said again here - this line says what PLAY does now.
         if (RefusalHere) return $"not joined: {_joinWhy}";
-        int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
+        int k = Arena.DailyLobby.Keep(_lobby.rows, _pickId);
         // the round PLAY joins, in its row's words; or what PLAY waits for (follow-up)
-        return Blwp.DailyLobby.HintWords(k >= 0 ? _lobby.rows[k] : null, _lobby.rows.Length);
+        return Arena.DailyLobby.HintWords(k >= 0 ? _lobby.rows[k] : null, _lobby.rows.Length);
     }
 
     /// <summary>The line under the rows, longest first: shorter wordings of the round PLAY joins for a phone.</summary>
     string[] LobbyHintWordings()
     {
         string full = LobbyHint();
-        int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
+        int k = Arena.DailyLobby.Keep(_lobby.rows, _pickId);
         var r = k >= 0 ? _lobby.rows[k] : null;
-        return full == Blwp.DailyLobby.HintWords(r, _lobby.rows.Length) ? Blwp.DailyLobby.HintWordings(r, _lobby.rows.Length) : new[] { full };
+        return full == Arena.DailyLobby.HintWords(r, _lobby.rows.Length) ? Arena.DailyLobby.HintWordings(r, _lobby.rows.Length) : new[] { full };
     }
 
     void JoinPicked()
@@ -876,9 +876,9 @@ public class SplashScreen : MonoBehaviour
         WakeAudio();
         _joinWhy = "";
         _joinedAt = -1f;
-        _joining = Blwp.DailyLobby.Join(_pickId);
+        _joining = Arena.DailyLobby.Join(_pickId);
         // the last poll still holds the press before this one: it is not this join's answer
-        if (_joining && _lobby != null) _lobby.join = new Blwp.LobbyJoin { state = "joining" };
+        if (_joining && _lobby != null) _lobby.join = new Arena.LobbyJoin { state = "joining" };
         _polledAt = -10f;
     }
 
@@ -920,7 +920,7 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     void Report(int w, int h, Frame f)
     {
-        if (!Blwp.DailyLobby.Compiled || Event.current.type != EventType.Repaint) return;
+        if (!Arena.DailyLobby.Compiled || Event.current.type != EventType.Repaint) return;
         if (Time.unscaledTime - _shownAt < 0.5f) return;
         _shownAt = Time.unscaledTime;
         var sb = new System.Text.StringBuilder();
@@ -956,7 +956,7 @@ public class SplashScreen : MonoBehaviour
             sb.Append(']');
         }
         sb.Append('}');
-        Blwp.DailyLobby.Shown(sb.ToString());
+        Arena.DailyLobby.Shown(sb.ToString());
     }
 
     public const string Title = NextBlockMark.Name;
@@ -1087,7 +1087,7 @@ public class SplashScreen : MonoBehaviour
     {
         Spectate();
 #if UNITY_WEBGL && !UNITY_EDITOR
-        BlwpBenchmark();
+        ArenaBenchmark();
 #endif
     }
 
