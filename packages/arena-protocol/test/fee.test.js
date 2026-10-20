@@ -406,3 +406,20 @@ test('2026.0.16: with more than one provider the liquidity quarter follows avail
   const even = nodeFeeTable({ contract: { ...contract, protocolVersion: 16 }, entries, pools: { ...pools, guardian: g, liquidity: lp }, eligible: elig });
   assert.ok([...lp].every((k) => even.signerNodes.get(`liquidity:${toHex(k)}`) >= q / 3n), 'no weights: evenly');
 });
+
+// kanban #559/#543 (spec §23A.3a part 1): from 2026.0.20, under pressure, the guardians' part split by (min(bond, B*))^2
+test('2026.0.20: the guardians\' part follows the pressure weights; 2026.0.19 and no weights: evenly', () => {
+  const g = [b32(0x51), b32(0x52), b32(0x53)];
+  const elig = new Set([...game, ...settle, ...g].map(toHex));
+  const weights = { guardian: new Map([[toHex(g[0]), 86_667n * 86_667n], [toHex(g[1]), 50_000n * 50_000n], [toHex(g[2]), 50_000n * 50_000n]]) };
+  const share = (t, k) => t.signerNodes.get(`guardian:${toHex(k)}`) || 0n;
+  const t20 = nodeFeeTable({ contract: { ...contract, protocolVersion: 20 }, entries, pools: { ...pools, guardian: g }, eligible: elig, weights });
+  const part = g.reduce((a, k) => a + share(t20, k), 0n);
+  const w0 = 86_667n * 86_667n, w1 = 50_000n * 50_000n, tot = w0 + 2n * w1;
+  assert.ok(share(t20, g[0]) - (part * w0) / tot <= 1n, 'the guardian at B* takes its weight\'s part');
+  assert.ok(share(t20, g[0]) > 2n * share(t20, g[1]), 'about 3 times each other one (1 against 0.333)');
+  const t19 = nodeFeeTable({ contract: { ...contract, protocolVersion: 19 }, entries, pools: { ...pools, guardian: g }, eligible: elig, weights });
+  assert.ok(share(t19, g[0]) - share(t19, g[1]) <= 1n, 'protocol 19: the same weights are not read - evenly');
+  const t20even = nodeFeeTable({ contract: { ...contract, protocolVersion: 20 }, entries, pools: { ...pools, guardian: g }, eligible: elig });
+  assert.ok(share(t20even, g[0]) - share(t20even, g[2]) <= 1n, 'protocol 20 while CALM (no weights): evenly');
+});

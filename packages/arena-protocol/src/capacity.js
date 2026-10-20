@@ -139,3 +139,20 @@ export function bondIncentive({ bonds, targetBondSats, node, pressure }) {
   // underPressure: what raising would pay once the weighting applies (shown while CALM, so the owner knows before it does)
   return { guardians: by.size, bondSats: String(mine), targetBondSats: String(bStar), addSats: String(mine < bStar ? bStar - mine : 0n), even, now, ifRaised, underPressure: 1 / (1 + others) };
 }
+
+/**
+ * THE GUARDIANS' WEIGHTS UNDER PRESSURE (spec §23A.3a part 1, kanban #559/#543): while the federation's band is PRESSURE, CRITICAL or FULL,
+ * each seated guardian's part of the guardians' share is w_i = (min(bond_i, B*) / B*)^2 - here min(bond_i, B*)^2 in sat^2, the common
+ * 1/B*^2 dropped (only the ratios split the pool). CALM: null (the even split). Inputs as read at the round's census height: `bonds` [{ node
+ * hex, bondSats }] from its census, `reserveSats`, `exposureCapSats`, `nominal` from the record in force there, `band` that record's band when
+ * it carries one, else the band its load enters (no hysteresis without the record's).
+ */
+export function guardianWeights({ bonds, reserveSats, exposureCapSats, nominal, bondMinSats, band = null }) {
+  const cap = BigInt(exposureCapSats || 0);
+  if (cap <= 0n || !(bonds || []).length) return null;
+  const load = Number(BigInt(reserveSats || 0) * 1000000n / cap) / 1000000;
+  const b = band || capacityBand(load, 'CALM');
+  if (!['PRESSURE', 'CRITICAL', 'FULL'].includes(b)) return null;
+  const star = targetBond({ reserveSats, nominal, bondMinSats });
+  return new Map(bonds.map((g) => { const x = BigInt(g.bondSats || 0) < star ? BigInt(g.bondSats || 0) : star; return [String(g.node).toLowerCase(), x * x]; }));
+}

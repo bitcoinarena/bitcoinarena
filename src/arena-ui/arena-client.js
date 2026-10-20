@@ -614,11 +614,13 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
 const BOND_SUM_VERSION = 19;
+/** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
+const PRESSURE_WEIGHT_VERSION = 20;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -7137,8 +7139,12 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
     // already uses for the pool so there is one implementation of it.
     // THE LIQUIDITY POOL BY AVAILABLE BALANCE (2026.0.16, §23A.10; 2026-10-18: "Fee must be dependant on available balance too if
     // there is more than one"): each provider's weight floored to 10,000 sat, its share floored; with no weights (or all 0) evenly
+    // THE GUARDIANS UNDER PRESSURE (2026.0.20, §23A.3a part 1): each by (min(bond, B*))^2 from `weights.guardian` (capacity.js
+    // guardianWeights, read at the round's census height); none given (CALM, or an older version) - evenly
     const w = pool === LIQUIDITY && weights && weights[LIQUIDITY]
-      ? earning.map((k) => { const x = BigInt(weights[LIQUIDITY].get(hex(k)) || 0n); return (x / LIQUIDITY_WEIGHT_STEP) * LIQUIDITY_WEIGHT_STEP; }) : null;
+      ? earning.map((k) => { const x = BigInt(weights[LIQUIDITY].get(hex(k)) || 0n); return (x / LIQUIDITY_WEIGHT_STEP) * LIQUIDITY_WEIGHT_STEP; })
+      : pool === GUARDIAN && v >= PRESSURE_WEIGHT_VERSION && weights && weights[GUARDIAN]
+        ? earning.map((k) => BigInt(weights[GUARDIAN].get(hex(k)) || 0n)) : null;
     const total = w ? w.reduce((a, b) => a + b, 0n) : 0n;
     const shares = total > 0n ? w.map((x) => (amount * x) / total) : earning.map(() => amount / BigInt(earning.length));
     let left = amount - shares.reduce((a, b) => a + b, 0n);
@@ -15653,7 +15659,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1): its fee locks hold that, and the table owes that
   const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
   // the liquidity providers' weights (2026.0.16, §23A.10): `signerNodes.liquidityWeights` node hex -> sat, from the standing liquidity seating
-  const weights = signerNodes.liquidityWeights instanceof Map ? { liquidity: signerNodes.liquidityWeights } : null;
+  // and, from 2026.0.20 under capacity pressure, the guardians' weights (§23A.3a part 1): `signerNodes.guardianWeights` node hex -> min(bond, B*)^2
+  const weights = signerNodes.liquidityWeights instanceof Map || signerNodes.guardianWeights instanceof Map
+    ? { ...(signerNodes.liquidityWeights instanceof Map ? { liquidity: signerNodes.liquidityWeights } : {}), ...(signerNodes.guardianWeights instanceof Map ? { guardian: signerNodes.guardianWeights } : {}) } : null;
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, weights, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'

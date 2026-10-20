@@ -84,7 +84,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
   // this seat holds - kept with its bytes, so anyone checks it - and forgotten once a newer record is not HALTED (a recovery)
   const halted = new Map();                  // federation id hex -> { height, bytes }
+  // EVERY RECORD BY ITS HEIGHT TOO (kanban #559/#543, §23A.3a: the pressure weights read "the federation record in force at" the round's
+  // census height, which may be older than the newest): each verified record kept per federation and height, in memory and the store
+  const history = new Map();                 // fid -> Map(height -> record)
+  const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
+    if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
   function keep(fid, bytes, v) {
+    remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
     const had = kept.get(fid);
     if (had && had.height > v.record.height) return;
     kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
@@ -531,6 +537,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // only when the rounds' census moves past it, a day later): the chain's when read, else the basis's
     censusNewest() { const cb = chainBasis(null); if (cb && cb.ok) return cb.census.entries || []; const b = basis(); return b.ok ? b.census.entries || [] : []; },
     // and with its height (GET /roles, kanban #560: every seat answers the same census - the chain's at the same step - not its newest round's)
+    // the record in force at `height`: the newest this seat verified at or below it (null when it holds none)
+    recordAt(fid, height) {
+      const f = String(fid).toLowerCase(); let m = history.get(f);
+      if ((!m || !m.size) && store && store.loadAt) { try { for (const r of store.loadAt(f) || []) { try { const bytes = fromHex(r.record); const rec = decodeFederationRecord(splitSignedRecord(bytes).body); remember(f, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ } m = history.get(f); }
+      if (!m) return null;
+      let best = null; for (const [h, rec] of m) if (h <= Number(height) && (!best || h > best.height)) best = rec;
+      return best;
+    },
     censusNewestAt() { const cb = chainBasis(null); return cb && cb.ok ? { height: cb.height, entries: cb.census.entries || [] } : null; },
     // THE FEDERATION'S GUARDIANS BY THE CENSUS (kanban #552): node keys hex of the census that names it (the held round's, else the chain's) -
     // what stands before this seat holds its record (seatedGuardians is null then; "the census rule then stands")

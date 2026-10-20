@@ -4944,6 +4944,10 @@ share_i = guardians' part × w_i / Σ w
 Rounds settle as before: one payout contract per guardian, sized by these weights. The weights use only the record and census of the
 round's census height, so every signer node builds the same outputs.
 
+*Implemented from protocol 2026.0.20 (kanban #559/#543).* Every seat keeps each federation record it verified by height and reads the one in
+force at the round's census height. Until records carry the capacity band, the band is the one the record's own load enters (70 / 90 /
+100 %, no hysteresis); a record that names its band is read as it says.
+
 **The founding draw under pressure** (§23A.2). When the network is under pressure and a new federation is founded, candidates with a
 bond of at least the network's `B*_net` (below) are seated first. So a non-guardian node that raises its bond is first in line for
 the federation that adds capacity.

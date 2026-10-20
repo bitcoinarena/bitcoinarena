@@ -27,7 +27,8 @@ test('this build writes its version and reads the versions it lists', () => {
   assert.equal(speaksVersion(16), true);
   assert.equal(speaksVersion(17), true, 'the owner\'s emergency key (spec §23A.5a)');
   assert.equal(speaksVersion(19), true, 'add to bond: a node\'s outputs summed (kanban #544)');
-  assert.equal(speaksVersion(20), false);
+  assert.equal(speaksVersion(20), true, '2026.0.20: the guardians weighted under capacity pressure');
+  assert.equal(speaksVersion(21), false);
 });
 
 test('every live manifest keeps its bytes and its game id: none names a required version', () => {

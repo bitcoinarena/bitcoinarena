@@ -98,3 +98,23 @@ test('bondIncentive: the spec\'s example - the raiser takes 33.3 % instead of 14
   assert.equal(bondIncentive({ bonds: [...bonds, { node: '01', bondSats: '36667' }], targetBondSats: '86667', node: '01', pressure: true }).addSats, '0');
   assert.equal(bondIncentive({ bonds, targetBondSats: '86667', node: 'ff', pressure: true }), null);
 });
+
+// kanban #559/#543 (spec §23A.3a part 1): the guardians' weights under pressure, and the spec's table
+test('guardian weights: (min(bond, B*))^2 under PRESSURE or worse; the spec\'s 7-guardian table; none while CALM', async () => {
+  const { guardianWeights } = await import('../src/capacity.js');
+  const node = (i) => String(i).repeat(64).slice(0, 64);
+  const at = (raised) => [1, 2, 3, 4, 5, 6, 7].map((i) => ({ node: node(i), bondSats: i <= raised ? 86_667n : 50_000n }));
+  const share = (w, i) => Number((w.get(node(i)) * 10000n) / [...w.values()].reduce((a, b) => a + b, 0n)) / 100;
+  const base = { reserveSats: 130_000n, exposureCapSats: 150_000n, nominal: 7, bondMinSats: 50_000n };   // load 0.87: PRESSURE, B* 86,667
+  const one = guardianWeights({ ...base, bonds: at(1) });
+  const near = (a, b, why) => assert.ok(Math.abs(a - b) <= 0.1, `${why}: ${a} against ${b}`);
+  near(share(one, 1), 33.3, 'one raiser 33.3 % (2.3x even)'); near(share(one, 2), 11.1, 'each other 11.1 %');
+  const three = guardianWeights({ ...base, bonds: at(3) });
+  near(share(three, 1), 23.1, 'three: 23.1 % each'); near(share(three, 7), 7.7, 'the others 7.7 %');
+  const all = guardianWeights({ ...base, bonds: at(7) });
+  near(share(all, 4), 14.3, 'all seven raised: even again');
+  const whale = guardianWeights({ ...base, bonds: [{ node: node(1), bondSats: 900_000n }, ...at(0).slice(1)] });
+  assert.equal(whale.get(node(1)), 86_667n * 86_667n, 'capped at B*: a bigger bond earns nothing more');
+  assert.equal(guardianWeights({ ...base, reserveSats: 60_000n, bonds: at(1) }), null, 'load 0.4: CALM, the even split');
+  assert.equal(guardianWeights({ ...base, bonds: at(1), band: 'CALM' }), null, 'a record that says CALM wins over the load');
+});
