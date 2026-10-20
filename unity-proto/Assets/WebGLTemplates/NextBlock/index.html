@@ -877,9 +877,10 @@
        the clicks, so no click through is possible until the overlay is closed ... from bellow the header up to the footer";: "when an
        overlay is open, selecting a game loads the game without closing the overlay first"): balance, deposit and withdraw lie on it */
     #arena-ov-scrim { display: none; position: fixed; left: 0; right: 0; top: calc(41px + env(safe-area-inset-top, 0px));
-      bottom: calc(30px + env(safe-area-inset-bottom, 0px)); z-index: 43; background: rgba(170, 182, 200, .26); }
+      bottom: calc(30px + env(safe-area-inset-bottom, 0px)); z-index: 41; background: rgba(170, 182, 200, .26); }   /* under the Wallet (42) and the overlays (44), over Settings (40); kanban #558 */
     body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
     body:has(#arena-bal-split:not([style*="none"]):not(:empty)) #arena-ov-scrim { display: block; }
+    body:has(#arena-wallet-modal:not([style*="none"])) #arena-ov-scrim { display: block; }
     body.arena-clean #arena-ov-scrim { display: none !important; }
     /* A LIGHTER LAYER (kanban #536: "the contrast is still not enough, make this newly added layer a bit lighter"): .14 -> .26 */
     /* THE DONATE BOX AS THE OTHER OVERLAYS (kanban #537: "adapt the donate layer to the changes of #533 and #536"): the same lighter layer
@@ -1060,6 +1061,38 @@
     .bal-ico.pend { background: #7a5a12; color: #ffe7ad; }
     /* the next round's box is Tick Tock's: games/nextblock/unity-page.css (packages/nextblock/page, kanban #521) */
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
+    /* THE WALLET MODAL (kanban #558): over Settings (40), under Deposit and Withdraw (44); its contents styled as Settings' own */
+    #arena-wallet-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 42; width: min(94vw, 560px); max-height: calc(100vh - 70px - env(safe-area-inset-top, 0px)); overflow-y: auto; box-sizing: border-box; background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+    #arena-wallet-modal .wl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+    #arena-wallet-modal .wl-head h3 { margin: 0; color: #f7931a; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; text-transform: none; letter-spacing: 0; }
+    #arena-wallet-modal .wl-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 6px; margin: 0; width: auto; }
+    #arena-wallet-modal .wl-close:hover { color: #f7931a; }
+    #arena-wallet-modal #arena-set-wallet { max-width: none; margin: 0; padding: 0; border: 0; background: none; }
+    #arena-wallet-modal #arena-set-wallet > h3 { display: none; }
+    #arena-wallet-modal #arena-bal-split { position: static; transform: none; width: auto; max-height: none; overflow: visible; box-shadow: none; margin: 10px 0 0; padding: 10px 0 0; border: 0; border-top: 1px solid #2a3440; border-radius: 0; background: none; z-index: auto; display: block; }
+    /* THE HISTORY IN COLUMNS (kanban #558: "much more structured and doesn't overlap/wrap on small screens"): date, what, amount - the date and the
+       amount never wrap, the description ends with an ellipsis, and a narrow screen puts the date on its own line */
+    #arena-wallet-modal .hist-row { display: grid; grid-template-columns: 8.2em minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; }
+    #arena-wallet-modal .hist-row .hist-when { color: #8b949e; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #arena-wallet-modal .hist-row .hist-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #arena-wallet-modal .hist-row .hist-amt { margin-left: 0; white-space: nowrap; text-align: right; }
+    @media (max-width: 440px) { #arena-wallet-modal .hist-row { grid-template-columns: minmax(0, 1fr) auto; } #arena-wallet-modal .hist-row .hist-when { grid-column: 1 / -1; font-size: 11px; } }
+    #arena-wallet-modal .wd-tabs button.on {background: #f7931a; color: #111; border-color: #f7931a; }
+    #arena-wallet-modal .settings-card {max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box; background: linear-gradient(180deg, #161c24, #11161c); border: 1px solid #2f3b49; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+    #arena-wallet-modal .settings-card h3 {margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #f7931a; border-bottom: 1px solid #2f3b49; padding-bottom: 8px; }
+    #arena-wallet-modal button {font: inherit; font-weight: 600; padding: 9px 14px; margin: 4px 6px 4px 0; cursor: pointer; background: #1e2833; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
+    #arena-wallet-modal button.primary {background: #f7931a; color: #1b1000; border-color: #f7931a; }
+    #arena-wallet-modal button:disabled {opacity: 0.45; cursor: default; }
+    #arena-wallet-modal button.danger {color: #ff6b6b; border-color: #8b2b2b; background: #1f1316; }
+    #arena-wallet-modal button.danger.primary {color: #fff; background: #c62828; border-color: #c62828; }
+    #arena-wallet-modal .bal-grid {display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    #arena-wallet-modal .bal-box {display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: #0d1218; border: 1px solid #263240; }
+    #arena-wallet-modal .bal-box .bal-what {font-size: 12px; color: #9fb3c8; }
+    #arena-wallet-modal .bal-box .bal-sats {font-size: 17px; font-weight: 700; }
+    #arena-wallet-modal .muted {color: #9fb3c8; font-size: 13px; }
+    #arena-wallet-modal .name-row {display: flex; gap: 8px; align-items: center; }
+    #arena-wallet-modal input[type=text], #arena-wallet-modal input[type=password], #arena-wallet-modal select {flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px; background: #0d1218; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
+    #arena-wallet-modal select {width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
     #arena-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
       padding: 14px 14px 24px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
     #arena-settings .settings-head { display: flex; align-items: center; justify-content: space-between; max-width: 720px;
@@ -1269,6 +1302,9 @@
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
   <div id="arena-ov-scrim" aria-hidden="true"></div>
   <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
+  <!-- THE WALLET (kanban #558, the owner 2026-10-20: "Combine Wallet view in "Settings" and "Balance click" into one view when clicking the balance,
+       that is the new Wallet, the title of the modal"): Settings' wallet section and the balance by federation, in one modal -->
+  <div id="arena-wallet-modal" role="dialog" aria-modal="true" aria-labelledby="arena-wallet-modal-title" style="display:none"><div class="wl-head"><h3 id="arena-wallet-modal-title">Wallet</h3><button type="button" class="wl-close" aria-label="Close">&times;</button></div><div id="arena-wallet-modal-body"></div></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (2026-09-29): placed over the row Unity reports as `balance`, where
        NAME and KEY stood, above the rounds. -->
   <div id="arena-lobby-balance" style="display:none">
@@ -1277,6 +1313,10 @@
   </div>
   <div id="arena-settings" style="display:none">
     <div class="settings-head"><h2><img class="mark" src="nextblock-icon.svg" alt="">SETTINGS <small>Tick Tock, Next Block</small></h2><button id="arena-settings-close" type="button">&#10005; Close</button></div>
+    <section class="settings-card" id="arena-set-wallet-link">
+      <h3>Wallet</h3>
+      <div class="name-row"><div class="muted" style="flex:1">Your balance, deposits, withdrawals and history</div><button id="arena-open-wallet" type="button" class="primary">Open wallet</button></div>
+    </section>
     <section class="settings-card" id="arena-set-wallet">
       <h3>Wallet</h3>
       <div class="bal-grid">
@@ -3997,7 +4037,8 @@
       // it should open the withdraw overlay instead"): no game picked lists no round, and the wallet is read through a round - a paid round of
       // the games asked from their own seats, as the donation reads its sets there (paidRoundFromSeats); the withdraw still reads the
       // federation that holds the money (moneyContext)
-      if (!ctx.ok && which === 'withdraw' && opts.overlay && !opts.seatRound && typeof paidRoundFromSeats === 'function') {
+      // AND MOVE THE SAME WAY (kanban #554: "same for move" - Move in the Wallet with no game picked said nothing)
+      if (!ctx.ok && (which === 'withdraw' || which === 'move') && opts.overlay && !opts.seatRound && typeof paidRoundFromSeats === 'function') {
         // SAID ONLY WHEN IT TAKES A WHILE ("there is briefly a strange notice bar bellow the header section when clicking on
         // withdrawals after refreshing the page"; measured: "Opening your wallet …" under the header for 85 ms, then the box)
         const slow = setTimeout(() => say('Opening your wallet \u2026'), 700);
@@ -4129,10 +4170,13 @@
         } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (waitBox && waitBox.el.contains(waitBox.w)) waitBox.w.textContent = why; return { ok: false, why }; }
       })();
     }
+    // WITHDRAW AND MOVE OPEN THEIR OVERLAYS (kanban #554, the owner 2026-10-20: "Clicking on withdrawal raises, and error message instead of opening the
+    // withdrawal layer. same for move"; #555: "clicking on the withdrawal button should open the withdrawal overlay, as its done with deposit"): as
+    // the header's buttons do - with no game picked the wallet is read through a paid round of the games' seats
     for (const [id, which] of [['arena-deposit-go', 'deposit'], ['arena-move-go', 'move'],
       ['arena-withdraw-lobby', 'withdraw']]) {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('click', () => { openMoney(which); });
+      if (el) el.addEventListener('click', () => { which === 'deposit' ? openMoney(which) : openMoney(which, undefined, { overlay: true }); });
     }
     // THE WALLET BAR OVER A GAME'S OWN CLIENT: the balance this wallet reads, and the page's one Deposit and
     // Withdraw - a client frame covers the lobby's strip and its gear, so without this a market or Rock Paper Scissors
@@ -4655,7 +4699,7 @@
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           : `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`;
         for (const [cls, text] of [['hist-when', when], ['hist-what', what], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
-          const c = document.createElement('span'); c.className = cls; c.textContent = text; el.appendChild(c);
+          const c = document.createElement('span'); c.className = cls; c.textContent = text; if (cls === 'hist-what') c.title = text; el.appendChild(c);   // the whole line on hover or long press (kanban #558)
         }
         if (r.kind === 'stake' && r.entry) {
           el.title = 'Open this round\'s replay in a new window';
@@ -6495,8 +6539,9 @@
         const sat = (n) => Number(n || 0).toLocaleString('en-US') + ' sat';
         el.textContent = '';
         const head = document.createElement('div'); head.className = 'ov-head';
-        const h = document.createElement('h4'); h.textContent = 'Your balance';
-        const x = document.createElement('button'); x.type = 'button'; x.className = 'ov-close'; x.title = 'Close'; x.textContent = '\u00d7';
+        const inWallet = !!(el.closest && el.closest('#arena-wallet-modal'));   // kanban #558: one part of the Wallet, its own head and no close of its own
+        const h = document.createElement('h4'); h.textContent = inWallet ? 'By federation' : 'Your balance';
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'ov-close'; x.title = 'Close'; x.textContent = '\u00d7'; if (inWallet) x.hidden = true;
         x.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none'; });
         head.append(h, x); el.append(head);
         const parts = bal && Array.isArray(bal.parts) ? bal.parts : [];
@@ -6509,7 +6554,12 @@
           // ITS HEALTH (kanban #545): a dot and a word from its verified record, what happens to the funds, and for a HALTED one when they
           // are paid back - in blocks and in time at the chain's recent pace (balance-view.js)
           const CL = typeof BLWPCLIENT !== 'undefined' ? BLWPCLIENT : {};
-          const hl = CL.federationHealth ? CL.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
+          let hl = CL.federationHealth ? CL.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
+          // AN OPEN FEDERATION BY ITS LOAD (kanban #556: "the health indicator should be color coded: healthy: green, then amber and finally red when
+          // approaching high risk levels"; the popup said "Healthy" at 433 %): green under 70 %, amber from 70 %, red from 90 %
+          if (st && st.status === 'OPEN' && typeof st.load === 'number')
+            hl = st.load >= 1 ? { level: 'bad', label: 'Full', note: 'It holds more than its guardians\u2019 bonds cover.' } : st.load >= 0.9 ? { level: 'bad', label: 'Nearly full', note: '' }
+              : st.load >= 0.7 ? { level: 'warn', label: 'Filling up', note: '' } : { level: 'ok', label: 'Healthy', note: '' };
           const s = document.createElement('div'); s.className = 'st';
           const dot = document.createElement('span'); dot.className = 'hl ' + hl.level;
           s.append(dot, document.createTextNode(hl.label + (st && typeof st.load === 'number' ? ' \u00b7 load ' + Math.round(st.load * 100) + ' %' : '')));
@@ -6572,8 +6622,20 @@
           r.append(left, b); el.append(r);
         }
       };
+      // THE WALLET (kanban #558): Settings' wallet section and the balance by federation moved into one modal the first time it opens - every
+      // painter still finds its parts by id - opened by the balance anywhere and by Settings' Open wallet, closed by its ×
+      const walletModal = () => document.getElementById('arena-wallet-modal');
+      window.ARENA_CLOSE_WALLET = () => { const m = walletModal(); if (m) m.style.display = 'none'; const sp = splitEl(); if (sp) sp.style.display = 'none'; };
+      { const m = walletModal(); const x = m && m.querySelector('.wl-close'); if (x) x.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_CLOSE_WALLET(); }); }
       window.ARENA_SHOW_BALANCE_SPLIT = () => {
         const el = splitEl(); if (!el) return;
+        const m = walletModal(), body = document.getElementById('arena-wallet-modal-body'), sec = document.getElementById('arena-set-wallet');
+        if (m && body) {
+          if (sec && sec.parentElement !== body) body.append(sec);
+          if (el.parentElement !== body) body.append(el);
+          m.style.display = '';
+          if (window.ARENA_PAINT_SETTINGS) try { window.ARENA_PAINT_SETTINGS(); } catch { /* painted again with the balance */ }
+        }
         const repaint = () => { if (el.style.display !== 'none') { paintSplit(); paintDebug(el); } };
         paintSplit(); paintDebug(el); el.style.display = '';
         if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES().then(repaint, () => {});
@@ -6581,7 +6643,8 @@
         const nets = new Set([...(window.ARENA_FED_LOADS || new Map()).values()].filter((x) => x && x.status === 'HALTED' && x.network).map((x) => x.network));
         for (const n of nets) readChain(n).then(repaint, () => {});
       };
-      for (const sel of ['#arena-wallet-bar .wb-bal', '#arena-hdr-bal', '#arena-lobby-balance', '#arena-set-wallet .bal-grid']) {
+      { const o = document.getElementById('arena-open-wallet'); if (o) o.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_SHOW_BALANCE_SPLIT(); }); }
+      for (const sel of ['#arena-wallet-bar .wb-bal', '#arena-hdr-bal', '#arena-lobby-balance']) {
         const el = document.querySelector(sel);
         if (el) el.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_SHOW_BALANCE_SPLIT(); });
       }
@@ -7598,8 +7661,8 @@
     {
       const byId = (id) => document.getElementById(id);
       const OVERLAYS = {
-        balance: { open: () => { const e = byId('arena-bal-split'); return !!e && e.style.display !== 'none' && e.childElementCount > 0; },
-          close: () => { byId('arena-bal-split').style.display = 'none'; } },
+        balance: { open: () => { const e = byId('arena-wallet-modal'); return !!e && e.style.display !== 'none'; },
+          close: () => { if (window.ARENA_CLOSE_WALLET) window.ARENA_CLOSE_WALLET(); } },
         deposit: { open: () => { const e = byId('arena-deposit'); return !!e && e.classList.contains('deposit-modal') && e.childElementCount > 0; },
           close: () => { const c = document.querySelector('#arena-deposit .dep-close'); if (c) c.click(); else { const e = byId('arena-deposit'); e.textContent = ''; e.className = ''; } } },
         withdraw: { open: () => !!byId('arena-withdraw') && byId('arena-withdraw').classList.contains('show'),
