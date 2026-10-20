@@ -16,7 +16,7 @@
 import http from 'node:http';
 import { readFileSync, appendFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { readSources } from '../src/sources.js';
-import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson } from '../src/attestor.js';
+import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson, marketsToAttest } from '../src/attestor.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 
 const arg = (name, dflt = null) => { const i = process.argv.indexOf(`--${name}`); return i > 1 ? process.argv[i + 1] : dflt; };
@@ -25,7 +25,8 @@ const attestor = attestorKey(readFileSync(arg('key')));
 const SOURCES = String(arg('sources', 'coinbase,kraken,bitstamp')).split(',');
 const GAME = arg('game', 'btc-updown-15m');
 // the market by its id (hex) - its name alone also matches an older manifest of the same name
-// --game-id: one id, or several comma-separated - the v1 and v2 markets of one game side by side (2026.0.2)
+// --game-id: one id, or several comma-separated - the v1 and v2 markets of one game side by side (2026.0.2); every other version a
+// seat hosts whose manifest names this attestor's key is attested too (marketsToAttest)
 const GAME_IDS = String(arg('game-id') || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
 const PERIOD_MS = BigInt(arg('period-ms', '900000'));
 const SEATS = String(arg('seats', '')).split(',').filter(Boolean);
@@ -76,7 +77,32 @@ const sample = async () => {
   if (r.median === null) log({ step: 'no reading', sources: r.sources });
 };
 
+// EVERY VERSION OF THE MARKET THAT NAMES THIS KEY (marketsToAttest): the seats' /games, read again each minute - with --game-id
+// the listed ids are kept beside them; without it and before the first read, the game's name alone matches, as before
+let marketIds = new Set(GAME_IDS);
+let marketsReadMs = 0;
+const readMarkets = async () => {
+  if (Date.now() - marketsReadMs < 60000) return;
+  const games = [];
+  let read = 0;
+  for (const seat of SEATS) {
+    try {
+      const r = await fetch(`${seat}/games`, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      games.push(...((await r.json()).games || [])); read++;
+    } catch { /* the next seat */ }
+  }
+  if (!read) return;
+  marketsReadMs = Date.now();
+  const next = marketsToAttest({ games, name: GAME, key: toHex(attestor.pubkey), mode: MODE, ids: GAME_IDS });
+  const added = [...next].filter((id) => !marketIds.has(id));
+  if (added.length) log({ step: 'markets', added, of: next.size });
+  marketIds = next;
+};
+const ofThisMarket = (x) => (marketIds.size ? marketIds.has(String(x.game.id).toLowerCase()) : x.game.name === GAME);
+
 const roundsOfGame = async () => {
+  await readMarkets();
   for (const seat of SEATS) {
     try {
       // THE NEXT 16 OF EACH SERIES, NOT EVERY ROUND (2026-10-12 "Bring down test-host CPU usage back to 12"):
@@ -88,7 +114,7 @@ const roundsOfGame = async () => {
       const j = await r.json();
       const rows = Array.isArray(j) ? j : j.rounds || [];
       // entryCloseMs is decimal ms (a string on the wire)
-      return rows.filter((x) => x.game && (GAME_IDS.length ? GAME_IDS.includes(String(x.game.id).toLowerCase()) : x.game.name === GAME) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs))).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs) }));
+      return rows.filter((x) => x.game && ofThisMarket(x) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs))).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs) }));
     } catch { /* the next seat */ }
   }
   return [];
