@@ -125,6 +125,7 @@
       paintNodes(nodes, tip);
       const fedList = feds ? feds.body.federations : [];
       numberFeds(fedList); paintNodes(nodes, tip);
+      fedList.sort((a, b) => (fedNoOf(a.federation) || 99) - (fedNoOf(b.federation) || 99));   // the tables in number order (kanban #557)
       paintCapacity(await capP, fedList);
       paintFeds(fedList);
       await paintGateways(fedList, seats, nodes);
