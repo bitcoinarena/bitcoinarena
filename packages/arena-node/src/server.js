@@ -3772,9 +3772,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 4dc88be7: "no guardian seat of this federation answered"): its guardian's and its guardian-next's, so a successor's seats are ranked by
   // its own guardians from the start; `gatewayWatch` stays the first (its own federation), `gatewayWatchOf(fid)` finds the one that guards fid
   const gatewayWatches = [];
+  // THE GATEWAY PROBES IN THIS SEAT'S DATABASE (kanban #552): per federation and epoch, the probes and claims seen - two epochs kept
+  round.db.exec('CREATE TABLE IF NOT EXISTS gateway_probes (federation TEXT NOT NULL, epoch INTEGER NOT NULL, rows TEXT NOT NULL, PRIMARY KEY (federation, epoch))');
+  const gatewayKeep = {
+    load: async (fid) => Object.fromEntries(round.db.prepare('SELECT epoch, rows FROM gateway_probes WHERE federation = ? ORDER BY epoch DESC LIMIT 2').all(String(fid)).map((r) => [r.epoch, JSON.parse(r.rows)])),
+    save: async (fid, epoch, rows) => {
+      round.db.prepare('INSERT INTO gateway_probes (federation, epoch, rows) VALUES (?, ?, ?) ON CONFLICT(federation, epoch) DO UPDATE SET rows = excluded.rows').run(String(fid), epoch, JSON.stringify(rows));
+      round.db.prepare('DELETE FROM gateway_probes WHERE federation = ? AND epoch < ?').run(String(fid), epoch - 1);
+    },
+  };
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
-      seated: async (fid) => (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k)),
+      // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
+      seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
       entries: async () => { const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
+      keep: gatewayKeep,
       tip: async () => Number(await chainTip()),
       beaconAt: async (h) => {
         if (ballot && typeof ballot.blockHashAt === 'function') { const x = await ballot.blockHashAt(h); return x ? fromHex(String(x)).reverse() : null; }
@@ -3796,6 +3807,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // seated guardian, and the next one was 10 min away - every restart left the gateway seats "0 of 2" for 10-20 min
     const again = setTimeout(() => { for (const w of gatewayWatches) w.watch.probe().catch(() => {}); }, 120000);
     if (again.unref) again.unref();
+    // AND EVERY MINUTE WHILE A PROBE FOUND NO GUARDIAN TO ASK (kanban #552)
+    const retry = setInterval(() => { for (const w of gatewayWatches) { const p = w.watch.lastProbe && w.watch.lastProbe(); if (p && !p.seated) w.watch.probe().catch(() => {}); } }, 60000);
+    if (retry.unref) retry.unref();
   }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
   // seating its federation's guardians signed at threshold, so every signer node - guardian or not - must hold the same one: every
@@ -4530,8 +4544,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             total: found.all ? found.all.sats : found.bond.sats, outputs: (found.all ? found.all.outputs : [found.bond]).map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })),
             addBond: !!process.env.ARENA_HOME || !!process.env.ARENA_BOND_CLI,   // kanban #553: a seat set up by hand adds from its bond wallet
             ...(await (async () => { if (process.env.ARENA_HOME || !process.env.ARENA_BOND_CLI) return {};
-              try { const { bondCliFrom, walletOf } = await import('./add-bond-wallet.js'); const w = walletOf(bondCliFrom().cli);
-                return { wallet: { spendableSats: String(w.spendableSats), confirmingSats: String(w.confirmingSats) } }; } catch (e) { return { wallet: { why: e.message.split('\n')[0] } }; } })()),
+              try { const { bondCliFrom, walletOf, ADD_OVERHEAD_SATS } = await import('./add-bond-wallet.js'); const w = walletOf(bondCliFrom().cli);
+                return { wallet: { spendableSats: String(w.spendableSats), confirmingSats: String(w.confirmingSats), addOverheadSats: String(ADD_OVERHEAD_SATS) } }; } catch (e) { return { wallet: { why: e.message.split('\n')[0] } }; } })()),
             says: 'a withdrawn bond takes this node out of the census from the next census height on' });
         }
         if (req.method === 'GET' && url.pathname === '/owner/standing') {
