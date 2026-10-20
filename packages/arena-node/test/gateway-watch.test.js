@@ -47,6 +47,11 @@ test('the watch: seated guardians\' claims probed per epoch, ranked; a foreign f
   height += 144; await w.probe();
   const next = await w.view();
   assert.deepEqual([next.measuredEpoch, next.epoch], ['whole', 10], 'the last whole epoch is ranked once there is one');
+  // kanban #552: AND THE RUNNING EPOCH, as it stands - its own probes ranked, the block it ends at
+  assert.deepEqual([next.next.epoch, next.next.fromBlock], [11, 144 * 12]);
+  assert.deepEqual(next.next.seated, [keys[0].hex, keys[1].hex].sort((a, b) => next.next.seated.indexOf(a) - next.next.seated.indexOf(b)), 'up in its one probe: both would be seated');
+  assert.equal(next.next.seated.length, 2);
+  assert.match(next.next.why, /2 of 2 gateway seats filled/);
 });
 
 test('a seat that advertises its endpoint as wss:// is read over https (the live adverts do)', async () => {
