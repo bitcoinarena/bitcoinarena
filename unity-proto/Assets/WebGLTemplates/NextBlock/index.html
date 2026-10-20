@@ -6538,6 +6538,74 @@
       // while the page that made the invoice was closed never arrived - the pending deposits were resumed only by the lobby's own wallet,
       // and a page that opened the wallet any other way, the Up/Down market's balance among them, never claimed them): each kept wallet
       // waits on its federation's pending deposits once per page, writes each claimed one's history row once, and reads the balance again
+      // (set up here, beside ARENA_KEEP_WALLET, so it exists on every page - measured on UI 264: further down it was never reached without a
+      // named lobby round, and every merge said "the page set up no merge")
+      // EVERY FEDERATION, NOT ONLY THE LOBBY ROUND'S (the owner 2026-10-20 18:5xZ, "Go and find the 200": his 200 sat sat in 4dc88be7 in the wallet of
+      // phrase acaa8a44, a phrase this browser keeps that was no longer the one in use, and the merge below ran only in the lobby round's
+      // federation, 337ae01a). Each federation is merged on its own, one at a time; the e-cash kept between the send and the receive names
+      // its federation, and is only ever offered to that federation's wallet (an entry an earlier page kept without one: the lobby round's).
+      const combiningBy = new Map();
+      function combineWallets(main, named, round) { return combineIn(main, ARENACLIENT.toHex(round.federationId), named.federation, { legacy: true }); }
+      window.ARENA_COMBINE_IN = (main, fedHex, invite) => combineIn(main, fedHex, invite, { legacy: false });
+      function combineIn(main, fedHex, invite, { legacy }) {
+        fedHex = String(fedHex).toLowerCase();
+        if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
+        const run = (async () => {
+          const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
+          const receiveKept = async () => {
+            for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
+              let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
+              if (!rec || !rec.ecash) { L.removeItem(k); continue; }
+              if (rec.fed ? rec.fed !== fedHex : !legacy) continue;   // never into another federation's wallet
+              const said = JSON.parse(await main.receiveEcash(rec.ecash));
+              console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
+              if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
+            }
+          };
+          if (typeof main.receiveEcash !== 'function') return;
+          await receiveKept();
+          let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
+          // a wallet found empty is not opened again until its store changes (its entry count is noted with it)
+          // AND EVERY KEPT PHRASE'S BLWP-ERA WALLET (2026-10-08, pick (a); spec 0A.9 "the player wallets'
+          // e-cash carries over"): the wallet a phrase had before the ARENA/v1 tags is the one under the ancestor's tag
+          // (ancestor.js), kept here under its own store; this tab's own phrase's too. Swept the same way, once, into this tab's.
+          const emptyKey = (hex, ancestor) => 'arena.wallet.empty.' + (ancestor ? 'blwp.' : '') + (legacy ? '' : fedHex.slice(0, 16) + '.') + hex.slice(0, 16);
+          const entriesOf = (hex, ancestor) => ARENACLIENT.phraseWalletEntries(L, hex, fedHex, { ancestor: !!ancestor });
+          const wanted = (x, ancestor) => { const n = entriesOf(x.hex, ancestor); return n > 0 && L.getItem(emptyKey(x.hex, ancestor)) !== String(n); };
+          const phrases = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex));
+          if (/^[0-9a-f]{64}$/i.test(cur) && !phrases.some((x) => x.hex === cur)) phrases.push({ hex: cur });
+          const others = [
+            ...phrases.filter((x) => x.hex !== cur && wanted(x, false)).map((x) => ({ hex: x.hex, ancestor: false })),
+            ...phrases.filter((x) => wanted(x, true)).map((x) => ({ hex: x.hex, ancestor: true })),
+          ];
+          if (!others.length) return;
+          const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+          for (const x of others) {
+            const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
+            const take = async () => {
+              const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
+                new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
+              if (typeof other.sendAllEcash !== 'function') return;
+              const noteEmpty = () => L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor)));
+              if (BigInt(await other.balanceMsat()) === 0n) { noteEmpty(); return; }
+              const sent = JSON.parse(await other.sendAllEcash());
+              if (!sent.ecash) { noteEmpty(); return; }
+              L.setItem('arena.ecash.pending.' + fedHex.slice(0, 16) + '.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from, fed: fedHex }));
+              await receiveKept();
+              if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
+            };
+            try {
+              // this tab's own phrase is held by this tab already; any other is taken under its lock
+              if (x.hex !== cur && navigator.locks && navigator.locks.request) {
+                await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
+              } else await take();
+            } catch (e) { console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e)); }
+          }
+          if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
+        })().finally(() => { combiningBy.delete(fedHex); });
+        combiningBy.set(fedHex, run);
+        return run;
+      }
       const RESUMED = new Set();
       window.ARENA_KEEP_WALLET = (fid, client) => {
         if (!fid || !client) return;
@@ -7067,72 +7135,6 @@
       // tab holds is skipped, so no wallet runs in two places), its whole balance sent as e-cash, the e-cash kept in the
       // browser BEFORE it is received, received into this tab's wallet, and the kept copy dropped once the federation
       // reissued it. A copy an earlier page kept is received first. Nothing leaves the federation; no fee is paid.
-      // EVERY FEDERATION, NOT ONLY THE LOBBY ROUND'S (the owner 2026-10-20 18:5xZ, "Go and find the 200": his 200 sat sat in 4dc88be7 in the wallet of
-      // phrase acaa8a44, a phrase this browser keeps that was no longer the one in use, and the merge below ran only in the lobby round's
-      // federation, 337ae01a). Each federation is merged on its own, one at a time; the e-cash kept between the send and the receive names
-      // its federation, and is only ever offered to that federation's wallet (an entry an earlier page kept without one: the lobby round's).
-      const combiningBy = new Map();
-      function combineWallets(main, named, round) { return combineIn(main, ARENACLIENT.toHex(round.federationId), named.federation, { legacy: true }); }
-      window.ARENA_COMBINE_IN = (main, fedHex, invite) => combineIn(main, fedHex, invite, { legacy: false });
-      function combineIn(main, fedHex, invite, { legacy }) {
-        fedHex = String(fedHex).toLowerCase();
-        if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
-        const run = (async () => {
-          const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
-          const receiveKept = async () => {
-            for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
-              let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
-              if (!rec || !rec.ecash) { L.removeItem(k); continue; }
-              if (rec.fed ? rec.fed !== fedHex : !legacy) continue;   // never into another federation's wallet
-              const said = JSON.parse(await main.receiveEcash(rec.ecash));
-              console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
-              if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
-            }
-          };
-          if (typeof main.receiveEcash !== 'function') return;
-          await receiveKept();
-          let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
-          // a wallet found empty is not opened again until its store changes (its entry count is noted with it)
-          // AND EVERY KEPT PHRASE'S BLWP-ERA WALLET (2026-10-08, pick (a); spec 0A.9 "the player wallets'
-          // e-cash carries over"): the wallet a phrase had before the ARENA/v1 tags is the one under the ancestor's tag
-          // (ancestor.js), kept here under its own store; this tab's own phrase's too. Swept the same way, once, into this tab's.
-          const emptyKey = (hex, ancestor) => 'arena.wallet.empty.' + (ancestor ? 'blwp.' : '') + (legacy ? '' : fedHex.slice(0, 16) + '.') + hex.slice(0, 16);
-          const entriesOf = (hex, ancestor) => ARENACLIENT.phraseWalletEntries(L, hex, fedHex, { ancestor: !!ancestor });
-          const wanted = (x, ancestor) => { const n = entriesOf(x.hex, ancestor); return n > 0 && L.getItem(emptyKey(x.hex, ancestor)) !== String(n); };
-          const phrases = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex));
-          if (/^[0-9a-f]{64}$/i.test(cur) && !phrases.some((x) => x.hex === cur)) phrases.push({ hex: cur });
-          const others = [
-            ...phrases.filter((x) => x.hex !== cur && wanted(x, false)).map((x) => ({ hex: x.hex, ancestor: false })),
-            ...phrases.filter((x) => wanted(x, true)).map((x) => ({ hex: x.hex, ancestor: true })),
-          ];
-          if (!others.length) return;
-          const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-          for (const x of others) {
-            const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
-            const take = async () => {
-              const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
-                new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
-              if (typeof other.sendAllEcash !== 'function') return;
-              const noteEmpty = () => L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor)));
-              if (BigInt(await other.balanceMsat()) === 0n) { noteEmpty(); return; }
-              const sent = JSON.parse(await other.sendAllEcash());
-              if (!sent.ecash) { noteEmpty(); return; }
-              L.setItem('arena.ecash.pending.' + fedHex.slice(0, 16) + '.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from, fed: fedHex }));
-              await receiveKept();
-              if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
-            };
-            try {
-              // this tab's own phrase is held by this tab already; any other is taken under its lock
-              if (x.hex !== cur && navigator.locks && navigator.locks.request) {
-                await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
-              } else await take();
-            } catch (e) { console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e)); }
-          }
-          if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
-        })().finally(() => { combiningBy.delete(fedHex); });
-        combiningBy.set(fedHex, run);
-        return run;
-      }
       // THE LOBBY, AS UNITY DRAWS IT, is Tick Tock's: unityLobbyView (packages/nextblock/page/unity-page.js, kanban #521), handed
       // this lobby's own state at each read - what it shows is that, and what it presses comes back here (ARENA_LOBBY_ACT)
       window.ARENA_LOBBY_VIEW = () => unityLobbyView({ me, lobbyNow, closedRounds, lobbyViewRow, refused, unanswered, askedNodes, failedNodes, named });
