@@ -45,3 +45,21 @@ test('the bond_min in force and a pending rise, with its escalation in the warni
   assert.match(html, /bond_min in force<\/span><b>50,000 sat · rising to 80,000 sat at block 444 if it holds \(notice 144 blocks\)/);
   assert.match(html, /BOND_MIN RISE \(T-3D\)/);
 });
+
+// THE CAPACITY PLEA (kanban #543): the page's own capacityPlea, run on GET /capacity?node=me - the seat's words shown, nothing while CALM
+test('the capacity plea: the seat\'s words for this node when a federation fills; nothing when the seat says no plea', async () => {
+  const c = HTML.indexOf('async function capacityPlea() {');
+  const fnBody = HTML.slice(c, HTML.indexOf('\n}\n', c) + 2);
+  const show = async (answer) => {
+    const el = { innerHTML: '' }, asked = [];
+    const fetch = async (u) => { asked.push(u); return { json: async () => answer }; };
+    await new Function('$', 'at', 'fetch', 'esc', `${fnBody}; return capacityPlea;`)(() => el, (p) => `https://seat${p}`, fetch, esc)();
+    return { html: el.innerHTML, asked };
+  };
+  const { html, asked } = await show({ ok: true, plea: { level: 'warn', band: 'PRESSURE', addSats: '36667', says: 'Federation aaaaaaaa holds 87 % of what its bonds cover (PRESSURE). Increase your bond by 36,667 sat (Add to bond) to bring it to 86,667 sat.' } });
+  assert.deepEqual(asked, ['https://seat/capacity?node=me']);
+  assert.match(html, /<h2>Capacity<\/h2>.*Increase your bond by 36,667 sat \(Add to bond\)/s);
+  assert.match(html, /Add to bond is in the Bond card below/);
+  assert.equal((await show({ ok: true, plea: null })).html, '');
+  assert.equal((await show({ ok: true })).html, '');
+});

@@ -2807,6 +2807,31 @@ to a lost bracket means abandoning a working bond and starting again; with
 it, an operator adds a second output and keeps the first until it matures
 naturally.
 
+**Counted as one bond (protocol 19, kanban #544).** A node is its
+`node_pubkey` AND its `operator_id`: outputs of two operators never merge,
+even under one key. From protocol 19:
+
+- each output is still checked on its own - template, marker, retrievable
+  advertisement, `census_confirmations`, and its own maturity;
+- the round's `bond_min` is applied to the node's **sum**: a 32,000 sat output
+  beside a 50,000 sat one is in, the node at 82,000; an output whose node sums
+  below the floor is excluded by that sum ("that node's bonds sum to N");
+- the node's **newest advertisement over all its outputs** (an update, or a
+  newer output's own body; the higher block, then the later position, then
+  the larger txid) decides version, serving, roles, games and endpoint for
+  every one of them - each output keeping its own maturity height;
+- every reader of a bond reads the sum: sortition weight, a federation's
+  bonded guardians, the record's guardian rows, the gateway seats, the
+  capacity view's B*, a node's standing.
+
+Below protocol 19 the floor stays each output's, as before. **Add to bond is
+the default way to raise a bond** (the owner 2026-10-19: "e.g. increase your bond
+by 32000 sats"): `arena-install --add-bond <sat>` or the owner page's "Add to
+bond" shows the amount, the fees, the new total and the added output's
+maturity, and posts it with the node's current advertisement; the warnings
+say "increase your bond by N sat". `--rebond` stays for joining matured
+outputs into one.
+
 ## 5A.11 Selection cannot be overwritten
 
 The Round Contract contains:

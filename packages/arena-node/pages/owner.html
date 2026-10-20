@@ -199,6 +199,7 @@ async function area() {
       <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Services</h2><div class="card" id="services"><p class="sub">reading this node's services…</p></div>
+    <div id="capacity-plea"></div>
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Bond</h2><div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
     <h2>Custody</h2><div class="card" id="custody"><p class="sub">reading whether this node holds custody…</p></div>
@@ -242,6 +243,7 @@ async function area() {
   devClients();
   ballotsPanel();
   standingPanel();
+  capacityPlea();
   servicesPanel();
   emergencyPanel();
   bondPanel();
@@ -357,13 +359,36 @@ async function bondPanel() {
   const lockLine = !l ? 'its lock is read once this seat reads the chain' : l.withdrawable
     ? `<b>Unlocked</b> since block ${l.maturity} (now ${l.tip}): it can be withdrawn`
     : `<b>Locked until block ${l.maturity}</b> - ${l.blocksLeft} blocks from now (block ${l.tip}), about ${esc(new Date(l.estimatedMs).toUTCString())}. The block height is the rule, the date an estimate. Until then it cannot be withdrawn.`;
-  el.innerHTML = `<div class="row"><span>Bond</span><b>${esc(Number(b.bond.sats).toLocaleString('en-US'))} sat</b></div>
+  // EVERY OUTPUT AND THEIR SUM (kanban #544): an output added beside the first counts with it, each with its own lock
+  const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
+  const sats = (x) => esc(Number(x).toLocaleString('en-US'));
+  el.innerHTML = `<div class="row"><span>Bond</span><b>${sats(b.total || b.bond.sats)} sat${outs ? ` (${outs.length} outputs)` : ''}</b></div>
+    ${outs ? outs.map((o, i) => `<div class="row"><span>Output ${i + 1}</span><b>${sats(o.sats)} sat · <code>${esc(o.txid)}:${o.vout}</code> · ${o.lock && !o.lock.withdrawable ? `locked until block ${esc(o.maturity)}` : o.lock ? 'unlocked' : 'block ' + esc(o.maturity)}</b></div>`).join('') : ''}
     <div class="row"><span>Outpoint</span><b><code>${esc(b.bond.txid)}:${b.bond.vout}</code></b></div>
     <div class="row"><span>Confirmed at</span><b>${b.bond.height === null ? '?' : 'block ' + esc(b.bond.height)}</b></div>
     <p>${lockLine}</p>
-    <p class="sub">${esc(b.says)}. A larger bond, once it is unlocked, in one step on the node's machine: <code>arena-install --rebond &lt;sat&gt;</code> shows the plan (this bond plus the wallet's coins, the new lock); <code>--yes</code> posts it.</p>
+    <h3>Add to bond</h3>
+    <p class="sub">Raise the bond now: the amount goes into a second bond output beside the first, which stays as it is. The census counts both as one bond (protocol 19). The added output has its own lock and counts after 6 confirmations. The coins come from this node's wallet.</p>
+    ${b.addBond ? `<div class="row"><input id="ab-sats" type="number" min="330" step="1000" placeholder="sat to add, e.g. 32000" style="flex:1"><button id="ab-plan">Show the plan</button></div>
+    <p class="sub" id="ab-msg"></p>` : `<p class="sub">This seat was not started from the installer: on the node's machine, <code>arena-install --add-bond &lt;sat&gt;</code> shows the plan and <code>--yes</code> posts it.</p>`}
+    <p class="sub">${esc(b.says)}. To join matured outputs into one: <code>arena-install --rebond &lt;sat&gt;</code> on the node's machine.</p>
     <div class="row"><input id="wd-addr" placeholder="your ${esc(b.network || 'testnet4')} address" style="flex:1"><button id="wd" ${l && l.withdrawable ? '' : 'disabled'}>Withdraw the bond</button></div>
     <p class="sub" id="wd-msg"></p>`;
+  if ($('ab-plan')) $('ab-plan').onclick = async () => {
+    const add = $('ab-sats').value.trim();
+    if (!/^[0-9]+$/.test(add)) { $('ab-msg').textContent = 'name the sat to add, e.g. 32000'; return; }
+    $('ab-plan').disabled = true;
+    try {
+      const r = await post('/owner/add-bond', signed('add-bond', { sats: add, post: false }));
+      const p = r.plan;
+      const say = `Add ${sats(p.addSats)} sat: the bond becomes ${sats(p.totalSats)} sat (now ${sats(p.bondSats)} sat). Fees ${sats(p.fees.total)} sat. `
+        + `The added output is locked until block ${p.maturity} (about ${new Date(p.lock.estimatedMs).toUTCString()}) and counts after ${p.countsAfter} confirmations.`;
+      $('ab-msg').textContent = say;
+      if (!confirm(`${say}\n\nPost it now?`)) { $('ab-plan').disabled = false; return; }
+      const done = await post('/owner/add-bond', signed('add-bond', { sats: add, post: true }));
+      $('ab-msg').textContent = `Posted: the added output is ${done.bond.txid}:0. ${say}`;
+    } catch (e) { $('ab-msg').textContent = e.message; $('ab-plan').disabled = false; }
+  };
   $('wd').onclick = async () => {
     const address = $('wd-addr').value.trim();
     if (!address) { $('wd-msg').textContent = 'name the address the bond goes to'; return; }
@@ -372,6 +397,15 @@ async function bondPanel() {
     try { const r = await post('/owner/bond-withdraw', signed('bond-withdraw', { address, feeRate: 2 })); $('wd-msg').textContent = `Sent: ${r.txid} (${Number(r.value).toLocaleString('en-US')} sat, fee ${r.fee})`; }
     catch (e) { $('wd-msg').textContent = e.message; $('wd').disabled = false; }
   };
+}
+
+// THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much
+// to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM
+async function capacityPlea() {
+  let c = null;
+  try { c = await (await fetch(at('/capacity?node=me'), { cache: 'no-store' })).json(); } catch { c = null; }
+  const p = c && c.plea;
+  $('capacity-plea').innerHTML = p ? `<h2>Capacity</h2><div class="card"><p class="warn">${esc(p.says)}</p>${p.addSats ? '<p class="sub">Add to bond is in the Bond card below.</p>' : ''}</div>` : '';
 }
 
 async function standingPanel() {

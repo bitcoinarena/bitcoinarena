@@ -13,6 +13,7 @@ import { bondOutputKey, bondInternalKey, recoveryLeaf, tapLeafHash, controlBlock
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { nodeBondOf } from '../../arena-protocol/src/census.js';
 import { tweakPoint, combine } from './curve.js';
 
 /** Testnet4 and mainnet both aim at ten-minute blocks: the date is an estimate, the height is the rule. */
@@ -36,6 +37,18 @@ export function ownBondOf(entries, me) {
   if (!e || !e.advert || !e.txid) return null;
   return { txid: toHex(Uint8Array.from(e.txid).reverse()), vout: Number(e.vout), sats: String(e.bondSats), height: e.height ?? null,
     maturity: e.advert.bondMaturityHeight ?? null, template: e.advert.bondScriptTemplateVersion };
+}
+
+/**
+ * ALL THIS NODE'S BOND OUTPUTS and their sum (kanban #544: an added output beside the first counts with it): { sats, outputs: [as
+ * ownBondOf] } - the outputs of its key and of the operator its first entry names - or null.
+ */
+export function ownBondsOf(entries, me) {
+  const n = nodeBondOf(entries, me);
+  if (!n) return null;
+  const mine = (entries || []).filter((x) => x && x.pubkey && x.txid && x.advert && toHex(x.pubkey) === me && String(x.advert.operatorId || '') === n.operatorId);
+  return { sats: String(n.bondSats), outputs: mine.map((e) => ({ txid: toHex(Uint8Array.from(e.txid).reverse()), vout: Number(e.vout), sats: String(e.bondSats),
+    height: e.height ?? null, maturity: e.advert.bondMaturityHeight ?? null })) };
 }
 
 /** The lock, said plainly, at a tip: { maturity, blocksLeft, estimatedMs, withdrawable }. */

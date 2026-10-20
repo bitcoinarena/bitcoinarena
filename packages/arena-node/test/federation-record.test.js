@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { statusFor, buildFederationRecord, encodeFederationRecord, decodeFederationRecord, federationRecordId, joinSignedRecord,
   splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
-import { federationRecords } from '../src/federation-records.js';
+import { federationRecords, guardiansOf } from '../src/federation-records.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { readFileSync } from 'node:fs';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -494,4 +494,13 @@ test('a draining federation\'s successor, unknown to the held rounds\' census, g
   assert.equal(Number(drained.height), 156873, 'from the held round\'s census, as before');
   assert.ok(succ, 'the successor has a record');
   assert.deepEqual([succ.signers, Number(succ.height)], [4, 157080], 'signed by its 4 guardians at the chain\'s census (157,090 - 6, down to a multiple of 6)');
+});
+
+// ADD TO BOND (kanban #544): a guardian with two bond outputs is one guardian of the record, its bond their sum, its outpoint the lowest
+test('guardiansOf: a node with two bond outputs is one guardian, its bond their sum; two nodes stay two', () => {
+  const fid = new Uint8Array(32).fill(0x33);
+  const advert = (n) => ({ operatorId: `op-${n}`, guardianOf: [{ federationId: fid, guardianKey: Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]) }], guardianEndpoint: `wss://g${n}`, endpoint: `https://n${n}` });
+  const e = (n, txidByte, sats) => ({ pubkey: new Uint8Array(32).fill(n), txid: new Uint8Array(32).fill(txidByte), vout: 0, bondSats: sats, advert: advert(n) });
+  const rows = guardiansOf({ entries: [e(1, 0x90, 50000n), e(1, 0x10, 32000n), e(2, 0x50, 50000n), { pubkey: new Uint8Array(32).fill(3), txid: new Uint8Array(32).fill(0x60), vout: 0, bondSats: 90000n, advert: { operatorId: 'x', guardianOf: [] } }] }, fid);
+  assert.deepEqual(rows.map((r) => [toHex(r.nodePubkey).slice(0, 2), r.bondSats, toHex(r.bondTxid).slice(0, 2)]), [['01', 82000n, '10'], ['02', 50000n, '50']]);
 });

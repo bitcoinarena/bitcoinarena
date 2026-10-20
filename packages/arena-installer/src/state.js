@@ -53,6 +53,15 @@ export function nodeState(home) {
   };
 }
 
+/**
+ * THE NODE'S BOND OUTPUTS (kanban #544): `bonds` [first, added...] - a state file from before add-bond has only `bond`, read as
+ * [bond]. `bond` stays the first output (the one the advertisement updates name).
+ */
+export function bondsOf(s) {
+  if (s && Array.isArray(s.bonds) && s.bonds.length) return s.bonds;
+  return s && s.bond && s.bond.txid ? [s.bond] : [];
+}
+
 /** The node's guardian endpoint: its public address as a websocket, /guardian (the seat carries it to its fedimintd). */
 export const guardianUrlOf = (url) => (url ? `${url.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '')}/guardian` : null);
 
