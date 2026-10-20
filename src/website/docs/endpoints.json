@@ -9625,6 +9625,49 @@
  },
  {
   "method": "POST",
+  "path": "/owner/roles",
+  "params": "body JSON signed request, action \"add-bond\", args {sats, post}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 JSON {ok, plan{before{roles, custody}, after{roles, custody}, bond, feeSats, countsAfter}, update{txid}|null}; 400 {ok:false, why} (no bond, no change, an unknown role, the wallet too small, the mempool refuses); 401 not the owner; 501 no bond wallet named (ARENA_BOND_CLI), or an installed node",
+  "purpose": "Owner-signed ({action: 'roles', args: {roles, custody, post}}): changes what the node advertises - roles among game, verify, settlement, relay, and custody (guardian_capable) - by an advertisement update of its bond paid from the bond wallet. Without post, the plan (fee) after testmempoolaccept; with post: true both transactions are sent. The census reads the new roles 6 blocks later.",
+  "audience": "operator/monitoring",
+  "line": 4744,
+  "summary": "Change the node's advertised roles",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"liquidity/new-address\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, address:\"tb1p…\"}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no liquidity provider service."
+   },
+   {
+    "status": "502",
+    "contentType": "application/json",
+    "description": "The provider service did not answer or failed."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
   "path": "/owner/bond-wallet/address",
   "params": "body JSON signed request, action \"bond-wallet/address\"",
   "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
