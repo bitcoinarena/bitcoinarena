@@ -504,3 +504,19 @@ test('guardiansOf: a node with two bond outputs is one guardian, its bond their 
   const rows = guardiansOf({ entries: [e(1, 0x90, 50000n), e(1, 0x10, 32000n), e(2, 0x50, 50000n), { pubkey: new Uint8Array(32).fill(3), txid: new Uint8Array(32).fill(0x60), vout: 0, bondSats: 90000n, advert: { operatorId: 'x', guardianOf: [] } }] }, fid);
   assert.deepEqual(rows.map((r) => [toHex(r.nodePubkey).slice(0, 2), r.bondSats, toHex(r.bondTxid).slice(0, 2)]), [['01', 82000n, '10'], ['02', 50000n, '50']]);
 });
+
+// kanban #549 (measured 2026-10-20 07:37Z): right after a restart a guardian seat refused its gatherer's named height - "this seat holds
+// no round with census height 157086" - having only started reading that census; now it reads it before it answers
+test('a guardian seat asked at a chain census height it has not read yet reads it and signs on the first ask (kanban #549)', async () => {
+  const SUCC = new Uint8Array(32).fill(0x4e);
+  const n = { secret: new Uint8Array(32).fill(71) }; n.pubkey = schnorr.getPublicKey(n.secret);
+  const entry = { pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xe1), vout: 0, bondSats: 50000n,
+    advert: { operatorId: 'op549b', endpoint: 'wss://n549b.example', guardianEndpoint: 'wss://g549b.example', guardianOf: [{ federationId: SUCC, guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x91)]) }] } };
+  let reads = 0;
+  const seat = federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => null, roster: { censusFor: () => ({ ok: false }) },
+    inviteFor: (fid) => `fed:${fid}`, networkId: NET, censusAt: async () => { reads++; await new Promise((r) => setTimeout(r, 20)); return [entry]; }, chainTip: async () => 157092 });
+  const first = await seat.mySignature(toHex(SUCC), 157086);
+  assert.deepEqual([first.ok, first.height], [true, 157086], first.why);
+  await seat.mySignature(toHex(SUCC), 157086);
+  assert.equal(reads, 1, 'read once, kept');
+});
