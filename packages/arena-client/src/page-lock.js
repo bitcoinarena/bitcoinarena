@@ -291,6 +291,7 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
   if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
   if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
   const round = { federationId };
+  if (!ancestor) rememberInvite(storage, federationId, invite);
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one
   const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
@@ -739,6 +740,7 @@ export async function walletDepositOffer({ federationId, invite, seed, LockClien
   const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
   offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
+  offer.client = client;   // the page keeps it with its other wallets: summed, and its pending deposits waited on (2026-10-20)
   return offer;
 }
 export const DEPOSIT_MARGIN_PPM = 6000n;
@@ -2435,9 +2437,22 @@ export async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fr
 export function ledgerFederations(storage) {
   const out = [];
   for (const k of storageKeys(storage)) {
-    if (!k.startsWith(LEDGER_PREFIX) || k.startsWith(LEDGER_READ_PREFIX)) continue;
-    const f = k.slice(LEDGER_PREFIX.length);
-    if (/^[0-9a-f]{64}$/.test(f)) out.push(f);
+    // AND EVERY FEDERATION A DEPOSIT IS STILL PENDING IN (the owner 2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not reflected" -
+    // the gateway funded the incoming contract, but a deposit gets its ledger row only once claimed, and a page reloaded or
+    // suspended before the claim opened wallets only where the ledger had rows: the pending deposit was never resumed, claimed or
+    // summed). A federation this browser made a deposit invoice in is one it holds a wallet in.
+    const f = k.startsWith(PENDING_PREFIX) ? k.slice(PENDING_PREFIX.length)
+      : k.startsWith(LEDGER_PREFIX) && !k.startsWith(LEDGER_READ_PREFIX) ? k.slice(LEDGER_PREFIX.length) : null;
+    if (f && /^[0-9a-f]{64}$/.test(f) && !out.includes(f)) out.push(f);
   }
   return out;
+}
+// THE INVITE EACH WALLET WAS OPENED WITH (arena.federation.invite.<fed>): a held federation's wallet opens from it when no verified
+// status names an invite (a CRITICAL or not-yet-listed federation), so its funds are still read and summed
+const INVITE_PREFIX = 'arena.federation.invite.';
+export function rememberedInvite(storage, federationId) {
+  try { return (storage && storage.getItem(INVITE_PREFIX + fedHexOf(federationId))) || null; } catch { return null; }
+}
+function rememberInvite(storage, federationId, invite) {
+  try { if (storage && fedHexOf(federationId) && invite) storage.setItem(INVITE_PREFIX + fedHexOf(federationId), String(invite)); } catch { /* not kept */ }
 }

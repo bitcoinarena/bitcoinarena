@@ -48,6 +48,7 @@
   <div class="card"><h2>Gateway seats</h2><div class="scroll"><table id="gateways"></table></div></div>
   <div class="card"><h2>Pending gateways</h2><div class="scroll"><table id="gw-pending"></table></div></div>
   <div class="card"><h2>What the network waits for</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll"><table id="pending"></table></div></div>
+  <div class="card"><h2>Transactions on their way <span id="txs-count" class="muted"></span></h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">every grid publication, peg-in, bond and advertisement update the nodes see in their mempool or last 12 blocks, with the unconfirmed or same-block parents they spent - the same list the mining view tracks (GET /pending, txs)</div><div class="scroll"><table id="pending-txs"></table></div></div>
   <div class="card"><h2>Liquidity providers</h2><div class="scroll"><table id="liquidity"></table></div></div>
   <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll"><table id="lnd"></table></div></div>
   <div class="card"><h2>Games and markets</h2><div class="scroll"><table id="games"></table></div></div>
@@ -282,6 +283,20 @@
     const bar = (have, need) => { const pc = need ? Math.min(100, Math.round((100 * have) / need)) : 0;
       return `<div style="width:110px;height:6px;background:var(--line);border-radius:3px"><div style="width:${pc}%;height:6px;border-radius:3px;background:${pc >= 100 ? 'var(--ok)' : 'var(--warn)'}"></div></div>`; };
     const rows = [];
+    // THE CHAIN SPLIT (the owner 2026-10-20, "Mining view mismatch, what is true"): each node names its tip and the rival tips of the same
+    // (or more) work it knows; nodes on different tips, or a rival of the same work, mean the next block decides - and everything below
+    // is read on each node's own branch
+    { const tips = new Map(), rivals = new Map();
+      for (const a of answers) if (a.chain) { tips.set(a.chain.hash, a.chain.height); for (const r of a.chain.rivals || []) if (r.work !== 'less') rivals.set(r.hash, r); }
+      for (const h of tips.keys()) rivals.delete(h);
+      if (tips.size > 1 || rivals.size) {
+        const fork = Math.min(...[...rivals.values()].map((r) => r.forkHeight + 1), Infinity);
+        const on = [...tips].map(([h, n]) => `${short(h, 10)} (${sat(n)})`).join(', ');
+        const other = [...rivals.values()].map((r) => `${short(r.hash, 10)} (${sat(r.height)}, ${r.work === 'same' ? 'the same work' : 'more work, not taken'})`).join(', ');
+        rows.push(`<tr><td>${dot('warn')}<b>the chain is split${Number.isFinite(fork) ? ` from block ${sat(fork)}` : ''}</b></td><td class="mono">-</td><td>-</td><td></td>
+          <td class="wrap">the nodes follow ${on}${other ? `; another branch: ${other}` : ''}. The next block decides which one stays - until then, confirmations below count on the nodes' own branch, and a public explorer may show the other</td></tr>`);
+      }
+    }
     for (const g of grids.values()) {
       const pub = g.publication, b = g.beacon;
       const what = `${esc(g.game)} grid: ${g.slots} rounds, entry from ${new Date(Number(g.firstWindowMs)).toISOString().slice(5, 16).replace('T', ' ')} UTC`;
@@ -294,13 +309,32 @@
       const left = p.finality && p.confirmations != null ? Math.max(0, p.finality + 1 - p.confirmations) : null;
       const waits = !p.onChain ? 'not found unspent on this node\'s chain (spent: counted, or not confirmed yet)'
         : left ? `${p.confirmations} of ${p.finality} confirmations: counts as the gateway's e-cash in about ${left >= 6 ? Math.round(left / 6) + ' h' : left * 10 + ' min'}` : 'final: counted';
-      rows.push(`<tr><td>${dot(left === 0 ? 'ok' : 'warn')}peg-in ${sat(p.sats)} sat to ${short(p.node, 10)}'s gateway in ${fedName(p.federation)}</td><td class="mono">${short(p.txid, 10)}</td><td>${sat(p.confirmations)}</td><td>${bar(p.confirmations || 0, p.finality || 0)}</td><td class="wrap">${waits}</td></tr>`);
+      rows.push(`<tr><td>${dot(left === 0 ? 'ok' : 'warn')}peg-in ${sat(p.sats)} sat to ${short(p.node, 10)}'s gateway in ${fedName(p.federation)}</td><td class="mono">${short(p.txid, 10)}:${esc(p.vout)}</td><td>${sat(p.confirmations)}</td><td>${bar(p.confirmations || 0, p.finality || 0)}</td><td class="wrap">${waits}</td></tr>`);
     }
     for (const x of ads.values()) {
       const left = Math.max(0, Number(x.takenByTip) - Number(x.tip));
       rows.push(`<tr><td>${dot('warn')}advertisement of ${short(x.node, 10)} <span class="muted">${esc(String(x.endpoint).replace(/^wss?:\/\//, ''))}</span></td><td class="mono">-</td><td>-</td><td></td>
         <td class="wrap">${esc(x.changes.join('; '))} - the census takes it by block ${sat(x.takenByTip)} (${left ? `in ${left} block${left === 1 ? '' : 's'}` : 'now'})</td></tr>`);
     }
+    // THE ONE TRANSACTION LIST (the owner 2026-10-20: "Make sure that both show the same number of transactions at all times"): every
+    // node's txs, one row per transaction, its furthest confirmation kept, and how many of the answering nodes name it
+    { const all = new Map();
+      for (const a of answers) for (const t of a.txs || []) {
+        const was = all.get(t.txid);
+        if (!was) all.set(t.txid, { ...t, seenBy: 1 });
+        else { was.seenBy++; if ((t.confirmations || 0) > (was.confirmations || 0)) Object.assign(was, { ...t, seenBy: was.seenBy }); }
+      }
+      const label = (t) => t.kind === 'advert update' ? `advertisement update of ${short(t.node, 10)}${t.protocols ? ` (protocols to ${t.protocols})` : ''}`
+        : t.kind === 'bond' ? `bond of ${short(t.node, 10)}${t.maturity ? ` (matures ${sat(t.maturity)})` : ''}`
+        : t.kind === 'grid publication' ? `${esc(t.game)} grid publication, ${t.slots} rounds`
+        : t.kind === 'peg-in' ? `peg-in ${(t.outputs || []).map((o) => `:${esc(o.vout)} ${sat(o.sats)} sat to ${short(o.node, 8)} in ${fedName(o.federation)}`).join('; ')}`
+        : t.kind === 'funding' ? `funding of ${short(t.parentOf, 10)}` : esc(t.kind);
+      const list = [...all.values()].sort((x, y) => (x.confirmations || 0) - (y.confirmations || 0) || String(x.kind).localeCompare(String(y.kind)));
+      $('txs-count').textContent = `(${list.length})`;
+      $('pending-txs').innerHTML = '<tr><th>Tx</th><th>What</th><th>Confirmations</th><th>Nodes</th></tr>'
+        + (list.map((t) => `<tr><td class="mono">${short(t.txid, 10)}</td><td class="wrap">${label(t)}</td>
+          <td>${t.inMempool ? 'in the mempool' : `${sat(t.confirmations)}${t.height ? ` (block ${sat(t.height)})` : ''}`}</td><td>${t.seenBy} of ${answers.length}</td></tr>`).join('')
+          || `<tr><td colspan="4" class="muted">${answers.length ? 'no transaction on its way' : 'no node answers GET /pending yet'}</td></tr>`); }
     $('pending').innerHTML = '<tr><th>What</th><th>Tx</th><th>Confirmations</th><th></th><th>Waits for</th></tr>'
       + (rows.join('') || `<tr><td colspan="5" class="muted">${answers.length ? 'nothing pending on ' + answers.length + ' node(s)' : 'no node answers GET /pending yet'}</td></tr>`);
   }
