@@ -208,7 +208,7 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   4. bond;
   5. a ticket on the epoch's beacon.
 
-  An incumbent stays unless it becomes ineligible or a challenger routes 25 % more. An empty seat is stated.
+  The seats rotate every epoch (144 blocks, 2026-10-20): last epoch's holders step back for the eligible operators that did not hold a seat; with nobody else eligible they keep it. A draining federation has one seat, and a federation is never without a gateway (the best one that can serve holds a seat below the minimums, unpaid). An empty seat is stated.
 - **What it earns, from the custody fee** (protocol 2026.0.15, so the 4 % node fee of protocol 11 on): the guardian pool (4/3 % of every
   round's volume) splits **2/3 to the guardians, 1/3 to the two gateway seats**. With ten guardians that is about **0.222 %** of volume
   per gateway seat against 0.089 % per guardian (a seat holder is a guardian too: 0.311 % in all), plus the gateway's own Lightning

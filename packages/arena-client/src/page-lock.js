@@ -326,6 +326,7 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
     (recover ? LockClient.recover : LockClient.join).call(LockClient, invite, toHex(round.federationId), toHex(secret), store),
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
+  joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});
   if (byStore) {
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
@@ -464,6 +465,21 @@ export function gatewayOrder(named = [], listed = []) {
   const out = []; const seen = new Set();
   for (const u of [...(named || []), ...(listed || [])]) { const k = gwKey(u); if (!k || seen.has(k)) continue; seen.add(k); out.push(String(u).trim()); }
   return out;
+}
+// THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559, the owner 2026-10-20: "Fix all of it"):
+// the page names a lookup - async (federation hex) -> the seated gateways' URLs, as the federation's guardians rank them - and every
+// deposit, and both legs of a swap, try those before the lobby's named gateway and the federation's list
+let seatedLookup = null;
+const federationOfClient = new WeakMap();
+/** The page's lookup of a federation's seated gateways (null: none). */
+export function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
+/** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
+export function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
+/** The seated gateways of `client`'s federation, [] when the page names no lookup or it cannot say. */
+export async function seatedGatewaysOf(client) {
+  const f = client && typeof client === 'object' ? federationOfClient.get(client) : null;
+  if (!f || !seatedLookup) return [];
+  try { const l = await Promise.race([seatedLookup(f), new Promise((ok) => setTimeout(() => ok([]), 3000))]); return Array.isArray(l) ? l.filter(Boolean).map(String) : []; } catch { return []; }
 }
 const listedOf = new WeakMap();
 /** The gateways the federation lists, as the lock client reads them (asked once per wallet); none when it cannot say. */
@@ -624,7 +640,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
     const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
     // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the lobby's first, then the federation's
-    const order = gatewayOrder([depositGateway('', gateways)].filter(Boolean), await federationGateways(client));
+    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway('', gateways)].filter(Boolean), await federationGateways(client));
     const got = await invoiceThroughGateways(client, amount, order);
     let settled = false;
     const shown = (x) => {
@@ -874,7 +890,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
     // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT: the named first, then the federation's list
-    const order = gatewayOrder([depositGateway(plan.gateway, gateways)].filter(Boolean), await federationGateways(client));
+    const order = gatewayOrder([...await seatedGatewaysOf(client), depositGateway(plan.gateway, gateways)].filter(Boolean), await federationGateways(client));
     const invoice = await invoiceThroughGateways(client, plan.invoice_msat, order);
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat), gateway: invoice.gateway, tried: invoice.tried };
     deposits.push(d);
@@ -2374,7 +2390,8 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
   // outbound, "InsufficientBalance"; once receiving, gw-b's node then finding "NoRoute" - and every swap ended Refunded):
   // receive through one listed gateway, pay through another, and a payment that ends Refunded - the money back - tries the next
   // pair; any other end stops, as money may be on its way.
-  const pairs = swapGatewayPairs(gateways, await federationGateways(to), await federationGateways(from));
+  // each leg's own federation's seated gateways first (§23A.9), then its list
+  const pairs = swapGatewayPairs(gateways, [...await seatedGatewaysOf(to), ...await federationGateways(to)], [...await seatedGatewaysOf(from), ...await federationGateways(from)]);
   const tried = [];
   let made = null, said = null;
   for (const [recv, pay] of pairs) {
