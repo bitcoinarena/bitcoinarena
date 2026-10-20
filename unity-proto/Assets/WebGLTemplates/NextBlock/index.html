@@ -6573,9 +6573,14 @@
         };
         // AND THE OTHER KEPT PHRASES' WALLETS IN THIS FEDERATION MERGED INTO THIS ONE (combineIn), once per page, by themselves (the owner 18:5xZ:
         // "The wallet must be automatically be merged and be shown"): only notes already there move - a deposit still to be claimed is the resume's
-        const mergeHere = () => { const inv = (window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(k) && window.ARENA_FED_LOADS.get(k).invite)
-          || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), k) : null);
-          if (inv && window.ARENA_COMBINE_IN) window.ARENA_COMBINE_IN(client, k, inv).catch((e) => console.log('[arena] wallets not combined in ' + k.slice(0, 8) + ': ' + (e && e.message ? e.message : e))); };
+        // (measured in Chrome on UI 263, 18:53Z: a wallet kept right after a reload came before the page had set up ARENA_COMBINE_IN further down,
+        // and the merge was skipped without a word - it now waits for it, up to two minutes, and says when it cannot merge)
+        const mergeHere = (tries = 0) => {
+          if (!window.ARENA_COMBINE_IN) { if (tries < 60) { const t = setTimeout(() => mergeHere(tries + 1), 2000); if (t && t.unref) t.unref(); } else console.log('[arena] wallets not combined in ' + k.slice(0, 8) + ': the page set up no merge'); return; }
+          const inv = (window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(k) && window.ARENA_FED_LOADS.get(k).invite)
+            || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), k) : null);
+          if (!inv) { console.log('[arena] wallets not combined in ' + k.slice(0, 8) + ': no invite for it'); return; }
+          window.ARENA_COMBINE_IN(client, k, inv).catch((e) => console.log('[arena] wallets not combined in ' + k.slice(0, 8) + ': ' + (e && e.message ? e.message : e))); };
         ARENACLIENT.resumeDeposits({ client, storage: vault(), federationId: ARENACLIENT.fromHex(k), others,
           onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat' + (d.from ? ' (in wallet ' + d.from.label + ')' : ''));
             Promise.resolve(d.from ? sweep(d.from) : null).catch((e) => console.log('[arena] the claimed deposit stays in wallet ' + d.from.label + ': ' + (e && e.message ? e.message : e)))
