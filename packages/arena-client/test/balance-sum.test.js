@@ -4,6 +4,7 @@
 // und zu wechseln, immer alle Balances summiert und ersichtlich" - the page's ARENA_SUM_BALANCES, run on its own source
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor } from '../src/balance-view.js';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
@@ -62,16 +63,17 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
     set textContent(v) { this._t = v; this.children = []; }, get textContent() { return this._t + this.children.map((c) => c.textContent).join(' | '); } }; return e; };
   const split = mk('div'); split.style.display = 'none';
   const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#arena-lobby-balance': mk('div'), '#arena-set-wallet .bal-grid': mk('div') };
-  const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
+  const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, createTextNode: (t) => ({ textContent: t }), querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
   const window = { ARENA_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
     ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };
-  new Function('window', 'document', src2)(window, document);
+  // the popup says each federation's health in words (kanban #545, balance-view.js)
+  new Function('window', 'document', 'BLWPCLIENT', src2)(window, document, { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor });
   bars['#arena-wallet-bar .wb-bal'].listeners.click({ stopPropagation: () => {} });
   const text = split.textContent;
   console.log('  SPLIT:', text);
   assert.equal(split.style.display, '');
-  assert.match(text, /Federation bbbbbbbb… \| DRAINING · load 12 % \| 2,250 sat/);
-  assert.match(text, /Federation aaaaaaaa… \| OPEN · load 43 % \| 1,500 sat/);
+  assert.match(text, /Federation bbbbbbbb…[ |]*Draining · load 12 %[ |]*A guardian left\. Your funds move to a healthy federation by themselves\.[ |]*2,250 sat/);
+  assert.match(text, /Federation aaaaaaaa…[ |]*Healthy · load 43 %[ |]*1,500 sat/);
   assert.match(text, /Total \(2 federations\) \| 3,750 sat/);
   assert.ok(text.indexOf('bbbbbbbb') < text.indexOf('aaaaaaaa'), 'the larger first');
   for (const sel of Object.keys(bars)) assert.equal(typeof bars[sel].listeners.click, 'function', sel + ' opens it');

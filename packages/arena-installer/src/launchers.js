@@ -169,6 +169,11 @@ export function writeCommand({ home, release, node, platform = process.platform,
  * arenanode, not a release, so an update moves everything else and never stops it mid-way; it ends with 75 after an update and comes
  * back from the new release (systemd Restart=on-failure, launchd KeepAlive, the Windows launcher's loop). Answers installProgram's answer.
  */
+/** A Windows updater launcher written before it CALLed its batch file (2026-10-19): its exit-75 loop never ran - written again. */
+export function updaterLauncherStale(file, platform = process.platform) {
+  if (platform !== 'win32') return false;
+  try { const t = readFileSync(file, 'utf8'); return /\.cmd" "auto-update"/.test(t) && !/^call "/m.test(t); } catch { return false; }
+}
 export function installUpdater({ home, installProgram, platform = process.platform, env = process.env, sh = undefined, boot = true }) {
   const cmd = join(home, 'bin', platform === 'win32' ? `${commandName()}.cmd` : commandName());
   return installProgram({ id: 'updater', description: 'The Arena node\'s auto update', args: [cmd, 'auto-update'], home, boot, platform, env, againOn: 75, ...(sh ? { sh } : {}) });

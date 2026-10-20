@@ -18,7 +18,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
   let incumbents = [];
-  const baseOf = (u) => String(u).replace(/\/+$/, '');
+  // a seat's advert names its endpoint as wss://... (the guardian socket's address); its HTTP doors are the same address over https
+  // (measured 2026-10-19 21:1xZ: fetch refused every wss:// claim URL - "unknown scheme" - so no claim stood and no gateway was seated)
+  const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
   async function probe() {
     const fid = await federationId();
     if (!fid) return { ok: false, why: 'this node guards no federation' };
@@ -83,7 +85,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (at < epoch) incumbents = s.seated;
     return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...s,
       gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
-        inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
+        inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
   }
   return { probe, view };
 }
