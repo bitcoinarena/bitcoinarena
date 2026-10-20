@@ -11,7 +11,8 @@
 //       [--peg-in <sat> | --gateway-cli <path> --gateway-addr <url> --gateway-password <file>]
 //       [--peg-in-pending <txid>:<vout>,... --bitcoin-rpc <url> --bitcoin-cookie <file>]
 //       [--peg-in-outpoints <txid>:<vout>,...]   the gateway's peg-ins into this federation, signed in the claim: the guardians count
-//                                                 each that is one of the federation's own coins as its proved peg-in (§23A.3a)
+//                                                 each that is one of the federation's own coins as its proved peg-in (§23A.3a);
+//                                                 without it, with --gateway-cli, the gateway's own confirmed deposits (payment-log)
 //
 // The peg-in is the gateway's own e-cash in the federation (what it pegged in), read from its gatewayd (`gateway-cli info`) when
 // --gateway-cli is named - measured 22:0xZ: gateway A held 248,999 sat in federation A while the hand-signed claim said 0.
@@ -63,6 +64,18 @@ if (arg('gateway-cli')) {
   if (!f) { console.error('the gateway does not serve that federation'); process.exit(1); }
   pegInSats = Math.floor(Number(f.balance_msat || 0) / 1000);
 }
+// ITS PEG-IN OUTPOINTS (kanban #559/#543, §23A.3a "What counts as the peg-in"): named with --peg-in-outpoints, else read from the
+// gateway's own client - each deposit it requested into this federation that confirmed (`payment-log`, deposit-confirmed); the
+// guardians count those that are still the federation's coins
+let pegInOutpoints = arg('peg-in-outpoints') ? String(arg('peg-in-outpoints')).split(',').map((x) => x.trim()).filter(Boolean) : [];
+if (!pegInOutpoints.length && arg('gateway-cli')) {
+  try {
+    const log = JSON.parse(execFileSync(arg('gateway-cli'), ['--address', need('gateway-addr'), '--rpcpassword', readFileSync(need('gateway-password'), 'utf8').trim(), 'payment-log',
+      '--federation-id', federationId, '--event-kinds', 'deposit-confirmed', '--pagination-size', '200'], { encoding: 'utf8', timeout: 30000 }));
+    pegInOutpoints = [...new Set(log.filter((e) => e && e.payload && /^[0-9a-f]{64}$/.test(String(e.payload.txid)) && Number.isInteger(e.payload.out_idx))
+      .map((e) => `${String(e.payload.txid).toLowerCase()}:${e.payload.out_idx}`))];
+  } catch { pegInOutpoints = []; }   // a gatewayd without the log: the claim names none (nothing proved)
+}
 const pegIns = [];
 if (arg('peg-in-pending')) {
   const cookie = readFileSync(need('bitcoin-cookie'), 'utf8').trim();
@@ -93,7 +106,7 @@ const outsideIn = sum(active.filter((c) => !inside.has(c.remote_pubkey)), 'remot
 const claim = signGatewayClaim({ node, federationId, gatewayUrl, lightningPubkey: info.identity_pubkey, capacitySats: sum(channels, 'capacity'),
   pegInSats, atMs: Date.now(), inboundSats: sum(active, 'remote_balance'), outboundSats: sum(active, 'local_balance'),
   lightningAddr: arg('lightning-addr', ''), outsideInboundSats: outsideIn,
-  ...(arg('peg-in-outpoints') ? { pegInOutpoints: String(arg('peg-in-outpoints')).split(',').map((x) => x.trim()).filter(Boolean) } : {}) }, (h) => schnorr.sign(h, secret));
+  ...(pegInOutpoints.length ? { pegInOutpoints } : {}) }, (h) => schnorr.sign(h, secret));
 const ok = checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k));
 if (!ok.ok) { console.error(`the claim does not check: ${ok.why}`); process.exit(1); }
 writeFileSync(`${out}.tmp`, JSON.stringify(pegIns.length ? { ...claim, pending: { pegIns } } : claim, null, 2) + '\n');
