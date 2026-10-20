@@ -5,7 +5,7 @@
 // followed by the next gateway's - the first still payable - and the deposit offer doing it end to end.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gatewayOrder, federationGateways, invoiceThroughGateways, followWithFailover, depositOffer } from '../src/page-lock.js';
+import { gatewayOrder, federationGateways, invoiceThroughGateways, followWithFailover, depositOffer, useSeatedGateways, noteClientFederation, seatedGatewaysOf, openPlayerWallet } from '../src/page-lock.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 /** A lock client whose gateways behave as `plan` says: 'hang' (never answers), 'throw', or { end, afterMs } for the invoice. */
@@ -80,4 +80,29 @@ test('the deposit offer: the lobby\'s gateway refuses, the federation\'s next ma
   assert.equal((await offer.claimed).gateway, 'https://fed-1');
   assert.deepEqual(c.asked, ['https://lobby', 'https://fed-1']);
   assert.deepEqual(shown, ['https://fed-1']);
+});
+
+// kanban #559 (spec §23A.9: "clients use those two first"): the federation's seated gateways come before the lobby's and the list
+test('the seated gateways first: a deposit asks its federation\'s seated gateways before the lobby\'s and the federation\'s list', async () => {
+  const F = 'ab'.repeat(32), G = 'cd'.repeat(32);
+  const asked = [];
+  useSeatedGateways(async (fid) => { asked.push(fid); return fid === F ? ['https://seat-1', 'https://seat-2'] : []; });
+  try {
+    const c = fakeClient({ 'https://seat-1': 'throw', 'https://seat-2': { end: 'Claimed', afterMs: 10 }, 'https://lobby': { end: 'Claimed' } }, ['https://fed-1', 'https://seat-2']);
+    assert.deepEqual(await seatedGatewaysOf(c), [], 'a client whose federation is not known asks no seats');
+    noteClientFederation(c, F.toUpperCase());
+    assert.deepEqual(await seatedGatewaysOf(c), ['https://seat-1', 'https://seat-2']);
+    const d = await depositOffer({ client: c, stakeMsat: 100000n, gateways: ['https://lobby'] }).invoice(100000n);
+    assert.equal(d.gateway, 'https://seat-2');
+    assert.deepEqual(c.asked, ['https://seat-1', 'https://seat-2'], 'the seated two before the lobby\'s');
+    // openPlayerWallet notes the federation of the client it opens
+    const opened = fakeClient({});
+    const LockClient = { join: async () => opened };
+    await openPlayerWallet({ federationId: Uint8Array.from(Buffer.from(G, 'hex')), invite: 'fed1x', seed: new Uint8Array(32).fill(3), LockClient, storage: null });
+    await seatedGatewaysOf(opened);
+    assert.equal(asked[asked.length - 1], G);
+    // a lookup that hangs costs 3 s at most and names none
+    useSeatedGateways(() => new Promise(() => {}));
+    const t0 = Date.now(); assert.deepEqual(await seatedGatewaysOf(c), []); assert.ok(Date.now() - t0 < 4000);
+  } finally { useSeatedGateways(null); }
 });

@@ -10,8 +10,10 @@
 //             at least bond_min_guardian
 //   ranked    routed volume (floored to 1,000 sat), then two-way capacity - the smaller of inbound and outbound (floored to 100,000 sat), availability (whole percent), bond, then the
 //             ticket H('BLWP/v1/GATEWAY' || beacon || node key), lowest first
-//   seated    the top `seats` operators (one seat per operator); an incumbent keeps its seat unless it is ineligible or a challenger it
-//             would yield to routed at least 25 % more
+//   seated    `seats` operators (one seat per operator), ROTATING EVERY EPOCH (the owner 2026-10-20: "rotate the guardians daily every 144
+//             blocks among those that want to be gateways in the federation"): the eligible operators that did not hold a seat in the
+//             epoch before take the seats first, in rank order; last epoch's holders fill what is left, in rank order. With no other
+//             eligible operator a holder keeps its seat.
 //   at least one  a federation is never without a gateway (the owner 2026-10-20: "There needs to be at least 1 gateway"): when no operator
 //             is eligible, the best candidate that can still serve - a seated guardian, its gateway registered, holding e-cash in the
 //             federation - takes one seat, ranked as above and named in `belowMinimums`
@@ -22,8 +24,6 @@ import { tagAt, TAG_PAIRS } from './tag-switch.js';
 export const GATEWAY_SEATS = 2;
 export const GATEWAY_EPOCH_BLOCKS = 144;
 export const GATEWAY_TICKET_TAG = TAG_PAIRS.gatewayTicket[0];   // the tag before the switch (tag-switch.js, kanban #525)
-/** A challenger unseats an incumbent only with this much more routed volume (25 %). */
-export const UNSEAT_MARGIN_PCT = 25n;
 /** The minimums per network (spec §23A.9 table). */
 export const GATEWAY_MINIMUMS = Object.freeze({
 // inbound and outbound each half of what the single capacity minimum was (2026-10-18: a gateway with outbound only takes no deposit)
@@ -54,7 +54,7 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
 
 /**
  * THE EPOCH'S GATEWAY SEATS. `candidates` [{ node (32-byte key), operatorId, seatedGuardian, registered, volumeSats, inboundSats, outboundSats, pegInSats,
- * availabilityPct, bondSats }]; `beacon` the epoch's first block hash (32 bytes); `incumbents` node keys hex seated last epoch;
+ * availabilityPct, bondSats }]; `beacon` the epoch's first block hash (32 bytes); `incumbents` node keys hex seated last epoch (they step back);
  * `network`; `bondMinGuardian`. Answers { seated: [node hex], ranked: [{ node, ... }], ineligible: [{ node, why }], waiting: [{ node, why }],
  * belowMinimums: [node hex], empty, why }.
  */
@@ -85,21 +85,17 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
     else waiting.push({ node: c.nodeHex, why: `the same operator as ${byOp.get(op).nodeHex.slice(0, 10)}, whose node stands for it (one seat per operator)` });
   }
   const ranked = [...byOp.values()];
-  // INCUMBENTS STAY unless ineligible or out-routed by 25 %: the seats are the top `seats`, then an unseated incumbent takes back the
-  // place of the lowest newcomer that did not route 25 % more than it
-  let seated = ranked.slice(0, seats);
-  const kept = new Set((incumbents || []).map((k) => String(k).toLowerCase()));
-  for (const inc of ranked.filter((c) => kept.has(c.nodeHex) && !seated.includes(c))) {
-    const newcomers = seated.filter((c) => !kept.has(c.nodeHex));
-    const weakest = newcomers[newcomers.length - 1];
-    if (weakest && weakest.volume * 100n < inc.volume * (100n + UNSEAT_MARGIN_PCT)) seated = seated.map((c) => (c === weakest ? inc : c)).sort(cmp);
-  }
+  // THE ROTATION: last epoch's holders (`incumbents`, node keys; their operators) step back - the others first, then the holders
+  const held = new Set((incumbents || []).map((k) => String(k).toLowerCase()));
+  const heldOps = new Set(candidates.filter((c) => held.has(toHex(c.node))).map((c) => String(c.operatorId || toHex(c.node))));
+  const wasHeld = (c) => held.has(c.nodeHex) || heldOps.has(String(c.operatorId || c.nodeHex));
+  let seated = [...ranked.filter((c) => !wasHeld(c)), ...ranked.filter(wasHeld)].slice(0, seats).sort(cmp);
   // AT LEAST ONE: no eligible operator, so the best one that can still serve holds a seat until one clears the minimums
   const belowMinimums = [];
   if (!seated.length && seats >= 1 && serving.length) { const best = serving.sort(cmp)[0]; seated = [best]; belowMinimums.push(best.nodeHex); }
   const out = seated.map((c) => c.nodeHex);
   // ELIGIBLE AND WAITING (kanban #552: the page lists what each gateway still waits for): behind its operator's better node, or ranked below the seats
-  for (const c of ranked) if (!out.includes(c.nodeHex)) waiting.push({ node: c.nodeHex, why: 'eligible, ranked below the seated gateways' });
+  for (const c of ranked) if (!out.includes(c.nodeHex)) waiting.push({ node: c.nodeHex, why: wasHeld(c) ? 'held a seat last epoch: steps back while others take their turn' : 'eligible, ranked below the seated gateways' });
   return { seated: out, empty: Math.max(0, seats - out.length), belowMinimums, waiting,
     ranked: ranked.map(({ nodeHex, volume, capacity, availability, bond }) => ({ node: nodeHex, volume, capacity, availability, bond })), ineligible,
     why: `${out.length} of ${seats} gateway seats filled from ${ranked.length} eligible operator${ranked.length === 1 ? '' : 's'}${ineligible.length ? `, ${ineligible.length} not eligible` : ''}`

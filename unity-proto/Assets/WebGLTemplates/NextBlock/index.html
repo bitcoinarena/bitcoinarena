@@ -6702,6 +6702,30 @@
         })().catch((e) => { console.log('[arena] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.ARENA_WALLET_EARLY = null; });
       };
       window.ARENA_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
+      // THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559): a deposit into a federation, and
+      // each leg of a swap, tries the gateways that federation's guardians seated before the named and listed ones. Asked of the seats
+      // (GET /gateway-seats?federation=, answered only by a seat that guards it), kept 10 minutes per federation
+      if (BLWPCLIENT.useSeatedGateways) {
+        const seatBases = [...new Set([...((testnet && testnet.named && testnet.named.nodes) || []), ...((named && named.nodes) || [])]
+          .map((u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')).filter(Boolean))];
+        const seatedKept = new Map();
+        BLWPCLIENT.useSeatedGateways(async (fid) => {
+          const k = String(fid).toLowerCase(), was = seatedKept.get(k);
+          if (was && Date.now() - was.at < 600000) return was.urls;
+          for (const base of seatBases) {
+            try {
+              const r = await fetch(base + '/gateway-seats?federation=' + k, { signal: AbortSignal.timeout(2500) });
+              if (!r.ok) continue;
+              const v = await r.json();
+              if (!v || String(v.federationId || '').toLowerCase() !== k) continue;
+              const urls = (v.seated || []).map((n) => v.gateways && v.gateways[n] && v.gateways[n].url).filter(Boolean);
+              seatedKept.set(k, { at: Date.now(), urls });
+              return urls;
+            } catch (e) { /* the next seat */ }
+          }
+          return [];
+        });
+      }
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[arena] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
       if (!window.ARENA_LIQ_TIMER) { const liq = () => claimLiquidations().catch((e) => console.warn('[arena] liquidation claims: ' + (e && e.message ? e.message : e))); liq(); window.ARENA_LIQ_TIMER = setInterval(liq, 600000); }
