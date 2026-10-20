@@ -571,8 +571,10 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
   // the liquidity providers' weights (2026.0.16, §23A.10): `signerNodes.liquidityWeights` node hex -> sat, from the standing liquidity seating
   // and, from 2026.0.20 under capacity pressure, the guardians' weights (§23A.3a part 1): `signerNodes.guardianWeights` node hex -> min(bond, B*)^2
-  const weights = signerNodes.liquidityWeights instanceof Map || signerNodes.guardianWeights instanceof Map
-    ? { ...(signerNodes.liquidityWeights instanceof Map ? { liquidity: signerNodes.liquidityWeights } : {}), ...(signerNodes.guardianWeights instanceof Map ? { guardian: signerNodes.guardianWeights } : {}) } : null;
+  // and the gateways' weights under peg-in pressure (§23A.3a part 2): `signerNodes.gatewayWeights` node hex -> min(proved peg-in, P*)^2
+  const weights = signerNodes.liquidityWeights instanceof Map || signerNodes.guardianWeights instanceof Map || signerNodes.gatewayWeights instanceof Map
+    ? { ...(signerNodes.liquidityWeights instanceof Map ? { liquidity: signerNodes.liquidityWeights } : {}), ...(signerNodes.guardianWeights instanceof Map ? { guardian: signerNodes.guardianWeights } : {}),
+      ...(signerNodes.gatewayWeights instanceof Map ? { gateway: signerNodes.gatewayWeights } : {}) } : null;
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, weights, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'

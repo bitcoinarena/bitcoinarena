@@ -118,3 +118,18 @@ test('guardian weights: (min(bond, B*))^2 under PRESSURE or worse; the spec\'s 7
   assert.equal(guardianWeights({ ...base, reserveSats: 60_000n, bonds: at(1) }), null, 'load 0.4: CALM, the even split');
   assert.equal(guardianWeights({ ...base, bonds: at(1), band: 'CALM' }), null, 'a record that says CALM wins over the load');
 });
+
+// kanban #559/#543 (spec §23A.3a part 2): the gateways' weights under peg-in pressure
+test('gateway weights: (min(proved peg-in, P*))^2 under PRESSURE and peg-in pressure; the one at P* takes 80 %; none otherwise', async () => {
+  const { gatewayWeights } = await import('../src/capacity.js');
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
+  // load 0.8: PRESSURE; headroom 200,000 -> P* = max(50,000, ceil(200,000 / 8)) = 50,000
+  const base = { reserveSats: 800_000n, exposureCapSats: 1_000_000n, pegInMinSats: 50_000n };
+  const w = gatewayWeights({ ...base, pegIns: [{ node: A, pegInSats: 50_000n }, { node: B, pegInSats: 25_000n }] });
+  const share = (n) => Number((w.get(n) * 1000n) / [...w.values()].reduce((a, b) => a + b, 0n)) / 10;
+  assert.equal(share(A), 80, 'at P* against half of it: 80 %');
+  assert.equal(gatewayWeights({ ...base, pegIns: [{ node: A, pegInSats: 900_000n }, { node: B, pegInSats: 25_000n }] }).get(A), 50_000n * 50_000n, 'capped at P*');
+  assert.equal(gatewayWeights({ ...base, pegIns: [{ node: A, pegInSats: 50_000n }, { node: B, pegInSats: 60_000n }] }), null, 'both at P*: no peg-in pressure, evenly');
+  assert.equal(gatewayWeights({ ...base, reserveSats: 300_000n, pegIns: [{ node: A, pegInSats: 50_000n }, { node: B, pegInSats: 0n }] }), null, 'CALM: evenly');
+  assert.equal(gatewayWeights({ ...base, pegIns: [{ node: A, pegInSats: 0n }, { node: B, pegInSats: 0n }] }), null, 'nothing proved: evenly');
+});

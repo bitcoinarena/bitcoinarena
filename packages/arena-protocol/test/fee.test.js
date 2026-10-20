@@ -423,3 +423,19 @@ test('2026.0.20: the guardians\' part follows the pressure weights; 2026.0.19 an
   const t20even = nodeFeeTable({ contract: { ...contract, protocolVersion: 20 }, entries, pools: { ...pools, guardian: g }, eligible: elig });
   assert.ok(share(t20even, g[0]) - share(t20even, g[2]) <= 1n, 'protocol 20 while CALM (no weights): evenly');
 });
+
+// kanban #559/#543 (spec §23A.3a part 2): the gateways' part follows the proved peg-ins on 2026.0.20, evenly before
+test('2026.0.20: under peg-in pressure the gateways\' part follows weights.gateway; 2026.0.19 and no weights: evenly', () => {
+  const g = [b32(0x51), b32(0x52), b32(0x53)], gw = [b32(0x52), b32(0x61)];
+  const elig = new Set([...game, ...settle, ...g, ...gw].map(toHex));
+  const at = (v, weights) => nodeFeeTable({ contract: { ...contract, protocolVersion: v }, entries, pools: { ...pools, guardian: g, gateway: gw }, eligible: elig, weights });
+  const owed = (t, k) => t.signerNodes.get(`gateway:${toHex(k)}`) || 0n;
+  const w = { gateway: new Map([[toHex(gw[0]), 100n * 100n], [toHex(gw[1]), 50n * 50n]]) };   // one at P*, one at half of it
+  const t20 = at(20, w), part = t20.pools.gateway;
+  assert.ok(Math.abs(Number((owed(t20, gw[0]) * 1000n) / part) - 800) <= 1, 'the one at P* takes 80 % of the gateways\' part');
+  assert.equal(owed(t20, gw[0]) + owed(t20, gw[1]), part, 'the whole part, nothing more');
+  const t19 = at(19, w);
+  assert.ok(owed(t19, gw[0]) - owed(t19, gw[1]) <= 1n && owed(t19, gw[1]) - owed(t19, gw[0]) <= 1n, '2026.0.19: evenly');
+  const plain = at(20, null);
+  assert.ok(owed(plain, gw[0]) - owed(plain, gw[1]) <= 1n && owed(plain, gw[1]) - owed(plain, gw[0]) <= 1n, 'no weights (CALM): evenly');
+});
