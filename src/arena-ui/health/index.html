@@ -282,6 +282,20 @@
     const bar = (have, need) => { const pc = need ? Math.min(100, Math.round((100 * have) / need)) : 0;
       return `<div style="width:110px;height:6px;background:var(--line);border-radius:3px"><div style="width:${pc}%;height:6px;border-radius:3px;background:${pc >= 100 ? 'var(--ok)' : 'var(--warn)'}"></div></div>`; };
     const rows = [];
+    // THE CHAIN SPLIT (the owner 2026-10-20, "Mining view mismatch, what is true"): each node names its tip and the rival tips of the same
+    // (or more) work it knows; nodes on different tips, or a rival of the same work, mean the next block decides - and everything below
+    // is read on each node's own branch
+    { const tips = new Map(), rivals = new Map();
+      for (const a of answers) if (a.chain) { tips.set(a.chain.hash, a.chain.height); for (const r of a.chain.rivals || []) if (r.work !== 'less') rivals.set(r.hash, r); }
+      for (const h of tips.keys()) rivals.delete(h);
+      if (tips.size > 1 || rivals.size) {
+        const fork = Math.min(...[...rivals.values()].map((r) => r.forkHeight + 1), Infinity);
+        const on = [...tips].map(([h, n]) => `${short(h, 10)} (${sat(n)})`).join(', ');
+        const other = [...rivals.values()].map((r) => `${short(r.hash, 10)} (${sat(r.height)}, ${r.work === 'same' ? 'the same work' : 'more work, not taken'})`).join(', ');
+        rows.push(`<tr><td>${dot('warn')}<b>the chain is split${Number.isFinite(fork) ? ` from block ${sat(fork)}` : ''}</b></td><td class="mono">-</td><td>-</td><td></td>
+          <td class="wrap">the nodes follow ${on}${other ? `; another branch: ${other}` : ''}. The next block decides which one stays - until then, confirmations below count on the nodes' own branch, and a public explorer may show the other</td></tr>`);
+      }
+    }
     for (const g of grids.values()) {
       const pub = g.publication, b = g.beacon;
       const what = `${esc(g.game)} grid: ${g.slots} rounds, entry from ${new Date(Number(g.firstWindowMs)).toISOString().slice(5, 16).replace('T', ' ')} UTC`;
@@ -294,7 +308,7 @@
       const left = p.finality && p.confirmations != null ? Math.max(0, p.finality + 1 - p.confirmations) : null;
       const waits = !p.onChain ? 'not found unspent on this node\'s chain (spent: counted, or not confirmed yet)'
         : left ? `${p.confirmations} of ${p.finality} confirmations: counts as the gateway's e-cash in about ${left >= 6 ? Math.round(left / 6) + ' h' : left * 10 + ' min'}` : 'final: counted';
-      rows.push(`<tr><td>${dot(left === 0 ? 'ok' : 'warn')}peg-in ${sat(p.sats)} sat to ${short(p.node, 10)}'s gateway in ${fedName(p.federation)}</td><td class="mono">${short(p.txid, 10)}</td><td>${sat(p.confirmations)}</td><td>${bar(p.confirmations || 0, p.finality || 0)}</td><td class="wrap">${waits}</td></tr>`);
+      rows.push(`<tr><td>${dot(left === 0 ? 'ok' : 'warn')}peg-in ${sat(p.sats)} sat to ${short(p.node, 10)}'s gateway in ${fedName(p.federation)}</td><td class="mono">${short(p.txid, 10)}:${esc(p.vout)}</td><td>${sat(p.confirmations)}</td><td>${bar(p.confirmations || 0, p.finality || 0)}</td><td class="wrap">${waits}</td></tr>`);
     }
     for (const x of ads.values()) {
       const left = Math.max(0, Number(x.takenByTip) - Number(x.tip));

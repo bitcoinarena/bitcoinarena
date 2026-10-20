@@ -396,6 +396,22 @@ if (url) {
     chainBlockTxids: async (h) => (await call('getblock', [await call('getblockhash', [h]), 1])).tx,
     // AND WHETHER ONE WAITS IN THIS NODE'S MEMPOOL
     chainInMempool: async (txid) => { try { await call('getmempoolentry', [txid]); return true; } catch { return false; } },
+    // THE CHAIN'S TIPS NEAR THE TOP (the owner 2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133
+    // while the public explorer followed another miner's of the same work): the active tip, and every other tip within 12 blocks of it
+    // with its work against the active one's and the height it forks from - a tie is decided by the next block, not by this node
+    chainTips: async () => {
+      const best = String(await call('getbestblockhash'));
+      const work = async (h) => BigInt('0x' + (await call('getblockheader', [h])).chainwork);
+      const bestWork = await work(best);
+      const top = (await call('getblockheader', [best])).height;
+      const rivals = [];
+      for (const t of await call('getchaintips', [])) {
+        if (t.status === 'active' || t.height < top - 12 || !['valid-fork', 'valid-headers', 'headers-only'].includes(t.status)) continue;
+        const w = await work(t.hash);
+        rivals.push({ hash: t.hash, height: t.height, status: t.status, forkHeight: t.height - t.branchlen, work: w === bestWork ? 'same' : w > bestWork ? 'more' : 'less' });
+      }
+      return { hash: best, height: top, rivals };
+    },
     // THE CHAIN'S MEDIAN TIME AT A HEIGHT: a funding signal's active window, read alike by every seat
     blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
