@@ -14,7 +14,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
 
 export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = fetch, network = 'testnet4', bondMinGuardian = 50000n,
-  epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null }) {
+  epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null, keep = null }) {
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
@@ -29,8 +29,25 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   async function probe() {
     try { return await probeOnce(); } catch (e) { lastProbe = { atMs: Date.now(), why: String(e && e.message || e).slice(0, 200) }; throw e; }
   }
+  // THE EPOCH'S PROBES OUTLIVE A RESTART (kanban #552, the owner 2026-10-20: "Shows 0 of 2 again. Why is this so hard to fix?" - every seat
+  // restart cleared them and the seats said "0 of 2" until new probes came in): `keep` { load(fid) -> { epoch: { node: row } }, save(fid,
+  // epoch, rows) } - the seat's own database; a claim is kept as the node signed it and is checked again when it is read back
+  let loaded = false;
+  const rowsOut = (rows) => Object.fromEntries([...rows].map(([k, r]) => [k, { probes: r.probes, up: r.up, claim: r.claim, modulePk: r.modulePk || null }]));
+  async function loadKept(fid) {
+    if (loaded || !keep) return; loaded = true;
+    try {
+      const got = (await keep.load(fid)) || {};
+      for (const [e, rows] of Object.entries(got)) {
+        const m = new Map();
+        for (const [node, r] of Object.entries(rows || {})) if (r && r.claim && checkGatewayClaim(r.claim, verify).ok && r.claim.node === node) m.set(node, { probes: Number(r.probes) || 0, up: Number(r.up) || 0, claim: r.claim, ...(r.modulePk ? { modulePk: r.modulePk } : {}) });
+        if (m.size && !epochs.has(Number(e))) epochs.set(Number(e), m);
+      }
+    } catch { /* none kept */ }
+  }
   async function probeOnce() {
     const fid = await federationId();
+    if (fid) await loadKept(fid);
     if (!fid) return { ok: false, why: 'this node guards no federation' };
     const h = await tip();
     const epoch = Math.floor(h / epochBlocks);
@@ -75,11 +92,13 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       } catch { /* the guardian's API did not answer: next probe */ }
     }
     lastProbe = { ...said, standing: rows.size };
+    if (keep && rows.size) { try { await keep.save(fid, epoch, rowsOut(rows)); } catch { /* kept next probe */ } }
     return { ok: true, epoch, standing: rows.size, credited };
   }
   /** The seats as this guardian ranks them now. */
   async function view() {
     const fid = await federationId();
+    if (fid) await loadKept(fid);
     if (!fid) return { ok: false, why: 'this node guards no federation' };
     const h = await tip();
     const epoch = Math.floor(h / epochBlocks);
@@ -111,5 +130,5 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (at < epoch) { const r = await rank(epoch, w.s.seated); if (r.ok) next = { epoch, fromBlock: (epoch + 1) * epochBlocks, seated: r.s.seated, why: r.s.why, gateways: r.gateways }; }
     return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...w.s, gateways: w.gateways, ...(next ? { next } : {}), lastProbe };
   }
-  return { probe, view };
+  return { probe, view, lastProbe: () => lastProbe };
 }

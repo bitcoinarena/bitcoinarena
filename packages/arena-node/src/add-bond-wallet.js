@@ -18,6 +18,9 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.
 import { bondSetFor } from './curve.js';
 
 const CARRIER_FEE = 3000n;
+/** WHAT ADDING COSTS BESIDE THE AMOUNT (kanban #553: the page says "send N sat", worked out): the bond output's dust (330), the carrier's fee and
+ *  what it keeps for the bond transaction (1,000), and about 500 sat for the funding transaction at 2 sat/vB. */
+export const ADD_OVERHEAD_SATS = 330n + CARRIER_FEE + 1000n + 500n;
 const MIN_ADD = 1000n;
 /** The bond wallet's command line from the environment, or null: { cli(...args) -> stdout, wallet }. */
 export function bondCliFrom(env = process.env) {
