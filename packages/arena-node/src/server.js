@@ -20,7 +20,7 @@ import { gzipSync } from 'node:zlib';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
+import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
@@ -3844,6 +3844,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const blockIds = new Map(), blockMtp = new Map();
   const idsAt = async (h) => { if (!blockIds.has(h)) { blockIds.set(h, new Set(await chainBlockTxids(h))); for (const k of blockIds.keys()) if (k < h - PENDING_BACK - 10) blockIds.delete(k); } return blockIds.get(h); };
   const mtpAt = async (h) => { if (!blockMtp.has(h)) blockMtp.set(h, Number(await blockTimeAt(h))); return blockMtp.get(h); };
+  // GRIDS ANNOUNCED BY THEIR PUBLISHERS (kanban #560: "nodes not operated by us"): POST /expected takes a grid's signed series line and
+  // its publication transaction, checks both (below), and keeps the grid here until its last round has closed - in this node's database
+  round.db.exec('CREATE TABLE IF NOT EXISTS expected_grids (series TEXT PRIMARY KEY, body TEXT NOT NULL, last_close_ms INTEGER NOT NULL)');
+  const announced = new Map();
+  try { for (const r of round.db.prepare('SELECT series, body, last_close_ms FROM expected_grids WHERE last_close_ms > ?').all(Date.now())) announced.set(r.series, JSON.parse(r.body)); } catch { /* none kept */ }
+  function announceGrid(line, txHex) {
+    let t; try { t = parseSeriesLine(String(line)); } catch (e) { return { ok: false, code: 400, why: `that is not a series line: ${e.message}` }; }
+    if (!isGridSeries(t)) return { ok: false, code: 400, why: 'only a grid series is announced here' };
+    const lead = seriesLeadIsValid(t); if (!lead.ok) return { ok: false, code: 409, why: lead.why };
+    const sid = seriesId(t), id = toHex(sid);
+    const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
+    if (!cr.ok) return { ok: false, code: 403, why: `series ${id.slice(0, 16)}: ${cr.why}` };
+    let tx; try { tx = parseTransaction(fromHex(String(txHex || '').toLowerCase())); } catch (e) { return { ok: false, code: 400, why: `that is not a transaction: ${e.message}` }; }
+    const want = toHex(seriesPublicationOutput(sid).script);
+    if (!tx.outputs.some((o) => toHex(o.script) === want)) return { ok: false, code: 422, why: `that transaction does not publish series ${id.slice(0, 16)}` };
+    const period = BigInt(t.seriesPeriodMs), count = Number(t.seriesCount);
+    const lastClose = Number(t.entryCloseMs + BigInt(count - 1) * period);
+    if (lastClose < Date.now()) return { ok: false, code: 410, why: 'that grid\'s last round has closed' };
+    const game = [...hosted.values()].find((g) => toHex(g.gameId) === toHex(t.gameId));
+    const e = { game: game ? String(game.name) : toHex(t.gameId).slice(0, 16), gameId: toHex(t.gameId), series: id,
+      firstWindowMs: Number(t.entryCloseMs - period), firstCloseMs: Number(t.entryCloseMs), lastCloseMs: lastClose, slots: count,
+      committeeTimeMs: Number(t.committeeTimeMs), federation: t.federationId ? toHex(t.federationId) : '',
+      publication: { txid: toHex(Uint8Array.from(tx.txid).reverse()), height: null }, announcedAtMs: Date.now() };
+    announced.set(id, e);
+    try { round.db.prepare('INSERT INTO expected_grids (series, body, last_close_ms) VALUES (?, ?, ?) ON CONFLICT(series) DO UPDATE SET body = excluded.body, last_close_ms = excluded.last_close_ms').run(id, JSON.stringify(e), lastClose); } catch { /* kept in memory */ }
+    pendingKept = null;
+    return { ok: true, series: id, publication: e.publication.txid, firstCloseMs: String(e.firstCloseMs), slots: count };
+  }
+  // every grid on its way: the announced ones, and the ones the operator's own publisher names in a file (ARENA_EXPECTED_FILE)
+  function expectedEntries() {
+    const now = Date.now(), out = [], seen = new Set();
+    for (const e of announced.values()) if (e.lastCloseMs > now) { out.push(e); seen.add(e.publication.txid); }
+    for (const f of String(process.env.ARENA_EXPECTED_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+      let e = null; try { e = JSON.parse(readFileSync(f, 'utf8')); } catch { e = null; }
+      if (e && e.publication && /^[0-9a-f]{64}$/.test(String(e.publication.txid || '')) && Number(e.lastCloseMs) > now && !seen.has(String(e.publication.txid))) out.push(e);
+    }
+    return out;
+  }
   let pendingKept = null;
   async function pendingNow() {
     if (typeof chainTip !== 'function') return { ok: false, why: 'this node reads no chain' };
@@ -3851,9 +3889,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (pendingKept && pendingKept.tip === tip && Date.now() - pendingKept.at < 60000) return pendingKept.r;
     const now = Date.now(), grids = [], pegIns = [];
     // the grids its publishers named (ARENA_EXPECTED_FILE) - each checked here on this node's own chain
-    for (const f of String(process.env.ARENA_EXPECTED_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)) {
-      let e = null; try { e = JSON.parse(readFileSync(f, 'utf8')); } catch { e = null; }
-      if (!e || !e.publication || !/^[0-9a-f]{64}$/.test(String(e.publication.txid || '')) || Number(e.lastCloseMs) < now) continue;
+    for (const e of expectedEntries()) {
       const txid = String(e.publication.txid);
       let height = null;
       if (typeof chainBlockTxids === 'function') for (let h = tip; h > tip - PENDING_BACK && height === null; h--) { try { if ((await idsAt(h)).has(txid)) height = h; } catch { break; } }
@@ -4498,10 +4534,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const r = await pendingNow();
         return claimJson(r.ok ? 200 : 503, r);
       }
+      // A GRID ANNOUNCED (kanban #560): { line, tx } - its signed series line and its publication transaction, hex. Anyone may post it: the
+      // line must be a grid its creator signed, and the transaction must carry that series' publication output; kept until its last close
+      if (req.method === 'POST' && url.pathname === '/expected') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an announcement is JSON { line, tx }'); }
+        const got = announceGrid(j.line, j.tx);
+        return claimJson(got.ok ? 200 : got.code, got);
+      }
       if (req.method === 'GET' && url.pathname === '/expected') {
         const now = Date.now(), out = [];
-        for (const f of String(process.env.ARENA_EXPECTED_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)) {
-          let e = null; try { e = JSON.parse(readFileSync(f, 'utf8')); } catch { e = null; }
+        for (const e of expectedEntries()) {
           if (!e || !e.game || !Number.isFinite(Number(e.lastCloseMs)) || Number(e.lastCloseMs) < now) continue;
           out.push({ game: String(e.game), gameId: String(e.gameId || ''), firstWindowMs: String(e.firstWindowMs), firstCloseMs: String(e.firstCloseMs), lastCloseMs: String(e.lastCloseMs),
             slots: Number(e.slots) || 0, committeeTimeMs: String(e.committeeTimeMs), publication: e.publication ? { txid: String(e.publication.txid || ''), height: e.publication.height ?? null } : null,

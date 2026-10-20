@@ -1319,6 +1319,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // the first 900 rounds' contracts for the tools that read them (a 24 h grid derives 21,600; every seat derives them itself)
       contracts: grid.slice(0, 900).map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
+    // AND ANNOUNCED AT ONCE (kanban #560, the owner 2026-10-20: "it will work on future testnet and mainnet with nodes not operated by us"): every
+    // seat this tool runs and every other node of the census gets the signed line and the publication (POST /expected), checks both and
+    // says when the grid's first window comes - its rounds are posted only once its beacon block is 6 deep. Not waited for.
+    (async () => {
+      const targets = [...[a, b, ...rest].map((n) => `http://${host}:${n.port}`), ...[...otherCensusSeats()].map(([, url]) => url)];
+      const said = await Promise.all(lines.flatMap((line) => targets.map(async (u) => {
+        try { const r = await fetch(`${u}/expected`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ line, tx: signed }), signal: AbortSignal.timeout(20000) }); return r.ok; } catch { return false; }
+      })));
+      console.log(`[grid] ${txid.slice(0, 16)} announced at ${said.filter(Boolean).length} of ${said.length} seat(s)`);
+    })().catch(() => {});
     // THE DUTY KEEPER waits for nothing here: it posts the series to the seats itself once the publication confirms
     if (!waitBeacon) for (const sid of ids) if (funded.nameRound) funded.nameRound(sid);   // named funded before any seat is asked
     if (!waitBeacon) return { ok: true, published: true, txid, series: ids.map((id) => toHex(id)), lines, rounds: grid.length,
