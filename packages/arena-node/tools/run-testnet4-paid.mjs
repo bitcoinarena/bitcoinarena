@@ -339,7 +339,8 @@ if (env.PAID_DUTY_DAILY === '1') {
   const { parseRoutes, routed } = await import('../src/fetch-routes.js');
   const routes = parseRoutes(env.ARENA_ROUTE_MAP);
   const fedsNow = async () => {
-    for (const n of round.nodes || []) {
+    // DUTY_RECORDS_FROM (a seat's direct address) first: a runner beside its seats reads them there
+    for (const n of [...(env.DUTY_RECORDS_FROM ? [env.DUTY_RECORDS_FROM] : []), ...(round.nodes || [])]) {
       try {
         const base = String(n).replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/+$/, '');
         const r = await fetch(routed(base + '/federations', routes), { signal: AbortSignal.timeout(15000) });
