@@ -115,3 +115,34 @@ function settledFor(round, roundIdBytes, entryIdBytes, playerPubkey) {
   if (moves && lock && moves.claims.includes(lock.outpoint)) return s;
   return null;
 }
+
+/**
+ * WHERE ONE ORDER'S MONEY STANDS IN AN ATTESTED MARKET (the owner 2026-10-20, live UI 269: "The pending balance doesn't appear in the
+ * wallet but does in the prediction market" - measured: the market showed "Up won · +99 sats · pending · final in 8:44" while
+ * every committee seat's /standing answered that entry as a replay game, "0 of 5 agree on any one run", pendingMsat null, so the
+ * wallet's Pending read 0 sat). A market round is decided by its attestation, not by signed runs: from the round's outcome
+ * (GET /outcome's answer, its table) and, for an order book, this entry's line of the book's settlement table.
+ *   `out`: the seat's outcome of the round (state, outcome, final, finalAtMs, entryCloseMs, table); `bookRow`: for an order book,
+ *   this entry's claimed row of bookSettlement ({ outMsat }) or null when it has no fill; `book`: whether the round is a book.
+ * Answers the fields standingOf answers: a winning or a book's claimed line is kind 'payout' with its msat, provisional until the
+ * outcome is final (windowCloseMs = when it becomes final); a loser's line is '0'; an order with no fill and a VOID market are
+ * kind 'refund' with no figure - their locks come back whole by the return door, which the page counts as a stake owed back.
+ */
+export function marketStandingOf({ out, entryIdHex, book = false, bookRow = null }) {
+  const base = { windowOpenMs: out && out.entryCloseMs ? String(out.entryCloseMs) : null, windowCloseMs: out && out.finalAtMs ? String(out.finalAtMs) : null, market: true };
+  if (!out) return { ...base, state: null, outcome: null, pendingMsat: null, kind: null, provisional: true, why: 'that round has no outcome at this seat' };
+  if (out.state === 'VOID') return { ...base, state: 'VOID', outcome: null, pendingMsat: null, kind: 'refund', provisional: false, why: out.why || 'the market is VOID: every lock comes back whole' };
+  if (out.state !== 'ATTESTED') return { ...base, state: out.state || null, outcome: null, pendingMsat: null, kind: null, provisional: true,
+    why: out.state === 'DISPUTED' ? 'the attestors named different outcomes' : 'the outcome is not attested yet' };
+  const decided = { ...base, state: 'ATTESTED', outcome: out.outcome, provisional: !out.final };
+  if (book) {
+    if (!bookRow) return { ...decided, pendingMsat: null, kind: 'refund', why: 'this order has no fill: its locks come back whole by the return door' };
+    return { ...decided, pendingMsat: String(bookRow.outMsat), kind: 'payout', why: null };
+  }
+  const t = out.table;
+  if (!t) return { ...decided, pendingMsat: null, kind: null, why: 'no table for that round at this seat' };
+  if (t.refunded) return { ...decided, pendingMsat: null, kind: 'refund', why: 'the round is refunded: every stake comes back' };
+  const row = (t.rows || []).find((r) => String(r.entryId) === String(entryIdHex));
+  if (!row) return { ...decided, pendingMsat: null, kind: null, why: 'this entry\'s stake is not counted at this seat' };
+  return { ...decided, pendingMsat: String(row.payoutMsat || '0'), kind: 'payout', why: null };
+}

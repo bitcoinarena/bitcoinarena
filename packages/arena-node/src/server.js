@@ -181,7 +181,8 @@ import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality, finalSignatureNow } from './finality.js';
-import { standingOf } from './standing.js';
+import { standingOf, marketStandingOf } from './standing.js';
+import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
@@ -7428,7 +7429,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = decodeEntryContract(stored).roundId;
         const row = round.get(rid);
         if (!row) return text(res, 404, 'this node holds no such round');
-        const s = standingOf(round, rid, new Uint8Array(eid), decodeRoundContract(new Uint8Array(row.contract)));
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        // AN ATTESTED MARKET'S ORDER stands on the round's attestation and its table (marketStandingOf), never on signed runs
+        let s;
+        if (attestedOf(c)) {
+          const out = outcomeOf(rid, c, { table: true });
+          const book = orderBook.isBook(rid);
+          let bookRow = null;
+          if (book && out && out.state === 'ATTESTED') {
+            const L = orderBook.ledger(rid);
+            if (L.ok) {
+              const plugin = attestedOf(c);
+              const scalar = isScalar(plugin.manifest) && out.value !== undefined ? { value: BigInt(out.value), bounds: marketOfRound(plugin.manifest, c).scalar } : null;
+              try { bookRow = bookSettlement({ positions: L.positions, outcome: out.outcome, scalar }).claimed.find((r) => r.entry === eid.toString('hex')) || null; } catch { bookRow = null; }
+            }
+          }
+          s = marketStandingOf({ out, entryIdHex: eid.toString('hex'), book, bookRow });
+        } else s = standingOf(round, rid, new Uint8Array(eid), c);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ entry: eid.toString('hex'), round: toHex(rid), nowMs: String(Date.now()), ...s }) + '\n');
       }
