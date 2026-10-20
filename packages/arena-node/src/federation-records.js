@@ -350,7 +350,20 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const h = decodeFederationRecord(splitSignedRecord(bytes).body).height;
         const b = basisFor(fid);
         let v = b && b.ok ? verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId }) : { ok: false };
-        if (!v.ok && typeof censusAt === 'function') { const entries = await Promise.resolve(censusAt(h)).catch(() => null); if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId }); }
+        if (!v.ok && typeof censusAt === 'function') {
+          const entries = await Promise.race([Promise.resolve(censusAt(h)).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 5000))]);
+          if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId });
+        }
+        // NO CENSUS YET (the owner 2026-10-20: "It is also not reading the federations at all reliably so everything gateway related is never
+        // shown" - measured 12:48Z: six test host seats restarted one by one under load 18 held no record for minutes, their chain view not
+        // built at the 20 s restore, and gathering asked guardians that had restarted too): a record this seat kept was checked in full
+        // when it was kept, so it is read back against its own guardian list - every signature and the threshold checked again, the
+        // guardians' bonds not; the next gathering, with the census, checks it in full and replaces it
+        if (!v.ok) {
+          const r = decodeFederationRecord(splitSignedRecord(bytes).body);
+          const own = r.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: r.federationId, guardianKey: g.peerKey }] } }));
+          v = verifyFederationRecord(bytes, { census: own, verify, inviteFederationId });
+        }
         if (v.ok) { keep(fid, bytes, v); restored++; }
       } catch { /* not restored: gathered again */ }
     }
