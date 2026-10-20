@@ -42,7 +42,7 @@ import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/ga
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityView } from '../../arena-protocol/src/capacity.js';
+import { capacityView, capacityPlea } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -7662,7 +7662,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         });
         const v = capacityView({ federations: feds, bondMinSats: bondMin, pegInMinSats: pegInMin, was: capacityWas });
         for (const r of v.federations) capacityWas[r.federation] = r.band;
-        return claimJson(200, { ok: true, node: toHex(round.pubkey), censusHeight: now.ok ? now.height : null, ...v });
+        // ?node=<hex> (or me: this seat's own key): the plea to that node (capacity.js capacityPlea) - the dashboard's and owner page's warning
+        const asked = url.searchParams.get('node');
+        const pleaFor = asked === 'me' ? toHex(round.pubkey) : (asked && /^[0-9a-f]{64}$/i.test(asked) ? asked.toLowerCase() : null);
+        return claimJson(200, { ok: true, node: toHex(round.pubkey), censusHeight: now.ok ? now.height : null, ...v, ...(pleaFor ? { plea: capacityPlea(v, pleaFor) } : {}) });
       }
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
