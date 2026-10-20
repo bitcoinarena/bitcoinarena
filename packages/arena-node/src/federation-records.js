@@ -530,6 +530,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // THE NEWEST CENSUS THIS SEAT READS (kanban #552: an operator's new advertisement counts once its update is in the chain's census, not
     // only when the rounds' census moves past it, a day later): the chain's when read, else the basis's
     censusNewest() { const cb = chainBasis(null); if (cb && cb.ok) return cb.census.entries || []; const b = basis(); return b.ok ? b.census.entries || [] : []; },
+    // and with its height (GET /roles, kanban #560: every seat answers the same census - the chain's at the same step - not its newest round's)
+    censusNewestAt() { const cb = chainBasis(null); return cb && cb.ok ? { height: cb.height, entries: cb.census.entries || [] } : null; },
     // THE FEDERATION'S GUARDIANS BY THE CENSUS (kanban #552): node keys hex of the census that names it (the held round's, else the chain's) -
     // what stands before this seat holds its record (seatedGuardians is null then; "the census rule then stands")
     censusGuardians(fidHex) {
