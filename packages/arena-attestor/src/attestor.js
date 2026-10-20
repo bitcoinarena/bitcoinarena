@@ -107,7 +107,18 @@ export function wordFromJson(j) {
  */
 export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids = [] }) {
   const out = new Set(ids.map((x) => String(x).toLowerCase()));
+  for (const v of marketVersions({ games, name, key, mode })) out.add(v.id);
+  return out;
+}
+
+/**
+ * THE VERSIONS OF THE MARKET THAT NAME THIS KEY (the owner 2026-10-20: "Attestors need a dynamic list of versions to support, always
+ * including the latest version"): of the seats' /games rows, each version once - { id, version } - oldest first, so the last is
+ * the latest; the list an attestor shows on /status and logs whenever it changes.
+ */
+export function marketVersions({ games = [], name, key, mode = 'outcome' }) {
   const keyHex = String(key).toLowerCase();
+  const byId = new Map();
   for (const g of games) {
     let m;
     try { m = decodeManifest(fromHex(String(g.manifest))); } catch { continue; }
@@ -116,9 +127,9 @@ export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids =
     if (!m.attestors.some((a) => toHex(a) === keyHex)) continue;
     const id = toHex(gameIdOf(m));
     if (String(g.id).toLowerCase() !== id) continue;
-    out.add(id);
+    byId.set(id, { id, version: m.version });
   }
-  return out;
+  return [...byId.values()].sort((a, b) => a.version - b.version || (a.id < b.id ? -1 : 1));
 }
 
 export { UP_DOWN_OUTCOMES };

@@ -16,7 +16,7 @@
 import http from 'node:http';
 import { readFileSync, appendFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { readSources } from '../src/sources.js';
-import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson, marketsToAttest } from '../src/attestor.js';
+import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson, marketsToAttest, marketVersions } from '../src/attestor.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 
 const arg = (name, dflt = null) => { const i = process.argv.indexOf(`--${name}`); return i > 1 ? process.argv[i + 1] : dflt; };
@@ -68,6 +68,10 @@ const keepSamples = () => {
 };
 const words = new Map();               // round hex -> this attestor's word (or { none: why })
 const posted = new Map();              // round hex -> Set of seats that hold its attestation
+// A SEAT THAT HOLDS NO SUCH ROUND (the owner 2026-10-20 "Also fix this" - measured: the test host-only rounds went to the 7 second-host seats every
+// 5 s, 7,834 refusals "404 this node holds no such round" in attestor A's log): asked again only after NO_ROUND_RETRY_MS, logged once
+const NO_ROUND_RETRY_MS = Number(arg('no-round-retry-ms', '300000'));
+const noRound = new Map();             // round hex -> Map seat -> ms it is asked again
 const sample = async () => {
   const r = await readSources(SOURCES);
   const atMs = BigInt(Date.now());
@@ -81,8 +85,11 @@ const sample = async () => {
 // the listed ids are kept beside them; without it and before the first read, the game's name alone matches, as before
 let marketIds = new Set(GAME_IDS);
 let marketsReadMs = 0;
+const MARKETS_EVERY_MS = Number(arg('markets-every-ms', '60000'));
+let versions = [];                     // [{ id, version }] of the seats' listing, oldest first
+let listed = false;
 const readMarkets = async () => {
-  if (Date.now() - marketsReadMs < 60000) return;
+  if (Date.now() - marketsReadMs < MARKETS_EVERY_MS) return;
   const games = [];
   let read = 0;
   for (const seat of SEATS) {
@@ -94,9 +101,14 @@ const readMarkets = async () => {
   }
   if (!read) return;
   marketsReadMs = Date.now();
-  const next = marketsToAttest({ games, name: GAME, key: toHex(attestor.pubkey), mode: MODE, ids: GAME_IDS });
+  const key = toHex(attestor.pubkey);
+  const next = marketsToAttest({ games, name: GAME, key, mode: MODE, ids: GAME_IDS });
+  versions = marketVersions({ games, name: GAME, key, mode: MODE });
   const added = [...next].filter((id) => !marketIds.has(id));
-  if (added.length) log({ step: 'markets', added, of: next.size });
+  const dropped = [...marketIds].filter((id) => !next.has(id));
+  // THE WHOLE LIST at the first read and on every change, the latest version named
+  if (added.length || dropped.length || !listed) log({ step: 'markets', of: next.size, latest: versions.at(-1) || null, added, dropped, versions });
+  listed = true;
   marketIds = next;
 };
 const ofThisMarket = (x) => (marketIds.size ? marketIds.has(String(x.game.id).toLowerCase()) : x.game.name === GAME);
@@ -136,7 +148,8 @@ const tick = async () => {
     const mine = words.get(r.id);
     if (!mine || mine.none) continue;
     const held = posted.get(r.id) || new Set();
-    if (held.size >= SEATS.length) continue;
+    const absent = noRound.get(r.id) || new Map();
+    if (SEATS.every((seat) => held.has(seat) || (absent.get(seat) || 0) > Date.now())) continue;
     // THE OTHER ATTESTORS' WORDS, and the attestation once the threshold of them sign one body
     const theirs = await Promise.all(PEERS.map(async (p) => {
       try { const x = await fetch(`${p}/attestation?round=${r.id}`, { signal: AbortSignal.timeout(5000) }); return x.ok ? wordFromJson(await x.json()) : null; } catch { return null; }
@@ -145,13 +158,16 @@ const tick = async () => {
     const att = combine(all, { attestors: ATTESTORS, threshold: THRESHOLD });
     if (!att) continue;
     for (const seat of SEATS) {
-      if (held.has(seat)) continue;
+      if (held.has(seat) || (absent.get(seat) || 0) > Date.now()) continue;
       try {
         const x = await fetch(`${seat}/outcome?round=${r.id}`, { method: 'POST', body: att.bytes, signal: AbortSignal.timeout(8000) });
         const text = (await x.text()).trim();
         if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, ...(MODE === 'value' ? { value: att.body.value } : { outcome: att.body.outcome }),
           words: all.map((w) => ({ key: w.key.slice(0, 8), ...(MODE === 'value' ? { value: w.body.value } : { outcome: w.body.outcome }) })) }); }
-        else log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
+        else if (x.status === 404) {
+          if (!absent.has(seat)) log({ step: 'seat holds no such round', round: r.id, seat, again: `in ${NO_ROUND_RETRY_MS / 1000} s` });
+          absent.set(seat, Date.now() + NO_ROUND_RETRY_MS); noRound.set(r.id, absent);
+        } else log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
       } catch (e) { log({ step: 'post failed', round: r.id, seat, why: e.message }); }
     }
     posted.set(r.id, held);
@@ -168,7 +184,8 @@ http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/status') {
     const last = samples[samples.length - 1];
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ attestor: NAME, key: toHex(attestor.pubkey), sources: SOURCES, samples: samples.length, last: last ? { at: new Date(Number(last.atMs)).toISOString(), cents: String(last.price) } : null, words: words.size }));
+    return res.end(JSON.stringify({ attestor: NAME, key: toHex(attestor.pubkey), sources: SOURCES, samples: samples.length, last: last ? { at: new Date(Number(last.atMs)).toISOString(), cents: String(last.price) } : null, words: words.size,
+      markets: { ids: [...marketIds], latest: versions.at(-1) || null, versions, readAt: marketsReadMs ? new Date(marketsReadMs).toISOString() : null } }));
   }
   res.writeHead(404); res.end();
 }).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, mode: MODE, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
