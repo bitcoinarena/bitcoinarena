@@ -363,7 +363,11 @@ if (url) {
       return String(await call('sendrawtransaction', [hex]));
     },
     // A LIQUIDITY PROVIDER'S COIN, UNSPENT AND CONFIRMED (§23A.10: a guardian counts only coins its own chain shows)
-    chainTxOut: async (txid, vout) => { const o = await call('gettxout', [txid, vout, false]); return o ? { sats: BigInt(Math.round(Number(o.value) * 1e8)), script: o.scriptPubKey.hex } : null; },
+    chainTxOut: async (txid, vout) => { const o = await call('gettxout', [txid, vout, false]); return o ? { sats: BigInt(Math.round(Number(o.value) * 1e8)), script: o.scriptPubKey.hex, confirmations: Number(o.confirmations) || 0 } : null; },
+    // THE TRANSACTIONS OF A BLOCK, by id (GET /pending finds which recent block holds a publication - no txindex needed)
+    chainBlockTxids: async (h) => (await call('getblock', [await call('getblockhash', [h]), 1])).tx,
+    // AND WHETHER ONE WAITS IN THIS NODE'S MEMPOOL
+    chainInMempool: async (txid) => { try { await call('getmempoolentry', [txid]); return true; } catch { return false; } },
     // THE CHAIN'S MEDIAN TIME AT A HEIGHT: a funding signal's active window, read alike by every seat
     blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ

@@ -9910,6 +9910,74 @@
   "needsAuth": "none",
   "pathParams": []
  },
+ {
+  "method": "GET",
+  "path": "/pending",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {ok, node, tip, nowMs, grids[{game, firstWindowMs, firstCloseMs, lastCloseMs, slots, committeeTimeMs, federation, publication{txid, height, confirmations, inMempool}, beacon{height, depth, needed, medianTimeMs}, stage}], pegIns[{federation, node, txid, vout, sats, confirmations, finality, onChain}]}; 503 when the node reads no chain",
+  "purpose": "What the network waits for, as this node reads its own chain: every grid published and not yet posted (its publication found in the node's last 300 blocks, its beacon block read off its own headers, how deep), and every peg-in the gateway claims it reads name as confirming, counted against the federation's finality. The health page and the mining dashboard merge it across nodes.",
+  "audience": "public",
+  "line": 4324,
+  "summary": "Grids waiting for their beacon, peg-ins confirming",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The ranking; amounts are decimal strings."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no guardian, so it ranks no gateways\"}."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "The view could not be read now."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/expected",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {nowMs, tip, expected[{game, gameId, firstWindowMs, firstCloseMs, lastCloseMs, slots, committeeTimeMs, publication{txid, height}, federation}]}",
+  "purpose": "The grids this node's publisher put on chain and the seats do not list yet, as the publisher states them (ARENA_EXPECTED_FILE); a market page says when the next round comes from it.",
+  "audience": "public",
+  "line": 4324,
+  "summary": "Grids on their way, as published",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The ranking; amounts are decimal strings."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no guardian, so it ranks no gateways\"}."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "The view could not be read now."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
 {
   "method": "GET",
   "path": "/capacity",

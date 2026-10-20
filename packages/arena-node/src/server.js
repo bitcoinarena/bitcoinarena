@@ -484,6 +484,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   chainTxOut = null,
   // THE CHAIN'S MEDIAN TIME AT A HEIGHT, in ms (a funding signal's 432-block active window), as the launcher reads it
   blockTimeAt = null,
+  // A BLOCK'S TRANSACTION IDS, and whether a transaction waits in this node's mempool (GET /pending, kanban #560)
+  chainBlockTxids = null,
+  chainInMempool = null,
   expiry = {},
   // WHERE EVERY CORE A STORED ROUND NAMES IS KEPT FOR ITS REPLAY (2026-09-26 13:28: "the copied replay link must
   // keep working. Always ... Keep every core a stored round names, and serve it. Do not drop it when HEAD moves"): a
@@ -3835,6 +3838,49 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const retry = setInterval(() => { for (const w of gatewayWatches) { const p = w.watch.lastProbe && w.watch.lastProbe(); if (p && !p.seated) w.watch.probe().catch(() => {}); } }, 60000);
     if (retry.unref) retry.unref();
   }
+  // GET /pending's reading (kanban #560): the grids on their way and the peg-ins confirming. A publication is looked for in this node's
+  // last PENDING_BACK blocks (each block's ids kept once read); a beacon in the blocks above it (each median time kept once read)
+  const PENDING_BACK = 300;
+  const blockIds = new Map(), blockMtp = new Map();
+  const idsAt = async (h) => { if (!blockIds.has(h)) { blockIds.set(h, new Set(await chainBlockTxids(h))); for (const k of blockIds.keys()) if (k < h - PENDING_BACK - 10) blockIds.delete(k); } return blockIds.get(h); };
+  const mtpAt = async (h) => { if (!blockMtp.has(h)) blockMtp.set(h, Number(await blockTimeAt(h))); return blockMtp.get(h); };
+  let pendingKept = null;
+  async function pendingNow() {
+    if (typeof chainTip !== 'function') return { ok: false, why: 'this node reads no chain' };
+    const tip = Number(await chainTip());
+    if (pendingKept && pendingKept.tip === tip && Date.now() - pendingKept.at < 60000) return pendingKept.r;
+    const now = Date.now(), grids = [], pegIns = [];
+    // the grids its publishers named (ARENA_EXPECTED_FILE) - each checked here on this node's own chain
+    for (const f of String(process.env.ARENA_EXPECTED_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+      let e = null; try { e = JSON.parse(readFileSync(f, 'utf8')); } catch { e = null; }
+      if (!e || !e.publication || !/^[0-9a-f]{64}$/.test(String(e.publication.txid || '')) || Number(e.lastCloseMs) < now) continue;
+      const txid = String(e.publication.txid);
+      let height = null;
+      if (typeof chainBlockTxids === 'function') for (let h = tip; h > tip - PENDING_BACK && height === null; h--) { try { if ((await idsAt(h)).has(txid)) height = h; } catch { break; } }
+      const inMempool = height === null && typeof chainInMempool === 'function' ? await chainInMempool(txid) : false;
+      let beacon = null;
+      if (height !== null && typeof blockTimeAt === 'function') for (let h = height + 1; h <= tip; h++) { if ((await mtpAt(h)) > Number(e.committeeTimeMs)) { beacon = h; break; } }
+      const mtp = typeof blockTimeAt === 'function' ? await mtpAt(tip) : null;
+      const depth = beacon === null ? 0 : tip - beacon + 1;
+      grids.push({ game: String(e.game), firstWindowMs: String(e.firstWindowMs), firstCloseMs: String(e.firstCloseMs), lastCloseMs: String(e.lastCloseMs), slots: Number(e.slots) || 0,
+        committeeTimeMs: String(e.committeeTimeMs), federation: String(e.federation || ''), publication: { txid, height, confirmations: height === null ? 0 : tip - height + 1, inMempool },
+        beacon: { height: beacon, depth, needed: 6, medianTimeMs: mtp === null ? null : String(mtp) },
+        stage: height === null ? 'publication unconfirmed' : beacon === null ? 'waiting for the beacon block' : depth < 6 ? 'beacon confirming' : 'posted' });
+    }
+    // the peg-ins the claims this node reads name as confirming, counted on its own chain
+    for (const w of gatewayWatches) {
+      let v = null; try { v = await w.watch.view(); } catch { v = null; }
+      if (!v || !v.ok) continue;
+      for (const [node, g] of Object.entries(v.gateways || {})) for (const pg of (g.pending && g.pending.pegIns) || []) {
+        let out = null; try { out = typeof chainTxOut === 'function' ? await chainTxOut(String(pg.txid), Number(pg.vout)) : null; } catch { out = null; }
+        pegIns.push({ federation: v.federationId, node, txid: String(pg.txid), vout: Number(pg.vout), sats: out ? String(out.sats) : String(pg.sats || 0),
+          confirmations: out ? Number(out.confirmations || 0) : null, finality: Number(pg.finality) || null, onChain: !!out });
+      }
+    }
+    const r = { ok: true, node: toHex(round.pubkey), tip, nowMs: String(now), grids, pegIns };
+    pendingKept = { tip, at: Date.now(), r };
+    return r;
+  }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
   // seating its federation's guardians signed at threshold, so every signer node - guardian or not - must hold the same one: every
   // 10 min each seat reads, for every federation it holds a record of, the last four whole epochs' seatings from the seated guardians'
@@ -4443,6 +4489,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // deep, so until then no seat lists it and a market said only "No window is open". The publisher (run-testnet4-paid.mjs) writes what
       // it published - the game, the first window, the committee time its beacon block must pass, the publication - to the files
       // ARENA_EXPECTED_FILE names (comma-separated); this door serves the ones not over yet, as the operator states them
+      // WHAT THE NETWORK WAITS FOR, AS THIS NODE SEES IT (kanban #560, the owner 2026-10-20: "All of that must be available via node endpoints
+      // too so it will work on future testnet and mainnet with nodes not operated by us"; "Make sure that /health is also showing this table
+      // by asking the nodes"): every grid published and not yet posted - its publication found in this node's own blocks, its beacon block
+      // (the first whose median time passes the committee time) read off this node's own headers, how deep; every peg-in the gateway
+      // claims this node reads name as confirming - its confirmations counted on this node's own chain against the federation's finality
+      if (req.method === 'GET' && url.pathname === '/pending') {
+        const r = await pendingNow();
+        return claimJson(r.ok ? 200 : 503, r);
+      }
       if (req.method === 'GET' && url.pathname === '/expected') {
         const now = Date.now(), out = [];
         for (const f of String(process.env.ARENA_EXPECTED_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)) {
