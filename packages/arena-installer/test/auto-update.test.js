@@ -105,7 +105,7 @@ test('the updater as a service: it names the node\'s own arenanode (no release),
     assert.match(unit, /^Restart=on-failure$/m, 'ending with 75 starts it again');
     await installUpdater({ home, installProgram, platform: 'win32', env: { APPDATA: join(root, 'appdata') }, sh });
     const cmd = readFileSync(join(home, 'arena-updater.cmd'), 'utf8');
-    assert.match(cmd, /:again\r\n".*arenanode\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n$/);
+    assert.match(cmd, /:again\r\ncall ".*arenanode\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n$/);
     const { readFileSync: rf } = await import('node:fs');
     assert.match(rf(new URL('../src/update.js', import.meta.url), 'utf8'), /-notlike '\*arenanode\.mjs\*auto-update\*'/, 'a Windows update does not end the auto update that runs it');
   } finally { rmSync(root, { recursive: true, force: true }); }

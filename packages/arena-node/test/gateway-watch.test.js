@@ -49,6 +49,35 @@ test('the watch: seated guardians\' claims probed per epoch, ranked; a foreign f
   assert.deepEqual([next.measuredEpoch, next.epoch], ['whole', 10], 'the last whole epoch is ranked once there is one');
 });
 
+test('a seat that advertises its endpoint as wss:// is read over https (the live adverts do)', async () => {
+  // measured 2026-10-19 21:1xZ on testnet4: every seat's advert names wss://test-host.../guardian-N, the watch fetched
+  // wss://.../gateway-claim, fetch refused the scheme, and the federation's 2 gateway seats stayed empty all epoch
+  const asked = [];
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `wss://seat${i}.example/guardian-${i}/`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    asked.push(url);
+    if (/^wss?:/.test(url)) throw new TypeError('fetch failed: unknown scheme');
+    const seat = /^https:\/\/seat(\d)\.example\/guardian-\d\/gateway-claim$/.exec(url);
+    if (seat) return { status: 200, json: async () => claimOf(Number(seat[1])) };
+    if (/^https:\/\/n\d\.example\/gateway\/routing_info$/.test(url)) return { status: 200, text: async () => '{"lightning_public_key":"02.."}' };
+    throw new Error(`unexpected ${url}`);
+  };
+  const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries,
+    tip: async () => 144 * 10 + 5, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher });
+  await w.probe();
+  assert.ok(asked.includes('https://seat0.example/guardian-0/gateway-claim'), asked.join(' '));
+  const v = await w.view();
+  assert.deepEqual(Object.keys(v.gateways).sort(), [keys[0].hex, keys[1].hex].sort(), 'both claims read and probed');
+  assert.equal(v.seated.length, 2);
+});
+
+test('the seat gathers signed seatings over https too, never at a wss:// address', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const line = src.split('\n').find((l) => l.includes('/gateway-seating?federation='));
+  assert.ok(line && line.includes("replace(/^ws(s?):/, 'http$1:')"), line);
+});
+
 test('routed volume: incoming contracts credited to the gateway whose module key funded them, from the second probe on', async () => {
   const claims = { 0: claimOf(0, { capacitySats: 900000 }), 1: claimOf(1, { capacitySats: 300000 }) };
   const mk = { 0: '03' + '11'.repeat(32), 1: '02' + '22'.repeat(32) };

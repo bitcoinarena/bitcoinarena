@@ -167,7 +167,11 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
       stop: async (fs, release) => {
         for (const f of fs) await sh('schtasks', ['/end', '/tn', task(f)]);
         // every process of that release but the auto update that runs this update: it ends by itself when done
-        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${q(release)}*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+        // BY THE RELEASE'S FOLDER, ANY SLASHES (measured 2026-10-19 22:43Z in the Windows VM: the node ran as "...\\.arena-node/releases/
+        // arena-node-2026.1.0-windows-x64/runtime/node.exe", the release was named with backslashes, -like matched nothing, the old node
+        // kept its port, the new one could not start, and the old one answered the health check - a false "updated")
+        const folder = String(release).split(/[\\/]/).filter(Boolean).pop();
+        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.CommandLine -notlike '*arenanode.mjs*auto-update*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
       start: async (fs) => {
@@ -221,14 +225,22 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   if (!from) return { ok: false, why: `no arena-node service names a release (${svc.where})` };
   if (from === newRelease) return { ok: false, why: 'that release is the one running' };
   const before = await waitHealthy({ port, fetcher, waitMs: 10000, everyMs: 500 });
-  // the node's services that run from the old release: the seat, and every other one naming it
-  const moving = svc.files().filter((f) => f === svc.seatFile || readFileSync(f, 'utf8').includes(from));
+  // the node's services that run from the old release: the seat, and every other one naming it - or naming an OLDER release beside it
+  // (measured 2026-10-19 in the Windows VM: arena-custody.cmd still named rc.25 after updates to 0.1.1, 2026.1.0 and 2026.1.1 - each update
+  // moved only the launchers naming the release it updated from, so the custody agent, its guardian and gateway stayed on rc.25)
+  const releasesDir = from.replace(/[\\/][^\\/]+[\\/]?$/, '');
+  const olderRe = new RegExp(`${releasesDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]arena-node-[^\\\\/"'\\s]+`, 'g');
+  const oldersIn = (t) => [...new Set(t.match(olderRe) || [])].filter((x) => x !== from && x !== newRelease && !String(newRelease).startsWith(x));
+  const moving = svc.files().filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || t.includes(from) || oldersIn(t).length > 0; });
   const oldTexts = new Map(moving.map((f) => [f, readFileSync(f, 'utf8')]));
 
   while (inSeatingWindow(nowMs())) await sleep(5000);
   await svc.prepare(newRelease);
   const stop = await svc.stop(moving, from);
   if (!stop.ok) return { ok: false, why: stop.why };
+  // and the processes of those older releases (Windows ends a release's processes by its folder; elsewhere the units above stop them)
+  const olders = [...new Set(moving.flatMap((f) => oldersIn(oldTexts.get(f))))];
+  if (platform === 'win32') for (const o of olders) await svc.stop([], o);
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
   // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
@@ -250,7 +262,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   for (const f of moving) {
     const text = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
-        : oldTexts.get(f).split(from).join(newRelease);
+        : oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease));
     // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
     writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
   }

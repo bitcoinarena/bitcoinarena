@@ -47,13 +47,22 @@ test('the point: before it the old tag, from it the new one; heights, epochs and
   for (const [o, n] of Object.values(TAG_PAIRS)) { assert.match(o, /^BLWP\/v1\//); assert.equal(n, o.replace('BLWP/', 'ARENA/')); }
 });
 
-test('no point is named on any network yet: every network is on the old tags', () => {
-  for (const net of ['mainnet', 'testnet4', 'regtest']) { assert.equal(TAG_SWITCH[net], null, net); setTagNetwork(net); assert.equal(tagSwitch(), null); }
+test('mainnet and regtest name no point; testnet4 names H 157,064 and T 2026-10-20 01:00Z', () => {
+  for (const net of ['mainnet', 'regtest']) { assert.equal(TAG_SWITCH[net], null, net); setTagNetwork(net); assert.equal(tagSwitch(), null); }
+  // testnet4's point (the owner 2026-10-19 ~20:45Z): H 157,064, T 2026-10-20 01:00:00Z
+  setTagNetwork('testnet4');
+  assert.deepEqual(tagSwitch(), { height: 157064, timeMs: Date.parse('2026-10-20T01:00:00Z') });
+  assert.equal(tagAt('duty', { height: 157063 }), 'BLWP/v1/DUTY');
+  assert.equal(tagAt('duty', { height: 157064 }), 'ARENA/v1/DUTY');
+  assert.equal(tagAt('liquidityClaim', { ms: Date.parse('2026-10-20T00:59:59.999Z') }), 'BLWP/v1/LIQUIDITY_CLAIM');
+  assert.equal(tagAt('liquidityClaim', { ms: Date.parse('2026-10-20T01:00:00Z') }), 'ARENA/v1/LIQUIDITY_CLAIM');
+  assert.equal(tagAt('gatewaySeating', { epoch: 1090 }), 'BLWP/v1/GATEWAY_SEATING', 'epoch 1090 starts at 156,960');
+  assert.equal(tagAt('gatewaySeating', { epoch: 1091 }), 'ARENA/v1/GATEWAY_SEATING', 'epoch 1091 starts at 157,104');
   setTagNetwork('testnet4');
   assert.throws(() => setTagNetwork('signet'), /no tag switch for network signet/);
 });
 
-test('with no point, every ticket and id is the bytes a protocol-17 seat computes', () => {
+test('with no point, every ticket and id is the bytes a protocol-17 seat computes', () => withPoint(null, () => {
   const w = (parts) => { const x = new Writer(); parts(x); return x.finish(); };
   const ticket = (tag, parts) => bytesToBigInt(taggedHash(tag, w(parts)));
   assert.equal(dutyTicket(b32(1), 500000, b32(2)), ticket('BLWP/v1/DUTY', (x) => { x.bytes32(b32(1)); x.u32(500000); x.bytes32(b32(2)); }));
@@ -62,7 +71,7 @@ test('with no point, every ticket and id is the bytes a protocol-17 seat compute
   assert.equal(gatewayTicket(b32(5), b32(6), 2000), ticket('BLWP/v1/GATEWAY', (x) => { x.bytes32(b32(5)); x.bytes32(b32(6)); }));
   assert.equal(liquidityTicket(toHex(b32(7)), toHex(b32(8)), T + 1), ticket('BLWP/v1/LIQUIDITY', (x) => { x.bytes32(b32(7)); x.bytes32(b32(8)); }));
   assert.equal(toHex(foundingId(b32(9), H + 5)), toHex(taggedHash('BLWP/v1/FOUNDING', w((x) => { x.bytes32(b32(9)); x.u32(H + 5); }))));
-});
+}));
 
 test('with a point, each ticket and id moves exactly there - and every node computes the same', () => withPoint(POINT, () => {
   const slotAt = Math.ceil(T / 3_600_000);
