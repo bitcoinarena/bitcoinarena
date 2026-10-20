@@ -98,6 +98,14 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
     const att = attest(w, ['A', 'B'], 8295000, 8299000);
     const posted = await Promise.all(w.nodes.map((d) => post(d, `/outcome?round=${toHex(w.rid)}`, att.bytes)));
     const o = await (await fetch(`${base(w.a)}/outcome?round=${toHex(w.rid)}`)).json();
+    // THE WALLET'S PENDING LINE (the owner 2026-10-20: "The pending balance doesn't appear in the wallet but does in the prediction
+    // market"): each filled order's /standing is its line of the book's settlement table, provisional until the outcome is final
+    const pendingTable = bookSettlement({ positions: w.a.orderBook.ledger(w.rid).positions, outcome: YES });
+    for (const e of [up, down]) {
+      const st = await (await fetch(`${base(w.a)}/standing?entry=${toHex(e.eid)}`)).json();
+      const r = pendingTable.claimed.find((x) => x.entry === toHex(e.eid));
+      assert.deepEqual([st.state, st.kind, st.pendingMsat, st.provisional, st.windowCloseMs], ['ATTESTED', 'payout', String(r.outMsat), true, o.finalAtMs]);
+    }
     skipTo(Number(o.finalAtMs) + 100);
     const got = await settle(w);
     assert.equal(got.state, 'ACCEPTED', got.why);

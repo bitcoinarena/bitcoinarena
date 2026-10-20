@@ -121,6 +121,15 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal(got[0].label, 'above 100k');
     for (const r of t.rows) assert.equal(BigInt(r.payoutMsat), want.get(r.entryId), `entry ${r.entryId.slice(0, 8)}`);
     assert.equal(BigInt(t.feesMsat) + BigInt(t.donationsMsat) + BigInt(t.payoutsMsat), BigInt(t.grossMsat), 'a msat of the gross went to nobody');
+    // THE WALLET'S PENDING LINE READS THE SAME TABLE (the owner 2026-10-20: "The pending balance doesn't appear in the wallet but does in
+    // the prediction market" - /standing answered a market order as a replay game, "0 of 5 agree on any one run", nothing pending):
+    // every entry's /standing at both seats is its table row - a winner's payout, a loser's 0 - provisional until the outcome is final
+    // (each seat's final time is its own: 600 s from when IT held the attestation)
+    for (const [i, d] of w.nodes.entries()) for (const e of entries) {
+      const st = await (await fetch(`http://127.0.0.1:${d.port}/standing?entry=${toHex(e.eid)}`)).json();
+      assert.deepEqual([st.state, st.kind, st.pendingMsat, st.provisional, st.windowCloseMs],
+        ['ATTESTED', 'payout', String(want.get(toHex(e.eid))), true, got[i].finalAtMs], `entry ${toHex(e.eid).slice(0, 8)}'s pending line`);
+    }
     assert.equal(BigInt(t.feesMsat), 4n * fee, 'the fee is not the market\'s 1 % of each stake (0.5 % nodes + 0.5 % donation)');
     assert.equal(BigInt(t.donationsMsat), 0n, 'a market entry donated beside its fee lock');
     assert.deepEqual(entries.map((e) => (e.donated || []).length), [0, 0, 0, 0], 'a market entry made donation outputs at entry');
