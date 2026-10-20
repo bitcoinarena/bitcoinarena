@@ -4698,13 +4698,18 @@
         fedEl.append(chip); }
       const st = vault();
       try { ARENACLIENT.ledgerReadSavedStakes(st, fed); } catch { /* nothing to read */ }
-      const rows = ARENACLIENT.ledgerHistory(ARENACLIENT.ledgerRows(st, fed)).slice().sort((a, b) => (b.atMs ?? -1) - (a.atMs ?? -1));
+      // EVERY FEDERATION'S HISTORY, ONE LIST (the owner 2026-10-20 18:4xZ: "it doesn't show the complete history" - his deposits sat in 4dc88be7 and
+      // b18947f0 while the list showed only the chip's 337ae01a): each federation this browser holds a wallet in, its rows tagged with it
+      const feds = [...new Set([fed, ...(ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(st) : [])])];
+      const rows = feds.flatMap((f) => { try { ARENACLIENT.ledgerReadSavedStakes(st, f); } catch { /* nothing to read */ }
+        return ARENACLIENT.ledgerHistory(ARENACLIENT.ledgerRows(st, f)).map((r) => ({ ...r, fed: f })); })
+        .sort((a, b) => (b.atMs ?? -1) - (a.atMs ?? -1));
       rowsEl.textContent = '';
       // NOTHING YET, SAID AS SUCH (the owner: "misleading, I just did no deposits yet")
       if (!rows.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No activity yet. Your deposits, stakes and withdrawals show here.'; rowsEl.append(e); return; }
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
       for (const r of rows) {
-        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout';
+        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in';
         const el = document.createElement('div');
         el.className = `hist-row ${plus ? 'plus' : 'minus'}` + (r.kind === 'stake' && r.entry ? ' clickable' : '');
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
@@ -4712,8 +4717,15 @@
           : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
-          : `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`;
-        for (const [cls, text] of [['hist-when', when], ['hist-what', what], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
+          // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
+          // entered -1,000 sat" in 337ae01a, where they had arrived)
+          : r.kind === 'moved-in' ? `Moved in from federation ${String(r.from || '').slice(0, 8)}`
+          : r.kind === 'moved-out' ? `Moved to federation ${String(r.to || '').slice(0, 8)}`
+          : r.kind === 'swapped-in' ? `Swapped in from federation ${String(r.from || '').slice(0, 8)}`
+          : r.kind === 'swapped-out' ? `Swapped to federation ${String(r.to || '').slice(0, 8)}${r.feeMsat && r.feeMsat !== '0' ? ' (fee ' + sat(r.feeMsat) + ')' : ''}`
+          : r.kind === 'stake' ? `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`
+          : String(r.kind || 'entry');
+        for (const [cls, text] of [['hist-when', when], ['hist-what', what + (feds.length > 1 ? ' \u00b7 ' + String(r.fed).slice(0, 8) : '')], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
           const c = document.createElement('span'); c.className = cls; c.textContent = text; if (cls === 'hist-what') c.title = text; el.appendChild(c);   // the whole line on hover or long press (kanban #558)
         }
         if (r.kind === 'stake' && r.entry) {
