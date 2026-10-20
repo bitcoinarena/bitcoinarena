@@ -6,6 +6,22 @@
 const LATEST_URL = 'https://testnet.bitcoin-arena.io/release/latest.json';
 const TTL_MS = 6 * 3600_000;
 
+/**
+ * WHERE THE NEWEST RELEASE IS READ (kanban #546, the owner 2026-10-20: "a signed, unlisted latest.json, read only when ARENA_LATEST_URL is set,
+ * and only when that URL is limited to testnet.bitcoin-arena.io"): the production latest.json unless ARENA_LATEST_URL (or the node's
+ * arena.conf `latest_url`, which an update keeps where a launcher's env would be rewritten) names an https latest.json on the Arena
+ * testnet site - a test channel, still believed only under the release key's signature. Anything else is refused and the production
+ * URL read. ARENA_RELEASE_LATEST_URL='' (empty) still turns the checks off. Answers { url, why }.
+ */
+export const TEST_CHANNEL_RE = /^https:\/\/testnet\.bitcoin-arena\.io\/[A-Za-z0-9._\/-]*latest\.json$/;
+export function latestUrlFrom(env = process.env, conf = {}) {
+  if (env.ARENA_RELEASE_LATEST_URL === '') return { url: '', why: 'release checks are off (ARENA_RELEASE_LATEST_URL is empty)' };
+  const given = env.ARENA_LATEST_URL || conf.latest_url || '';
+  if (!given) return { url: LATEST_URL, why: null };
+  if (TEST_CHANNEL_RE.test(given)) return { url: given, why: `the test channel ${given}` };
+  return { url: LATEST_URL, why: `${given} is not a latest.json on https://testnet.bitcoin-arena.io/: refused, the production release read` };
+}
+
 /** Is version `a` newer than `b`? Releases are 2026.xx.yy and a fix 2026.xx.yy.zz (2026-10-19), compared part by part (a missing
  *  fourth part is 0: 2026.1.1.1 is newer than 2026.1.1); then a release over its own pre-releases, then rc.N by N (the older x.y.z-rc.N). */
 export function newerVersion(a, b) {
@@ -29,7 +45,7 @@ export function newerVersion(a, b) {
  * The reader: read(ownVersion) answers { checkedMs, latest: { version, tag, release, commit, assets, download } | null, newer, why }. `verify(bytes, sigB64)`
  * checks the release key's signature (the installer's release-verify.js; a node without it offers nothing).
  */
-export function latestReleaseReader({ url = process.env.ARENA_RELEASE_LATEST_URL ?? LATEST_URL, fetcher = fetch, verify, now = Date.now, ttlMs = TTL_MS } = {}) {
+export function latestReleaseReader({ url = latestUrlFrom().url, fetcher = fetch, verify, now = Date.now, ttlMs = TTL_MS } = {}) {
   let kept = null, pending = null;
   const fetchOnce = async () => {
     if (!url) return { latest: null, why: 'release checks are off on this node' };
