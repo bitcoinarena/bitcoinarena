@@ -23,7 +23,7 @@ import { WithdrawPanel } from './WithdrawPanel.jsx';
 import { ShopItems } from './ShopItems.jsx';
 import { DonateBox } from './DonateBox.jsx';
 import { OtherWallets } from './OtherWallets.jsx';
-import { RefundKey, BackToArena } from './PageBits.jsx';
+import { RefundKey, BackToArena, Text, FedChip, BackupBox } from './PageBits.jsx';
 import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
@@ -98,7 +98,18 @@ if (typeof window !== 'undefined') window.ArenaShop = { draw: (host, props) => i
 // THE DONATE BOX (the page's ARENA_DONATE_OPEN hands it to whom and its rules): a fresh one each time it opens
 if (typeof window !== 'undefined') window.ArenaDonate = { open: (host, props) => into(host, <DonateBox key={Date.now()} {...props} />) };
 // SMALL PARTS: the refund key's line in an open round, the way back when a game's client is not loaded
-if (typeof window !== 'undefined') window.ArenaBits = { refundKey: (host, props) => into(host, <RefundKey {...props} />), backToArena: (host, props) => into(host, <BackToArena {...props} />) };
+if (typeof window !== 'undefined') window.ArenaBits = { refundKey: (host, props) => into(host, <RefundKey {...props} />), backToArena: (host, props) => into(host, <BackToArena {...props} />),
+  fedChip: (host, props) => into(host, <FedChip {...props} />), backup: (host, props) => into(host, <BackupBox {...props} />) };
+// EVERY LINE OF WORDS THE PAGE KEEPS (kanban #564: a status, a balance, a count, the loading progress once this bundle is there):
+// window.ArenaText.say(element, text) draws them by React into that element, at once - the page reads some of them back - and only when
+// they change
+const say = (el, text) => {
+  if (!el) return;
+  const t = text === undefined || text === null ? '' : String(text);
+  if (el._root && el._said === t) return;
+  el._said = t; into(el, <Text text={t} />);
+};
+if (typeof window !== 'undefined') window.ArenaText = { say };
 // SETTINGS' OWN CARDS: each drawn into its section with what the page hands it
 if (typeof window !== 'undefined') window.ArenaSettings = {
   name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),

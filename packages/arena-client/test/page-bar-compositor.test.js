@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -21,8 +22,8 @@ test('the bar is moved by a transform, never by its width', () => {
   const src = HTML.slice(from, HTML.indexOf('\n    }\n', from) + 6);
   const bar = { style: {} };
   const el = () => ({ classList: { add() {}, remove() {} } });
-  const show = pageFunction(PAGE, ['bar', 'pct', 'stage', 'subStep', 'TOTAL_MB', 'STAGES', 'document'], src, 'return show;')(
-    bar, { textContent: '', dataset: {} }, { textContent: '' }, 0, '', [[0, 'x']], { getElementById: el });
+  const show = pageFunction(PAGE, ['bar', 'pct', 'stage', 'subStep', 'TOTAL_MB', 'STAGES', 'document', 'window'], src, 'return show;')(
+    bar, { textContent: '', dataset: {} }, { textContent: '' }, 0, '', [[0, 'x']], { getElementById: el }, { ArenaText });
   show(0.5); assert.equal(bar.style.width, undefined, 'no width written'); assert.equal(bar.style.transform, 'translateX(-50.0%)');
   show(0.9); assert.equal(bar.style.transform, 'translateX(-10.0%)');
   show(1); assert.equal(bar.style.transform, 'translateX(0.0%)');
