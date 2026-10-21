@@ -17,8 +17,8 @@
 // NOTHING HERE IS AN INPUT. 0.10: another player's truck is a picture, never
 // an input to my simulation. A queue of pictures is handed to a renderer and
 // to nothing else - `packages/nextblock` is not imported, and cannot be.
-import { toHex } from '../../arena-protocol/src/hash.js';
-import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
+import { toHex } from 'arena-sdk/hash';
+import { displayNameFromKey } from 'arena-sdk/display-name';
 
 /** How many pictures a page will hold before it starts dropping the oldest. */
 export const GHOST_BACKLOG = 240;

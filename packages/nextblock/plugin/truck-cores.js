@@ -9,10 +9,10 @@
 import { createRequire } from 'node:module';
 import { coreHashHex } from '../tools/hash-core.js';
 import { fileURLToPath } from 'node:url';
-import { GENESIS_CONFIG_HASH } from '../../arena-protocol/src/genesis-ids.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../arena-protocol/src/manifest.js';
-import { ROUND_PERIOD_MS } from '../../arena-protocol/src/series.js';
+import { GENESIS_CONFIG_HASH } from 'arena-sdk/genesis-ids';
+import { toHex, fromHex } from 'arena-sdk/hash';
+import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from 'arena-sdk/manifest';
+import { ROUND_PERIOD_MS } from 'arena-sdk/series';
 
 // THE REGISTRATION IMPORTS NO CORE (kanban #328, spec §0A.6). A node loads this module in its own thread (ARENA_GAMES,
 // arena-node/src/main.js), and a core imported here would run there with every right the node has. A node runs a core
