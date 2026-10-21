@@ -230,9 +230,9 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "14ca1b166090f0e412458bdd5040997d9115f53d",
+      "commit": "01113771e1b4da85af1c3cd8a585e9799a2ff36f",
       "files": {
-        "app.json": "c03055bf4885417fdf6ea8442309037073747a7ba8a907446ce57b81a7206206",
+        "app.json": "414384d51cb16f11d9733f9edc30d87f28a269acc1e4b2e00fa71c9ae6bdae93",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
         "client/index-v2.html": "b895f3b16d9cef663130faacbf5d37e2fe60271ba5e4748024db2d27e1174206",
         "client/index-v4.html": "5c724514c0fba4a8a360ff646a8a050c79627c8f34369377fa54c7c38d4f11fa",
@@ -266,9 +266,9 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "e3bfd453889024072a942a3c62e19e2b4f074a46",
+      "commit": "4ed00f376086b0fa3f3e92712ef0775bd2f6d56b",
       "files": {
-        "app.json": "fee0da0f6e6fa1e7d7bf18d69faa5ad5a099468b9c511d7ab15c2cc19a54918c",
+        "app.json": "3e12f1a9c71bab180ff4519dadd79ac1d7a0e4842f5e0cc89a18963f15bad659",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
         "client/index-v10.html": "8d596bc7173f4645f7d87426d056a30f42a9cb43d15cd1fe5f5b8b5d720a3ad9",
         "client/index-v11.html": "50362ea2e8dfee602363ae34676d5340ee8e7478b3a4d47d724417271262dea4",
