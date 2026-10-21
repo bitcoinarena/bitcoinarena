@@ -18,6 +18,7 @@ import { WalletHistory } from './WalletHistory.jsx';
 import { CustodyCard } from './CustodyCard.jsx';
 import { SeedModal } from './SeedModal.jsx';
 import { WalletStart } from './WalletStart.jsx';
+import { DepositModal } from './DepositModal.jsx';
 import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
@@ -72,6 +73,9 @@ if (typeof window !== 'undefined') window.ArenaSeed = { open: openSeed, close: c
 // THE WALLET SCREEN (the page's wallet start hands it its rules: create, restore, the Nostr login)
 export function openWalletStart(host, props) { into(host, <WalletStart {...props} />); }
 if (typeof window !== 'undefined') window.ArenaWalletStart = { open: openWalletStart };
+// THE DEPOSIT WINDOW (the page's showDepositOffer hands it the offer and its rules): drawn at once into a fresh host; the root, to unmount
+export function openDeposit(host, props) { const root = createRoot(host); flushSync(() => root.render(<DepositModal {...props} />)); return root; }
+if (typeof window !== 'undefined') window.ArenaDeposit = { open: openDeposit };
 // SETTINGS' OWN CARDS: each drawn into its section with what the page hands it
 if (typeof window !== 'undefined') window.ArenaSettings = {
   name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),

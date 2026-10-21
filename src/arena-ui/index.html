@@ -3832,7 +3832,8 @@
           b.addEventListener('click', () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'arena-deposit') { el.textContent = ''; el.className = ''; } else el.classList.remove('show');
             const cta = document.getElementById('arena-backup-cta'); if (cta) cta.click(); });
           box.append(t, b);
-          const head = el.querySelector(after); if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
+          const slot = el.querySelector('.dep-backup-host'), head = el.querySelector(after);
+          if (slot) slot.append(box); else if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
         } else if (!line && box) box.remove();
       }
       if (window.ARENA_DRAW_SEED_CARD) window.ARENA_DRAW_SEED_CARD(line);
@@ -4194,256 +4195,41 @@
       if (st <= 0n || one === st) return made || '';
       return `A round costs ${sats(st)}. You deposit ${sats(one)} per round: the stake, plus the round's node fee and donation, rounded up to a whole sat. Whatever a round does not use stays in your wallet.`;
     }
+    // THE DEPOSIT WINDOW (kanban #564: drawn by React, window.ArenaDeposit - DepositModal): the page keeps where it stands, the note for a
+    // reload, which offer's window this is, and the rules it hands over - the whole notes a deposit is (ARENACLIENT.ceilNote), the QR, why a
+    // round's deposit is what it is, the wallet link kept in this browser (arena.nwc) and the Nostr module, WebLN, and its probes
     function showDepositOffer(offer, { message = '', title = 'Deposit', overSettings = false } = {}) {
       const el = document.getElementById('arena-deposit');
       if (!el) return;
       // over the games screen too: never inside #boot's stacking context once the games screen is up
       if (el.parentElement !== document.body && document.body.classList.contains('arena-picking')) document.body.appendChild(el);
+      // one window at a time, in a host of its own: the page clears #arena-deposit by hand in places, React's root never sits on it
+      if (el._deposit) { try { el._deposit.unmount(); } catch { /* its host was cleared */ } el._deposit = null; }
       el.textContent = '';
       el.className = 'deposit-modal' + (overSettings ? ' over-settings' : '');
-      const add = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; el.appendChild(x); return x; };
-      const close = add('button', 'dep-close', '\u00d7');
-      close.type = 'button'; close.title = 'Close';
-      const titleEl = add('div', 'dep-title', message || title);
-      const tabs = add('div', 'dep-tabs');
-      // CUSTOM: typed, read with parseInt as it is typed, the invoice made a moment after the last key - no Set button.
-      // The row keeps its place when hidden (visibility), so choosing Custom moves nothing.
-      const custom = add('div', 'dep-custom'); custom.style.visibility = 'hidden';
-      const field = document.createElement('input'); field.type = 'text'; field.inputMode = 'numeric'; field.autocomplete = 'off';
-      field.placeholder = 'amount in sat';
-      custom.append(field);
-      const amount = add('div', 'dep-amount');
-      const why = add('div', 'dep-why');
-      // PAY WITH MY WALLET (2026-10-10: "nwc for deposits is part of the scope"): the player's own wallet
-      // pays this invoice over Nostr Wallet Connect (NIP-47) - its link pasted once, kept in this browser (arena.nwc). Connected,
-      // it is the DEFAULT (2026-10-10: "If possible and nwc provides a balance of the connected wallet automatically
-      // display it and also default it"): first, above the QR, the wallet's balance beside it (get_balance) - the QR stays for
-      // any other wallet. It pays only when tapped.
-      const nwc = add('div', 'dep-nwc');
-      nwc.style.cssText = 'margin:8px 0 4px;display:flex;flex-direction:column;gap:6px';
-      const nwcPay = document.createElement('button'); nwcPay.type = 'button'; nwcPay.className = 'dep-nwc-pay'; nwcPay.disabled = true;
-      nwcPay.style.cssText = 'font:600 15px system-ui,sans-serif;padding:11px;border-radius:10px;border:1px solid #8e5cf2;background:#2a1f3d;color:#efe7ff;cursor:pointer';
-      const nwcLink = document.createElement('input'); nwcLink.type = 'text'; nwcLink.autocomplete = 'off'; nwcLink.spellcheck = false;
-      nwcLink.placeholder = 'nostr+walletconnect://… from your wallet\'s "connect an app"';
-      nwcLink.style.cssText = 'display:none;font:13px ui-monospace,monospace;padding:9px;border-radius:9px;border:1px solid #3a4655;background:#0b0f14;color:#e8eaed';
-      const nwcNote = document.createElement('div'); nwcNote.style.cssText = 'font-size:12.5px;color:#a9b3c1';
-      nwc.append(nwcPay, nwcLink, nwcNote);
-      const nwcUri = () => { try { return window.ARENA_BROWSER_STORE().getItem('arena.nwc') || ''; } catch { return ''; } };
-      const nwcPaint = () => {
-        const u = nwcUri();
-        nwcPay.textContent = u ? 'Pay with my wallet (Nostr Wallet Connect)' : 'Connect my wallet to pay in one tap (Nostr Wallet Connect)';
-        nwcLink.style.display = 'none';
-        nwcNote.innerHTML = '';
-        if (u) { nwcNote.textContent = 'Wallet connected in this browser · '; const x = document.createElement('a'); x.href = '#'; x.textContent = 'disconnect'; x.style.color = '#c9a8ff';
-          x.onclick = (e) => { e.preventDefault(); try { window.ARENA_BROWSER_STORE().removeItem('arena.nwc'); } catch { /* none */ } nwcPaint(); }; nwcNote.appendChild(x); }
-      };
-      let nwcBalanceMsat = null;
-      const nwcReadBalance = async () => {
-        const u = nwcUri(); if (!u || !window.ARENA_NOSTR_LOAD) return;
-        try {
-          const N = await window.ARENA_NOSTR_LOAD();
-          const b = await N.nwcBalance(u, { timeoutMs: 15000 });
-          nwcBalanceMsat = BigInt(b);
-          window.ARENA_NWC = { ...(window.ARENA_NWC || {}), balanceMsat: String(b) };
-          nwcFit();
-        } catch (e) { nwcBalanceMsat = null; if (nwcUri()) nwcNote.firstChild && (nwcNote.firstChild.textContent = 'Wallet connected (its balance is not shared: ' + (e.code || 'no answer') + ') · '); }
-      };
-      // THE BALANCE AGAINST THIS INVOICE: shown, and the button off when it cannot cover it
-      let nwcWant = null;
-      const nwcFit = () => {
-        if (nwcBalanceMsat === null || !nwcUri()) return;
-        const enough = nwcWant === null || nwcBalanceMsat >= nwcWant;
-        nwcPay.textContent = enough ? `Pay with my wallet · ${sats(nwcBalanceMsat)} in it` : `My wallet has ${sats(nwcBalanceMsat)} - not enough for this`;
-        if (!enough) nwcPay.disabled = true;
-      };
-      nwcPaint();
-      if (nwcUri()) { nwcPay.style.background = '#8e5cf2'; nwcPay.style.color = '#fff'; nwcReadBalance(); }
-      nwcPay.addEventListener('click', async () => {
-        const N = await (window.ARENA_NOSTR_LOAD ? window.ARENA_NOSTR_LOAD() : Promise.reject(new Error('the wallet connection did not load'))).catch((e) => { nwcNote.textContent = e.message; return null; });
-        if (!N) return;
-        let u = nwcUri();
-        if (!u) {
-          if (nwcLink.style.display === 'none') { nwcLink.style.display = ''; nwcLink.focus(); nwcPay.textContent = 'Connect and pay'; nwcNote.textContent = 'Your wallet\'s link lets this page ask it to pay; your wallet decides, and you can disconnect it there.'; return; }
-          u = nwcLink.value.trim();
-          try { N.parseNwc(u); } catch (e) { nwcNote.textContent = e.message; return; }
-          nwcPay.disabled = true; nwcNote.textContent = 'Asking your wallet …';
-          try { const i = await N.nwcGetInfo(u, { timeoutMs: 20000 }); try { window.ARENA_BROWSER_STORE().setItem('arena.nwc', u); } catch { /* the session only */ } window.ARENA_NWC = { connected: true, alias: i.alias || null, network: i.network || null }; }
-          catch (e) { if (!/does not|unknown|NOT_IMPLEMENTED/i.test(e.code || e.message)) { nwcNote.textContent = e.message; nwcPay.disabled = false; return; } try { window.ARENA_BROWSER_STORE().setItem('arena.nwc', u); } catch { /* none */ } }
-        }
-        const invoice = current;
-        if (!invoice) { nwcNote.textContent = 'No invoice yet - pick an amount first'; return; }
-        nwcPay.disabled = true;
-        status.set(2, 'Your wallet is paying this invoice over Nostr Wallet Connect …', 'busy');
-        const t0 = Date.now();
-        try {
-          const r = await N.nwcPay(u, invoice, { timeoutMs: 60000 });
-          window.ARENA_NWC = { ...(window.ARENA_NWC || {}), paid: invoice.slice(0, 24), ms: Date.now() - t0, preimage: r.preimage.slice(0, 16) };
-          nwcNote.textContent = 'Paid by your wallet - waiting for the e-cash …';
-        } catch (e) {
-          window.ARENA_NWC = { ...(window.ARENA_NWC || {}), failed: e.message };
-          status.set(2, 'Your wallet did not pay: ' + e.message + ' - you can still pay the invoice above from any wallet.', 'fail');
-        } finally { nwcPay.disabled = false; nwcPaint(); nwcReadBalance(); }
-      });
-      // WEBLN WHERE AVAILABLE (spec §24: "Nostr Wallet Connect, BOLT11 QR, deep link, or WebLN where available"):
-      // a browser wallet that puts window.webln on the page (Alby and others) pays this invoice when tapped - enable() asks the
-      // player's permission, sendPayment(invoice) pays. Shown only when such a wallet is there; the QR stays for any other.
-      const webln = window.webln && typeof window.webln.sendPayment === 'function' ? window.webln : null;
-      const weblnPay = document.createElement('button'); weblnPay.type = 'button'; weblnPay.className = 'dep-webln-pay'; weblnPay.disabled = true;
-      weblnPay.textContent = 'Pay with my browser wallet (WebLN)';
-      weblnPay.style.cssText = 'font:600 15px system-ui,sans-serif;padding:11px;border-radius:10px;border:1px solid #f7931a;background:#3a2a12;color:#fff3e0;cursor:pointer';
-      weblnPay.style.display = webln ? '' : 'none';
-      nwc.append(weblnPay);
-      weblnPay.addEventListener('click', async () => {
-        const invoice = current;
-        if (!webln || !invoice) return;
-        weblnPay.disabled = true;
-        status.set(2, 'Your browser wallet is paying this invoice (WebLN) \u2026', 'busy');
-        const t0 = Date.now();
-        try {
-          if (typeof webln.enable === 'function') await webln.enable();
-          const r = await webln.sendPayment(invoice);
-          window.ARENA_WEBLN = { paid: invoice.slice(0, 24), ms: Date.now() - t0, preimage: String((r && r.preimage) || '').slice(0, 16) };
-          nwcNote.textContent = 'Paid by your browser wallet - waiting for the e-cash \u2026';
-        } catch (e) {
-          window.ARENA_WEBLN = { failed: e && e.message ? e.message : String(e) };
-          status.set(2, 'Your browser wallet did not pay: ' + window.ARENA_WEBLN.failed + ' - you can still pay the invoice above from any wallet.', 'fail');
-        } finally { weblnPay.disabled = false; }
-      });
-      const qr = add('div', 'arena-deposit-qr');
-      qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,28vh);margin:6px auto;line-height:0';
-      const qrHold = (words) => { qr.innerHTML = ''; const h = document.createElement('div'); h.className = 'qr-hold'; h.textContent = words; qr.appendChild(h); };
-      // COPY INVOICE (2026-09-30): the invoice shown, to the clipboard, with the press answered on the button -
-      // green "Copied ✓" for 1.5 s, or red "Copy failed" (then the invoice text is selected to copy by hand).
-      const row = add('div', 'dep-inv-row');
-      const box = document.createElement('code'); box.className = 'dep-invoice';
-      const copy = document.createElement('button'); copy.className = 'dep-copy'; copy.textContent = 'Copy invoice';
-      copy.type = 'button'; copy.disabled = true;
-      row.append(box, copy);
-      // WHAT IS HAPPENING NOW, UNDER THE INVOICE (2026-09-30): making the invoice at the gateway, waiting for the
-      // Lightning payment, the federation's e-cash in the player wallet - or the invoice expired or failed.
-      const status = payStatus(el);
-      const host = (u) => { try { return new URL(u).host; } catch { return String(u || ''); } };
-      // EXACT AMOUNTS (N rounds play N rounds, 2026-10-01): shown as they are, never rounded to a sat they are not -
-      // deposits are whole sats, notes are 1 msat (page-lock.js NOTE_MSAT, "1 sat = 1 sat")
-      const satNum = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n;
-        return f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w; };
-      const sats = (msat) => `${satNum(msat)} sat`;
-      const due = (msat) => (ARENACLIENT.ceilNote ? ARENACLIENT.ceilNote(msat) : BigInt(msat));
-      let copyTimer = 0;
-      const copied = (ok) => {
-        clearTimeout(copyTimer);
-        copy.classList.toggle('copied', ok); copy.classList.toggle('failed', !ok);
-        copy.textContent = ok ? 'Copied \u2713' : 'Copy failed - select the invoice';
-        copyTimer = setTimeout(() => { copy.classList.remove('copied', 'failed'); copy.textContent = 'Copy invoice'; }, 1500);
-      };
-      copy.addEventListener('click', async () => {
-        const text = box.textContent;
-        if (!/^ln/i.test(text)) return;
-        try { await navigator.clipboard.writeText(text); copied(true); return; } catch { /* the older way below */ }
-        const r = document.createRange(); r.selectNodeContents(box);
-        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
-        let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
-        copied(ok);
-      });
-      let token = 0; let current = null;
-      // THE OFFER THIS MODAL SHOWS: the gross one, then - when a paid deposit still falls short (option 2, the owner
-      // 2026-10-01) - the rest of the round's fees, in this same modal
-      let active = offer;
-      const watcher = (o) => (d, final) => {
-        if (o !== active || d.invoice !== current) return;
-        const again = o.restMsat === null ? ' Pick an amount to get a new one.' : '';
-        if (final === 'Claimed') status.set(3, `Payment received! ${sats(d.amountMsat)} are now in your wallet.`, 'ok');
-        else if (final === 'Expired') status.set(3, 'This invoice has expired and nothing was charged.' + again, 'fail');
-        else status.set(3, `The deposit did not go through (${final}), and nothing was charged.` + again, 'fail');
-      };
-      const show = async (msat) => {
-        const mine = ++token;
-        amount.textContent = `Pay ${sats(due(msat))} from any Lightning wallet to top up your player wallet.`;
-        qrHold('Creating the QR code \u2026'); box.textContent = 'creating the invoice \u2026'; copy.disabled = true;
-        status.set(1, `Creating your invoice for ${sats(due(msat))} \u2026`, 'busy');
-        try {
-          const d = await active.invoice(msat);
-          if (mine !== token) return;
-          current = d.invoice;
-          qr.innerHTML = ARENACLIENT.invoiceQrSvg(d.invoice);
-          box.textContent = d.invoice; copy.disabled = false; nwcPay.disabled = false; weblnPay.disabled = false; nwcWant = BigInt(d.amountMsat); nwcFit();
-          status.set(2, `Waiting for your Lightning payment of ${sats(d.amountMsat)}` + (d.gateway ? ` via ${host(d.gateway)}` : '') + ' \u2026', 'busy');
-        } catch (e) {
-          if (mine !== token) return;
-          const why = e && e.message ? e.message : String(e);
-          box.textContent = 'No invoice: ' + why; qrHold('No QR code');
-          status.set(3, 'The invoice could not be created: ' + why, 'fail');
-        }
-      };
-      const buttons = offer.choices.map((c) => {
-        const b = document.createElement('button'); b.type = 'button'; b.textContent = c.label; b.dataset.key = c.key;
-        b.addEventListener('click', () => {
-          for (const x of buttons) x.classList.toggle('on', x === b);
-          custom.style.visibility = c.key === 'custom' ? 'visible' : 'hidden';
-          // WHY NOT EXACTLY THE STAKE: the round tabs only (Custom and the rest say their own amount)
-          const one = offer.choices[0] && offer.choices[0].rounds === 1 ? offer.choices[0].msat : null;
-          why.textContent = c.rounds ? depositWhyLine(offer.perRoundStake, one) : '';
-          if (c.key !== 'custom') show(c.msat); else { field.focus(); typed(); }
-        });
-        tabs.appendChild(b); return b;
-      });
-      let typeTimer = 0;
-      const typed = () => {
-        clearTimeout(typeTimer);
-        const sat = parseInt(String(field.value).replace(/[^0-9]/g, ''), 10);
-        if (!(sat > 0)) {
-          token++; current = null; copy.disabled = true; box.textContent = '';
-          amount.textContent = 'Enter an amount in sat.'; qrHold('The QR code appears as soon as you enter an amount');
-          status.set(0, 'Enter an amount in sat.', ''); return;
-        }
-        amount.textContent = `Pay ${sats(due(BigInt(sat) * 1000n))} from any Lightning wallet to top up your player wallet.`;
-        typeTimer = setTimeout(() => show(BigInt(sat) * 1000n), 450);
-      };
-      field.addEventListener('input', typed);
       // noted for a reload (the boot script above): only a join's offer - Settings' is over the lobby's own address
       if (!overSettings) {
         try { sessionStorage.setItem('arena.depositAt', JSON.stringify({ at: location.search,
           back: typeof window.ARENA_LOBBY_BACK === 'string' ? window.ARENA_LOBBY_BACK : '' })); } catch { /* no session storage */ }
       }
-      // ONLY THIS OFFER'S MODAL: a short wallet is asked again with a new offer, and this one's late close must not clear it
+      // ONLY THIS OFFER'S WINDOW: a short wallet is asked again with a new offer, and this one's late close must not clear it
       const mine = el.dataset.offer = String(Number(el.dataset.offer || 0) + 1);
-      const done = () => {
-        if (el.dataset.offer !== mine) return;
-        el.textContent = ''; el.className = ''; try { sessionStorage.removeItem('arena.depositAt'); } catch { /* none */ }
-      };
-      close.addEventListener('click', () => { active.close(); done(); });
-      // THE REST, IN PLACE: the title says what is missing, the tabs keep their place unseen, the one invoice is made
-      // THE 5 SAT FLOOR (2026-10-01): a rest under the smallest deposit the federation takes is asked at that floor
-      const satN = (msat) => satNum(msat);
-      const restPay = (o) => (o.restPayMsat !== undefined && o.restPayMsat !== null ? o.restPayMsat : o.restMsat);
-      const restWords = (o) => restPay(o) > o.restMsat
-        ? `This round needs ${satN(o.restMsat)} more sat for fees. The smallest Lightning deposit is ${satN(restPay(o))} sat. Pay ${satN(restPay(o))} sat to join.`
-        : `This round needs ${satN(o.restMsat)} more sat for fees. Pay the rest to join.`;
-      const takeRest = (o) => {
-        active = o; bind(o);
-        titleEl.textContent = restWords(o); why.textContent = '';
-        tabs.style.visibility = 'hidden'; custom.style.visibility = 'hidden';
-        show(restPay(o));
-      };
-      // PAID: the green line stays; the round is looked at again (`outcome`). Funded - the modal goes 2.5 s later.
-      // Still short - after the green line has stood 2 s, the rest of the fees in this same modal (never the tabs again).
-      const bind = (o) => {
-        if (o.watch) o.watch(watcher(o));
-        o.claimed.then(async () => {
-          const greenAt = Date.now();
-          const out = o.outcome ? await Promise.race([o.outcome, new Promise((r) => setTimeout(() => r({ funded: true }), 120000))]) : { funded: true };
-          if (o !== active) return;
-          if (out.funded || !out.rest) { setTimeout(done, 2500); return; }
-          await new Promise((r) => setTimeout(r, Math.max(0, 2000 - (Date.now() - greenAt))));
-          if (o === active) takeRest(out.rest);
-        }, () => { if (o === active) done(); });
-      };
-      bind(offer);
-      if (offer.restMsat !== null && offer.restMsat !== undefined) {
-        titleEl.textContent = restWords(offer);
-        tabs.style.visibility = 'hidden';
-      }
-      buttons[0].click();
+      const host = document.createElement('div'); host.className = 'dep-host'; host.style.display = 'contents';
+      el.appendChild(host);
+      const store = () => window.ARENA_BROWSER_STORE();
+      el._deposit = window.ArenaDeposit.open(host, { offer, title, message,
+        due: (msat) => (ARENACLIENT.ceilNote ? ARENACLIENT.ceilNote(msat) : BigInt(msat)),
+        qrSvg: (invoice) => ARENACLIENT.invoiceQrSvg(invoice), whyLine: depositWhyLine,
+        nwc: { uri: () => store().getItem('arena.nwc') || '', keep: (u) => { try { store().setItem('arena.nwc', u); } catch { /* the session only */ } },
+          forget: () => store().removeItem('arena.nwc'), load: window.ARENA_NOSTR_LOAD ? () => window.ARENA_NOSTR_LOAD() : null },
+        webln: window.webln && typeof window.webln.sendPayment === 'function' ? window.webln : null,
+        onNwc: (o, fresh) => { window.ARENA_NWC = fresh ? o : { ...(window.ARENA_NWC || {}), ...o }; },
+        onWebln: (o) => { window.ARENA_WEBLN = o; },
+        onDone: () => {
+          if (el.dataset.offer !== mine) return;
+          if (el._deposit) { el._deposit.unmount(); el._deposit = null; }
+          el.textContent = ''; el.className = ''; try { sessionStorage.removeItem('arena.depositAt'); } catch { /* none */ }
+        } });
     }
     window.ARENA_SHOW_DEPOSIT = showDepositOffer;
     // WHAT SETTINGS' DEPOSIT AND WITHDRAW WORK ON: the lobby's paying round (its stake sets the tabs), the invite of the
