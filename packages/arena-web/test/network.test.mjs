@@ -15,7 +15,10 @@ const mine = { chain: 'testnet4', own, installed: [{ network: 'cc'.repeat(32), i
 test('the four lines in force, a draining federation, an installed package with Remove', () => {
   assert.equal(setInForce(own.sets).serial, '3');
   const four = renderToStaticMarkup(React.createElement(FourRows, { network: own }));
-  assert.match(four, /set 3 in force \(since block 157000\)/); assert.match(four, /1 running · 1 not on this node/); assert.match(four, /337ae01ad1e9bb35…/);
+  // stat cards (kanban #565): each fact a card, its label, value and what it means
+  assert.match(four, /<span>Donation addresses<\/span><b>Set 3<\/b><small>in force since block 157000<\/small>/);
+  assert.match(four, /<span>Game series<\/span><b>1 running<\/b><small>1 not on this node<\/small>/);
+  assert.match(four, /<span>Federation<\/span><b class="mono">337ae01ad1e9…<\/b>/);
   const html = renderToStaticMarkup(React.createElement(NetworkPanel, { initial: { loaded: true, mine, games: [] } }));
   assert.match(html, /Federation b18947f085d4… is being replaced by 4dc88be70830… \(since 2026-10-20 04:00 UTC\)/);
   assert.match(html, /Installed · network cccccccccccc… · package dddddddddddd…/); assert.match(html, />Remove</);
