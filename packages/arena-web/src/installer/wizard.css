@@ -28,3 +28,6 @@
 .aw button.kind.on{border-color:var(--gv);background:rgba(247,147,26,.12)}
 .aw .bar{height:8px;background:var(--line);border-radius:4px;margin-top:6px;overflow:hidden}.aw .bar i{display:block;height:8px;background:var(--gv)}
 .aw .choice > input{width:auto;margin-top:4px}.aw .choice p{overflow-wrap:anywhere}
+/* the gateway seat's card: its earnings bars and its needs under their own names (the page's intro lays out .needs as a grid of cards) */
+.aw .earn .ebar{display:grid;grid-template-columns:70px 1fr 110px;align-items:center;gap:8px;margin:4px 0;font-size:13px}
+.aw .seat-needs{margin:12px 0 6px}.aw .seat .tile{align-items:center;text-align:center;gap:2px;padding:10px 6px}
