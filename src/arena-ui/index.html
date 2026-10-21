@@ -2624,19 +2624,10 @@
       }
       const refundEl = document.getElementById('arena-refund');
       if (refundEl) {
-        refundEl.textContent = 'refund key fingerprint ' + player.fingerprint
-          + (origin === 'imported' ? ' (from the seed you imported)'
-            : ' (from a seed this page made: back it up, or restore your own in Settings)')
-          + ' - check it: refund-key.mjs <your seed> ' + named.roundIdHex;
-        const backup = document.createElement('details');
-        const label = document.createElement('summary');
-        label.textContent = 'seed backup';
-        const code = document.createElement('code');
-        code.textContent = ARENACLIENT.toHex ? ARENACLIENT.toHex(seed) : Array.from(seed, (b) => b.toString(16).padStart(2, '0')).join('');
-        backup.append(label, code);
-        // THE RESTORE MOVED TO SETTINGS (2026-10-04 23:48: "Move restore into Settings"): not here,
-        // inside an open round
-        refundEl.append(backup);
+        // drawn by React (kanban #564, window.ArenaBits.refundKey - RefundKey). THE RESTORE MOVED TO SETTINGS (2026-10-04 23:48: "Move
+        // restore into Settings"): not here, inside an open round
+        window.ArenaBits.refundKey(refundEl, { fingerprint: player.fingerprint, imported: origin === 'imported', roundIdHex: named.roundIdHex,
+          seedHex: ARENACLIENT.toHex ? ARENACLIENT.toHex(seed) : Array.from(seed, (b) => b.toString(16).padStart(2, '0')).join('') });
       }
 
       // AND THE PAGE DEALS ITS OWN STAKE (23.1 steps 1 and 2).
@@ -4984,9 +4975,6 @@
       pop.querySelector('.top button').addEventListener('click', close);
       pop.addEventListener('click', (e) => { if (e.target === pop) close(); });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pop.classList.contains('show')) close(); });
-      const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; };
-      const row = (t, s, right) => { const r = el('div', 'row'); const m = el('div', 'main'); m.append(el('div', 't', t)); if (s) m.append(el('div', 's', s)); r.append(m); if (right) r.append(right); return r; };
-      const note = (t) => el('div', 'note', t);
       const span = (ms) => { const sec = Math.max(0, Math.round(ms / 1000)); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
         return h ? h + ' h' + (m ? ' ' + m + ' min' : '') : m ? m + ' min' + (x ? ' ' + x + ' s' : '') : x + ' s'; };
       const when = (ms) => { const d = new Date(ms), now = new Date();
@@ -5006,8 +4994,6 @@
       ROLE_ICONS.liquidity = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8c2.4 3 3.8 5.2 3.8 7.2a3.8 3.8 0 0 1-7.6 0c0-2 1.4-4.2 3.8-7.2z"/><path d="M6.2 9.6 8 11.4l1.8-1.8"/></svg>';
       const ROLE_WORDS = { verify: 'verify', settlement: 'settlement', custody: 'custody', liquidity: 'liquidity' };
       const ROLE_KEYS = ['verify', 'settlement', 'custody', 'liquidity'];
-      const icon = (k) => { const x = el('span'); x.innerHTML = ROLE_ICONS[k]; return x.firstChild; };
-      const legend = () => { const l = el('div', 'legend'); for (const k of ROLE_KEYS) { const x = el('span'); x.append(icon(k), ROLE_WORDS[k]); l.append(x); } return l; };
       // a node's route name (guardian-3, fed2-5): the last part of its address, the same in its advert's endpoint and the page's URL
       const routeOf = (u) => { try { return new URL(String(u).replace(/^ws(s?):/, 'http$1:')).pathname.replace(/\/+$/, '').split('/').pop() || new URL(String(u).replace(/^ws(s?):/, 'http$1:')).host; } catch { return String(u); } };
       // GET /roles of the first node that answers: every census node's roles and custody, by node key and by route
@@ -5263,7 +5249,6 @@
       const dayButtons = Array.from(box.querySelectorAll('.days button'));
       const POLL_MS = ARENACLIENT.SEASON_POLL_MS || 30000;
       const s = { open: false, game: null, days: 7, timer: null, ask: 0, book: null, seen: null };
-      const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; };
       const myBadges = box.querySelector('.mybadges');
       // THE ROWS IN REACT (kanban #564, the Arena page's bundle: window.ArenaSeason): drawn from the last board, again whenever a
       // player's badges come in
@@ -5801,10 +5786,10 @@
       const g = window.ARENA_GAME_CHOSEN || {};
       el.querySelector('h2').textContent = (g.title || 'That game') + ' cannot be loaded';
       el.querySelector('.why').textContent = e.message;
+      // the way back, drawn by React (kanban #564, BackToArena) in a host of its own: the list's tiles are gone with this game
       const list = el.querySelector('.list'); list.textContent = '';
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.textContent = '\u2190 Arena';   //: every way back says Arena
-      b.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); location.search = q.toString(); });
-      list.append(b);
+      const host = document.createElement('div'); list.append(host);
+      window.ArenaBits.backToArena(host, { onBack: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); location.search = q.toString(); } });
       el.classList.add('show', 'refused');
       document.body.classList.add('arena-picking');   // the header bar, as on the games screen
       if (boot.parentNode) boot.remove();
