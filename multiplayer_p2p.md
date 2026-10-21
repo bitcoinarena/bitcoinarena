@@ -6217,6 +6217,21 @@ reachable, and it is exactly the external service §25.1 exists to avoid.
 The address is therefore committed directly, and running a node is a
 commitment to a stable address.
 
+**And when the address moves anyway: an address announcement, off chain**
+*(2026-10-21, kanban #562: "1 default, 2 for updates so no needed updates")*.
+A stable address is the default - a named tunnel or the operator's own
+domain, set at install and on the owner page. When it changes all the same
+(a quick tunnel comes back under a new name after a restart), the node signs
+an **address announcement** with its node key - `{ node, endpoint, atMs }`
+under the tag `BLWP/v1/ADDRESS_ANNOUNCEMENT` - and pushes it to every census
+node's seat (`POST /address-announcement`; `GET /address-announcements`
+lists what a seat holds). Whoever looks for the node - a seat, another
+guardian's P2P tunnel, a founding's code exchange - takes its newest valid
+announcement over the census endpoint, unless the advertisement is newer.
+No transaction, no fee, no confirmations: the census entry stays the node's
+identity and its bond, and only where to find it moves. An announcement dated
+more than 10 minutes ahead is refused.
+
 ---
 
 # 26. Reference client experience

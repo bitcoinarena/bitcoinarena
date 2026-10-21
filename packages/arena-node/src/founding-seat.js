@@ -130,7 +130,7 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
  * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records).
  */
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
-  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
+  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
   const LOOKBACK = 288;                      // how far back a seat's first tick reads the run of free operators
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
@@ -180,8 +180,9 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     const st = current.founding.state ? current.founding.state() : {};
     const keys = new Set([...(st.seated || []).map((x) => String(x.node || x).toLowerCase()), ...(st.alternates || []).map((x) => String(x).toLowerCase())]);
     keys.delete(toHex(ownKey));
-    return (current.entries || []).filter((e) => e && e.advert && e.advert.endpoint && keys.has(toHex(e.pubkey)))
-      .map((e) => String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+    // AT THE ADDRESS IT IS FOUND AT NOW: its newest address announcement, else its census endpoint (kanban #562)
+    return (current.entries || []).filter((e) => e && e.advert && keys.has(toHex(e.pubkey))).map((e) => endpointOf(e)).filter(Boolean)
+      .map((u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
   };
   async function tick() {
     const h0 = await tip();
