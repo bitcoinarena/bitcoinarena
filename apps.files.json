@@ -230,13 +230,15 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "441dc5dc1241b08e1c4a4cd94762ec2938e3f253",
+      "commit": "14ca1b166090f0e412458bdd5040997d9115f53d",
       "files": {
         "app.json": "c03055bf4885417fdf6ea8442309037073747a7ba8a907446ce57b81a7206206",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
         "client/index-v2.html": "b895f3b16d9cef663130faacbf5d37e2fe60271ba5e4748024db2d27e1174206",
         "client/index-v4.html": "5c724514c0fba4a8a360ff646a8a050c79627c8f34369377fa54c7c38d4f11fa",
+        "client/index-v5.html": "00985bcf21fa83e91812617aaab627dd4a9ee245597e728118c0f5c606a34d2a",
         "client/index.html": "1242d7d39c8a218dff54a34b92bde5b4a25704a92e09d8fc9fecb2c7b52f3f85",
+        "dist/rps-view-v5.js": "0f70d437492bd79c024c56457257208218d78c0d6a546aaeec625061f3775f49",
         "dist/rps-view.js": "a9d958a26ceafa1580e5c17a3c41160d03b243d5f4d28ab79ce0d0ae6f43825b",
         "package.json": "a3035a32aa9f8bec49b07ddb4f65369abe2863bb95308a4e65974299973ade42",
         "plugin/decide-v4.js": "f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031",
@@ -247,13 +249,18 @@
         "plugin/rock-paper-scissors-v2.js": "ac2ccf4a7bc56917cef552f48e6129785180f3d3fd2ee22d4cdb7b6cbdb7c3e0",
         "plugin/rock-paper-scissors-v3.js": "a3dca863729aa3fb2df0e5868a09bedbed9d874563bdb70c967b04f4b0cfc430",
         "plugin/rock-paper-scissors-v4.js": "c31e3e2dab60e3a4c5cba671cadb7852c03342bf6b3f2ecf3df54305eb375013",
+        "plugin/rock-paper-scissors-v5.js": "181dca880675ce5f6b60a395d3d6fb2ff04a409bcfaa38a84f8eb08fc875c140",
         "plugin/rock-paper-scissors.js": "2b61c2c21825cfa0e40d1ff82e401031c587ad5888eb5c3fd1a3c1d7fbba073f",
         "plugin/rps-manifest.js": "801904d4e15ae102ba667c10888c3c2b5f7d7dffe2818a2e63d3784032286ad3",
         "tools/build-client-v4.mjs": "ddce2672587d1bfe5bc75805c8a7d1240ae8aaa59479b8f67e1b32ca368e813d",
-        "tools/build-view.mjs": "9412e464998c628dc000caa07b6928a3f82395ee60ab3341bd729884d80cb8f4",
+        "tools/build-client-v5.mjs": "b0b5d439f8973adf709b1905a8ae1c73bc5755081ee918f85a7fc6a035a50216",
+        "tools/build-view.mjs": "42be098581db05403c8c320f605b8e8b081dbc3e5e4c9d857760b93382c29d41",
         "tools/sign-manifest-v3.mjs": "a14161fd69055e81f42f5436d80efbde6d7783fea9ebd36ff4a7cb160d376f33",
         "tools/sign-manifest-v4.mjs": "7160ec3067fb07533edd7430ae5bbe910b1d09edd0efdddfd76c58019711a33d",
+        "tools/sign-manifest-v5.mjs": "c51c65dc93042966f07914d3b346cdfe9b7641232ddcd82c9b654a6b6a3c0370",
+        "view/RpsChrome.jsx": "b930b46944cf859dceec2751e5da213146d6b29074fd2eb04637fc8824d03b6c",
         "view/RpsView.jsx": "5a54553ed2c27fd09f22207de6334b645200cbc2621645f2946f27ae0b2ea196",
+        "view/main-v5.jsx": "0e3aed0d1103e29ed0b5c764875e9947f37d159fc89589950904d53ac5f35203",
         "view/main.jsx": "df96ec6301a2deef96f8750685668e2cb7d7db1fa6a81e323eb6338e33b170a4"
       },
       "exec": []

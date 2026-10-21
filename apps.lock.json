@@ -26,7 +26,7 @@
     },
     "arena-app-rock-paper-scissors": {
       "repo": "a tester/arena-app-rock-paper-scissors",
-      "commit": "441dc5dc1241b08e1c4a4cd94762ec2938e3f253",
+      "commit": "14ca1b166090f0e412458bdd5040997d9115f53d",
       "copy": "packages/rock-paper-scissors",
       "paths": [
         "/*"
