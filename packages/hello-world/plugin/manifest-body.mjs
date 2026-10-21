@@ -4,10 +4,10 @@
 // install it from their owner page. Signed with the dev client:
 //   node packages/arena-donor/bin/arena-donor.mjs sign ~/.config/blwp/hello-world-dev packages/hello-world/plugin/manifest-body.mjs
 // then the printed hex into hello-world-manifest.js.
-import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../arena-protocol/src/manifest.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from 'arena-sdk/manifest';
+import { fromHex } from 'arena-sdk/hash';
+import { donationSetId } from 'arena-sdk/donation';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
 
 export const HELLO_WORLD_DEV_PUBKEY = '784e19811b32a0065bd5fb10c38539b5e09429302a8ff38afc61ad94cc562d8d';
 export const HELLO_WORLD_ATTESTOR = '9b439af5608b1eec47644f8aabc4dd20d94408139a62bcc30acf371e52a60138';
