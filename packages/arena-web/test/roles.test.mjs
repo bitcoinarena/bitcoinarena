@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE ROLES SCREEN IN REACT (kanban #564): rendered on the server for what it shows, and its class driven for what it does - read the
+// node's roles, a switch flipped, the change counted, Review asks the seat for the fee, Confirm sends it, Undo puts it back.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { RolesPanel, switchesOf, changedOf, askOf } from '../dist/test/roles.mjs';
+
+const mine = { node: 'me', roles: ['game', 'verify', 'settlement'], guardianCapable: true };
+const answers = { '/roles': { nodes: [mine] }, '/guardian': null, '/gateway-claim': { gatewayUrl: 'https://x/gateway/' }, '/liquidity-claim': null };
+
+/** The class run without a DOM: setState applied at once, so each step can be checked. */
+function driven(api) {
+  const c = new RolesPanel({ api, node: 'me' });
+  c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  return c;
+}
+
+test('what it shows: six tiles, a switch for each advertised role and custody, the gateway on, no save bar while nothing changed', () => {
+  const was = switchesOf(mine);
+  const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine, gateway: answers['/gateway-claim'], was, now: { ...was } } }));
+  assert.equal((html.match(/class="tile[ "]/g) || []).length, 6);
+  for (const k of ['play', 'settlement', 'relay', 'custody']) assert.match(html, new RegExp(`id="rl-${k}"`));
+  assert.match(html, /class="tile on" id="tile-play"/);
+  assert.match(html, /class="tile" id="tile-relay"/);
+  assert.match(html, />Manage →</, 'the gateway is on');
+  assert.doesNotMatch(html, /savebar/);
+});
+
+test('what it does: read from the seat, a switch flipped and counted, Review asks for the fee, Confirm sends, Undo puts it back', async () => {
+  const posts = [];
+  const api = { get: async (p) => answers[p], signed: async (action, args) => ({ action, args }),
+    post: async (path, body) => { posts.push(body.args); return body.args.post ? { ok: true, update: { txid: 'ab'.repeat(32) } } : { ok: true, plan: { feeSats: 612 } }; } };
+  const c = driven(api);
+  await c.componentDidMount();
+  assert.deepEqual([c.state.loaded, c.state.was], [true, { play: true, settlement: true, relay: false, custody: true }]);
+  c.toggle('relay', true);
+  assert.deepEqual(changedOf(c.state.was, c.state.now), ['relay']);
+  assert.match(renderToStaticMarkup(c.render()), /1 change not saved/);
+  await c.review();
+  assert.deepEqual([c.state.step, c.state.plan.feeSats], ['review', 612]);
+  assert.match(renderToStaticMarkup(c.render()), /Fee <b>612 sat<\/b>/);
+  await c.confirm();
+  assert.equal(c.state.step, 'sent');
+  assert.deepEqual(posts, [{ roles: ['game', 'verify', 'settlement', 'relay'], custody: true, post: false }, { roles: ['game', 'verify', 'settlement', 'relay'], custody: true, post: true }]);
+  const d = driven(api); await d.componentDidMount(); d.toggle('play', false); d.undo();
+  assert.deepEqual(changedOf(d.state.was, d.state.now), []);
+});
+
+test('a node not in the census yet: no switches, the reason said; the seat refusing the change is shown', async () => {
+  const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine: null, was: {}, now: {} } }));
+  assert.doesNotMatch(html, /id="rl-/); assert.match(html, /not in the census yet/);
+  const c = driven({ get: async (p) => answers[p], signed: async () => ({}), post: async () => ({ ok: false, why: 'the bond wallet holds 200 sat' }) });
+  await c.componentDidMount(); c.toggle('relay', true); await c.review();
+  assert.deepEqual([c.state.step, c.state.message], ['idle', 'the bond wallet holds 200 sat']);
+  assert.deepEqual(askOf({ play: false, settlement: true, relay: false, custody: false }), { roles: ['settlement'], custody: false });
+});
