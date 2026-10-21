@@ -199,3 +199,70 @@ export class FeesProposal extends React.Component {
       </div>);
   }
 }
+
+// A LEADERBOARD PAYOUT (slice 4): what each federation holds and the most one payout may take, the form (scope, game, top, amount,
+// federation, period, split, payment date, reason), and every request with its vote. `check(fields)` -> { ok, why } | { ok, request,
+// say } is forum.js's own (the split, the date as a height and the cap through its client); publish signs and hands it to every node.
+export class PayoutProposal extends React.Component {
+  constructor(props) {
+    super(props);
+    const d = props.data;
+    this.state = { scope: '0', game: '', top: '10', amount: '', fed: d && d.feds[0] ? d.feds[0].id : '', period: d ? String(d.periods[0]) : '', split: '', date: d ? d.defaultDate : '', purpose: '', say: '', bad: false, busy: false };
+    this.submit = this.submit.bind(this);
+  }
+  componentDidUpdate(prev) {
+    const d = this.props.data;
+    if (!prev.data && d) this.setState({ fed: d.feds[0] ? d.feds[0].id : '', period: String(d.periods[0]), date: d.defaultDate });   // the nodes answered
+  }
+  fields() { const s = this.state; return { scope: s.scope, game: s.game, top: s.top, amount: s.amount, fed: s.fed, period: s.period, split: s.split, date: s.date, purpose: s.purpose }; }
+  async submit(e) {
+    e.preventDefault();
+    if (!this.props.signedIn) return this.setState({ say: 'Open the Arena once first: the forum signs with your in-game key.', bad: true });
+    const c = this.props.check(this.fields());
+    if (!c.ok) return this.setState({ say: c.why, bad: true });
+    if (!c.request.amountSats) return this.setState({ say: 'Name the amount.', bad: true });
+    if (!c.request.purpose.trim()) return this.setState({ say: 'Say why: a proposal always gives its reason.', bad: true });
+    this.setState({ busy: true, say: 'Signing…', bad: false });
+    const r = await this.props.onPublish(c.request);
+    this.setState({ busy: false, say: r.say, bad: !r.ok });
+  }
+  render() {
+    const { data: d, error, types, hash, markdown } = this.props;
+    const head = (
+      <>
+        <div className="bar"><a className="btn" href="#">← All proposals</a></div>
+        <h1>New proposal</h1>
+        <div className="types" role="radiogroup" aria-label="Type"><span className="types-label">Type</span>
+          {types.map(([h, label]) => <a key={h} className={`type${h === hash ? ' on' : ''}`} href={h} role="radio" aria-checked={h === hash ? 'true' : 'false'}>{label}</a>)}</div>
+      </>);
+    if (!d) return <div>{head}<div className="empty">{error || 'Reading the nodes…'}</div></div>;
+    const s = this.state, touched = s.amount || s.split || s.purpose || s.game;
+    const live = touched ? this.props.check(this.fields()) : null;
+    const words = s.say || (live ? (live.ok ? live.say : live.why) : ''), bad = s.say ? s.bad : !!(live && !live.ok);
+    const f = (k) => ({ name: k, value: s[k], onChange: (e) => this.setState({ [k]: e.target.value, say: '' }) });
+    return (
+      <div>
+        {head}
+        <div className="avail">{!d.feds.length ? <div className="empty">No federation with a reserve key answered: nothing can be paid out now.</div> : d.feds.map((x) => (
+          <div key={x.id} className="avail-fed"><div className="avail-name">Federation {x.id.slice(0, 8)}</div>
+            <div className="avail-row"><span>Reserves now</span><b>{n(x.held)} sat</b></div>
+            <div className="avail-row"><span>Max for one payout (10 %)</span><b className="max">{n(x.max)} sat</b></div></div>))}</div>
+        <form className="compose payout" onSubmit={this.submit}>
+          <p className="reserves-line">Pays the best players of a season by P&amp;L from one federation's protocol reserves, as e-cash into their Arena wallets. Its vote runs 2 weeks from publication, weighted by bond, with no signal; it passes when YES is at least 25 % of the voting weight. At most 10 % of that federation's reserves.</p>
+          <div className="row"><label>Leaderboard<select {...f('scope')}><option value="0">All games and markets</option><option value="1">One game</option><option value="2">One market</option></select></label>
+            <label>Game or market name<input {...f('game')} placeholder="e.g. btc-updown-15m" disabled={s.scope === '0'} /></label></div>
+          <div className="row"><label>Top<input {...f('top')} type="number" min="1" max={d.topMax} /></label><label>Amount (sat)<input {...f('amount')} type="number" min="1" step="1" /></label></div>
+          <div className="row"><label>Paid from<select {...f('fed')}>{d.feds.length ? d.feds.map((x) => <option key={x.id} value={x.id}>{x.id.slice(0, 8)} · reserves {n(x.held)} sat · up to {n(x.max)} sat</option>) : <option value="">no federation with a reserve key answered</option>}</select></label>
+            <label>Period<select {...f('period')}>{d.periods.map((p) => <option key={p} value={p}>{p === 30 ? 'last month (30 days)' : `last ${p} days`}</option>)}</select></label></div>
+          <div className="row"><label>Split per place <span className="hint">empty: equal; or percents, one per place, e.g. 50, 30, 20</span><input {...f('split')} placeholder="equal" /></label>
+            <label>Payment date (UTC)<input {...f('date')} type="date" /></label></div>
+          <label>Why <span className="hint">required: why these players, this amount</span><textarea {...f('purpose')} rows={3} maxLength={4000} required /></label>
+          <div className="bar"><button className="btn primary" type="submit" disabled={s.busy}>Sign and publish</button><span className={`say${bad ? ' bad' : ''}`}>{words}</span></div>
+        </form>
+        <h2>Leaderboard payout requests</h2>
+        {!d.list.length ? <div className="empty">{d.listEmpty}</div> : d.list.map((p) => (
+          <div key={p.id} className="fee-prop"><div className="bar"><b>{p.title}</b><span className="say">{p.vote}</span></div><p className="hint">{p.line}</p>
+            {p.purpose ? <div className="md" dangerouslySetInnerHTML={{ __html: markdown(p.purpose) }} /> : null}</div>))}
+      </div>);
+  }
+}
