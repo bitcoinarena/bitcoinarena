@@ -20,6 +20,7 @@ import { SeedModal } from './SeedModal.jsx';
 import { WalletStart } from './WalletStart.jsx';
 import { DepositModal } from './DepositModal.jsx';
 import { WithdrawPanel } from './WithdrawPanel.jsx';
+import { ShopItems } from './ShopItems.jsx';
 import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
@@ -80,6 +81,8 @@ if (typeof window !== 'undefined') window.ArenaDeposit = { open: openDeposit };
 // THE WITHDRAW PANEL (the page's openWithdraw hands it the balance and its rules): a fresh one each time it is opened
 export function openWithdraw(host, props) { into(host, <WithdrawPanel key={Date.now()} {...props} />); }
 if (typeof window !== 'undefined') window.ArenaWithdraw = { open: openWithdraw };
+// THE SHOP'S ITEMS (the page's openShop hands them over with its rules), drawn at once into the sheet's list
+if (typeof window !== 'undefined') window.ArenaShop = { draw: (host, props) => into(host, <ShopItems {...props} />) };
 // SETTINGS' OWN CARDS: each drawn into its section with what the page hands it
 if (typeof window !== 'undefined') window.ArenaSettings = {
   name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),

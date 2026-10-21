@@ -7044,42 +7044,24 @@
       // "SHOP" ONCE (2026-10-19: "shop is shown twice. one amber title is enough"): the amber line says Shop, the
       // title is the game's name, as the leaderboard's
       const title = document.getElementById('arena-shop-title'); if (title) title.textContent = (chosen && (chosen.title || chosen.name)) || 'Shop';
-      sheet.classList.add('show'); list.textContent = ''; say(shop ? 'Reading what you own …' : 'This game sells nothing.');
+      sheet.classList.add('show'); window.ArenaShop.draw(list, { items: [], owned: [], use: null, picture() {}, what() {}, price: (x) => x, onUse() {}, onBuy() {} });
+      say(shop ? 'Reading what you own …' : 'This game sells nothing.');
       if (!shop) return;
       const seats = shop.game.nodes || [];
       let owned = [];
       try { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }); say(''); } catch (e) { say('What you own could not be read: ' + e.message, true); }
-      const paint = () => {
-        list.textContent = '';
-        const use = itemsUse(shop.game.name);
-        for (const it of shop.items) {
-          const mine = owned.find((o) => o.itemId === it.id);
-          const row = document.createElement('div'); row.className = 'item'; row.dataset.item = it.id;
-          const pic = document.createElement('div'); pic.className = 'pic'; pic.innerHTML = ITEM_PICTURE[it.id] || '';
-          const mid = document.createElement('div');
-          const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = it.name;
-          const wh = document.createElement('div'); wh.className = 'what'; wh.textContent = (ITEM_WHAT[it.id] ? ITEM_WHAT[it.id] + ' · ' : '') + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat';
-          mid.append(nm, wh);
-          const end = document.createElement('div');
-          if (mine) {
-            const o = document.createElement('div'); o.className = 'owned'; o.textContent = 'Owned ✓'; end.append(o);
-            const lab = document.createElement('label'); lab.className = 'use';
-            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !use || use.includes(it.id);
-            cb.addEventListener('change', () => { const now = new Set(itemsUse(shop.game.name) || owned.map((x) => x.itemId)); if (cb.checked) now.add(it.id); else now.delete(it.id); setItemsUse(shop.game.name, [...now]); });
-            lab.append(cb, document.createTextNode('Play with it')); end.append(lab);
-          } else {
-            const b = document.createElement('button'); b.type = 'button'; b.className = 'buy'; b.textContent = 'Buy · ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat';
-            b.addEventListener('click', async () => {
-              b.disabled = true; say('Paying ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat …');
-              const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
-              if (got.ok) { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }).catch(() => owned); say('Bought: ' + it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'); paint(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }
-              else { b.disabled = false; say('Not bought (' + got.step + '): ' + got.why, true); }
-            });
-            end.append(b);
-          }
-          row.append(pic, mid, end); list.append(row);
-        }
-      };
+      // THE ITEMS (kanban #564: drawn by React, window.ArenaShop - ShopItems): the page hands over what is sold, what is owned, the items
+      // played with, and its rules - the switch kept per game, the purchase (buyShopItem), what is owned read again after it
+      const paint = () => window.ArenaShop.draw(list, { items: shop.items, owned, use: itemsUse(shop.game.name),
+        picture: (id) => ITEM_PICTURE[id], what: (id) => ITEM_WHAT[id], price: (priceSat) => window.ARENA_ITEM_PRICE(priceSat),
+        onUse: (id, on) => { const now = new Set(itemsUse(shop.game.name) || owned.map((x) => x.itemId)); if (on) now.add(id); else now.delete(id);
+          setItemsUse(shop.game.name, [...now]); paint(); },
+        onBuy: async (it) => {
+          say('Paying ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat …');
+          const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+          if (got.ok) { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }).catch(() => owned); say('Bought: ' + it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'); paint(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }
+          else say('Not bought (' + got.step + '): ' + got.why, true);
+        } });
       paint();
     }
     // A PURCHASE: a federation this wallet holds the price in, the round's two donation sets read from a listed round of the game
