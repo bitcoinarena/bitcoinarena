@@ -3740,6 +3740,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     chainTip: typeof chainTip === 'function' ? async () => Number(await chainTip()) : null,
     // ARENA_RECORD_BASIS=chain: records from the chain's census before any held round's (seats that run no series)
     chainFirst: process.env.ARENA_RECORD_BASIS === 'chain',
+    // a record its guardians' own nodes do not hold, asked of the census seats this seat reads (kanban #326)
+    peerSeats: () => networkSeats(),
     absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
@@ -3753,7 +3755,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // federation it holds a record of, signs once the last session has not moved for abandon_blocks, and keeps its peers' observations
   const fedClocks = FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet;
   const schnorrVerify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
+  // ... and kept across restarts beside the held absences (kanban #326: a roll counted abandon_blocks again from the restart)
+  const haltsFile = db && db.arenaPath ? `${db.arenaPath}.halts.json` : null;
   halts = typeof chainTip === 'function' ? createHalts({ records: fedRecords, censusSeats: () => fedRecords.censusKeys(), clocks: fedClocks, verify: schnorrVerify,
+    load: () => (haltsFile ? JSON.parse(readFileSync(haltsFile, 'utf8')) : []), save: (v) => { if (haltsFile) { try { writeFileSync(haltsFile, JSON.stringify(v)); } catch { /* kept in memory */ } } },
     sign: (h) => schnorr.sign(h, round.identity.secret), ownKey: round.pubkey, height: async () => Number(await chainTip()),
     ask: (endpoint) => wsSessionCount(endpoint),
     // to every seat of the census (networkSeats: the advertisements' endpoints and the peers given), as the games are read
