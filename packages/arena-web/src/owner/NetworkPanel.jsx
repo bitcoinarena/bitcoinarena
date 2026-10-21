@@ -25,12 +25,15 @@ export class FourRows extends React.Component {
     const n = this.props.network;
     const sets = n.sets || [], series = n.series || [], held = series.filter((x) => x.held !== false);
     const top = setInForce(sets);
+    // THE NETWORK AT A GLANCE (kanban #565): its four facts as stat cards, who signs each folded away
     return (
       <div>
-        <div className="row"><span>Chain</span><b>{n.chain || ''}</b></div>
-        <div className="row"><span>Donation addresses</span><b>{top ? `set ${top.serial} in force (since block ${top.validFrom})` : 'none'}</b></div>
-        <div className="row"><span>Game series</span><b>{held.length} running{series.length > held.length ? ` · ${series.length - held.length} not on this node` : ''}</b></div>
-        <div className="row"><span>Federation</span><b>{n.federationId ? `${String(n.federationId).slice(0, 16)}…` : 'found by itself'}</b></div>
+        <div className="stats">
+          <div className="stat"><span>Chain</span><b>{n.chain || '-'}</b><small>the network's genesis</small></div>
+          <div className="stat"><span>Donation addresses</span><b>{top ? `Set ${top.serial}` : 'None'}</b><small>{top ? `in force since block ${top.validFrom}` : 'no set named'}</small></div>
+          <div className="stat"><span>Game series</span><b>{held.length} running</b><small>{series.length > held.length ? `${series.length - held.length} not on this node` : 'all on this node'}</small></div>
+          <div className="stat"><span>Federation</span><b className="mono">{n.federationId ? `${String(n.federationId).slice(0, 12)}…` : 'Found by itself'}</b><small>{n.federationId ? 'named by the network' : 'this node finds its federations'}</small></div>
+        </div>
         <details><summary className="sub">Details and who signs each</summary>
           <p className="sub"><b>Chain</b> - signed by {WHO.chain}.</p>
           <p className="sub"><b>Donation addresses</b> - {sets.map((x) => `set ${x.serial} from block ${x.validFrom}`).join(', ') || 'none'}; signed by {WHO.sets}.</p>
@@ -90,14 +93,13 @@ export class NetworkPanel extends React.Component {
     return (
       <div>
         {mine.draining.map((d) => <p key={d.federationId} className="warnline">Federation {d.federationId.slice(0, 12)}… is being replaced by {d.successor.slice(0, 12)}… (since {when(d.sinceMs)}): new rounds and deposits go to the new one.</p>)}
-        {mine.own && !mine.own.why ? <FourRows network={mine.own} /> : <div className="row"><span>Chain</span><b>{mine.chain || 'none named'}</b></div>}
+        {mine.own && !mine.own.why ? <FourRows network={mine.own} /> : <div className="stats"><div className="stat"><span>Chain</span><b>{mine.chain || 'none named'}</b><small>the chain this node reads</small></div></div>}
         {mine.installed.map((n) => (
           <div key={n.network} className="card"><div className="row"><span>Installed · network {n.network.slice(0, 12)}… · package {n.id.slice(0, 12)}…</span>
             <b><Button onClick={() => this.remove(n.network)}>Remove</Button></b></div><FourRows network={n} /></div>))}
-        <details><summary className="sub">Take a network from another node</summary>
-          <label>Another node's address</label>
-          <input placeholder="https://node.example" autoComplete="off" autoCapitalize="none" value={from} onChange={(e) => this.setState({ from: e.target.value })} />
-          <Button onClick={this.look}>Look</Button></details>
+        <details className="settings-card"><summary className="sub">Take a network from another node</summary>
+          <div className="inline"><input placeholder="https://node.example" autoComplete="off" autoCapitalize="none" value={from} onChange={(e) => this.setState({ from: e.target.value })} />
+            <Button onClick={this.look}>Look</Button></div></details>
         {offer ? (
           <div className="card">
             <div className="row"><span>{offer.pkg.title || offer.m.chain} · package {String(offer.pkg.id || '').slice(0, 12)}…</span><b><Button onClick={this.check}>Check{offer.installed ? ' update' : ''}</Button></b></div>
