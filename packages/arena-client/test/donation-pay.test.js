@@ -48,6 +48,7 @@ import { encodeDonationSetBody, donationSetBodyId, authorityRotationId, encodeAu
 import { pageFunction } from './page-script.js';
 import { HOSTED } from '../../arena-node/test/plugins/hosted.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -333,7 +334,7 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   });
   pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'ARENACLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget'],
     src, ' return paintWallet();')(
-    { getElementById: el }, { ARENA_ROUND: round, ARENA_ENTRY: entry, ARENA_DONATION_PAID: donationPaid, ARENA_SETTLEMENT: settlement },
+    { getElementById: el }, { ArenaText, ARENA_ROUND: round, ARENA_ENTRY: entry, ARENA_DONATION_PAID: donationPaid, ARENA_SETTLEMENT: settlement },
     SHIPPED, { connected: false }, spent, owed, false, '', null);
   return made;
 }
@@ -381,7 +382,7 @@ function showNotedOnThePage({ search, storage }) {
   const made = {};
   const el = (id) => (made[id] = made[id] || { textContent: '', classes: new Set(), classList: { add(c) { made[id].classes.add(c); } } });
   pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'ARENACLIENT', 'location'], src, ' return showNotedDonation();')(
-    { getElementById: el }, { sessionStorage: storage, ARENA_CURVE: pageCurve }, SHIPPED, { search });
+    { getElementById: el }, { ArenaText, sessionStorage: storage, ARENA_CURVE: pageCurve }, SHIPPED, { search });
   return made['arena-donation-noted'];
 }
 

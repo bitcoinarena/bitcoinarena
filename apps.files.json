@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "52887fbea69338db3b10e4a82af2524a74a34dc1",
+      "commit": "5d5673961928db598dc37dde0d267f9e3ec6868d",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "a6de2eb419b1770e82208aa011b9def24ceb6caa91689a7b7ea77f0de6795d4b",
@@ -135,7 +135,7 @@
         "page/loading-page.js": "b989205712e0454b304d31a307f00de7c8584f3d5ff54df76b375acbe6bbcd18",
         "page/parts-page.js": "08ed6982cccfd4ea1d400f97b297fdc15157d6d5a977991d62224925c629b52d",
         "page/unity-page.css": "db9937766aeeafd15a557ae2b6fc736daafabe660c0b43fe5038beb630087976",
-        "page/unity-page.js": "7478688788921985c5a56f62419be0aec45e5f6cd0694dadea01da9109e1ddcc",
+        "page/unity-page.js": "637160e96c4f0c32632b429419b9b44b59a69033cc3efe52722d2c2806171d84",
         "plugin/clients.json": "98b9a61ed32879bbe2b3405e9cac981d6d09f85e46db627962b1aeb788fec9fc",
         "plugin/info.js": "b4f1fdf329c5523c2a8bceee3208e7245a5d0ce8b9e8016237b27b0a5f556fdf",
         "plugin/known-v3.js": "68851327f3721d78ee340868e3d6cc0ada9c40f0031594150580553148dd65da",
