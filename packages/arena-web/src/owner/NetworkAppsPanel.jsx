@@ -94,35 +94,43 @@ export class NetworkAppsPanel extends React.Component {
         {c.state === 'taken' ? <p className="ok">{c.take && c.take.parent ? 'Updated' : 'Installed'} - running now ✓</p> : null}
       </div>);
   }
+  /** One app another node runs, as a card (kanban #565): its initial, name, version, kind and seats, its signed description, Install / Update. */
+  offerCard(g, hosted) {
+    const parent = g.updateOf ? hosted.find((h) => h.id === g.updateOf) || null : null;
+    const c = this.state.checks[g.id];
+    return (
+      <div key={g.id} className="app-card">
+        <div className="app-head"><span className="app-ic" aria-hidden="true">{(g.title || '?').slice(0, 1).toUpperCase()}</span>
+          <b className="app-name">{g.title}</b><span className="pill">v{g.version}</span></div>
+        {g.infoSigned ? <InfoLine info={{ description: g.description, website: g.website }} /> : <div className="sub info">no signed description</div>}
+        <div className="app-foot"><span className="sub">{g.type} · on {g.seats.length} node{g.seats.length === 1 ? '' : 's'}</span>
+          <Button primary disabled={!!c && c.state === 'checking'} onClick={() => this.check({ g, parent, from: g.seats[0], auto: true })}>{g.updateOf ? 'Update' : 'Install'}</Button></div>
+        {this.checkBox(g)}
+      </div>);
+  }
   render() {
     const { ng, foundError, hosted, look, lookError, done, from } = this.state;
     const offers = ng ? (ng.games || []).filter((g) => !g.hostedHere) : [];
     const answered = ng ? (ng.seats || []).filter((x) => x.answered).length : 0;
     return (
       <div>
-        <p className="sub">{foundError || (ng ? `${answered} of ${(ng.seats || []).length} nodes answered · ${ng.atMs ? new Date(ng.atMs).toLocaleTimeString() : '-'}` : 'asking the network\'s nodes…')}{done ? <> · <span className="ok">{done}</span></> : null}</p>
-        {ng && !offers.length ? <p className="sub">This node already has every app the other nodes run.</p> : null}
-        {offers.length ? (
-          <table className="found"><thead><tr><th>Name</th><th>Type</th><th>Version</th><th>Seats</th><th /></tr></thead>
-            <tbody>{offers.map((g) => {
-              const parent = g.updateOf ? hosted.find((h) => h.id === g.updateOf) || null : null;
-              return (
-                <React.Fragment key={g.id}>
-                  <tr><td><b>{g.title}</b></td><td>{g.type}</td><td>v{g.version}</td><td>{g.seats.length}</td>
-                    <td><Button primary disabled={!!this.state.checks[g.id] && this.state.checks[g.id].state === 'checking'} onClick={() => this.check({ g, parent, from: g.seats[0], auto: true })}>{g.updateOf ? 'Update' : 'Install'}</Button></td></tr>
-                  <tr><td colSpan="5">{g.infoSigned ? <InfoLine info={{ description: g.description, website: g.website }} /> : <div className="sub info">no signed description</div>}{this.checkBox(g)}</td></tr>
-                </React.Fragment>);
-            })}</tbody></table>) : null}
-        <Button onClick={() => this.search(true)}>Search again</Button>
-        <details><summary className="sub">Or look at one node by its address</summary>
-          <label>Another node's address</label>
-          <input placeholder="https://node.example" autoComplete="off" autoCapitalize="none" value={from} onChange={(e) => this.setState({ from: e.target.value })} />
-          <Button onClick={this.look}>Look</Button></details>
+        <div className={`summary ${foundError ? 'bad' : 'good'}`}>
+          <div><b>{foundError ? 'The network was not read' : !ng ? 'Asking the network\'s nodes…' : offers.length ? `${offers.length} app${offers.length === 1 ? '' : 's'} this node does not run` : 'This node runs every app the others do'}</b>
+            <span className="sub">{foundError || (ng ? `${answered} of ${(ng.seats || []).length} nodes answered · ${ng.atMs ? new Date(ng.atMs).toLocaleTimeString() : '-'}` : '')}</span></div>
+          <button type="button" className="mini" onClick={() => this.search(true)}>Search again</button>
+        </div>
+        {done ? <p className="ok">{done}</p> : null}
+        {offers.length ? <div className="app-grid">{offers.map((g) => this.offerCard(g, hosted))}</div> : null}
+        <details className="settings-card"><summary className="sub">Or look at one node by its address</summary>
+          <div className="inline"><input placeholder="https://node.example" autoComplete="off" autoCapitalize="none" value={from} onChange={(e) => this.setState({ from: e.target.value })} />
+            <Button onClick={this.look}>Look</Button></div></details>
         {lookError ? <p className="err">{lookError}</p> : null}
         {look && !look.offers.length ? <p className="sub">That node has nothing this node does not already have.</p> : null}
-        {look ? look.offers.map(({ g, parent }) => (
-          <div key={g.id} className="card"><div className="row"><span>{g.title || g.name}{g.attested ? ' · market' : ''} · {g.id.slice(0, 12)}…</span>
-            <b><Button onClick={() => this.check({ g, parent, from: look.from, auto: false })}>Check{parent ? ' update' : ''}</Button></b></div>{this.checkBox(g)}</div>)) : null}
+        {look && look.offers.length ? <div className="app-grid">{look.offers.map(({ g, parent }) => (
+          <div key={g.id} className="app-card"><div className="app-head"><span className="app-ic" aria-hidden="true">{(g.title || g.name || '?').slice(0, 1).toUpperCase()}</span>
+            <b className="app-name">{g.title || g.name}</b><span className="pill">{g.attested ? 'market' : 'game'}</span></div>
+            <div className="app-foot"><code className="sub">{g.id.slice(0, 12)}…</code><Button onClick={() => this.check({ g, parent, from: look.from, auto: false })}>Check{parent ? ' update' : ''}</Button></div>
+            {this.checkBox(g)}</div>))}</div> : null}
       </div>
     );
   }
