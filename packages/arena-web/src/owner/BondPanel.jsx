@@ -49,22 +49,28 @@ export class BondPanel extends React.Component {
     const l = b.lock;
     const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
     const nowMs = this.props.nowMs ? this.props.nowMs() : Date.now();
+    const open = !!(l && l.withdrawable);
     return (
       <div>
-        <div className="row"><span>Bond</span><b>{n(b.total || b.bond.sats)} sat{outs ? ` (${outs.length} parts)` : ''}</b></div>
-        <div className="row"><span>Lock</span><b>{lockText(l, nowMs)}</b></div>
-        {b.wallet && !b.wallet.why ? <div className="row"><span>Bond wallet</span><b>{n(b.wallet.spendableSats)} sat</b></div> : null}
-        <details><summary className="sub">Withdraw the bond</summary>
-          <p className="sub">Only after the lock. The node then leaves the network.</p>
-          <div className="row">
-            <input placeholder={`your ${b.network || 'testnet4'} address`} style={{ flex: 1 }} value={address} onChange={(e) => this.setState({ address: e.target.value })} />
-            <Button disabled={busy || !(l && l.withdrawable)} onClick={this.withdraw}>Withdraw</Button>
+        {/* THE BOND AT A GLANCE (kanban #565): the amount, the lock, the wallet - one stat card each, as the overview */}
+        <div className="stats">
+          <div className="stat"><span>Bond</span><b>{n(b.total || b.bond.sats)} sat</b><small>{outs ? `in ${outs.length} parts on the chain` : 'one output on the chain'}</small></div>
+          <div className="stat"><span>Lock</span><b className={open ? 'ok' : undefined}>{open ? 'Unlocked' : 'Locked'}</b>
+            <small>{l ? (open ? 'it can be withdrawn now' : `${n(l.blocksLeft)} blocks left · about ${daysHours(l.estimatedMs - nowMs)}`) : 'not read'}</small></div>
+          {b.wallet && !b.wallet.why ? <div className="stat"><span>Bond wallet</span><b>{n(b.wallet.spendableSats)} sat</b><small>spendable, for adding to the bond</small></div> : null}
+        </div>
+        <h3 className="sh">On the chain</h3>
+        <div className="scroll"><table className="tbl"><thead><tr><th>Output</th><th className="n">Amount</th></tr></thead>
+          <tbody>{(outs || [b.bond]).map((o) => <tr key={`${o.txid}:${o.vout}`}><td><code>{o.txid.slice(0, 16)}…:{o.vout}</code></td><td className="n">{n(o.sats)} sat</td></tr>)}</tbody></table></div>
+        <h3 className="sh">Withdraw</h3>
+        <div className={`withdraw${open ? '' : ' off'}`}>
+          <p className="sub">{open ? 'The whole bond goes to the address you type. The node then leaves the network.' : 'Possible once the lock is over. The node then leaves the network.'}</p>
+          <div className="inline">
+            <input placeholder={`your ${b.network || 'testnet4'} address`} value={address} disabled={!open} onChange={(e) => this.setState({ address: e.target.value })} />
+            <Button disabled={busy || !open} onClick={this.withdraw}>Withdraw</Button>
           </div>
           {message ? <p className="sub">{message}</p> : null}
-        </details>
-        <details><summary className="sub">On the chain</summary>
-          {(outs || [b.bond]).map((o) => <div key={`${o.txid}:${o.vout}`} className="row sub"><span><code>{o.txid.slice(0, 16)}…:{o.vout}</code></span><b>{n(o.sats)} sat</b></div>)}
-        </details>
+        </div>
       </div>
     );
   }

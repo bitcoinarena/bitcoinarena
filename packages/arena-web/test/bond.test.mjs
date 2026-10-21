@@ -14,11 +14,12 @@ const locked = { network: 'testnet4', total: '100000', bond: { txid: 'aa'.repeat
 
 test('what it shows: the bond in parts, locked with the blocks and time left, the wallet, the outputs; Withdraw off while locked', () => {
   const html = renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, initial: { loaded: true, bond: locked } }));
-  assert.match(html, /Bond<\/span><b>100,000 sat \(2 parts\)/);
-  assert.match(html, /locked · 251 blocks \(about 3 d 4 h\)/);
-  assert.match(html, /Bond wallet<\/span><b>312,380 sat/);
-  assert.match(html, /<button type="button" disabled="">Withdraw<\/button>/);
-  assert.equal((html.match(/class="row sub"/g) || []).length, 2);
+  // stat cards, as the overview (kanban #565): the amount and its parts, the lock, the wallet
+  assert.match(html, /<div class="stat"><span>Bond<\/span><b>100,000 sat<\/b><small>in 2 parts on the chain<\/small><\/div>/);
+  assert.match(html, /<span>Lock<\/span><b>Locked<\/b><small>251 blocks left · about 3 d 4 h<\/small>/);
+  assert.match(html, /<span>Bond wallet<\/span><b>312,380 sat<\/b>/);
+  assert.equal((html.match(/<td class="n">50,000 sat<\/td>/g) || []).length, 2, 'the outputs on the chain, one row each');
+  assert.match(html, /<div class="withdraw off">[\s\S]*<button type="button" disabled="">Withdraw<\/button>/, 'withdrawing waits for the lock');
   assert.match(renderToStaticMarkup(React.createElement(BondPanel, { initial: { loaded: true, bond: { network: 'testnet4' } } })), /No bond yet/);
   assert.deepEqual([daysHours(90 * 60000), daysHours(5 * 60000), lockText({ withdrawable: true })], ['1 h 30 min', '5 min', 'unlocked']);
 });
