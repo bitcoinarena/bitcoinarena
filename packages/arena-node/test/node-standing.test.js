@@ -39,3 +39,14 @@ test('standing: two outputs of the node count as their sum; the warning says how
   const one = nodeStanding({ me: ME, rounds: [census(500000n, [{ pubkey: ME, bondSats: 600000n }, { pubkey: B, bondSats: 900000n }])] });
   assert.equal(one.warnings[0].addSats, '150000'); assert.match(one.warnings[0].says, /^headroom 1.20x.*Increase your bond by 150000 sat/);
 });
+
+test('a node whose advertisement names another address than it answers at says so (kanban #562: the installers\' adverts named old quick tunnels)', async () => {
+  const { endpointWarning } = await import('../src/node-standing.js');
+  const w = endpointWarning({ advertised: 'https://keeps-ahead-employ-thomas.trycloudflare.com', serving: 'https://cottage-usually-pete-path.trycloudflare.com' });
+  assert.equal(w.kind, 'address changed'); assert.equal(w.urgent, true);
+  assert.match(w.says, /answers at https:\/\/cottage-usually-pete-path.*names https:\/\/keeps-ahead-employ-thomas/);
+  assert.equal(endpointWarning({ advertised: 'ws://198.51.100.7:6511', serving: 'http://198.51.100.7:6511/' }), null, 'ws and http, a trailing slash: the same address');
+  assert.equal(endpointWarning({ advertised: 'wss://Node.Example', serving: 'https://node.example' }), null, 'case in the host');
+  assert.equal(endpointWarning({ advertised: null, serving: 'https://a.example' }), null, 'not in the census yet: nothing to compare');
+  assert.equal(endpointWarning({ advertised: 'https://a.example', serving: null }), null, 'no public address configured');
+});

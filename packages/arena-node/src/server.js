@@ -50,7 +50,7 @@ import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { devClientSnapshot } from './dev-client.js';
 import { attributeDonations, devEarnings } from './dev-clients.js';
-import { nodeStanding } from './node-standing.js';
+import { nodeStanding, endpointWarning } from './node-standing.js';
 import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
 import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
@@ -478,6 +478,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THIS NODE'S OWN ADVERTISEMENT, decoded: when given, the games it names are held to the games hosted above
   // - an advertised game this node does not host refuses the start, by name (plugins.js advertisedGamesCheck).
   ownAdvert = null,
+  publicEndpoint = null,
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
@@ -4875,7 +4876,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const warn = newest === null ? null : bondMinWarning({ pending: floor.pending, ownBondSats: standing.ownBondSats === null ? null : BigInt(standing.ownBondSats), nowHeight: newest });
           return answer(200, { ...standing, bondMin: { inForce: floor.inForce === null ? null : String(floor.inForce), noticeBlocks: notice, censuses: history.length,
             pending: floor.pending ? { value: String(floor.pending.value), crossedAt: floor.pending.crossedAt, effectiveAt: floor.pending.effectiveAt } : null },
-            warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : [])] });
+            warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : []),
+              ...(() => { const mine = rows[0] && (rows[0].full || []).find((e) => toHex(e.pubkey) === me);
+                const w = endpointWarning({ advertised: mine && mine.advert && mine.advert.endpoint, serving: publicEndpoint }); return w ? [w] : []; })()] });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {

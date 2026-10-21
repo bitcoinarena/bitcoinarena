@@ -535,7 +535,7 @@ async function standingPanel() {
   const n = (x) => esc(Number(x).toLocaleString('en-US'));
   const warns = [...(seat.warning ? [{ urgent: true, kind: 'missed seatings', says: seat.warning.says, update: seat.warning.update }] : []), ...(st.warnings || [])];
   // PLAIN NAMES (kanban #553): what each figure means for the owner
-  const KIND = { 'missed seatings': 'Missed draws', 'losing brackets': 'Bond below the minimum', 'near the floor': 'Bond at the minimum', 'falling share': 'Your share is shrinking' };
+  const KIND = { 'missed seatings': 'Missed draws', 'losing brackets': 'Bond below the minimum', 'near the floor': 'Bond at the minimum', 'falling share': 'Your share is shrinking', 'address changed': 'Address changed' };
   $('standing').innerHTML = `
     <div class="row"><span>Draws missed in a row</span><b>${esc(seat.missedInARow)}</b></div>
     <div class="row"><span>Bond</span><b>${st.ownBondSats === null ? 'not in the census yet' : n(st.ownBondSats) + ' sat'}</b></div>
