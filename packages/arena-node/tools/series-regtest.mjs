@@ -66,7 +66,7 @@ const start = (k, withSeries) => {
   // door is before the chain's); with the chain the same round passes the series door and meets the census check
   const e = { ...env, ...(env.CHAIN === '0' ? {} : { ARENA_BITCOIND_URL: `http://127.0.0.1:${RPCPORT}`, ARENA_BITCOIND_COOKIE: `${RT}/regtest/.cookie` }), ARENA_FUND_FREE_ROUNDS: '1',
     // the games its nodes host (main.js names none): nextblock
-    ARENA_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname,
+    ARENA_APPS: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname,
     ARENA_DONATION_NETWORK: 'regtest', ...(withSeries ? { ARENA_SERIES_FILE: join(dir, 'series.txt') } : {}) };
   delete e.ARENA_ATTACH_PROOF_DIR;
   const p = spawn(process.execPath, ['src/main.js', String(ports[k]), stores[k]], { cwd: new URL('..', import.meta.url).pathname, env: e, stdio: ['ignore', 'pipe', 'pipe'] });

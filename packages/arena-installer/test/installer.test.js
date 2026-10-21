@@ -305,7 +305,7 @@ test('the state survives a restart of the installer: a new wizard resumes at the
     assert.equal(statSync(home).mode & 0o777, 0o700);
     const env = seatEnv({ ...a.read(), port: 7801 }, { home, release: '/opt/arena' });
     assert.match(env, /ARENA_BITCOIND_URL=http:\/\/x\//);
-    assert.match(env, /ARENA_GAMES=\/opt\/arena\/packages\/nextblock\/plugin\/nextblock.js/);
+    assert.match(env, /ARENA_APPS=\/opt\/arena\/packages\/nextblock\/plugin\/nextblock.js/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

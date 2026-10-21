@@ -89,7 +89,7 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    free round (tn4-live-run's run without the lock) and prints every node's signed result; `replay` is the replay simulator
    (the node's own replay, in the core's sandbox, over a node's transcript and marks); `down` stops what it started by its pid
    files. The game template (`tools/devnet-template`, `devnet.mjs new-game <dir> <name>`) is a whole replayed game - core,
-   manifest body, registration - signed with the developer's own keys by the dev client and hosted with DEVNET_GAMES; `play
+   manifest body, registration - signed with the developer's own keys by the dev client and hosted with DEVNET_APPS; `play
    --game <name>` plays it end to end. Measured on the test host: `up` 75 s from empty, `play` 229 s (Tick Tock) and 157 s
    (the template), 7 of 7 signatures, `replay` agreeing with all seven. Left: the paid round is published but the gateways
    hold no channels or e-cash, so no deposit goes through; the browser link is printed, not tested.

@@ -471,13 +471,13 @@
 <pre># start a node on port 31221 with its database in node.db
 node packages/arena-node/src/main.js 31221 node.db
 
-# the same, hosting Tick Tock, Next Block (sets ARENA_GAMES to nextblock when it is not set)
+# the same, hosting Tick Tock, Next Block (sets ARENA_APPS to nextblock when it is not set)
 node packages/nextblock/bin/node.mjs 31221 node.db</pre>
   <p>The node listens on <code>127.0.0.1</code> unless you set <code>ARENA_BIND</code>; put a reverse proxy or a tunnel in front of it. <b>Back up <code>node.db</code></b>: it holds the node's key. The node is configured by environment variables:</p>
   <div class="tbl"><table><thead><tr><th>Setting</th><th>What it does</th></tr></thead><tbody>
     <tr><td><code>ARENA_BIND</code></td><td>The address to listen on (default <code>127.0.0.1</code>).</td></tr>
     <tr><td><code>ARENA_BITCOIND_URL</code>, <code>ARENA_BITCOIND_COOKIE</code></td><td>Your <code>bitcoind</code>'s RPC address and cookie (set both). The network follows this node.</td></tr>
-    <tr><td><code>ARENA_GAMES</code></td><td>The games this node hosts: a comma-separated list of modules that each export <code>GAME</code>. Games installed from the owner area live in <code>&lt;db&gt;.plugins</code> (<code>ARENA_PLUGINS_DIR</code>).</td></tr>
+    <tr><td><code>ARENA_APPS</code></td><td>The games this node hosts: a comma-separated list of modules that each export <code>GAME</code>. Games installed from the owner area live in <code>&lt;db&gt;.plugins</code> (<code>ARENA_PLUGINS_DIR</code>).</td></tr>
     <tr><td><code>ARENA_SERIES_FILE</code>, <code>ARENA_GRID_SERIES_FILE</code></td><td>The published round series (and grids) this node writes rounds for.</td></tr>
     <tr><td><code>ARENA_PEERS</code></td><td>The other nodes this node talks to directly.</td></tr>
     <tr><td><code>ARENA_STAKE_LOCK_BIN</code>, <code>ARENA_FEDERATION_CLIENT_DIR</code>, <code>ARENA_FEDERATION_INVITE</code></td><td>The federation client the node uses to check and settle stake locks, and the federation it joins.</td></tr>
@@ -616,7 +616,7 @@ node packages/arena-node/tools/devnet.mjs down      # stop everything it started
   <div class="tbl"><table><thead><tr><th>Setting</th><th>What it does</th></tr></thead><tbody>
     <tr><td><code>DEVNET_DIR</code></td><td>Where everything lives: chain, node stores and guardians, clients, logs, process ids (default <code>./devnet-data</code>).</td></tr>
     <tr><td><code>DEVNET_BASE_PORT</code></td><td>Every port is derived from it (default 24000): bitcoind RPC base+1, the runner's control door base+5, lnds base+10 and base+20, gateways base+30 and base+40, the seven nodes base+100 to base+160 in steps of 10, and each node's guardian at node+1000 to node+4000. All must stay below 32768. <code>up</code> refuses a port another program holds.</td></tr>
-    <tr><td><code>DEVNET_GAMES</code></td><td>More games for the nodes to host, as modules that export <code>GAME</code> (see below). Kept for every later command.</td></tr>
+    <tr><td><code>DEVNET_APPS</code></td><td>More games for the nodes to host, as modules that export <code>GAME</code> (see below). Kept for every later command.</td></tr>
     <tr><td><code>DEVNET_PAID_STAKE_MSAT</code></td><td>The paid round's stake (default 10,000,000 msat).</td></tr>
     <tr><td><code>DEVNET_BLOCK_SECONDS</code></td><td>A block every N seconds once the rounds are up (default 30; 0 for none).</td></tr>
     <tr><td><code>DEVNET_PAGE</code>, <code>DEVNET_PAGE_DIR</code></td><td>The page the printed links open, or a built page directory the devnet serves on base+3.</td></tr>
@@ -625,7 +625,7 @@ node packages/arena-node/tools/devnet.mjs down      # stop everything it started
   <p>The game template is a whole replayed game called <code>coin-count</code>: each tick the player presses a number from 0 to 9, some ticks count three times, and the score is the sum. One command copies it into a directory of yours, makes your developer keys with the dev client and signs its manifest:</p>
 <pre>node packages/arena-node/tools/devnet.mjs new-game ./my-game my-game
 # {"step":"new game","name":"my-game","gameId":"…","core":"…","hostedAs":true,…}
-DEVNET_DIR=./my-devnet DEVNET_GAMES=./my-game/game.js node packages/arena-node/tools/devnet.mjs up
+DEVNET_DIR=./my-devnet DEVNET_APPS=./my-game/game.js node packages/arena-node/tools/devnet.mjs up
 node packages/arena-node/tools/devnet.mjs play --game my-game
 node packages/arena-node/tools/devnet.mjs replay</pre>
   <p>Three files are yours to change:</p>
@@ -689,7 +689,7 @@ export const BODY = {
 # {"step":"signed","game":"coin-count","version":1,"gameId":"…","file":"./my-game-dev/coin-count-manifest.hex"}</pre>
       <p>That id is your game. Change one byte of the manifest and the id changes too.</p></li>
     <li><b>Hand it to the nodes</b>
-      <p>A node loads a game from a module that exports <code>GAME</code>, listed in its <code>ARENA_GAMES</code>. It checks every piece against the manifest at start and refuses a game that does not match.</p>
+      <p>A node loads a game from a module that exports <code>GAME</code>, listed in its <code>ARENA_APPS</code>. It checks every piece against the manifest at start and refuses a game that does not match.</p>
 <pre>// coin-count/game.js
 export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
   cores: new Map([[CORE_HASH, { name: 'coin-count', hash: CORE_HASH, url: CORE_URL, adapter: CORE,
@@ -765,7 +765,7 @@ export const DECIDE = {
   revealWindowMs: 120000n,                          // 10 s to 1 h: the longest a round may give for reveals
   roundPeriodMs: 0n, clients: [sha256(games/rock-paper-scissors/index.html)], gameDonationSetId,
 };</pre>
-      <p>Sign it and hand it to the nodes exactly as in <a href="#game">Implement a game</a> (<code>arena-donor sign</code>, a module exporting <code>GAME</code>, listed in <code>ARENA_GAMES</code>).</p></li>
+      <p>Sign it and hand it to the nodes exactly as in <a href="#game">Implement a game</a> (<code>arena-donor sign</code>, a module exporting <code>GAME</code>, listed in <code>ARENA_APPS</code>).</p></li>
     <li><b>Write the client</b>
       <p>Besides <code>rows</code>, <code>identity</code> and <code>back</code>, a head-to-head client gets these from <code>window.parent.ARENA_GAME</code>. The salt, the stake and the keys stay the engine's.</p>
 <pre>const A = window.parent.ARENA_GAME;

@@ -14,7 +14,7 @@ import { toHex, fromHex } from 'arena-sdk/hash';
 import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from 'arena-sdk/manifest';
 import { ROUND_PERIOD_MS } from 'arena-sdk/series';
 
-// THE REGISTRATION IMPORTS NO CORE (kanban #328, spec §0A.6). A node loads this module in its own thread (ARENA_GAMES,
+// THE REGISTRATION IMPORTS NO CORE (kanban #328, spec §0A.6). A node loads this module in its own thread (ARENA_APPS,
 // arena-node/src/main.js), and a core imported here would run there with every right the node has. A node runs a core
 // only in its sandbox (arena-node/src/core-sandbox.js), from the files `root` names, checked against the core's hash.
 // `adapter` is the core imported natively for a PLAYER's own simulation (tests, tools): not enumerable, so no copy of a

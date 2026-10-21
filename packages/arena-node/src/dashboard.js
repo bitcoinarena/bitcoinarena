@@ -29,7 +29,7 @@ const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
 // `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js) - its score shown with the round
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null, devClient = null, devClients = null, reserveKeys = [] } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, apps = null, matchFor = null, devClient = null, devClients = null, reserveKeys = [] } = {}) {
   const db = round.db;
   // WHAT EACH ROUND PAID THE PROTOCOL RESERVES: its rows under a federation's reserve key, as kept here
   const reserveKeyHexes = (reserveKeys || []).map((k) => String(k).toLowerCase());
@@ -79,7 +79,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     const s = settlementOf.get(r.round_id);
     // THE ROUND'S GAME: its id, and the name this node hosts it under (none for a game it no longer hosts)
     const gameId = contract.gameId instanceof Uint8Array ? hex(contract.gameId) : null;
-    const hostedAs = gameId && games instanceof Map && games.get(gameId);
+    const hostedAs = gameId && apps instanceof Map && apps.get(gameId);
     // ITS KIND ("which kind of game was played, and the score if that game supports it"): the manifest's result
     // type - a replayed game, a market (attested), a head-to-head game - and a head-to-head round's match score
     const rt = hostedAs && hostedAs.manifest ? hostedAs.manifest.resultType : null;

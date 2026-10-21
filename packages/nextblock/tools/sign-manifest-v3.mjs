@@ -54,7 +54,7 @@ import { fromHex } from 'arena-sdk/hash';
 export const MANIFEST_V3_HEX = '${toHex(encodeManifest(manifest))}';
 export const MANIFEST_V3 = decodeManifest(fromHex(MANIFEST_V3_HEX));
 export const GAME_ID_V3 = gameIdOf(MANIFEST_V3);
-/** What a launcher loads from this module (ARENA_GAMES): the registration. */
+/** What a launcher loads from this module (ARENA_APPS): the registration. */
 export const GAME = Object.freeze({ ...V1, manifest: MANIFEST_V3, gameId: GAME_ID_V3, cores: NEXTBLOCK_CORES_V3 });
 `);
 console.log(`nextblock v${body.version}: parent ${toHex(GAME_ID_V2).slice(0, 16)}, ${body.cores.length} cores (${body.cores.map((c) => toHex(c.hash).slice(0, 8)).join(' ')}), ${body.clients.length} clients, items ${body.items.map((i) => `${i.id} ${i.priceSat} sat`).join(', ')}, protocol ${body.requiredProtocolVersion}; game_id ${id}`);

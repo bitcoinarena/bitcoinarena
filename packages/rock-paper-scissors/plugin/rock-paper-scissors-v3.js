@@ -10,5 +10,5 @@ import { fromHex } from 'arena-sdk/hash';
 export const MANIFEST_V3_HEX = '1c00010013726f636b2d70617065722d73636973736f7273db57bd7ad41ef92d72fb53a6d4bf5f4b614150fadeedf5430be1af7814091dab00000003a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1c06164ea030001d65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf443400010d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172000000000000000000000103040000000200021242d7d39c8a218dff54a34b92bde5b4a25704a92e09d8fc9fecb2c7b52f3f85b895f3b16d9cef663130faacbf5d37e2fe60271ba5e4748024db2d27e1174206a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c237790203000000000001d4c0020002fb1748222f7b5b7f64eb1eb6ffea179386b361f8cfce22daab93ea965f2059d606d899a49fa83eba8e05a21d222ed04babd0dac5a31e3b32ea88fe20cf5d810d';
 export const MANIFEST_V3 = decodeManifest(fromHex(MANIFEST_V3_HEX));
 export const GAME_ID_V3 = gameIdOf(MANIFEST_V3);
-/** What a launcher loads from this module (ARENA_GAMES): the registration, its client the new file. */
+/** What a launcher loads from this module (ARENA_APPS): the registration, its client the new file. */
 export const GAME = Object.freeze({ ...V1, manifest: MANIFEST_V3, gameId: GAME_ID_V3, clientUrls: [RPS_CLIENT_V3_FILE.href] });

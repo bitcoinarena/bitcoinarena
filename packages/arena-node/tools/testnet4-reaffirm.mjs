@@ -43,11 +43,11 @@ import { witnessRunsOf } from '../../arena-protocol/src/tx.js';
 
 const env = process.env;
 // THE GAMES EACH SEAT HOSTS (2026-10-10: the seven seats name Tick Tock, Rock Paper Scissors and Bitcoin Up
-// or Down): ARENA_HOSTED_GAMES, game ids in hex, comma-separated - written sorted, as an advertisement lists them; unset,
+// or Down): ARENA_HOSTED_APPS, game ids in hex, comma-separated - written sorted, as an advertisement lists them; unset,
 // nextblock's alone (as the updates). A seat serves a game's rounds only if its advert in the round's census names it.
-const HOSTED = (env.ARENA_HOSTED_GAMES ? env.ARENA_HOSTED_GAMES.split(',').map((x) => fromHex(x.trim())) : [NEXTBLOCK.gameId])
+const HOSTED = (env.ARENA_HOSTED_APPS ? env.ARENA_HOSTED_APPS.split(',').map((x) => fromHex(x.trim())) : [NEXTBLOCK.gameId])
   .sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
-if (!HOSTED.every((g) => g.length === 32) || new Set(HOSTED.map(toHex)).size !== HOSTED.length) throw new Error('ARENA_HOSTED_GAMES: 32-byte game ids, each once');
+if (!HOSTED.every((g) => g.length === 32) || new Set(HOSTED.map(toHex)).size !== HOSTED.length) throw new Error('ARENA_HOSTED_APPS: 32-byte game ids, each once');
 const publish = process.argv.includes('--publish');
 const updateOnly = process.argv.includes('--update-only');
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;

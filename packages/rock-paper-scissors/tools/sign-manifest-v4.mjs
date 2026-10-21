@@ -53,7 +53,7 @@ const requireCore = createRequire(import.meta.url);
 export const RPS_DECIDE_V4_CORE = Object.freeze(Object.defineProperty({ name: 'rock-paper-scissors decide v1', hash: sha(readFileSync(DECIDE_V4_URL)), url: DECIDE_V4_URL.href,
   configs: new Map([[sha('rock-paper-scissors-config:v1'), {}]]) }, 'adapter', { get: () => requireCore('./decide-v4.js').DECIDE, enumerable: false }));
 export const RPS_CLIENT_V4_FILE = new URL('../client/index-v4.html', import.meta.url);
-/** What a launcher loads from this module (ARENA_GAMES): the registration, its core and its client version 4's. */
+/** What a launcher loads from this module (ARENA_APPS): the registration, its core and its client version 4's. */
 export const GAME = Object.freeze({ ...V1, manifest: MANIFEST_V4, gameId: GAME_ID_V4, cores: new Map([[RPS_DECIDE_V4_CORE.hash, RPS_DECIDE_V4_CORE]]), clientUrls: [RPS_CLIENT_V4_FILE.href] });
 /** A version-4 round's fields: its game, its core and config, the timing of versions 1 to 3. */
 export const RPS_ROUND_FIELDS_V4 = Object.freeze({ gameId: GAME_ID_V4, simCoreHash: fromHex(RPS_DECIDE_V4_CORE.hash),

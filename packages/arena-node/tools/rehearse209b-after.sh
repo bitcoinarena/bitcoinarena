@@ -25,16 +25,16 @@ bc generatetoaddress 2 $(bc getnewaddress) >/dev/null
 
 # ---- A2. THE ARENA SERIES ----
 ( cd "$ARENA_NODE" && env $A_ENV SEAT_PORTS=$ARENA_PORTS SEAT_DIR=$H/arena GUARDIAN_BASE=$H CLIENT_DIR=$CLIENT_DIR LOCK_BIN=$LOCK_BIN \
-  OUT=$H/arena/series.txt SERIES_GAME=nextblock SERIES_K_AHEAD=4 STAKE_MSAT=1000000 HOME=$FORK_HOME "$NODE" tools/market-series.mjs series ) >> "$LOG" 2>&1 \
+  OUT=$H/arena/series.txt SERIES_APP=nextblock SERIES_K_AHEAD=4 STAKE_MSAT=1000000 HOME=$FORK_HOME "$NODE" tools/market-series.mjs series ) >> "$LOG" 2>&1 \
   || die "A2: the Arena series was not published (above)"
 reading "A2 series: $(grep '"step":"series"' "$LOG" | tail -1)"
 bc generatetoaddress 2 $(bc getnewaddress) >/dev/null
 
 # ---- A3. SEVEN ARENA SEATS BESIDE THE PHASE0 SEATS ----
-GAMES_A="$(cd "$ARENA_NODE/.." && pwd)/nextblock/plugin/nextblock.js,$ARENA_NODE/test/plugins/market/game.js"
+APPS_A="$(cd "$ARENA_NODE/.." && pwd)/nextblock/plugin/nextblock.js,$ARENA_NODE/test/plugins/market/game.js"
 i=0; for p in ${ARENA_PORTS//,/ }; do i=$((i+1))
   ( cd "$ARENA_NODE" && HOME=$FORK_HOME ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR ARENA_CLOSE_AT_END=1 \
-    ARENA_DONATION_NETWORK=regtest ARENA_GAMES=$GAMES_A ARENA_SERIES_FILE=$H/arena/series.txt \
+    ARENA_DONATION_NETWORK=regtest ARENA_APPS=$APPS_A ARENA_SERIES_FILE=$H/arena/series.txt \
     ARENA_BITCOIND_URL=${ARENA_BITCOIND_URL:-$BLWP_BITCOIND_URL} ARENA_BITCOIND_COOKIE=${ARENA_BITCOIND_COOKIE:-$BLWP_BITCOIND_COOKIE} \
     setsid "$NODE" src/main.js $p $H/arena/node-$i.db > $H/arena/node-$i.log 2>&1 < /dev/null & echo "$! arena-node-$i" >> $PIDS )
 done

@@ -88,7 +88,7 @@ export function seatEnv(s, { home, release }) {
     `ARENA_BIND=${s.reach && s.reach.mode === 'direct' ? '0.0.0.0' : '127.0.0.1'}`,
     'ARENA_DONATION_NETWORK=testnet4',
     'ARENA_CLOSE_AT_END=1',
-    `ARENA_GAMES=${join(release, 'packages/nextblock/plugin/nextblock.js')}`,
+    `ARENA_APPS=${join(release, 'packages/nextblock/plugin/nextblock.js')}`,
     `ARENA_PLUGINS_DIR=${join(home, 'node.db.plugins')}`,
   ];
   if (s.chain && s.chain.kind === 'core') {

@@ -117,7 +117,7 @@ INVITE=$(grep -o '"invite":"[^"]*"' "$LOG" | tail -1 | cut -d'"' -f4)
 [ -n "$INVITE" ] && [ "$INVITE" != "(none written)" ] || die "the founding wrote no invite"
 echo "$INVITE" > $H/invite-code
 mkdir -p $H/paid/attach-proof $H/series
-GAMES="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." && pwd)/test/plugins/market/game.js,$(cd "$HERE/.." && pwd)/test/plugins/updown/game.js,$(cd "$HERE/.." && pwd)/../rock-paper-scissors/plugin/rock-paper-scissors.js"
+APPS="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." && pwd)/test/plugins/market/game.js,$(cd "$HERE/.." && pwd)/test/plugins/updown/game.js,$(cd "$HERE/.." && pwd)/../rock-paper-scissors/plugin/rock-paper-scissors.js"
 SEAT_ENV=""
 start_nodes() {
   i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1))
@@ -126,7 +126,7 @@ start_nodes() {
     # stayed unseen at four seats past the 12-block lock-height rule (4 min at a block every 20 s), and the order never traded
     READ=""; if [ -n "$SEAT_ENV" ]; then rm -rf $H/client-read-$i; cp -R $CLIENT_DIR $H/client-read-$i; READ="ARENA_FEDERATION_CLIENT_READ_DIR=$H/client-read-$i"; fi
     ( cd "$HERE/.." && HOME=$FORK_HOME ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR ARENA_CLOSE_AT_END=1 \
-      ARENA_DONATION_NETWORK=regtest ARENA_GAMES=$GAMES env $SEAT_ENV $READ setsid "$NODE" src/main.js $p $H/node-$i.db > $H/node-$i.log 2>&1 < /dev/null & echo "$! node-$i" >> $PIDS )
+      ARENA_DONATION_NETWORK=regtest ARENA_APPS=$APPS env $SEAT_ENV $READ setsid "$NODE" src/main.js $p $H/node-$i.db > $H/node-$i.log 2>&1 < /dev/null & echo "$! node-$i" >> $PIDS )
   done
   for p in ${NODE_PORTS//,/ }; do until_ "node $p" 120 curl -s -o /dev/null --max-time 3 http://127.0.0.1:$p/identity; done
 }
@@ -213,7 +213,7 @@ reading "3 peg-in: {\"ok\":true,\"gatewayA\":{\"beforeMsat\":$BEFORE_A,\"afterMs
 
 # ---- 4. THE SEATS HOLD THE SERIES (as the live seats do: attach units with ARENA_SERIES_FILE), THE PAGE'S PROOF AND LINK ----
 stop_nodes
-SEAT_ENV="${SERIES_GAME:+$([ "$SERIES_GAME" = updown ] && echo ARENA_REGTEST_DONATION_SET=keys)} ARENA_SERIES_FILE=$H/series/series.txt ARENA_ATTACH_PROOF_DIR=$H/paid/attach-proof ARENA_FUNDED_ROUNDS_FILE=$H/paid/funded-rounds.txt \
+SEAT_ENV="${SERIES_APP:+$([ "$SERIES_APP" = updown ] && echo ARENA_REGTEST_DONATION_SET=keys)} ARENA_SERIES_FILE=$H/series/series.txt ARENA_ATTACH_PROOF_DIR=$H/paid/attach-proof ARENA_FUNDED_ROUNDS_FILE=$H/paid/funded-rounds.txt \
   ARENA_BITCOIND_URL=$ARENA_BITCOIND_URL ARENA_BITCOIND_COOKIE=$ARENA_BITCOIND_COOKIE"
 touch $H/paid/funded-rounds.txt
 start_nodes

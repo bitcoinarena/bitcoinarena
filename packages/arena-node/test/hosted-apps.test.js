@@ -3,7 +3,7 @@
 // EACH NODE CHOOSES WHICH GAMES IT HOSTS - THE NODE HALF (§0A.4, comment 756; 2026-10-07: a node
 // whose advertisement names a game it does not host refuses to start, by name).
 //
-// Pair A hosts nextblock, pair B hosts tally (ARENA_GAMES' registrations, handed to serve as `plugins`), each with an
+// Pair A hosts nextblock, pair B hosts tally (ARENA_APPS' registrations, handed to serve as `plugins`), each with an
 // advertisement naming only its own game. Each settles a paying round of its own game. Then, at each: the other game's
 // round is refused at /round and an entry into it at /entry, by the game's id; /rounds and /api/rounds list only its own
 // game, every row tagged and the listing grouped by game; the dashboard shows earnings only under its own game. And a
@@ -61,8 +61,8 @@ test('two nodes hosting different games: each opens, lists, pays and refuses by 
       settled: { A: settled.A.state, B: settled.B.state },
       refused: Object.fromEntries(Object.entries(refused).map(([k, v]) => [k, { round: [v.round.status, v.round.why.slice(0, 70)], entry: [v.entry.status, v.entry.why.slice(0, 90)] }])),
       listed: Object.fromEntries(Object.entries(listing).map(([k, v]) => [k, { games: v.games.map((g) => `${g.name}:${g.rounds.length}`),
-        rowGames: [...new Set([...v.upcoming, ...v.finished].map((r) => r.game && r.game.name))] }])),
-      upcomingGames: Object.fromEntries(Object.entries(upcoming).map(([k, v]) => [k, v.games.map((g) => g.name)])),
+        rowApps: [...new Set([...v.upcoming, ...v.finished].map((r) => r.game && r.game.name))] }])),
+      upcomingApps: Object.fromEntries(Object.entries(upcoming).map(([k, v]) => [k, v.games.map((g) => g.name)])),
       dashboard: Object.fromEntries(Object.entries(dash).map(([k, v]) => [k, v.byGame.map((g) => ({ name: g.name, rounds: g.rounds, earnedMsat: String(earned(g)) }))])),
     };
     console.log('  FACTS (hosted games):', JSON.stringify(facts));

@@ -851,7 +851,7 @@ attested one (arena-node `game-market.js`):
   round is VOID - nothing claimed, every stake back by the return door - not
   only at the deadline. No result by the deadline is VOID as before.
 - **On its own.** A seat hosting a market on a game sweeps every 10 s
-  (`ARENA_GAME_MARKET_SWEEP_MS`): each round of its store is looked at **once**,
+  (`ARENA_APP_MARKET_SWEEP_MS`): each round of its store is looked at **once**,
   behind a rowid cursor; a market round on a game with nothing held is
   remembered as pending and tried only when due - from its entry close (the
   source contract), from its source round's end (the committee's results), then

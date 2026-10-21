@@ -22,7 +22,7 @@ import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
-import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
+import { envToConfValues, formatConf, renameKeys, renameValues } from '../../arena-node/src/arena-conf.js';
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
 import { quickTunnelUrl } from './reach.js';
@@ -317,13 +317,14 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const confFile = join(home, 'arena.conf');
   const migrating = !existsSync(confFile);
   if (migrating) {
-    const values = { network: state.network || 'testnet4', ...envToConfValues(envForRelease(readFileSync(envFile, 'utf8'), newRelease), { port, database: join(home, 'node.db') }) };
+    const values = { network: state.network || 'testnet4', ...renameValues(envToConfValues(envForRelease(readFileSync(envFile, 'utf8'), newRelease), { port, database: join(home, 'node.db') })) };
     if (INSTANCE && !values.instance) values.instance = INSTANCE;
     if (PORT_OFFSET && !values.port_offset) values.port_offset = String(PORT_OFFSET);
     writeFileSync(confFile, formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n', header: 'moved from node.env by an update' }), { mode: 0o600 });
   } else {
     const confText = readFileSync(confFile, 'utf8');
-    const confNew = envForRelease(confText, newRelease);
+    // and a key that took a new name under it, once (kanban #569: games= is apps=)
+    const confNew = renameKeys(envForRelease(confText, newRelease));
     if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
   }
   for (const f of moving) {

@@ -1,4 +1,4 @@
-// ROCK PAPER SCISSORS AS A PLUGIN (kanban #233): the registration a node's launcher hands serve() (ARENA_GAMES) - the signed
+// ROCK PAPER SCISSORS AS A PLUGIN (kanban #233): the registration a node's launcher hands serve() (ARENA_APPS) - the signed
 // manifest, its id, the decide adapter installed as its one core (checked against the manifest by hash), and the game's name
 // and donation set. The engine imports none of this; it reads the game through its manifest and the adapter it is handed.
 import { createHash } from 'node:crypto';
@@ -33,7 +33,7 @@ export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', 
   // its client, so the plugin store can hand the game to another seat (kanban #276 step 5)
   clientUrls: [new URL('../client/index-v2.html', import.meta.url).href] });
 
-/** What a launcher loads from this module (ARENA_GAMES): the registration. */
+/** What a launcher loads from this module (ARENA_APPS): the registration. */
 export const GAME = ROCK_PAPER_SCISSORS;
 // A ROCK PAPER SCISSORS ROUND'S FIELDS (kanban #292/#293): its game, its decide adapter and config; no run - its 600 ticks and
 // 300-tick deadline make the reveal window (entry close to the round's end) about 20 s, inside the game's 120 s. One place for

@@ -1,4 +1,4 @@
-// HELLO WORLD AS A SEAT HOSTS IT (kanban #276): the registration ARENA_GAMES names (src/main.js reads `GAME`) - its signed
+// HELLO WORLD AS A SEAT HOSTS IT (kanban #276): the registration ARENA_APPS names (src/main.js reads `GAME`) - its signed
 // manifest, no cores (an attested market runs no game code), its developer's donation set, its signed description.
 import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
 import { fromHex } from 'arena-sdk/hash';

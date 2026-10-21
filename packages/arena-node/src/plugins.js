@@ -83,7 +83,7 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
  * start. A hosted game the advertisement does not name only means the node is not drawn for it until an advertisement
  * update names it: said, not refused.
  */
-export function advertisedGamesCheck(advert, plugins) {
+export function advertisedAppsCheck(advert, plugins) {
   const hosted = new Set(plugins.keys());
   const advertised = (advert && Array.isArray(advert.hostedGames) ? advert.hostedGames : []).map(toHex);
   const notHosted = advertised.filter((g) => !hosted.has(g));
@@ -91,7 +91,7 @@ export function advertisedGamesCheck(advert, plugins) {
   if (notHosted.length)
     return { ok: false, notHosted, unadvertised,
       why: `this node's advertisement names game${notHosted.length === 1 ? '' : 's'} ${notHosted.map((g) => g.slice(0, 16)).join(', ')} `
-        + 'it does not host (ARENA_GAMES): it would be drawn to replay rounds it cannot play - post an advertisement update or host the game' };
+        + 'it does not host (ARENA_APPS): it would be drawn to replay rounds it cannot play - post an advertisement update or host the game' };
   return { ok: true, unadvertised };
 }
 
