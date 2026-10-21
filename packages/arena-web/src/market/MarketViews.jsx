@@ -21,12 +21,10 @@ export class PickSheet extends React.Component {
         <div className="picks">
           {sheet.outcomes.map((o) => <Button key={o.index} primary disabled={!ok || busy} onClick={() => onPick && onPick(o.index, this.state.confirmed)}>{o.label}</Button>)}
         </div>
-        <p>{sheet.lines.stake}</p>
-        <p className="sub">{sheet.lines.fee}</p>
-        <p><b>{sheet.lines.net}</b></p>
+        {this.props.free ? <p>free - nothing at stake</p> : <><p>{sheet.lines.stake}</p><p className="sub">{sheet.lines.fee}</p><p><b>{sheet.lines.net}</b></p></>}
         <p className="sub">{sheet.attestors}</p>
         {needs ? <label className="confirm"><input type="checkbox" checked={this.state.confirmed} onChange={(e) => this.setState({ confirmed: e.target.checked })} /> <span>{sheet.confirm}</span></label> : null}
-        {onClose ? <Button onClick={onClose}>Close</Button> : null}
+        {onClose ? <Button onClick={onClose}>Cancel</Button> : null}
       </div>
     );
   }

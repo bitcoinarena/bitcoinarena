@@ -11,6 +11,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 mkdirSync(join(root, 'dist', 'test'), { recursive: true });
 await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/owner.js'), legalComments: 'none' });
+await build({ entryPoints: [join(root, 'src/market/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/market.js'), legalComments: 'none' });
+// and beside Up/Down's page part, where the Arena page loads its games' page code (tools/sync-arena-ui.mjs copies *-page.js to games/<game>/)
+copyFileSync(join(root, 'dist/market.js'), join(root, '../btc-updown/page/market-react-page.js'));
 copyFileSync(join(root, 'src/design/arena.css'), join(root, 'dist/arena.css'));
 for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['bond', 'src/owner/BondPanel.jsx'], ['custody', 'src/owner/CustodyPanels.jsx'], ['standing', 'src/owner/StandingPanel.jsx'], ['release', 'src/owner/ReleasePanel.jsx'], ['apps', 'src/owner/AppsPanel.jsx'], ['network-apps', 'src/owner/NetworkAppsPanel.jsx'], ['network', 'src/owner/NetworkPanel.jsx'], ['needs', 'src/owner/NeedsPanel.jsx'], ['market', 'src/market/MarketViews.jsx'], ['components', 'src/design/components.jsx']])
   await build({ entryPoints: [join(root, entry)], bundle: true, format: 'esm', jsx: 'automatic', platform: 'node', external: ['react', 'react-dom', 'react/jsx-runtime'],
