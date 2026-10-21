@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE OWNER DASHBOARD'S BOND, IN REACT (kanban #564): the bitcoin this node locked so it can be drawn - how much (in parts when it was
+// added to), the lock and when it ends, the bond wallet, its outputs on the chain - and the withdrawal once the lock is over (POST
+// /owner/bond-withdraw, signed; the node leaves the network). Read from GET /owner/bond.
+import React from 'react';
+import { Button } from '../design/components.jsx';
+
+const n = (x) => Number(x).toLocaleString('en-US');
+/** "3 d 4 h" / "5 h 20 min" for a span in ms. */
+export function daysHours(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
+  return d ? `${d} d ${h} h` : h ? `${h} h ${min} min` : `${min} min`;
+}
+export function lockText(l, nowMs = Date.now()) {
+  if (!l) return '';
+  return l.withdrawable ? 'unlocked' : `locked · ${n(l.blocksLeft)} blocks (about ${daysHours(l.estimatedMs - nowMs)})`;
+}
+
+export class BondPanel extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { loaded: false, bond: null, address: '', busy: false, message: null, ...(props.initial || {}) };
+    this.withdraw = this.withdraw.bind(this);
+  }
+  async componentDidMount() {
+    if (this.state.loaded || !this.props.api) return;
+    let b = null; try { b = await this.props.api.get('/owner/bond'); } catch { b = null; }
+    this.setState({ loaded: true, bond: b });
+  }
+  async withdraw() {
+    const address = this.state.address.trim();
+    if (!address) return this.setState({ message: 'Type the address the bond goes to.' });
+    const ask = this.props.confirm || ((q) => window.confirm(q));
+    if (!ask(`Withdraw the whole bond to ${address}? This node leaves the network.`)) return;
+    this.setState({ busy: true, message: null });
+    try {
+      const r = await this.props.api.post('/owner/bond-withdraw', await this.props.api.signed('bond-withdraw', { address, feeRate: 2 }));
+      if (!r || r.ok === false) return this.setState({ busy: false, message: (r && r.why) || 'not sent' });
+      this.setState({ message: `Sent: ${r.txid} (${n(r.value)} sat)` });
+    } catch (e) { this.setState({ busy: false, message: e.message }); }
+  }
+  render() {
+    const { loaded, bond: b, address, busy, message } = this.state;
+    if (!loaded) return <p className="sub">reading this node's bond…</p>;
+    if (!b) return <p className="sub">This node did not answer about its bond.</p>;
+    if (!b.bond) return <p>No bond yet. Until it has one, this node is not drawn for rounds.</p>;
+    const l = b.lock;
+    const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
+    const nowMs = this.props.nowMs ? this.props.nowMs() : Date.now();
+    return (
+      <div>
+        <div className="row"><span>Bond</span><b>{n(b.total || b.bond.sats)} sat{outs ? ` (${outs.length} parts)` : ''}</b></div>
+        <div className="row"><span>Lock</span><b>{lockText(l, nowMs)}</b></div>
+        {b.wallet && !b.wallet.why ? <div className="row"><span>Bond wallet</span><b>{n(b.wallet.spendableSats)} sat</b></div> : null}
+        <details><summary className="sub">Withdraw the bond</summary>
+          <p className="sub">Only after the lock. The node then leaves the network.</p>
+          <div className="row">
+            <input placeholder={`your ${b.network || 'testnet4'} address`} style={{ flex: 1 }} value={address} onChange={(e) => this.setState({ address: e.target.value })} />
+            <Button disabled={busy || !(l && l.withdrawable)} onClick={this.withdraw}>Withdraw</Button>
+          </div>
+          {message ? <p className="sub">{message}</p> : null}
+        </details>
+        <details><summary className="sub">On the chain</summary>
+          {(outs || [b.bond]).map((o) => <div key={`${o.txid}:${o.vout}`} className="row sub"><span><code>{o.txid.slice(0, 16)}…:{o.vout}</code></span><b>{n(o.sats)} sat</b></div>)}
+        </details>
+      </div>
+    );
+  }
+}
