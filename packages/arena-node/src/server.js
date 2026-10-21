@@ -5231,7 +5231,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/owner/roles') {
           const a = owner.authorize(body, 'roles');
           if (!a.ok) return answer(a.status || 401, a);
-          if (process.env.ARENA_HOME) return answer(501, { ok: false, why: 'an installed node changes its roles with the installer (arena-install --roles) until its wallet is wired here' });
+          // AN INSTALLED NODE (kanban #563): the advertisement update paid from its own wallet, the one the wizard funded
+          if (process.env.ARENA_HOME) {
+            try {
+              const { changeRolesOnNode } = await import('../../arena-installer/src/change-roles.js');
+              const args = body.args || {};
+              const r = await changeRolesOnNode({ home: process.env.ARENA_HOME, release: fileURLToPath(new URL('../../../', import.meta.url)), roles: args.roles, custody: args.custody, post: args.post === true });
+              if (!r.ok) return answer(400, r);
+              if (r.update) console.log(`[roles] advertisement update ${r.update.txid}: ${r.plan.before.roles.join(',')} -> ${r.plan.after.roles.join(',')}`);
+              return answer(200, { ok: true, plan: r.plan, update: r.update || null });
+            } catch (e) { return answer(500, { ok: false, why: `the roles could not be changed: ${e.message}` }); }
+          }
           const { bondCliFrom, changeRolesFromWallet } = await import('./add-bond-wallet.js');
           const w = bondCliFrom();
           if (!w) return answer(501, { ok: false, why: 'this node names no bond wallet (ARENA_BOND_CLI), so it cannot pay for an advertisement update from here' });
