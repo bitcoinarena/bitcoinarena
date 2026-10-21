@@ -317,3 +317,36 @@ test('seats started at different heights draw the same cohort, and a void one is
   assert.equal(late.state().trigger.height, 301, 'the seat that held 290 moves to the same next draw');
   assert.equal(fresh.state().id, late.state().id);
 });
+
+test('a node whose advert names a dead endpoint still seats its code: each seat sends its own code to the drawn nodes every tick (kanban #495: the installers\' adverts named old quick tunnels)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`q${i}`));
+  const live = (i) => `http://10.0.0.1:${6600 + i}`;
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/qtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `qop${i}`, guardianCapable: true, endpoint: i >= 9 ? `https://old-tunnel-${i}.example` : live(i).replace('http:', 'ws:'),
+      guardianEndpoint: `wss://g${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
+  const w = { tip: 300 };
+  const seats = [], byRoot = new Map();
+  for (let i = 0; i < 12; i++) {
+    const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
+      beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+      guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
+      nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
+      post: async () => {}, peers: () => [],
+      fetchJson: async (u) => { const s2 = byRoot.get(u.replace(/\/founding$/, '')); if (!s2) throw new Error('no such seat'); return s2.state(); },
+      postTo: async (root, m) => { const s2 = byRoot.get(root); if (!s2) throw new Error('no such seat'); s2.take(m); } });
+    seats.push(s); byRoot.set(live(i), s);              // the old tunnels answer nothing; every seat's live root does
+  }
+  for (const s of seats) await s.tick();
+  w.tip = 301;
+  for (let n = 0; n < 3; n++) for (const s of seats) await s.tick();
+  let checked = 0;
+  for (const [i, s] of seats.entries()) {
+    const x = s.state();
+    if (!x.seated.some((y) => y.node === toHex(all[i].pub))) continue;
+    assert.equal(x.seated.filter((y) => y.code).length, 10, `drawn seat ${i} holds every drawn code, the dead-advert nodes' too`);
+    checked++;
+  }
+  assert.ok(checked >= 8);
+  assert.ok(seats.slice(9).some((s, j) => s.state().seated.some((y) => y.node === toHex(all[9 + j].pub))), 'a dead-advert node is drawn');
+});
