@@ -37,6 +37,6 @@ export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', 
 export const GAME = ROCK_PAPER_SCISSORS;
 // A ROCK PAPER SCISSORS ROUND'S FIELDS (kanban #292/#293): its game, its decide adapter and config; no run - its 600 ticks and
 // 300-tick deadline make the reveal window (entry close to the round's end) about 20 s, inside the game's 120 s. One place for
-// the free demo (demo-regtest.mjs) and the paid regtest stack (run-testnet4-paid.mjs PAID_RPS=1).
+// the free demo (the Arena's arena-node/tools/rps-demo-regtest.mjs) and the paid regtest stack (run-testnet4-paid.mjs PAID_RPS=1).
 export const RPS_ROUND_FIELDS = Object.freeze({ gameId: RPS_GAME_ID, simCoreHash: fromHex(RPS_DECIDE_CORE.hash),
   configHash: fromHex([...RPS_DECIDE_CORE.configs.keys()][0]), blockTicks: 600, startDeadlineTicks: 300, minScore: 2 });

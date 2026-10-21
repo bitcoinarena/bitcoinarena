@@ -28,7 +28,7 @@ test('every subpath is the Arena module itself', async () => {
 
 // every import of a game's files: its own (./ or ../ inside it) or arena-sdk - nothing else of the Arena
 const filesOf = (dir) => readdirSync(dir).flatMap((f) => { const p = join(dir, f); if (f === 'node_modules') return [];
-  return statSync(p).isDirectory() ? filesOf(p) : /\.(m?js)$/.test(f) ? [p] : []; });
+  return statSync(p).isDirectory() ? filesOf(p) : /\.(m?js|jsx)$/.test(f) ? [p] : []; });
 const outside = (game, sub = '') => {
   const base = join(root, '..', game);
   return filesOf(join(base, sub)).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/(?:from|import\()\s*'([^']+)'/g)].map((m) => m[1])
@@ -42,8 +42,9 @@ test('hello-world imports only itself and arena-sdk, and its game id is what the
   assert.equal(Buffer.from(GAME.gameId).toString('hex'), '32ee1aa45e485eb2bc6b35d118a79f9724ab8019a0ceeb71eda45a84200c130f');
 });
 
-test('rock-paper-scissors\' plugin imports only itself and arena-sdk; its four ids are the network\'s and its cores the hashed bytes', async () => {
-  assert.deepEqual(outside('rock-paper-scissors', 'plugin'), []);
+test('rock-paper-scissors imports only itself and arena-sdk (plugin, tools, tests, its view); its four ids are the network\'s and its cores the hashed bytes', async () => {
+  for (const d of ['plugin', 'tools', 'test']) assert.deepEqual(outside('rock-paper-scissors', d), [], d);
+  assert.deepEqual(outside('rock-paper-scissors', 'view').filter((s) => !/: react/.test(s)), [], 'view: React and itself only');
   const ids = {};
   for (const v of ['', '-v2', '-v3', '-v4']) ids[v || 'v1'] = Buffer.from((await import(`../../rock-paper-scissors/plugin/rock-paper-scissors${v}.js`)).GAME.gameId).toString('hex').slice(0, 16);
   assert.deepEqual(ids, { v1: '1e9ab4b7d402d51f', '-v2': 'a75f54fd4f978a29', '-v3': '90f462c823bdd382', '-v4': '13699356aae534ee' });

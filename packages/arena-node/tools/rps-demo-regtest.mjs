@@ -8,22 +8,22 @@
 // ARENA_WSS_<port> names them (rps-a / rps-b.bitcoin-arena.io).
 //
 //   ARENA_PAGE=<the page's URL> ARENA_WSS_21651=wss://rps-a.bitcoin-arena.io ARENA_WSS_21652=wss://rps-b.bitcoin-arena.io \
-//     node packages/rock-paper-scissors/tools/demo-regtest.mjs <work dir>
+//     node packages/arena-node/tools/rps-demo-regtest.mjs <work dir>   (moved from rock-paper-scissors/tools, kanban #568: the Arena stands up the round)
 // Ports (private, < 32768, clear of the live guardian range): bitcoind RPC 21641 / p2p 21642, seats 21651 21652.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { standUpRound, keepBackToBack, tableCounter } from '../../arena-node/tools/round-2of2.mjs';
-import { bitcoindRpc } from '../../arena-node/src/chain-rpc.js';
+import { standUpRound, keepBackToBack, tableCounter } from './round-2of2.mjs';
+import { bitcoindRpc } from '../src/chain-rpc.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
-import { ROCK_PAPER_SCISSORS, RPS_DECIDE_CORE, RPS_ROUND_FIELDS } from '../plugin/rock-paper-scissors.js';
+import { ROCK_PAPER_SCISSORS, RPS_DECIDE_CORE, RPS_ROUND_FIELDS } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
-import { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } from '../../arena-node/test/plugins/updown/index.js';
+import { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } from '../test/plugins/updown/index.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 
 const env = process.env;
 const dir = process.argv[2];
-if (!dir || !env.ARENA_PAGE) { console.error('ARENA_PAGE=<page url> node demo-regtest.mjs <work dir>'); process.exit(2); }
+if (!dir || !env.ARENA_PAGE) { console.error('ARENA_PAGE=<page url> node rps-demo-regtest.mjs <work dir>'); process.exit(2); }
 const B = env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const RPC = 21641;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
