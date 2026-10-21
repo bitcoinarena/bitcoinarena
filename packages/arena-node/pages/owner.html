@@ -57,6 +57,7 @@ h3.offer{font-size:20px;color:var(--gv)}
 .tile a.go{color:var(--st);font-weight:600;font-size:14px;text-decoration:none}
 .savebar{position:sticky;bottom:12px;z-index:4;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;background:var(--card);border:1px solid var(--gv);border-radius:14px;padding:10px 14px;margin-top:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
 .savebar[hidden]{display:none}
+.svc-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-2px 0 10px 26px}.svc-ctl button{padding:6px 12px;font-size:13px;margin:0}.svc-ctl .switch{margin-left:8px}
 .confirm{display:flex;gap:10px;align-items:flex-start;margin:10px 0;color:var(--text)}.confirm input{width:auto;margin-top:4px}
 @media (max-width:820px){.layout{display:block}
   nav.side{position:sticky;top:0;z-index:5;flex-direction:row;overflow-x:auto;background:var(--bg);margin:0 -16px 8px;padding:8px 16px;border-bottom:1px solid var(--line)}
@@ -493,12 +494,24 @@ async function servicesPanel() {
   el.innerHTML = `${r.services.map((s) => {
     const ok = s.running === null ? null : !s.running ? false : s.probe ? s.probe.ok : true;
     return `<div class="row"><span>${ok === null ? '⚪' : ok ? '🟢' : '🔴'} ${esc(s.title)}${s.inside ? ' <span class="sub">(inside the node)</span>' : ''}</span><b>${s.running === null ? 'unknown' : s.running ? 'running' : 'stopped'}</b></div>
-      <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe && s.running !== null ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>`;
+      <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe && s.running !== null ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>
+      ${(s.controls || []).length || s.bootSettable ? `<div class="svc-ctl">${(s.controls || []).map((c) => `<button type="button" data-svc="${esc(s.id)}" data-act="${c}">${{ start: 'Start', stop: 'Stop', restart: 'Restart' }[c]}</button>`).join('')}
+        ${s.bootSettable ? `<label class="switch" title="Start at boot"><input type="checkbox" data-svc="${esc(s.id)}" data-boot="1" aria-label="${esc(s.title)}: start at boot"${s.atBoot ? ' checked' : ''}><span></span></label><span class="sub">at boot</span>` : ''}</div>`
+        : s.why ? `<p class="sub" style="margin:-2px 0 8px 26px">${esc(s.why)}</p>` : ''}`;
   }).join('')}
     <p class="${bad ? 'err' : 'ok'}">${bad ? `${bad} service(s) need attention.` : 'All services run.'}</p>
     ${r.command ? `<p class="sub">On the node's machine: <code>${esc(r.command)} status</code>, <code>${esc(r.command)} doctor</code> (each problem with its fix), <code>${esc(r.command)} restart &lt;service&gt;</code>. Settings: ${esc(r.settings || '?')} (<code>${esc(r.command)} config</code>).</p>` : '<p class="sub">Set up by hand: start and stop these programs on the node\'s machine.</p>'}
     <p><button id="svc-again">Check again</button></p>`;
   $('svc-again').onclick = () => { el.innerHTML = '<p class="sub">reading this node\'s services…</p>'; servicesPanel(); };
+  // START / STOP / RESTART AND AT BOOT, one service at a time (kanban #563): the node does it, then the list is read again
+  const act = async (id, action, ctl) => {
+    if (ctl) ctl.disabled = true;
+    let x; try { x = await post('/owner/service', await signed('service', { id, action })); } catch (e) { x = { ok: false, why: e.message }; }
+    if (!x || !x.ok) { alert(`${id}: ${(x && x.why) || 'not done'}`); if (ctl) ctl.disabled = false; return; }
+    setTimeout(servicesPanel, x.restarting ? 8000 : 800);
+  };
+  for (const b of el.querySelectorAll('button[data-act]')) b.onclick = () => act(b.dataset.svc, b.dataset.act, b);
+  for (const c of el.querySelectorAll('input[data-boot]')) c.onchange = () => act(c.dataset.svc, c.checked ? 'boot-on' : 'boot-off', c);
   need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services');
 }
 // THE NODE'S ADDRESS (kanban #563 / #562 2C, the owner 2026-10-21 "1 default"): how the world reaches it, and a switch to another way -

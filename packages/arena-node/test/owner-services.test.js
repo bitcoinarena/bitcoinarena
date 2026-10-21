@@ -26,8 +26,12 @@ test('on a running seat: the owner\'s signed ask answers every service of the no
     const req = (k) => signOwnerRequest({ node, action: 'services', args: {}, secret: k, sign: (m, x) => schnorr.sign(m, x), pubkeyOf: (x) => schnorr.getPublicKey(x) });
     const post = (body) => fetch(`${base}/owner/services`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     delete process.env.ARENA_HOME;
+    // A NODE SET UP BY HAND (kanban #563: "all services even if it's custom installed"): its own services, from the seat itself
     const none = await post(req(secret));
-    assert.equal(none.status, 501); assert.match((await none.json()).why, /not installed by the Arena installer/);
+    assert.equal(none.status, 200);
+    const manual = await none.json();
+    assert.deepEqual([manual.manual, manual.command], [true, null]);
+    assert.deepEqual(manual.services.slice(0, 2).map((x) => x.id), ['node', 'chain']);
     // an installed node: its arena.conf and the seat's unit (the unit's state is asked of systemctl, which this machine may not have)
     const home = join(root, 'home'); mkdirSync(home, { recursive: true });
     writeFileSync(join(home, 'arena.conf'), `port=${s.d.port}\nroles=verify\n`);
@@ -41,7 +45,8 @@ test('on a running seat: the owner\'s signed ask answers every service of the no
     assert.equal(r.status, 200);
     const j = await r.json();
     assert.deepEqual([j.ok, j.port, j.roles, j.settings, j.command], [true, s.d.port, 'verify', 'arena.conf', 'arenanode']);
-    assert.deepEqual(j.services.map((x) => [x.id, x.title]), [['node', 'Arena node (seat)']]);
+    assert.deepEqual(j.services[0].id, 'node'); assert.equal(j.services[0].title, 'Arena node (seat)');
+    assert.ok(j.services.some((x) => x.id === 'address'), 'beside the installer\'s: the seat\'s own rows it does not know');
     assert.equal(typeof j.services[0].running, 'boolean');
     assert.ok(!JSON.stringify(j).includes(root), 'no local paths in the answer');
   } finally {

@@ -16,7 +16,8 @@ import { execFile } from 'node:child_process';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { join } from 'node:path';
 import { serve } from './server.js';
-import { startGuardian } from './guardian.js';
+import { startGuardian, guardianPorts } from './guardian.js';
+import { serviceSettings } from './service-settings.js';
 import { nodeIdentity } from './store.js';
 
 /** Whether the node on this store holds a guardian key: both ceremony files beside it, both parsing (`dir` '.guardian-next' for the second). */
@@ -67,8 +68,10 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
     bitcoindUrl: chain.bitcoindUrl, cookiePath: chain.cookiePath, call: chain.call,
     ...(chain.env ? { env: chain.env } : {}), ...(chain.tailscale !== undefined ? { tailscale: chain.tailscale } : {}),
     ...(chain.log ? { log: chain.log } : {}) });
-  if (plan.own) guardian = await start('guardian');
-  if (plan.next && guardian.running) {
+  // STARTED WITH THE NODE UNLESS THE OWNER TURNED IT OFF (kanban #563: the owner page's "at boot" switch, kept in the node's store)
+  const settings = serviceSettings(db);
+  if (plan.own && settings.atBoot('guardian')) guardian = await start('guardian');
+  if (plan.next && guardian.running && settings.atBoot('guardian-next')) {
     try { next = await start('next'); } catch (e) { await guardian.stop(); throw e; }
   }
   const stopBoth = async () => { try { await next.stop(); } finally { await guardian.stop(); } };
@@ -77,8 +80,22 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   try {
     node = await serve(db, {
       ...options,
-      ...(guardian.running ? { guardian: as(guardian, plan.own === 'setup') } : {}),
-      ...(next.running ? { guardianNext: as(next, plan.next === 'setup') } : {}) });
+      ...(guardian.running ? { guardian: as(guardian, plan.own === 'setup') } : plan.own ? { guardian: { ...as({ apiPort: guardianPorts(options.port).api, p2pPort: guardianPorts(options.port).p2p }, plan.own === 'setup'), stopped: true } } : {}),
+      ...(next.running ? { guardianNext: as(next, plan.next === 'setup') } : {}),
+      // THE GUARDIAN STARTED AND STOPPED FROM THE OWNER PAGE (kanban #563): the node runs it, so the node starts and stops it - a node
+      // without a guardian key and no setup to wait in has none to start
+      guardianControl: {
+        has: () => !!plan.own,
+        running: () => !!guardian.running,
+        stop: async () => { if (!guardian.running) return { ok: true }; await guardian.stop(); guardian = none; return { ok: true }; },
+        start: async () => {
+          if (!plan.own) return { ok: false, why: 'this node holds no guardian key and waits in no setup: it runs no guardian' };
+          if (guardian.running) return { ok: true };
+          guardian = await start('guardian');
+          return guardian.running ? { ok: true } : { ok: false, why: guardian.why || 'the guardian did not start' };
+        },
+      },
+      serviceSettings: settings });
   } catch (e) { await stopBoth(); throw e; }
   const closeNode = node.close;
   node.close = async () => { try { await closeNode(); } finally { await stopBoth(); } };

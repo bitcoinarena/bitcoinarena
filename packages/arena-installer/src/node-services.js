@@ -332,6 +332,40 @@ export async function followTunnelNow({ home, platform = process.platform, env =
   return { url: t.url || null, changed: t.changed || [], restarted };
 }
 
+/**
+ * START AT BOOT, one service at a time (kanban #563, the owner 2026-10-21): Linux - its user unit enabled (`systemctl --user is-enabled`);
+ * macOS - its launch agent's RunAtLoad; Windows - the Arena Node launcher starts the node's services together at login, so not one by
+ * one. bootOf answers { atBoot: true | false | null, settable, why }; setBoot(word, on) changes it - without starting or stopping it now.
+ */
+export async function bootOf(svc, { platform = process.platform, sh = run } = {}) {
+  if (!svc || !svc.file) return { atBoot: null, settable: false, why: 'runs inside the node: the node starts it' };
+  if (platform === 'linux') {
+    const r = await sh('systemctl', ['--user', 'is-enabled', svc.name]);
+    return { atBoot: r.out.trim() === 'enabled', settable: true };
+  }
+  if (platform === 'darwin') {
+    const r = await sh('/usr/libexec/PlistBuddy', ['-c', 'Print :RunAtLoad', svc.file]);
+    return { atBoot: r.ok && r.out.trim() === 'true', settable: true };
+  }
+  return { atBoot: null, settable: false, why: 'on Windows the Arena Node launcher starts all of the node\'s services at login' };
+}
+export async function setBoot(word, on, { home, platform = process.platform, env = process.env, sh = run } = {}) {
+  const svcs = installedServices({ home, platform, env });
+  const { list, why } = servicesNamed(word, svcs);
+  const svc = list.find((x) => x.file);
+  if (!svc) return { ok: false, why: why || `${word} is not a service of its own` };
+  if (platform === 'linux') {
+    const r = await sh('systemctl', ['--user', on ? 'enable' : 'disable', svc.name]);
+    return r.ok ? { ok: true, id: svc.id, atBoot: !!on } : { ok: false, why: (r.err || r.out).trim().slice(0, 200) };
+  }
+  if (platform === 'darwin') {
+    let r = await sh('/usr/libexec/PlistBuddy', ['-c', `Set :RunAtLoad ${on ? 'true' : 'false'}`, svc.file]);
+    if (!r.ok) r = await sh('/usr/libexec/PlistBuddy', ['-c', `Add :RunAtLoad bool ${on ? 'true' : 'false'}`, svc.file]);
+    return r.ok ? { ok: true, id: svc.id, atBoot: !!on } : { ok: false, why: (r.err || r.out).trim().slice(0, 200) };
+  }
+  return { ok: false, why: 'on Windows the Arena Node launcher starts all of the node\'s services at login' };
+}
+
 /** One action on one service: { ok, why }. */
 async function act(action, svc, { platform, sh, home }) {
   if (platform === 'linux') {
