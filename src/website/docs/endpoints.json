@@ -10201,6 +10201,35 @@
  },
  {
   "method": "GET",
+  "path": "/emergency/react.js",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JavaScript module; 404 when this release carries no React emergency page",
+  "purpose": "The React steps of /Dashboard/emergency (packages/arena-web/dist/emergency.js): the page mounts them with its own /owner/client.js, which still makes the key and the signature; it keeps its own steps when the bundle is missing.",
+  "audience": "operator/monitoring",
+  "line": 4753,
+  "summary": "The \"my node is offline\" page's React bundle",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/javascript",
+    "description": "The bundle."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This release carries no React emergency page."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/dashboard/react.js",
   "params": "none",
   "auth": "none",
