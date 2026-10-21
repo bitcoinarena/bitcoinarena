@@ -11,7 +11,7 @@ import { CORE as NOW } from '../src/adapter.js';
 import { CORE as F2069 } from '../frozen/2069b4c2/adapter.js';
 import { CORE as F7E21 } from '../frozen/7e2123d1/adapter.js';
 import { CORE as FDE2F } from '../frozen/de2f263d/adapter.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex } from 'arena-sdk/hash';
 import { TRUCK_CURRENT_CONFIG, TRUCK_V3_CONFIG, TRUCK_DE2F_CONFIG, TRUCK_NAME, TRUCK_RUN_TICKS, TRUCK, TRUCK_2069, TRUCK_7E21,
   TRUCK_DE2F, TRUCK_BEFORE_FORK, NEXTBLOCK_CORES, NEXTBLOCK_CORES_V3, TRUCK_F0CC } from '../plugin/truck-cores.js';
 

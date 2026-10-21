@@ -16,13 +16,13 @@
 // core/test/nextblock-manifest.test.js is red until the signed bytes are the registration's.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { gameDevKey, signManifest } from '../../arena-donor/src/manifest-sign.js';
+import { gameDevKey, signManifest } from 'arena-sdk/manifest-sign';
 import { nextblockManifestBody } from '../plugin/truck-cores.js';
-import { encodeManifest, gameIdOf, manifestStands } from '../../arena-protocol/src/manifest.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
-import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
+import { encodeManifest, gameIdOf, manifestStands } from 'arena-sdk/manifest';
+import { donationSetId } from 'arena-sdk/donation';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
+import { toHex } from 'arena-sdk/hash';
+import { verifyEd25519 } from 'arena-sdk/ed25519';
 
 const [dir] = process.argv.slice(2);
 if (!dir) {

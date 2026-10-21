@@ -10,12 +10,12 @@
 // Writes only public bytes: plugin/nextblock-v4.js.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { gameDevKey, signManifest } from '../../arena-donor/src/manifest-sign.js';
+import { gameDevKey, signManifest } from 'arena-sdk/manifest-sign';
 import { MANIFEST_V3, GAME_ID_V3 } from '../plugin/nextblock-v3.js';
-import { encodeManifest, gameIdOf, manifestStands } from '../../arena-protocol/src/manifest.js';
-import { RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
-import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
+import { encodeManifest, gameIdOf, manifestStands } from 'arena-sdk/manifest';
+import { RESERVES_VERSION } from 'arena-sdk/constants';
+import { toHex } from 'arena-sdk/hash';
+import { verifyEd25519 } from 'arena-sdk/ed25519';
 
 const [dir] = process.argv.slice(2);
 if (!dir) { console.error('usage: node sign-manifest-v4.mjs <dev dir holding game-dev.pkcs8>'); process.exit(2); }
@@ -34,8 +34,8 @@ writeFileSync(new URL('../plugin/nextblock-v4.js', import.meta.url), `// GENERAT
 // game_id ${id}
 import { GAME as V1 } from './nextblock.js';
 import { NEXTBLOCK_CORES_V3 } from './truck-cores.js';
-import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
+import { fromHex } from 'arena-sdk/hash';
 
 export const MANIFEST_V4_HEX = '${toHex(encodeManifest(manifest))}';
 export const MANIFEST_V4 = decodeManifest(fromHex(MANIFEST_V4_HEX));
