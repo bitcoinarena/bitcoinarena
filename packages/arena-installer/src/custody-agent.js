@@ -105,19 +105,30 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     }
     // A LIQUIDITY PROVIDER'S DEPOSIT (§23A.10): 5 x L on testnet4 from the node's wallet into LND's, once - the provider
     // service (bin/liquidity-provider.mjs) opens channels from it
+    // A DEPOSIT THAT CANNOT BE PAID YET DOES NOT HOLD UP CUSTODY (kanban #495, measured 2026-10-21 09:32Z on installer node 4003758b, a
+    // custody and liquidity node drawn into founding e8741283: "the wallet holds 312380 sat: sending 500000 sat needs 500232 sat" returned
+    // on every tick, before guardian_of - its guardian seat would never have been published, its gateway never joined)
+    const custodyToo = (s.roles || []).includes('custody');
     if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.pubkey && !(s.custody || {}).liquidityFund) {
+      let waits = null;
       const f = await lnd.funds(s.lightning);
-      if (!f.ok) return { ok: false, why: `the liquidity deposit waits for LND: ${f.why}` };
-      const deposit = Number(LIQUIDITY_TERMS.testnet4.depositSats);
-      const w0 = walletOf(fromHex(state.readSecret('seed.hex')));
-      const { coins } = await chainKit.coinsOf(s.chain, w0.spk);
-      let tx;
-      try { tx = buildSend({ wallet: w0, coins, script: addressScript(f.address), sats: deposit }); }
-      catch (e) { return { ok: false, why: `the liquidity deposit is not sent yet: ${e.message}` }; }
-      const txid = await chainKit.broadcast(s.chain, tx.hex);
-      state.save({ custody: { ...(state.read().custody || {}), liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } } });
-      log(`liquidity deposit: ${deposit} sat to LND (${txid})`);
-      return { ok: true, did: 'liquidity-fund', txid };
+      if (!f.ok) waits = `the liquidity deposit waits for LND: ${f.why}`;
+      else {
+        const deposit = Number(LIQUIDITY_TERMS.testnet4.depositSats);
+        const w0 = walletOf(fromHex(state.readSecret('seed.hex')));
+        const { coins } = await chainKit.coinsOf(s.chain, w0.spk);
+        let tx = null;
+        try { tx = buildSend({ wallet: w0, coins, script: addressScript(f.address), sats: deposit }); }
+        catch (e) { waits = `the liquidity deposit is not sent yet: ${e.message}`; }
+        if (tx) {
+          const txid = await chainKit.broadcast(s.chain, tx.hex);
+          state.save({ custody: { ...(state.read().custody || {}), liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } } });
+          log(`liquidity deposit: ${deposit} sat to LND (${txid})`);
+          return { ok: true, did: 'liquidity-fund', txid };
+        }
+      }
+      if (!custodyToo) return { ok: false, why: waits };
+      log(`${waits} - custody goes on`);
     }
     if (!(s.roles || []).includes('custody')) return { ok: true, idle: (s.roles || []).includes('liquidity') ? 'liquidity provider: deposit sent; the provider service opens the channels' : 'no custody role' };
     const g = guardianOfEntry(state.path('node.db.guardian'));
