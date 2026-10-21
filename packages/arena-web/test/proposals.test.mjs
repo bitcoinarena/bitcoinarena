@@ -75,3 +75,29 @@ test('a new proposal: the reserves and the cap, the amount checked as typed, the
   const out = new NewProposal({ ...props, signedIn: false }); out.setState = (u) => Object.assign(out.state, u);
   await out.submit({ preventDefault() {} }); assert.match(out.state.say, /^Open the Arena once first/);
 });
+
+test('change fees: the fees in force with their limits, only typed fees checked by the page\'s rule, a reason required, then published', async () => {
+  const { FeesProposal } = await import('../dist/test/proposals.mjs');
+  const feeVal = (k, v) => (k.endsWith('Bps') ? `${Number(v) / 100} %` : `${v} %`);
+  const data = { tip: 157205, agreeing: 14, asked: 14, sums: { roundMaxBps: 1000, itemPct: 100, marketMaxBps: 100 }, earliest: 158213,
+    keys: ['roundNodeBps', 'roundDonationBps'], names: { roundNodeBps: 'Game round: node fee', roundDonationBps: 'Game round: developers\' donation' }, units: { roundNodeBps: 'bps', roundDonationBps: 'bps' },
+    fees: { roundNodeBps: 400, roundDonationBps: 400 }, limits: { roundNodeBps: { min: 100, max: 800 }, roundDonationBps: { min: 1, max: 800, donation: true } },
+    proposals: [{ id: 'ab'.repeat(32), changes: [{ fee: 'roundNodeBps', from: 400, to: 500 }], signal: { state: 'open' }, needsDevs: false, purpose: 'More for nodes' }] };
+  const checks = [], sent = [];
+  const props = { data, types: [['#new', 'Payout'], ['#new-fees', 'Change fees']], hash: '#new-fees', feeVal, markdown: (s) => `<p>${s}</p>`, signedIn: true,
+    check: (typed, activation, purpose) => { checks.push([typed, activation]); return typed.roundNodeBps ? { changes: [{ fee: 'roundNodeBps', to: Number(typed.roundNodeBps) }], say: '1 fee in one proposal.', bad: false } : { changes: null, say: 'Change at least one fee.', bad: false }; },
+    onPublish: async (x) => { sent.push(x); return { ok: true, say: 'Published to 14 of 14 nodes. Its signal starts now.' }; } };
+  const h = renderToStaticMarkup(React.createElement(FeesProposal, props));
+  assert.match(h, /Fees in force at block 157205 \(14 of 14 nodes agree\)\. Fill in only the fees to change/);
+  assert.match(h, /<td>Game round: developers&#x27; donation<span class="hint"> donation<\/span><\/td><td>4 %<\/td><td>0.01 % – 8 %<\/td>/);
+  assert.match(h, /<input[^>]*name="activation"[^>]*>/); assert.match(h.match(/<input[^>]*name="activation"[^>]*>/)[0], /min="158213"/); assert.match(h.match(/<input[^>]*name="activation"[^>]*>/)[0], /value="158213"/);
+  assert.match(h, /<li>Game round: node fee: 4 % → 5 %<\/li>/);
+  assert.equal(checks.length, 0, 'nothing typed: nothing checked');
+  const f = new FeesProposal(props); f.setState = (u) => Object.assign(f.state, typeof u === 'function' ? u(f.state) : u);
+  await f.submit({ preventDefault() {} }); assert.equal(f.state.say, 'Change at least one fee.');
+  f.state.typed = { roundNodeBps: '500' }; await f.submit({ preventDefault() {} });
+  assert.equal(f.state.say, 'Say why: a proposal always gives its reason.'); assert.equal(sent.length, 0);
+  f.state.purpose = 'More for nodes'; await f.submit({ preventDefault() {} });
+  assert.deepEqual(sent, [{ changes: [{ fee: 'roundNodeBps', to: 500 }], activation: 158213, purpose: 'More for nodes' }]);
+  assert.match(renderToStaticMarkup(React.createElement(FeesProposal, { ...props, data: null, error: 'no node answered /fees' })), /<div class="empty">no node answered \/fees<\/div>/);
+});
