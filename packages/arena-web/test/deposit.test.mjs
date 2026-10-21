@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DepositModal, satNum, restWords } from '../dist/test/deposit.mjs';
+import { DepositModal, DepositWait, satNum, restWords } from '../dist/test/deposit.mjs';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 function offerOf(over = {}) {
@@ -93,4 +93,14 @@ test('a connected wallet: its balance against the invoice, the button off when s
   const none = mount({ offer: offerOf().o });
   assert.match(html(none), />Connect my wallet to pay in one tap \(Nostr Wallet Connect\)<\/button>/);
   assert.doesNotMatch(html(none), /dep-webln-pay/);
+});
+
+test('the wait before the offer: its close, its title, the place of the backup warning, what it waits for', () => {
+  let closed = 0;
+  const w = new DepositWait({ title: 'Deposit into your player wallet', line: 'Opening your wallet and making the invoice … (the first time takes up to 20 s)', onClose: () => closed++ });
+  assert.equal(renderToStaticMarkup(React.createElement(React.Fragment, null, w.render())),
+    '<button type="button" class="dep-close" title="Close">×</button><div class="dep-title">Deposit into your player wallet</div>'
+    + '<div class="dep-backup-host" style="display:contents"></div><div class="dep-why">Opening your wallet and making the invoice … (the first time takes up to 20 s)</div>');
+  w.render().props.children[0].props.onClick();
+  assert.equal(closed, 1);
 });

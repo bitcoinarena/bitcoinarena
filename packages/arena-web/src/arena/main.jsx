@@ -18,7 +18,7 @@ import { WalletHistory } from './WalletHistory.jsx';
 import { CustodyCard } from './CustodyCard.jsx';
 import { SeedModal } from './SeedModal.jsx';
 import { WalletStart } from './WalletStart.jsx';
-import { DepositModal } from './DepositModal.jsx';
+import { DepositModal, DepositWait } from './DepositModal.jsx';
 import { WithdrawPanel } from './WithdrawPanel.jsx';
 import { ShopItems } from './ShopItems.jsx';
 import { DonateBox } from './DonateBox.jsx';
@@ -81,7 +81,12 @@ export function openWalletStart(host, props) { into(host, <WalletStart {...props
 if (typeof window !== 'undefined') window.ArenaWalletStart = { open: openWalletStart };
 // THE DEPOSIT WINDOW (the page's showDepositOffer hands it the offer and its rules): drawn at once into a fresh host; the root, to unmount
 export function openDeposit(host, props) { const root = createRoot(host); flushSync(() => root.render(<DepositModal {...props} />)); return root; }
-if (typeof window !== 'undefined') window.ArenaDeposit = { open: openDeposit };
+// the wait before it: { say(line), unmount() }
+export function waitDeposit(host, props) {
+  const root = createRoot(host); const draw = (line) => flushSync(() => root.render(<DepositWait {...props} line={line} />));
+  draw(props.line); return { say: draw, unmount: () => root.unmount() };
+}
+if (typeof window !== 'undefined') window.ArenaDeposit = { open: openDeposit, wait: waitDeposit };
 // THE WITHDRAW PANEL (the page's openWithdraw hands it the balance and its rules): a fresh one each time it is opened
 export function openWithdraw(host, props) { into(host, <WithdrawPanel key={Date.now()} {...props} />); }
 if (typeof window !== 'undefined') window.ArenaWithdraw = { open: openWithdraw };

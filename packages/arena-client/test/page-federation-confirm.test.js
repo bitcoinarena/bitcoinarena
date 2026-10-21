@@ -56,10 +56,10 @@ function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const ARENACLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
     depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => ({}) };
   const did = [];
-  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'localStorage', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'localStorage', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'depositWait', 'donationBps', 'vault'],
     [GATE, ASK, CONFIRMED, OPEN], 'return { gate: window.ARENA_FEDERATION_GATE, paintConfirmed: window.ARENA_PAINT_CONFIRMED, openMoney };');
   let ctx = null;
-  const api = fn(document, window, ARENACLIENT, storage, () => ctx, () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
+  const api = fn(document, window, ARENACLIENT, storage, () => ctx, () => did.push('withdraw'), () => did.push('modal'), () => null, () => 0, () => ({}));
   const shown = () => !!els['arena-fed-confirm'] && els['arena-fed-confirm'].style.display === 'flex';
   const answer = async (trust) => { for (let i = 0; i < 50 && !shown(); i++) await new Promise((r) => setImmediate(r)); assert.ok(shown(), 'the modal is open'); dialogs.at(-1).onAnswer(trust); };
   const dialog = () => dialogs.at(-1);
