@@ -129,6 +129,7 @@ import { createEndpointsOf, federationOfDir, configInvite } from './federation-e
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
+import { createSettleBackoff } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
@@ -661,6 +662,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // not final yet, or DISPUTED, so a round is only ever settled on a final outcome. Started by the first attestation held.
   let attestedSweep = null;
   const attestedWhy = new Map();
+  // a round refused without a settlement state is asked again after a doubling wait, up to 60 s (kanban #576: 1,961 attested
+  // rounds asked every 5 s were a third of a core per seat)
+  const attestedWait = createSettleBackoff({ now: () => round.now() });
   const settleAttestedSoon = () => {
     if (attestedSweep || !settlements) return;
     let sweeping = false;
@@ -675,15 +679,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         .all().map((r) => new Uint8Array(r.round_id));
       const waiting = ids.filter((rid) => stateOf(round, rid) !== 'ACCEPTED');
       if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
+      attestedWait.keep(new Set(waiting.map((rid) => toHex(rid))));
       for (const rid of waiting) {
+        const k = toHex(rid);
+        if (!attestedWait.due(k)) continue;
         const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
-        if (got && got.state && got.state !== 'HELD') console.log(`[outcome] ${toHex(rid).slice(0, 16)} settlement: ${got.state} - ${got.why || ''}`);
+        if (got && got.state && got.state !== 'HELD') console.log(`[outcome] ${k.slice(0, 16)} settlement: ${got.state} - ${got.why || ''}`);
         // WHY A FINAL ROUND IS NOT SETTLED, said once per reason (a paid market round final for minutes, its
         // settlement silent - the sweep logged only answers with a state, and a plan's refusal carries none)
-        else if (got && !got.ok && !got.state && got.why) {
-          const k = toHex(rid), was = attestedWhy.get(k);
+        if (got && !got.ok && !got.state && got.why) {
+          attestedWait.refused(k);
+          const was = attestedWhy.get(k);
           if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
-        }
+        } else attestedWait.clear(k);
       }
       } finally { sweeping = false; }
     }, 5000);
