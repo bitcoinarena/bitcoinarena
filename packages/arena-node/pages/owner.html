@@ -580,8 +580,17 @@ async function releasePanel() {
 }
 
 async function bondPanel() {
-  const b = await readBond();
   const el = $('bond');
+  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountBond) {
+      if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountBond(el, { api: { get: async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; }, post, signed } });
+      return;
+    }
+  } catch { /* the page's own panel */ }
+  const b = await readBond();
   const n = (x) => Number(x).toLocaleString('en-US');
   if (!b) { el.innerHTML = '<p class="sub">This node did not answer about its bond.</p>'; return; }
   if (!b.bond) { el.innerHTML = '<p>No bond yet. Until it has one, this node is not drawn for rounds.</p>'; return; }

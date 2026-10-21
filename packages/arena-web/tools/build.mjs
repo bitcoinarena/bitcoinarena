@@ -12,7 +12,7 @@ mkdirSync(join(root, 'dist', 'test'), { recursive: true });
 await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/owner.js'), legalComments: 'none' });
 copyFileSync(join(root, 'src/design/arena.css'), join(root, 'dist/arena.css'));
-for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['components', 'src/design/components.jsx']])
+for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['bond', 'src/owner/BondPanel.jsx'], ['components', 'src/design/components.jsx']])
   await build({ entryPoints: [join(root, entry)], bundle: true, format: 'esm', jsx: 'automatic', platform: 'node', external: ['react', 'react-dom', 'react/jsx-runtime'],
     outfile: join(root, `dist/test/${name}.mjs`) });
 console.log('built dist/owner.js, dist/arena.css, dist/test/');
