@@ -4,7 +4,7 @@
 // on an installed node and on one set up by hand - each with what it answers, its Start / Stop / Restart where the node can do it, and
 // whether it starts at boot. Read and changed through the owner's signed requests (POST /owner/services, POST /owner/service).
 import React from 'react';
-import { Switch, Button } from '../design/components.jsx';
+import { Switch } from '../design/components.jsx';
 
 const LABEL = Object.freeze({ start: 'Start', stop: 'Stop', restart: 'Restart' });
 /** A row's light: green it answers, red it does not, grey unknown. */
@@ -12,6 +12,9 @@ export const lightOf = (s) => {
   const ok = s.running === null || s.running === undefined ? null : !s.running ? false : s.probe ? s.probe.ok : true;
   return ok === null ? '⚪' : ok ? '🟢' : '🔴';
 };
+/** A service's state: up (answers), down (stopped or not answering), unknown. */
+export const stateOf = (s) => (s.running === null || s.running === undefined ? 'unknown' : !s.running ? 'down' : s.probe && !s.probe.ok ? 'down' : 'up');
+export const STATE_WORD = Object.freeze({ up: 'Running', down: 'Needs attention', unknown: 'Unknown' });
 export const needsAttention = (rows) => rows.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
 
 export class ServicesPanel extends React.Component {
@@ -35,21 +38,20 @@ export class ServicesPanel extends React.Component {
     clearTimeout(this.timer);
     this.timer = setTimeout(this.reload, x.restarting ? 8000 : 800);
   }
-  row(s) {
+  /** One service as a card: its light, its name, running or not, what it answers, its actions and whether it starts at boot. */
+  card(s) {
     const { busy } = this.state;
-    const ctl = (s.controls || []).length || s.bootSettable;
+    const tone = stateOf(s);
     return (
-      <div key={s.id} className="svc">
-        <div className="row"><span>{lightOf(s)} {s.title}{s.inside ? <span className="sub"> (inside the node)</span> : null}</span>
-          <b>{s.running === null || s.running === undefined ? 'unknown' : s.running ? 'running' : 'stopped'}</b></div>
-        <p className="sub" style={{ margin: '-4px 0 6px 26px' }}>{s.probe && s.running !== null ? s.probe.says : s.detail}{s.pid ? ` · pid ${s.pid}` : ''}</p>
-        {ctl ? (
-          <div className="svc-ctl">
-            {(s.controls || []).map((c) => <Button key={c} disabled={busy === `${s.id}:${c}`} onClick={() => this.act(s.id, c)}>{LABEL[c]}</Button>)}
-            {s.bootSettable ? [<Switch key="b" id={`boot-${s.id}`} label={`${s.title}: start at boot`} checked={!!s.atBoot} onChange={(on) => this.act(s.id, on ? 'boot-on' : 'boot-off')} />,
-              <span key="l" className="sub">at boot</span>] : null}
-          </div>
-        ) : s.why ? <p className="sub" style={{ margin: '-2px 0 8px 26px' }}>{s.why}</p> : null}
+      <div key={s.id} className={`svc-card ${tone}`} id={`svc-${s.id}`}>
+        <div className="svc-head"><span className={`led ${tone}`} aria-hidden="true" /><b className="svc-name">{s.title}</b>
+          <span className={`pill${tone === 'up' ? ' on' : tone === 'down' ? ' bad' : ''}`}>{STATE_WORD[tone]}</span></div>
+        <p className="svc-says">{s.probe && s.running !== null ? s.probe.says : s.detail}{s.pid ? <span className="svc-pid"> · pid {s.pid}</span> : null}</p>
+        {(s.controls || []).length || s.bootSettable ? (
+          <div className="svc-foot">
+            <span className="svc-btns">{(s.controls || []).map((c) => <button key={c} type="button" className="mini" disabled={busy === `${s.id}:${c}`} onClick={() => this.act(s.id, c)}>{LABEL[c]}</button>)}</span>
+            {s.bootSettable ? <label className="boot"><span>At boot</span><Switch id={`boot-${s.id}`} label={`${s.title}: start at boot`} checked={!!s.atBoot} onChange={(on) => this.act(s.id, on ? 'boot-on' : 'boot-off')} /></label> : null}
+          </div>) : s.why ? <p className="svc-why">{s.why}</p> : null}
       </div>
     );
   }
@@ -58,13 +60,18 @@ export class ServicesPanel extends React.Component {
     if (!loaded) return <p className="sub">reading this node's services…</p>;
     if (!r || !r.ok) return <p className="sub">{(r && r.why) || 'not readable'}</p>;
     const bad = needsAttention(r.services);
+    const up = r.services.filter((s) => stateOf(s) === 'up').length;
+    const groups = [['On this machine', r.services.filter((s) => !s.inside)], ['Inside the node', r.services.filter((s) => s.inside)]].filter(([, xs]) => xs.length);
     return (
       <div>
-        {r.services.map((s) => this.row(s))}
-        <p className={bad ? 'err' : 'ok'}>{bad ? `${bad} service(s) need attention.` : 'All services run.'}</p>
+        <div className={`summary ${bad ? 'bad' : 'good'}`}>
+          <div><b>{bad ? `${bad} need${bad === 1 ? 's' : ''} attention` : 'Everything runs'}</b><span className="sub">{up} of {r.services.length} services answer</span></div>
+          <button type="button" className="mini" onClick={this.reload}>Check again</button>
+        </div>
         {message ? <p className="warn">{message}</p> : null}
+        {groups.map(([title, xs]) => (
+          <React.Fragment key={title}><h3 className="sh">{title}</h3><div className="svc-grid">{xs.map((s) => this.card(s))}</div></React.Fragment>))}
         <p className="sub">{r.command ? <>On the node's machine: <code>{r.command} status</code>, <code>{r.command} doctor</code>, <code>{r.command} restart &lt;service&gt;</code>.</> : 'Set up by hand: what runs outside the node is started and stopped on its machine.'}</p>
-        <p><Button onClick={this.reload}>Check again</Button></p>
       </div>
     );
   }
