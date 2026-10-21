@@ -26,6 +26,19 @@ export const P2P_TUNNEL_BASE = 20000, P2P_TUNNEL_SPAN = 10000;
 /** The seat's path for each guardian slot's P2P. */
 export const P2P_TUNNEL_PATHS = Object.freeze({ guardian: '/guardian-p2p', next: '/guardian-next-p2p' });
 
+// A TUNNEL THAT IS NEVER IDLE (kanban #495, measured 2026-10-21 16:18-16:34Z on the 10-node founding 082e74b3: the guardians' P2P
+// connections to the installer nodes, behind Cloudflare quick tunnels, closed every ~2 min 05 s - "peer closed connection without
+// sending TLS close_notify" - a proxy's idle cut of a websocket that carried nothing for 100 s, then the reconnect; the cuts came at the
+// DKG's start (16:19:08-16:19:23) and every guardian stayed at "Exchanging raw bytes" from 16:19:24): each end pings its websocket
+// every P2P_KEEPALIVE_MS, so the proxy always sees traffic.
+export const P2P_KEEPALIVE_MS = 30000;
+function keepAlive(ws, everyMs = P2P_KEEPALIVE_MS) {
+  const t = setInterval(() => { if (ws.readyState === 1) { try { ws.ping(); } catch { /* closing */ } } }, everyMs);
+  if (t.unref) t.unref();
+  ws.on('close', () => clearInterval(t));
+  return () => clearInterval(t);
+}
+
 const hexOf = (k) => (typeof k === 'string' ? k : Buffer.from(k).toString('hex')).toLowerCase();
 
 /** The local port a guardian's P2P URL names: the same on every node, from its node key and slot. */
@@ -36,11 +49,12 @@ export function p2pTunnelPort(nodeKey, slot = 'guardian') {
 }
 
 /** INBOUND: a websocket the seat accepted on /guardian-p2p, carried byte for byte to the guardian's local P2P port. */
-export function carryP2p(ws, port, { host = '127.0.0.1', connect = netConnect } = {}) {
+export function carryP2p(ws, port, { host = '127.0.0.1', connect = netConnect, keepAliveMs = P2P_KEEPALIVE_MS } = {}) {
+  const stop = keepAlive(ws, keepAliveMs);
   const stream = createWebSocketStream(ws);
   const up = connect({ host, port });
   stream.pipe(up); up.pipe(stream);
-  const done = () => { try { up.destroy(); } catch { /* gone */ } try { stream.destroy(); } catch { /* gone */ } };
+  const done = () => { stop(); try { up.destroy(); } catch { /* gone */ } try { stream.destroy(); } catch { /* gone */ } };
   up.on('error', done); stream.on('error', done); up.on('close', done); stream.on('close', done);
   return { close: done };
 }
@@ -54,7 +68,7 @@ export const tunnelRoot = (endpoint) => String(endpoint || '').trim().replace(/^
  * a node's new endpoint, and closes one whose node left. `state()` what each port serves.
  */
 export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024 }),
-  listen = createServer }) {
+  listen = createServer, keepAliveMs = P2P_KEEPALIVE_MS }) {
   const own = hexOf(ownKey);
   const ports = new Map();   // port -> { key, slot, root, server, state: 'listening' | 'shared' | 'opening', connections }
   function open(port, row) {
@@ -64,6 +78,7 @@ export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, o
       const ws = openWs(`${target.root}${P2P_TUNNEL_PATHS[target.slot]}`);
       sock.pause();
       ws.on('open', () => {
+        keepAlive(ws, keepAliveMs);
         const stream = createWebSocketStream(ws);
         stream.pipe(sock); sock.pipe(stream); sock.resume();
         const done = () => { try { sock.destroy(); } catch { /* gone */ } try { stream.destroy(); } catch { /* gone */ } };
