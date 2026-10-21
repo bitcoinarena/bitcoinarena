@@ -58,7 +58,10 @@ test('the price at the share: 500 sat at the default 50 %, 250 sat at 0 %, kept 
 });
 
 test('every buy screen prices at the share: the shop sheet, its paying line, the wallet check, Unity\'s add-ons view and its paying line', () => {
-  assert.equal((shipped.match(/String\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\)/g) || []).length, 5);
+  // the shop sheet's rows are React's (kanban #564, ShopItems: its price line and Buy button show price(priceSat), arena-web shop.test.mjs);
+  // the page hands it the share's price - and keeps its paying line, the wallet check and Unity's two
+  assert.match(shipped, /price: \(priceSat\) => window\.ARENA_ITEM_PRICE\(priceSat\),/);
+  assert.equal((shipped.match(/String\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\)/g) || []).length, 3);
   assert.match(shipped, /const need = window\.ARENA_ITEM_PRICE\(it\.priceSat\) \* 1000n;/);
   assert.match(shipped, /priceSat: Number\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\), listSat: Number\(it\.priceSat\)/);
   assert.match(shipped, /ARENACLIENT\.buyItem\(\{ manifest: shop\.game\.manifest, itemId: it\.id, networkSet: ds\.target\.network, gameSet: ds\.target\.game, wallet, federationId, devsPct,/);
