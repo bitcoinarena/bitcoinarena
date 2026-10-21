@@ -25,9 +25,9 @@ const [dir] = process.argv.slice(2);
 if (!dir) { console.error('usage: node sign-manifest-v3.mjs <dev dir holding game-dev.pkcs8>'); process.exit(2); }
 const dev = gameDevKey(readFileSync(join(dir, 'game-dev.pkcs8')));
 if (toHex(dev.pubkey) !== toHex(MANIFEST_V2.gameDevPubkey)) throw new Error(`that key is not nextblock's developer key ${toHex(MANIFEST_V2.gameDevPubkey).slice(0, 16)}`);
-const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
+const CLIENTS = JSON.parse(readFileSync(new URL('../plugin/clients.json', import.meta.url), 'utf8'));   // the app's own list (kanban #569)
 const body = {
-  ...nextblockManifestBody({ clients: Object.values(LIST.games.nextblock.pinned).flat(), gameDevPubkey: dev.pubkey,
+  ...nextblockManifestBody({ clients: Object.values(CLIENTS.pinned).flat(), gameDevPubkey: dev.pubkey,
     gameDonationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients), cores: NEXTBLOCK_CORES_V3 }),
   version: MANIFEST_V2.version + 1,
   parentManifestId: GAME_ID_V2,

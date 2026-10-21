@@ -37,7 +37,7 @@ import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const OUT = '/tmp/claude-1000/-tmp-btc-phase0/50a57200-8210-47c2-a393-919f0e1ea289/scratchpad/shot';
-const BUILD = '/tmp/btc-phase0/packages/nextblock/unity/build/webgl';
+const BUILD = process.env.ARENA_BUILD_DIR || '/tmp/btc-phase0/.apps/arena-app-next-block/unity/build/webgl';   // the app's Unity build (kanban #569)
 const CHROME = '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

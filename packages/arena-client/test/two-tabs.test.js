@@ -394,14 +394,14 @@ test('two daemons whose chains disagree stop the join by name', async () => {
  * that agree with each other but not with the game do not both pass.
  */
 test('the shipped bridge writes the driver\'s entry and pose in the twelve ints C# reads', async () => {
-  const cs = readFileSync(new URL('../../nextblock/unity/Assets/Scripts/Arena/GhostField.cs', import.meta.url), 'utf8');
+  const cs = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Scripts/Arena/GhostField.cs', import.meta.url), 'utf8');
   const WORDS = Number(/public const int Words = (\d+)/.exec(cs)[1]);
   const PER_FRAME = Number(/public const int PerFrame = (\d+)/.exec(cs)[1]);
   assert.equal(WORDS, 12, 'the game reads a different picture size than the bridge writes');
 
   // The jslib, evaluated: `mergeInto` keeps what it is handed, and the bare
   // `HEAP32` the ghost export writes through is a real Int32Array here.
-  const jslib = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const heap = new Int32Array(64);
   const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
   let library = null;

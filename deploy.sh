@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BUILD="$ROOT/packages/nextblock/unity/build/webgl"
+BUILD="${ARENA_BUILD_DIR:?name the Unity WebGL build: the app arena-app-next-block builds it, kanban 569}"
 PROJECT="${1:-btc-logistics-war}"
 
 # FROZEN. This project holds the last single-player version - Unity running

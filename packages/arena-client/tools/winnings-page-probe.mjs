@@ -311,7 +311,7 @@ try {
   const heap = new Int32Array(64);
   const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
   const win = { location: { search: new URL(round.url).search }, ARENA_RUN_OVER: pageHook };
-  const src = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
   const globals = { Module, HEAP32: heap, UTF8ToString: () => named.nodes[0], window: win, console, crypto, BLWP: coreDist, ARENACLIENT: CLIENT,
     ARENA_CURVE: pageCurve, ARENA_ROUND: named.round, ARENA_ENTRY, ARENA_NODES: named.nodes, ARENA_CHAIN: named.chain, ARENA_ADVERT: named.advert };
   const names = Object.keys(globals);

@@ -30,8 +30,8 @@ if (!dir) {
   process.exit(2);
 }
 const dev = gameDevKey(readFileSync(join(dir, 'game-dev.pkcs8')));
-const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
-const body = nextblockManifestBody({ clients: Object.values(LIST.games.nextblock.pinned).flat(), gameDevPubkey: dev.pubkey,
+const CLIENTS = JSON.parse(readFileSync(new URL('../plugin/clients.json', import.meta.url), 'utf8'));   // the app's own list (kanban #569)
+const body = nextblockManifestBody({ clients: Object.values(CLIENTS.pinned).flat(), gameDevPubkey: dev.pubkey,
   gameDonationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients) });
 const manifest = signManifest(body, dev);
 // AS A NODE WILL CHECK IT: the same verifier, the same rule

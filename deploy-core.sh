@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 # The page to deploy: the last Unity build, or - for the Daily's keeper after a reboot has emptied
 # /tmp - the copy of the last deployed page kept on persistent disk (ARENA_BUILD_DIR).
-BUILD="${ARENA_BUILD_DIR:-$ROOT/packages/nextblock/unity/build/webgl}"
+BUILD="${ARENA_BUILD_DIR:?name the Unity WebGL build: the app arena-app-next-block builds it, kanban 569}"
 PROJECT="${1:-btc-logistics-core}"
 
 if [ "$PROJECT" = "btc-logistics-war" ]; then

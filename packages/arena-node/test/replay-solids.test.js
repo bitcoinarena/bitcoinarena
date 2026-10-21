@@ -34,11 +34,11 @@ test('no daemon hands a replay a collision world, and no page can send one', () 
     'something in src/ hands a replay a collision world - it should come from the map');
 
   const jslib = readFileSync(
-    new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+    new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const core = readFileSync(
-    new URL('../../nextblock/unity/Assets/Scripts/Arena/ArenaCore.cs', import.meta.url), 'utf8');
+    new URL('../../../.apps/arena-app-next-block/unity/Assets/Scripts/Arena/ArenaCore.cs', import.meta.url), 'utf8');
   const truck = readFileSync(
-    new URL('../../nextblock/unity/Assets/Scripts/Arena/CoreDrivenTruck.cs', import.meta.url), 'utf8');
+    new URL('../../../.apps/arena-app-next-block/unity/Assets/Scripts/Arena/CoreDrivenTruck.cs', import.meta.url), 'utf8');
   assert.equal(/ArenaSetSolids\s*:/.test(jslib), false, 'the bridge still exports a solids door');
   assert.equal(/bool\s+SetSolids\s*\(/.test(core), false, 'ArenaCore still offers SetSolids');
   assert.equal(/void\s+UploadSolids\s*\(/.test(truck), false, 'the truck still uploads a collision world');

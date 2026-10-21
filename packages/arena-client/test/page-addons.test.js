@@ -11,7 +11,7 @@ const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 // the countdown box - its markup, code and CSS - is Tick Tock's page part (kanban #521)
 const UNITY_JS = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 const UNITY_CSS = readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
-const JSLIB = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+const JSLIB = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
 // the add-ons panel Unity draws is Tick Tock's page part (kanban #521)
 const lineOf = (head) => { const at = UNITY_JS.indexOf(head); assert.ok(at > 0, `unity-page.js has no ${head.trim()}`); return UNITY_JS.slice(at, UNITY_JS.indexOf('\n', at)); };
 

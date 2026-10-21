@@ -21,7 +21,7 @@ test('loaded after the bundle, it puts the jslib\'s functions on ARENACLIENT, an
   assert.equal(typeof ARENACLIENT.watchGhosts, 'undefined', 'the engine bundle carries no ghost code');
   const window = { ARENACLIENT: { ...ARENACLIENT } };
   new Function('window', readFileSync(PAGE_JS, 'utf8'))(window);
-  const jslib = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   for (const name of ['watchGhosts', 'tickClock', 'ghostLabels', 'ghostLabelText', 'newestPose']) {
     assert.ok(jslib.includes('ARENACLIENT.' + name), `the jslib no longer calls ${name}`);
     assert.equal(typeof window.ARENACLIENT[name], 'function', name);

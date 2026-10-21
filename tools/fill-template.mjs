@@ -16,7 +16,7 @@
 // company, product and version out of ProjectSettings. Nothing is guessed; a
 // token this cannot answer is an error, not a blank.
 //
-//   node packages/nextblock/unity/tools/fill-template.mjs [--check] [build-dir]
+//   node tools/fill-template.mjs [--check] [build-dir]
 //
 // `--check` fills nothing and exits non-zero if any token is left, which is
 // what the deploy scripts run before they upload.
@@ -47,7 +47,7 @@ if (CHECK) {
   if (over.length) {
     console.error(`${page} still carries ${over.length} template token(s): ${over.join(' ')}`);
     console.error('The page will not start: `Build/{{{ LOADER_FILENAME }}}` is a 404.');
-    console.error('Run: node packages/nextblock/unity/tools/fill-template.mjs');
+    console.error('Run: node tools/fill-template.mjs');
     process.exit(1);
   }
   console.log(`${page}: no template tokens left`);
@@ -65,7 +65,7 @@ const one = (what, test) => {
   return found[0];
 };
 
-const settings = readFileSync(join(HERE, '..', 'packages', 'nextblock', 'unity', 'ProjectSettings', 'ProjectSettings.asset'), 'utf8');
+const settings = readFileSync(join(HERE, '..', '.apps', 'arena-app-next-block', 'unity', 'ProjectSettings', 'ProjectSettings.asset'), 'utf8');
 const setting = (key) => {
   const m = settings.match(new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm'));
   if (!m) throw new Error(`ProjectSettings names no ${key}`);
