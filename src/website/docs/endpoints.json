@@ -10171,6 +10171,160 @@
   "pathParams": []
  },
  {
+  "method": "GET",
+  "path": "/rounds/react.js",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JavaScript module; 404 when this release carries no React rounds page",
+  "purpose": "The rounds page's React bundle (packages/arena-web/dist/rounds.js): /rounds draws its stat and round cards with it, and keeps its own drawing when it is missing.",
+  "audience": "player/page",
+  "line": 4752,
+  "summary": "The rounds page's React bundle",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/javascript",
+    "description": "The bundle."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This release carries no React rounds page."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/dashboard/react.js",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JavaScript module; 404 when this release carries no React dashboard",
+  "purpose": "The node dashboard's React bundle (packages/arena-web/dist/dashboard.js): /dashboard draws with it when this release carries it.",
+  "audience": "operator/monitoring",
+  "line": 4757,
+  "summary": "The dashboard's React bundle",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/javascript",
+    "description": "The bundle."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This release carries no React dashboard."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/react.js",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JavaScript module; 404 when this release carries no React screens",
+  "purpose": "The owner page's React screens (packages/arena-web/dist/owner.js): the page mounts them in place of its own panels where they are there.",
+  "audience": "operator/monitoring",
+  "line": 4762,
+  "summary": "The owner page's React screens",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/javascript",
+    "description": "The bundle."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This release carries no React screens."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/react.css",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 stylesheet; 404 when this release carries no React screens",
+  "purpose": "The stylesheet of the owner page's React screens (packages/arena-web/dist/arena.css).",
+  "audience": "operator/monitoring",
+  "line": 4762,
+  "summary": "The owner page's React stylesheet",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/css",
+    "description": "The stylesheet."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This release carries no React screens."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/reach",
+  "params": "body JSON signed request, action \"reach\", args {mode, cfToken?, cfSubdomain?, hostname?}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, mode, url, stable, serving, progress, modes} (and the switch started when args.mode names one); 401/403 when not the owner; 501 on a node the installer did not set up",
+  "purpose": "How the world reaches this installed node, read and switched from the owner page: quick, workers, direct, tailscale or permanent; the switch runs the installer's own reach and service steps, detached, since they restart the seat.",
+  "audience": "operator/monitoring",
+  "line": 5106,
+  "summary": "Read or switch how the node is reached",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"reach\", args, atMs, sig}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, mode, url, stable, serving, progress, modes}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "Not a node set up by the installer."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
   "method": "POST",
   "path": "/owner/liquidity/become",
   "params": "body JSON signed request, action \"liquidity/become\", args {post}",
@@ -10315,5 +10469,62 @@
   "needsAuth": "none",
   "pathParams": [],
   "skipOpenapi": true
+ },
+ {
+  "method": "POST",
+  "path": "/address-announcement",
+  "params": "body JSON {node, endpoint, atMs, sig}",
+  "auth": "the announcement is signed by the node key it names",
+  "returns": "200 {ok, ...} when kept; 400 with why",
+  "purpose": "A node's signed off-chain address announcement (address-book.js, spec §25): where it is reached now, newer than its advertisement; refused when dated over 10 min ahead.",
+  "audience": "node-to-node",
+  "line": 8137,
+  "summary": "Take a node's address announcement",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{ node, endpoint, atMs, sig } signed by the node key."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Kept."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a valid announcement, with why."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/address-announcements",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 {announcements}",
+  "purpose": "Every address announcement this seat holds: where the nodes it knows are reached now.",
+  "audience": "node-to-node",
+  "line": 8142,
+  "summary": "The address announcements this seat holds",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{announcements:[{node, endpoint, atMs, sig}]}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]

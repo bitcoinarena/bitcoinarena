@@ -6,7 +6,9 @@
 <title>Bitcoin Arena · Rounds</title>
 <!-- THE ROUNDS PAGE (2026-09-28 16:17, ROUNDS-HTML-1617), served by every node at /rounds. Upcoming rounds with
      their start, end and the committees drawn for them; finished rounds open an accordion with who played and who won
-     how much. Its data is this node's /api/rounds and /api/round-result. -->
+     how much. Its data is this node's /api/rounds and /api/round-result.
+     THE MODERN PAGE (kanban #564): drawn by React (/rounds/react.js, packages/arena-web/src/rounds) as stat cards and round cards when
+     this release carries it; this page's own drawing below stays for a release without it. -->
 <style>
   :root { --bg: #0e1116; --panel: #161b22; --line: #2a313c; --text: #e6edf3; --dim: #8b949e; --gold: #e3b341;
           --ok: #3fb950; --warn: #d29922; --bad: #f85149; --link: #58a6ff; }
@@ -50,10 +52,53 @@
   }
   .game { font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
   .game img { width: 18px; height: 18px; }
+  /* the React page */
+  #app:empty { display: none; }
+  .rounds { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .rounds h1 { font-size: 22px; font-weight: 750; margin: 4px 0 2px; }
+  .rounds h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); margin: 26px 0 10px; }
+  .rounds code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .rounds .dim { color: var(--dim); } .rounds .ok { color: var(--ok); } .rounds .bad { color: var(--bad); } .rounds .warn { color: var(--warn); }
+  .rounds .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin: 10px 0; }
+  .rounds .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .rounds .stat > span, .rounds .times span { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; }
+  .rounds .stat > b { font-size: 24px; font-variant-numeric: tabular-nums; }
+  .rounds .stat > small, .rounds .times small { color: var(--dim); font-size: 12.5px; overflow-wrap: anywhere; }
+  .rounds .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; align-items: start; }
+  .rounds .list { display: flex; flex-direction: column; gap: 10px; }
+  .rounds .card { border-radius: 14px; padding: 14px 16px; margin: 0; min-width: 0; overflow: visible; }
+  .rounds .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+  .rounds .game { gap: 8px; } .rounds .game code { color: var(--dim); font-weight: 400; }
+  .rounds .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); margin-left: 6px; }
+  .rounds .pill.on { color: var(--ok); border-color: var(--ok); } .rounds .pill.wait { color: var(--warn); border-color: var(--warn); }
+  .rounds .times { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rounds .times > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .rounds .times b { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .rounds .committee { margin: 12px 0 0; font-size: 13px; }
+  .rounds .committee summary { cursor: pointer; color: var(--dim); }
+  .rounds .committee summary b { color: var(--text); }
+  .rounds .committee > div { margin-top: 6px; }
+  .rounds .committee .dim { margin-right: 8px; }
+  .rounds .chip { display: inline-block; margin: 1px 6px 1px 0; padding: 1px 7px; border: 1px solid var(--line); border-radius: 6px; }
+  .rounds button.head { all: unset; display: block; width: 100%; cursor: pointer; box-sizing: border-box; }
+  .rounds button.head:focus-visible { outline: 2px solid var(--link); outline-offset: 4px; border-radius: 8px; }
+  .rounds .chev { font-style: normal; color: var(--dim); margin-left: 10px; }
+  .rounds .acc { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; }
+  .rounds .scroll { overflow-x: auto; margin-top: 8px; }
+  .rounds .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .rounds .tbl th { color: var(--dim); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  .rounds .tbl th, .rounds .tbl td { padding: 7px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  .rounds .tbl .n { text-align: right; font-variant-numeric: tabular-nums; }
+  .rounds .more { margin: 12px 0 0; } .rounds .btn { font: 600 13px system-ui, sans-serif; padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); cursor: pointer; }
+  @media (max-width: 560px) {
+    .rounds .cards { grid-template-columns: 1fr; }
+    .rounds .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .rounds .stat { padding: 10px 12px; border-radius: 12px; } .rounds .stat > b { font-size: 20px; } .rounds .stat > span { font-size: 10px; }
+  }
 </style>
 </head>
 <body>
-<main>
+<div id="app"></div>
+<main id="legacy">
   <h1>Bitcoin Arena · Rounds</h1>
   <div class="sub" id="node">reading this node…</div>
   <h2>Upcoming <span class="muted" id="upcount"></span></h2>
@@ -124,12 +169,27 @@
     } catch (e) { acc.innerHTML = `<div class="empty">could not read this round: ${esc(e.message)}</div>`; }
   }
 
+  // THE REACT PAGE, when this release carries it (a browser only; the page's own drawing stays otherwise)
+  let R = null;
+  const react = async () => {
+    if (R !== null) return R;
+    if (typeof window === 'undefined') return (R = false);
+    try { await import('./rounds/react.js'); R = !!window.ArenaRounds; } catch { R = false; }
+    return R;
+  };
+  const readResult = async (id) => {
+    const r = await fetch(`api/round-result?round=${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`);
+    return r.json();
+  };
+
   let openIds = new Set();
   async function load() {
     try {
       const r = await fetch('api/rounds');
       if (!r.ok) throw new Error(`${r.status}`);
       const d = await r.json();
+      if (await react()) { $('legacy').hidden = true; window.ArenaRounds.draw($('app'), d, readResult); return; }
       $('node').textContent = `node ${d.node} · read ${new Date(Number(d.nowMs)).toLocaleString()}`;
       const up = [...d.upcoming].sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
       $('upcount').textContent = `(${up.length})`;
@@ -141,7 +201,10 @@
         card.querySelector('button.head').addEventListener('click', () => openResult(card));
         if (openIds.has(card.dataset.id)) openResult(card);
       }
-    } catch (e) { $('node').textContent = `could not read this node's rounds: ${e.message}`; }
+    } catch (e) {
+      if (R) return window.ArenaRounds.draw($('app'), { error: e.message }, readResult);
+      $('node').textContent = `could not read this node's rounds: ${e.message}`;
+    }
   }
   load();
   setInterval(() => { if (!document.hidden) load(); }, 30000);
