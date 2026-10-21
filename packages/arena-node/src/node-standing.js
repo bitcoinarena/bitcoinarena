@@ -60,3 +60,14 @@ export function nodeStanding({ me, rounds, margin = 1.5 }) {
   return { ownBondSats: own === null ? null : String(own), ownWeight, bracketsServed: { eligible: served, of: rounds.length },
     headroom, commonBondMinSats: common === null ? null : String(common), warnings };
 }
+
+// THE ADDRESS IT ADVERTISES IS THE ADDRESS IT ANSWERS AT (kanban #562, measured 2026-10-21: the census named the three installer
+// nodes at quick tunnels they no longer had - a tunnel's name changes when it restarts - so nobody could reach them at the census's
+// word). The spec makes a stable address the operator's commitment (§25, "a committed endpoint cannot change cheaply"); this only
+// says when it broke. `advertised` the endpoint in this node's newest census entry, `serving` the address it names itself now.
+const urlKey = (u) => String(u || '').trim().replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '').toLowerCase();
+export function endpointWarning({ advertised, serving }) {
+  if (!advertised || !serving || urlKey(advertised) === urlKey(serving)) return null;
+  return { kind: 'address changed', urgent: true, advertised: String(advertised), serving: String(serving),
+    says: `this node answers at ${serving}, but its advertisement names ${advertised}: players and other nodes look for it there and cannot reach it. Keep a stable address, or post an advertisement update naming the new one` };
+}
