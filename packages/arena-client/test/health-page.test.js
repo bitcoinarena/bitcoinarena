@@ -39,18 +39,20 @@ test('each federation\'s gateway row is its own guardians\' answer, not the firs
     b1: { federationId: B, epoch: 1090, seated: [], why: 'B ranked', ineligible: [{ node: C, why: 'peg-in 0 below 50000 sat' }],
       gateways: { [C]: { pending: { pegIns: [{ txid: 'f3'.repeat(32), vout: 1, sats: 55000, confirmations: 2, finality: 100 }] } } } } };
   const ask = async (s) => ({ ok: true, body: answers[s] });
-  const els = {};
-  const fn = new Function('ask', '$', 'dot', 'short', 'esc', 'fedName', 'sat', src + '\nreturn paintGateways;')(ask, (id) => (els[id] = els[id] || { innerHTML: '' }), (c) => `[${c}]`,
-    (x, n) => String(x).slice(0, n), (x) => String(x), (f) => `<span class="mono">${String(f).slice(0, 12)}</span>`, (x) => Number(x).toLocaleString('en-US'));
+  // the page's tables are data (kanban #564): drawTable is handed in and keeps what each table was given
+  const tables = {};
+  const fn = new Function('ask', 'drawTable', 'fedCell', 'cut', 'sat', src + '\nreturn paintGateways;')(ask, (id, head, rows, empty, foot) => { tables[id] = { head, rows, empty, foot }; },
+    (f) => String(f).slice(0, 12), (x, n) => String(x).slice(0, n), (x) => Number(x).toLocaleString('en-US'));
   await fn([{ federation: A }, { federation: B }], ['a1', 'b1'], []);
-  const rows = els.gateways.innerHTML.split('<tr>').filter((r) => r.includes('[ok]') || r.includes('[warn]') || r.includes('[bad]'));
-  assert.match(rows[0], /aaaaaaaaaaaa.*1 of 2.*A ranked/s);
-  assert.match(rows[1], /bbbbbbbbbbbb.*0 of 2.*B ranked/s, 'B is ranked by a seat of B');
+  const fedRows = tables.gateways.rows.filter((r) => r.dot);
+  assert.deepEqual(fedRows.map((r) => [r.dot, r.cells[0], r.cells[2], r.cells[4].t]), [['warn', 'aaaaaaaaaaaa', '1 of 2', 'A ranked'], ['bad', 'bbbbbbbbbbbb', '0 of 2', 'B ranked']], 'B is ranked by a seat of B');
+  assert.equal(tables.gateways.foot, 'Nodes that claim a gateway: none');
   // PENDING GATEWAYS (kanban #552): what each one waits for, a peg-in with its confirmations against the finality and about when it counts
-  const pending = els['gw-pending'].innerHTML.split('<tr>').filter((r) => r.includes('[warn]') || r.includes('[bad]'));
+  const pending = tables['gw-pending'].rows;
   assert.equal(pending.length, 2);
-  assert.match(pending[0], /\[warn\].*aaaaaaaaaaaa.*eeeeeeeeee.*waits: the same operator as 0101010101/s);
-  assert.match(pending[1], /\[bad\].*bbbbbbbbbbbb.*cccccccccc.*not eligible: peg-in 0 below 50000 sat.*peg-in 55,000 sat · <b>2 of 100<\/b> confirmations · counts in about 17 h.*f3f3f3f3:1.*width:2%/s);
+  assert.deepEqual([pending[0].dot, pending[0].cells[0], pending[0].cells[1], pending[0].cells[2][0]], ['warn', 'aaaaaaaaaaaa', 'eeeeeeeeee', 'waits: the same operator as 0101010101, whose node stands for it (one seat per operator)']);
+  assert.deepEqual([pending[1].dot, pending[1].cells[0], pending[1].cells[1]], ['bad', 'bbbbbbbbbbbb', 'cccccccccc']);
+  assert.deepEqual(pending[1].cells[2], ['not eligible: peg-in 0 below 50000 sat', '· peg-in 55,000 sat ·', { t: '2 of 100', c: 'strong' }, 'confirmations · counts in about 17 h', { t: 'f3f3f3f3:1', c: 'mono muted' }, { bar: [2, 100] }]);
 });
 
 test('the Capacity card: each federation\'s band in words, who is below B* and by how much, and the network with the install minimum', async () => {
