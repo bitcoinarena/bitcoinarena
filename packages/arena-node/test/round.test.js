@@ -146,7 +146,7 @@ test('the node imports no core and registers no game, and only the sandbox\'s dr
     if (/\bstep\s*\(/.test(src)) steps.push(f);
   }
   assert.deepEqual(imports, [], 'an engine file imports a core');
-  // since not even the launcher: main.js hosts what ARENA_GAMES names, arena-node/bin/node.mjs names Next Block
+  // since not even the launcher: main.js hosts what ARENA_APPS names, arena-node/bin/node.mjs names Next Block
   assert.deepEqual(registrations, [], 'an engine file registers a game');
   // since (spec §0A.6) the one door is core-driver.js, run inside the core's sandbox; replay.js hands it the run
   assert.deepEqual(steps, ['core-driver.js'], 'a core is stepped somewhere other than the sandbox\'s driver, or nowhere');

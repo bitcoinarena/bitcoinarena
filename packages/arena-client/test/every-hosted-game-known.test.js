@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY GAME A SEAT CAN HOST IS ONE THE PAGE KNOWS (the live break of 2026-10-16 05:19Z): once the seats
 // listed nextblock v3's rounds the page found v3 (b8b88e23) nowhere in KNOWN_GOOD_GAMES and showed "Tick Tock, Next Block cannot be
-// loaded". Every module under the seats' game packages' plugin/ that exports a GAME with a manifest - what a seat's ARENA_GAMES loads - must be
+// loaded". Every module under the seats' game packages' plugin/ that exports a GAME with a manifest - what a seat's ARENA_APPS loads - must be
 // listed by its game id, under its manifest's name, with every core its manifest names; a new version that is not fails here first.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { gameIdOf } from '../../arena-protocol/src/manifest.js';
 
 const ROOT = new URL('../../', import.meta.url);
-// THE PACKAGES THE SEATS' ARENA_GAMES LOAD (hello-world is the developer sample, hosted by no seat)
+// THE PACKAGES THE SEATS' ARENA_APPS LOAD (hello-world is the developer sample, hosted by no seat)
 const HOSTED_PACKAGES = ['nextblock', 'rock-paper-scissors', 'btc-updown'];
 
 test('every hosted game version is known to the page, by id, name and cores', async () => {

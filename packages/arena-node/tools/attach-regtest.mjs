@@ -70,7 +70,7 @@ const kids = ports.map((port, i) => spawn(process.execPath, ['src/main.js', Stri
   env: { ...env, ARENA_BITCOIND_URL: `http://127.0.0.1:${RPCPORT}`, ARENA_BITCOIND_COOKIE: `${RT}/regtest/.cookie`, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1',
     ARENA_DONATION_NETWORK: 'regtest', ARENA_ATTACH_PROOF_DIR: join(dir, 'proof'), ARENA_FUNDED_ROUNDS_FILE: join(dir, 'funded.txt'),
     // the games its nodes host (main.js names none): nextblock
-    ARENA_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname },
+    ARENA_APPS: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname },
   stdio: ['ignore', 'pipe', 'pipe'] }));
 const text = stores.map(() => '');
 kids.forEach((k, i) => { for (const s of [k.stdout, k.stderr]) s.on('data', (d) => { text[i] += d; }); });

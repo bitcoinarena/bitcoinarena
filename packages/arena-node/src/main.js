@@ -25,7 +25,7 @@
 //     ARENA_FEDERATION_INVITE      the federation invite this seat hands out with its network (GET /network)
 //     ARENA_ATTACH_PROOF_DIR       the launcher's headers.bin and bond.json, served on GET /headers and GET /bond,
 //                                 read at every ask (the launcher writes them once the nodes are up)
-//     ARENA_GAMES                  the games this node hosts: registration modules, comma-separated, each exporting GAME
+//     ARENA_APPS                   the apps this node hosts: registration modules, comma-separated, each exporting GAME
 //                                 (§0A.4: none given hosts none - the engine names no game;
 //                                 packages/arena-node/bin/node.mjs is the reference launcher and names Next Block)
 //     ARENA_SERIES_FILE            the series this node holds: one Round Contract template per line, hex (serve's
@@ -96,16 +96,16 @@ if (!ln.ok) {
 }
 
 const db = openStore(path);
-// THE GAMES THIS NODE HOSTS (§0A.4): the registration modules ARENA_GAMES names, each exporting GAME -
+// THE GAMES THIS NODE HOSTS (§0A.4): the registration modules ARENA_APPS names, each exporting GAME -
 // a manifest as its developer signed it with the dev client (public bytes only), the cores installed for it, its replay
 // page. The node verifies the signature and refuses a manifest that does not stand (plugins.js); it holds no developer
 // key and never signs a game. NONE BY DEFAULT: the engine names no game. nextblock's launcher
-// (packages/arena-node/bin/node.mjs) sets ARENA_GAMES to nextblock's registration.
-const games = [];
-for (const at of (process.env.ARENA_GAMES || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+// (packages/arena-node/bin/node.mjs) sets ARENA_APPS to nextblock's registration.
+const apps = [];
+for (const at of (process.env.ARENA_APPS || '').split(',').map((x) => x.trim()).filter(Boolean)) {
   const m = await import(pathToFileURL(resolvePath(at)).href);
-  if (!m.GAME) throw new Error(`ARENA_GAMES names ${at}, which exports no GAME`);
-  games.push(m.GAME);
+  if (!m.GAME) throw new Error(`ARENA_APPS names ${at}, which exports no GAME`);
+  apps.push(m.GAME);
 }
 // AND THE GAMES ITS OWNER INSTALLED FROM OTHER SEATS (plugin-package.js): each package checked again -
 // manifest, donation set, every file's hash, the scan - before it is loaded; a refused one is said and left out
@@ -115,9 +115,9 @@ const pluginsDir = process.env.ARENA_PLUGINS_DIR || `${path}.plugins`;
   const { verifyEd25519 } = await import('./ed25519.js');
   const got = await loadInstalled(pluginsDir, { verify: verifyEd25519 });
   for (const r of got.refused) console.error(`[games] installed game refused: ${r.dir}: ${r.why}`);
-  for (const g of got.registrations) if (!games.some((x) => Buffer.from(x.gameId).equals(Buffer.from(g.gameId)))) games.push(g);
+  for (const g of got.registrations) if (!apps.some((x) => Buffer.from(x.gameId).equals(Buffer.from(g.gameId)))) apps.push(g);
 }
-console.log(`[games] hosting ${games.length ? games.map((g) => g.name).join(', ') : 'none (ARENA_GAMES names no game)'}`);
+console.log(`[games] hosting ${apps.length ? apps.map((g) => g.name).join(', ') : 'none (ARENA_APPS names no game)'}`);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
 // THE OWNER'S KEY AND CLAIM CODE (owner.js): two files beside the database, the code readable by the operator only
@@ -139,7 +139,7 @@ const operatorFiles = {
   writePairing: (uri) => writeFileSync(`${path}.operator-pairing`, uri + '\n', { mode: 0o600 }),
   endpoint: (process.env[`ARENA_WSS_${port}`] || `http://${host}:${port}`).replace(/^ws(s?):/, 'http$1:'),
 };
-const options = { port, host, publicEndpoint: process.env[`ARENA_WSS_${port}`] || null, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, operator: operatorFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+const options = { port, host, publicEndpoint: process.env[`ARENA_WSS_${port}`] || null, funded: fundingFromEnv(process.env), plugins: apps, owner: ownerFiles, operator: operatorFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
 // THE COMMITTEE'S PRICE FEED (§11): read BTC/USD every 5 s and lead / sign the attested price samples
@@ -219,7 +219,7 @@ if (process.env.ARENA_ATTACH_PROOF_DIR) {
   options.bondProof = () => { try { return JSON.parse(readFileSync(`${dir}/bond.json`, 'utf8')); } catch { return null; } };
   // THIS NODE'S ADVERTISEMENT: the newest it posted - an update's, when the operator put the update
   // transaction beside the bond as advert-update.json ({ hex }) - else the one its bond committed to. serve() holds its
-  // hosted_games to ARENA_GAMES and refuses to start on an advertised game it does not host.
+  // hosted_games to ARENA_APPS and refuses to start on an advertised game it does not host.
   try {
     const update = existsSync(`${dir}/advert-update.json`) ? JSON.parse(readFileSync(`${dir}/advert-update.json`, 'utf8')) : null;
     const read = update && update.hex ? readAdvertUpdate(fromHex(update.hex), { network: process.env.ARENA_DONATION_NETWORK || 'regtest' }) : null;

@@ -73,7 +73,7 @@ test('an update keeps the node, its settings and data; a broken release is rolle
   writeFileSync(join(broken, 'packages/arena-node/src/main.js'), "throw new Error('this release does not start');\n");
 
   // the node as an installer before arena.conf left it: node.env, state, an owner, its unit on release 0.1.0, running
-  const settings = `ARENA_BIND=127.0.0.1\nARENA_DONATION_NETWORK=testnet4\nARENA_GAMES=${join(v1, 'packages/nextblock/plugin/nextblock.js')}\nARENA_ROLES=verify\n`;
+  const settings = `ARENA_BIND=127.0.0.1\nARENA_DONATION_NETWORK=testnet4\nARENA_APPS=${join(v1, 'packages/nextblock/plugin/nextblock.js')}\nARENA_ROLES=verify\n`;
   writeFileSync(join(home, 'node.env'), settings);
   writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
   writeFileSync(join(home, 'node.db.owner.json'), JSON.stringify({ pubkey: 'ab'.repeat(32), claimedAtMs: 1 }) + '\n');
@@ -91,7 +91,7 @@ test('an update keeps the node, its settings and data; a broken release is rolle
   assert.equal(up.migrated, true);
   const { parseConf } = await import('../../arena-node/src/arena-conf.js');
   assert.deepEqual(parseConf(readFileSync(join(home, 'arena.conf'), 'utf8')).values, { network: 'testnet4', port: String(port), database: join(home, 'node.db'), bind: '127.0.0.1',
-    donation_network: 'testnet4', games: join(v1, 'packages/nextblock/plugin/nextblock.js'), roles: 'verify' }, 'the same settings (a release folder not named arena-node-<version> is not moved: envForRelease)');
+    donation_network: 'testnet4', apps: join(v1, 'packages/nextblock/plugin/nextblock.js'), roles: 'verify' }, 'the same settings (a release folder not named arena-node-<version> is not moved: envForRelease)');
   assert.equal(readFileSync(join(home, 'node.env.migrated'), 'utf8'), settings, 'node.env kept aside as it was');
   assert.ok(!existsSync(join(home, 'node.env')), 'and nothing reads it any more');
   assert.match(readFileSync(join(unitDir(env), UNIT), 'utf8'), /^ExecStart=\S+ src\/run\.js \S+\/arena\.conf$/m, 'the unit starts from arena.conf');
@@ -237,16 +237,16 @@ test('node.env paths into an older release follow to the new one - from every ol
   const rel = '/h/home/releases/arena-node-0.1.0-rc.16-darwin-arm64';
   const has = new Set([`${rel}/packages/nextblock/plugin/nextblock`, `${rel}/runtime/custody/fedimintd`]);
   const text = ['ARENA_BIND=127.0.0.1',
-    'ARENA_GAMES=/h/arena-node-0.1.0-rc.12-darwin-arm64/packages/nextblock/plugin/nextblock',
+    'ARENA_APPS=/h/arena-node-0.1.0-rc.12-darwin-arm64/packages/nextblock/plugin/nextblock',
     'ARENA_FEDIMINTD=/h/home/releases/arena-node-0.1.0-rc.14-darwin-arm64/runtime/custody/fedimintd',
     'ARENA_FEDIMINT_CLI=/h/arena-node-0.1.0-rc.12-darwin-arm64/runtime/custody/fedimint-cli',
     'ARENA_PLUGINS_DIR=/h/home/node.db.plugins', ''].join('\n');
   assert.deepEqual(envForRelease(text, rel, (p) => has.has(p)).split('\n'), ['ARENA_BIND=127.0.0.1',
-    `ARENA_GAMES=${rel}/packages/nextblock/plugin/nextblock`, `ARENA_FEDIMINTD=${rel}/runtime/custody/fedimintd`,
+    `ARENA_APPS=${rel}/packages/nextblock/plugin/nextblock`, `ARENA_FEDIMINTD=${rel}/runtime/custody/fedimintd`,
     'ARENA_FEDIMINT_CLI=/h/arena-node-0.1.0-rc.12-darwin-arm64/runtime/custody/fedimint-cli', 'ARENA_PLUGINS_DIR=/h/home/node.db.plugins', '']);
   const win = 'C:\\a\\releases\\arena-node-0.1.0-rc.16-windows-x64';
-  assert.equal(envForRelease('ARENA_GAMES=C:\\a\\arena-node-0.1.0-rc.14-windows-x64\\packages\\nextblock\r\nX=1\r\n', win, () => true),
-    `ARENA_GAMES=${win}\\packages\\nextblock\r\nX=1\r\n`, 'CRLF and backslashes on Windows');
+  assert.equal(envForRelease('ARENA_APPS=C:\\a\\arena-node-0.1.0-rc.14-windows-x64\\packages\\nextblock\r\nX=1\r\n', win, () => true),
+    `ARENA_APPS=${win}\\packages\\nextblock\r\nX=1\r\n`, 'CRLF and backslashes on Windows');
   assert.equal(envForRelease(text, rel, () => true), envForRelease(envForRelease(text, rel, () => true), rel, () => true), 'a second update moves nothing more');
 });
 

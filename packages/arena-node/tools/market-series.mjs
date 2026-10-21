@@ -47,7 +47,7 @@ if (ports.length !== 7) throw new Error('seven seats');
 const host = '127.0.0.1';
 const storeOf = (i) => `${env.SEAT_DIR}/node-${i + 1}.db`;
 const keyOf = (i) => { const db = openStore(storeOf(i)); try { return nodeIdentity(db); } finally { if (db.close) db.close(); } };
-// THE UP/DOWN MARKET TOO: every seat hosts it, and SERIES_GAME=updown publishes its 15-minute series
+// THE UP/DOWN MARKET TOO: every seat hosts it, and SERIES_APP=updown publishes its 15-minute series
 // AND ROCK PAPER SCISSORS: every seat hosts it, and PAID_RPS=1 keeps paid rounds of it on the 8 s grid
 const HOSTED = [NEXTBLOCK.gameId, MARKET.registration.gameId, UPDOWN.registration.gameId, ROCK_PAPER_SCISSORS.gameId].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 const rt = regtest(cli, { network: 'regtest', wallet: env.WALLET || 'tn4rt' });
@@ -94,7 +94,7 @@ if (mode === 'bonds') {
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: new Uint8Array(32), censusConfirmations: 1,
     gameVerifySlots: 7, settlementSlots: 7, gameId: MARKET.registration.gameId, simCoreHash: new Uint8Array(32),
-    // SERIES_GAME=nextblock (rehearsal): nextblock's own series - its current core and config
+    // SERIES_APP=nextblock (rehearsal): nextblock's own series - its current core and config
     committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
     federationId: fed.federationId, stakeExpiryBlocks: 144,
@@ -103,14 +103,14 @@ if (mode === 'bonds') {
     stakeMsat: BigInt(env.STAKE_MSAT || 1000000), bondMinSats: 50000n, blockTicks: 4920,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
     minScore: 0, rankNumerator: 3, rankDenominator: 4, nodes,
-    ...(env.SERIES_GAME === 'nextblock' ? { gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, minScore: 1 } : {}),
-    // SERIES_GAME=updown: the Up/Down market's series - its locks outlive a whole window (390 blocks at
+    ...(env.SERIES_APP === 'nextblock' ? { gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, minScore: 1 } : {}),
+    // SERIES_APP=updown: the Up/Down market's series - its locks outlive a whole window (390 blocks at
     // the least, lock-expiry.js marketExpiryBlocks), its rounds every 15 minutes
-    ...(env.SERIES_GAME === 'updown' ? { gameId: UPDOWN.registration.gameId, stakeExpiryBlocks: 600, donationSetId: donationSetId(TEST_DONATION_SET_KEYS_REGTEST.recipients) } : {}),
+    ...(env.SERIES_APP === 'updown' ? { gameId: UPDOWN.registration.gameId, stakeExpiryBlocks: 600, donationSetId: donationSetId(TEST_DONATION_SET_KEYS_REGTEST.recipients) } : {}),
   };
   const template = seriesTemplate(contract, k);
   // ON ITS OWN PERIOD (§0A.7b.4): the id published is the one the seats derive (series-writer.js stamps the same)
-  if (env.SERIES_GAME === 'updown') {
+  if (env.SERIES_APP === 'updown') {
     template.seriesPeriodMs = UPDOWN.registration.manifest.roundPeriodMs;
     // ITS LOCKS SPAN THE LATEST ROUND OF ITS DAY: committee time (72 h before the series) to that window's end, the void
     // deadline and the objection window (lock-expiry.js marketExpiryBlocks) - measured: 600 blocks refused at the page,

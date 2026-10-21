@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { parseConf, confToRun, envToConfValues, formatConf, setInConf, unsetInConf, unknownKeys } from '../src/arena-conf.js';
+import { parseConf, confToRun, envToConfValues, formatConf, setInConf, unsetInConf, unknownKeys, renameKeys, renameValues, RENAMED_KEYS } from '../src/arena-conf.js';
 
 test('arena.conf: key=value lines and comments; a later key wins; a line that is no setting is named', () => {
   const { values, errors } = parseConf('# c\nport=8470\n\nbind = 0.0.0.0\r\nPORT=8471\nnot a line\n9x=1\n');
@@ -30,7 +30,7 @@ test('arena.conf to the seat: ARENA_<KEY>, the port-named three, port and databa
 });
 
 test('an older node.env moves into arena.conf with the same settings (macOS node B\'s keys), and reads back the same', () => {
-  const env = ['# The Arena node\'s settings', 'ARENA_BIND=127.0.0.1', 'ARENA_DONATION_NETWORK=testnet4', 'ARENA_CLOSE_AT_END=1', 'ARENA_GAMES=/r/packages/nextblock/plugin/nextblock.js',
+  const env = ['# The Arena node\'s settings', 'ARENA_BIND=127.0.0.1', 'ARENA_DONATION_NETWORK=testnet4', 'ARENA_CLOSE_AT_END=1', 'ARENA_APPS=/r/packages/nextblock/plugin/nextblock.js',
     'ARENA_BITCOIND_URL=http://127.0.0.1:48342', 'ARENA_BITCOIND_COOKIE=/c/.cookie', 'ARENA_WSS_8570=https://x.trycloudflare.com', 'ARENA_GATEWAY_PORT=8576',
     'ARENA_FOUNDING=1', 'ARENA_FEDIMINTD=/r/runtime/custody/fedimintd', 'ARENA_GUARDIAN_ENDPOINT_8570=wss://x.trycloudflare.com/guardian', 'ARENA_ROLES=verify,settlement,custody'].join('\n');
   const values = envToConfValues(env, { port: 8570, database: '/h/node.db' });
@@ -69,4 +69,13 @@ test('run.js: a file that does not read stops the start and names the line', () 
   const m = spawnSync(process.execPath, [fileURLToPath(new URL('../src/run.js', import.meta.url)), join(dir, 'missing.conf')], { encoding: 'utf8', timeout: 30000 });
   assert.equal(m.status, 2);
   assert.match(m.stderr, /cannot read/);
+});
+
+// A KEY THAT TOOK A NEW NAME (kanban #569: games= is apps=): an update rewrites it once, the rest of the file as it was
+test('games= becomes apps= in an installed node\'s arena.conf and in settings moved from node.env; nothing else changes', () => {
+  assert.deepEqual(RENAMED_KEYS, { games: 'apps' });
+  const conf = '# written by the installer\n# the game plugins the seat loads\ngames=/x/packages/nextblock/plugin/nextblock.js\nport=8471\n  games = /y.js\n# games=in a comment\n';
+  assert.equal(renameKeys(conf), '# written by the installer\n# the game plugins the seat loads\napps=/x/packages/nextblock/plugin/nextblock.js\nport=8471\n  apps = /y.js\n# games=in a comment\n');
+  assert.equal(renameKeys(renameKeys(conf)), renameKeys(conf), 'once is enough');
+  assert.deepEqual(renameValues({ games: '/a.js', port: '1' }), { apps: '/a.js', port: '1' });
 });

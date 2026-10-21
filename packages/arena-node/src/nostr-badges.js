@@ -177,7 +177,7 @@ const ledgerRound = (text) => {
  *   relays     where to publish (publishRelays()); none: awards are kept and served, nothing is sent
  *   roundOf    hex round id -> { ok: true, game: { name, id }, round } (round: season-read.js seasonRoundOf) | { ok: false, status, why }
  *   settled    hex round id -> whether its settlement stands ACCEPTED (round.settlementState)
- *   games      () -> [{ name, ids }]: the games this seat hosts, a name with its ids
+ *   apps       () -> [{ name, ids }]: the apps this seat hosts, a name with its ids
  *   accountsOf async ({ name, ids }, { fromMs, toMs }) -> { bySeat, asked }: every seat's account of that game's rounds in
  *              that window, unmerged - `bySeat` a Map of one label per seat (this one included) to its season rounds, each
  *              entry with its `roundKey`; `asked` how many other seats were asked (server.js seasonAccounts, keyed)
@@ -185,7 +185,7 @@ const ledgerRound = (text) => {
  *   imageBase  the public https base the definitions' images are named under (null: no image tag)
  * Answers { definitions(), awardsOf(player), tick(), start(), stop() }.
  */
-export function nostrBadges({ db, secret, on = false, relays = [], roundOf, settled = () => true, games = () => [],
+export function nostrBadges({ db, secret, on = false, relays = [], roundOf, settled = () => true, apps = () => [],
   accountsOf = async () => ({ bySeat: new Map(), asked: 0 }), agree = SEASON_NETWORK_AGREE, imageBase = null, catalogue = BADGES,
   perMinute = 30, tickMs = 60000, timeoutMs = 10000, maxAttempts = 10, lookbackMs = 90 * 86400000, now = () => Date.now(), connect, log = (l) => console.log(l) } = {}) {
   const cat = checkCatalogue(catalogue);
@@ -279,7 +279,7 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
     if (!week) return 0;
     const label = new Date(week.fromMs).toISOString().slice(0, 10);
     let made = 0;
-    for (const g of games()) {
+    for (const g of apps()) {
       if (stopped) break;
       if (q.week.get(g.name, week.fromMs)) continue;
       const key = `${g.name}|${week.fromMs}`;
