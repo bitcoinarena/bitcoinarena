@@ -3,8 +3,8 @@
 // network id commits to), v2 de2f263d's, v3 the per-player config, v4 one world per round. Moved here from
 // arena-protocol/src/genesis.js: they read the game's rules, and the engine imports no game. A round names a config by hash;
 // the engine only compares hashes the game's manifest lists.
-import { Writer } from '../../arena-protocol/src/encode.js';
-import { taggedHash } from '../../arena-protocol/src/hash.js';
+import { Writer } from 'arena-sdk/encode';
+import { taggedHash } from 'arena-sdk/hash';
 // THE NODE FEE THESE CONFIGS WERE PLAYED UNDER: BLWP's 2.00%, a literal (kanban #205). The engine's fee is now 5% (§0A.8),
 // but a config is the frozen bytes of rules already played - its hash is what rounds and the network id name - so the
 // fee written into them stays the one they were written with.
