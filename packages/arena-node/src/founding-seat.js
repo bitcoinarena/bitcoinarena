@@ -22,7 +22,7 @@
 //   FIRST     ascending), and draws the missing seats (drawGuardians). The draw's pool leaves out the operators guarding an OPEN
 //             federation other than the one succeeded (their census adverts' guardian_of[] naming a federation whose held record is
 //             OPEN), and the leaving guardians' operators (the succeeded federation's departing / gone guardians).
-import { triggerKey, foundingTrigger } from '../../arena-protocol/src/guardian-founding.js';
+import { triggerKey, foundingTrigger, COHORT_NOMINAL } from '../../arena-protocol/src/guardian-founding.js';
 import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
 import { createFounding } from './founding.js';
@@ -132,6 +132,7 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
+  const LOOKBACK = 288;                      // how far back a seat's first tick reads the run of free operators
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
   // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2), one row per chain height this seat ticked at:
   //   capable  { height, operators }: the distinct operators of guardian-capable census nodes with an endpoint (the draw's own rule)
@@ -141,6 +142,21 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   async function history(h) {
     const held = records() || [];
     remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
+    // EVERY HEIGHT, FROM THE CHAIN: a gap since the last tick is read in, and the first tick reads back to where the run of
+    // free operators began (kanban #495, 2026-10-21: a restarted seat's run began at its restart, so seats disagreed on the draw)
+    const last = capable.length ? capable[capable.length - 1].height : null;
+    if (last === null) {
+      const back = [];
+      for (let x = h - 1; x >= Math.max(0, h - LOOKBACK); x--) {
+        const row = await capableAt(x, held); if (!row) break;
+        back.unshift(row); if (row.free < COHORT_NOMINAL && (held.length > 0 || row.federations > 0 || row.operators < nominal)) break;
+      }
+      for (const row of back) remember(capable, row);
+    } else for (let x = Math.max(last + 1, h - LOOKBACK); x < h; x++) { const row = await capableAt(x, held); if (row) remember(capable, row); }
+    const row = await capableAt(h, held); if (row) remember(capable, row);
+    return held;
+  }
+  async function capableAt(h, held) {
     let entries = null; try { entries = await entriesAt(h); } catch { entries = null; }
     if (entries) {
       const ops = new Set(), bonds = new Map(), named = new Set();
@@ -152,9 +168,9 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // THE COHORT (protocol 2026.0.14): the same operators, held to bond_min_guardian, minus those guarding an OPEN federation
       const guarding = guardingOpen ? guardingOpen({ entries, records: held, except: null }) : guardingOpenOf({ entries, held });
       const free = [...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).length;
-      remember(capable, { height: h, operators: ops.size, free, federations: named.size });
+      return { height: h, operators: ops.size, free, federations: named.size };
     }
-    return held;
+    return null;
   }
   async function tick() {
     const h0 = await tip();
@@ -169,7 +185,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     // new seats and the three installer nodes hold no round, so no record - they drew a GENESIS trigger at 156970 on a network with two
     // federations, and the cohort of ten could never trigger there). guardian_of[] in the bond adverts is the chain's own word for it.
     const federationExists = held.length > 0 || capable.some((x) => x.federations > 0);
-    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists, voided: [...voided] });
+    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists, voided: [...voided],
+      tip: h0, foundingWindow: clocks.foundingWindow });
     if (!t.ok) return { ok: false, why: t.why };
     const key = triggerKey(t);
     const h = await tip();
