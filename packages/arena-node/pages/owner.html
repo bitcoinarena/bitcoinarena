@@ -125,7 +125,6 @@ const O = window.ArenaOwner;
 const STORE = 'arena-owner-seed:' + BASE;          // per node address, in this browser only
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-const view = (html) => { const el = $('view'); if (el._react) { el._react.unmount(); el._react = null; } el.innerHTML = html; };
 const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
 const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
 // LOGIN WITH NOSTR (2026-10-10: "a login with Nostr feature for node claiming instead of generating your
@@ -184,27 +183,14 @@ function welcome() { mount('view', 'mountStart', { ...startProps(), screen: 'wel
 function claim(mine, file) { mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
 // A ONE-CARD MESSAGE (no answer, not the owner), drawn by React (OwnerMessage)
 const message = (props) => mount('view', 'mountMessage', props);
-// THE SECTIONS (kanban #553): id, title in the sidebar; one shown at a time, chosen by the address's #, kept in the history
-const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
-  ['money', 'Donations'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
-function showSection() {
-  const want = (location.hash || '#overview').slice(1);
-  const id = SECTIONS.some(([x]) => x === want) ? want : 'overview';
-  for (const [x] of SECTIONS) { const sec = $('s-' + x); if (sec) sec.hidden = x !== id; }
-  for (const a of document.querySelectorAll('#side a')) a.classList.toggle('on', a.dataset.s === id);
-}
-window.addEventListener('hashchange', () => { if ($('side')) { showSection(); window.scrollTo(0, 0); } });
-// WHAT NEEDS THE OWNER (kanban #553): each section that finds something to do says it here, in one line, with a link to it;
-// the Overview lists them, the sidebar marks the section
+// WHAT NEEDS THE OWNER (kanban #553): each section that finds something to do says it here, in one line, with a link to it; the Overview
+// lists them, the sidebar marks the section - both React's (kanban #564, OwnerArea), drawn again with the list on each change
 const needs = new Map();   // key -> { level: 'bad' | 'warn', text, section }
+let areaProps = null;
+const drawArea = () => { if (areaProps) O.areaInto($('view'), { ...areaProps, needs: needs.size || areaProps.said ? [...needs.values()] : null }); };
 function need(key, level, text, section) {
   if (level) needs.set(key, { level, text, section }); else needs.delete(key);
-  const el = $('needs'); if (!el) return;
-  const list = [...needs.values()].sort((x, y) => (x.level === 'bad' ? 0 : 1) - (y.level === 'bad' ? 0 : 1));
-  // THE REACT LIST (kanban #564), drawn again on each change; the sidebar dots stay the page's
-  if (!el._needsRoot) el.innerHTML = '';
-  O.needsInto(el, list);
-  for (const [x] of SECTIONS) { const d = $('dot-' + x); if (d) { const l = list.find((n) => n.section === x); d.className = 'dot' + (l ? ' d-' + l.level : ''); } }
+  if (areaProps) { areaProps.said = true; drawArea(); }
 }
 // EACH APP ONCE, AT ITS NEWEST VERSION (kanban #553): [{ name, version, ... }] -> one per name, the highest version, with `older` counted
 function newestApps(list) {
@@ -227,73 +213,19 @@ async function area() {
   // still has rounds for; the owner sees each app once, at its newest version
   const games = newestApps(me.games || []);
   const who = await identity();
-  // THE OWNER AREA IN SECTIONS (kanban #553: "too much data, too much wall of text ... Add a sideboard navigation"): a sidebar (a top
-  // menu on a phone) and one section at a time; Overview says what needs the owner, every other section starts with one plain line
-  view(`<div class="layout"><nav class="side" id="side">${SECTIONS.map(([id, t]) => `<a href="#${id}" data-s="${id}">${t}<span class="dot" id="dot-${id}"></span></a>`).join('')}</nav><main>
-    <section id="s-overview"><h2>Overview</h2>
-      <div class="card" id="needs"><p class="sub">checking this node…</p></div>
-      <!-- THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large -->
-      <div class="stats">
-        <div class="stat"><span>Node</span><b class="mono">${esc(state.node.slice(0, 12))}…</b><small>its key on the network</small></div>
-        <div class="stat"><span>Custody</span><b class="${me.guardian ? 'ok' : ''}">${me.guardian ? 'Guardian' : 'No custody'}</b><small>${me.guardian ? 'holds players\' bitcoin with its federation' : 'does not hold players\' bitcoin'}</small></div>
-        <div class="stat"><span>Apps</span><b>${games.length}</b><small>${games.length ? games.map((g) => `${esc(g.name)} v${esc(g.version ?? '?')}`).join(', ') : 'none installed'}</small></div>
-        <div class="stat"><span>Owner since</span><b>${new Date(state.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with ${esc({ words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' }[who.how])}</small></div>
-        <div class="stat"><span>Owner key</span><b class="mono">${esc(state.owner.slice(0, 12))}…</b><small>the key every owner request is signed with</small></div>
-      </div>
-    </section>
-    <section id="s-roles"><h2>Roles</h2>
-      <p class="lead">What this node does for the network, and what each role earns.</p>
-      <div class="card" id="roles"><p class="sub">reading this node's roles…</p></div>
-      <h3 class="sh">Custody (guardian)</h3><div class="card" id="custody"><p class="sub">reading whether this node holds custody…</p></div>
-      <h3 class="sh">Liquidity provider</h3><div class="card" id="liquidity"><p class="sub">reading whether this node is a liquidity provider…</p></div>
-    </section>
-    <section id="s-bond"><h2>Bond</h2>
-      <p class="lead">The bitcoin this node locked so it can be drawn for rounds. It earns your share of the fees.</p>
-      <div class="card" id="bond-answer"><p class="sub">checking whether your bond is enough…</p></div>
-      <div id="capacity-plea"></div>
-      <div class="card" id="bond"><p class="sub">reading this node's bond…</p></div>
-      <details class="more"><summary>How this node is drawn (details)</summary><div class="card" id="standing"><p class="sub">reading…</p></div></details>
-    </section>
-    <section id="s-services"><h2>Services</h2>
-      <p class="lead">The programs this node runs and whether they answer.</p>
-      <h3 class="sh">Address</h3><div class="card" id="address"><p class="sub">reading how this node is reached…</p></div>
-      <div class="card" id="services"><p class="sub">reading this node's services…</p></div>
-    </section>
-    <section id="s-apps"><h2>Apps</h2>
-      <p class="lead">Games, markets and networks this node runs. New ones come from other nodes; each is checked here and again by the node before it runs.</p>
-      <div class="card" id="store">
-      <h3>On this node</h3><div id="installed"></div>
-      <h3>Found on the network</h3><div id="netfound"></div></div>
-      <h3 class="sh">Network</h3><div class="card" id="nets">
-      <p>The network this node plays on: its chain, the donation addresses in force, the game series, and its federations.</p>
-      <div id="netmine"><p class="sub">reading this node's network…</p></div></div>
-    </section>
-    <section id="s-release"><h2>Updates</h2>
-      <p class="lead">The version this node runs and whether a newer one is out.</p>
-      <div class="card" id="release"><p class="sub">reading this node's release…</p></div>
-    </section>
-    <section id="s-money"><h2>Donations</h2>
-      <p class="lead">Money this node collects for the developers, and the developers' split.</p>
-      <h3 class="sh">Waiting to be collected</h3><div id="dons"><div class="card"><p class="sub">reading this node's donations…</p></div></div>
-      <h3 class="sh">Dev clients</h3><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
-      <h3 class="sh">Developer split</h3><div id="ballots"><div class="card"><p class="sub">reading the developers' ballots…</p></div></div>
-    </section>
-    <section id="s-emergency"><h2>Emergency code</h2><div class="card" id="emergency"></div></section>
-    <section id="s-leave"><h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this node still serves…</p></div></section>
-    <section id="s-developer"><h2>Developer</h2><div class="card">
-      <p>Sign your own game or market. Your developer key comes from the same 24 words: <b id="devkey" class="mono"></b></p>
-      <label>The manifest (JSON; 32-byte values in hex, large numbers as strings; leave out gameDevPubkey - it is yours)</label>
-      <textarea id="body" rows="8" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder='{ "gameName": "my-game", "version": 1, "resultType": "HEAD_TO_HEAD", ... }'></textarea>
-      <div class="err" id="serr"></div><button class="primary" id="sign">Sign</button><div id="signed"></div></div></section>
-    <section id="s-login"><h2>Your login</h2>
-    ${who.words ? `<div class="card"><p>Your 24 words are kept in this browser only.</p>
-      <button id="show">Show them</button><button id="forget">Forget them on this browser</button><div id="shown"></div></div>`
-      : `<div class="card"><p>This browser keeps your login${who.how === 'nsec' ? ' and your nsec' : ''}. Your key stays with your ${who.how === 'nsec' ? 'nsec - keep it written down' : 'signer'}.</p>
-      <button id="forget">Sign out on this browser</button></div>`}</section>
-  </main></div>`);
-  showSection();
-  if ($('show')) $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
-  $('forget').onclick = () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); };
+  // THE OWNER AREA IN SECTIONS (kanban #553: "too much data, too much wall of text ... Add a sideboard navigation"), drawn by React (kanban #564,
+  // OwnerArea): a sidebar and one section at a time; the page hands over the node's facts and its rules - the words shown, the sign-out,
+  // THE EMERGENCY CODE (spec §23A.5a, protocol 17: made from the words when this browser holds them, never kept anywhere) and SIGNING A GAME
+  // OR MARKET as the developer's command-line client signs it (the developer key comes from the words or the nsec; a signer never gives its
+  // secret out, so it signs no game here) - then draws each panel into its place
+  const seed = readSeed(), devSeed = who.devSeed, devPub = devSeed ? C.devPubkeyOf(devSeed) : null;
+  areaProps = { node: state.node, owner: state.owner, claimedAtMs: state.claimedAtMs, guardian: !!me.guardian, games, how: who.how,
+    onShowWords: () => C.phraseFromSeed(readSeed()).words,
+    onForget: () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); },
+    emergencyCode: seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null, emergencyLink: at('/Dashboard/emergency'),
+    devKey: devPub ? C.toHex(devPub) : null,
+    signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
+  drawArea();
   rolesPanel();
   donations();
   devClients();
@@ -303,7 +235,6 @@ async function area() {
   bondAnswer();
   servicesPanel();
   addressPanel();
-  emergencyPanel();
   bondPanel();
   custodyPanel();
   liquidityPanel();
@@ -311,22 +242,6 @@ async function area() {
   leavePanel();
   storePanel();
   networkPanel();
-  // SIGN A GAME OR MARKET: signed here as the developer's command-line client signs it
-  // the developer key comes from the words or the nsec; a signer never gives its secret out, so it signs no game here
-  const devSeed = (await identity()).devSeed;
-  if (!devSeed) { $('sign').disabled = true; $('devkey').textContent = 'none with a Nostr signer - sign games with your 24 words or your nsec'; return; }
-  const devPub = C.devPubkeyOf(devSeed);
-  $('devkey').textContent = C.toHex(devPub);
-  $('sign').onclick = () => {
-    $('serr').textContent = ''; $('signed').innerHTML = '';
-    try {
-      const out = C.signManifestWithSeed(C.bodyFromJson($('body').value, { devPubkey: devPub }), devSeed);
-      $('signed').innerHTML = `<div class="row"><span>Game id</span><b>${esc(out.gameId.slice(0, 16))}…</b></div>
-        <label>The signed manifest (hex)</label><textarea id="mhex" rows="5" readonly>${esc(out.hex)}</textarea><button id="copy">Copy</button>`;
-      window.OWNER_SIGNED = out;
-      $('copy').onclick = () => { navigator.clipboard.writeText(out.hex).then(() => { $('copy').textContent = 'Copied ✓'; }, () => { $('mhex').select(); }); };
-    } catch (e) { $('serr').textContent = e.message; }
-  };
 }
 // THE PORTED PANELS, EACH ONLY ITS REACT SCREEN (kanban #564, the owner 2026-10-21: "no fall backs"): the page hands each the doors it
 // reads, its signed-request helpers and, where it reports to the Overview, the need() line
@@ -430,26 +345,6 @@ async function addBond(add) {
     };
   } catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-go').disabled = false; }
 }
-// THE EMERGENCY CODE (spec §23A.5a, protocol 17): what it is for, the code itself when this browser holds the words (it is made from
-// them, never kept anywhere), and the page that takes the node out - on any other node, or the Arena site
-function emergencyPanel() {
-  const seed = readSeed();
-  const code = seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null;
-  $('emergency').innerHTML = `
-    <p>If this node will be offline for a while - more than about two days on mainnet, 12 blocks on testnet4 - take it out of the
-    network with your emergency code so you keep your bond. Open <a href="https://testnet.bitcoin-arena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoin-arena.io/offline</b></a> on any device and type the code.</p>
-    <table style="width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 10px">
-      <tr><th style="text-align:left">Your node</th><th style="text-align:left">What happens</th><th style="text-align:left">Your bond</th></tr>
-      <tr><td>no custody</td><td>it is out of every draw at once</td><td>kept</td></tr>
-      <tr><td>custody, code typed in time</td><td>it leaves; its federation gets a successor</td><td>kept</td></tr>
-      <tr><td>custody, too late</td><td>counted as abandoned</td><td>lost</td></tr></table>
-    ${code ? `<div class="row"><span>Your code</span><b id="emcode">hidden</b></div><button id="emshow">Show the code</button>`
-      : '<p class="sub">This browser signed in without the 24 words, so it cannot make the code. The installer showed it at the seed step; it is made from the same words.</p>'}
-    <p class="sub">The code can only take this node out - no money, no settings. Never type your 24 words on another node.</p>
-    <p class="sub">If the Arena site cannot be reached: the same page is on every node, at <a href="${at('/Dashboard/emergency')}">/Dashboard/emergency</a>.</p>`;
-  if ($('emshow')) $('emshow').onclick = () => { $('emcode').textContent = code; $('emshow').hidden = true; };
-}
-
 // LEAVE WITHOUT BEING SLASHED: from the moment the owner signs Leave this seat takes no new round and
 // serves the ones it holds to their end; it is free once the last is past its objection window and settled. Custody: only if
 // the federation keeps its threshold without this guardian.
@@ -684,6 +579,7 @@ async function devClients() {
   };
 }
 async function start() {
+  areaProps = null; needs.clear();   // a new start draws no old area again
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
   catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
   $('who').textContent = 'Node ' + state.node;

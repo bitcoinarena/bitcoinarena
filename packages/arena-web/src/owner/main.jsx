@@ -16,6 +16,8 @@ import { NetworkAppsPanel } from './NetworkAppsPanel.jsx';
 import { NetworkPanel } from './NetworkPanel.jsx';
 import { NeedsPanel } from './NeedsPanel.jsx';
 import { OwnerStart, OwnerMessage } from './OwnerStart.jsx';
+import { OwnerArea } from './OwnerArea.jsx';
+import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -53,4 +55,14 @@ export function needsInto(element, items) {
 // THE WAY IN (the welcome, the words, Login with Nostr, the claim) and a one-card message: each drawn fresh into the page's #view
 export function mountStart(element, props) { const root = createRoot(element); root.render(<OwnerStart {...props} />); return root; }
 export function mountMessage(element, props) { const root = createRoot(element); root.render(<OwnerMessage {...props} />); return root; }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+// THE OWNER AREA: drawn into the page's #view at once the first time (the page then draws each panel into its place), again with each
+// new need() list; a root the page made for another screen there is unmounted first
+export function areaInto(element, props) {
+  if (!element._react || !element._react._area) {
+    if (element._react) element._react.unmount();
+    element.innerHTML = ''; element._react = createRoot(element); element._react._area = true;
+    flushSync(() => element._react.render(<OwnerArea {...props} />));
+  } else element._react.render(<OwnerArea {...props} />);
+  return element._react;
+}
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

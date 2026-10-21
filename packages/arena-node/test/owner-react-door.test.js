@@ -36,6 +36,7 @@ test('owner.html: the React bundle loaded once and unconditionally; every screen
   // the way in and its one-card messages too (kanban #564: OwnerStart, OwnerMessage)
   assert.deepEqual(new Set(used), new Set(['mountStart', 'mountMessage', 'mountRoles', 'mountCustody', 'mountLiquidity', 'mountServices', 'mountAddress', 'mountRelease', 'mountBond',
     'mountStanding', 'mountApps', 'mountNetworkApps', 'mountNetwork']));
-  for (const u of [...used, 'needsInto']) assert.ok(offered.has(u), `${u} is offered by the bundle`);
-  assert.match(script, /O\.needsInto\(el, list\)/);
+  for (const u of [...used, 'areaInto']) assert.ok(offered.has(u), `${u} is offered by the bundle`);
+  // the area itself is React's (kanban #564, OwnerArea): drawn with the need() list, again on each change
+  assert.match(script, /O\.areaInto\(\$\('view'\), \{ \.\.\.areaProps, needs:/);
 });
