@@ -16,6 +16,7 @@ const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, from.slice(0, 40)); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const GATE = slice('    window.ARENA_FEDERATION_GATE = async', '\n    };\n');
+const ASK = slice('    window.ARENA_ASK_IN_REACT = (boxId, props) => {', '\n    };\n');
 const CONFIRMED = slice('    window.ARENA_PAINT_CONFIRMED = () => {', '\n    };\n');
 const OPEN = slice('    function openMoney(which, say = ', '\n      })();\n    }\n');
 
@@ -34,10 +35,11 @@ function memStorage() {
 function node(tag) {
   const n = { tag, textContent: '', style: {}, dataset: {}, children: [], className: '', listeners: {},
     append: (...c) => n.children.push(...c), appendChild: (c) => n.children.push(c), addEventListener: (ev, f) => { n.listeners[ev] = f; },
+    querySelector: () => null,
     contains: (c) => c === n || n.children.some((k) => k === c || (k && typeof k.contains === 'function' && k.contains(c))) };   // the page asks it (waitBox.el.contains)
   let html = '';
   Object.defineProperty(n, 'innerHTML', { get: () => html, set: (v) => { html = v; n.parts = { b: node('b'), span: node('span'), code: [node('code'), node('code')] }; } });
-  n.querySelector = (s) => n.parts[s];
+  n.querySelector = (s) => (n.parts ? n.parts[s] : null);
   n.querySelectorAll = (s) => n.parts[s];
   return n;
 }
@@ -46,18 +48,21 @@ function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const els = {};
   const document = { getElementById: (id) => (els[id] = els[id] || node(id)), createElement: node };
   // the browser's store through the page's one door, window.ARENA_BROWSER_STORE: the same fake as `localStorage`
-  const window = { ARENA_FED_STATUS: status, ARENA_CURVE: {}, ARENA_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, ARENA_BROWSER_STORE: () => storage };
+  const window = { ARENA_FED_STATUS: status, ARENA_CURVE: {}, ARENA_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, ARENA_BROWSER_STORE: () => storage,
+    ArenaConfirm: { ask: (host, props) => dialogs.push(props), clear: () => {} } };   // the page's bundle (React) as a record of what it was asked to show
+  const dialogs = [];
   const asked = [];
   const ARENACLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
     depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => ({}) };
   const did = [];
   const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'localStorage', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
-    [GATE, CONFIRMED, OPEN], 'return { gate: window.ARENA_FEDERATION_GATE, paintConfirmed: window.ARENA_PAINT_CONFIRMED, openMoney };');
+    [GATE, ASK, CONFIRMED, OPEN], 'return { gate: window.ARENA_FEDERATION_GATE, paintConfirmed: window.ARENA_PAINT_CONFIRMED, openMoney };');
   let ctx = null;
   const api = fn(document, window, ARENACLIENT, storage, () => ctx, () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
   const shown = () => !!els['arena-fed-confirm'] && els['arena-fed-confirm'].style.display === 'flex';
-  const answer = async (trust) => { for (let i = 0; i < 50 && !shown(); i++) await new Promise((r) => setImmediate(r)); assert.ok(shown(), 'the modal is open'); els[trust ? 'afc-trust' : 'afc-cancel'].onclick(); };
-  return { ...api, els, window, storage, did, asked, shown, answer, setCtx: (c) => { ctx = c; } };
+  const answer = async (trust) => { for (let i = 0; i < 50 && !shown(); i++) await new Promise((r) => setImmediate(r)); assert.ok(shown(), 'the modal is open'); dialogs.at(-1).onAnswer(trust); };
+  const dialog = () => dialogs.at(-1);
+  return { ...api, els, dialog, window, storage, did, asked, shown, answer, setCtx: (c) => { ctx = c; } };
 }
 const round = (f) => ({ federationId: f, stakeMsat: 1n });
 
@@ -69,14 +74,13 @@ test('an unknown federation is refused until trusted, and the modal lists every 
   const no = await asking;
   assert.equal(no.ok, false);
   assert.match(no.why, /not on this page's known-good list and was not confirmed/);
-  assert.equal(p.els['afc-id'].textContent, fid);
-  assert.equal(p.els['afc-status'].textContent, 'OPEN · 7 of 7 guardians signed');
-  const rows = p.els['afc-guardians'].children;
+  assert.deepEqual(p.dialog().rows, [['Federation', fid], ['Status', 'OPEN · 7 of 7 guardians signed']]);
+  const rows = p.dialog().guardians;
   assert.equal(rows.length, 7, 'every guardian');
-  assert.deepEqual(rows.map((r) => r.parts.b.textContent), ['op-0', 'op-1', 'op-2', 'op-3', 'op-4', 'op-5', 'op-6']);
-  assert.equal(rows[0].parts.code[0].textContent, 'node ' + '10'.repeat(32));
-  assert.equal(rows[0].parts.code[1].textContent, 'wss://g0.example/');
-  assert.equal(rows[6].parts.span.textContent, '50,006');
+  assert.deepEqual(rows.map((r) => r.operator), ['op-0', 'op-1', 'op-2', 'op-3', 'op-4', 'op-5', 'op-6']);
+  assert.equal(rows[0].nodeKey, '10'.repeat(32));
+  assert.equal(rows[0].endpoint, 'wss://g0.example/');
+  assert.equal(rows[6].bondSats, '50006');
   assert.equal(p.shown(), false, 'closed after Cancel');
   assert.equal(fed.federationConfirmed(p.storage, fid), false, 'Cancel keeps nothing');
 });
@@ -162,7 +166,7 @@ test('with no status read by a join yet, the modal asks the seats for the signed
   await p.answer(false);
   await asking;
   assert.deepEqual(p.asked, ['status']);
-  assert.equal(p.els['afc-status'].textContent, 'OPEN \u00b7 6 of 7 guardians signed');
+  assert.deepEqual(p.dialog().rows[1], ['Status', 'OPEN \u00b7 6 of 7 guardians signed']);
   const join = HTML.indexOf("const gate = await window.ARENA_FEDERATION_GATE({ round: named.round, invite: named.federation");
   const lock = HTML.indexOf("signerNodes = await joinStep('clientSettlementSignerNodes'");
   assert.ok(join > 0 && join < lock, 'the join asks before the signer nodes and the lock');

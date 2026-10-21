@@ -16,6 +16,7 @@ import { BalanceSplit } from './BalanceSplit.jsx';
 import { ConfirmCard } from './ConfirmCard.jsx';
 import { WalletHistory } from './WalletHistory.jsx';
 import { CustodyCard } from './CustodyCard.jsx';
+import { SeedModal } from './SeedModal.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -62,3 +63,7 @@ const into = (el, node) => { if (!el._root) el._root = createRoot(el); flushSync
 export function drawHistory(el, props) { into(el, <WalletHistory {...props} />); }
 export function drawCustody(el, props) { into(el, <CustodyCard {...props} />); }
 if (typeof window !== 'undefined') window.ArenaWallet = { drawHistory, drawCustody };
+// THE SEED PHRASE MODAL (the page's Settings opens it with the words and its own recording rule)
+export function openSeed(host, props) { into(host, <SeedModal key={Date.now()} {...props} />); }
+export function closeSeed(host) { if (host._root) { host._root.unmount(); host._root = null; } }
+if (typeof window !== 'undefined') window.ArenaSeed = { open: openSeed, close: closeSeed };

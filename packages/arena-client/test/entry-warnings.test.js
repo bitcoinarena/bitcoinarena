@@ -22,14 +22,17 @@ test('the engine\'s warnings come from the contract; the seats\' only as codes t
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 function gate(rows) {
   const els = {};
-  const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, children: [], appendChild(c) { this.children.push(c); } });
+  const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, children: [], appendChild(c) { this.children.push(c); }, append(c) { this.children.push(c); }, querySelector: () => null });
   for (const id of ['awc-list', 'arena-warn-confirm', 'awc-go', 'awc-cancel']) el(id);
   const document = { getElementById: (id) => els[id] || null, createElement: () => ({ textContent: '' }) };
-  const window = { ARENA_LOBBY_ROWS: rows };
+  // the page's bundle (window.ArenaConfirm, React) as a record of what it was asked to show
+  const asked = [];
+  const window = { ARENA_LOBBY_ROWS: rows, ArenaConfirm: { ask: (host, props) => asked.push(props), clear: () => {} } };
   const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT'], [
+    (() => { const h = readFileSync(PAGE, 'utf8'); const a = h.indexOf('    window.ARENA_ASK_IN_REACT = (boxId, props) => {'); return h.slice(a, h.indexOf('\n    };\n', a) + 7); })(),
     (() => { const html = require_(); const a = html.indexOf('    window.ARENA_WARNINGS_GATE = async'); return html.slice(a, html.indexOf('\n    };\n', a) + 7); })()],
     'return window.ARENA_WARNINGS_GATE;');
-  return { run: fn(document, window, { entryWarnings, warningsSay }), els, window };
+  return { run: fn(document, window, { entryWarnings, warningsSay }), els, window, asked };
 }
 import { readFileSync } from 'node:fs';
 const require_ = () => readFileSync(PAGE, 'utf8');
@@ -43,15 +46,15 @@ test('the gate: no warning, no dialog; a warning shown and Cancel refuses the en
   const p = g.run({ round: { ...base, rankNumerator: 19, rankDenominator: 20 }, roundIdHex: id });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(g.els['arena-warn-confirm'].style.display, 'flex');
-  assert.deepEqual(g.els['awc-list'].children.map((c) => c.textContent), [WARNING_SAYS.flat_rank_curve, WARNING_SAYS.exposure_ignored]);
-  g.els['awc-cancel'].onclick();
+  assert.deepEqual([g.asked[0].title, g.asked[0].items, g.asked[0].yes], ['Before you stake', [WARNING_SAYS.flat_rank_curve, WARNING_SAYS.exposure_ignored], 'Enter anyway']);
+  g.asked[0].onAnswer(false);
   const r = await p;
   assert.deepEqual([r.ok, r.codes, g.els['arena-warn-confirm'].style.display], [false, ['flat_rank_curve', 'exposure_ignored'], 'none']);
   assert.match(r.why, /warnings were not accepted: nothing is staked/);
   const g2 = gate([{ id, warnings: ['exposure_ignored'] }]);
   const p2 = g2.run({ round: base, roundIdHex: id });
   await new Promise((r2) => setTimeout(r2, 0));
-  g2.els['awc-go'].onclick();
+  g2.asked[0].onAnswer(true);
   assert.deepEqual(await p2, { ok: true, codes: ['exposure_ignored'], confirmed: true });
   assert.deepEqual(g2.window.ARENA_WARNINGS_SHOWN, { round: id, codes: ['exposure_ignored'] });
 });

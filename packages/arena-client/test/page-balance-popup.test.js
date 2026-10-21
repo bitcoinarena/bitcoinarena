@@ -12,17 +12,33 @@ const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 const at = HTML.indexOf('      const splitEl = () => document.getElementById(\'arena-bal-split\');');
 const SRC = HTML.slice(at, HTML.indexOf('      for (const sel of [\'#arena-wallet-bar .wb-bal\'', at));
 
+// window.ArenaBalance.drawSplit as the page's bundle draws it (kanban #564), its parts as plain nodes of the fake document
+const drawSplit = (mk) => (host, p) => {
+  host.textContent = '';
+  const h = mk('h4'); h.textContent = p.title; host.append(h);
+  if (p.empty) { const r = mk('div'); r.className = 'row'; r.textContent = p.empty; host.append(r); }
+  for (const x of p.rows) {
+    const r = mk('div'); r.className = 'row'; const left = mk('div');
+    const f = mk('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '\u2026';
+    const s = mk('div'); s.className = 'st'; const dot = mk('span'); dot.className = 'hl ' + x.level; s.append(dot, { textContent: x.label });
+    left.append(f, s);
+    if (x.note) { const n = mk('div'); n.className = 'note'; n.textContent = x.note; left.append(n); }
+    const v = mk('b'); v.textContent = x.value; r.append(left, v); host.append(r);
+  }
+  if (p.total) { const t = mk('div'); t.className = 'row total'; const a = mk('div'); a.textContent = p.total.label; const v = mk('b'); v.textContent = p.total.value; t.append(a, v); host.append(t); }
+};
 function fakeDom() {
   const mk = (tag) => {
     const n = { tag, className: '', style: {}, children: [], listeners: {}, disabled: false, title: '', type: '',
       _text: '', get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); },
       set textContent(v) { this._text = String(v); this.children = []; },
       append(...xs) { for (const x of xs) this.children.push(typeof x === 'string' ? { textContent: x } : x); },
-      addEventListener(k, f) { this.listeners[k] = f; }, get childElementCount() { return this.children.length; } };
+      addEventListener(k, f) { this.listeners[k] = f; }, get childElementCount() { return this.children.length; },
+      prepend(x) { this.children.unshift(x); }, removeChild(x) { this.children.splice(this.children.indexOf(x), 1); }, get firstChild() { return this.children[0] || null; }, get lastChild() { return this.children[this.children.length - 1] || null; } };
     return n;
   };
   const split = mk('div'); split.style.display = 'none';
-  return { split, document: { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, createTextNode: (t) => ({ textContent: t }) } };
+  return { split, mk, document: { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, createTextNode: (t) => ({ textContent: t }) } };
 }
 const ARENACLIENT = { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor };
 const A = 'aa'.repeat(32), H = 'bb'.repeat(32), C = 'cc'.repeat(32);
@@ -32,9 +48,9 @@ const loads = new Map([
   [C, { status: 'OPEN', federation: C, load: 0.1, reserveSats: '15000', exposureCapSats: '150000', invite: 'fed1c', network: 'testnet4' }],
 ]);
 function run({ debug }) {
-  const { split, document } = fakeDom();
+  const { split, mk, document } = fakeDom();
   const opened = [];
-  const window = { ARENA_WALLET_BALANCE: { sats: 3000, parts: [{ federation: A, sats: 2000 }, { federation: H, sats: 1000 }] }, ARENA_FED_LOADS: loads,
+  const window = { ArenaBalance: { drawSplit: drawSplit(mk) }, ARENA_WALLET_BALANCE: { sats: 3000, parts: [{ federation: A, sats: 2000 }, { federation: H, sats: 1000 }] }, ARENA_FED_LOADS: loads,
     ARENA_BROWSER_STORE: () => ({ getItem: (k) => (k === 'arena.debugFederations' && debug ? '1' : null) }) };
   const fetch = async (u) => (u.endsWith('/blocks/tip/height') ? { text: async () => '157070' } : { json: async () => [5000, 3800, 2600, 1400].map((timestamp) => ({ timestamp })) });
   const openMoney = (...a) => { opened.push(a); return Promise.resolve({ ok: true }); };

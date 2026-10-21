@@ -81,28 +81,30 @@ test('the page\'s swap dialog shows the amount, the fee and the total; Cancel an
   const slice = HTML.slice(a, HTML.indexOf('\n    };\n', a) + 7);
   const mk = () => {
     const els = {};
-    const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, children: [], appendChild(c) { this.children.push(c); } });
+    const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {}, children: [], appendChild(c) { this.children.push(c); }, append(c) { this.children.push(c); }, querySelector: () => null });
     for (const id of ['awc-title', 'awc-list', 'awc-go', 'awc-cancel', 'arena-warn-confirm']) el(id);
     const sub = { textContent: 'This round\'s rules are fixed in its contract.' };
     const document = { getElementById: (id) => els[id] || null, querySelector: () => sub, createElement: () => ({ textContent: '' }) };
-    const window = {};
-    pageFunction(PAGE, ['document', 'window'], [slice], '')(document, window);
-    return { window, els, sub };
+    const asked = [];   // the page's bundle (window.ArenaConfirm, React) as a record of what it was asked to show
+    const window = { ArenaConfirm: { ask: (host, props) => asked.push(props), clear: () => {} } };
+    const ask = HTML.slice(HTML.indexOf('    window.ARENA_ASK_IN_REACT = (boxId, props) => {'), HTML.indexOf('\n    };\n', HTML.indexOf('    window.ARENA_ASK_IN_REACT = (boxId, props) => {')) + 7);
+    pageFunction(PAGE, ['document', 'window'], [ask, slice], '')(document, window);
+    return { window, els, asked };
   };
   const q = { amountMsat: 80000n, feeMsat: 1480n, totalMsat: 81480n, ruleKnown: true };
   const p1 = mk(); const r1 = p1.window.ARENA_SWAP_CONFIRM(q, 'aa'.repeat(32), 'bb'.repeat(32));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(p1.els['arena-warn-confirm'].style.display, 'flex');
-  assert.equal(p1.els['awc-title'].textContent, 'Enter by swap');
-  assert.deepEqual(p1.els['awc-list'].children.map((c) => c.textContent), ['Move 80 sat through a gateway that serves both.', 'Fee: 2 sat.', 'Total from federation aaaaaaaa: 82 sat.']);
+  assert.equal(p1.asked[0].title, 'Enter by swap');
+  assert.deepEqual(p1.asked[0].items, ['Move 80 sat through a gateway that serves both.', 'Fee: 2 sat.', 'Total from federation aaaaaaaa: 82 sat.']);
   assert.deepEqual(p1.window.ARENA_SWAP_SHOWN, { amountMsat: '80000', feeMsat: '1480', from: 'aa'.repeat(32), to: 'bb'.repeat(32) });
-  p1.els['awc-cancel'].onclick();
+  p1.asked[0].onAnswer(false);
   assert.equal(await r1, false);
-  assert.equal(p1.els['awc-title'].textContent, '', 'the dialog\'s own words back after');
+  assert.equal(p1.els['arena-warn-confirm'].style.display, 'none', 'closed after');
   const p2 = mk(); const r2 = p2.window.ARENA_SWAP_CONFIRM(q, 'aa'.repeat(32), 'bb'.repeat(32));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(p2.els['awc-go'].textContent, 'Swap and enter');
-  p2.els['awc-go'].onclick();
+  assert.equal(p2.asked[0].yes, 'Swap and enter');
+  p2.asked[0].onAnswer(true);
   assert.equal(await r2, true);
 });
 
