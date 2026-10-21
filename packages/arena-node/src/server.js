@@ -73,6 +73,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, P2P_TUNNEL_PATHS } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn } from './address-book.js';
+import { ownServices } from './own-services.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
@@ -5111,14 +5112,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'services');
           if (!a.ok) return answer(a.status || 401, a);
           const home = process.env.ARENA_HOME;
-          if (!home) return answer(501, { ok: false, why: 'this node was not installed by the Arena installer (it runs without arena.conf): its services are its operator\'s own' });
+          // EVERY SERVICE ON EVERY NODE (kanban #563, the owner 2026-10-21: "563 must contain all services even if it's custom installed"):
+          // what the seat runs and reaches, probed from here (own-services.js) - all a node set up by hand shows, and beside an installed
+          // node's services the ones the installer does not know (its address, the P2P tunnel, the announcements)
+          const own = await ownServices({ port: http.address() ? http.address().port : null, chainTip, guardian, guardianNext, gatewayPort: process.env.ARENA_GATEWAY_PORT || null,
+            publicEndpoint, p2pTunnels, addressBook, ownKey: toHex(round.pubkey) });
+          if (!home) return answer(200, { ok: true, manual: true, version: null, publicUrl: publicEndpoint || null, services: own, command: null, settings: null });
           try {
             const { overview } = await import('../../arena-installer/src/node-services.js');
             const v = await overview({ home });
+            const known = new Set(v.services.map((x) => x.id));
+            const extra = own.filter((x) => !known.has(x.id) && !(x.id === 'chain' && [...known].some((k) => /^bitcoind|^chain-bridge/.test(k))) && x.id !== 'node');
             return answer(200, { ok: true, version: v.version, instance: v.instance, port: v.port, publicUrl: v.publicUrl, roles: v.roles, settings: v.conf ? 'arena.conf' : v.legacyEnv ? 'node.env' : null,
-              services: v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })),
+              services: [...v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })), ...extra],
               command: v.instance ? `arenanode-${v.instance}` : 'arenanode' });
-          } catch (e) { return answer(500, { ok: false, why: `the services could not be read: ${e.message}` }); }
+          } catch (e) { return answer(200, { ok: true, version: null, publicUrl: publicEndpoint || null, services: own, command: null, settings: null, why: `the installer's services could not be read: ${e.message}` }); }
         }
         // ADD TO BOND (kanban #544): signed by the owner, { sats, post } - the plan of a second bond output beside the first (the amount,
         // the fees, the new total, the maturity), and with post: true the funding and bond transactions broadcast. The wallet is the
