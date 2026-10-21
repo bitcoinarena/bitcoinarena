@@ -38,6 +38,7 @@
   <button id="again" disabled>Run again</button>
   <p class="foot">Kanban #326, FEDERATION.md item 16: "a phone opens every one of the seven wss:// endpoints". Each answer is Fedimint's own <code>session_count</code> over its public WebSocket API.</p>
 </main>
+<script src="../site-react.js"></script>
 <script>
 (() => {
   const HOST = 'wss://seat.example.com';
@@ -47,7 +48,6 @@
   ];
   const TIMEOUT_MS = 20000;
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function ask(url) {
     return new Promise((done) => {
@@ -74,23 +74,17 @@
     const started = new Date();
     const conn = navigator.connection ? `${navigator.connection.effectiveType || ''}${navigator.connection.type ? ' / ' + navigator.connection.type : ''}` : 'not reported';
     $('meta').textContent = `${started.toISOString().replace('T', ' ').slice(0, 19)} UTC · connection: ${conn} · ${navigator.userAgent}`;
-    $('feds').innerHTML = FEDS.map((f, fi) => `<h2>${esc(f.name)} <span class="agree" id="agree-${fi}">${esc(f.id)}…</span></h2><table>${f.paths.map((p, pi) =>
-      `<tr><td class="path">${esc(HOST + p)}</td><td class="state wait" id="s-${fi}-${pi}">opening…</td></tr>`).join('')}</table>`).join('');
+    // drawn by React (kanban #564, the site's small pages: window.ArenaSite.guardians - GuardianCheck), again as each answer comes
+    const state = FEDS.map((f) => ({ name: f.name, id: f.id, paths: f.paths.map((p) => ({ url: HOST + p, r: null })) }));
+    const draw = () => window.ArenaSite.guardians($('feds'), { feds: state });
+    draw();
     const results = await Promise.all(FEDS.map((f, fi) => Promise.all(f.paths.map(async (p, pi) => {
       const r = await ask(HOST + p);
-      const cell = $(`s-${fi}-${pi}`);
-      cell.className = `state ${r.ok ? 'ok' : 'bad'}`;
-      cell.textContent = r.ok ? `${r.sessions} sessions · ${r.ms} ms` : `${r.why} · ${r.ms} ms`;
+      state[fi].paths[pi].r = r; draw();
       return r;
     }))));
     let answered = 0;
-    results.forEach((rs, fi) => {
-      const ok = rs.filter((r) => r.ok);
-      answered += ok.length;
-      const counts = ok.map((r) => r.sessions);
-      const spread = counts.length ? Math.max(...counts) - Math.min(...counts) : null;
-      $(`agree-${fi}`).textContent = `${FEDS[fi].id}… · ${ok.length} of 7 answer${counts.length ? ` · sessions ${Math.min(...counts)}${spread ? `–${Math.max(...counts)}` : ''}${spread <= 1 ? ', in agreement' : ', NOT in agreement'}` : ''}`;
-    });
+    results.forEach((rs) => { answered += rs.filter((r) => r.ok).length; });
     $('sum').textContent = `${answered} of 14 guardians answer from this device`;
     $('sum').className = `big ${answered === 14 ? 'ok' : 'bad'}`;
     $('again').disabled = false;
