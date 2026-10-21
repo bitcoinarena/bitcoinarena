@@ -7,7 +7,7 @@
 // page draws no step of its own (the owner 2026-10-21: "no fall backs").
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep } from './WizardSteps.jsx';
+import { RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep, StepBar, SetupRefused } from './WizardSteps.jsx';
 import { ChainStep, ReachStep, ServiceStep, FederationStep } from './SetupSteps.jsx';
 import { LightningStep, BondStep, DoneStep } from './FinishSteps.jsx';
 import css from './wizard.css';
@@ -39,5 +39,8 @@ export function show(step, sectionOf, props) {
 
 if (typeof document !== 'undefined') {
   const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
-  window.ArenaWizard = { mount, show, steps: Object.keys(STEPS) };
+  // the bar of steps along the top, and the page's one line when the installer cannot set up here
+  const draw = (element, node) => { if (!element._awRoot) { element.textContent = ''; element._awRoot = createRoot(element); } element._awRoot.render(node); };
+  window.ArenaWizard = { mount, show, steps: Object.keys(STEPS), bar: (element, props) => draw(element, <StepBar {...props} />),
+    refused: (element, props) => draw(element, <SetupRefused {...props} />) };
 }

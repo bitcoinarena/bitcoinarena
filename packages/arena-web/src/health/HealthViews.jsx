@@ -11,6 +11,9 @@ const pct = (x) => (typeof x === 'number' ? `${Math.round(x * 100)} %` : '-');
 export const Dot = ({ c }) => <span className={`dot ${c}`} />;
 
 /** [label, value, tone] as stat cards. */
+/** One line of words: { text, bad } - the page's reading state ("reading …", "read 21:40:12 UTC · 24 nodes asked"), red when it failed. */
+export const Line = ({ text, bad }) => (bad ? <span className="bad">{text}</span> : text);
+
 export function Facts({ items }) {
   return <div className="facts r">{items.map(([k, v, c]) => <div key={k} className="fact"><b className={c || ''}>{String(v)}</b><span>{k}</span></div>)}</div>;
 }

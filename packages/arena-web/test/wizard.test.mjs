@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep, onAtStart, OPT_IN_ROLES, appOnAtStart } from '../dist/test/wizard.mjs';
+import { RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep, onAtStart, OPT_IN_ROLES, appOnAtStart, StepBar, SetupRefused } from '../dist/test/wizard.mjs';
 
 const roleInfo = {
   verify: { title: 'Game / verify', does: 'replays and signs rounds', chips: ['🔒 bond', '🌐 https address'], needs: 'Replays each round it is seated on.', slice: 1 },
@@ -129,4 +129,11 @@ test('apps: Continue posts the apps that are on and moves on; none on cannot con
   const d = driven(AppsStep, { st: { appInfo, apps: [] }, post: async () => ({ ok: false, why: 'no app chess in this release' }), reload() {} });
   await d.save();
   assert.match(renderToStaticMarkup(d.render()), /class="msg bad"[^>]*>no app chess in this release/);
+});
+
+test('the steps along the top: done ticked, the current one marked; the page\'s one line when the installer cannot set up', () => {
+  const steps = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps']];
+  assert.equal(renderToStaticMarkup(React.createElement(StepBar, { steps, done: { chain: true }, now: 'roles' })),
+    '<li class="done">Bitcoin</li><li class="now">Roles</li><li class="">Apps</li>');
+  assert.equal(renderToStaticMarkup(React.createElement(SetupRefused, { why: 'no disk <here>' })), '<h1>Arena node setup</h1><p>no disk &lt;here&gt;</p>');
 });
