@@ -7,6 +7,7 @@ import { createRoot } from 'react-dom/client';
 import { RolesPanel } from './RolesPanel.jsx';
 import { ServicesPanel } from './ServicesPanel.jsx';
 import { AddressPanel } from './AddressPanel.jsx';
+import { BondPanel } from './BondPanel.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -23,4 +24,9 @@ export function mountAddress(element, { api, initial } = {}) {
   root.render(<AddressPanel api={api} initial={initial} />);
   return root;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress };
+export function mountBond(element, { api, initial } = {}) {
+  const root = createRoot(element);
+  root.render(<BondPanel api={api} initial={initial} />);
+  return root;
+}
+if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond };
