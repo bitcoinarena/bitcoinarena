@@ -11,6 +11,7 @@ import { flushSync } from 'react-dom';
 import { GameTiles } from './GameTiles.jsx';
 import { SeasonRows } from './SeasonRows.jsx';
 import { ZapCard } from './ZapCard.jsx';
+import { ChipList } from './ChipList.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -33,3 +34,9 @@ export function drawZap(host, props) {
   flushSync(() => host._root.render(<ZapCard {...props} />));
 }
 if (typeof window !== 'undefined') window.ArenaZap = { draw: drawZap };
+// A TILE'S CHIP LIST (the page's ARENA_CHIP_LIST hands it its blocks): drawn into the popup's body, one root
+export function drawChips(body, props) {
+  if (!body._root) body._root = createRoot(body);
+  flushSync(() => body._root.render(<ChipList {...props} />));
+}
+if (typeof window !== 'undefined') window.ArenaChips = { draw: drawChips };

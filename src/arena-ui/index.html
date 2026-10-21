@@ -5535,69 +5535,75 @@
         return (j.rounds || []).filter((x) => x.game && ids.has(String(x.game.id).toLowerCase()) && Date.parse(x.endTime) > now)
           .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)).map((x) => Object.assign({ nowMs: now }, x));
       }
-      window.ARENA_CHIP_LIST = async function (g, kind) {
+      // THE LIST AS BLOCKS (kanban #564): notes, the legend and rows - drawn by the page's bundle (window.ArenaChips, a React class
+      // component) when it has loaded, else by drawBlocks below; the same blocks either way
+      const drawBlocks = (blocks) => {
+        if (window.ArenaChips && window.ArenaChips.draw) { window.ArenaChips.draw(body, { blocks, icons: ROLE_ICONS, words: ROLE_WORDS }); return; }
         body.textContent = '';
+        for (const b of blocks) {
+          if (b.note !== undefined) { body.append(note(b.note)); continue; }
+          if (b.legend) { body.append(legend()); continue; }
+          const x = b.row;
+          let right = null;
+          if (x.right) { if (x.right.href) { right = el('a', null, x.right.text); right.href = x.right.href; right.target = '_blank'; right.rel = 'noopener'; } else right = el('span', 'tag' + (x.right.live ? ' live' : ''), x.right.text); }
+          const r = row(x.t, x.s, right);
+          if (x.who && x.who.length) { const w = el('div', 'who'); for (const y of x.who) { const sp = el('span'); sp.title = ROLE_WORDS[y.k]; sp.append(icon(y.k), y.text); w.append(sp); } r.querySelector('.main').append(w); }
+          if (x.roles) { const ic = el('span', 'roles'); for (const y of x.roles) { const sp = el('span', 'role' + (y.on ? ' on' : '')); sp.append(icon(y.k)); sp.title = y.title; ic.append(sp); } if (right) r.insertBefore(ic, right); else r.append(ic); }
+          body.append(r);
+        }
+      };
+      window.ARENA_CHIP_LIST = async function (g, kind) {
         const name = g.title || g.name;
         if (kind === 'nodes') {
           const nodes = g.nodes || [];
-          title.textContent = nodes.length + ' node' + (nodes.length === 1 ? '' : 's') + ' \u00b7 ' + name;
-          body.append(note('The nodes that answered for this game. Each one runs its own public dashboard.'), legend());
+          title.textContent = nodes.length + ' node' + (nodes.length === 1 ? '' : 's') + ' · ' + name;
+          const head = [{ note: 'The nodes that answered for this game. Each one runs its own public dashboard.' }, { legend: true }];
+          drawBlocks(head);
           pop.classList.add('show');
           const roles = await rolesOf(g);
-          if (!roles.known) body.append(note('No node said which roles the nodes have just now.'));
+          const blocks = head.slice();
+          if (!roles.known) blocks.push({ note: 'No node said which roles the nodes have just now.' });
           nodes.forEach((n, i) => {
             const base = String(n).replace(/\/+$/, '');
-            const a = el('a', null, 'Dashboard \u2197'); a.href = base + '/dashboard'; a.target = '_blank'; a.rel = 'noopener';
             const v = roles.byRoute.get(routeOf(base));
             // the node's id only, not its address (2026-10-18: "Don't display the address of the node, just the id is enough")
-            const r = row('Node ' + (i + 1), v ? v.key.slice(0, 8) : 'id not read yet', a);
-            if (v) {
-              const ic = el('span', 'roles');
-              for (const k of ROLE_KEYS) {
-                const b = el('span', 'role' + (v[k] ? ' on' : '')); b.append(icon(k));
-                b.title = (v[k] ? '' : 'not ') + ROLE_WORDS[k] + (k === 'custody' && v.custody ? ': guardian of ' + [...v.feds].map((f) => f.slice(0, 8)).join(', ') : '')
-                  + (k === 'liquidity' && v.liquidity ? `: ${v.liquidityChannels} channel${v.liquidityChannels === 1 ? '' : 's'} given to new nodes` : '');
-                ic.append(b);
-              }
-              r.insertBefore(ic, a);
-            }
-            body.append(r);
+            blocks.push({ row: { t: 'Node ' + (i + 1), s: v ? v.key.slice(0, 8) : 'id not read yet', right: { href: base + '/dashboard', text: 'Dashboard ↗' },
+              roles: v ? ROLE_KEYS.map((k) => ({ k, on: !!v[k], title: (v[k] ? '' : 'not ') + ROLE_WORDS[k] + (k === 'custody' && v.custody ? ': guardian of ' + [...v.feds].map((f) => f.slice(0, 8)).join(', ') : '')
+                + (k === 'liquidity' && v.liquidity ? `: ${v.liquidityChannels} channel${v.liquidityChannels === 1 ? '' : 's'} given to new nodes` : '') })) : null } });
           });
+          drawBlocks(blocks);
           return;
         }
-        title.textContent = (kind === 'players' ? 'Players' : 'Open rounds') + ' \u00b7 ' + name;
-        body.append(note('Asking the nodes \u2026'));
+        title.textContent = (kind === 'players' ? 'Players' : 'Open rounds') + ' · ' + name;
+        drawBlocks([{ note: 'Asking the nodes …' }]);
         pop.classList.add('show');
         let rounds, roles = null;
-        try { [rounds, roles] = await Promise.all([roundsOf(g), kind === 'rounds' ? rolesOf(g) : null]); } catch { body.textContent = ''; body.append(note('No node answered just now. Try again in a moment.')); return; }
+        try { [rounds, roles] = await Promise.all([roundsOf(g), kind === 'rounds' ? rolesOf(g) : null]); } catch { drawBlocks([{ note: 'No node answered just now. Try again in a moment.' }]); return; }
         // a node by its number in the node list (the one the nodes chip opens), else its key's first 4 bytes
         const numberOf = new Map();
         if (roles) (g.nodes || []).forEach((n, i) => { const v = roles.byRoute.get(routeOf(n)); if (v) numberOf.set(v.key.toLowerCase(), i + 1); });
         const nodeName = (k) => numberOf.get(String(k).toLowerCase()) || String(k).slice(0, 8);
         const assigned = (r) => {
-          const c = r.committee || {};
-          const w = el('div', 'who');
-          const put = (k, keys) => { if (!keys.length) return; const x = el('span'); x.title = ROLE_WORDS[k]; x.append(icon(k), keys.map(nodeName).sort((a, b) => (typeof a === 'number' ? (typeof b === 'number' ? a - b : -1) : typeof b === 'number' ? 1 : String(a) < String(b) ? -1 : 1)).join(' ')); w.append(x); };
+          const c = r.committee || {}, w = [];
+          const put = (k, keys) => { if (keys.length) w.push({ k, text: keys.map(nodeName).sort((a, b) => (typeof a === 'number' ? (typeof b === 'number' ? a - b : -1) : typeof b === 'number' ? 1 : String(a) < String(b) ? -1 : 1)).join(' ') }); };
           put('verify', Array.isArray(c.game) ? c.game : []);
           put('settlement', Array.isArray(c.settlement) ? c.settlement : []);
           if (roles && r.federation) put('custody', [...roles.byKey.values()].filter((v) => v.feds.has(String(r.federation).toLowerCase())).map((v) => v.key));
-          return w.childNodes.length ? w : null;
+          return w;
         };
-        body.textContent = '';
+        const blocks = [];
         if (kind === 'rounds') {
           const shown = rounds.slice(0, 100);
-          body.append(legend());
-          body.append(note(rounds.length ? rounds.length + ' round' + (rounds.length === 1 ? '' : 's') + ' running or starting in the next 15 min' + (rounds.length > shown.length ? ' (the first ' + shown.length + ' shown)' : '') + '. Times are yours.' : 'No round is running or starting in the next 15 min.'));
+          blocks.push({ legend: true });
+          blocks.push({ note: rounds.length ? rounds.length + ' round' + (rounds.length === 1 ? '' : 's') + ' running or starting in the next 15 min' + (rounds.length > shown.length ? ' (the first ' + shown.length + ' shown)' : '') + '. Times are yours.' : 'No round is running or starting in the next 15 min.' });
           for (const r of shown) {
             const start = Date.parse(r.startTime), end = Date.parse(r.endTime);
             const live = start <= r.nowMs;
             const players = Number(r.joined || 0);
-            const t = el('span', 'tag' + (live ? ' live' : ''), live ? 'running' : 'open');
-            const rr = row('Round ' + String(r.id).slice(0, 8) + ' \u00b7 ' + span(end - start) + ' \u00b7 ' + sats(r.stakeMsat),
-              when(start) + ' \u2192 ' + when(end) + (players ? ' \u00b7 ' + players + ' player' + (players === 1 ? '' : 's') : ''), t);
-            const who = assigned(r); if (who) rr.querySelector('.main').append(who);
-            body.append(rr);
+            blocks.push({ row: { t: 'Round ' + String(r.id).slice(0, 8) + ' · ' + span(end - start) + ' · ' + sats(r.stakeMsat),
+              s: when(start) + ' → ' + when(end) + (players ? ' · ' + players + ' player' + (players === 1 ? '' : 's') : ''), right: { text: live ? 'running' : 'open', live }, who: assigned(r) } });
           }
+          drawBlocks(blocks);
           return;
         }
         // PLAYERS: every name record a round holds, checked before it is drawn; a player who posted none is counted, not named
@@ -5607,12 +5613,13 @@
           const names = ARENACLIENT.checkedNames ? ARENACLIENT.checkedNames(r.names || [], String(r.id), verify) : [];
           for (const x of names) {
             named++;
-            body.append(row(x.name, 'round ' + String(r.id).slice(0, 8) + ' \u00b7 player ' + x.player.slice(0, 8), el('span', 'tag', x.chosen ? 'chosen name' : 'generated name')));
+            blocks.push({ row: { t: x.name, s: 'round ' + String(r.id).slice(0, 8) + ' · player ' + x.player.slice(0, 8), right: { text: x.chosen ? 'chosen name' : 'generated name' } } });
           }
           unnamed += Math.max(0, Number(r.joined || 0) - names.length);
         }
-        if (unnamed) body.append(note(unnamed + ' more player' + (unnamed === 1 ? '' : 's') + ' joined without posting a name yet.'));
-        if (!named && !unnamed) body.append(note('Nobody has joined a round of this game that is running or starting in the next 15 min.'));
+        if (unnamed) blocks.push({ note: unnamed + ' more player' + (unnamed === 1 ? '' : 's') + ' joined without posting a name yet.' });
+        if (!named && !unnamed) blocks.push({ note: 'Nobody has joined a round of this game that is running or starting in the next 15 min.' });
+        drawBlocks(blocks);
       };
     })();
     // THE SEASON BOARD (docs/PLATFORM-RESEARCH.md item 1): one game's players over the last 7, 30 or 90 days -
