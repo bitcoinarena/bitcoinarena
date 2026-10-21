@@ -89,8 +89,9 @@ test('debug on: every federation with its capacity, and Deposit here opens the d
 });
 
 test('the page wires it: the toggle in Advanced settings, and openMoney\'s deposit into a fixed federation', () => {
-  assert.match(HTML, /<input type="checkbox" id="arena-debug-feds">/);
-  assert.match(HTML, /setItem\('arena\.debugFederations', dbg\.checked \? '1' : '0'\)/);
+  // the switch is React's (kanban #564, arena-web SettingsCards DebugCard); the page keeps the choice
+  assert.match(readFileSync(new URL('../../arena-web/src/arena/SettingsCards.jsx', import.meta.url), 'utf8'), /<input type="checkbox" id="arena-debug-feds" checked=\{this\.state\.on\}/);
+  assert.match(HTML, /setItem\('arena\.debugFederations', v \? '1' : '0'\)/);
   assert.match(HTML, /if \(which === 'deposit' && opts\.federation && opts\.federation\.invite\) \{/);
   assert.match(HTML, /ARENACLIENT\.walletDepositOffer\(\{ federationId, invite: fixed\.invite,/);
 });
