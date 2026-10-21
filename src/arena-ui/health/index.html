@@ -10,7 +10,9 @@
      Nothing new to trust and nothing kept: daily.json names the seats to start from, one seat's census (/roles) names every node,
      and each node is asked its own public doors - /owner/version, /owner/bond, /dashboard.json (its LND), /liquidity-claim,
      /gateway-claim. The federations, gateway seats, liquidity seatings, fees, reserves and games come from the seats. Six requests
-     at a time, every 60 s; a node that does not answer in 10 s is red. -->
+     at a time, every 60 s; a node that does not answer in 10 s is red.
+     THE MODERN PAGE (kanban #564): the network's facts, the nodes and the capacity drawn by React (./react.js, packages/arena-web/src/
+     health) when it is there; this page still reads everything itself, and draws them itself when it is not. -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -34,6 +36,23 @@
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
   button { background: #1e2833; color: var(--text); border: 1px solid #3a4a5c; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
   a { color: var(--accent); }
+  /* the React sections */
+  .facts.r { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .facts.r .fact { border-radius: 12px; padding: 12px 14px; background: var(--bg); display: flex; flex-direction: column-reverse; gap: 4px; }
+  .facts.r .fact span { text-transform: uppercase; letter-spacing: .06em; font-weight: 700; font-size: 10.5px; }
+  .facts.r .fact b { font-size: 19px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  button.fold { font-size: 12px; }
+  .cap { display: flex; flex-direction: column; gap: 10px; }
+  .capcard { border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; padding: 10px 12px; background: var(--bg); }
+  .capcard.ok { border-left-color: var(--ok); } .capcard.warn { border-left-color: var(--warn); } .capcard.bad { border-left-color: var(--bad); }
+  .capcard p { margin: 6px 0 0; }
+  .caphead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; } .caphead .grow { flex: 1; }
+  .pill { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); } .pill.muted { color: var(--muted); }
+  .loadbar { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin: 8px 70px 0 0; }
+  .loadbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--ok); } .loadbar i.warn { background: var(--warn); } .loadbar i.bad { background: var(--bad); }
+  .loadbar span { position: absolute; right: -70px; top: -5px; width: 62px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .capnet { padding: 6px 2px 0; }
 </style>
 </head>
 <body>
@@ -62,6 +81,8 @@
   const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
   const satMsat = (v) => (v == null ? '-' : Math.floor(Number(v) / 1000).toLocaleString('en-US'));
   const dot = (c) => `<span class="dot ${c}"></span>`;
+  // THE REACT VIEWS (./react.js), when they are there: loaded before the first read
+  let H = null;
   // FEDERATIONS BY NUMBER (kanban #557, the owner 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
   // it belongs, federation 1,2,3 or more"): 1, 2, 3 ... by the oldest record first, then by id - the same number on every card of the page
   let FED_NO = new Map();
@@ -187,10 +208,17 @@
         return [['Last settlement (any node)', h < 1 ? Math.round(h * 60) + ' min ago' : Math.round(h) + ' h ago', h > 26 ? 'warn' : 'ok']]; })(),
       ['Funding proposals', funding ? String(funding.body.proposals.length) + (funding.body.leaderboards.length ? ' · ' + funding.body.leaderboards.length + ' leaderboard payouts' : '') : '-', ''],
     ];
+    if (H) return H.draw($('network'), 'facts', { items: facts });
     $('network').innerHTML = facts.map(([k, v, c]) => `<div class="fact"><b class="${c}">${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
   }
 
+  let nodesHost = null;
   function paintNodes(nodes, tip) {
+    if (H) {
+      nodesHost = nodesHost || $('nodes').parentElement;
+      const served = Object.fromEntries(SERVED);
+      return H.draw(nodesHost, 'nodes', { rows: nodes.map((n) => H.nodeView(n, { tip, served, fedNo: fedNoOf, active: activeOf(n) })) });
+    }
     const act = nodes.filter(activeOf), idle = nodes.filter((n) => !activeOf(n));
     const rowsOf = (list, from) => list.map((n, k) => {
       const i = from + k;
@@ -225,6 +253,7 @@
   // network's band (the lowest-load OPEN federation's: new deposits go there) with the installer's minimum bond
   function paintCapacity(cap, feds = []) {
     const el = $('capacity');
+    if (H) { if (cap && cap.body) window.ARENA_HEALTH_CAPACITY = cap.body; return H.draw(el, 'capacity', { view: H.capacityView(cap && cap.body, feds, fedNoOf) }); }
     if (!cap || !cap.body || !cap.body.federations) { el.innerHTML = '<div class="muted">no seat answers /capacity yet</div>'; return; }
     const pct = (x) => (typeof x === 'number' ? Math.round(x * 100) + ' %' : '-');
     const word = { CALM: ['ok', 'room left'], PRESSURE: ['warn', 'filling up'], CRITICAL: ['bad', 'deposits close soon'], FULL: ['bad', 'deposits closed'], NOT_OPEN: ['muted', 'takes no deposits'] };
@@ -448,7 +477,10 @@
   }
 
   $('again').onclick = read;
-  read(); setInterval(read, 60000);
+  (async () => {
+    try { await import('./react.js'); H = window.ArenaHealth || null; } catch { H = null; }
+    read(); setInterval(read, 60000);
+  })();
 })();
 </script>
 </body>

@@ -66,7 +66,7 @@ test('the Capacity card: each federation\'s band in words, who is below B* and b
   const el = { innerHTML: '' }; const window = {};
   const esc = (x) => String(x == null ? '' : x); const short = (h, n = 8) => String(h).slice(0, n);
   const sat = (v) => Number(v).toLocaleString('en-US'); const dot = (c) => `[${c}]`;
-  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'fedNoOf', src + '\nreturn paintCapacity;')(() => el, esc, short, sat, dot, window, () => null)({ body: view });
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'fedNoOf', 'H', src + '\nreturn paintCapacity;')(() => el, esc, short, sat, dot, window, () => null, null)({ body: view });
   assert.match(el.innerHTML, /\[warn\]<b>PRESSURE<\/b> · filling up · OPEN - Federation aaaaaaaa holds 87 % of what its bonds cover\. Deposits stop at 100 %\. 7 of 7 guardians below the bond B\* = 86,667 sat - increase your bond by 36,667 sat \(Add to bond\)\. 1 gateway\(s\) below the peg-in P\* = 50,000 sat\./);
   assert.match(el.innerHTML, /\[bad\]<b>FULL<\/b> · deposits closed · OPEN - Deposits into bbbbbbbb are closed until bonds rise or a new federation is founded\./);
   // kanban #553: a federation that takes no deposits (draining into its successor) has no band and no plea, its status and successor said
@@ -74,12 +74,12 @@ test('the Capacity card: each federation\'s band in words, who is below B* and b
     guardianBonds: [1, 2, 3].map((i) => ({ node: String(i), bondSats: 50000n })), gateways: [] }] });
   assert.deepEqual([drain.federations[0].band, drain.federations[0].guardiansBelowTarget.length], ['NOT_OPEN', 0]);
   const el2 = { innerHTML: '' };
-  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'fedNoOf', src + '\nreturn paintCapacity;')(() => el2, esc, short, sat, dot, window, (f) => ({ ['dd'.repeat(32)]: 2, ['ee'.repeat(32)]: 3 })[f] || null)({ body: drain }, [{ federation: 'dd'.repeat(32), successor: 'ee'.repeat(32) }]);
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'fedNoOf', 'H', src + '\nreturn paintCapacity;')(() => el2, esc, short, sat, dot, window, (f) => ({ ['dd'.repeat(32)]: 2, ['ee'.repeat(32)]: 3 })[f] || null, null)({ body: drain }, [{ federation: 'dd'.repeat(32), successor: 'ee'.repeat(32) }]);
   assert.match(el2.innerHTML, /\[muted\]<b>CRITICAL<\/b> · takes no deposits - Federation 2 is draining into Federation 3: new deposits and rounds go there\./);
   assert.doesNotMatch(el2.innerHTML, /increase your bond/);
   assert.match(el.innerHTML, /\[ok\]<b>CALM<\/b> · room left · OPEN - Federation cccccccc: 7 % of what its bonds cover\./);
   assert.match(el.innerHTML, /<b>Network: CALM<\/b> - the lowest-load OPEN federation cccccccc at 7 % · new installs bond at least 180,000 sat/);
   const none = { innerHTML: '' };
-  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', src + '\nreturn paintCapacity;')(() => none, esc, short, sat, dot, {})(null);
+  new Function('$', 'esc', 'short', 'sat', 'dot', 'window', 'H', src + '\nreturn paintCapacity;')(() => none, esc, short, sat, dot, {}, null)(null);
   assert.match(none.innerHTML, /no seat answers \/capacity yet/);
 });
