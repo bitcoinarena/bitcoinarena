@@ -130,7 +130,7 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
  * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records).
  */
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
-  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
+  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
   const LOOKBACK = 288;                      // how far back a seat's first tick reads the run of free operators
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
@@ -172,6 +172,17 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     }
     return null;
   }
+  // THE DRAWN NODES' OWN SEATS, at their census adverts' endpoints: codes are read there, and posted there (kanban #495, measured
+  // 2026-10-21: the seven new seats hold no round, so peers() never named one another; and the three installer nodes' networkSeats()
+  // named none of the seven, so their codes reached nobody who could seat them)
+  const drawnRoots = () => {
+    if (!current) return [];
+    const st = current.founding.state ? current.founding.state() : {};
+    const keys = new Set([...(st.seated || []).map((x) => String(x.node || x).toLowerCase()), ...(st.alternates || []).map((x) => String(x).toLowerCase())]);
+    keys.delete(toHex(ownKey));
+    return (current.entries || []).filter((e) => e && e.advert && e.advert.endpoint && keys.has(toHex(e.pubkey)))
+      .map((e) => String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+  };
   async function tick() {
     const h0 = await tip();
     const held = await history(h0);
@@ -215,13 +226,6 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     // endpoints (kanban #495, measured 2026-10-21 on the 10-node cohort 8fbeab5e at 157,174: the seven new seats hold no round, so
     // peers() - the configured seats and the newest held round's census - never named one another; each seat held only its own code
     // and every draw went void, "more no-shows than alternates")
-    const drawnRoots = () => {
-      const st = current.founding.state ? current.founding.state() : {};
-      const keys = new Set([...(st.seated || []).map((x) => String(x.node || x).toLowerCase()), ...(st.alternates || []).map((x) => String(x).toLowerCase())]);
-      keys.delete(toHex(ownKey));
-      return (current.entries || []).filter((e) => e && e.advert && e.advert.endpoint && keys.has(toHex(e.pubkey)))
-        .map((e) => String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
-    };
     if (fetchJson) for (const root of [...new Set([...peers(), ...drawnRoots()])]) {
       try {
         const s = await fetchJson(`${root}/founding`);
@@ -229,6 +233,14 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       } catch { /* the next tick */ }
     }
     const st = await current.founding.advance(h);
+    // THIS SEAT'S OWN CODE, sent to every drawn node's seat on each tick until the federation exists: one lost post, or a node
+    // whose advert names a tunnel it no longer has, must not make it a no-show at seats that cannot read it back. Not only until
+    // this seat starts its key generation - it starts once it holds every code, which may be before the others hold its own
+    const mine = st && st.federation !== true && !st.void ? (st.codes || []).find((c) => c.node === toHex(ownKey)) : null;
+    if (postTo && mine) {
+      const m = { id: current.founding.id, node: mine.node, code: mine.code, signature: mine.signature };
+      await Promise.all(drawnRoots().map((root) => Promise.resolve().then(() => postTo(root, m)).catch(() => null)));
+    }
     if (st && st.void) voided.add(current.key);   // the next tick draws on the next trigger
     return { ok: true, trigger: current.trigger, state: st };
   }
