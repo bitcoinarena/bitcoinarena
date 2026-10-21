@@ -496,7 +496,7 @@ async function servicesPanel() {
       <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe && s.running !== null ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>`;
   }).join('')}
     <p class="${bad ? 'err' : 'ok'}">${bad ? `${bad} service(s) need attention.` : 'All services run.'}</p>
-    <p class="sub">On the node's machine: <code>${esc(r.command)} status</code>, <code>${esc(r.command)} doctor</code> (each problem with its fix), <code>${esc(r.command)} restart &lt;service&gt;</code>. Settings: ${esc(r.settings || '?')} (<code>${esc(r.command)} config</code>).</p>
+    ${r.command ? `<p class="sub">On the node's machine: <code>${esc(r.command)} status</code>, <code>${esc(r.command)} doctor</code> (each problem with its fix), <code>${esc(r.command)} restart &lt;service&gt;</code>. Settings: ${esc(r.settings || '?')} (<code>${esc(r.command)} config</code>).</p>` : '<p class="sub">Set up by hand: start and stop these programs on the node\'s machine.</p>'}
     <p><button id="svc-again">Check again</button></p>`;
   $('svc-again').onclick = () => { el.innerHTML = '<p class="sub">reading this node\'s services…</p>'; servicesPanel(); };
   need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services');
