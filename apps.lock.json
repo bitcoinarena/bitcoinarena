@@ -3,7 +3,7 @@
   "apps": {
     "arena-app-next-block": {
       "repo": "a tester/arena-app-next-block",
-      "commit": "d2e8b1ca29eb50b5eb58804b2eecff11c2ff9430",
+      "commit": "20ad4e45b8277b2b4bf0d08e18733c579ddc8e1e",
       "paths": ["/unity/Assets/Plugins/", "/unity/Assets/Scripts/", "/unity/Assets/Tests/", "/unity/ProjectSettings/", "/unity/Assets/Models/bitcoin_miner_megastructure.glb", "/unity/Assets/Art/Resources/"]
     }
   }
