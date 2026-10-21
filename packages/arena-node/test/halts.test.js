@@ -91,6 +91,13 @@ test('a restart keeps the observations and the clock: a seat restarted mid-way s
   // the first format (a list of observations alone) still reads
   disk = JSON.stringify(JSON.parse(disk).observations);
   assert.equal(seat().list(fid).length, 1);
+  // a session-0 view stored before `heard` was kept names its peers' session too (the seats rolled 23:49Z stored one)
+  disk = JSON.stringify({ observations: world.posted.slice(0, 1).map((o) => o), seen: { [fid]: { session: 0, firstHeight: 345, at: 1 } } });
+  const old = createHalts({ records, censusSeats: () => seats.map((x) => x.pub), clocks, verify, sign: (h) => schnorr.sign(h, seats[1].secret),
+    ownKey: seats[1].pub, height: async () => world.tip, ask: async () => { throw new Error('down'); }, post: async () => {},
+    load: () => JSON.parse(disk), save: () => {} });
+  world.tip = 360;
+  assert.deepEqual((await old.observe()).map((r) => [r.session, r.firstHeight]), [[41, 345]]);
 });
 
 // A SEAT THAT NEVER HEARD A GUARDIAN (kanban #326, measured 2026-10-21 23:5xZ): T2's guardians exit once consensus times out, so a
