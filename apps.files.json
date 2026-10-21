@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "20ad4e45b8277b2b4bf0d08e18733c579ddc8e1e",
+      "commit": "52887fbea69338db3b10e4a82af2524a74a34dc1",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "a6de2eb419b1770e82208aa011b9def24ceb6caa91689a7b7ea77f0de6795d4b",
@@ -133,8 +133,9 @@
         "page/ghost-field.js": "4d1e41391e8daed504cd02a0bf9735d66116918ea793703e29b8a05ddb4af4e2",
         "page/ghost-page.js": "45b2ec62cfe8c5642d8d4ac29d0e9f2caf7d73620eef0a891c6eef54ffd51553",
         "page/loading-page.js": "b989205712e0454b304d31a307f00de7c8584f3d5ff54df76b375acbe6bbcd18",
+        "page/parts-page.js": "08ed6982cccfd4ea1d400f97b297fdc15157d6d5a977991d62224925c629b52d",
         "page/unity-page.css": "db9937766aeeafd15a557ae2b6fc736daafabe660c0b43fe5038beb630087976",
-        "page/unity-page.js": "b90e48ee147c63ecb11ab0f8bfaf9ba7c87099417c3129a663e11335849eb8f8",
+        "page/unity-page.js": "7478688788921985c5a56f62419be0aec45e5f6cd0694dadea01da9109e1ddcc",
         "plugin/clients.json": "98b9a61ed32879bbe2b3405e9cac981d6d09f85e46db627962b1aeb788fec9fc",
         "plugin/info.js": "b4f1fdf329c5523c2a8bceee3208e7245a5d0ce8b9e8016237b27b0a5f556fdf",
         "plugin/known-v3.js": "68851327f3721d78ee340868e3d6cc0ada9c40f0031594150580553148dd65da",
@@ -183,6 +184,7 @@
         "test-vectors/straight.json": "4da2a6ea0d965e395e79b746d0cbb111a631ebf743b07d6cbcff0a1fb16992a1",
         "tools/archive-replay-cores.mjs": "73015d05a01279a4c5a45507e114a0cb8dd69259b6858bc50e5e9648e8c303bf",
         "tools/arrival-card-runs.mjs": "66f83a72403d5a22003194dc72afa588d0213221f116a020b7882e3ae46707d6",
+        "tools/build-page-view.mjs": "ddcf11a16c1d409da98312733a8a770f8602affa60224096cfc082d2a118b8b3",
         "tools/bundle-ghost-page.mjs": "071962560dccc59b4775eeefdea59f46f8f0f2daf0913eb799489bf064170833",
         "tools/bundle-replay.js": "a5e381ecf7328e4ecf0634273f7e52f5c67dac8feccb90ccdbfc0531a44e8eab",
         "tools/bundle.js": "a831bd103376cae8c69751bf029a640b08bb36d9c26d92754f910cacbe7432f5",
@@ -217,7 +219,9 @@
         "tools/run-versions.sh": "d5b76c95cdfc1d850a847d762c343df06cae659adb79c6059e9be2b998b1ea43",
         "tools/sign-manifest-v3.mjs": "0900c427d1a7124373f3f69cc396be96d16dd92e1c5fa67a1d2c2b6f9b2e76b4",
         "tools/sign-manifest-v4.mjs": "b3f615290d756789604386205d5aeb402e49de186daefa25d854725c50cbbb68",
-        "tools/sign-manifest.mjs": "c18e097a025ac8c89fb9065d56be8779f931ea543955d3f9806e48604db05e55"
+        "tools/sign-manifest.mjs": "c18e097a025ac8c89fb9065d56be8779f931ea543955d3f9806e48604db05e55",
+        "view/NextBlockParts.jsx": "38aa5c1bba6338f6f7765cad04f2a5aaa7a83ac2eb1894255cf33f03e0e08e29",
+        "view/main.jsx": "c7dbcd78a7908470308967d8c72c09c9cf3a7e31015d406c853a3e75a3a07a01"
       },
       "exec": [
         "tools/run-arch.sh",

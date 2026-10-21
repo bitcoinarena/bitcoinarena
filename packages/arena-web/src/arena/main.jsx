@@ -35,6 +35,8 @@ export function drawTiles(list, props) {
   return root;
 }
 if (typeof window !== 'undefined') window.ArenaGames = { drawTiles };
+// THE PAGE'S ONE REACT, for the apps' page parts (kanban #564: Tick Tock's parts-page.js draws with it, carrying no React of its own)
+if (typeof window !== 'undefined') window.ArenaReact = { React, createRoot };
 // THE SEASON BOARD'S ROWS (the page's seasonBoard hands them over): drawn at once, so the page can watch the new rows right after
 export function drawRows(board, props) {
   if (!board._root) board._root = createRoot(board);

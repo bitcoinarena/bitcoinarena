@@ -13,9 +13,10 @@ const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 // the benchmark - its switch, its Settings card and handlers, the test itself - is Tick Tock's page part (kanban #521)
 const UNITY = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
 const HANDLER = (() => {
-  const head = "    document.getElementById('arena-bench-go').addEventListener('click', () => {\n";
+  // the card's Run, handed to React's BenchCard (kanban #564)
+  const head = "        onRun: () => {\n";
   const at = UNITY.indexOf(head); assert.ok(at > 0, 'unity-page.js has no Benchmark handler');
-  return UNITY.slice(at + head.length, UNITY.indexOf('\n    });\n', at));
+  return UNITY.slice(at + head.length, UNITY.indexOf('\n        } });\n', at));
 })();
 const click = (window) => {
   const panel = { style: { display: '' } };
@@ -26,10 +27,14 @@ const click = (window) => {
 test('Settings has a Benchmark card with its button, inside the settings sheet', () => {
   const sheet = PAGE.slice(PAGE.indexOf('<div id="arena-settings"'), PAGE.indexOf('SETTINGS OPENS ON THE FIRST CLICK'));
   assert.match(sheet, /<section class="settings-card" id="arena-set-logs">/, 'the card goes in after the client logs');
-  const card = UNITY.slice(UNITY.indexOf("document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', "), UNITY.indexOf('// the benchmark\'s card'));
-  assert.match(card, /<section class="settings-card" id="arena-set-bench">\s*<h3>Benchmark<\/h3>/);
-  assert.match(card, /<input type="checkbox" id="arena-bench-on"> On - off by default/);
-  assert.match(card, /<button id="arena-bench-go" type="button" disabled>Run the benchmark<\/button>/, 'disabled as the page loads');
+  // the card is Tick Tock's React BenchCard (packages/nextblock/view, kanban #564), drawn into a host after the logs' card
+  assert.match(UNITY, /NB_BENCH = nbHost\('arena-set-logs', 'after'\)/);
+  const VIEW = readFileSync(new URL('../../nextblock/view/NextBlockParts.jsx', import.meta.url), 'utf8');
+  const card = VIEW.slice(VIEW.indexOf('export class BenchCard'), VIEW.indexOf('const SECURING'));
+  assert.match(card, /<section className="settings-card" id="arena-set-bench">\s*<h3>Benchmark<\/h3>/);
+  assert.match(card, /<input type="checkbox" id="arena-bench-on" checked=\{!!on\} onChange=\{\(e\) => onToggle\(e\.target\.checked\)\} \/> On - off by default/);
+  assert.match(card, /<button id="arena-bench-go" type="button" disabled=\{!on\} onClick=\{onRun\}>Run the benchmark<\/button>/, 'disabled while off');
+  assert.match(UNITY, /on: window\.ARENA_BENCH_ON\(\),/, 'drawn with the switch as this browser keeps it');
 });
 
 test('the switch: off with nothing kept, on only with "1" kept; a blocked store is off', () => {

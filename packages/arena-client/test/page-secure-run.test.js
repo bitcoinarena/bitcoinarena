@@ -13,7 +13,8 @@ function page(answers) {
   const els = new Map();
   const document = { getElementById: (id) => els.get(id) || null, createElement: () => ({ style: {} }), body: { appendChild: (e) => els.set(e.id, e) } };
   const asked = [];
-  const window = { unityInstance: { Module: { blwpRunNet: { client: { nextTick: 4920 } } } } };
+  // the line is drawn by React (Tick Tock's Securing, kanban #564): what it was handed is kept on its host
+  const window = { unityInstance: { Module: { blwpRunNet: { client: { nextTick: 4920 } } } }, ArenaNextBlock: { draw: (el, kind, props) => { el.drawn = { kind, ...props }; } } };
   const ARENACLIENT = { fromHex: (h) => h, secureTranscript: async (o) => { asked.push(o); return answers[Math.min(asked.length - 1, answers.length - 1)]; } };
   new Function('window', 'document', 'ARENACLIENT', 'setTimeout', body)(window, document, ARENACLIENT, (f) => { Promise.resolve().then(f); return 0; });
   return { window, els, asked };
@@ -24,7 +25,8 @@ test('a DELIVERED run: asked until two nodes hold all of it, then "safe"', async
   const p = page([{ safe: false, holders: ['https://n1'], why: '1 of the 2' }, { safe: false, holders: ['https://n1'] }, { safe: true, holders: ['https://n1', 'https://n2'] }]);
   const got = await p.window.ARENA_SECURE_RUN('DELIVERED', run, { everyMs: 0 });
   assert.deepEqual([got.safe, p.asked.length, p.asked[0].finalTick, p.asked[0].nodes.length], [true, 3, 4920, 3]);
-  assert.match(p.els.get('arena-securing').textContent, /Your run is safe: 2 signer nodes hold all of it/);
+  const d = p.els.get('arena-securing-host').drawn;
+  assert.deepEqual([d.kind, d.say, d.tone, d.hidden], ['securing', 'Your run is safe: 2 signer nodes hold all of it', 'safe', true], 'said, then put away after 4 s');
 });
 
 test('not delivered: not gated; still unsafe after its tries: the line stays and says why', async () => {
@@ -33,5 +35,6 @@ test('not delivered: not gated; still unsafe after its tries: the line stays and
   assert.equal(p.asked.length, 0);
   const got = await p.window.ARENA_SECURE_RUN('DELIVERED', run, { tries: 2, everyMs: 0 });
   assert.equal(got.safe, false);
-  assert.match(p.els.get('arena-securing').textContent, /not yet held by two signer nodes - keep this tab open \(0 of the 2/);
+  assert.match(p.els.get('arena-securing-host').drawn.say, /not yet held by two signer nodes - keep this tab open \(0 of the 2/);
+  assert.equal(p.els.get('arena-securing-host').drawn.tone, 'bad');
 });
