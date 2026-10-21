@@ -3822,10 +3822,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     guardianWiring.founding = true;
     // WHY A TICK STARTS NO FOUNDING, said once per reason (measured live 2026-10-15: a held notice started nothing, silently)
     let foundingWhy = null;
-    const ft = setInterval(() => {
-      foundingSeat.tick().then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
-        .catch((e) => console.log(`[founding] tick: ${e.message}`));
-    }, Number(process.env.ARENA_FOUNDING_MS || 600000));
+    // A PASS AT ONCE, THEN EVERY MINUTE (kanban #495, founding 53be35a3 went void at 21:04Z 2026-10-21: an installer node restarted at 20:54Z
+    // made its first pass only after ARENA_FOUNDING_MS, 10 min by default - it never saw the founding it was seated in and counted as a
+    // no-show; the manual n495 nodes ran at 60 s and posted within minutes)
+    const foundingPass = () => foundingSeat.tick().then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
+      .catch((e) => console.log(`[founding] tick: ${e.message}`));
+    const ft0 = setTimeout(foundingPass, 5000);
+    if (ft0.unref) ft0.unref();
+    const ft = setInterval(foundingPass, Number(process.env.ARENA_FOUNDING_MS || 60000));
     if (ft.unref) ft.unref();
   }
   // THE FEDERATION'S GATEWAY SEATS (spec §23A.9gateway-watch.js): a guardian probes, every 10 min, the gateways its
