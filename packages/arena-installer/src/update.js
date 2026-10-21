@@ -23,6 +23,7 @@ import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHeal
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues } from '../../arena-node/src/arena-conf.js';
+import { ensureApps } from '../../arena-node/src/app-fetch.js';
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
 import { quickTunnelUrl } from './reach.js';
@@ -277,7 +278,7 @@ export async function versionAnswers({ port, fetcher = fetch, want, waitMs = 900
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
-  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null }) {
+  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps }) {
   // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
   // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
   waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
@@ -291,6 +292,10 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const from = svc.releaseOf(oldSeat);
   if (!from) return { ok: false, why: `no arena-node service names a release (${svc.where})` };
   if (from === newRelease) return { ok: false, why: 'that release is the one running' };
+  // THE NEW RELEASE'S APPS (kanban #575): downloaded and checked before anything is stopped - an app that cannot be fetched leaves the
+  // node running as it is
+  const apps = await fetchApps({ release: newRelease, home, fetcher });
+  if (!apps.ok) return { ok: false, why: `the new release's apps: ${apps.why}` };
   const before = await waitHealthy({ port, fetcher, waitMs: 10000, everyMs: 500 });
   // the node's services that run from the old release: the seat, and every other one naming it - or naming an OLDER release beside it
   // (measured 2026-10-19 in the Windows VM: arena-custody.cmd still named rc.25 after updates to 0.1.1, 2026.1.0 and 2026.1.1 - each update

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# ONE RELEASE ASSET OF THE ARENA NODE: the seat, its protocol, the installer and nextblock from a commit, their
+# ONE RELEASE ASSET OF THE ARENA NODE: the seat, its protocol and the installer from a commit (the apps only as pins), their
 # npm dependencies at pinned versions, a pinned Node runtime and cloudflared for the OS - each download checked against its published
 # SHA-256 - and the launcher (`arena-install`, `arena-install.cmd` on Windows). Run by CI for every tag (release.yml), the same way
 # each time.
@@ -47,13 +47,14 @@ fetch() { # url sha file
 # 1. the code, from the commit (git archive: tracked files only, nothing of a working tree)
 # (all of packages/arena-web/dist: every page script the node serves, packed by esbuild - its pages draw only with React, kanban #564;
 # arena-web/test/dist-fresh checks each is the build of its source, arena-installer/test/release-bundles that each is tracked)
-# THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed"): every app with an app.json - the
-# installer's apps step lists them, all chosen - and arena-sdk, which their registrations import as arena-sdk/<name> through the tracked
-# link packages/node_modules/arena-sdk (arena-installer/test/release-bundles checks this line carries each)
-git -C "$ROOT" archive "$REF" LICENSE packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist packages/arena-installer packages/nextblock \
-  packages/rock-paper-scissors packages/btc-updown packages/arena-sdk packages/node_modules/arena-sdk packages/arena-donor/src/manifest-sign.js \
+# THE APPS ARE NOT IN IT (kanban #575, the owner 2026-10-21: "the installer downloads the 3 apps automatically, no longer built in"): only
+# their pins - apps.lock.json (repository, commit) and apps.files.json (each file's SHA-256) - from which the installer, an update and the
+# seat's start fetch and check them (arena-node/src/app-fetch.js) into packages/<app>. arena-sdk stays, which their registrations import
+# as arena-sdk/<name> through the tracked link packages/node_modules/arena-sdk (arena-installer/test/release-bundles checks this line)
+git -C "$ROOT" archive "$REF" LICENSE apps.lock.json apps.files.json packages/arena-installer packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist \
+  packages/arena-sdk packages/node_modules/arena-sdk packages/arena-donor/src/manifest-sign.js \
   | tar -x -C "$STAGE"
-for p in arena-node arena-protocol arena-installer nextblock rock-paper-scissors btc-updown arena-sdk; do
+for p in arena-node arena-protocol arena-installer arena-sdk; do
   rm -rf "$STAGE/packages/$p/test"
   [ -L "$STAGE/packages/$p/node_modules" ] && rm "$STAGE/packages/$p/node_modules"
 done

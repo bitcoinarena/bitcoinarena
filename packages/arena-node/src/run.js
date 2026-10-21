@@ -19,5 +19,12 @@ for (const [k, v] of Object.entries(run.env)) process.env[k] = v;
 process.env.ARENA_HOME = dirname(file);
 const other = unknownKeys(values);
 console.log(`[arena.conf] ${file}: ${Object.keys(values).length} settings, seat on port ${run.port}${other.length ? `; not listed by this release (passed on): ${other.join(', ')}` : ''}`);
+// THE APPS, before the seat loads them (kanban #575): a release carries only their pins; one missing here - a node moved to this release
+// by an older updater, which does not fetch them - is downloaded and checked now (app-fetch.js). Without them the seat does not start.
+{
+  const { ensureApps } = await import('./app-fetch.js');
+  const apps = await ensureApps({ release: fileURLToPath(new URL('../../../', import.meta.url)), home: dirname(file), log: (l) => console.log(`[apps] ${l}`) });
+  if (!apps.ok) { console.error(`[apps] the apps could not be fetched: ${apps.why}`); process.exit(3); }
+}
 process.argv = [process.argv[0], fileURLToPath(new URL('./main.js', import.meta.url)), String(run.port), run.database];
 await import('./main.js');
