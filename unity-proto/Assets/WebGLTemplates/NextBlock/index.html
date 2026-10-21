@@ -4723,10 +4723,24 @@
     // tab made in the federation that holds the funds - its id named, the id LockClient.federationIdOf reads off the
     // lobby's invite - newest first; a stake row names its round and opens that round's replay in a new window.
     async function paintHistory() {
+      // WHAT A HISTORY ROW SAYS (kanban #564: one place, for the page's rows and the React ones)
+      const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
+          : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
+          : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
+          : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
+          // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
+          // entered -1,000 sat" in 337ae01a, where they had arrived)
+          : r.kind === 'moved-in' ? `Moved in from federation ${String(r.from || '').slice(0, 8)}`
+          : r.kind === 'moved-out' ? `Moved to federation ${String(r.to || '').slice(0, 8)}`
+          : r.kind === 'swapped-in' ? `Swapped in from federation ${String(r.from || '').slice(0, 8)}`
+          : r.kind === 'swapped-out' ? `Swapped to federation ${String(r.to || '').slice(0, 8)}${r.feeMsat && r.feeMsat !== '0' ? ' (fee ' + sat(r.feeMsat) + ')' : ''}`
+          : r.kind === 'stake' ? `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`
+          : String(r.kind || 'entry');
       const fedEl = document.getElementById('arena-history-fed'); const rowsEl = document.getElementById('arena-history-rows');
       if (!fedEl || !rowsEl) return;
       const lob = window.ARENA_LEDGER_LOBBY;
-      if (!lob || !lob.federation) { fedEl.textContent = 'No federation named by this lobby'; rowsEl.textContent = ''; return; }
+      const clearRows = () => { if (rowsEl._root && window.ArenaWallet) window.ArenaWallet.drawHistory(rowsEl, { rows: [], empty: '' }); else rowsEl.textContent = ''; };
+      if (!lob || !lob.federation) { fedEl.textContent = 'No federation named by this lobby'; clearRows(); return; }
       let fed;
       try { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
       catch (e) { fedEl.textContent = 'The federation id could not be read: ' + (e && e.message ? e.message : e); return; }
@@ -4748,44 +4762,39 @@
       const rows = feds.flatMap((f) => { try { ARENACLIENT.ledgerReadSavedStakes(st, f); } catch { /* nothing to read */ }
         return ARENACLIENT.ledgerHistory(ARENACLIENT.ledgerRows(st, f)).map((r) => ({ ...r, fed: f })); })
         .sort((a, b) => (b.atMs ?? -1) - (a.atMs ?? -1));
-      rowsEl.textContent = '';
+      clearRows();
       // NOTHING YET, SAID AS SUCH (the owner: "misleading, I just did no deposits yet")
-      if (!rows.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No activity yet. Your deposits, stakes and withdrawals show here.'; rowsEl.append(e); return; }
+      const EMPTY = 'No activity yet. Your deposits, stakes and withdrawals show here.';
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
-      for (const r of rows) {
+      // A STAKE ROW OPENS ITS ROUND'S REPLAY
+      const openReplay = (r) => async () => {
+        // THE NEW WINDOW IS OPENED ON THE CLICK ITSELF (measured: opened after the replay nodes' fetch, the click no
+        // longer counted as the player's and the browser blocked the window), then sent to the replay once it is known.
+        const win = window.open('', '_blank');
+        if (win) win.opener = null;
+        const endpoints = await prefetchReplayNodes(r.round, lob.nodes);
+        const link = ARENACLIENT.replayLinkFor({ endpoints, roundHex: r.round, entryHex: r.entry });
+        if (!link.ok) { console.error('[arena] history replay: ' + link.why); if (win) win.close(); return; }
+        window.ARENA_HISTORY_REPLAY = link.url;
+        if (win) win.location.href = link.url; else window.open(link.url, '_blank', 'noopener');
+      };
+      // EACH ROW AS DATA (kanban #564): drawn by the page's bundle (window.ArenaWallet, React) when it has loaded, else below
+      const view = rows.map((r, i) => {
         const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in';
-        const el = document.createElement('div');
-        el.className = `hist-row ${plus ? 'plus' : 'minus'}` + (r.kind === 'stake' && r.entry ? ' clickable' : '');
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
-        const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
-          : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
-          : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
-          : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
-          // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
-          // entered -1,000 sat" in 337ae01a, where they had arrived)
-          : r.kind === 'moved-in' ? `Moved in from federation ${String(r.from || '').slice(0, 8)}`
-          : r.kind === 'moved-out' ? `Moved to federation ${String(r.to || '').slice(0, 8)}`
-          : r.kind === 'swapped-in' ? `Swapped in from federation ${String(r.from || '').slice(0, 8)}`
-          : r.kind === 'swapped-out' ? `Swapped to federation ${String(r.to || '').slice(0, 8)}${r.feeMsat && r.feeMsat !== '0' ? ' (fee ' + sat(r.feeMsat) + ')' : ''}`
-          : r.kind === 'stake' ? `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`
-          : String(r.kind || 'entry');
-        for (const [cls, text] of [['hist-when', when], ['hist-what', what + (feds.length > 1 ? ' \u00b7 ' + String(r.fed).slice(0, 8) : '')], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
+        const what = WHAT(r, sat);
+        return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
+          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null };
+      });
+      if (window.ArenaWallet && window.ArenaWallet.drawHistory) { window.ArenaWallet.drawHistory(rowsEl, { rows: view, empty: EMPTY }); return; }
+      if (!view.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = EMPTY; rowsEl.append(e); return; }
+      for (const v of view) {
+        const el = document.createElement('div');
+        el.className = `hist-row ${v.plus ? 'plus' : 'minus'}` + (v.onOpen ? ' clickable' : '');
+        for (const [cls, text] of [['hist-when', v.when], ['hist-what', v.what], ['hist-amt', v.amt]]) {
           const c = document.createElement('span'); c.className = cls; c.textContent = text; if (cls === 'hist-what') c.title = text; el.appendChild(c);   // the whole line on hover or long press (kanban #558)
         }
-        if (r.kind === 'stake' && r.entry) {
-          el.title = 'Open this round\'s replay in a new window';
-          el.addEventListener('click', async () => {
-            // THE NEW WINDOW IS OPENED ON THE CLICK ITSELF (measured: opened after the replay nodes' fetch, the click no
-            // longer counted as the player's and the browser blocked the window), then sent to the replay once it is known.
-            const win = window.open('', '_blank');
-            if (win) win.opener = null;
-            const endpoints = await prefetchReplayNodes(r.round, lob.nodes);
-            const link = ARENACLIENT.replayLinkFor({ endpoints, roundHex: r.round, entryHex: r.entry });
-            if (!link.ok) { console.error('[arena] history replay: ' + link.why); if (win) win.close(); return; }
-            window.ARENA_HISTORY_REPLAY = link.url;
-            if (win) win.location.href = link.url; else window.open(link.url, '_blank', 'noopener');
-          });
-        }
+        if (v.onOpen) { el.title = 'Open this round\'s replay in a new window'; el.addEventListener('click', v.onOpen); }
         rowsEl.appendChild(el);
       }
     }
@@ -4805,19 +4814,30 @@
       // COLOURFUL SO IT IS READ (2026-10-12): the card tinted by its band, each value in its own colour, the health a pill
       const tint = { green: 'rgba(63,185,80,.12)', yellow: 'rgba(210,153,34,.14)', red: 'rgba(248,81,73,.14)' }[said.band] || 'rgba(139,148,158,.1)';
       el.style.borderColor = color; el.style.background = `linear-gradient(135deg, ${tint}, #11161d 70%)`;
-      el.textContent = '';
-      const head = document.createElement('div'); head.style.cssText = 'font-weight:700;font-size:14px;color:#f7931a;margin-bottom:4px';
-      head.textContent = '🏦 Federations'; el.appendChild(head);
-      const row = (k, v, tip, c) => { const d = document.createElement('div'); d.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:1px 0';
-        const a = document.createElement('span'); a.textContent = k; a.style.color = '#a9b3c1'; const b = document.createElement('b'); b.textContent = v; b.style.cssText = `font-weight:700;color:${c || '#e6edf5'}`;
-        d.append(a, b); if (tip) { d.title = tip; d.style.cursor = 'help'; } el.appendChild(d); return b; };
+      // THE LINES AS DATA (kanban #564): drawn by the page's bundle (window.ArenaWallet, React) when it has loaded, else below
+      const rows = [];
+      const row = (k, v, tip, c, pill) => { rows.push({ k, v, tip: tip || '', color: c, pill: pill || null }); };
+      const draw = () => {
+        if (window.ArenaWallet && window.ArenaWallet.drawCustody) { window.ArenaWallet.drawCustody(el, { rows }); return; }
+        el.textContent = '';
+        const head = document.createElement('div'); head.style.cssText = 'font-weight:700;font-size:14px;color:#f7931a;margin-bottom:4px';
+        head.textContent = '🏦 Federations'; el.appendChild(head);
+        for (const r of rows) {
+          const d = document.createElement('div'); d.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:1px 0';
+          const x = document.createElement('span'); x.textContent = r.k; x.style.color = '#a9b3c1'; const y = document.createElement('b'); y.textContent = r.v;
+          y.style.cssText = r.pill ? `font-weight:700;color:#0d1117;background:${r.pill};border-radius:999px;padding:1px 10px` : `font-weight:700;color:${r.color || '#e6edf5'}`;
+          if (r.pill) y.title = r.tip;
+          d.append(x, y); if (r.tip) { d.title = r.tip; d.style.cursor = 'help'; } el.appendChild(d);
+        }
+      };
       // HOW MANY NODES THE NETWORK HAS (2026-10-12): the bonded nodes of the newest census this page checked -
       // shown whatever the federations' records say, it is the chain's own count
       { const nc = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null;
         if (nc) row('Nodes in the network', String(nc.nodes), nc.height ? 'bonded nodes in the census at block ' + nc.height : '', '#58a6ff'); }
       if (!sum.federations) {
         const loading = window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_FED_TRIED');
-        row('Federations', loading ? 'loading \u2026' : 'none verified yet', loading ? 'Reading the federations\' signed records from the seats' : '', loading ? '#d29922' : '#8b949e');
+        row('Federations', loading ? 'loading …' : 'none verified yet', loading ? 'Reading the federations\' signed records from the seats' : '', loading ? '#d29922' : '#8b949e');
+        draw();
         if (loading && !window.ARENA_CUSTODY_RETRY) window.ARENA_CUSTODY_RETRY = setTimeout(() => { window.ARENA_CUSTODY_RETRY = null; if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY(); }, 3000);
         window.ARENA_CUSTODY_SHOWN = sum; return;
       }
@@ -4825,9 +4845,8 @@
       row('Funds held in all federations', sat(sum.reserveSats), '', '#f7931a');
       row('Possible capacity', sat(sum.capSats), '', '#58a6ff');
       row('Free before deposits stop', sat(sum.freeSats), '', Number(BigInt(sum.freeSats)) > 0 ? '#3fb950' : '#f85149');
-      const h = row('Health', sum.load === null ? '-' : `${Math.round(sum.load * 100)} %${sum.networkTest ? ' · test network' : ''}`, said.tip, '#0d1117');
-      h.style.cssText = `font-weight:700;color:#0d1117;background:${color};border-radius:999px;padding:1px 10px`;
-      h.title = said.tip;
+      row('Health', sum.load === null ? '-' : `${Math.round(sum.load * 100)} %${sum.networkTest ? ' · test network' : ''}`, said.tip, '#0d1117', color);
+      draw();
       el.dataset.band = said.band; el.title = said.tip;
       window.ARENA_CUSTODY_SHOWN = { ...sum, band: said.band };
     };

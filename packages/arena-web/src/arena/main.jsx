@@ -14,6 +14,8 @@ import { ZapCard } from './ZapCard.jsx';
 import { ChipList } from './ChipList.jsx';
 import { BalanceSplit } from './BalanceSplit.jsx';
 import { ConfirmCard } from './ConfirmCard.jsx';
+import { WalletHistory } from './WalletHistory.jsx';
+import { CustodyCard } from './CustodyCard.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -55,3 +57,8 @@ export function ask(host, props) {
 }
 export function clear(host) { if (host._root) { host._root.unmount(); host._root = null; } }
 if (typeof window !== 'undefined') window.ArenaConfirm = { ask, clear };
+// THE WALLET'S HISTORY AND ITS FEDERATIONS BOX (the page's paintHistory and paintCustody hand over their rows)
+const into = (el, node) => { if (!el._root) el._root = createRoot(el); flushSync(() => el._root.render(node)); };
+export function drawHistory(el, props) { into(el, <WalletHistory {...props} />); }
+export function drawCustody(el, props) { into(el, <CustodyCard {...props} />); }
+if (typeof window !== 'undefined') window.ArenaWallet = { drawHistory, drawCustody };
