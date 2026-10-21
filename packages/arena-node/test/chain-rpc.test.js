@@ -258,3 +258,39 @@ test('a census that is not a chain is read once more with the kept hashes droppe
   const main = (await import('node:fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.match(main, /censusWithFreshHashes\(\{ read, derive: \(view\) => censusOfView\(view, contract\), cache: blocksKept \}\)/);
 });
+
+// A ROUND'S VIEW FROM A KEPT HASH OF A BRANCH THE CHAIN LEFT (kanban #576, measured 2026-10-21 ~22:00Z on node-15: every round's view
+// failed "that is not a chain", so no round was assigned and its series writer held a core at 100 % asking again)
+test('a round view that does not link is read once more with the kept hashes dropped; one that links is read once', async () => {
+  const { viewWithFreshHashes, viewLinks, blockCache } = await import('../src/chain-rpc.js');
+  const headerAfter = (prev, n) => { const h = new Uint8Array(HEADER_BYTES); h.set(prev, 4); h[0] = n; return h; };
+  const chain = (n, first = headerAfter(new Uint8Array(32), 1)) => {
+    const blocks = [{ header: first, transactions: [] }];
+    for (let i = 1; i < n; i++) blocks.push({ header: headerAfter(blockHashOf(blocks[i - 1].header), i + 1), transactions: [] });
+    return { blocks, firstHeight: 0 };
+  };
+  const good = chain(5);
+  const broken = { ...good, blocks: [...good.blocks] };
+  broken.blocks[2] = { header: headerAfter(new Uint8Array(32).fill(7), 99), transactions: [] };   // a block of another branch
+  assert.deepEqual([viewLinks(good), viewLinks(broken)], [true, false]);
+  const cache = blockCache();
+  cache.putHash(2, 'stale');
+  let reads = 0;
+  const got = await viewWithFreshHashes({ read: async () => { reads++; return cache.hashes.has(2) ? broken : good; }, cache });
+  assert.deepEqual([got === good, reads, cache.hashes.size], [true, 2, 0]);
+  cache.putHash(3, 'fine'); reads = 0;
+  const once = await viewWithFreshHashes({ read: async () => { reads++; return good; }, cache });
+  assert.deepEqual([once === good, reads, cache.hashes.size], [true, 1, 1]);
+  // and the seat reads its rounds' views through it
+  const main = (await import('node:fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.match(main, /viewWithFreshHashes\(\{ read: \(\) => blocksOver\(call, Math\.max\(0, contract\.censusHeight - CENSUS_LOOKBACK\), to, \{ cache: blocksKept \}\), cache: blocksKept \}\)/);
+});
+
+// THE SERIES WRITER BACKS OFF A REFUSED ASSIGNMENT (kanban #576): a refusal that cost a census waits a minute; a view not read yet,
+// which costs none, is asked next pass as before
+test('the series writer skips a round refused within the last minute, and remembers no refusal for a view not read yet', async () => {
+  const server = (await import('node:fs')).readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  assert.match(server, /if \(Date\.now\(\) - \(refusedAt\.get\(hex\) \|\| 0\) < REFUSED_RETRY_MS\) continue;/);
+  assert.match(server, /const REFUSED_RETRY_MS = 60000;/);
+  assert.match(server, /else if \(assigned\.why !== NO_CHAIN_VIEW_WHY && !\/still reading its chain view\/\.test\(String\(assigned\.why\)\)\) refusedAt\.set\(hex, Date\.now\(\)\);/);
+});

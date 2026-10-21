@@ -3520,6 +3520,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // 150 ms slice, so every pass ended "more" and the writer ran again at once: 7 seats at 105-170% of a core, load 19, doors
     // unanswered. A round once assigned stays assigned, so it is asked once.)
     const assignedSeen = new Set();
+    // A ROUND REFUSED ITS ASSIGNMENT WAITS A MINUTE (kanban #576, measured 2026-10-21 ~22:00Z on node-15: every round's census
+    // was refused - its view did not link - and each refusal re-derived a ~2,000-block census, ~150 ms, so every pass ran out
+    // of its slice, said "more" and ran again at once: one core at 100 % for hours). A refusal is asked again a minute on; a
+    // view not read yet is no refusal of the census and is asked next pass.
+    const refusedAt = new Map();         // round id hex -> when its assignment was last refused (ms)
+    const REFUSED_RETRY_MS = 60000;
     const writeAll = () => timed('series writer', () => {
       if (shuttingDown) return;
       takeNewSeries();
@@ -3547,6 +3553,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           for (const hex of next && !upcoming.includes(next) ? [next, ...upcoming] : upcoming) {
             if (done >= 20) break;
             if (assignedSeen.has(hex)) continue;
+            if (Date.now() - (refusedAt.get(hex) || 0) < REFUSED_RETRY_MS) continue;
             // THE ASSIGNING IS SLICED TOO: measured offline, opening a restarted seat's 2,123 rounds took 121 ms - the
             // 15-28 s holds were these assignments, each reading a census from the chain (cold after a restart)
             if (Date.now() >= until) { more = true; break; }
@@ -3554,11 +3561,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (round.signerNodes(rid).length) { assignedSeen.add(hex); continue; }
             const assigned = roster.assignSignerNodes(rid);
             done++;
-            if (assigned.ok) makeClaimKey(rid);
+            if (assigned.ok) { makeClaimKey(rid); refusedAt.delete(hex); }
+            // a view still being read (or none yet) is asked again next pass, as before - it costs no census
+            else if (assigned.why !== NO_CHAIN_VIEW_WHY && !/still reading its chain view/.test(String(assigned.why))) refusedAt.set(hex, Date.now());
           }
         }
       }
       if (assignedSeen.size > 200000) assignedSeen.clear();     // bounded: asked once more, then remembered again
+      if (refusedAt.size > 20000) refusedAt.clear();
       if (more && !sliceQueued) { sliceQueued = true; setImmediate(() => { sliceQueued = false; writeAll(); }); }
     });
     writeSeriesNow = writeAll;

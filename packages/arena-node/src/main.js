@@ -45,7 +45,7 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes } from './chain-rpc.js';
+import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes, viewWithFreshHashes } from './chain-rpc.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './node-start.js';
@@ -318,7 +318,8 @@ if (url) {
     const tip = Number(await call('getblockcount'));
     const deep = seen.ok ? seen.height + contract.censusConfirmations - 1 : 0;
     const to = Math.min(tip, Math.max(contract.censusHeight, deep));
-    const view = await blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to, { cache: blocksKept });
+    // a view that does not link - a kept hash from a branch the chain left - is read once more with fresh hashes (kanban #576)
+    const view = await viewWithFreshHashes({ read: () => blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to, { cache: blocksKept }), cache: blocksKept });
     // SHORT OF THE BEACON'S DEPTH, a view is read again later (ORDER-2116, measured on the free pair 2026-10-01: a round
     // posted 15 min ahead was read before its beacon existed, kept for good, and never drew a committee - "no block in
     // this view is after this round's committee time"; no free round posted ahead was joinable).
