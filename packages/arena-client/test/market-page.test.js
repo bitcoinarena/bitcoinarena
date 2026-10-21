@@ -179,8 +179,11 @@ test('picked: the join of a pick ends \'picked\' before the session\'s globals -
   assert.doesNotMatch(branch, /ARENA_ENTRY =|ARENA_CHAIN =|ARENA_ADVERT =/);
   // the join of a pick never sets the session's globals: it returns before window.ARENA_ENTRY is written
   const pickJoin = PAGE.indexOf('const chosen = pickFor(named.roundIdHex);');
-  const pickReturn = PAGE.indexOf('\n        return;\n      }\n      if (keptEntry) window.ARENA_ENTRY = keptEntry;', pickJoin);
-  assert.ok(pickJoin > 0 && pickReturn > pickJoin, 'the pick does not return before the entry the session opens');
+  // the pick's own return closes its branch, and the session's entry is written only after it (the run's items, added later, came
+  // between the two lines, so the order is checked, not that they touch)
+  const pickReturn = PAGE.indexOf('\n        return;\n      }\n', pickJoin);
+  const entryWritten = PAGE.indexOf('if (keptEntry) window.ARENA_ENTRY = keptEntry;', pickJoin);
+  assert.ok(pickJoin > 0 && pickReturn > pickJoin && entryWritten > pickReturn, 'the pick does not return before the entry the session opens');
   assert.doesNotMatch(PAGE.slice(pickJoin, pickReturn), /window\.ARENA_ENTRY =|warmTheSession\(/);
   // and Unity: unchanged, it waits on "joined" and adopts only "joining"/"joined" (no C# change in slice 2)
   const lobbyCs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Arena/DailyLobby.cs', import.meta.url), 'utf8');
