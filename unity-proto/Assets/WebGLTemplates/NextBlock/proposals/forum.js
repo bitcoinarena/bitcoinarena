@@ -333,7 +333,45 @@
     itemNodesPct: 'Item: nodes', itemReservesPct: 'Item: protocol reserve', itemDevsPct: 'Item: developers', marketNodeBps: 'Market: node fee',
     marketDonationBps: 'Market: developers\' donation', marketReserveBps: 'Market: protocol reserve', websitePct: 'Website share of the nodes\' fee' };
   function feeVal(k, v) { return ARENACLIENT.FEE_UNITS[k] === 'bps' ? (Number(v) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %' : v + ' %'; }
+  // the fees form's check, the seats' own rule through the client: { changes, say, bad } - changes null while it does not stand
+  function feeCheck(r, typed, activation, purpose) {
+    var ch;
+    try { ch = ARENACLIENT.feeChangesFrom(r.fees, typed); } catch (e) { return { changes: null, say: e.message, bad: true }; }
+    if (!ch.length) return { changes: null, say: 'Change at least one fee.', bad: false };
+    var st = ARENACLIENT.feeProposalStands({ networkId: new Uint8Array(32), author: new Uint8Array(32), publishedHeight: Number(r.tip), activationHeight: activation, changes: ch, purpose: purpose }, { current: r.fees, schedule: r.schedule });
+    if (!st.ok) return { changes: null, say: st.why, bad: true };
+    return { changes: ch, say: ch.length + ' fee' + (ch.length === 1 ? '' : 's') + ' in one proposal' + (st.donations.length ? ' · changes a donation: most of the protocol developers must approve' : '') + '.', bad: false };
+  }
+  function feesReact() {
+    var common = { types: TYPES, hash: '#new-fees', feeVal: feeVal, markdown: markdown, signedIn: !!state.key, check: function () { return { changes: null, say: '', bad: false }; }, onPublish: function () { return Promise.resolve({ ok: false, say: '' }); } };
+    R.draw(view, 'fees', Object.assign({}, common, { data: null }));
+    ARENACLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
+      if (location.hash !== '#new-fees') return;
+      if (!r.ok) { R.draw(view, 'fees', Object.assign({}, common, { data: null, error: r.why })); return; }
+      state.fees = r;
+      var data = { tip: r.tip, agreeing: r.agreeing, asked: r.asked, sums: r.sums, fees: r.fees, limits: r.limits, keys: Object.keys(ARENACLIENT.FEES), names: FEE_NAMES, units: ARENACLIENT.FEE_UNITS,
+        earliest: ARENACLIENT.earliestActivation(Number(r.tip), r.schedule), proposals: r.proposals };
+      R.draw(view, 'fees', Object.assign({}, common, { data: data, check: function (typed, activation, purpose) { return feeCheck(r, typed, activation, purpose); },
+        onPublish: function (x) {
+          return (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+            if (!net) throw new Error('the nodes did not agree on their network');
+            state.network = net;
+            var p = ARENACLIENT.signedFeeProposal({ secretKey: state.key, networkId: net, publishedHeight: Number(r.tip), activationHeight: x.activation, changes: x.changes,
+              purpose: x.purpose, current: r.fees, schedule: r.schedule, curve: window.ARENA_CURVE });
+            if (!p.ok) throw new Error(p.why);
+            return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'fee', hex: p.hex }).then(function (y) {
+              if (!y.ok) return { ok: false, say: 'Not taken: ' + y.why };
+              window.ARENA_FEE_PROPOSAL = { id: p.id, took: y.took, asked: y.asked };
+              setTimeout(function () { R.clear(view); feesReact(); }, 1500);
+              return { ok: true, say: 'Published to ' + y.took + ' of ' + y.asked + ' nodes. Its signal starts now.' };
+            });
+          }).catch(function (e) { return { ok: false, say: e.message }; });
+        } }));
+      window.ARENA_FEES_VIEW = { inForce: r.fees, tip: r.tip, proposals: r.proposals.length, agreeing: r.agreeing };
+    }).catch(function (e) { R.draw(view, 'fees', Object.assign({}, common, { data: null, error: e.message })); });
+  }
   function feesView() {
+    if (R) return feesReact();
     composeHead('#new-fees');
     var box = el('div', 'empty', 'Reading the fees from the nodes…'); view.append(box);
     ARENACLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
@@ -495,7 +533,7 @@
   function route() {
     var h = location.hash;
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
-    var own = h === '#new-leaderboard' || h === '#new-fees' || (h === '#new' && !R);
+    var own = h === '#new-leaderboard' || ((h === '#new-fees' || h === '#new') && !R);
     if (own && R) R.clear(view);   // the forms are this script's own: React lets go of the view first
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
