@@ -14,6 +14,7 @@ import { ReleasePanel } from './ReleasePanel.jsx';
 import { AppsPanel } from './AppsPanel.jsx';
 import { NetworkAppsPanel } from './NetworkAppsPanel.jsx';
 import { NetworkPanel } from './NetworkPanel.jsx';
+import { NeedsPanel } from './NeedsPanel.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -42,4 +43,10 @@ export function mountRelease(element, { api, initial, onNewer } = {}) { const ro
 export function mountApps(element, { api, initial } = {}) { const root = createRoot(element); root.render(<AppsPanel api={api} initial={initial} />); return root; }
 export function mountNetworkApps(element, { api, client, onChanged } = {}) { const root = createRoot(element); root.render(<NetworkAppsPanel api={api} client={client} onChanged={onChanged} />); return root; }
 export function mountNetwork(element, { api, client } = {}) { const root = createRoot(element); root.render(<NetworkPanel api={api} client={client} />); return root; }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork };
+/** The overview's list, drawn again each time the page's need() changes it (one root per element). */
+export function needsInto(element, items) {
+  if (!element._needsRoot) element._needsRoot = createRoot(element);
+  element._needsRoot.render(<NeedsPanel items={items} />);
+  return element._needsRoot;
+}
+if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
