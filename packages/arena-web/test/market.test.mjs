@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { PickSheet, MarketLines, STATE_LABEL } from '../dist/test/market.mjs';
-import { pickSheet, marketLines } from '../../btc-updown/page/market.js';
+import { pickSheet, marketLines } from '../../arena-client/src/market.js';
 
 const market = { name: 'BTC Up/Down 15m', outcomes: ['Up', 'Down'], fee: { nodeBps: 50, donationBps: 50 }, threshold: 3, attestors: ['a', 'b', 'c', 'd'], devKey: 'ab'.repeat(32), gameId: 'cd'.repeat(32), needsConfirm: false };
 

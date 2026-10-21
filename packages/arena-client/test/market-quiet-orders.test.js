@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { quietOrders } from '../../btc-updown/page/market.js';
+import { quietOrders } from '../src/market.js';
 
 const H = 3600000;
 const NOW = 1792530800000;
