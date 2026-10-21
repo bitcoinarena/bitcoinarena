@@ -4,10 +4,10 @@
 // that adapter for it and the page runs only that client. The developer key is the game's own (db57bd7a…).
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../arena-protocol/src/manifest.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from 'arena-sdk/manifest';
+import { fromHex } from 'arena-sdk/hash';
+import { donationSetId } from 'arena-sdk/donation';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
 
 const sha = (b) => new Uint8Array(createHash('sha256').update(b).digest());
 export const RPS_DECIDE_HASH = sha(readFileSync(new URL('./decide.js', import.meta.url)));
