@@ -22,6 +22,7 @@ import { DepositModal } from './DepositModal.jsx';
 import { WithdrawPanel } from './WithdrawPanel.jsx';
 import { ShopItems } from './ShopItems.jsx';
 import { DonateBox } from './DonateBox.jsx';
+import { OtherWallets } from './OtherWallets.jsx';
 import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
@@ -68,7 +69,9 @@ if (typeof window !== 'undefined') window.ArenaConfirm = { ask, clear };
 const into = (el, node) => { if (!el._root) el._root = createRoot(el); flushSync(() => el._root.render(node)); };
 export function drawHistory(el, props) { into(el, <WalletHistory {...props} />); }
 export function drawCustody(el, props) { into(el, <CustodyCard {...props} />); }
-if (typeof window !== 'undefined') window.ArenaWallet = { drawHistory, drawCustody };
+// THE OTHER WALLETS IN THIS BROWSER (the page's paintOtherWallets hands over its line or the wallets read)
+export function drawOthers(el, props) { into(el, <OtherWallets {...props} />); }
+if (typeof window !== 'undefined') window.ArenaWallet = { drawHistory, drawCustody, drawOthers };
 // THE SEED PHRASE MODAL (the page's Settings opens it with the words and its own recording rule)
 export function openSeed(host, props) { into(host, <SeedModal key={Date.now()} {...props} />); }
 export function closeSeed(host) { if (host._root) { host._root.unmount(); host._root = null; } }
