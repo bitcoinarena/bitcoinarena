@@ -315,6 +315,23 @@ export async function followQuickTunnel({ home, svcs, platform, env, sh, sinceMs
   return { url, changed, restart };
 }
 
+/**
+ * A QUICK TUNNEL THAT CAME BACK BY ITSELF (kanban #562 2A, 2026-10-21: a reboot or a crash restarts the tunnel under a new name, and
+ * nothing but an update or the owner page followed it - arena.conf, the gateway and the census kept the old host): its newest name is
+ * read from its log and followed as control() follows it, the services whose files changed restarted in start order. Asked by the
+ * custody agent every minute. Answers { url, changed, restarted: [ids] }.
+ */
+export async function followTunnelNow({ home, platform = process.platform, env = process.env, sh = run, quickUrl = quickTunnelUrl } = {}) {
+  const svcs = installedServices({ home, platform, env });
+  const t = await followQuickTunnel({ home, svcs, platform, env, sh, sinceMs: null, quickUrl: (o) => quickUrl({ ...o, waitMs: 200 }) });
+  const restarted = [];
+  for (const id of (t.restart || []).sort((x, y) => svcs.findIndex((s) => s.id === x) - svcs.findIndex((s) => s.id === y))) {
+    const s = svcs.find((x) => x.id === id);
+    if (s && (await act('restart', s, { platform, sh, home })).ok) restarted.push(id);
+  }
+  return { url: t.url || null, changed: t.changed || [], restarted };
+}
+
 /** One action on one service: { ok, why }. */
 async function act(action, svc, { platform, sh, home }) {
   if (platform === 'linux') {

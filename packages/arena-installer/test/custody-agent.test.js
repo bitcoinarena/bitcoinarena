@@ -148,3 +148,48 @@ test('the gateway Disconnected while LND answers: restarted on the second tick i
   assert.equal((await agent.tick()).did, undefined, 'Running again: nothing more');
   assert.equal(restarts.length, 1);
 });
+
+test('the address changed (a quick tunnel\'s new name): one advertisement update names it, signed against the bond; then it waits for it to confirm (kanban #562 2A)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'custody-addr-'));
+  const state = nodeState(home);
+  writeFileSync(join(home, 'seed.hex'), '11'.repeat(32));
+  const nodeSecret = new Uint8Array(32).fill(7);
+  const db = new DatabaseSync(join(home, 'node.db'));
+  db.exec('CREATE TABLE identity (one INTEGER PRIMARY KEY, secret BLOB)'); db.prepare('INSERT INTO identity VALUES (0, ?)').run(nodeSecret); db.close();
+  const bondTxid = '78'.repeat(32);
+  state.save({ roles: ['verify', 'custody'], chain: { kind: 'core' }, owner: { pubkey: 'ab'.repeat(32) }, reach: { mode: 'quick', url: 'https://cottage-usually-pete-path.trycloudflare.com', port: 8471 },
+    bond: { txid: bondTxid, vout: 0, sats: '50000', maturity: 157441 } });
+  const sent = [];
+  const chainKit = { coinsOf: async () => ({ tip: 157190, coins: [{ txid: '5b'.repeat(32), vout: 1, sats: 20000 }] }),
+    broadcast: async (_c, hex) => { sent.push(hex); return toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()); } };
+  let address = { advertised: 'https://keeps-ahead-employ-thomas.trycloudflare.com', serving: 'https://cottage-usually-pete-path.trycloudflare.com' };
+  let clock = 1_800_000_000_000;
+  let renamed = 'https://cottage-usually-pete-path.trycloudflare.com';
+  const followTunnel = async () => { const r = renamed ? { url: renamed, restarted: ['gateway', 'node'] } : { url: null, restarted: [] }; renamed = null; return r; };
+  const agent = createCustodyAgent({ state, release: home, chainKit, nowMs: () => clock, addressRead: async () => address, followTunnel,
+    gw: { joinFederation: async () => ({ ok: false }), testGateway: async () => ({ ok: false }), depositAddress: async () => ({ ok: false }) },
+    channels: async () => ({ ok: true, open: [], pending: [] }), lndInfo: async () => ({ ok: false }), ringMembers: async () => [] });
+
+  const first = await agent.tick();
+  assert.deepEqual([first.did, first.restarted], ['tunnel-name', ['gateway', 'node']], 'the tunnel\'s new name followed first, the seat restarted on it');
+  assert.equal(sent.length, 0);
+  const one = await agent.tick();
+  assert.equal(one.did, 'address');
+  assert.equal(sent.length, 2, 'the funding and the update');
+  const read = readAdvertUpdate(fromHex(sent[1]), { network: 'testnet4' });
+  const ok = await checkAgainstBond(read, { txid: fromHex(bondTxid).reverse(), vout: 0, nodePubkey: schnorr.getPublicKey(nodeSecret) }, (s, m, k) => schnorr.verify(s, m, k));
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(read.advert.endpoint, 'https://cottage-usually-pete-path.trycloudflare.com', 'the address it answers at');
+  assert.equal(read.advert.bondMaturityHeight, 157441, 'the bond\'s maturity kept');
+  assert.deepEqual([state.read().advertised.endpoint, state.read().advertised.was], [address.serving, address.advertised]);
+
+  assert.match((await agent.tick()).idle, /confirming/, 'the census still names the old one: no second update');
+  assert.equal(sent.length, 2);
+  clock += 6 * 3600 * 1000 + 1;
+  assert.equal((await agent.tick()).did, 'address', 'not in the census after 6 h: posted again');
+  assert.equal(sent.length, 4);
+
+  address = { advertised: address.serving, serving: address.serving };   // confirmed: the census names it
+  assert.match((await agent.tick()).idle, /waits to be drawn/, 'nothing to update: the agent goes on with its other steps');
+  assert.equal(sent.length, 4);
+});

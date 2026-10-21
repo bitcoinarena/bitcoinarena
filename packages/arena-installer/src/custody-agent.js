@@ -19,6 +19,8 @@ import { joinFederation, testGateway, depositAddress } from './gateway.js';
 import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClose } from './lnd.js';
 
 /** THE RING CHANNEL each custody node opens to the next node of its federation (sat), and what the deposit sets aside for it with fees. */
+/** How long a posted address update is waited for before it is posted again (a dropped transaction, a reorg). */
+export const ADDRESS_REPOST_MS = 6 * 3600 * 1000;
 export const RING_SATS = 150000;
 export const RING_RESERVE_SATS = RING_SATS + 3000;
 /**
@@ -38,6 +40,7 @@ import { LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
 import { writeFileSync } from 'node:fs';
 import { guardianSetupOf } from './state.js';
 import { readInvite } from '../../arena-node/src/invite.js';
+import { endpointWarning } from '../../arena-node/src/node-standing.js';
 import { fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
 /** A founded guardian's entry for guardian_of[]: its federation (invite-code) and its own peer's broadcast key. Null before the founding. */
@@ -54,7 +57,14 @@ export function guardianOfEntry(dir) {
 
 export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
   lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now(),
-  restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }) }) {
+  restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }),
+  addressRead = null, followTunnel = async () => (await import('./node-services.js')).followTunnelNow({ home: state.home }) }) {
+  // THE ADDRESS THE NODE ADVERTISES AND THE ONE IT ANSWERS AT, from its own seat (GET /owner/standing `address`: the endpoint of its
+  // census entry, and its public address now)
+  const addressOf = addressRead || (async (s) => {
+    const port = (s.reach && s.reach.port) || (s.service && s.service.port);
+    try { const r = await fetch(`http://127.0.0.1:${port}/owner/standing`, { signal: AbortSignal.timeout(60000) }); const v = await r.json(); return (v && v.address) || null; } catch { return null; }
+  });
   // the federation's custody nodes with their Lightning key and address, from this node's own seat (GET /gateway-seats: the claims it
   // gathered as a guardian, its own among them)
   const membersOf = ringMembers || (async (s) => {
@@ -91,10 +101,47 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     log(r.ok ? 'the gateway was Disconnected while LND answers: restarted' : `the gateway was Disconnected while LND answers; the restart failed: ${r.why}`);
     return r.ok ? { ok: true, did: 'gateway-restart' } : { ok: false, why: `the gateway restart failed: ${r.why}` };
   }
+  // THE ADVERTISEMENT FOLLOWS THE ADDRESS (kanban #562 2A, the owner 2026-10-21: "1a, 2a ..."; measured that morning: the census named
+  // the three installer nodes at quick tunnels they no longer had - keeps-ahead-employ-thomas for cottage-usually-pete-path and so on -
+  // so no node could reach them at the census's word): when the endpoint of the node's census entry is not the address it answers at,
+  // an advertisement update naming the new one is posted from the node's wallet (§5A.2, the bond stays the bond), with guardian_of
+  // kept. Once per address: while that update confirms the step waits, and posts it again only after ADDRESS_REPOST_MS.
+  async function addressStep(s) {
+    if (!s.bond || !s.bond.txid || !s.owner) return null;
+    const a = await addressOf(s);
+    if (!a || !endpointWarning({ advertised: a.advertised, serving: a.serving })) return null;
+    const last = s.advertised || {};
+    if (!endpointWarning({ advertised: last.endpoint, serving: a.serving }) && nowMs() - (last.atMs || 0) < ADDRESS_REPOST_MS)
+      return { ok: true, idle: `the advertisement update naming ${a.serving} is confirming (${String(last.txid || '').slice(0, 16)})` };
+    const seed = fromHex(state.readSecret('seed.hex'));
+    const w = walletOf(seed);
+    const { coins } = await chainKit.coinsOf(s.chain, w.spk);
+    const nodeSecret = nodeSecretOf();
+    const { schnorr } = await import('@noble/curves/secp256k1.js');
+    const g = (s.custody || {}).guardianOf ? guardianOfEntry(state.path('node.db.guardian')) : null;
+    const advert = { ...advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: a.serving,
+      payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null }),
+      ...(g ? { guardianOf: [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }] } : {}) };
+    let u;
+    try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
+    catch (e) { return { ok: false, why: `the new address ${a.serving} is not advertised yet: ${e.message}` }; }
+    await chainKit.broadcast(s.chain, u.funding.hex);
+    const txid = await chainKit.broadcast(s.chain, u.update.hex);
+    state.save({ advertised: { endpoint: a.serving, was: a.advertised, txid, advertId: u.advertId, atMs: nowMs() } });
+    log(`the address changed: ${a.advertised} -> ${a.serving}, advertised in ${txid}`);
+    return { ok: true, did: 'address', txid };
+  }
   async function tick() {
     const s = state.read();
     const watched = await gatewayWatch(s);
     if (watched) return watched;
+    // A QUICK TUNNEL'S NEW NAME, followed first: the seat then answers at it, and the step below advertises it
+    if (s.reach && s.reach.mode === 'quick') {
+      const t = await followTunnel().catch((e) => ({ url: null, restarted: [], why: e.message }));
+      if (t && t.restarted && t.restarted.length) { log(`the quick tunnel came back as ${t.url}: ${t.restarted.join(', ')} restarted`); return { ok: true, did: 'tunnel-name', url: t.url, restarted: t.restarted }; }
+    }
+    const moved = await addressStep(state.read());
+    if (moved) return moved;
     // A LIQUIDITY PROVIDER'S DEPOSIT (§23A.10): 5 x L on testnet4 from the node's wallet into LND's, once - the provider
     // service (bin/liquidity-provider.mjs) opens channels from it
     if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.pubkey && !(s.custody || {}).liquidityFund) {
