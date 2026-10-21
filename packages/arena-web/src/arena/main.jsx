@@ -10,6 +10,7 @@ import '../market/main.jsx';
 import { flushSync } from 'react-dom';
 import { GameTiles } from './GameTiles.jsx';
 import { SeasonRows } from './SeasonRows.jsx';
+import { ZapCard } from './ZapCard.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -26,3 +27,9 @@ export function drawRows(board, props) {
   flushSync(() => board._root.render(<SeasonRows {...props} />));
 }
 if (typeof window !== 'undefined') window.ArenaSeason = { drawRows };
+// THE ZAP BOX (the page's zaps block hands it what its own elements hold)
+export function drawZap(host, props) {
+  if (!host._root) host._root = createRoot(host);
+  flushSync(() => host._root.render(<ZapCard {...props} />));
+}
+if (typeof window !== 'undefined') window.ArenaZap = { draw: drawZap };
