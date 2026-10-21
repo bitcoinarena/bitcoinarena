@@ -50,10 +50,11 @@ test('rock-paper-scissors imports only itself and arena-sdk (plugin, tools, test
   assert.deepEqual(ids, { v1: '1e9ab4b7d402d51f', '-v2': 'a75f54fd4f978a29', '-v3': '90f462c823bdd382', '-v4': '13699356aae534ee' });
 });
 
-test('bitcoin up or down\'s plugin, tools and tests import only themselves and arena-sdk (but one test of the Arena\'s test market); its 15 ids are the network\'s', async () => {
+test('bitcoin up or down imports only itself and arena-sdk (plugin, tools, tests, page); the frozen testnet4 market\'s id is the network\'s', async () => {
   assert.deepEqual(outside('btc-updown', 'plugin'), []);
   assert.deepEqual(outside('btc-updown', 'tools'), []);
-  assert.deepEqual(outside('btc-updown', 'test'), ['test/manifest.test.js: ../../arena-node/test/plugins/updown/index.js']);
+  assert.deepEqual(outside('btc-updown', 'test'), []);
+  assert.deepEqual(outside('btc-updown', 'page'), []);
   const { GAME } = await import('../../btc-updown/plugin/btc-updown.js');
   assert.equal(Buffer.from(GAME.gameId).toString('hex').slice(0, 16), '672415c814e61b47', 'the frozen testnet4 market');
 });
