@@ -5,6 +5,15 @@
   "type": "module",
   "description": "Rock Paper Scissors, a head-to-head game on Bitcoin Arena: its decide adapter, plugin registration and web client.",
   "scripts": {
-    "test": "node --test --test-timeout=120000 test/*.test.js"
+    "build": "node tools/build-view.mjs && node tools/build-client-v4.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "arena-sdk": "github:a tester/arena-sdk#v0.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   }
 }

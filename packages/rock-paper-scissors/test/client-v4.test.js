@@ -10,7 +10,7 @@ import { buildV4, FORBIDDEN, trailing } from '../tools/build-client-v4.mjs';
 
 const V3 = readFileSync(new URL('../client/index.html', import.meta.url), 'utf8');
 const V4 = readFileSync(new URL('../client/index-v4.html', import.meta.url), 'utf8');
-const BUNDLE = new URL('../../arena-web/dist/rps.js', import.meta.url);
+const BUNDLE = new URL('../dist/rps-view.js', import.meta.url);
 /** v3's code as the tool strips it: no comment lines, no trailing comments. */
 const bare = (s) => s.split('\n').filter((l) => !l.trim().startsWith('//')).map(trailing).join('\n').replace(/\/\* [^*]*\*\//g, '');
 const part = (s, from, to) => { const a = s.indexOf(from); const b = s.indexOf(to, a); assert.ok(a > 0 && b > a, `${from} ... ${to}`); return s.slice(a, b); };
