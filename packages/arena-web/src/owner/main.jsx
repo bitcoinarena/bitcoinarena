@@ -6,6 +6,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RolesPanel } from './RolesPanel.jsx';
 import { ServicesPanel } from './ServicesPanel.jsx';
+import { AddressPanel } from './AddressPanel.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -17,4 +18,9 @@ export function mountServices(element, { api, initial, onAttention } = {}) {
   root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} />);
   return root;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices };
+export function mountAddress(element, { api, initial } = {}) {
+  const root = createRoot(element);
+  root.render(<AddressPanel api={api} initial={initial} />);
+  return root;
+}
+if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress };
