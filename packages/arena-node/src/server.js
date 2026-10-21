@@ -4748,9 +4748,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE OWNER DASHBOARD'S REACT SCREENS (kanban #564, packages/arena-web): the bundle and its stylesheet, when this release carries
       // them - the page mounts them in place of its own panels, and keeps its own where they are missing
       // THE NODE DASHBOARD IN REACT (kanban #566, packages/arena-web): the page draws with it when this release carries it
-      // THE ROUNDS PAGE IN REACT (kanban #564): pages/rounds.html draws with it when this release carries it
-      if (req.method === 'GET' && url.pathname === '/rounds/react.js') {
-        let body; try { body = readFileSync(new URL('../../arena-web/dist/rounds.js', import.meta.url)); } catch { return text(res, 404, 'this release carries no React rounds page'); }
+      // THE ROUNDS AND "MY NODE IS OFFLINE" PAGES IN REACT (kanban #564): pages/rounds.html and pages/emergency.html draw with them
+      // when this release carries them
+      if (req.method === 'GET' && (url.pathname === '/rounds/react.js' || url.pathname === '/emergency/react.js')) {
+        const name = url.pathname.split('/')[1];
+        let body; try { body = readFileSync(new URL(`../../arena-web/dist/${name}.js`, import.meta.url)); } catch { return text(res, 404, `this release carries no React ${name} page`); }
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(body);
       }

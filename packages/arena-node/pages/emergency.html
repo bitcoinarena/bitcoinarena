@@ -2,7 +2,10 @@
 <title>Bitcoin Arena · My node is offline</title>
 <!-- MY NODE IS OFFLINE (spec §23A.5a, protocol 17): /Dashboard/emergency on every node, no login. The owner types the emergency code
      written down at install; the browser makes the emergency key from it, finds the node whose bond advert names that key, and signs a
-     leave request at this node's tip. Only the request and its signature leave the browser; this node passes it on to every seat. -->
+     leave request at this node's tip. Only the request and its signature leave the browser; this node passes it on to every seat.
+     THE MODERN PAGE (kanban #564): the same steps drawn by React (/emergency/react.js, packages/arena-web/src/emergency) when this release
+     carries it - the code, the key and the signature still made here, by this node's /owner/client.js; this page's own steps stay for a
+     release without it. -->
 <style>
 :root{--bg:#0f1218;--card:#171c25;--line:#2a3140;--text:#e6e9ef;--dim:#8b93a3;--gv:#f2a93b;--st:#4fa3ff;--ok:#3fbf7f;--bad:#e25c5c;color-scheme:dark}
 @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f5f6f8;--card:#fff;--line:#dde1e7;--text:#1b2230;--dim:#5d6676;color-scheme:light}}
@@ -17,7 +20,20 @@ input{width:100%;font:16px ui-monospace,monospace;padding:10px;border-radius:10p
 .warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}label{display:block;margin:8px 0 4px;color:var(--dim)}
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
+#app:empty{display:none}.emergency h1{font-size:24px;font-weight:750;margin:6px 0 4px}.emergency .card{border-radius:16px;padding:18px 20px}
+.steps{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}.steps span{font-size:12px;font-weight:700;letter-spacing:.04em;padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.steps span.now{border-color:var(--gv);color:var(--gv)}.steps span.done{border-color:var(--ok);color:var(--ok)}
+.emergency input{font-size:17px;padding:13px 14px;border-radius:12px}.emergency .hint{color:var(--dim);font-size:13px;margin:6px 0 10px}
+.emergency button{width:100%;margin:6px 0 0}.actions{display:grid;grid-template-columns:1fr 2fr;gap:8px}.actions button{margin:0}
+button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.kv .row{padding:8px 0}.kv .row span{color:var(--dim)}
+.outcomes{display:flex;flex-direction:column;gap:8px}.outcome{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+.outcome span{color:var(--dim);font-size:13px;grid-column:1/-1}.outcome b{font-weight:600}.outcome i{font-style:normal;font-weight:700;font-size:13px;white-space:nowrap}.outcome i.ok{color:var(--ok)}.outcome i.bad{color:var(--bad)}
+.done{text-align:center}.done .big{font-size:44px;line-height:1}
+.emergency .err:empty{min-height:0;margin:0}
 </style></head><body>
+<div id="app"></div>
+<div id="legacy">
 <h1>My node is offline</h1>
 <div class="sub">Take your own node out of the network while it is offline, so it keeps its bond. You need the emergency code you wrote down
 when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</b> - this page does not want them.</div>
@@ -39,6 +55,7 @@ when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</
 </div>
 <div class="card" id="step2" hidden></div>
 <p class="sub"><a id="public" href="#">← This node's dashboard</a></p>
+</div>
 <script type="module">
 const BASE = location.pathname.replace(/\/[Dd]ashboard\/emergency\/?$/, '');
 const at = (p) => BASE + p;
@@ -46,6 +63,14 @@ const $ = (id) => document.getElementById(id);
 $('public').href = at('/Dashboard');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const C = await import(at('/owner/client.js'));
+// THE REACT PAGE, when this release carries it: the same steps, this node's client and fetches handed in
+let R = false; try { await import(at('/emergency/react.js')); R = !!window.ArenaEmergency; } catch { R = false; }
+if (R) {
+  $('legacy').hidden = true;
+  window.ArenaEmergency.mount($('app'), { client: C, dashboardHref: at('/Dashboard'),
+    get: async (p) => (await fetch(at(p))).json(),
+    post: async (p, body) => { const r = await fetch(at(p), { method: 'POST', body }); const t = await r.text(); if (!r.ok) throw new Error(t.trim() || 'HTTP ' + r.status); return JSON.parse(t); } });
+}
 let secret = null, found = null;
 $('find').onclick = async () => {
   $('err1').textContent = ''; $('step2').hidden = true;
