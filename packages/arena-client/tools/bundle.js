@@ -95,7 +95,7 @@ walk(SRC + 'winnings.js');
 walk(SRC + 'item-buy.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
-walk(ROOT + 'btc-updown/page/market.js');   // Up/Down's own page part (kanban #521)
+walk(SRC + 'market.js');   // a market in the page: the Arena's, for every attested market (kanban #568; it was in btc-updown/page)
 // AND A HEAD-TO-HEAD ROUND'S HIDDEN MOVE AND ITS REVEAL
 walk(SRC + 'head-to-head.js');
 // AND THE GAMES: the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
