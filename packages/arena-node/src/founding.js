@@ -81,10 +81,22 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
    * One advance at chain height `tip`: the void at the window's end, no-shows past their fifth, this node's code, the DKG once all
    * codes are in, and whether the federation now runs.
    */
+  let refreshed = false;
   async function postOwn() {
     if (started || !setup || !isSeated(own) || posted) return;
     try {
-      const code = await setup.localParams({ leader: position(own) === 0, name, size: nominal });
+      let code;
+      try { code = await setup.localParams({ leader: position(own) === 0, name, size: nominal }); }
+      catch (e) {
+        // PARAMS FROM A FOUNDING THAT WENT VOID (kanban #495): the guardian took them for an earlier founding and refuses new ones; it is
+        // started again in a fresh setup - once in this founding, only before this node's code is posted - and asked again
+        if (!/already been set/i.test(String(e && e.message)) || refreshed || typeof setup.freshSetup !== 'function') throw e;
+        refreshed = true;
+        const r = await setup.freshSetup();
+        say({ founding: toHex(id).slice(0, 16), freshSetup: r.ok ? 'the guardian\'s setup started again (its old setup kept)' : r.why });
+        if (!r.ok) throw e;
+        code = await setup.localParams({ leader: position(own) === 0, name, size: nominal });
+      }
       const signature = toHex(sign(setupDigest(id, ownKey, code, tagAt('foundingSetup', { height: triggerHeight }))));
       const m = { id: toHex(id), node: own, code, signature };
       take(m); posted = true;
