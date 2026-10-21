@@ -11,8 +11,7 @@
      and each node is asked its own public doors - /owner/version, /owner/bond, /dashboard.json (its LND), /liquidity-claim,
      /gateway-claim. The federations, gateway seats, liquidity seatings, fees, reserves and games come from the seats. Six requests
      at a time, every 60 s; a node that does not answer in 10 s is red.
-     THE MODERN PAGE (kanban #564): the network's facts, the nodes, the capacity, the federations, liquidity providers, LND, games and
-     fees drawn by React (./react.js, packages/arena-web/src/
+     THE MODERN PAGE (kanban #564): every section drawn by React (./react.js, packages/arena-web/src/
      health) when it is there; this page still reads everything itself, and draws them itself when it is not. -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
@@ -396,19 +395,18 @@
     // (as its operator's claim states them) and about when it counts, a block taken as 10 minutes
     function pendingRows(fed, b) {
       const out = [], gws = b.gateways || {};
-      const pegs = (node) => ((gws[node] && gws[node].pending && gws[node].pending.pegIns) || []).map((p) => {
-        const fin = Number(p.finality) || 0, conf = Number(p.confirmations) || 0, left = Math.max(0, fin + 1 - conf), pc = fin ? Math.min(100, Math.round((100 * conf) / fin)) : 0;
+      const pegs = (node) => ((gws[node] && gws[node].pending && gws[node].pending.pegIns) || []).flatMap((p) => {
+        const fin = Number(p.finality) || 0, conf = Number(p.confirmations) || 0, left = Math.max(0, fin + 1 - conf);
         const eta = left ? (left >= 6 ? `about ${Math.round(left / 6)} h` : `about ${left * 10} min`) : 'now';
-        return `<div>peg-in ${sat(p.sats)} sat · <b>${conf} of ${fin || '?'}</b> confirmations · counts in ${eta}
-          <span class="mono muted">${short(p.txid, 8)}:${esc(p.vout)}</span>
-          <div style="height:6px;background:var(--line,#333);border-radius:3px;margin-top:3px;max-width:240px"><div style="height:6px;width:${pc}%;background:var(--warn,#e0a020);border-radius:3px"></div></div></div>`;
-      }).join('');
-      const row = (node, c, what) => out.push(`<tr><td>${dot(c)}${fedName(fed)}</td><td class="mono">${short(node, 10)}</td><td class="wrap">${what}${pegs(node)}</td></tr>`);
-      for (const n of b.belowMinimums || []) row(n, 'warn', `holds the seat below the minimums: ${esc(((b.ineligible || []).find((x) => x.node === n) || {}).why || '')}`);
-      for (const x of b.ineligible || []) if (!(b.belowMinimums || []).includes(x.node)) row(x.node, 'bad', `not eligible: ${esc(x.why)}`);
-      for (const x of b.waiting || []) row(x.node, 'warn', `waits: ${esc(x.why)}`);
+        return [`· peg-in ${sat(p.sats)} sat ·`, { t: `${conf} of ${fin || '?'}`, c: 'strong' }, `confirmations · counts in ${eta}`, { t: `${cut(p.txid, 8)}:${p.vout}`, c: 'mono muted' }, { bar: [conf, fin] }];
+      });
+      const row = (node, c, what) => out.push({ key: fed + node, dot: c, cls: [null, 'mono', 'wrap'], cells: [fedCell(fed), cut(node, 10), [what, ...pegs(node)]] });
+      for (const n of b.belowMinimums || []) row(n, 'warn', `holds the seat below the minimums: ${((b.ineligible || []).find((x) => x.node === n) || {}).why || ''}`);
+      for (const x of b.ineligible || []) if (!(b.belowMinimums || []).includes(x.node)) row(x.node, 'bad', `not eligible: ${x.why}`);
+      for (const x of b.waiting || []) row(x.node, 'warn', `waits: ${x.why}`);
       return out;
     }
+    const W = [null, null, null, 'mono', 'wrap'];
     for (const f of feds) {
       // A GUARDIAN SEAT RANKS ITS OWN FEDERATION ONLY (gateway-watch.js; the ?federation= is not read): the answer counts only from a
       // seat whose federationId is this one - the first seat that answers may guard the other federation
@@ -418,24 +416,22 @@
       { const got = (await Promise.all(seats.map(async (s) => { const a = await ask(s, '/gateway-seats?federation=' + f.federation); return a.ok && a.body && a.body.federationId === f.federation ? { seat: s, ...a } : null; }))).filter(Boolean);
         got.sort((x, y) => ((y.body.seated || []).length - (x.body.seated || []).length) || ((x.body.ineligible || []).length - (y.body.ineligible || []).length));
         g = got[0] || null; }
-      if (!g) { rows.push(`<tr><td>${dot('bad')}${fedName(f.federation)}</td><td colspan="4" class="bad">no guardian seat of this federation answered</td></tr>`); continue; }
+      if (!g) { rows.push({ key: f.federation, dot: 'bad', cls: W, cells: [fedCell(f.federation), { t: 'no guardian seat of this federation answered', c: 'bad' }, '', '', ''] }); continue; }
       const b = g.body, seated = b.seated || [], need = Number(b.seats) || 2;   // 2 seats, 1 for a draining federation (hard rule, 2026-10-20)
       pending.push(...pendingRows(f.federation, b));
       const c = seated.length >= need ? 'ok' : seated.length ? 'warn' : 'bad';
-      rows.push(`<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(b.epoch)}</td><td>${seated.length} of ${need}</td>
-        <td class="mono">${seated.map((s) => short(s.node || s, 10)).join(', ') || '-'}</td><td class="wrap muted">${esc(b.why || '')}</td></tr>`
-        // THE RUNNING EPOCH (kanban #552): the seats rank the last whole epoch; what this one would seat, and from which block
-        + (b.next ? `<tr><td></td><td class="muted">${esc(b.next.epoch)}</td><td class="muted">${(b.next.seated || []).length} of ${need}</td>
-          <td class="mono muted">${(b.next.seated || []).map((s) => short(s, 10)).join(', ') || '-'}</td><td class="wrap muted">next epoch, from block ${sat(b.next.fromBlock)}: ${esc(b.next.why || '')}</td></tr>` : '')
-        // PEG-IN CLAIMED AND PROVED (kanban #559/#543): what each gateway's claim states, and how much of it the federation's own coins
-        // show (its claimed outpoints that are federation coins); "not checked" while the seat runs code that does not read the coins
-        + Object.entries(b.gateways || {}).map(([node, x]) => `<tr><td></td><td></td><td></td><td class="mono muted">${short(node, 10)}</td>
-          <td class="wrap muted">peg-in ${sat(x.pegInSats || 0)} sat claimed · ${x.provedPegInSats == null ? 'not checked' : sat(x.provedPegInSats) + ' sat proved by the federation\'s coins'}</td></tr>`).join(''));
+      rows.push({ key: f.federation, dot: c, cls: W, cells: [fedCell(f.federation), b.epoch, `${seated.length} of ${need}`, seated.map((x) => cut(x.node || x, 10)).join(', ') || '-', { t: b.why || '', c: 'muted' }] });
+      // THE RUNNING EPOCH (kanban #552): the seats rank the last whole epoch; what this one would seat, and from which block
+      if (b.next) rows.push({ key: f.federation + ':next', cls: W, cells: ['', { t: b.next.epoch, c: 'muted' }, { t: `${(b.next.seated || []).length} of ${need}`, c: 'muted' },
+        { t: (b.next.seated || []).map((x) => cut(x, 10)).join(', ') || '-', c: 'muted' }, { t: `next epoch, from block ${sat(b.next.fromBlock)}: ${b.next.why || ''}`, c: 'muted' }] });
+      // PEG-IN CLAIMED AND PROVED (kanban #559/#543): what each gateway's claim states, and how much of it the federation's own coins
+      // show (its claimed outpoints that are federation coins); "not checked" while the seat runs code that does not read the coins
+      for (const [node, x] of Object.entries(b.gateways || {})) rows.push({ key: f.federation + node, cls: W, cells: ['', '', '', { t: cut(node, 10), c: 'muted' },
+        { t: `peg-in ${sat(x.pegInSats || 0)} sat claimed · ${x.provedPegInSats == null ? 'not checked' : sat(x.provedPegInSats) + ' sat proved by the federation\'s coins'}`, c: 'muted' }] });
     }
-    const claims = nodes.filter((n) => n.gw && n.gw.ok).map((n) => `<span class="tag mono">${short(n.node, 10)} · LND ${short(n.gw.body.lightningPubkey, 10)}</span>`).join('');
-    $('gateways').innerHTML = '<tr><th>Federation</th><th>Epoch</th><th>Seated</th><th>Seats</th><th>Why</th></tr>' + (rows.join('') || '<tr><td colspan="5" class="muted">no federation</td></tr>')
-      + `<tr><td colspan="5" class="wrap"><span class="muted">Nodes that claim a gateway: </span>${claims || '<span class="muted">none</span>'}</td></tr>`;
-    $('gw-pending').innerHTML = '<tr><th>Federation</th><th>Node</th><th>Waits for</th></tr>' + (pending.join('') || '<tr><td colspan="3" class="muted">no gateway waiting</td></tr>');
+    const claims = nodes.filter((n) => n.gw && n.gw.ok).map((n) => `${cut(n.node, 10)} · LND ${cut(n.gw.body.lightningPubkey, 10)}`);
+    drawTable('gateways', ['Federation', 'Epoch', 'Seated', 'Seats', 'Why'], rows, 'no federation', `Nodes that claim a gateway: ${claims.join(', ') || 'none'}`);
+    drawTable('gw-pending', ['Federation', 'Node', 'Waits for'], pending, 'no gateway waiting');
   }
 
   async function paintLiquidity(feds, nodes, tip) {
