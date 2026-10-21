@@ -16,6 +16,7 @@
     "./up-down": "./src/up-down.js",
     "./manifest-sign": "./src/manifest-sign.js",
     "./ed25519": "./src/ed25519.js",
-    "./known-games": "./src/known-games.js"
+    "./known-games": "./src/known-games.js",
+    "./order-book": "./src/order-book.js"
   }
 }

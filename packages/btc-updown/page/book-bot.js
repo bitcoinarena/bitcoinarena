@@ -6,7 +6,7 @@
 // Up at fair - edge - i x step, Down at (1 - fair) - edge - i x step - so an Up bid and a Down bid of one bot together cost
 // less than a share's 1 sat and never cross each other, while a taker who pays the edge always finds a price. Pure: prices,
 // sizes and sides only; placing an order (its locks and its entry) is the client's join path, as a player's.
-import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES, YES, NO } from '../../arena-protocol/src/order-book.js';
+import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES, YES, NO } from 'arena-sdk/order-book';
 
 // the standard normal CDF (Abramowitz-Stegun 7.1.26, |error| < 7.5e-8)
 const phi = (z) => {
