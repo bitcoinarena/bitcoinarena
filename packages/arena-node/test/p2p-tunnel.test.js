@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as tcpServer, connect } from 'node:net';
 import { createServer as httpServer } from 'node:http';
-import { WebSocketServer } from 'ws';
-import { p2pTunnelPort, createP2pTunnels, carryP2p, tunnelRoot, P2P_TUNNEL_BASE, P2P_TUNNEL_SPAN, P2P_TUNNEL_PATHS } from '../src/p2p-tunnel.js';
+import { WebSocketServer, WebSocket } from 'ws';
+import { p2pTunnelPort, createP2pTunnels, carryP2p, tunnelRoot, P2P_TUNNEL_BASE, P2P_TUNNEL_SPAN, P2P_TUNNEL_PATHS, P2P_KEEPALIVE_MS } from '../src/p2p-tunnel.js';
 import { guardianEnv, guardianPorts } from '../src/guardian.js';
 
 const listening = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv.address().port)));
@@ -78,4 +78,29 @@ test('a connection to another guardian\'s port reaches its P2P port through its 
     await wait(100);
     assert.equal(t.state().length, 0);
   } finally { t.close(); s1.close(); s2.close(); g1.close(); g2.close(); }
+});
+
+// A TUNNEL THAT IS NEVER IDLE (kanban #495, measured 2026-10-21: guardians' P2P behind Cloudflare quick tunnels cut every ~2 min 05 s, the
+// DKG stalled at "Exchanging raw bytes"): an idle carried connection is pinged from both ends, each end hears the other's pings
+test('an idle tunnel is pinged from both ends, well inside a proxy\'s 100 s idle cut', async () => {
+  assert.ok(P2P_KEEPALIVE_MS <= 30000, 'every 30 s at most');
+  const g = await guardianP2p('g');
+  let seatPings = 0;
+  const http = httpServer((req, res) => res.end('seat'));
+  const wss = new WebSocketServer({ noServer: true });
+  http.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, (ws) => { ws.on('ping', () => seatPings++); carryP2p(ws, g.port, { keepAliveMs: 40 }); }));
+  const root = `http://127.0.0.1:${await listening(http)}`;
+  let nodePings = 0;
+  const key = 'ab'.repeat(32);
+  const tunnels = createP2pTunnels({ ownKey: 'cd'.repeat(32), keepAliveMs: 40,
+    openWs: (url) => { const ws = new WebSocket(url); ws.on('ping', () => nodePings++); return ws; } });
+  tunnels.sync([{ pubkey: Buffer.from(key, 'hex'), advert: { guardianCapable: true, endpoint: root } }]);
+  await wait(100);
+  const port = p2pTunnelPort(key);
+  const sock = connect({ host: '127.0.0.1', port });
+  await new Promise((r) => sock.on('connect', r));
+  await wait(300);                                   // nothing is written: an idle connection
+  assert.ok(seatPings >= 3, `the seat heard the node's pings (${seatPings})`);
+  assert.ok(nodePings >= 3, `the node heard the seat's pings (${nodePings})`);
+  sock.destroy(); tunnels.close(); for (const c of wss.clients) c.terminate(); http.close(); g.close();
 });
