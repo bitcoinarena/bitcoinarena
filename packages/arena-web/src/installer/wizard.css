@@ -23,3 +23,8 @@
 /* the chips keep their height in a tall tile; the owner's choices are labels, not the page's small grey field labels */
 .aw .tile .does{align-items:flex-start;align-content:flex-start}
 .aw label.choice{color:var(--text);font-size:15px;margin:0}
+/* the Bitcoin step's three ways as one row of buttons, the chosen one lit; the sync bar; ticks and radios in a choice at their own size */
+.aw .kinds{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 8px}.aw button.kind{background:transparent;color:var(--text);border-color:var(--line);margin:0}
+.aw button.kind.on{border-color:var(--gv);background:rgba(247,147,26,.12)}
+.aw .bar{height:8px;background:var(--line);border-radius:4px;margin-top:6px;overflow:hidden}.aw .bar i{display:block;height:8px;background:var(--gv)}
+.aw .choice > input{width:auto;margin-top:4px}.aw .choice p{overflow-wrap:anywhere}

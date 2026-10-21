@@ -418,21 +418,21 @@ async function load() {
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
   // THE REACT STEPS (kanban #564): a ported step draws itself; the roles into their list (the pictures around it stay the page's)
-  const R = window.ArenaWizard || null, ctx = { st, post, reload: load };
+  const R = window.ArenaWizard || null, ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: load };
   const reactRoles = st.step === 'roles' && !!R && R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; $('roles-save').hidden = true; } });
-  if (R) for (const k of ['seed', 'owner', 'promise']) if (st.step === k) R.mount(k, $('s-' + k), ctx);
+  const reactStep = !!R && R.show(st.step, (k) => $('s-' + k), ctx);
   if (st.step === 'roles' && !reactRoles) $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
     `<div class="rc"><label class="rc-top"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && !OPT_IN_ROLES.includes(k)) ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><span class="role-ic">${ROLE_IC[k] || ''}</span>`
     + `<span class="rc-name"><b>${esc(r.title)}</b> <span class="rc-does">${esc(r.does || '')}</span></span><span class="rc-pct">1 % of each round</span></label>`
     + `<div class="rc-chips">${(r.chips || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('')}${OPT_IN_ROLES.includes(k) ? '<span class="chip opt">needs coins + LND</span>' : ''}</div>`
     + `<details class="rc-more"><summary>more</summary><p>${ROLE_EARN[k] || ''}</p><p>${esc(r.needs)}</p></details></div>`).join('');
   if (st.step === 'roles' && !reactRoles) { const cb = document.querySelector('#roles input[value=custody]'); const show = () => { $('custody-explain').hidden = !(cb && cb.checked); }; if (cb) cb.addEventListener('change', show); show(); }
-  if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
-  if (st.step === 'chain') pickElectrum();
+  if (st.step === 'chain' && !reactStep) $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
+  if (st.step === 'chain' && !reactStep) pickElectrum();
   if (st.step === 'lightning' && st.lightning && st.lightning.pubkey) $('ln-gw').hidden = false;
   if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = needText(st.wallet.needSats, st.wallet.parts); $('b-need2').textContent = needText(st.wallet.needSats, st.wallet.parts); $('b-custody').hidden = !st.roles.includes('custody');
   $('b-later-custody').hidden = !st.custodyLater; $('b-custody-why').hidden = st.custodyLater; $('b-later').textContent = st.custodyLater ? 'Later' : 'I\'ll post it later'; $('b-new').hidden = st.custodyLater; $('b-post').textContent = st.custodyLater ? 'Update my bond for custody' : 'Post the bond'; }
-  if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
+  if (st.step === 'reach' && !reactStep) { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
       : r.mode === 'permanent' ? `at <code>${esc(r.url)}</code> through your Cloudflare tunnel (the user service <code>arena-tunnel</code>)`
@@ -589,7 +589,7 @@ $('nostr-login').onclick = async () => { if (!window.nostr) return say('svc-msg'
   const r = await post('/api/owner/login', { nostr: ev }); if (r.ok) return load(); say('svc-msg', r); };
 $('intro-go').onclick = () => { introSkipped = true; try { localStorage.setItem('arena-intro-seen', '1'); } catch { /* this visit only */ } load(); };
 $('finish').onclick = async () => { const r = await post('/api/finish'); say('finish-msg', r, `Finished. The installer has stopped. Your owner page: ${r.owner}`); $('finish').disabled = true; };
-setKind('core'); load().then(() => { if (st && st.step === 'chain') fetch('/api/state').then(() => post('/api/core/plan')).then((r) => { if (r && r.core) setKind('install'); }); });
+setKind('core'); load().then(() => { if (st && st.step === 'chain' && !window.ArenaWizard) fetch('/api/state').then(() => post('/api/core/plan')).then((r) => { if (r && r.core) setKind('install'); }); });
 </script>
 </body>
 </html>
