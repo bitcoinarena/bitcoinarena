@@ -10,6 +10,7 @@ import { AddressPanel } from './AddressPanel.jsx';
 import { BondPanel } from './BondPanel.jsx';
 import { CustodyPanel, LiquidityPanel } from './CustodyPanels.jsx';
 import { StandingPanel } from './StandingPanel.jsx';
+import { ReleasePanel } from './ReleasePanel.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -34,4 +35,5 @@ export function mountBond(element, { api, initial } = {}) {
 export function mountCustody(element, { api, initial } = {}) { const root = createRoot(element); root.render(<CustodyPanel api={api} initial={initial} />); return root; }
 export function mountLiquidity(element, { api, initial } = {}) { const root = createRoot(element); root.render(<LiquidityPanel api={api} initial={initial} />); return root; }
 export function mountStanding(element, { api, initial, onMissed } = {}) { const root = createRoot(element); root.render(<StandingPanel api={api} initial={initial} onMissed={onMissed} />); return root; }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding };
+export function mountRelease(element, { api, initial, onNewer } = {}) { const root = createRoot(element); root.render(<ReleasePanel api={api} initial={initial} onNewer={onNewer} />); return root; }
+if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease };
