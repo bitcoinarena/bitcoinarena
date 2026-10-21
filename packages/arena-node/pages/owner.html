@@ -236,7 +236,9 @@ function need(key, level, text, section) {
   if (level) needs.set(key, { level, text, section }); else needs.delete(key);
   const el = $('needs'); if (!el) return;
   const list = [...needs.values()].sort((x, y) => (x.level === 'bad' ? 0 : 1) - (y.level === 'bad' ? 0 : 1));
-  el.innerHTML = list.length ? `<h3>What needs you</h3>${list.map((n) => `<p class="${n.level === 'bad' ? 'err' : 'warnline'}">${n.level === 'bad' ? '🔴' : '🟡'} ${esc(n.text)} <a href="#${n.section}">Open</a></p>`).join('')}`
+  // THE REACT LIST (kanban #564) once the bundle is loaded; the page's own lines otherwise. The sidebar dots stay the page's.
+  if (window.ArenaOwner && window.ArenaOwner.needsInto) { if (!el._needsRoot) el.innerHTML = ''; window.ArenaOwner.needsInto(el, list); }
+  else el.innerHTML = list.length ? `<h3>What needs you</h3>${list.map((n) => `<p class="${n.level === 'bad' ? 'err' : 'warnline'}">${n.level === 'bad' ? '🔴' : '🟡'} ${esc(n.text)} <a href="#${n.section}">Open</a></p>`).join('')}`
     : '<h3 class="ok">Nothing needs you ✓</h3><p class="sub">This node runs, its bond is enough and it is up to date.</p>';
   for (const [x] of SECTIONS) { const d = $('dot-' + x); if (d) { const l = list.find((n) => n.section === x); d.className = 'dot' + (l ? ' d-' + l.level : ''); } }
 }
