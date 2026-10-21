@@ -4775,7 +4775,11 @@ that becomes the founding's `trigger_height` (the earliest wins):
    federation of their own, of `cohort_nominal` seats, drawn as below. The
    trigger is the first height of the current run at or above 10: once
    their adverts name the new federation in `guardian_of[]` the run ends,
-   and the next ten are a later height. A node that installs the custody
+   and the next ten are a later height. A cohort founding that goes void is
+   drawn again at `founding_window + 1` blocks after its trigger height, the
+   run's first height plus a whole number of those steps, so every seat names
+   the same draw from the chain alone, however long it has run *(2026-10-21,
+   kanban #495)*. A node that installs the custody
    role advertises itself guardian-capable at its public address
    `/guardian` and runs its guardian in setup mode until drawn.
 

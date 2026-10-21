@@ -73,9 +73,9 @@ test('whether the guardian waits in setup is asked of the setup API (rehearsal 2
 });
 
 // THE GENESIS AND LOAD TRIGGERS, FROM THE HISTORY THE SEAT KEEPS AT EACH TICK
-function triggerSeat({ recs, w }) {
+function triggerSeat({ recs, w, from = 0 }) {
   const setup = { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null };
-  return createFoundingSeat({ records: () => recs(), entriesAt: async () => entries,
+  return createFoundingSeat({ records: () => recs(), entriesAt: async (h) => (h >= from ? entries : []),
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup, nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: keys[0].pub,
     sign: (h) => schnorr.sign(h, keys[0].secret), verify });
@@ -83,7 +83,7 @@ function triggerSeat({ recs, w }) {
 
 test('genesis: no federation and six guardian-capable operators in the census - the first federation is drawn on the block after', async () => {
   const w = { tip: 300 };
-  const seat = triggerSeat({ recs: () => [], w });
+  const seat = triggerSeat({ recs: () => [], w, from: 300 });           // the census holds them from 300 on
   const first = await seat.tick();
   assert.equal(first.ok, false); assert.match(first.why, /beacon after 300/);
   w.tip = 301;
@@ -222,7 +222,7 @@ test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a 
       guardianOf: i < 4 ? [{ federationId: Uint8Array.from(Buffer.from(bFed, 'hex')), guardianKey: new Uint8Array(33) }] : [] } }));
   const held = [{ federation: bFed, status: 'OPEN', height: 300 }];
   const w = { tip: 300 };
-  const s = createFoundingSeat({ records: () => held, entriesAt: async () => cEntries,
+  const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
     nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[5].pub, sign: (h) => schnorr.sign(h, all[5].secret), verify });
@@ -245,7 +245,7 @@ test('a seat that holds no record (no round) sees the federation the census name
     advert: { operatorId: `rop${i}`, guardianCapable: true, guardianEndpoint: `wss://r${i}`,
       guardianOf: i < 4 ? [{ federationId: Uint8Array.from(Buffer.from(bFed, 'hex')), guardianKey: new Uint8Array(33) }] : [] } }));
   const w = { tip: 300 };
-  const s = createFoundingSeat({ records: () => [], entriesAt: async () => cEntries,
+  const s = createFoundingSeat({ records: () => [], entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
     nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[7].pub, sign: (h) => schnorr.sign(h, all[7].secret), verify });
@@ -268,7 +268,7 @@ test('seats that hold no round and name no peers read the drawn nodes\' codes at
   const seats = [];
   const byRoot = new Map();
   for (let i = 0; i < 12; i++) {
-    const s = createFoundingSeat({ records: () => held, entriesAt: async () => cEntries,
+    const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
       beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
       guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
       nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
@@ -288,4 +288,32 @@ test('seats that hold no round and name no peers read the drawn nodes\' codes at
     if (!x.seated.some((y) => y.node === toHex(all[seats.indexOf(s)].pub))) continue;   // an alternate holds no code of its own
     assert.equal(x.seated.filter((y) => y.code).length, 10, 'a drawn seat holds every drawn code');
   }
+});
+
+test('seats started at different heights draw the same cohort, and a void one is drawn again founding_window + 1 later (kanban #495: the seven second-host seats drew at 157,178, the installers at 157,179)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`d${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/dtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `dop${i}`, guardianCapable: true, guardianEndpoint: `wss://d${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 280 }];
+  const w = { tip: 293 };
+  const reads = [];
+  const seat = (i) => createFoundingSeat({ records: () => held, entriesAt: async (h) => { reads.push(h); return h >= 290 ? cEntries : cEntries.slice(0, 3); },
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
+    nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
+  const early = seat(0);
+  await early.tick();                                     // started at 293: the run began at 290, read back from the chain
+  assert.equal(early.state().trigger.height, 290);
+  w.tip = 296;
+  const late = seat(1);
+  await late.tick(); await early.tick();
+  assert.equal(late.state().id, early.state().id, 'a seat started later names the same founding');
+  assert.equal(late.state().trigger.height, 290);
+  assert.ok(reads.includes(289) && !reads.includes(288), 'the first tick reads back to the run\'s start and one height before, no further');
+  w.tip = 302 + clocks.foundingWindow;                    // the window of 290 (beacon 291, foundingWindow 10) has passed: 290 + 11 = 301
+  const fresh = seat(2);
+  await fresh.tick(); await late.tick();
+  assert.equal(fresh.state().trigger.height, 301, 'drawn again one founding_window + 1 after the run began');
+  assert.equal(late.state().trigger.height, 301, 'the seat that held 290 moves to the same next draw');
+  assert.equal(fresh.state().id, late.state().id);
 });

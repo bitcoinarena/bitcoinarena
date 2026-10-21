@@ -120,9 +120,15 @@ export const triggerKey = (t) => `${t.kind}:${t.federation || ''}:${t.height}`;
  * 2026-10-18 on the test host seats: federation B's departure notice at 156647 went void at 156666 and stayed the trigger, the earliest,
  * so no later event - a cohort of ten new nodes among them - could ever start a founding).
  */
-export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false, cohort = COHORT_NOMINAL, voided = [] }) {
+export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false, cohort = COHORT_NOMINAL, voided = [],
+  tip = null, foundingWindow = null }) {
   const skip = new Set(voided);
-  const cohortAfter = Math.max(-1, ...[...skip].filter((k) => k.startsWith('cohort:')).map((k) => Number(k.split(':').pop())));
+  // A COHORT REDRAWS ON THE CHAIN'S CLOCK when the tip and founding_window are known (kanban #495, measured 2026-10-21 at 157,179:
+  // the seven second-host seats, restarted at 157,178, drew 218dd6c7 at 157,178; the three installer nodes, whose first readable census was
+  // 157,179, drew at 157,179 - each seat's run began where its memory began, and a void moved it to the next height it had seen).
+  // The draws are the run's first height, then one founding_window + 1 later each - every seat names the same one from the chain.
+  const scheduled = Number.isInteger(tip) && Number.isInteger(foundingWindow) && foundingWindow > 0;
+  const cohortAfter = scheduled ? -1 : Math.max(-1, ...[...skip].filter((k) => k.startsWith('cohort:')).map((k) => Number(k.split(':').pop())));
   const found = [];
   if (!federationExists && Number.isInteger(nominal)) {
     const g = capable.find((x) => x.operators >= nominal);
@@ -131,8 +137,11 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
   if (federationExists && Number.isInteger(cohort) && cohort > 0) {
     let start = null;
     for (const x of capable) { if (typeof x.free !== 'number' || x.height <= cohortAfter) continue; if (x.free >= cohort) { if (start === null) start = x; } else start = null; }
-    if (start) found.push({ kind: 'cohort', height: start.height, nominal: cohort,
-      why: `${start.free} guardian-capable operators guarding no OPEN federation at ${start.height}, at least ${cohort}: they found a federation of their own` });
+    const step = foundingWindow + 1;
+    const at = start && scheduled && tip - 1 > start.height ? start.height + Math.floor((tip - 1 - start.height) / step) * step : start && start.height;
+    if (start) found.push({ kind: 'cohort', height: at, nominal: cohort,
+      why: `${start.free} guardian-capable operators guarding no OPEN federation from ${start.height}, at least ${cohort}: they found a federation of their own`
+        + (at !== start.height ? ` (drawn again at ${at}, every founding_window + 1)` : '') });
   }
   const carried = (r) => ({ ...(r.federation !== undefined ? { federation: r.federation } : {}), ...(Number.isInteger(r.nominal) ? { nominal: r.nominal } : {}),
     ...(Array.isArray(r.seatedFirst) ? { seatedFirst: r.seatedFirst } : {}),
