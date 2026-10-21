@@ -1,0 +1,12 @@
+{
+  "about": "What a node hosts of this app (kanban #569): the registrations it loads, every version still played. The installer lists the app with these, selected.",
+  "id": "nextblock",
+  "title": "Tick Tock, Next Block",
+  "short": "Next Block",
+  "registrations": [
+    "plugin/nextblock.js",
+    "plugin/nextblock-v2.js",
+    "plugin/nextblock-v3.js",
+    "plugin/nextblock-v4.js"
+  ]
+}
