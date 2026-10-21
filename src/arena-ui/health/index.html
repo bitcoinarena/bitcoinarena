@@ -11,7 +11,8 @@
      and each node is asked its own public doors - /owner/version, /owner/bond, /dashboard.json (its LND), /liquidity-claim,
      /gateway-claim. The federations, gateway seats, liquidity seatings, fees, reserves and games come from the seats. Six requests
      at a time, every 60 s; a node that does not answer in 10 s is red.
-     THE MODERN PAGE (kanban #564): the network's facts, the nodes and the capacity drawn by React (./react.js, packages/arena-web/src/
+     THE MODERN PAGE (kanban #564): the network's facts, the nodes, the capacity, the federations, liquidity providers, LND, games and
+     fees drawn by React (./react.js, packages/arena-web/src/
      health) when it is there; this page still reads everything itself, and draws them itself when it is not. -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
@@ -83,6 +84,20 @@
   const dot = (c) => `<span class="dot ${c}"></span>`;
   // THE REACT VIEWS (./react.js), when they are there: loaded before the first read
   let H = null;
+  // A TABLE AS DATA (kanban #564): head, rows of cells - text, { t, c } (text in a class) or a list of those - and the words for none;
+  // drawn by React's Table when it is there, else as this page's own HTML (the same cells, escaped here)
+  const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
+  const fedCell = (fid) => { const n = fedNoOf(fid); return n ? [`Federation ${n}`, { t: cut(fid, 8), c: 'muted mono' }] : { t: cut(fid, 12), c: 'mono' }; };
+  const partHtml = (p) => (p && typeof p === 'object' ? `<span class="${p.c || ''}">${esc(p.t)}</span>` : esc(p));
+  const cellHtml = (c) => (Array.isArray(c) ? c.map(partHtml).join(' ') : partHtml(c));
+  const tableHost = {};
+  function drawTable(id, head, rows, empty, foot) {
+    if (H) { tableHost[id] = tableHost[id] || $(id).parentElement; return H.draw(tableHost[id], 'table', { head, rows, empty, foot }); }
+    $(id).innerHTML = '<tr>' + head.map((h) => `<th>${esc(h)}</th>`).join('') + '</tr>'
+      + (rows.length ? rows.map((r) => '<tr>' + r.cells.map((c, i) => `<td${r.cls && r.cls[i] ? ` class="${r.cls[i]}"` : ''}>${i === 0 && r.dot ? dot(r.dot) : ''}${cellHtml(c)}</td>`).join('') + '</tr>').join('')
+        : `<tr><td colspan="${head.length}" class="muted">${esc(empty)}</td></tr>`)
+      + (foot ? `<tr><td colspan="${head.length}" class="muted">${esc(foot)}</td></tr>` : '');
+  }
   // FEDERATIONS BY NUMBER (kanban #557, the owner 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
   // it belongs, federation 1,2,3 or more"): 1, 2, 3 ... by the oldest record first, then by id - the same number on every card of the page
   let FED_NO = new Map();
@@ -291,11 +306,11 @@
       const st = String(f.status || ''), byStatus = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
       const byLoad = load == null ? 'ok' : load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok';
       const RANK = { ok: 0, warn: 1, bad: 2 }, c = RANK[byLoad] > RANK[byStatus] ? byLoad : byStatus;
-      return `<tr><td>${dot(c)}${fedName(f.federation)}</td><td>${esc(st || '-')}${st === 'OPEN' && load != null && load >= 1 ? ' · <span class="bad">FULL</span>' : ''}</td><td>${sat(f.height)}</td>
-        <td>${Array.isArray(f.signers) ? f.signers.length : esc(f.signers)}</td><td>${sat(f.reserveSats)}</td><td>${sat(f.exposureCapSats)}</td>
-        <td>${load == null ? '-' : `<span class="${load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok'}">${(load * 100).toFixed(0)} %</span>`}</td></tr>`;
+      return { key: f.federation, dot: c, cells: [fedCell(f.federation), st === 'OPEN' && load != null && load >= 1 ? [st, '·', { t: 'FULL', c: 'bad' }] : (st || '-'), sat(f.height),
+        Array.isArray(f.signers) ? f.signers.length : f.signers, sat(f.reserveSats), sat(f.exposureCapSats),
+        load == null ? '-' : { t: `${(load * 100).toFixed(0)} %`, c: load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok' }] };
     });
-    $('feds').innerHTML = '<tr><th>Federation</th><th>Status</th><th>Record height</th><th>Signers</th><th>Reserve (sat)</th><th>Cap (sat)</th><th>Load</th></tr>' + (rows.join('') || '<tr><td colspan="7" class="muted">no federation record read</td></tr>');
+    drawTable('feds', ['Federation', 'Status', 'Record height', 'Signers', 'Reserve (sat)', 'Cap (sat)', 'Load'], rows, 'no federation record read');
   }
 
   // WHAT THE NETWORK WAITS FOR (kanban #560, the owner 2026-10-20: "Make sure that /health is also showing this table by asking the nodes"):
@@ -436,35 +451,33 @@
       const w = [...weights].filter(([k]) => k.endsWith(':' + n.node)).map(([k, v]) => k.split(':')[0] + ' ' + sat(v)).join(', ');
       const age = Math.round((Date.now() - Number(c.atMs || 0)) / 60000);
       const col = free + given >= 500000 ? 'ok' : 'warn';
-      return `<tr><td>${dot(col)}<span class="mono">${short(n.node, 12)}</span></td><td class="mono">${short(c.lightningPubkey, 12)}</td><td>${sat(free)}</td>
-        <td>${(c.channels || []).length} · ${sat(given)} sat</td><td>${(c.funds || []).length}</td><td>${w || '<span class="muted">not seated</span>'}</td>
-        <td class="${age > 20 ? 'warn' : ''}">${age} min ago</td></tr>`;
+      return { key: n.node, dot: col, cls: [null, 'mono', null, null, null, null, age > 20 ? 'warn' : null],
+        cells: [{ t: cut(n.node, 12), c: 'mono' }, cut(c.lightningPubkey, 12), sat(free), `${(c.channels || []).length} · ${sat(given)} sat`, (c.funds || []).length,
+          w || { t: 'not seated', c: 'muted' }, `${age} min ago`] };
     });
-    $('liquidity').innerHTML = `<tr><th>Provider node</th><th>LND</th><th>Free (claimed, sat)</th><th>Channels given</th><th>Coins proven by signature</th><th>Seating weight (epoch ${[...new Set(used.values())].join(', ') || (epoch == null ? '-' : epoch)})</th><th>Claim signed</th></tr>`
-      + (rows.join('') || '<tr><td colspan="7" class="muted">no node serves a liquidity claim</td></tr>');
+    drawTable('liquidity', ['Provider node', 'LND', 'Free (claimed, sat)', 'Channels given', 'Coins proven by signature',
+      `Seating weight (epoch ${[...new Set(used.values())].join(', ') || (epoch == null ? '-' : epoch)})`, 'Claim signed'], rows, 'no node serves a liquidity claim');
   }
 
   function paintLnd(nodes) {
     const rows = nodes.filter((n) => n.dash && n.dash.ok && n.dash.body.hosts && n.dash.body.hosts.lnd).map((n) => {
       const l = n.dash.body.hosts.lnd;
       const c = !l.synced ? 'bad' : Number(l.activeChannels || 0) === 0 ? 'warn' : 'ok';
-      return `<tr><td>${dot(c)}<span class="mono">${short(n.node, 12)}</span></td><td>${esc(l.alias || '-')}</td><td class="mono">${short(l.pubkey, 12)}</td>
-        <td>${l.synced ? '<span class="ok">yes</span>' : '<span class="bad">no</span>'}</td><td>${esc(l.activeChannels)}</td>
-        <td>${satMsat(l.localMsat)}</td><td>${satMsat(l.remoteMsat)}</td><td>${esc(l.forwards30d == null ? '-' : l.forwards30d)}</td></tr>`;
+      return { key: n.node, dot: c, cls: [null, null, 'mono'], cells: [{ t: cut(n.node, 12), c: 'mono' }, l.alias || '-', cut(l.pubkey, 12),
+        l.synced ? { t: 'yes', c: 'ok' } : { t: 'no', c: 'bad' }, l.activeChannels, satMsat(l.localMsat), satMsat(l.remoteMsat), l.forwards30d == null ? '-' : l.forwards30d] };
     });
-    $('lnd').innerHTML = '<tr><th>Node</th><th>Alias</th><th>LND key</th><th>Synced</th><th>Active channels</th><th>Local (sat)</th><th>Remote / inbound (sat)</th><th>Forwards 30 d</th></tr>'
-      + (rows.join('') || '<tr><td colspan="8" class="muted">no node shows an LND on its dashboard</td></tr>');
+    drawTable('lnd', ['Node', 'Alias', 'LND key', 'Synced', 'Active channels', 'Local (sat)', 'Remote / inbound (sat)', 'Forwards 30 d'], rows, 'no node shows an LND on its dashboard');
   }
 
   function paintGames(g) {
-    if (!g) { $('games').innerHTML = '<tr><td class="bad">no seat answered /network-games</td></tr>'; return; }
+    const GH = ['Game or market', 'Type', 'Versions', 'Seats hosting (most of any version)'];
+    if (!g) return drawTable('games', GH, [], 'no seat answered /network-games');
     const byName = new Map();
     for (const x of g.body.games) { const k = x.name || x.title; const a = byName.get(k) || { title: x.title || k, type: x.type, versions: [], seats: 0 }; a.versions.push(x.version); a.seats = Math.max(a.seats, (x.seats || []).length || 0); byName.set(k, a); }
-    const rows = [...byName].map(([k, a]) => `<tr><td>${dot(a.seats >= 3 ? 'ok' : a.seats ? 'warn' : 'bad')}${esc(a.title)}</td><td>${esc(a.type || '-')}</td>
-      <td>${a.versions.filter((v) => v != null).sort((p, q) => Number(p) - Number(q)).join(', ') || '-'}</td><td>${a.seats}</td></tr>`);
+    const rows = [...byName].map(([k, a]) => ({ key: k, dot: a.seats >= 3 ? 'ok' : a.seats ? 'warn' : 'bad',
+      cells: [a.title, a.type || '-', a.versions.filter((v) => v != null).sort((p, q) => Number(p) - Number(q)).join(', ') || '-', a.seats] }));
     const answered = (g.body.seats || []).filter((s) => s.answered).length;
-    $('games').innerHTML = `<tr><th>Game or market</th><th>Type</th><th>Versions</th><th>Seats hosting (most of any version)</th></tr>` + rows.join('')
-      + `<tr><td colspan="4" class="muted">${answered} of ${(g.body.seats || []).length} seats answered the games read</td></tr>`;
+    drawTable('games', GH, rows, 'no game read', `${answered} of ${(g.body.seats || []).length} seats answered the games read`);
   }
 
   function paintFees(f) {
@@ -473,6 +486,7 @@
     const facts = [['Node fee (round)', (i.roundNodeBps / 100) + ' %'], ['Donation (round)', (i.roundDonationBps / 100) + ' %'], ['Reserves (round)', (i.roundReserveBps / 100) + ' %'],
       ['Market node fee', (i.marketNodeBps / 100) + ' %'], ['Market donation', (i.marketDonationBps / 100) + ' %'], ['Market reserves', (i.marketReserveBps / 100) + ' %'],
       ['Items: nodes / reserves / devs', i.itemNodesPct + ' / ' + i.itemReservesPct + ' / ' + i.itemDevsPct + ' %'], ['Website share', i.websitePct + ' %']];
+    if (H) return H.draw($('fees'), 'facts', { items: facts.map(([k, v]) => [k, v, '']) });
     $('fees').innerHTML = facts.map(([k, v]) => `<div class="fact"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
   }
 

@@ -105,3 +105,20 @@ export function Capacity({ view }) {
       <div className="capnet"><Dot c={view.network.tone} /><b>Network: {view.network.band}</b> - {view.network.say}</div>
     </div>);
 }
+
+// A TABLE FROM THE PAGE'S DATA (slice 2: federations, liquidity providers, LND, games): { head: [titles], rows: [{ key, dot, cells,
+// cls }], empty, foot }. A cell is text, { t, c } (text in a class) or a list of those, joined by spaces - plain strings, never HTML.
+const Part = ({ p }) => (p && typeof p === 'object' ? <span className={p.c || undefined}>{p.t}</span> : <>{p == null ? '' : String(p)}</>);
+const Cell = ({ c }) => (Array.isArray(c) ? <>{c.map((p, i) => <React.Fragment key={i}>{i ? ' ' : null}<Part p={p} /></React.Fragment>)}</> : <Part p={c} />);
+export function Table({ head, rows, empty, foot }) {
+  return (
+    <table>
+      <thead><tr>{head.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+      <tbody>
+        {rows.length ? rows.map((r, ri) => (
+          <tr key={r.key || ri}>{r.cells.map((c, i) => <td key={i} className={(r.cls && r.cls[i]) || undefined}>{i === 0 && r.dot ? <Dot c={r.dot} /> : null}<Cell c={c} /></td>)}</tr>))
+          : <tr><td colSpan={head.length} className="muted">{empty}</td></tr>}
+        {foot ? <tr><td colSpan={head.length} className="muted">{foot}</td></tr> : null}
+      </tbody>
+    </table>);
+}
