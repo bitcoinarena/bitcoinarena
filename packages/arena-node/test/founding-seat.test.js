@@ -7,7 +7,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
-import { createFoundingSeat, cliSetup } from '../src/founding-seat.js';
+import { createFoundingSeat, cliSetup, execCli } from '../src/founding-seat.js';
+import { execFile } from 'node:child_process';
+import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const key = (s) => { const secret = taggedHash('TEST/fseat', new TextEncoder().encode(s)); return { secret, pub: schnorr.getPublicKey(secret) }; };
 const verify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
@@ -349,4 +353,20 @@ test('a node whose advert names a dead endpoint still seats its code: each seat 
   }
   assert.ok(checked >= 8);
   assert.ok(seats.slice(9).some((s, j) => s.state().seated.some((y) => y.node === toHex(all[9 + j].pub))), 'a dead-advert node is drawn');
+});
+
+// THE CLI'S REFUSAL REACHES THE FOUNDING (kanban #495, founding 53be35a3: two seated nodes never posted a code - fedimint-cli says "Local
+// parameters have already been set" on stdout, the exec error's message held only "Command failed", and the fresh setup that reads the
+// refusal never started). A stand-in CLI that refuses as the real one does, run as the seat runs it.
+test('a refusal fedimint-cli prints on stdout is in the error the founding reads', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+  const bin = join(dir, 'fedimint-cli');
+  writeFileSync(bin, "#!/bin/sh\necho '{ \"error\": \"Config Gen Error: Federation rpc error { method => set_local_params, 1024 => Unspecified server error: Local parameters have already been set }\" }'\nexit 1\n");
+  chmodSync(bin, 0o755);
+  const setup = cliSetup({ run: (args) => execCli(execFile, bin, args), apiPort: 7551, password: 'pw', guardianName: 'ab'.repeat(8) });
+  await assert.rejects(setup.localParams({ leader: true, name: 'arena', size: 10 }), /Local parameters have already been set/);
+  const ok = join(dir, 'ok-cli');
+  writeFileSync(ok, "#!/bin/sh\necho '\"code123\"'\n");
+  chmodSync(ok, 0o755);
+  assert.equal(await cliSetup({ run: (a) => execCli(execFile, ok, a), apiPort: 1, password: 'p', guardianName: 'g' }).localParams({ leader: false }), 'code123');
 });

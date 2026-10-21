@@ -124,7 +124,7 @@ import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
-import { createFoundingSeat, cliSetup } from './founding-seat.js';
+import { createFoundingSeat, cliSetup, execCli } from './founding-seat.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
@@ -3776,7 +3776,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const newestRound = () => { const r = round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); return r || null; };
     const viewOf = () => { const r = newestRound(); if (!r) return null; const c = decodeRoundContract(new Uint8Array(r.contract)); return { rid: new Uint8Array(r.round_id), view: roster.chainFor({ contract: c, roundIdBytes: new Uint8Array(r.round_id) }) }; };
     const password = () => readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
-    const runCli = (args) => new Promise((res, rej) => execFileCb(process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args, { timeout: 120000 }, (e, out) => (e ? rej(e) : res(String(out)))));
+    // the CLI's refusal in its error's message (founding-seat.js execCli: fedimint-cli says it on stdout)
+    const runCli = (args) => execCli(execFileCb, process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args);
     const foundingSetup = cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16),
       freshSetup: guardianControl && guardianControl.freshSetup ? () => guardianControl.freshSetup() : null });
     // THE GUARDIAN-NEXT'S SETUP: a guardian in consensus seated first in a successor takes part through it
