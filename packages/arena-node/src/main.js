@@ -45,7 +45,7 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { bitcoindRpc, blocksOver, blockCache } from './chain-rpc.js';
+import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes } from './chain-rpc.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './node-start.js';
@@ -288,9 +288,9 @@ if (url) {
     if (chainCensusInFlight.has(key)) return chainCensusInFlight.get(key);
     if (Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
-      let view;
-      try { view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; }
-      const census = censusOfView(view, contract);
+      // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
+      const read = async () => { try { return await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
+      const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract), cache: blocksKept });
       if (census.ok) {
         try {
           db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now());
