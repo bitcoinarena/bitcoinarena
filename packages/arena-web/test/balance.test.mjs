@@ -31,3 +31,19 @@ test('inside the Wallet: its own head, no close; none held; the close handed bac
   head.props.children[1].props.onClick({ stopPropagation() {} });
   assert.equal(closed, 1);
 });
+
+test('debug: every federation read, its status and load, reserve against cap, a HALTED one’s payback, "Deposit here" into that one', () => {
+  const deposited = [];
+  const debug = { rows: [
+    { federation: A, level: 'ok', state: 'OPEN · load 12 %', cap: 'reserve 1,200 / cap 10,000 sat · room 8,800 sat · 7 signers', note: '', canDeposit: true, onDeposit: () => deposited.push(A) },
+    { federation: B, level: 'bad', state: 'HALTED', cap: 'reserve 0 / cap 0 sat · room 0 sat', note: 'Paid back in about 12 blocks (2 h)', canDeposit: false, onDeposit() {} }] };
+  const h = renderToStaticMarkup(React.createElement(BalanceSplit, { title: 'Your balance', closable: true, rows: [], total: null, debug }));
+  assert.match(h, /<div class="dbg-h">All federations \(debug\) · 2<\/div><div class="row"><div><div class="fed">Federation aaaaaaaa…<\/div><div class="st"><span class="hl ok"><\/span>OPEN · load 12 %<\/div><div class="dbg-cap">reserve 1,200 \/ cap 10,000 sat · room 8,800 sat · 7 signers<\/div><\/div><button type="button" class="dep-here">Deposit here<\/button><\/div>/);
+  assert.match(h, /<div class="note bad">Paid back in about 12 blocks \(2 h\)<\/div><\/div><button type="button" class="dep-here" disabled="" title="its record names no invite">Deposit here<\/button>/);
+  assert.match(renderToStaticMarkup(React.createElement(BalanceSplit, { title: 'x', rows: [], debug: { rows: [] } })), /All federations \(debug\) · 0<\/div><div class="row">No federation record read yet<\/div>$/);
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(BalanceSplit, { title: 'x', rows: [] })), /dbg-h/);
+  const parts = new BalanceSplit({ title: 'x', rows: [], debug }).render().props.children;
+  const button = parts[4].props.children[2][0].props.children[1];
+  let stopped = 0; button.props.onClick({ stopPropagation: () => stopped++ });
+  assert.deepEqual([deposited, stopped], [[A], 1]);
+});
