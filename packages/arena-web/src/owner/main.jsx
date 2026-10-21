@@ -5,10 +5,16 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RolesPanel } from './RolesPanel.jsx';
+import { ServicesPanel } from './ServicesPanel.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
   root.render(<RolesPanel api={api} node={node} initial={initial} />);
   return root;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles };
+export function mountServices(element, { api, initial, onAttention } = {}) {
+  const root = createRoot(element);
+  root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} />);
+  return root;
+}
+if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices };
