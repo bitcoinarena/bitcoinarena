@@ -12,6 +12,10 @@
     "./series": "./src/series.js",
     "./encode": "./src/encode.js",
     "./display-name": "./src/display-name.js",
-    "./genesis-ids": "./src/genesis-ids.js"
+    "./genesis-ids": "./src/genesis-ids.js",
+    "./up-down": "./src/up-down.js",
+    "./manifest-sign": "./src/manifest-sign.js",
+    "./ed25519": "./src/ed25519.js",
+    "./known-games": "./src/known-games.js"
   }
 }

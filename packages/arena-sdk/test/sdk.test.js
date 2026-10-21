@@ -13,11 +13,14 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
-test('every subpath is the protocol module itself', async () => {
+// the two that are not the protocol's: manifest signing (the developer's tools) and its ed25519
+const FROM = { 'manifest-sign': '../../arena-donor/src/manifest-sign.js', ed25519: '../../arena-node/src/ed25519.js' };
+
+test('every subpath is the Arena module itself', async () => {
   for (const sub of Object.keys(pkg.exports)) {
     const name = sub.slice(2);
     const viaSdk = await import(`arena-sdk/${name}`);
-    const own = await import(`../../arena-protocol/src/${name}.js`);
+    const own = await import(FROM[name] || `../../arena-protocol/src/${name}.js`);
     assert.deepEqual(Object.keys(viaSdk).sort(), Object.keys(own).sort(), name);
     for (const k of Object.keys(own)) assert.equal(viaSdk[k], own[k], `${name}.${k} is the same binding`);
   }
@@ -44,4 +47,12 @@ test('rock-paper-scissors\' plugin imports only itself and arena-sdk; its four i
   const ids = {};
   for (const v of ['', '-v2', '-v3', '-v4']) ids[v || 'v1'] = Buffer.from((await import(`../../rock-paper-scissors/plugin/rock-paper-scissors${v}.js`)).GAME.gameId).toString('hex').slice(0, 16);
   assert.deepEqual(ids, { v1: '1e9ab4b7d402d51f', '-v2': 'a75f54fd4f978a29', '-v3': '90f462c823bdd382', '-v4': '13699356aae534ee' });
+});
+
+test('bitcoin up or down\'s plugin, tools and tests import only themselves and arena-sdk (but one test of the Arena\'s test market); its 15 ids are the network\'s', async () => {
+  assert.deepEqual(outside('btc-updown', 'plugin'), []);
+  assert.deepEqual(outside('btc-updown', 'tools'), []);
+  assert.deepEqual(outside('btc-updown', 'test'), ['test/manifest.test.js: ../../arena-node/test/plugins/updown/index.js']);
+  const { GAME } = await import('../../btc-updown/plugin/btc-updown.js');
+  assert.equal(Buffer.from(GAME.gameId).toString('hex').slice(0, 16), '672415c814e61b47', 'the frozen testnet4 market');
 });

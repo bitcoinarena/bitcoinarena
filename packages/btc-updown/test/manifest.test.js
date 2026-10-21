@@ -4,16 +4,16 @@
 // with its own developer and attestor keys, and the testnet4 donation key set; pinned for testnet4 only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toHex } from '../../arena-protocol/src/hash.js';
-import { gameIdOf, isAttested } from '../../arena-protocol/src/manifest.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
-import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
+import { toHex } from 'arena-sdk/hash';
+import { gameIdOf, isAttested } from 'arena-sdk/manifest';
+import { donationSetId } from 'arena-sdk/donation';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
+import { NETWORK_ID_TESTNET4 } from 'arena-sdk/genesis-ids';
 import { UPDOWN } from '../../arena-node/test/plugins/updown/index.js';
 import { UPDOWN_TN4, UPDOWN_TN4_GAME_ID } from '../plugin/btc-updown.js';
 import { UPDOWN_TN4_ATTESTORS, UPDOWN_TN4_DEV_PUBKEY } from '../plugin/attestors.js';
 import { KNOWN_GAME } from '../plugin/known.js';
-import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
+import { KNOWN_GOOD_GAMES } from 'arena-sdk/known-games';
 
 test('the testnet4 market: game 672415c8, the regtest market\'s terms and client, its own keys, testnet4\'s donation set', () => {
   const m = UPDOWN_TN4.manifest, r = UPDOWN.registration.manifest;
