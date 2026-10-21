@@ -38,8 +38,8 @@ test('the core of version 4 carries no names, ticket numbers or old project name
 test('the signed manifest names version 4\'s core and client by their hashes, on version 3 (when it is generated)', { skip: !existsSync(GENERATED) && 'plugin/rock-paper-scissors-v4.js not signed yet' }, async () => {
   const { MANIFEST_V4, GAME_ID_V4, GAME, RPS_DECIDE_V4_CORE, RPS_ROUND_FIELDS_V4 } = await import('../plugin/rock-paper-scissors-v4.js');
   const { MANIFEST_V3, GAME_ID_V3 } = await import('../plugin/rock-paper-scissors-v3.js');
-  const { manifestStands } = await import('../../arena-protocol/src/manifest.js');
-  const { verifyEd25519 } = await import('../../arena-node/src/ed25519.js');
+  const { manifestStands } = await import('arena-sdk/manifest');
+  const { verifyEd25519 } = await import('arena-sdk/ed25519');
   const hex = (b) => Buffer.from(b).toString('hex');
   assert.equal(MANIFEST_V4.version, 4);
   assert.equal(hex(MANIFEST_V4.parentManifestId), hex(GAME_ID_V3));
