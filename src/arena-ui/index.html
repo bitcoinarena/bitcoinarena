@@ -1116,6 +1116,8 @@
     #arena-history-fed .fed-chip { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 3px 10px; border-radius: 999px;
       background: rgba(88,166,255,0.14); border: 1px solid rgba(88,166,255,0.45); color: #79c0ff; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
     #arena-history-fed .fed-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
+    #arena-history-fed .fed-chip.warn::before { background: #d29922; } #arena-history-fed .fed-chip.bad::before { background: #f85149; }
+    #arena-history-fed .fed-chip.idle::before { background: #6e7681; }
     #arena-history-rows .empty { color: #8b949e; font-size: 14px; padding: 6px 0; }
     .hist-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #2a2f36; font-size: 12px; }
     .hist-row .hist-amt { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -4706,7 +4708,9 @@
       window.ARENA_LEDGER_FEDERATION = fed;
       if (!knew && window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();   // the note follows this chip
       fedEl.textContent = '';
-      { const chip = document.createElement('span'); chip.className = 'fed-chip'; chip.title = fed + ' - tap to copy';
+      // ITS DOT BY ITS HEALTH (the same rule as the balance split; grey while its record is not read)
+      { const hl = window.ARENA_FED_HEALTH ? window.ARENA_FED_HEALTH(fed) : { level: 'idle', label: '' };
+        const chip = document.createElement('span'); chip.className = 'fed-chip ' + hl.level; chip.title = fed + (hl.label ? ' \u00b7 ' + hl.label : '') + ' - tap to copy';
         chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4);
         chip.addEventListener('click', () => { try { navigator.clipboard.writeText(fed).then(() => { chip.textContent = 'Copied'; setTimeout(() => { chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4); }, 1200); }); } catch { /* no clipboard */ } });
         fedEl.append(chip); }
@@ -6809,6 +6813,18 @@
       // Geld in welcher Federation gespeichert ist"): every balance on the page - the wallet bar, the lobby's chips, Settings -
       // opens the split: each federation's sats, its status and load from the record this page verified, and the sum
       const splitEl = () => document.getElementById('arena-bal-split');
+      // A FEDERATION'S HEALTH FROM ITS VERIFIED RECORD, one rule for every dot on the page (the history's chip uses it too: it showed a green
+      // dot for 337ae01a while this split said "Full · load 433 %", measured 2026-10-21 on UI 275)
+      const healthOf = (st) => {
+        const CL = typeof ARENACLIENT !== 'undefined' ? ARENACLIENT : {};
+        // AN OPEN FEDERATION BY ITS LOAD (kanban #556: "the health indicator should be color coded: healthy: green, then amber and finally red when
+        // approaching high risk levels"; the popup said "Healthy" at 433 %): green under 70 %, amber from 70 %, red from 90 %
+        if (st && st.status === 'OPEN' && typeof st.load === 'number')
+          return st.load >= 1 ? { level: 'bad', label: 'Full', note: 'It holds more than its guardians’ bonds cover.' } : st.load >= 0.9 ? { level: 'bad', label: 'Nearly full', note: '' }
+            : st.load >= 0.7 ? { level: 'warn', label: 'Filling up', note: '' } : { level: 'ok', label: 'Healthy', note: '' };
+        return CL.federationHealth ? CL.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
+      };
+      window.ARENA_FED_HEALTH = (fed) => healthOf((window.ARENA_FED_LOADS || new Map()).get(fed));
       const paintSplit = () => {
         const el = splitEl(); if (!el) return;
         const bal = window.ARENA_WALLET_BALANCE; const loads = window.ARENA_FED_LOADS || new Map();
@@ -6821,12 +6837,7 @@
           // ITS HEALTH (kanban #545): a dot and a word from its verified record, what happens to the funds, and for a HALTED one when they
           // are paid back - in blocks and in time at the chain's recent pace (balance-view.js)
           const CL = typeof ARENACLIENT !== 'undefined' ? ARENACLIENT : {};
-          let hl = CL.federationHealth ? CL.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
-          // AN OPEN FEDERATION BY ITS LOAD (kanban #556: "the health indicator should be color coded: healthy: green, then amber and finally red when
-          // approaching high risk levels"; the popup said "Healthy" at 433 %): green under 70 %, amber from 70 %, red from 90 %
-          if (st && st.status === 'OPEN' && typeof st.load === 'number')
-            hl = st.load >= 1 ? { level: 'bad', label: 'Full', note: 'It holds more than its guardians’ bonds cover.' } : st.load >= 0.9 ? { level: 'bad', label: 'Nearly full', note: '' }
-              : st.load >= 0.7 ? { level: 'warn', label: 'Filling up', note: '' } : { level: 'ok', label: 'Healthy', note: '' };
+          const hl = healthOf(st);
           const back = st && st.status === 'HALTED' && CL.reimbursementOf ? CL.reimbursementOf({ status: st, ...(chainFor(st) || {}) }) : null;
           return { federation: x.federation, level: hl.level, label: hl.label + (st && typeof st.load === 'number' ? ' · load ' + Math.round(st.load * 100) + ' %' : ''),
             note: back && back.ok ? back.line : back ? 'When it is paid back is read from the chain …' : hl.note, value: sat(x.sats) };
