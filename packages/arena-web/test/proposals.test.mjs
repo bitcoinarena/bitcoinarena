@@ -101,3 +101,27 @@ test('change fees: the fees in force with their limits, only typed fees checked 
   assert.deepEqual(sent, [{ changes: [{ fee: 'roundNodeBps', to: 500 }], activation: 158213, purpose: 'More for nodes' }]);
   assert.match(renderToStaticMarkup(React.createElement(FeesProposal, { ...props, data: null, error: 'no node answered /fees' })), /<div class="empty">no node answered \/fees<\/div>/);
 });
+
+test('a leaderboard payout: each federation\'s reserves and cap, the form, the page\'s check as typed, the amount and reason required, the requests', async () => {
+  const { PayoutProposal } = await import('../dist/test/proposals.mjs');
+  const data = { feds: [{ id: '337ae01a'.padEnd(64, '0'), held: 114, max: 11 }], tip: 157205, topMax: 50, periods: [7, 14, 30], defaultDate: '2026-11-05', listEmpty: 'No leaderboard payouts yet.',
+    list: [{ id: 'l1', title: 'Top 10 · 10 sat', vote: 'open · YES 0 % of the voting weight (25 % passes)', line: 'all games and markets · last 7 days · paid at block 158000 from 337ae01a · equal', purpose: 'test' }] };
+  const sent = [];
+  const props = { data, types: [['#new', 'Payout'], ['#new-leaderboard', 'Leaderboard payout']], hash: '#new-leaderboard', markdown: (s) => `<p>${s}</p>`, signedIn: true,
+    check: (v) => (Number(v.amount) > 11 ? { ok: false, why: `${v.amount} sat is more than 10 % of that federation's reserves (11 sat): it could never be paid.` }
+      : { ok: true, request: { amountSats: v.amount ? Number(v.amount) : 0, purpose: v.purpose, top: Number(v.top), federationId: v.fed }, say: `Pays the top ${v.top} at block 160000, equal.` }),
+    onPublish: async (b) => { sent.push(b); return { ok: true, say: 'Published to 14 of 14 nodes. Its 2-week vote starts now.' }; } };
+  const h = renderToStaticMarkup(React.createElement(PayoutProposal, props));
+  assert.match(h, /<div class="avail-name">Federation 337ae01a<\/div><div class="avail-row"><span>Reserves now<\/span><b>114 sat<\/b><\/div><div class="avail-row"><span>Max for one payout \(10 %\)<\/span><b class="max">11 sat<\/b>/);
+  assert.match(h.match(/<input[^>]*name="game"[^>]*>/)[0], /disabled=""/, 'all games: no name');
+  assert.match(h, /<option value="30">last month \(30 days\)<\/option>/);
+  assert.match(h, /<b>Top 10 · 10 sat<\/b><span class="say">open · YES 0 % of the voting weight/);
+  const f = new PayoutProposal(props); f.setState = (u) => Object.assign(f.state, typeof u === 'function' ? u(f.state) : u);
+  assert.equal(f.state.fed, data.feds[0].id); assert.equal(f.state.date, '2026-11-05');
+  f.state.amount = '50'; await f.submit({ preventDefault() {} });
+  assert.match(f.state.say, /more than 10 % of that federation's reserves \(11 sat\)/);
+  f.state.amount = '10'; await f.submit({ preventDefault() {} }); assert.equal(f.state.say, 'Say why: a proposal always gives its reason.');
+  f.state.purpose = 'the best of the week'; await f.submit({ preventDefault() {} });
+  assert.deepEqual(sent, [{ amountSats: 10, purpose: 'the best of the week', top: 10, federationId: data.feds[0].id }]);
+  assert.match(renderToStaticMarkup(React.createElement(PayoutProposal, { ...props, data: null })), /Reading the nodes…/);
+});

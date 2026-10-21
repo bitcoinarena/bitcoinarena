@@ -4,9 +4,9 @@
 // drawn again at every route; forum.js unmounts it (window.ArenaForum.clear) before it draws one of its own forms there.
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { ProposalList, ProposalThread, NewProposal, FeesProposal } from './ForumViews.jsx';
+import { ProposalList, ProposalThread, NewProposal, FeesProposal, PayoutProposal } from './ForumViews.jsx';
 
-const VIEWS = { list: ProposalList, thread: ProposalThread, new: NewProposal, fees: FeesProposal };
+const VIEWS = { list: ProposalList, thread: ProposalThread, new: NewProposal, fees: FeesProposal, payout: PayoutProposal };
 export function draw(element, kind, props) {
   if (!element._root) element._root = createRoot(element);
   element._root.render(React.createElement(VIEWS[kind], { key: kind + (props.thread ? props.thread.heading : ''), ...props }));
