@@ -4,7 +4,9 @@
 // the emergency code written down at install; the browser makes the emergency key from it (the node's own /owner/client.js, handed in as
 // `client`), finds the node whose bond advertisement names that key (GET /emergency-departures?key=), and signs a leave request at this
 // node's tip (POST /emergency-departure). Only the request and its signature leave the browser. A class component in three steps:
-// the code, the node found, the node out.
+// the code, the node found, the node out. The Arena site's /offline/ page mounts it too (kanban #564): its `get` and `post` ask every
+// seat of daily.json, `unreachable` is the words before a failed read (none: the site's own errors say it all), and a post answers how
+// many seats took the request.
 import React from 'react';
 
 /** What leaving does, by the node's role - the page's table. */
@@ -29,7 +31,8 @@ export class EmergencyPage extends React.Component {
     this.secret = C.emergencySecret(bytes);
     const key = C.toHex(C.pubkeyOf(this.secret));
     this.setState({ busy: true });
-    let r; try { r = await this.props.get(`/emergency-departures?key=${key}`); } catch (x) { return this.setState({ busy: false, error: `this node did not answer: ${x.message}` }); }
+    const before = this.props.unreachable === undefined ? 'this node did not answer: ' : this.props.unreachable;
+    let r; try { r = await this.props.get(`/emergency-departures?key=${key}`); } catch (x) { return this.setState({ busy: false, error: `${before}${x.message}` }); }
     if (!r || !r.named) return this.setState({ busy: false, error: 'No node of the census names this emergency code in its bond advertisement. Check the code - or your node\'s bond was posted before protocol 17 and has no emergency path.' });
     this.setState({ busy: false, found: { ...r.named, tip: r.tip, key } });
   }
@@ -49,7 +52,7 @@ export class EmergencyPage extends React.Component {
       <div className="card done">
         <div className="big ok">✓</div>
         <h3>Your node is out</h3>
-        <p>The leave request (block {sent.postedAt}) is held here and passed on to every seat. {f.guardianOf.length ? 'Its federation\'s succession starts now; its bond stays yours if it was in time.' : 'It is in no seating from now on; its bond stays yours.'}</p>
+        <p>{sent.took ? `${sent.took} of ${sent.asked} seats took the leave request (block ${sent.postedAt}); each passes it on.` : `The leave request (block ${sent.postedAt}) is held here and passed on to every seat.`} {f.guardianOf.length ? 'Its federation\'s succession starts now; its bond stays yours if it was in time.' : 'It is in no seating from now on; its bond stays yours.'}</p>
       </div>);
     if (f) return (
       <div className="card">
@@ -92,7 +95,7 @@ export class EmergencyPage extends React.Component {
             <div key={who} className="outcome"><span>{who}</span><b>{out}</b><i className={tone}>Bond: {bond}</i></div>))}</div>
           <p className="sub">Coming back afterwards needs a new advertisement from the node. The code can do nothing else: no money, no settings.</p>
         </div>
-        <p className="sub"><a href={this.props.dashboardHref || '../Dashboard'}>← This node's dashboard</a></p>
+        <p className="sub"><a href={this.props.dashboardHref || '../Dashboard'}>{this.props.backLabel || '← This node\'s dashboard'}</a></p>
       </div>);
   }
 }

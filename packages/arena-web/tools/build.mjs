@@ -30,6 +30,7 @@ await build({ entryPoints: [join(root, 'src/rounds/main.jsx')], bundle: true, fo
 // "MY NODE IS OFFLINE" (kanban #564): served by the node at /emergency/react.js beside pages/emergency.html
 await build({ entryPoints: [join(root, 'src/emergency/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/emergency.js'), legalComments: 'none' });
+copyFileSync(join(root, 'dist/emergency.js'), join(root, '../../src/arena-ui/offline/react.js'));   // the Arena site's /offline/ too
 // THE NETWORK HEALTH PAGE'S VIEWS (kanban #564): beside its page in src/arena-ui/health (the page's folder ships with the Arena page)
 await build({ entryPoints: [join(root, 'src/health/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/health.js'), legalComments: 'none' });

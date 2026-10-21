@@ -8,7 +8,10 @@
 <!-- MY NODE IS OFFLINE ON THE ARENA SITE (spec §23A.5a, protocol 17): the same as /Dashboard/emergency on every node. The owner types the
      emergency code written down at install; this page makes the emergency key from it (the code never leaves the browser), asks the
      network's seats (daily.json) which node's bond advert names that key, signs the leave request at a seat's tip and posts it to every
-     seat. -->
+     seat.
+     THE MODERN PAGE (kanban #564): the same steps drawn by React (./react.js, the node's own emergency page's bundle,
+     packages/arena-web/src/emergency) when it is there - the key and the signature still made here, by this page's client; this page's own
+     steps stay without it. -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
   @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f6f8fa; --panel: #ffffff; --line: #d0d7de; --text: #1f2328; --muted: #57606a; color-scheme: light; } }
@@ -29,10 +32,24 @@
   .warn { border-left: 3px solid var(--accent); padding: 8px 12px; background: rgba(247,147,26,.08); border-radius: 0 8px 8px 0; margin: 10px 0 0; }
   .ok { color: var(--ok); } .bad { color: var(--bad); min-height: 1.4em; margin-top: 8px; } .foot { color: var(--muted); font-size: 12px; }
   a { color: var(--accent); }
+  /* the React steps */
+  #app:empty { display: none; } .emergency h1 { font-size: 24px; font-weight: 750; margin: 6px 0 4px; } .emergency .sub { color: var(--muted); margin: 0 0 14px; }
+  .emergency .card { border-radius: 16px; padding: 18px 20px; } .emergency .card h3 { margin: 0 0 8px; font-size: 16px; }
+  .steps { display: flex; gap: 6px; margin: 0 0 14px; flex-wrap: wrap; } .steps span { font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .steps span.now { border-color: var(--accent); color: var(--accent); } .steps span.done { border-color: var(--ok); color: var(--ok); }
+  .emergency label { margin: 0 0 6px; } .emergency input { font-size: 17px; padding: 13px 14px; border-radius: 12px; } .emergency .hint { color: var(--muted); font-size: 13px; margin: 6px 0 10px; }
+  .emergency button { width: 100%; margin: 6px 0 0; } .emergency button:not(.primary) { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+  .actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; } .actions button { margin: 0; } .emergency button.danger { background: var(--bad); color: #fff; }
+  .emergency .err { color: var(--bad); margin: 8px 0 0; } .emergency .err:empty { display: none; }
+  .kv .row { padding: 8px 0; } .kv .row span { color: var(--muted); }
+  .outcomes { display: flex; flex-direction: column; gap: 8px; } .outcome { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+  .outcome span { color: var(--muted); font-size: 13px; grid-column: 1 / -1; } .outcome b { font-weight: 600; } .outcome i { font-style: normal; font-weight: 700; font-size: 13px; white-space: nowrap; }
+  .outcome i.ok { color: var(--ok); } .outcome i.bad { color: var(--bad); } .done { text-align: center; } .done .big { font-size: 44px; line-height: 1; }
 </style>
 </head>
 <body>
-<main>
+<div id="app" style="max-width:760px;margin:0 auto;padding:20px 16px 40px"></div>
+<main id="legacy">
   <h1>My node is offline</h1>
   <p class="lead">Take your own node out of the network while it is offline, so it keeps its bond. You need the emergency code you wrote down
   when you installed it (<code>ARN-…</code>). <b>Never type your 24 words here</b> - this page does not want them.</p>
@@ -77,6 +94,27 @@
     for (const s of seats) fetch(s + path, { signal: AbortSignal.timeout(8000) })
       .then(async (r) => { if (r.ok) done({ seat: s, body: await r.json() }); else { if (r.status === 404) older++; one(); } }, one);
   });
+  // THE REACT STEPS, when ./react.js is there: this page's client and every seat handed in
+  import('./react.js').then(() => {
+    if (!window.ArenaEmergency) return;
+    $('legacy').hidden = true;
+    const client = { parseEmergencyCode: C.parseEmergencyCode, emergencySecret: C.emergencySecret, pubkeyOf: K.pointX, toHex: hex, fromHex: bytes,
+      signEmergencyDeparture: C.signEmergencyDeparture, sign: K.signSchnorr, encodeEmergencyDeparture: C.encodeEmergencyDeparture };
+    window.ArenaEmergency.mount($('app'), { client, unreachable: '', dashboardHref: '../', backLabel: '← Bitcoin Arena',
+      get: async (path) => {
+        await seatsP;
+        if (!seats.length) throw new Error('The network\'s seats could not be read from daily.json. Try again in a moment.');
+        const got = await ask(path);
+        if (!got) throw new Error(older ? `The network's seats do not run protocol 17 yet (${older} of ${seats.length} have no emergency door), so no leave request can be posted.` : 'No seat answered. Try again in a moment.');
+        return got.body;
+      },
+      post: async (path, body) => {
+        const sent = await Promise.all(seats.map(async (s) => { try { const r = await fetch(s + path, { method: 'POST', body, signal: AbortSignal.timeout(15000) }); return { ok: r.ok, why: r.ok ? '' : (await r.text()).trim(), j: r.ok ? await r.json().catch(() => null) : null }; } catch (e) { return { ok: false, why: e.message }; } }));
+        const took = sent.filter((x) => x.ok);
+        if (!took.length) throw new Error(sent.map((x) => x.why).filter(Boolean)[0] || 'no seat took the request');
+        return { postedAt: (took[0].j || {}).postedAt, took: took.length, asked: seats.length };
+      } });
+  }).catch(() => {});
   $('find').onclick = async () => {
     $('err1').textContent = ''; $('step2').hidden = true;
     let codeBytes; try { codeBytes = C.parseEmergencyCode($('code').value); } catch (e) { $('err1').textContent = e.message; return; }
