@@ -539,8 +539,8 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
     setInterval(watchTheLink, 1000);
 
     // ---------------------------------------------------------------- Unity's loader: the download, the GPU's textures, the instance
+    // the loader is the Arena's to check (kanban #569): fetched, hashed against the pin the page is built with, run from a blob
     const script = document.createElement('script');
-    script.src = window.ARENA_UNITY_LOADER;   // 'Build/<the build's loader>', from index.html's template
     script.onerror = () => fail('The loader could not be loaded.');
     // UNITY STARTS LOADING AS SOON AS IT IS THE GAME (2026-10-16: "it takes too long to load a game, it's at 0%
     // for 10-15 seconds ... It's only showing connecting"). Measured on live UI 175, phone profile: the pick at 0 s, "0% ·
@@ -551,7 +551,9 @@ document.getElementById('arena-set-logs').insertAdjacentHTML('afterend', '<secti
       if (window.ARENA_LOADER_AT) return;
       window.ARENA_LOADER_AT = Date.now();
       stage.textContent = 'Loading the program …';
-      document.body.appendChild(script);
+      window.ARENA_PINNED_SCRIPT(window.ARENA_UNITY_LOADER)
+        .then((u) => { script.src = u; document.body.appendChild(script); })
+        .catch((e) => { console.error('[arena] ' + e.message); fail('The game\'s client is not the pinned one: ' + e.message); });
     };
     // THE TEXTURES THIS GPU HAS (measured 2026-10-08): the build's textures were DXT only, which most Android
     // GPUs and iPhones lack - Unity then decompressed 33 of them on the CPU, 20 before 100 %. A deploy may carry the same

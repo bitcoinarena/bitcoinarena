@@ -13,13 +13,13 @@
 # files are not changed; these go beside the page. The Unity lobby draws the same
 # boxes from the whole texture (DailyLobby.PanelBoxes).
 #
-#   python3 unity-proto/tools/cut-howto.py
+#   python3 packages/nextblock/unity/tools/cut-howto.py
 from pathlib import Path
 from PIL import Image
 
-HERE = Path(__file__).resolve().parent.parent
-WHOLE = HERE / 'Assets/Art/Resources/lobby-howto.png'
-OUT = HERE.parent / 'src/arena-ui'   # the Arena UI's source; node tools/sync-arena-ui.mjs copies it into Unity's template (kanban #521)
+HERE = Path(__file__).resolve().parent.parent   # the repository (this tool is the Arena's: the how-to pictures are its page's, kanban #569)
+WHOLE = HERE / 'packages/nextblock/unity/Assets/Art/Resources/lobby-howto.png'
+OUT = HERE / 'src/arena-ui'   # the Arena page's source
 # x0, y0, x1, y1 in the whole - the measured boxes (DailyLobby.PanelBoxes)
 BOXES = [(32, 80, 699, 625), (726, 82, 1440, 625), (23, 650, 711, 1019), (752, 653, 1429, 1020)]
 

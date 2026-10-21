@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARRIVAL CARD'S FACTORS ARE THE CORE'S (the owner's playtest 2026-09-25 18:29). The shot: DELIVERED at tick 4596,
 // SCORE +137, and the card read "load 0.85 x danger 1.00 x speed 1.50 x 1000" - 1275. The card now prints factors formed
-// from the core's three score words by Unity's CoreScoreFactors (unity-proto/Assets/Scripts/Cargo/RunScore.cs). This file
+// from the core's three score words by Unity's CoreScoreFactors (packages/nextblock/unity/Assets/Scripts/Cargo/RunScore.cs). This file
 // holds that C# to the core: its constants are score.js's, and its E x T x C x 1000 is scoreOf's score.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import { scoreOf, exposure5, time5, cargo5, FACTOR_SCALE, SCORE_SCALE, EXPOSURE_
 import * as then from '../frozen/2069b4c2/rules/score.js';
 
 const ONE = 65536;
-const CS = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Cargo/RunScore.cs', import.meta.url), 'utf8');
+const CS = readFileSync(new URL('../unity/Assets/Scripts/Cargo/RunScore.cs', import.meta.url), 'utf8');
 const constant = (name) => {
   const m = new RegExp(`const (?:float|int) ${name} = ([0-9.]+)f?;`).exec(CS);
   assert.ok(m, `RunScore.cs names no ${name}`);

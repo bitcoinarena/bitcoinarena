@@ -4,7 +4,7 @@
 // CandleTerrain's EditMode tests: the mesh is tested against what the core stands the truck on (WAR_TACTICS.md §4.15,
 // "the client's drawn height differs from candleHeight by more than 0.1 m" is a failure).
 //
-//   node tools/candle-fixture.mjs > ../../unity-proto/Assets/Tests/Fixtures/candle-words.txt
+//   node tools/candle-fixture.mjs > unity/Assets/Tests/Fixtures/candle-words.txt
 //
 // Lines: `view NAME w0 w1 ...` and `h NAME x z height` (Q16.16), heights above the apron. Samples on each body's centre
 // line and 1 cm inside each x-face, every 0.5 m (2 m after a sample) from 2 m before the body to 2 m after it.

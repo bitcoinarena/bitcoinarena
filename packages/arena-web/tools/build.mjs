@@ -17,7 +17,7 @@ mkdirSync(ALONE ? dist : join(dist, 'test'), { recursive: true });
 await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'owner.js'), legalComments: 'none' });
 // THE ARENA PAGE'S ONE BUNDLE: the market's pick sheet and the games screen's tiles, React once - into src/arena-ui, the page's own
-// folder (tools/sync-arena-ui.mjs copies it into the Unity template with the rest)
+// folder (tools/build-arena-page.mjs takes it into the page with the rest)
 // a CLASSIC script, loaded before the page's main script (kanban #564, the owner 2026-10-21: "Delete the old html code of those components
 // you have ported, no fall backs"): every React view is there when the page's first line runs
 await build({ entryPoints: [join(root, 'src/arena/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],

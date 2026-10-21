@@ -8,7 +8,7 @@
 // renders somewhere wrong, or its health becomes its heading. A layout written
 // twice by hand drifts the first time a field is inserted.
 //
-//   node tools/gen-unity-layout.js > ../../unity-proto/Assets/Scripts/Arena/ArenaLayout.cs
+//   node tools/gen-unity-layout.js > unity/Assets/Scripts/Arena/ArenaLayout.cs
 
 import { readFileSync } from 'node:fs';
 

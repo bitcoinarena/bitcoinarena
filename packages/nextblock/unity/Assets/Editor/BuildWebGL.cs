@@ -15,7 +15,7 @@ using UnityEngine;
 /// </summary>
 public static class BuildWebGL
 {
-    const string DefaultOutput = "/Users/arena/code/btc-logistics-war/unity-proto/build/webgl";
+    const string DefaultOutput = "build/webgl";   // inside this project unless -buildOutput names another
     const string ScenePath = "Assets/Scenes/Prototype.unity";
 
     /// <summary>
@@ -142,7 +142,7 @@ public static class BuildWebGL
 
     public static void Run()
     {
-        // The core is rebuilt and copied into the template HERE, not by hand.
+        // The core is rebuilt HERE, not by hand (its bundle and the C# layout from one state.js).
         //
         // It used to be a menu item nobody remembered to run, so the build
         // shipped whatever bundle was last synced. That is not a visible
@@ -222,9 +222,9 @@ public static class BuildWebGL
         // Unity Personal made this optional in Unity 6, and it is 2.7 MB of
         // texture in a build we are trying to get under thirty.
         PlayerSettings.SplashScreen.show = false;
-        // Our own template: the stock one shows a bare grey bar, and at 35 MB
-        // the person waiting needs to know it is working and roughly how long.
-        PlayerSettings.WebGL.template = "PROJECT:NextBlock";
+        // The app's own template (kanban #569): the Build/ folder is what Next Block publishes (tools/publish-webgl.mjs) and the
+        // Arena's page loads hash-pinned; this page only runs the client by itself. The Arena's page is no longer this project's.
+        PlayerSettings.WebGL.template = "PROJECT:NextBlockClient";
         PlayerSettings.productName = "Tick Tock, Next Block";
         PlayerSettings.companyName = "Bitcoin Arena";
 

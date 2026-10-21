@@ -27,7 +27,7 @@
 //                                 read at every ask (the launcher writes them once the nodes are up)
 //     ARENA_APPS                   the apps this node hosts: registration modules, comma-separated, each exporting GAME
 //                                 (§0A.4: none given hosts none - the engine names no game;
-//                                 packages/arena-node/bin/node.mjs is the reference launcher and names Next Block)
+//                                 the installer writes the apps a node ships with - apps= in arena.conf, kanban #569)
 //     ARENA_SERIES_FILE            the series this node holds: one Round Contract template per line, hex (serve's
 //                                 `series`). Measured 2026-09-29: without it a node process could hold no series at all,
 //                                 so every series round was refused - the doors were proved only on in-process nodes.
@@ -99,8 +99,8 @@ const db = openStore(path);
 // THE GAMES THIS NODE HOSTS (§0A.4): the registration modules ARENA_APPS names, each exporting GAME -
 // a manifest as its developer signed it with the dev client (public bytes only), the cores installed for it, its replay
 // page. The node verifies the signature and refuses a manifest that does not stand (plugins.js); it holds no developer
-// key and never signs a game. NONE BY DEFAULT: the engine names no game. nextblock's launcher
-// (packages/arena-node/bin/node.mjs) sets ARENA_APPS to nextblock's registration.
+// key and never signs a game. NONE BY DEFAULT: the engine names no app. The installer names the apps a node ships with (its apps
+// step, every app selected; apps= in arena.conf, kanban #569).
 const apps = [];
 for (const at of (process.env.ARENA_APPS || '').split(',').map((x) => x.trim()).filter(Boolean)) {
   const m = await import(pathToFileURL(resolvePath(at)).href);

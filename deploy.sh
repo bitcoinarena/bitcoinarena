@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BUILD="$ROOT/unity-proto/build/webgl"
+BUILD="$ROOT/packages/nextblock/unity/build/webgl"
 PROJECT="${1:-btc-logistics-war}"
 
 # FROZEN. This project holds the last single-player version - Unity running
@@ -33,8 +33,8 @@ cp "$ROOT/deploy/_headers" "$BUILD/_headers"
 # a 404 so Unity never starts. It shipped that way once (2026-09-09 16:08, found
 # by hand-injecting the loader in a browser). The copy is how the page is
 # edited and stays; what stops here is an unfilled copy reaching Cloudflare.
-node "$ROOT/unity-proto/tools/fill-template.mjs" "$BUILD"
-node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
+node "$ROOT/tools/fill-template.mjs" "$BUILD"
+node "$ROOT/tools/fill-template.mjs" --check "$BUILD"
 
 
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
