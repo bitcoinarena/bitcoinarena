@@ -19,7 +19,7 @@ test('on a running seat: signed by the owner, refused for another key; the insta
   const ownerRec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
   const store = { read: () => ownerRec, write: (o) => Object.assign(ownerRec, o), writeCode: () => {} };
   const home = mkdtempSync(join(tmpdir(), 'become-'));
-  nodeState(home).save({ roles: ['verify'], chain: { kind: 'core' }, lightning: null });
+  nodeState(home).save({ roles: ['verify'], chain: { kind: 'electrum' }, lightning: null });
   const was = { home: process.env.ARENA_HOME, claim: process.env.ARENA_LIQUIDITY_CLAIM_FILE };
   delete process.env.ARENA_HOME; delete process.env.ARENA_LIQUIDITY_CLAIM_FILE;
   const s = await joinedWithLock({ owner: { store } });
@@ -33,7 +33,7 @@ test('on a running seat: signed by the owner, refused for another key; the insta
     process.env.ARENA_HOME = home;
     assert.equal((await post(req(ownerSecretFromSeed(new Uint8Array(32).fill(9))))).status, 403, 'another key: refused');
     const r = await post(req(secret));
-    assert.equal(r.status, 400); assert.match((await r.json()).why, /no Lightning \(LND\) set up yet/);
+    assert.equal(r.status, 400); assert.match((await r.json()).why, /needs your own Bitcoin Core/);
     assert.equal((await fetch(`${base}/liquidity-claim`)).status, 404, 'no claim yet');
     writeFileSync(join(home, 'liquidity-claim.json'), JSON.stringify({ node: 'ab'.repeat(32), freeSats: '0', channels: [] }));
     const c = await fetch(`${base}/liquidity-claim`);

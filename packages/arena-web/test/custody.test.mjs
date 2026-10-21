@@ -52,3 +52,23 @@ test('liquidity: a node that is none becomes one on this page - the plan (signed
   await refused.review();
   assert.match(renderToStaticMarkup(refused.render()), /no Lightning \(LND\) set up yet/);
 });
+
+test('liquidity: a node without LND - the plan says it is installed now; the confirm asks again while LND starts, then it is done', async () => {
+  const plan = { lightning: 'install', lightningPubkey: null, depositSats: 500000, channelSats: 100000, walletSats: 600000, reservedSats: 0, shortSats: 0, address: 'tb1pnode' };
+  const answers = [{ ok: true, plan, waiting: 'LND is installed and starting (not reachable from outside: Tor gives LND an onion address)' }, { ok: true, plan, waiting: 'LND is starting: not answering yet' }, { ok: true, plan, done: {} }];
+  let posts = 0;
+  const api = { get: async () => null, signed: async (a, args) => ({ a, args }), post: async (_p, b) => (b.args.post ? answers[posts++] : { ok: true, plan }) };
+  const c = new LiquidityPanel({ api, initial: { loaded: true, claim: null } }); c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  await c.review();
+  assert.match(renderToStaticMarkup(c.render()), /<span>Lightning \(LND\)<\/span><b>Installed now<\/b><small>on your Bitcoin Core; Tor if no port is open<\/small>/);
+  const later = []; const t = global.setTimeout; global.setTimeout = (f) => { later.push(f); return 0; };
+  try {
+    await c.become();
+    assert.equal(c.state.message, answers[0].waiting); assert.equal(c.state.busy, true);
+    await later.shift()(); await new Promise((ok) => t(ok, 0));
+    assert.equal(c.state.message, 'LND is starting: not answering yet');
+    await later.shift()(); await new Promise((ok) => t(ok, 0));
+  } finally { global.setTimeout = t; }
+  assert.equal(posts, 3);
+  assert.match(renderToStaticMarkup(c.render()), /is a liquidity provider now ✓/);
+});
