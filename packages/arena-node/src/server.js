@@ -4746,6 +4746,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // THE OWNER DASHBOARD'S REACT SCREENS (kanban #564, packages/arena-web): the bundle and its stylesheet, when this release carries
       // them - the page mounts them in place of its own panels, and keeps its own where they are missing
+      // THE NODE DASHBOARD IN REACT (kanban #566, packages/arena-web): the page draws with it when this release carries it
+      if (req.method === 'GET' && url.pathname === '/dashboard/react.js') {
+        let body; try { body = readFileSync(new URL('../../arena-web/dist/dashboard.js', import.meta.url)); } catch { return text(res, 404, 'this release carries no React dashboard'); }
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(body);
+      }
       if (req.method === 'GET' && (url.pathname === '/owner/react.js' || url.pathname === '/owner/react.css')) {
         const js = url.pathname.endsWith('.js');
         let body; try { body = readFileSync(new URL(`../../arena-web/dist/${js ? 'owner.js' : 'arena.css'}`, import.meta.url)); } catch { return text(res, 404, 'this release carries no React screens'); }
