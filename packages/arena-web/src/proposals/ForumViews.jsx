@@ -143,3 +143,59 @@ export class NewProposal extends React.Component {
       </div>);
   }
 }
+
+// CHANGE FEES (slice 3): the fees in force as the nodes answer them, one field per fee with its limit, the block it applies from, the
+// reason; `check(typed, activation, purpose)` -> { changes, say, bad } is forum.js's own (the seats' rule through its client); publish
+// signs and hands it to every node. Below, every fee proposal with its signal, vote, the developers' answers and its decision.
+export class FeesProposal extends React.Component {
+  constructor(props) { super(props); this.state = { typed: {}, activation: props.data ? String(props.data.earliest) : '', purpose: '', say: '', bad: false, busy: false }; this.submit = this.submit.bind(this); }
+  componentDidUpdate(prev) { if (!prev.data && this.props.data && !this.state.activation) this.setState({ activation: String(this.props.data.earliest) }); }   // the fees arrived
+  verdict() { return this.props.check(this.state.typed, Number(this.state.activation), this.state.purpose); }
+  async submit(e) {
+    e.preventDefault();
+    if (!this.props.signedIn) return this.setState({ say: 'Open the Arena once first: the forum signs with your in-game key.', bad: true });
+    const v = this.verdict();
+    if (!v.changes) return this.setState({ say: v.say, bad: true });
+    if (!this.state.purpose.trim()) return this.setState({ say: 'Say why: a proposal always gives its reason.', bad: true });
+    this.setState({ busy: true, say: 'Signing…', bad: false });
+    const r = await this.props.onPublish({ changes: v.changes, activation: Number(this.state.activation), purpose: this.state.purpose });
+    this.setState({ busy: false, say: r.say, bad: !r.ok });
+  }
+  render() {
+    const { data: d, error, types, hash, feeVal, markdown } = this.props;
+    const head = (
+      <>
+        <div className="bar"><a className="btn" href="#">← All proposals</a></div>
+        <h1>New proposal</h1>
+        <div className="types" role="radiogroup" aria-label="Type"><span className="types-label">Type</span>
+          {types.map(([h, label]) => <a key={h} className={`type${h === hash ? ' on' : ''}`} href={h} role="radio" aria-checked={h === hash ? 'true' : 'false'}>{label}</a>)}</div>
+      </>);
+    if (!d) return <div>{head}<div className="empty">{error || 'Reading the fees from the nodes…'}</div></div>;
+    const s = this.state, v = Object.keys(s.typed).some((k) => s.typed[k] !== '') || s.purpose ? this.verdict() : { say: '', bad: false };
+    const words = s.say || v.say, bad = s.say ? s.bad : v.bad;
+    return (
+      <div>
+        {head}
+        <form className="compose fees" onSubmit={this.submit}>
+          <p className="reserves-line">Fees in force at block {d.tip} ({d.agreeing} of {d.asked} nodes agree). Fill in only the fees to change; leave the others empty. A round takes at most {d.sums.roundMaxBps / 100} %, an item's parts add up to {d.sums.itemPct} %, a market takes at most {d.sums.marketMaxBps / 100} %. A donation is never 0, and a change to one needs most of the protocol developers.</p>
+          <div className="tbl"><table><thead><tr><th>Fee</th><th>In force</th><th>Limit</th><th>New value</th></tr></thead><tbody>
+            {d.keys.map((k) => (
+              <tr key={k}><td>{d.names[k] || k}{d.limits[k].donation ? <span className="hint"> donation</span> : null}</td><td>{feeVal(k, d.fees[k])}</td><td>{feeVal(k, d.limits[k].min)} – {feeVal(k, d.limits[k].max)}</td>
+                <td><input name={k} type="number" step="1" min={d.limits[k].min} max={d.limits[k].max} placeholder={String(d.fees[k])} value={s.typed[k] || ''}
+                  onChange={(e) => this.setState({ typed: { ...s.typed, [k]: e.target.value }, say: '' })} /> {d.units[k] === 'bps' ? 'bps' : '%'}</td></tr>))}
+          </tbody></table></div>
+          <div className="row"><label>Applies from block<input name="activation" type="number" step="1" min={d.earliest} value={s.activation} onChange={(e) => this.setState({ activation: e.target.value, say: '' })} /></label></div>
+          <label>Why <span className="hint">required: what the change does and for whom</span><textarea name="purpose" rows={5} maxLength={4000} required value={s.purpose} onChange={(e) => this.setState({ purpose: e.target.value, say: '' })} /></label>
+          <div className="bar"><button className="btn primary" type="submit" disabled={s.busy}>Sign and publish</button><span className={`say${bad ? ' bad' : ''}`}>{words}</span></div>
+        </form>
+        <h2>Fee proposals</h2>
+        {!d.proposals.length ? <div className="empty">No fee proposals yet.</div> : d.proposals.map((p) => (
+          <div key={p.id} className="fee-prop">
+            <div className="bar"><b>{p.id.slice(0, 12)}…</b><span className="say">{p.decision ? (p.decision.accepted ? `accepted · in force from block ${p.activationHeight}` : `refused · ${p.decision.why}`) : p.vote ? `vote ${p.vote.state}` : `signal ${p.signal ? p.signal.state : '…'}`}</span></div>
+            <ul>{p.changes.map((x) => <li key={x.fee}>{d.names[x.fee] || x.fee}: {feeVal(x.fee, x.from)} → {feeVal(x.fee, x.to)}</li>)}</ul>
+            {p.needsDevs ? <p className="hint">Changes a donation: protocol developers {p.devs.filter((x) => x.approve).length} approve, {p.devs.filter((x) => !x.approve).length} deny.</p> : null}
+            {p.purpose ? <div className="md" dangerouslySetInnerHTML={{ __html: markdown(p.purpose) }} /> : null}
+          </div>))}
+      </div>);
+  }
+}
