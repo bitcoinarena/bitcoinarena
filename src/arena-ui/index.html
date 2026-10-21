@@ -4417,14 +4417,17 @@
     async function paintOtherWallets() {
       const el = document.getElementById('arena-other-wallets');
       if (!el || otherWalletsBusy || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.phraseWalletEntries) return;
+      // drawn by React (kanban #564, window.ArenaWallet.drawOthers - OtherWallets): a line, or the wallets with their "Use this wallet"
+      const draw = (props) => window.ArenaWallet.drawOthers(el, Object.assign({ note: null, lines: null,
+        onUse: (hex) => { sessionStorage.setItem('arena.player.seed', hex); sessionStorage.setItem('arena.player.seed.from', 'minted'); location.reload(); } }, props));
       const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
       let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
       const others = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && x.hex !== cur && ARENACLIENT.phraseWalletEntries(L, x.hex) > 0);
-      if (!others.length) { el.textContent = ''; return; }
+      if (!others.length) { draw({}); return; }
       const named = window.ARENA_LOBBY_NAMED_FOR_WALLET; const row = (window.ARENA_LOBBY || []).find((x) => !x.free && x.raw && x.raw.contract && ARENACLIENT.roundLocks(x.raw.contract));
-      if (!named || !named.federation || !row) { el.textContent = 'Other wallets in this browser: ' + others.length + ' (open the lobby to read them)'; return; }
+      if (!named || !named.federation || !row) { draw({ note: 'Other wallets in this browser: ' + others.length + ' (open the lobby to read them)' }); return; }
       otherWalletsBusy = true;
-      el.textContent = 'Reading the other wallets in this browser \u2026';
+      draw({ note: 'Reading the other wallets in this browser \u2026' });
       try {
         const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
         const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('arena.tab.id'); } catch { return false; } };
@@ -4442,25 +4445,10 @@
           if (sats) total += sats;
           lines.push({ hex: x.hex, sats, busy: heldElsewhere(x.hex) });
         }
-        el.innerHTML = '';
         // NOTHING SHOWN FOR WALLETS WITH 0 SAT (2026-10-02: "don't show wallets with 0 sat"): only a wallet holding sats,
         // or one that could not be read now, is named; with none, no line at all
-        if (!lines.some((w) => w.sats === null || w.sats > 0)) return;
-        const head = document.createElement('div'); head.className = 'muted';
-        head.textContent = 'Other wallets in this browser' + (total ? ': ' + total + ' sat' : '');
-        el.appendChild(head);
-        for (const w of lines) {
-          if (w.sats === 0) continue;
-          const d = document.createElement('div'); d.className = 'muted';
-          d.textContent = w.hex.slice(0, 8) + '\u2026  ' + (w.sats === null ? 'could not be read now' : w.sats + ' sat') + (w.busy ? '  (open in another tab)' : '  ');
-          if (!w.busy && w.sats) {
-            const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Use this wallet';
-            b.addEventListener('click', () => { sessionStorage.setItem('arena.player.seed', w.hex); sessionStorage.setItem('arena.player.seed.from', 'minted'); location.reload(); });
-            d.appendChild(b);
-          }
-          el.appendChild(d);
-        }
-      } catch (e) { el.textContent = 'The other wallets in this browser could not be read: ' + (e && e.message ? e.message : e); }
+        draw({ lines });
+      } catch (e) { draw({ note: 'The other wallets in this browser could not be read: ' + (e && e.message ? e.message : e) }); }
       finally { otherWalletsBusy = false; }
     }
     window.ARENA_PAINT_HISTORY = paintHistory;
