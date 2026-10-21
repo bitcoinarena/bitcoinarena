@@ -966,9 +966,10 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   assert.equal(calls.length, 1);
   assert.ok(calls[0] > withdrawAt && calls[0] < page.indexOf('\n    };\n', withdrawAt), 'collect-and-withdraw is called outside the Withdraw action');
   // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called only inside a Withdraw press: the lobby's Withdraw action, and
-  // Settings' Withdraw button with its round tabs (GROSS-INVOICE-2053) - never on a timer (above).
+  // the withdraw panel's Withdraw button - the panel is React's (kanban #564, WithdrawPanel), whose go() alone calls the `send` rule the
+  // page hands it - never on a timer (above).
   const fromWallet = [...page.matchAll(/ARENACLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
-  const settingsAt = page.indexOf("document.getElementById('arena-wd-go').onclick = async () => {");
+  const settingsAt = page.indexOf("        send: async ({ amountMsat, invoice, onStep }) => ARENACLIENT.withdrawPlayerWallet(");
   const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
   // AND A ZAP OR A TIP: the zap box's pay(), reached only from its Zap press - send(), which the React card's Zap button alone calls
   // (onGo: () => send(), kanban #564) - one call, inside it
@@ -980,7 +981,7 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   assert.ok(inside(zapPays[0], zapGoAt, '\n      }\n'), 'a zap is paid outside its Zap press');
   assert.equal(fromWallet.length, 3);
   for (const i of fromWallet)
-    assert.ok(inside(i, withdrawAt, '\n    };\n') || inside(i, settingsAt, '\n      };\n') || inside(i, zapPayAt, '\n      }\n'),
+    assert.ok(inside(i, withdrawAt, '\n    };\n') || inside(i, settingsAt, '\n        say:') || inside(i, zapPayAt, '\n      }\n'),
       'the player wallet is withdrawn outside a Withdraw or Zap press');
 });
 
