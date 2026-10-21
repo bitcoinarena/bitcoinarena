@@ -16,7 +16,7 @@ const OUT = new URL('../page/ghost-page.js', import.meta.url);
 export function ghostPage() {
   const text = readFileSync(SRC, 'utf8');
   const imports = [...text.matchAll(/^import\s[\s\S]*?from\s+'([^']+)';\n/gm)];
-  const allowed = new Set(['../../arena-protocol/src/hash.js', '../../arena-protocol/src/display-name.js']);
+  const allowed = new Set(['arena-sdk/hash', 'arena-sdk/display-name']);   // the Arena through arena-sdk (kanban #568)
   for (const m of imports) if (!allowed.has(m[1])) throw new Error(`ghost-field.js imports ${m[1]}, which the page script does not bring`);
   const body = text.replace(/^import\s[\s\S]*?from\s+'[^']+';\n/gm, '').replace(/^export\s+/gm, '');
   const names = [...text.matchAll(/^export\s+(?:async\s+)?(?:const|function|let|class)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);

@@ -5,10 +5,10 @@
 // (arena-protocol/src/manifest.js) and a core through its adapter, as arena-node/src/plugins.js hands them on.
 export * from './truck-cores.js';
 import { NEXTBLOCK_CORES, nextblockRoundWarnings } from './truck-cores.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
-import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
+import { fromHex } from 'arena-sdk/hash';
+import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
 import { NEXTBLOCK_MANIFEST_HEX } from './nextblock-manifest.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
 import { INFO } from './info.js';
 
 /** THE SIGNED MANIFEST, and its id: what a round of nextblock names as its game_id (§0A.3). */
