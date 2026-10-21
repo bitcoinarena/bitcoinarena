@@ -21,6 +21,7 @@ import { WalletStart } from './WalletStart.jsx';
 import { DepositModal } from './DepositModal.jsx';
 import { WithdrawPanel } from './WithdrawPanel.jsx';
 import { ShopItems } from './ShopItems.jsx';
+import { DonateBox } from './DonateBox.jsx';
 import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
@@ -83,6 +84,8 @@ export function openWithdraw(host, props) { into(host, <WithdrawPanel key={Date.
 if (typeof window !== 'undefined') window.ArenaWithdraw = { open: openWithdraw };
 // THE SHOP'S ITEMS (the page's openShop hands them over with its rules), drawn at once into the sheet's list
 if (typeof window !== 'undefined') window.ArenaShop = { draw: (host, props) => into(host, <ShopItems {...props} />) };
+// THE DONATE BOX (the page's ARENA_DONATE_OPEN hands it to whom and its rules): a fresh one each time it opens
+if (typeof window !== 'undefined') window.ArenaDonate = { open: (host, props) => into(host, <DonateBox key={Date.now()} {...props} />) };
 // SETTINGS' OWN CARDS: each drawn into its section with what the page hands it
 if (typeof window !== 'undefined') window.ArenaSettings = {
   name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),
