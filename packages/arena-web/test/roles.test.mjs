@@ -57,3 +57,15 @@ test('a node not in the census yet: no switches, the reason said; the seat refus
   assert.deepEqual([c.state.step, c.state.message], ['idle', 'the bond wallet holds 200 sat']);
   assert.deepEqual(askOf({ play: false, settlement: true, relay: false, custody: false }), { roles: ['settlement'], custody: false });
 });
+
+test('a gateway that runs but holds no seat yet says Waiting, not Off (kanban #563, installer C 2026-10-21)', async () => {
+  const api = { get: async (p) => ({ ...answers, '/gateway-claim': null })[p], signed: async (action) => ({ action }),
+    post: async (path) => (path === '/owner/services' ? { ok: true, services: [{ id: 'gateway', running: true }] } : { ok: true }) };
+  const c = driven(api);
+  await c.componentDidMount();
+  assert.equal(c.state.gatewayRuns, true);
+  const html = renderToStaticMarkup(c.render());
+  assert.match(html, /id="tile-gateway"[\s\S]*?<span class="pill wait">Waiting<\/span>/);
+  assert.match(html, /takes its federation&#x27;s gateway seat once the federation is founded and its peg-in counts/);
+  assert.match(html, />Manage →</);
+});
