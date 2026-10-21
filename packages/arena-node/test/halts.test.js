@@ -76,7 +76,7 @@ test('a restart keeps the observations and the clock: a seat restarted mid-way s
     post: async (o) => { world.posted.push(o); }, load: () => (disk === null ? [] : JSON.parse(disk)), save: (v) => { disk = JSON.stringify(v); } });
   const a = seat();
   await a.observe();                                       // 41 first seen at 341
-  assert.deepEqual(JSON.parse(disk).seen[fid], { session: 41, firstHeight: 341, at: JSON.parse(disk).seen[fid].at });
+  assert.deepEqual(JSON.parse(disk).seen[fid], { session: 41, firstHeight: 341, heard: true, at: JSON.parse(disk).seen[fid].at });
   world.tip = 346;
   const b = seat();                                        // restarted at 346: the clock is the one seen at 341
   assert.deepEqual([b.seen(fid).session, b.seen(fid).firstHeight], [41, 341]);
@@ -91,6 +91,32 @@ test('a restart keeps the observations and the clock: a seat restarted mid-way s
   // the first format (a list of observations alone) still reads
   disk = JSON.stringify(JSON.parse(disk).observations);
   assert.equal(seat().list(fid).length, 1);
+});
+
+// A SEAT THAT NEVER HEARD A GUARDIAN (kanban #326, measured 2026-10-21 23:5xZ): T2's guardians exit once consensus times out, so a
+// seat rolled after that saw no session at all - it names the session its peers' signed observations name, from its own first_height.
+test('a seat that never heard a guardian names its peers\' session from its own first_height; one it hears itself restarts the clock', async () => {
+  const world = { tip: 341, session: 41, down: new Set(), posted: [] };
+  const all = seats.map((s) => seatOf(s, world));
+  for (const h of all.slice(0, 4)) await h.observe();     // four seats hear session 41 at 341
+  world.down = new Set([0, 1, 2, 3]); world.tip = 345;
+  const late = all[8];
+  assert.deepEqual((await late.observe()).map((r) => [r.session, r.firstHeight]), [[0, 345]], 'nothing heard, no peer observation yet');
+  world.tip = 353;
+  for (const h of all.slice(0, 4)) assert.equal((await h.observe())[0].signed, true);
+  for (const o of world.posted) late.take(o);
+  const row = (await late.observe())[0];
+  assert.deepEqual([row.session, row.firstHeight, row.answering, row.signed], [41, 345, 0, undefined], 'the peers\' 41, from its own 345');
+  world.tip = 357;
+  assert.deepEqual((await late.observe()).map((r) => [r.session, r.firstHeight, r.signed]), [[41, 345, true]]);
+  for (const o of world.posted.slice(-1)) assert.equal(all[0].take(o).ok, true);
+  for (const o of world.posted.slice(1, 4)) all[0].take(o);
+  const p = all[0].proofOf(fid);
+  assert.ok(p, 'five at session 41: the late seat counts');
+  assert.deepEqual([p.session, p.haltHeight, p.observers], [41, 345, 5]);
+  // a seat that heard a guardian keeps its own session: a peer's higher one does not move it
+  const heard = all[0];
+  assert.equal(heard.seen(fid).session, 41);
 });
 
 test('a guardian session count is asked over its endpoint, a local override taken first', async () => {
