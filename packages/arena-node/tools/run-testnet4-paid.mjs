@@ -200,7 +200,7 @@ if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id
 const CREATOR = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 3 && env.ARENA_CREATOR_KEY_FILE
   ? { creatorSecret: Uint8Array.from(Buffer.from(readFileSync(env.ARENA_CREATOR_KEY_FILE, 'utf8').trim(), 'hex')) } : {};
 // THE DUTY TO POST THE NEXT 24 H (2026-10-13 ~18:35Z; arena-protocol/src/duty.js, spec §5A.5): PAID_DUTY=1 runs ONE
-// plan item - DUTY_GAME (rps | updown) in DUTY_FEDERATION (federation id hex), named DUTY_ITEM - on every machine of the network. Every
+// plan item - DUTY_APP (rps | updown) in DUTY_FEDERATION (federation id hex), named DUTY_ITEM - on every machine of the network. Every
 // 30 s it reads the chain: the slot's anchor, the census there, the duty order; when the node on duty for the current slot is one this
 // machine runs (DUTY_LOCAL_KEYS, else its own daemons) it posts what slotsToPost names - its own slot and, from 5 min in, every missed
 // slot of the last 20, oldest first - one grid of the slot's target hour, carrying the duty marker, then the series to every seat.
@@ -209,8 +209,8 @@ if (env.PAID_DUTY === '1') {
   const { slotOf, slotStartMs, targetWindow, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, slotsToPost, DUTY_COMMITTEE_LEAD_MS }
     = await import('../../arena-protocol/src/duty.js');
   const { medianTimePast } = await import('../../arena-protocol/src/beacon.js');
-  const item = env.DUTY_ITEM, game = env.DUTY_GAME, fed = String(env.DUTY_FEDERATION || '').toLowerCase();
-  if (!item || !['rps', 'updown', 'nextblock'].includes(game) || !/^[0-9a-f]{64}$/.test(fed)) throw new Error('PAID_DUTY=1 needs DUTY_ITEM, DUTY_GAME rps|updown|nextblock and DUTY_FEDERATION');
+  const item = env.DUTY_ITEM, game = env.DUTY_APP, fed = String(env.DUTY_FEDERATION || '').toLowerCase();
+  if (!item || !['rps', 'updown', 'nextblock'].includes(game) || !/^[0-9a-f]{64}$/.test(fed)) throw new Error('PAID_DUTY=1 needs DUTY_ITEM, DUTY_APP rps|updown|nextblock and DUTY_FEDERATION');
   const tag = toHex(itemTag(item));
   const local = new Set((env.DUTY_LOCAL_KEYS ? env.DUTY_LOCAL_KEYS.split(',') : round.daemons.map((d) => toHex(d.round.pubkey))).map((k) => k.trim().toLowerCase()));
   const feeRate = Number(env.DUTY_FEE_RATE || 2), maxFeeRate = Number(env.DUTY_MAX_FEE_RATE || 8);
@@ -295,7 +295,7 @@ if (env.PAID_DUTY === '1') {
   look(); setInterval(look, 30000);
 }
 // ONE POSTING PER GAME PER DAY, AT THE LOWEST FEE (2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the
-// fees must be as low as possible"). PAID_DUTY_DAILY=1 runs one game (DUTY_GAME rps | updown | nextblock) for every federation in
+// fees must be as low as possible"). PAID_DUTY_DAILY=1 runs one game (DUTY_APP rps | updown | nextblock) for every federation in
 // DUTY_FEDERATIONS (hex, comma-separated) on every machine. Day d's duty node (duty.js: the census at the day's anchor in duty order;
 // the next one an hour later while the day is not posted) publishes ONE transaction: the next UTC day's rounds of this game in every
 // federation - RPS 2 tables of 8 s rounds each, Up/Down its 96 x 15 min, Tick Tock 960 x 90 s - plus the day's marker, at DUTY_FEE_RATE
@@ -306,9 +306,9 @@ if (env.PAID_DUTY_DAILY === '1') {
     = await import('../../arena-protocol/src/duty.js');
   const { medianTimePast } = await import('../../arena-protocol/src/beacon.js');
   const { parseTransaction } = await import('../../arena-protocol/src/tx.js');
-  const game = env.DUTY_GAME;
+  const game = env.DUTY_APP;
   const feds = String(env.DUTY_FEDERATIONS || toHex(round.contract.federationId)).split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x));
-  if (!['rps', 'updown', 'nextblock'].includes(game) || !feds.length) throw new Error('PAID_DUTY_DAILY=1 needs DUTY_GAME rps|updown|nextblock and DUTY_FEDERATIONS');
+  if (!['rps', 'updown', 'nextblock'].includes(game) || !feds.length) throw new Error('PAID_DUTY_DAILY=1 needs DUTY_APP rps|updown|nextblock and DUTY_FEDERATIONS');
   const item = env.DUTY_ITEM || `${game}-day`;
   const tag = toHex(itemTag(item));
   const local = new Set((env.DUTY_LOCAL_KEYS ? env.DUTY_LOCAL_KEYS.split(',') : round.daemons.map((d) => toHex(d.round.pubkey))).map((k) => k.trim().toLowerCase()));

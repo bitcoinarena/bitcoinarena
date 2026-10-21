@@ -32,7 +32,7 @@
 // live stacks'. `up` refuses to start when any of them is already taken by something that is not this devnet.
 //
 // OTHER SETTINGS: LOCK_BIN (default $FEDIMINT_BIN/blwp-stake-lock), LND_BIN (lnd and lncli for the two gateways a paid round
-// needs; none: free rounds only), DEVNET_GAMES (more ARENA_GAMES registration modules for the
+// needs; none: free rounds only), DEVNET_APPS (more ARENA_APPS registration modules for the
 // seven nodes - a game of your own, tools/devnet-template), DEVNET_PAID_STAKE_MSAT (default 10 000 000), DEVNET_BLOCK_SECONDS
 // (a block every N s once the rounds are up; default 30, 0 for none), DEVNET_PAGE (the page the printed links open, default
 // https://testnet.bitcoin-arena.io) or DEVNET_PAGE_DIR (a built page served on base + 3, which the links then open).
@@ -63,15 +63,15 @@ const FED = env.FEDIMINT_BIN || dirOnPath('fedimintd');
 const LOCK = env.LOCK_BIN || (FED ? join(FED, 'blwp-stake-lock') : null);
 const PAGE_DIR = env.DEVNET_PAGE_DIR || '';
 const PAGE = PAGE_DIR ? `http://127.0.0.1:${PLAN.page}` : (env.DEVNET_PAGE || 'https://testnet.bitcoin-arena.io').replace(/\/+$/, '');
-// THE GAMES BEYOND NEXTBLOCK (DEVNET_GAMES, registration modules exporting GAME): named once at `up` and kept in the devnet's
+// THE GAMES BEYOND NEXTBLOCK (DEVNET_APPS, registration modules exporting GAME): named once at `up` and kept in the devnet's
 // own directory, so every later command - and the runner, started elsewhere - hosts, opens and replays the same games
-const GAME_FILES = env.DEVNET_GAMES !== undefined
-  ? env.DEVNET_GAMES.split(',').map((x) => x.trim()).filter(Boolean).map((x) => resolve(x))
+const APP_FILES = env.DEVNET_APPS !== undefined
+  ? env.DEVNET_APPS.split(',').map((x) => x.trim()).filter(Boolean).map((x) => resolve(x))
   : (() => { try { return JSON.parse(readFileSync(join(D, 'games.json'), 'utf8')); } catch { return []; } })();
-/** The registrations of every game this devnet hosts: nextblock's first, then DEVNET_GAMES'. */
+/** The registrations of every game this devnet hosts: nextblock's first, then DEVNET_APPS'. */
 async function registrations() {
   const out = [(await import('../../nextblock/plugin/nextblock.js')).GAME];
-  for (const f of GAME_FILES) out.push((await import(pathToFileURL(f).href)).GAME);
+  for (const f of APP_FILES) out.push((await import(pathToFileURL(f).href)).GAME);
   return out;
 }
 const nodeUrl = (k) => `http://127.0.0.1:${PLAN.nodes[k]}`;
@@ -209,8 +209,8 @@ async function up() {
   // ---- 3. THE SEVEN NODES, one process each, each starting its own guardian ----
   // THE GAMES THE NODES HOST, kept for every later command. A game added after the first `up` is hosted, and its bonds do not
   // advertise it (a bond is posted once): start a devnet on a fresh DEVNET_DIR for it, or its rounds find no committee
-  const games = [join(NODE_PKG, '..', 'nextblock', 'plugin', 'nextblock.js'), ...GAME_FILES];
-  writeFileSync(path('games.json'), JSON.stringify(GAME_FILES) + '\n');
+  const apps = [join(NODE_PKG, '..', 'nextblock', 'plugin', 'nextblock.js'), ...APP_FILES];
+  writeFileSync(path('games.json'), JSON.stringify(APP_FILES) + '\n');
   for (const [k, port] of PLAN.nodes.entries()) {
     if (running(`node-${k + 1}`)) continue;
     const client = path('clients', `node-${k + 1}`);
@@ -219,7 +219,7 @@ async function up() {
       ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: client, ARENA_FEDERATION_CLIENTS_DIR: path('clients', `node-${k + 1}-others`),
       ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
       ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
-      ARENA_GAMES: games.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}` }) });
+      ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}` }) });
   }
   for (const [k, port] of PLAN.nodes.entries()) {
     for (let i = 0; ; i++) {
@@ -260,7 +260,7 @@ async function up() {
   // ---- 5. THE RUNNER: bonds, a free round and a paid round, and the keeper (this file's `runner`) ----
   if (!running('runner')) {
     rmSync(path('runner', 'state.json'), { force: true });
-    startPart('runner', process.execPath, [fileURLToPath(import.meta.url), 'runner'], { env: fedEnv({ DEVNET_DIR: D, DEVNET_GAMES: GAME_FILES.join(',') }) });
+    startPart('runner', process.execPath, [fileURLToPath(import.meta.url), 'runner'], { env: fedEnv({ DEVNET_DIR: D, DEVNET_APPS: APP_FILES.join(',') }) });
   }
   let state = null;
   for (let i = 0; ; i++) {
@@ -731,7 +731,7 @@ async function newGame() {
   const hosted = hostedPlugins([GAME]);
   const { toHex } = await import('../../arena-protocol/src/hash.js');
   say({ step: 'new game', name, dir, gameId: signed.gameId, core: [...GAME.cores.keys()][0], hostedAs: [...hosted.keys()][0] === toHex(GAME.gameId),
-    next: `DEVNET_GAMES=${join(dir, 'game.js')} devnet.mjs up   (then: devnet.mjs play --game ${name})` });
+    next: `DEVNET_APPS=${join(dir, 'game.js')} devnet.mjs up   (then: devnet.mjs play --game ${name})` });
 }
 
 // =====================================================================================================================

@@ -40,10 +40,10 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const CARRIER_SATS = 3000n;
 // 2026.0.2: ARENA_ADVERT_PROTOCOL_VERSIONS="1,2" - the versions the node speaks, which the census reads to
-// draw it for a v2 round - and ARENA_ADVERT_ADD_GAMES="<id hex>,..." - games it hosts besides those it advertises (the v2
+// draw it for a v2 round - and ARENA_ADVERT_ADD_APPS="<id hex>,..." - games it hosts besides those it advertises (the v2
 // ids); each update carries both, everything else of the advertisement as it was
 const VERSIONS = env.ARENA_ADVERT_PROTOCOL_VERSIONS ? env.ARENA_ADVERT_PROTOCOL_VERSIONS.split(',').map(Number) : null;
-const ADD_GAMES = (env.ARENA_ADVERT_ADD_GAMES || '').split(',').filter((x) => /^[0-9a-f]{64}$/.test(x));
+const ADD_APPS = (env.ARENA_ADVERT_ADD_APPS || '').split(',').filter((x) => /^[0-9a-f]{64}$/.test(x));
 // STEPPING OUT WITHOUT UNBONDING (§5A.3): ARENA_ADVERT_SERVING=false takes the named nodes out of every census from
 // the update's block on (true brings them back), their bonds untouched; ARENA_ADVERT_NODES="3,5" names which (all seven when unset)
 const SERVING = env.ARENA_ADVERT_SERVING === 'false' ? false : env.ARENA_ADVERT_SERVING === 'true' ? true : null;
@@ -78,7 +78,7 @@ function payoutKeyOf(n) {
   }
   return schnorr.getPublicKey(fromHex(readFileSync(file, 'utf8').trim()));
 }
-const gamesWith = (hosted) => [...new Map([...(hosted || []), ...ADD_GAMES.map(fromHex)].map((g) => [toHex(g), g])).values()]
+const appsWith = (hosted) => [...new Map([...(hosted || []), ...ADD_APPS.map(fromHex)].map((g) => [toHex(g), g])).values()]
   .sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1));
 
 const [fundTxid, fundVout] = (env.ARENA_FUND_INPUT || '').split(':');
@@ -120,16 +120,16 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), advertises: now, protocolVersions: bond.advert.protocolVersions || [], updatedBy: bond.updatedBy || null, wants: want });
   const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
-  const gamesDiffer = ADD_GAMES.length && gamesWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
+  const appsDiffer = ADD_APPS.length && appsWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
   const servingDiffers = SERVING !== null && (bond.advert.serving !== false) !== SERVING;
   const operatorDiffers = OPERATOR !== null && bond.advert.operatorId !== OPERATOR;
   const payout = PAYOUT ? payoutKeyOf(n) : null;
   const payoutDiffers = payout !== null && toHex(bond.advert.payoutPubkey) !== toHex(payout);
   const declaresDiffer = DECLARE && JSON.stringify(bond.advert.declares || null, (k, v) => (typeof v === 'bigint' ? String(v) : v))
     !== JSON.stringify(DECLARE, (k, v) => (typeof v === 'bigint' ? String(v) : v));
-  if (now.join(',') === want && !versionsDiffer && !gamesDiffer && !servingDiffers && !declaresDiffer && !operatorDiffers && !payoutDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
+  if (now.join(',') === want && !versionsDiffer && !appsDiffer && !servingDiffers && !declaresDiffer && !operatorDiffers && !payoutDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
   const advert = { ...bond.advert, guardianOf: entries, timestamp: BigInt(Date.now()),
-    ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}),
+    ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_APPS.length ? { hostedGames: appsWith(bond.advert.hostedGames) } : {}),
     ...(SERVING !== null ? { serving: SERVING } : {}), ...(DECLARE ? { declares: DECLARE } : {}), ...(OPERATOR ? { operatorId: OPERATOR } : {}), ...(payout ? { payoutPubkey: payout } : {}) };
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }

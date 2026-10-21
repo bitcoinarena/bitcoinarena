@@ -41,7 +41,7 @@ import { fromHex } from 'arena-sdk/hash';
 export const MANIFEST_V4_HEX = '${toHex(encodeManifest(manifest))}';
 export const MANIFEST_V4 = decodeManifest(fromHex(MANIFEST_V4_HEX));
 export const GAME_ID_V4 = gameIdOf(MANIFEST_V4);
-/** What a launcher loads from this module (ARENA_GAMES): the registration. */
+/** What a launcher loads from this module (ARENA_APPS): the registration. */
 export const GAME = Object.freeze({ ...V1, manifest: MANIFEST_V4, gameId: GAME_ID_V4 });
 `);
 console.log(`btc-updown-15m v${body.version}: parent ${toHex(GAME_ID_V2).slice(0, 16)}, clients ${body.clients.map((c) => toHex(c).slice(0, 8)).join(' ')}, game_id ${id}`);

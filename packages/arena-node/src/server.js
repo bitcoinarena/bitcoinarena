@@ -193,7 +193,7 @@ import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
-import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
+import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
@@ -483,7 +483,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // or naming a core or config it did not install for that game, is refused at the door.
   plugins = [],
   // THIS NODE'S OWN ADVERTISEMENT, decoded: when given, the games it names are held to the games hosted above
-  // - an advertised game this node does not host refuses the start, by name (plugins.js advertisedGamesCheck).
+  // - an advertised game this node does not host refuses the start, by name (plugins.js advertisedAppsCheck).
   ownAdvert = null,
   publicEndpoint = null,
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
@@ -706,10 +706,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return `this node does not host game ${game.slice(0, 16)}: it plays only the games it hosts (§0A.4) - not selectable for that round, it serves nothing there, and is not slashed`;
   };
   if (ownAdvert) {
-    const games = advertisedGamesCheck(ownAdvert, hosted);
-    if (!games.ok) throw new Error(games.why);
-    if (games.unadvertised.length)
-      console.error(`[games] hosting ${games.unadvertised.join(', ')}, which this node's advertisement does not name: not drawn for it until an advertisement update names it`);
+    const apps = advertisedAppsCheck(ownAdvert, hosted);
+    if (!apps.ok) throw new Error(apps.why);
+    if (apps.unadvertised.length)
+      console.error(`[games] hosting ${apps.unadvertised.join(', ')}, which this node's advertisement does not name: not drawn for it until an advertisement update names it`);
   }
   const replayCoreFile = (hex) => (replayCores && /^[0-9a-f]{64}$/.test(hex) ? joinPath(replayCores, `${hex}.js`) : null);
   if (replayCores) {
@@ -739,13 +739,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // other seats hold, so the page could only call them "rounds this node no longer holds"): asked once of the seats that may hold
   // it - the census's and the dev clients' own - GET /round, its contract decoded here; the answer (or "nobody had it") is kept.
   // At most LEARN_MAX rounds and LEARN_MS per call, one seat at a time per round.
-  const roundGames = new Map();
+  const roundApps = new Map();
   const roundTried = new Set();
   const LEARN_MAX = 60, LEARN_MS = 6000;
-  const learnRoundGames = async (rows, seats) => {
+  const learnRoundApps = async (rows, seats) => {
     const t0 = Date.now();
     const bases = [...new Set([...networkSeats(), ...(seats || []).map(baseOf)])].filter((u) => /^https?:\/\//.test(u));
-    const want = [...new Set((rows || []).map((r) => String(r.roundId || '')).filter((rid) => /^[0-9a-f]{64}$/.test(rid) && !roundGames.has(rid) && !roundTried.has(rid)))];
+    const want = [...new Set((rows || []).map((r) => String(r.roundId || '')).filter((rid) => /^[0-9a-f]{64}$/.test(rid) && !roundApps.has(rid) && !roundTried.has(rid)))];
     let asked = 0;
     for (const rid of want) {
       if (asked >= LEARN_MAX || Date.now() - t0 > LEARN_MS) break;
@@ -757,11 +757,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const r = await fetch(`${b}/round?id=${rid}`, { signal: AbortSignal.timeout(2500) });
           if (!r.ok) continue;
           const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-          if (c.gameId instanceof Uint8Array) { roundGames.set(rid, toHex(c.gameId)); break; }
+          if (c.gameId instanceof Uint8Array) { roundApps.set(rid, toHex(c.gameId)); break; }
         } catch { /* the next seat */ }
       }
     }
-    return { asked, known: roundGames.size };
+    return { asked, known: roundApps.size };
   };
   // A DEV KEY'S DONATIONS, BY WHOM THEY WERE FOR: its share in the newest protocol set this seat holds, and per round the
   // round's game (from the contract this seat keeps) and its share in that game's set - attributeDonations splits each donation p : g
@@ -780,7 +780,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = /^[0-9a-f]{64}$/.test(rid) ? round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex')) : null;
         let gid = null;
         if (row) { const c = decodeRoundContract(new Uint8Array(row.contract)); gid = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null; }
-        else gid = roundGames.get(rid) || null;   // a round another seat holds, looked up once (learnRoundGames)
+        else gid = roundApps.get(rid) || null;   // a round another seat holds, looked up once (learnRoundApps)
         const g = gid ? hosted.get(gid) : null;
         if (g) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); out = { name: g.name, title: g.title || g.name, bps: r ? Number(r.shareBps || 0) : 0 }; }
       } catch { out = null; }
@@ -910,10 +910,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // The seats it asks: those of the newest census it can read (their advertisements' endpoints), the peers it was given and
   // the owner's sources. Each one's GET /games is read and checked here - a manifest must hash to the id beside it, and its
   // description and website are shown only when its developer key signed them for that id (game-info.js) - so a listing
-  // names what each seat claims and nothing this seat takes on trust. Read every NETWORK_GAMES_MS (5 min) and on an ask
+  // names what each seat claims and nothing this seat takes on trust. Read every NETWORK_APPS_MS (5 min) and on an ask
   // older than that; one read at a time.
-  const NETWORK_GAMES_MS = Number(process.env.ARENA_NETWORK_GAMES_MS || 300000);
-  const networkGames = { atMs: 0, seats: [], games: [], reading: null };
+  const NETWORK_APPS_MS = Number(process.env.ARENA_NETWORK_APPS_MS || 300000);
+  const networkApps = { atMs: 0, seats: [], games: [], reading: null };
   const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
   const networkSeats = () => {
     const found = new Set((peers || []).map(baseOf));
@@ -926,7 +926,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (owner) for (const s of owner.storeSettings().sources || []) found.add(baseOf(s));
     return [...found].filter((u) => /^https?:\/\//.test(u));
   };
-  const readNetworkGames = async () => {
+  const readNetworkApps = async () => {
     const seats = networkSeats();
     const byId = new Map();
     const asked = [];
@@ -948,13 +948,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     const games = [...byId.values()].map((g) => ({ ...g, hostedHere: hosted.has(g.id),
       updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
-    Object.assign(networkGames, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
-    return networkGames;
+    Object.assign(networkApps, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
+    return networkApps;
   };
-  const networkGamesNow = async ({ fresh = false } = {}) => {
-    if (!fresh && Date.now() - networkGames.atMs < NETWORK_GAMES_MS) return networkGames;
-    if (!networkGames.reading) networkGames.reading = readNetworkGames().finally(() => { networkGames.reading = null; });
-    return networkGames.reading;
+  const networkAppsNow = async ({ fresh = false } = {}) => {
+    if (!fresh && Date.now() - networkApps.atMs < NETWORK_APPS_MS) return networkApps;
+    if (!networkApps.reading) networkApps.reading = readNetworkApps().finally(() => { networkApps.reading = null; });
+    return networkApps.reading;
   };
   // A SEASON'S QUERY (GET /season, GET /season-rounds): the game ids and the window, or a refusal by name. A
   // name is every version this node hosts under it; one id in hex is that id; with `list`, a comma list of ids in hex (at
@@ -1048,8 +1048,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     seasonNetKept.set(q, { ...(had || {}), reading });
     return reading;
   };
-  const networkGamesTimer = setInterval(() => { networkGamesNow().catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_GAMES_MS);
-  if (networkGamesTimer.unref) networkGamesTimer.unref();
+  const networkAppsTimer = setInterval(() => { networkAppsNow().catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_APPS_MS);
+  if (networkAppsTimer.unref) networkAppsTimer.unref();
   const autoUpdateTimer = setInterval(() => { autoUpdate().catch((e) => console.error(`[plugins] automatic update: ${e.message}`)); }, Number(process.env.ARENA_AUTO_UPDATE_MS || 600000));
   if (autoUpdateTimer.unref) autoUpdateTimer.unref();
   // THE DONATION SET A ROUND NAMES, AS THIS SIGNER NODE CAN STAND BEHIND IT (M3.2 6e):
@@ -2135,7 +2135,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     roundsAfter: (after, n) => round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid LIMIT ?').all(after, n),
     now: () => round.now(), log: (l) => console.log(l), onHeld: () => settleAttestedSoon() }) : null;
   const marketsTimer = marketsSweep ? setInterval(() => { if (!shuttingDown) marketsSweep.pass().catch((e) => console.error(`[game-market] ${e.message}`)); },
-    Number(process.env.ARENA_GAME_MARKET_SWEEP_MS || 10000)) : null;
+    Number(process.env.ARENA_APP_MARKET_SWEEP_MS || 10000)) : null;
   if (marketsTimer && marketsTimer.unref) marketsTimer.unref();
   // A SETTLEMENT COMBINED WHILE THIS NODE WAS DOWN (ruled window, 2026-09-23/24): a peer's settlement row counts only if
   // its combined signature verifies under the round's claim key over the message it names.
@@ -3151,13 +3151,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const r = seasonRoundOf(round, rid, c, { isMarket: (x) => !!attestedOf(x) });
     return r ? { ok: true, game: { name: game.name, id: game.id }, round: r } : { ok: false, status: 404, why: 'a free market has no result to award from' };
   };
-  const hostedGames = () => {
+  const hostedApps = () => {
     const by = new Map();
     for (const p of hosted.values()) by.set(String(p.name), [...(by.get(String(p.name)) || []), toHex(p.gameId)]);
     return [...by.keys()].sort().map((name) => ({ name, ids: [...new Set(by.get(name))].sort() }));
   };
   const badges = nostrBadges({ db: round.db, secret: round.identity.secret, on: nostrBadgesOn, relays: nostrPublish, roundOf: badgeRoundOf,
-    settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', games: hostedGames, imageBase: badgeImageBase,
+    settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', apps: hostedApps, imageBase: badgeImageBase,
     accountsOf: (g, w) => seasonAccounts(g.ids, w, { keyed: true,
       days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1) }),
     perMinute: nostrPerMinute, tickMs: nostrBadgesTickMs });
@@ -3376,7 +3376,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const game = t.gameId instanceof Uint8Array ? toHex(t.gameId) : '(none)';
       if (!refusedSeries.has(id)) {
         refusedSeries.add(id);
-        console.error(`[series] ${id.slice(0, 16)} not written: this node does not host game ${game.slice(0, 16)} (ARENA_GAMES; §0A.4)`);
+        console.error(`[series] ${id.slice(0, 16)} not written: this node does not host game ${game.slice(0, 16)} (ARENA_APPS; §0A.4)`);
         if (t.gameId instanceof Uint8Array) for (let i = 0; i < ROUNDS_PER_SERIES; i++) rememberRefusedGame(toHex(roundIdOf(seriesRound(t, i))), game);
       }
       return true;
@@ -4960,7 +4960,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const all = devClients ? devClients.rowsAndSeats() : { rows: [], seats: [] };
             if (devClientDir) { try { const cfg = JSON.parse(readFileSync(joinPath(devClientDir, 'donor.json'), 'utf8')); all.seats.push(...(cfg.seats || []));
               all.rows.push(...readFileSync(joinPath(devClientDir, 'donations.jsonl'), 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return {}; } })); } catch { /* none beside */ } }
-            await learnRoundGames(all.rows, all.seats);
+            await learnRoundApps(all.rows, all.seats);
           } catch (e) { console.log(`[dev] round games not looked up: ${e.message}`); }
           return answer(200, { managed: !!devClients, clients: devClients ? devClients.list({ attribute: devAttribute }) : [],
             beside: devClientDir ? { ...devClientSnapshot(devClientDir), split: devSplitOfDir(devClientDir) } : null });
@@ -5405,7 +5405,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, games: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
@@ -5870,7 +5870,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // THE GAMES AND MARKETS THIS SEAT FOUND ON THE NETWORK: public, as /games is; ?fresh=1 reads them again now
       if (req.method === 'GET' && url.pathname === '/network-games') {
-        const ng = await networkGamesNow({ fresh: url.searchParams.get('fresh') === '1' });
+        const ng = await networkAppsNow({ fresh: url.searchParams.get('fresh') === '1' });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         // hosted here or not as of this ask: a game installed since the last read is not offered again
         const games = ng.games.map((g) => ({ ...g, hostedHere: hosted.has(g.id), updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null }));
@@ -9060,7 +9060,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(autoUpdateTimer);
         clearInterval(recordTimer);
         clearInterval(emergencyPull); clearTimeout(emergencyFirstPull);
-        clearInterval(networkGamesTimer);
+        clearInterval(networkAppsTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);
         nostr.stop();

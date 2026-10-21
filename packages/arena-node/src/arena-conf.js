@@ -22,7 +22,7 @@ export const CONF_KEYS = Object.freeze([
   ['port_offset', 'a second node on this machine: added to every port'],
   ['bitcoind_url', 'the chain: Bitcoin Core\'s RPC, or the chain bridge in Electrum mode'],
   ['bitcoind_cookie', 'the chain\'s RPC cookie file'],
-  ['games', 'the game plugins the seat loads'],
+  ['apps', 'the app plugins the seat loads'],
   ['plugins_dir', 'where installed plugins are kept'],
   ['donation_network', 'the network whose donation set the node pays'],
   ['close_at_end', '1: rounds are closed when they end'],
@@ -57,6 +57,13 @@ export function parseConf(text) {
 }
 
 /** The keys a file holds that this release does not list (each still reaches the seat as ARENA_<KEY>). */
+// KEYS THAT TOOK A NEW NAME (kanban #569, the owner 2026-10-21: "Rename it so apps in the code and envs"): an update rewrites them once in
+// an installed node's arena.conf (arena-installer/src/update.js) - the seat reads only the new name
+export const RENAMED_KEYS = Object.freeze({ games: 'apps' });
+/** arena.conf's text with every renamed key written under its new name (the rest of the file as it was). */
+export const renameKeys = (text) => String(text).replace(/^(\s*)([a-z_]+)(\s*=)/gm, (m, lead, k, eq) => (RENAMED_KEYS[k] ? `${lead}${RENAMED_KEYS[k]}${eq}` : m));
+/** Settings read from an older release's environment, their renamed keys under the new name. */
+export const renameValues = (values) => Object.fromEntries(Object.entries(values).map(([k, v]) => [RENAMED_KEYS[k] || k, v]));
 export const unknownKeys = (values) => Object.keys(values).filter((k) => !KNOWN.has(k) && !PORT_NAMED[k]);
 
 /** What the seat starts with: { port, database, env } - env the ARENA_* variables of every other key. */

@@ -40,8 +40,8 @@ const CWD = new URL('..', import.meta.url).pathname;
 function startMain(store, env, { args } = {}) {
   const child = spawn(process.execPath, [MAIN, ...(args || ['0', store])], { cwd: CWD, env: { ...process.env, ARENA_BITCOIND_URL: '', ARENA_BITCOIND_COOKIE: '',
     ARENA_STAKE_LOCK_BIN: '', ARENA_FEDERATION_CLIENT_DIR: '',
-    // AS THE UNITS WILL RUN IT: main.js names no game, the launcher names nextblock in ARENA_GAMES
-    ARENA_GAMES: NEXTBLOCK_REGISTRATION, PATH: process.env.PATH.split(':').filter((d) => !/fedimint|patched/.test(d)).join(':'), ...env },
+    // AS THE UNITS WILL RUN IT: main.js names no game, the launcher names nextblock in ARENA_APPS
+    ARENA_APPS: NEXTBLOCK_REGISTRATION, PATH: process.env.PATH.split(':').filter((d) => !/fedimint|patched/.test(d)).join(':'), ...env },
   stdio: ['ignore', 'pipe', 'pipe'] });
   child.out = ''; child.err = '';
   child.stdout.on('data', (d) => { child.out += d; });

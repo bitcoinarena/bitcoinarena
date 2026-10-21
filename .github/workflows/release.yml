@@ -97,7 +97,7 @@ jobs:
           set -eu
           mkdir run && tar -xzf out/arena-node-*-${{ matrix.asset }}.tar.gz -C run
           R=$(echo "$PWD"/run/arena-node-*)
-          (cd "$R/packages/arena-node" && ARENA_DONATION_NETWORK=testnet4 ARENA_GAMES="$R/packages/nextblock/plugin/nextblock.js" \
+          (cd "$R/packages/arena-node" && ARENA_DONATION_NETWORK=testnet4 ARENA_APPS="$R/packages/nextblock/plugin/nextblock.js" \
             "$R/runtime/node" src/main.js 31917 "$PWD/seat.db" > "$PWD/seat.log" 2>&1 &)
           for i in $(seq 1 90); do curl -sf -o /dev/null http://127.0.0.1:31917/identity && break; sleep 1; done
           curl -sf http://127.0.0.1:31917/games | grep -q '"name":"nextblock"' || { cat seat.log; exit 1; }
@@ -116,7 +116,7 @@ jobs:
         run: |
           Expand-Archive -Path (Get-ChildItem out\arena-node-*-windows-x64.zip).FullName -DestinationPath run
           $R = (Get-ChildItem run\arena-node-*).FullName
-          $env:ARENA_DONATION_NETWORK = 'testnet4'; $env:ARENA_GAMES = "$R\packages\nextblock\plugin\nextblock.js"
+          $env:ARENA_DONATION_NETWORK = 'testnet4'; $env:ARENA_APPS = "$R\packages\nextblock\plugin\nextblock.js"
           Start-Process -FilePath "$R\runtime\node.exe" -ArgumentList 'src\main.js','31917',"$PWD\seat.db" -WorkingDirectory "$R\packages\arena-node" -RedirectStandardOutput seat.log -RedirectStandardError seat.err
           $ok = $false; for ($i = 0; $i -lt 90; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:31917/identity | Out-Null; $ok = $true; break } catch { Start-Sleep 1 } }
           if (-not $ok) { Get-Content seat.log, seat.err; exit 1 }

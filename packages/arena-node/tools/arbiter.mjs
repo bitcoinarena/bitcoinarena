@@ -91,7 +91,7 @@ async function handle(seat, s) {
   const accused = census.entries.find((e) => toHex(e.pubkey) === s.node);
   if (!accused) return { done: true, why: 'the accused is not in the round\'s census' };
   const verdict = await judgeProof({ evidence, bundle, entry, entryId: eid, contract, committee, advert: accused.advert,
-    bondOutpoint: { txid: accused.txid, vout: accused.vout }, core: coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadGames()))),
+    bondOutpoint: { txid: accused.txid, vout: accused.vout }, core: coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps()))),
     roundRandomness: beacon.hash });
   if (!verdict.slashed) return { done: true, why: `not slashed: ${verdict.why}` };
   // THE BOND AS THE CHAIN HOLDS IT NOW, AND THE CENSUS AT THE SLASH HEIGHT (the tip)
@@ -120,9 +120,9 @@ const payOut = (proof, v) => payOutSlash({ proof, v, set, rpc, keep, say, bin: e
   feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000) });
 
 let games = null;
-async function loadGames() {
+async function loadApps() {
   if (games) return games;
-  const list = String(env.ARENA_GAMES || '').split(',').filter(Boolean);
+  const list = String(env.ARENA_APPS || '').split(',').filter(Boolean);
   games = [];
   for (const p of list) { const m = await import(p); games.push(m.GAME || Object.values(m).find((v) => v && v.gameId && v.manifest)); }
   return games;

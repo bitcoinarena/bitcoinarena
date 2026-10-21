@@ -30,5 +30,5 @@ export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_
   // testnet4 nextblock's protocol dev and game dev are the same recipients and are paid once
   donationSet: TESTNET4_DONATION_SET_KEYS.recipients });
 
-/** What a launcher loads from this module (ARENA_GAMES, arena-node/src/main.js): nextblock's registration. */
+/** What a launcher loads from this module (ARENA_APPS, arena-node/src/main.js): nextblock's registration. */
 export const GAME = NEXTBLOCK;

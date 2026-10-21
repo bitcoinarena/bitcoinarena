@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // __TITLE__: WHAT A NODE LOADS (made from the devnet's game template). A node hosts a game from a module that exports `GAME`,
-// named in its ARENA_GAMES - on the devnet, DEVNET_GAMES=<this file> before `devnet.mjs up`. The node checks every piece
+// named in its ARENA_APPS - on the devnet, DEVNET_APPS=<this file> before `devnet.mjs up`. The node checks every piece
 // against the signed manifest at start (arena-node/src/plugins.js hostedPlugins): the developer's signature, the core's hash
 // and that it loads in its sandbox, each config, and that the donation set hashes to the one the manifest names. A game that
 // does not stand is refused and the node says why.

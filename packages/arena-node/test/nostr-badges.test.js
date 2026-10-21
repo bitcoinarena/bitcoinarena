@@ -139,7 +139,7 @@ test('the book: a round counts once ACCEPTED; each award is issued once, across 
   const roundOf = (r) => { read.push(r); return rounds.has(r) ? { ok: true, game: { name: 'nextblock', id: GAME }, round: rounds.get(r) } : { ok: false, status: 404 }; };
   const relay = await fakeRelay();
   const make = (more = {}) => nostrBadges({ db, secret: SECRET, on: true, relays: [relay.url], roundOf, timeoutMs: 500, now: () => now, log: () => {},
-    games: () => [{ name: 'nextblock', ids: [GAME] }], ...more });
+    apps: () => [{ name: 'nextblock', ids: [GAME] }], ...more });
   let book = make();
   try {
     // ROUNDS 1-4 ACCEPTED, round 5 still SUBMITTING, a round of a game this seat does not host ACCEPTED
@@ -193,7 +193,7 @@ const DAVE = keyOf(0x24), ERIN = keyOf(0x25);
 const WEEK = [wr(1, [en(ALICE, 1, 3n * S), en(BOB, 2, 0n), en(CAROL, 3, 0n)]), wr(2, [en(BOB, 4, 2n * S), en(CAROL, 5, 0n)])];
 const seatsOf = (...accounts) => ({ bySeat: new Map(accounts.map((rounds, i) => [`seat-${i}`, rounds])), asked: 13 });
 const boardBook = (accountsOf, more = {}) => nostrBadges({ db: settlementsDb(), secret: SECRET, on: true, roundOf: () => ({ ok: false }),
-  log: () => {}, games: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf, ...more });
+  log: () => {}, apps: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf, ...more });
 const podium = (book) => [ALICE, BOB, CAROL, DAVE, ERIN].map((p) => book.awardsOf(p).map((a) => [a.scope, a.evidence.rank]));
 
 test('the board badge: the network\'s week, read once BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS after it closed; off, nothing', async () => {
@@ -202,7 +202,7 @@ test('the board badge: the network\'s week, read once BOARD_GRACE_MS + BOARD_NET
   const accountsOf = async (g, w) => { asked.push([g.name, w.fromMs, w.toMs]); return seatsOf(WEEK, WEEK, WEEK); };
   const book = boardBook(accountsOf, { now: () => now });
   const off = nostrBadges({ db: settlementsDb(), secret: SECRET, on: false, roundOf: () => { throw new Error('read'); }, now: () => now, log: () => {},
-    games: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf: () => { throw new Error('read'); } });
+    apps: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf: () => { throw new Error('read'); } });
   try {
     assert.equal((await book.tick()).awarded, 0);
     assert.deepEqual(asked, [['nextblock', MON - 2 * WEEK_MS, MON - WEEK_MS]], 'within the grace, the week before is the last one read');
@@ -321,7 +321,7 @@ test('the board badge: a week is fetched once - across ticks and across a restar
   const db = settlementsDb();
   const accountsOf = async () => { calls++; return seatsOf(WEEK, WEEK, WEEK); };
   const make = () => nostrBadges({ db, secret: SECRET, on: true, roundOf: () => ({ ok: false }), log: () => {}, now: () => now,
-    games: () => [{ name: 'nextblock', ids: [GAME] }, { name: 'rps', ids: [h('b')] }], accountsOf });
+    apps: () => [{ name: 'nextblock', ids: [GAME] }, { name: 'rps', ids: [h('b')] }], accountsOf });
   let book = make();
   try {
     // TWO TICKS AT ONCE: the second finds the first still asking, and asks nothing

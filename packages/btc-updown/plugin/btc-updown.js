@@ -1,4 +1,4 @@
-// BITCOIN UP OR DOWN 15M ON TESTNET4 AS A SEAT HOSTS IT (kanban #293): the registration ARENA_GAMES names (src/main.js reads
+// BITCOIN UP OR DOWN 15M ON TESTNET4 AS A SEAT HOSTS IT (kanban #293): the registration ARENA_APPS names (src/main.js reads
 // `GAME`) - its signed manifest, no cores (an attested market runs no game code), its developer donation set.
 import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
 import { fromHex } from 'arena-sdk/hash';
