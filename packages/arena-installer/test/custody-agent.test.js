@@ -189,7 +189,7 @@ test('a custody and liquidity node whose liquidity deposit cannot be paid yet st
   const agent = createCustodyAgent({ state, release: home, chainKit, log: (m) => logs.push(m), nowMs: () => 1_800_000_000_000,
     lnd: { funds: async () => ({ ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', onchainSats: 0 }) } });
   assert.match((await agent.tick()).idle, /waits to be drawn/, 'no federation yet: custody waits, the deposit said in the log');
-  assert.match(logs.join('\n'), /the liquidity deposit is not sent yet: .* - custody goes on/);
+  assert.match(logs.join('\n'), /the liquidity deposit waits until the gateway's peg-in is sent - custody goes on/, 'kanban #567: the peg-in first');
   const dir = join(home, 'node.db.guardian'); mkdirSync(dir);
   writeFileSync(join(dir, 'invite-code'), `"${inviteForGuardians(fromHex('ee'.repeat(32)), [{ url: 'wss://node.example.com/guardian', peer: 2 }])}"\n`);
   writeFileSync(join(dir, 'local.json'), JSON.stringify({ identity: 2 }));
@@ -198,4 +198,23 @@ test('a custody and liquidity node whose liquidity deposit cannot be paid yet st
   assert.equal(r.did, 'guardian_of', r.why);
   const read = readAdvertUpdate(fromHex(sent[1]), { network: 'testnet4' });
   assert.equal(toHex(read.advert.guardianOf[0].federationId), 'ee'.repeat(32));
+});
+
+test('a custody node that became a provider sends no deposit before its peg-in, even with the coins for it (kanban #567)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'custody-liq2-'));
+  const state = nodeState(home);
+  writeFileSync(join(home, 'seed.hex'), '11'.repeat(32));
+  const db = new DatabaseSync(join(home, 'node.db'));
+  db.exec('CREATE TABLE identity (one INTEGER PRIMARY KEY, secret BLOB)'); db.prepare('INSERT INTO identity VALUES (0, ?)').run(new Uint8Array(32).fill(6)); db.close();
+  state.save({ roles: ['verify', 'custody', 'liquidity'], chain: { kind: 'core' }, owner: { pubkey: 'ab'.repeat(32) }, reach: { mode: 'permanent', url: 'https://node.example.com' },
+    bond: { txid: '77'.repeat(32), vout: 0, sats: '50000', maturity: 157057 }, custody: { pegInSats: 50000 }, lightning: { pubkey: '02' + '99'.repeat(32) } });
+  const sent = [];
+  const chainKit = { coinsOf: async () => ({ tip: 157000, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 900000 }] }), broadcast: async (_c, hex) => { sent.push(hex); return 'aa'.repeat(32); } };
+  const funds = async () => ({ ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', onchainSats: 0 });
+  const agent = createCustodyAgent({ state, release: home, chainKit, log: () => {}, nowMs: () => 1_800_000_000_000, lnd: { funds } });
+  assert.match((await agent.tick()).idle, /waits to be drawn/);
+  assert.equal(sent.length, 0, 'no deposit while the peg-in is still to come');
+  state.save({ custody: { ...state.read().custody, pegIn: { txid: 'bb'.repeat(32) } } });
+  const r = await createCustodyAgent({ state, release: home, chainKit, log: () => {}, nowMs: () => 1_800_000_000_000, lnd: { funds } }).tick();
+  assert.deepEqual([r.did, sent.length], ['liquidity-fund', 1], 'the peg-in sent: the deposit goes');
 });

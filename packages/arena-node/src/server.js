@@ -4710,7 +4710,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return claimJson(200, { nowMs: String(now), tip, expected: out });
       }
       if (req.method === 'GET' && url.pathname === '/liquidity-claim') {
-        const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE;
+        // an installed node that became a provider from its owner page (kanban #567) serves its home's claim before its next restart
+        const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE || (process.env.ARENA_HOME ? joinPath(process.env.ARENA_HOME, 'liquidity-claim.json') : null);
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: 'this node is no liquidity provider' });
       }
@@ -5271,10 +5272,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // SET UP, WITHDRAW, REMOVE: signed by the owner like every owner door
         // A NEW TOP-UP ADDRESS FOR THE LIQUIDITY PROVIDER'S WALLET (2026-10-18: "a button generate a new address for
         // the lp wallet"): signed by the owner, asked of this node's provider service, which owns the LND and re-signs its claim
+        // BECOME A LIQUIDITY PROVIDER (kanban #567): on an installed node, the provider service on its LND, the deposit's agent, the role
+        // and its settings (arena-installer/src/add-liquidity.js); without `post` only the plan
+        if (url.pathname === '/owner/liquidity/become') {
+          const a = owner.authorize(body, 'liquidity/become');
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!process.env.ARENA_HOME) return answer(501, { ok: false, why: 'this node was not set up by the installer: its liquidity provider is set up where it runs' });
+          try {
+            const { addLiquidityOnNode } = await import('../../arena-installer/src/add-liquidity.js');
+            const r = await addLiquidityOnNode({ home: process.env.ARENA_HOME, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true });
+            if (!r.ok) return answer(400, r);
+            if (r.done) { console.log(`[liquidity] this node is a liquidity provider now (LND ${String(r.plan.lightningPubkey).slice(0, 12)})`); dashboardKept = null; }
+            return answer(200, r);
+          } catch (e) { return answer(500, { ok: false, why: `the liquidity provider could not be set up: ${e.message}` }); }
+        }
         if (url.pathname === '/owner/liquidity/new-address') {
           const a = owner.authorize(body, 'liquidity/new-address');
           if (!a.ok) return answer(a.status || 401, a);
-          const prov = process.env.ARENA_LIQUIDITY_PROVIDER_URL;
+          const prov = process.env.ARENA_LIQUIDITY_PROVIDER_URL || (process.env.ARENA_HOME ? `http://127.0.0.1:${(await import('../../arena-installer/src/state.js')).LIQUIDITY_PROVIDER_PORT}` : null);
           if (!prov) return answer(501, { ok: false, why: 'this node runs no liquidity provider service (ARENA_LIQUIDITY_PROVIDER_URL)' });
           let r; try { const x = await fetch(`${prov.replace(/\/+$/, '')}/new-address`, { method: 'POST', signal: AbortSignal.timeout(60000) }); r = await x.json(); } catch (e) { r = { ok: false, why: `the provider service did not answer: ${e.message}` }; }
           if (r.ok) dashboardKept = null;

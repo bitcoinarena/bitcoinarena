@@ -113,6 +113,8 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       let waits = null;
       const f = await lnd.funds(s.lightning);
       if (!f.ok) waits = `the liquidity deposit waits for LND: ${f.why}`;
+      // a custody node's peg-in comes first (kanban #567: a node that becomes a provider from its owner page while it waits for its federation)
+      else if (custodyToo && (s.custody || {}).pegInSats && !(s.custody || {}).pegIn) waits = 'the liquidity deposit waits until the gateway\'s peg-in is sent';
       else {
         const deposit = Number(LIQUIDITY_TERMS.testnet4.depositSats);
         const w0 = walletOf(fromHex(state.readSecret('seed.hex')));
