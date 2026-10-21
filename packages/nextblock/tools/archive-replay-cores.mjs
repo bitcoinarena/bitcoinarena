@@ -28,7 +28,7 @@ mkdirSync(out, { recursive: true });
 let wanted = rest;
 if (rest[0] === '--stores') {
   const { DatabaseSync } = await import('node:sqlite');
-  const { decodeRoundContract } = await import('../../arena-protocol/src/contracts.js');
+  const { decodeRoundContract } = await import('arena-sdk/contracts');
   const set = new Set();
   for (const f of rest.slice(1)) {
     const db = new DatabaseSync(f, { readOnly: true });

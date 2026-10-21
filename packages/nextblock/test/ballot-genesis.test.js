@@ -4,10 +4,10 @@
 // the bytes out because it imports no game; here they are held to the encoder that makes them and to the hash every truck round names.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
+import { BALLOT_GENESIS } from 'arena-sdk/ballot-chain';
 import { encodeGameConfigV4, TAG_GAME_CONFIG } from '../config/game-config.js';
 import { TRUCK_CURRENT_CONFIG } from '../plugin/truck-cores.js';
-import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
+import { taggedHash, toHex } from 'arena-sdk/hash';
 
 test('BALLOT_GENESIS is encodeGameConfigV4, and its hash is the config the truck\'s rounds name', () => {
   assert.equal(toHex(BALLOT_GENESIS.config), toHex(encodeGameConfigV4()));

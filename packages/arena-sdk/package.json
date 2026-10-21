@@ -17,6 +17,14 @@
     "./manifest-sign": "./src/manifest-sign.js",
     "./ed25519": "./src/ed25519.js",
     "./known-games": "./src/known-games.js",
-    "./order-book": "./src/order-book.js"
+    "./order-book": "./src/order-book.js",
+    "./contracts": "./src/contracts.js",
+    "./constants": "./src/constants.js",
+    "./transcript": "./src/transcript.js",
+    "./sha256": "./src/sha256.js",
+    "./tick": "./src/tick.js",
+    "./genesis": "./src/genesis.js",
+    "./ballot-chain": "./src/ballot-chain.js",
+    "./batch": "./src/batch.js"
   }
 }

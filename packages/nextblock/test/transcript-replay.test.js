@@ -17,10 +17,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { init, step, submitLiquidation, submitLoad } from '../src/sim.js';
 import { hash } from '../src/state.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, batchId } from 'arena-sdk/batch';
 import {
   encodeTranscript, decodeTranscript, checkTranscript, flatten, GENESIS,
-} from '../../arena-protocol/src/transcript.js';
+} from 'arena-sdk/transcript';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 
