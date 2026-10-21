@@ -5127,7 +5127,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return Promise.all(rows.map(async (r) => {
               let boot = null;
               if (ns) { const iid = r.id === 'node' ? 'node' : installerIdOf(r.id, ids); const svc = svcs.find((x) => x.id === iid); if (svc && svc.file) { try { boot = await ns.bootOf(svc); } catch { boot = null; } } }
-              return { ...r, ...controlsOf({ id: r.id, installed: !!ns, installedIds: ids, toggles: ownToggles, settings: svcSettings, boot }) };
+              return { ...r, ...controlsOf({ id: r.id, installed: !!ns, installedIds: ids, toggles: ownToggles, settings: svcSettings, boot, running: r.running }) };
             }));
           };
           if (!home) return answer(200, { ok: true, manual: true, version: null, publicUrl: publicEndpoint || null, services: await decorate(own, null, []), command: null, settings: null });
