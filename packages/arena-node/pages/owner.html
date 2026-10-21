@@ -584,6 +584,16 @@ async function addressPanel() {
   };
 }
 async function releasePanel() {
+  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountRelease) {
+      const el = $('release'); if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountRelease(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json() },
+        onNewer: (v) => need('release', v ? 'warn' : null, `A new release is out: ${v || ''}.`, 'release') });
+      return;
+    }
+  } catch { /* the page's own panel */ }
   let v = null;
   try { v = await (await fetch(at('/owner/version'), { cache: 'no-store' })).json(); } catch { v = null; }
   const el = $('release');
