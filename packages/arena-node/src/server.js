@@ -4163,7 +4163,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!producers.has(fid)) {
         const cfg = guardianConfigOf(guardian.dataDir, (f) => readFileSync(f, 'utf8'));
         const password = readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
-        producers.set(fid, createAbsenceProducer({ federationId: fid, ...cfg, attester: round.pubkey,
+        // RE-SIGNED WITHIN abandon_blocks (kanban #326, measured 2026-10-21 on T2: t-4 stopped at 157,171, every guardian attested
+        // "last seen 157,171, at 157,172" and signed nothing more - the producer re-signs once per 144 blocks, and testnet4's abandon_blocks
+        // is 12, so no proof could stand before 144 blocks): once a day, or once per abandon_blocks where that is shorter
+        const clocks = FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet;
+        producers.set(fid, createAbsenceProducer({ federationId: fid, ...cfg, attester: round.pubkey, every: Math.min(144, clocks.abandonBlocks),
           status: () => wsAdminStatus(guardian.apiPort, password), height: async () => Number(await chainTip()),
           sign: (h) => schnorr.sign(h, round.identity.secret), load: () => state[fid],
           save: (v) => { state[fid] = v; try { writeFileSync(stateFile, JSON.stringify(state)); } catch { /* kept in memory */ } } }));
