@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import net from 'node:net';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync, mkdirSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,9 @@ const freePort = () => new Promise((ok) => { const s = net.createServer().listen
  *  #569): the apps' registrations import arena-sdk/<name> - without it the seat did not start ("Cannot find package 'arena-sdk'"). */
 function releaseFrom(dir) {
   mkdirSync(dir, { recursive: true });
-  execFileSync('sh', ['-c', `git -C "${REPO}" archive HEAD packages/arena-node/src packages/arena-node/pages packages/arena-node/package.json packages/arena-protocol packages/arena-client/src packages/nextblock packages/arena-sdk packages/node_modules/arena-sdk | tar -x -C "${dir}"`]);
+  execFileSync('sh', ['-c', `git -C "${REPO}" archive HEAD packages/arena-node/src packages/arena-node/pages packages/arena-node/package.json packages/arena-protocol packages/arena-client/src packages/arena-sdk packages/node_modules/arena-sdk | tar -x -C "${dir}"`]);
+  // and Next Block as a node has it once fetched (kanban #575: no app is tracked here; tools/fetch-apps.mjs placed it at its pin)
+  cpSync(join(REPO, 'packages/nextblock'), join(dir, 'packages/nextblock'), { recursive: true });
   symlinkSync(join(REPO, 'packages/arena-node/node_modules'), join(dir, 'packages/arena-node/node_modules'));
   return dir;
 }

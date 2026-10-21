@@ -84,6 +84,12 @@ set belongs to its developers.
 
 ## Develop
 
+The apps (Next Block, Rock Paper Scissors, Up or Down, Hello World) are not in this repository: each is its own repository, pinned in `apps.lock.json`. Place them once after a clone, and again when a pin moves:
+
+```
+node tools/fetch-apps.mjs
+```
+
 Each package's tests run with Node.js 24:
 
 ```

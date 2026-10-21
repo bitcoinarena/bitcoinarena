@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -41,7 +41,8 @@ test('build-release.sh archives the apps\' pins, not the apps, and arena-sdk wit
   const start = sh.split('\n').findIndex((l) => l.startsWith('git -C "$ROOT" archive "$REF"'));
   const lines = sh.split('\n'); let archive = '';
   for (let i = start; i < lines.length; i++) { archive += ` ${lines[i].replace(/\\$/, '')} `; if (!lines[i].endsWith('\\')) break; }
-  const apps = readdirSync(join(repo, 'packages')).filter((d) => existsSync(join(repo, 'packages', d, 'app.json')));
+  const lock = JSON.parse(readFileSync(join(repo, 'apps.lock.json'), 'utf8'));
+  const apps = Object.keys(JSON.parse(readFileSync(join(repo, 'apps.files.json'), 'utf8')).apps).map((n) => lock.apps[n].copy.split('/').pop());
   assert.deepEqual(apps.sort(), ['btc-updown', 'nextblock', 'rock-paper-scissors'], 'the three apps a node downloads');
   for (const p of apps) assert.doesNotMatch(archive, new RegExp(` packages/${p} `), `the archive does not carry packages/${p}`);
   for (const f of ['apps.lock.json', 'apps.files.json']) assert.match(archive, new RegExp(` ${f.replace('.', '\\.')} `), `the archive carries ${f}`);
