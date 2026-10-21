@@ -234,3 +234,40 @@ test('another refusal is no reason to start the setup again; a fresh setup that 
   await stuck.round(101); await stuck.round(102); await stuck.round(103);
   assert.deepEqual(stuck.log.filter((l) => l[0] === 'fresh').map((l) => l[1]), [seated[2]], 'once in a founding');
 });
+
+test('a seated node started again after its code is out posts that same code - no new params, no fresh setup (kanban #495, 53be35a3)', async () => {
+  // the first start: the code is made and kept with the founding's id
+  const n = network();
+  const seated = n.seats[0].state().seated.map((x) => idx(x.node));
+  const kept = new Map();
+  const i = seated[1];
+  // the node i, started again: a fresh founding object on the same draw, its setup keeping and reading its code
+  const log = [];
+  const setup = {
+    localParams: async () => { log.push('params'); return 'code-new'; },
+    freshSetup: async () => { log.push('fresh'); return { ok: true }; },
+    addPeer: async (code) => { log.push(['add', code]); }, startDkg: async () => { log.push('dkg'); }, invite: async () => null, done: async () => false,
+    savedCode: () => kept.get('saved') || null, saveCode: (id, code) => kept.set('saved', { id, code }),
+  };
+  const make = () => createFounding({ seed, triggerHeight: 100, entries, nominal: 4, bondMinGuardian: 500000n, foundingWindow: 10,
+    ownKey: keys[i].pub, sign: (h) => schnorr.sign(h, keys[i].secret), verify, setup });
+  const first = make();
+  await first.advance(101);
+  assert.deepEqual(log, ['params'], 'the first start makes the code');
+  assert.deepEqual(kept.get('saved'), { id: first.id, code: 'code-new' }, 'and keeps it with the founding id');
+  const posted = first.state().codes.find((c) => c.node === toHex(keys[i].pub));
+  // started again, its guardian kept (guardian.js): the same code, signed again, and neither new params nor a fresh setup
+  log.length = 0;
+  const again = make();
+  await again.advance(102);
+  assert.deepEqual(log, [], 'no set-local-params and no fresh setup after the restart');
+  const repost = again.state().codes.find((c) => c.node === toHex(keys[i].pub));
+  assert.equal(repost.code, posted.code);
+  // a code kept for ANOTHER founding is no reason to skip the params: this founding makes its own
+  kept.set('saved', { id: 'ff'.repeat(32), code: 'code-old' });
+  log.length = 0;
+  const other = make();
+  await other.advance(101);
+  assert.deepEqual(log, ['params']);
+  assert.equal(kept.get('saved').code, 'code-new');
+});

@@ -27,6 +27,7 @@ import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
 import { createFounding } from './founding.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const opOf = (e) => String((e && e.advert && e.advert.operatorId) || toHex(e.pubkey));
 const lower = (x) => String(x || '').toLowerCase();
@@ -114,13 +115,19 @@ export function execCli(execFileCb, bin, args, { timeout = 120000 } = {}) {
 
 /**
  * The guardian's setup, through the stock CLI: `run(args)` runs fedimint-cli and answers its stdout. The code is the
- * set-local-params output without its JSON quotes.
+ * set-local-params output without its JSON quotes. `codeFile` (beside the guardian's data) keeps the code this node posted and its
+ * founding id, so a node started again posts that same code (founding.js postOwn).
  */
-export function cliSetup({ run, apiPort, password, guardianName, freshSetup = null }) {
+export function cliSetup({ run, apiPort, password, guardianName, freshSetup = null, codeFile = null }) {
   const setup = (...a) => run(['--password', password, 'admin', 'setup', `ws://127.0.0.1:${apiPort}`, ...a]);
   const unq = (s) => String(s).trim().replace(/^"|"$/g, '');
   return {
     localParams: async ({ leader, name, size }) => unq(await setup('set-local-params', guardianName, ...(leader ? ['--federation-name', name, '--federation-size', String(size)] : []))),
+    savedCode: () => {
+      if (!codeFile) return null;
+      try { const s = JSON.parse(readFileSync(codeFile, 'utf8')); return s && typeof s.id === 'string' && typeof s.code === 'string' ? s : null; } catch { return null; }
+    },
+    saveCode: (id, code) => { if (codeFile) writeFileSync(codeFile, JSON.stringify({ id, code }), { mode: 0o600 }); },
     addPeer: async (code) => { await setup('add-peer', code); },
     startDkg: async () => { await setup('start-dkg'); },
     invite: async () => null,

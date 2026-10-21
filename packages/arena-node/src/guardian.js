@@ -28,7 +28,7 @@
 // Fedimint's stock `wallet` module, not walletv2 (RULED 2026-09-26). Base fees off (§23A.2). Founding - which four nodes are drawn and run that ceremony - is §23A.2's
 // sortition, not this file: a guardian started here waits in Fedimint's setup until it is drawn.
 import { spawn, execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, constants } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, unlinkSync, constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { p2pTunnelPort } from './p2p-tunnel.js';
@@ -151,13 +151,51 @@ export const systemdUnits = {
     ['--user', `--unit=${unit}`, '--collect', '-p', 'Restart=on-failure', '-p', `StandardOutput=append:${logPath}`,
       '-p', `StandardError=append:${logPath}`, ...Object.entries(envVars).map(([k, v]) => `--setenv=${k}=${v}`), bin],
     { timeout: 20000 }, (e, out, err) => (e ? no(new Error(`systemd-run ${unit}: ${(err || e.message).trim()}`)) : ok()))),
+  stop: (unit) => new Promise((ok) => execFile('systemctl', ['--user', 'stop', `${unit}.service`], { timeout: 30000 }, () => ok())),
 };
+
+/**
+ * A GUARDIAN WAITING IN SETUP OUTLIVES ITS NODE, ON EVERY SYSTEM (kanban #495, measured 2026-10-21 22:2xZ on founding 53be35a3): fedimintd
+ * keeps a setup's local params - its TLS key among them - in memory only, so a node restarted after posting its code started a guardian
+ * with new params while its peers held the old code, and the DKG failed on every link ("invalid peer certificate: BadSignature"). The
+ * n495 nodes and the installers run on macOS and Windows, where systemd keeps nothing: fedimintd runs detached, its pid in
+ * <data>/fedimintd.pid, and a node that starts while it runs adopts it. Keyed by the data dir.
+ */
+export function pidfileUnits({ platform = process.platform, spawnFn = spawn, run = execFile } = {}) {
+  const file = (dataDir) => join(dataDir, 'fedimintd.pid');
+  const pidOf = (dataDir) => { try { const p = Number(readFileSync(file(dataDir), 'utf8').trim()); return Number.isInteger(p) && p > 0 ? p : null; } catch { return null; } };
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  // a pid the system gave again to another program after a reboot is no guardian: its command must name fedimintd (not asked on Windows)
+  const isFedimintd = (pid) => (platform === 'win32' ? Promise.resolve(true)
+    : new Promise((ok) => run('ps', ['-o', 'command=', '-p', String(pid)], { timeout: 10000 }, (e, out) => ok(!e && /fedimintd/.test(String(out))))));
+  return {
+    pid: pidOf,
+    active: async (dataDir) => { const p = pidOf(dataDir); return !!p && alive(p) && await isFedimintd(p); },
+    start: async (dataDir, bin, envVars, logPath) => {
+      const out = openSync(logPath, 'a');
+      const child = spawnFn(bin, [], { env: envVars, stdio: ['ignore', out, out], detached: true });
+      child.unref();
+      writeFileSync(file(dataDir), String(child.pid));
+      return child.pid;
+    },
+    stop: async (dataDir) => {
+      const p = pidOf(dataDir);
+      if (p && alive(p)) {
+        try { process.kill(p, 'SIGTERM'); } catch { /* gone */ }
+        for (let i = 0; i < 100 && alive(p); i++) await new Promise((r) => setTimeout(r, 100));
+        if (alive(p)) { try { process.kill(p, 'SIGKILL'); } catch { /* gone */ } }
+      }
+      try { unlinkSync(file(dataDir)); } catch { /* none */ }
+    },
+  };
+}
 
 // `slot`: 'guardian' (the node's own) or 'next' (the guardian-next) - its data dir, ports, public path and unit.
 // fedimintd on a data dir without a finished ceremony waits in setup mode (a founding drives it, founding-seat.js); with one, it
 // runs the federation.
 export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, cookiePath, call, env = process.env,
-  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000, units = systemdUnits, slot = 'guardian', nodeKey = null }) {
+  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000, units = systemdUnits, slot = 'guardian', nodeKey = null,
+  keep = false, pids = pidfileUnits() }) {
   const S = GUARDIAN_SLOTS[slot];
   if (!S) throw new Error(`guardian: no slot ${slot}`);
   const tag = `[${S.unit}]`;
@@ -209,24 +247,38 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     const unit = guardianUnit(nodePort, slot);
     if (await units.active(unit)) {
       log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-      return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {} };
+      return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {}, halt: () => units.stop(unit) };
     }
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
-    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {} };
+    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {}, halt: () => units.stop(unit) };
+  }
+  // A GUARDIAN THAT OUTLIVES ITS NODE WITHOUT SYSTEMD (pidfileUnits): adopted whenever it still runs - a setup kept across a restart that
+  // has since finished its DKG runs the federation on these ports, and a second fedimintd would not start - and started kept when the
+  // node asks (`keep`: it waits in setup). Closing the node leaves it running; `halt` stops it (a fresh setup, the owner page's stop).
+  if (storePath !== ':memory:') {
+    const kept = (adopted, pid) => ({ running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
+      stop: async () => {}, halt: () => pids.stop(dataDir) });
+    if (await pids.active(dataDir)) {
+      log(`[guardian] fedimintd ${pids.pid(dataDir)} already runs on ${dataDir}: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
+      return kept(true, pids.pid(dataDir));
+    }
+    if (keep) {
+      const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
+      log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
+      return kept(false, pid);
+    }
   }
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
   let exited = false;
   child.on('exit', (code, sig) => { exited = true; log(`[guardian] fedimintd exited (${sig || code})`); });
   log(`[guardian] fedimintd ${child.pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-  return {
-    running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot,
-    stop: () => new Promise((r) => {
-      if (exited) return r();
-      child.once('exit', () => r());
-      child.kill('SIGTERM');
-      setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, 10000).unref();
-    }),
-  };
+  const stop = () => new Promise((r) => {
+    if (exited) return r();
+    child.once('exit', () => r());
+    child.kill('SIGTERM');
+    setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, 10000).unref();
+  });
+  return { running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot, stop, halt: stop };
 }
