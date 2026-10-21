@@ -80,6 +80,10 @@ nav.side a{font-size:14.5px}nav.side a.on{border-color:transparent;box-shadow:in
 .svc-says{margin:0;color:var(--dim);font-size:13.5px;overflow-wrap:anywhere;flex:1}.svc-pid{opacity:.7}.svc-why{margin:0;color:var(--dim);font-size:13px}
 .svc-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}
 .svc-btns{display:flex;gap:6px;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin:12px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.stat>span{color:var(--dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:700}.stat>b{font-size:19px;overflow-wrap:anywhere}
+.stat>small{color:var(--dim);font-size:12.5px;overflow-wrap:anywhere}
 .addr-now{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 6px}.addr-main{display:flex;gap:12px;align-items:center;min-width:0}
 .addr-ic{font-size:22px;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:var(--bg);flex:0 0 44px}.addr-url{font-size:15px;overflow-wrap:anywhere}
 .addr-main .sub{margin:2px 0 0}.addr-side{display:flex;gap:8px;align-items:center}
@@ -299,13 +303,14 @@ async function area() {
   view(`<div class="layout"><nav class="side" id="side">${SECTIONS.map(([id, t]) => `<a href="#${id}" data-s="${id}">${t}<span class="dot" id="dot-${id}"></span></a>`).join('')}</nav><main>
     <section id="s-overview"><h2>Overview</h2>
       <div class="card" id="needs"><p class="sub">checking this node…</p></div>
-      <div class="card">
-        <div class="row"><span>Node</span><b class="mono">${esc(state.node.slice(0, 16))}…</b></div>
-        <div class="row"><span>Owner key</span><b class="mono">${esc(state.owner.slice(0, 16))}…</b></div>
-        <div class="row"><span>Signed in with</span><b>${esc({ words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' }[who.how])}</b></div>
-        <div class="row"><span>Owner since</span><b>${new Date(state.claimedAtMs).toISOString().slice(0, 10)}</b></div>
-        <div class="row"><span>Holds custody (guardian)</span><b>${me.guardian ? 'yes' : 'no'}</b></div>
-        <div class="row"><span>Apps</span><b>${games.length ? games.map((g) => `${esc(g.name)} v${esc(g.version ?? '?')}`).join(', ') : 'none'}</b></div></div>
+      <!-- THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large -->
+      <div class="stats">
+        <div class="stat"><span>Node</span><b class="mono">${esc(state.node.slice(0, 12))}…</b><small>its key on the network</small></div>
+        <div class="stat"><span>Custody</span><b class="${me.guardian ? 'ok' : ''}">${me.guardian ? 'Guardian' : 'No custody'}</b><small>${me.guardian ? 'holds players\' bitcoin with its federation' : 'does not hold players\' bitcoin'}</small></div>
+        <div class="stat"><span>Apps</span><b>${games.length}</b><small>${games.length ? games.map((g) => `${esc(g.name)} v${esc(g.version ?? '?')}`).join(', ') : 'none installed'}</small></div>
+        <div class="stat"><span>Owner since</span><b>${new Date(state.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with ${esc({ words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' }[who.how])}</small></div>
+        <div class="stat"><span>Owner key</span><b class="mono">${esc(state.owner.slice(0, 12))}…</b><small>the key every owner request is signed with</small></div>
+      </div>
     </section>
     <section id="s-roles"><h2>Roles</h2>
       <p class="lead">What this node does for the network, and what each role earns.</p>
