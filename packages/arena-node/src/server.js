@@ -4842,6 +4842,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
                 return { wallet: { spendableSats: String(w.spendableSats), confirmingSats: String(w.confirmingSats), addOverheadSats: String(ADD_OVERHEAD_SATS) } }; } catch (e) { return { wallet: { why: e.message.split('\n')[0] } }; } })()),
             says: 'a withdrawn bond takes this node out of the census from the next census height on' });
         }
+        // THE ENDPOINT THIS NODE'S ADVERTISEMENT NAMES: its entry in the newest held census that lists it, else in the chain's newest
+        // census, else the chain's census at that height as the founding reads it (every protocol its advert speaks - measured on the
+        // three installer nodes, whose 1-16 adverts are in no protocol-19 census), else the advertisement it posted
+        const advertisedEndpoint = async (rows, me) => {
+          const of = (entries) => { const e = (entries || []).find((x) => toHex(x.pubkey) === me); return e && e.advert && e.advert.endpoint ? e.advert.endpoint : null; };
+          for (const r of rows) { const a = of(r.full); if (a) return a; }
+          try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+            const a = cn && of(cn.entries); if (a) return a;
+            if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) {
+              const h = cn ? cn.height : Number(await chainTip()); const b = Number.isInteger(h) ? of(await ballot.censusEntriesAt(chainNetworkId(), h)) : null; if (b) return b; }
+          } catch { /* the advert */ }
+          return ownAdvert && ownAdvert.endpoint ? ownAdvert.endpoint : null;
+        };
         if (req.method === 'GET' && url.pathname === '/owner/standing') {
           const me = toHex(round.pubkey);
           const rows = [];
@@ -4874,11 +4887,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const notice = NOTICE_BLOCKS[(rows[0] && rows[0].network) || 'mainnet'] || NOTICE_BLOCKS.mainnet;
           const floor = newest === null ? { inForce: null, pending: null } : bondMinInForce(history, newest, notice);
           const warn = newest === null ? null : bondMinWarning({ pending: floor.pending, ownBondSats: standing.ownBondSats === null ? null : BigInt(standing.ownBondSats), nowHeight: newest });
+          const address = { advertised: await advertisedEndpoint(rows, me), serving: publicEndpoint };
           return answer(200, { ...standing, bondMin: { inForce: floor.inForce === null ? null : String(floor.inForce), noticeBlocks: notice, censuses: history.length,
             pending: floor.pending ? { value: String(floor.pending.value), crossedAt: floor.pending.crossedAt, effectiveAt: floor.pending.effectiveAt } : null },
             warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : []),
-              ...(() => { const mine = rows[0] && (rows[0].full || []).find((e) => toHex(e.pubkey) === me);
-                const w = endpointWarning({ advertised: mine && mine.advert && mine.advert.endpoint, serving: publicEndpoint }); return w ? [w] : []; })()] });
+              ...(() => { const w = endpointWarning(address); return w ? [w] : []; })()], address });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
