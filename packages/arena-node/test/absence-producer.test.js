@@ -107,3 +107,26 @@ test('a leaving guardian\'s own departure notice stands and makes it DEPARTED fr
   const forged = ownDeparture({ own: { federation: fid, peerKey: peer(2) }, tip: 156520, departureNotice: 1008, nodePubkey: nodes[1].pub, sign: (h) => schnorr.sign(h, nodes[1].secret) });
   assert.match(departureStands(forged, { record, departureNotice: 1008, verify }).why, /another node key/);
 });
+
+// ON TESTNET4 THE ATTESTATIONS ARE RE-SIGNED WITHIN abandon_blocks (kanban #326, measured 2026-10-21 on T2: t-4 stopped at 157,171,
+// its three peers attested "last seen 157,171, at 157,172" and nothing more - the producer re-signed once per 144 blocks while testnet4's
+// abandon_blocks is 12, so no proof could stand for 144 blocks): the seat passes every = min(144, abandon_blocks)
+test('testnet4: re-signed every abandon_blocks (12), so three guardians prove it ABANDONED 12 blocks on, not 144', async () => {
+  const { CLOCKS } = await import('../../arena-protocol/src/federation-slash.js');
+  const every = Math.min(144, CLOCKS.testnet4.abandonBlocks);
+  assert.equal(every, 12);
+  const w = world();
+  const ps = [0, 1, 2].map((i) => producer(w, i, { every }));
+  for (const p of ps) await p.pass();
+  w.gone.add(3); w.goneAt = 50; w.session = 52; w.tip = 101;
+  for (const r of await Promise.all(ps.map((p) => p.pass()))) assert.equal(r.signed.length, 1);
+  w.tip = 112;                                           // 11 after the first: not yet
+  assert.equal((await ps[0].pass()).signed.length, 0);
+  w.tip = 113;                                           // 12 after the first: signed again
+  const atts = (await Promise.all(ps.map((p) => p.pass()))).map((r) => r.signed[0]);
+  const p = abandonmentProof(atts.map((a) => readAbsenceHex(absenceHex(a))), { record, peerKey: peer(3), abandonBlocks: CLOCKS.testnet4.abandonBlocks, verify });
+  assert.equal(p.ok, true, p.why);
+  // and the seat wires it so
+  const server = (await import('node:fs')).readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  assert.match(server, /createAbsenceProducer\(\{[^\n]*every: Math\.min\(144, clocks\.abandonBlocks\)/);
+});
