@@ -39,6 +39,24 @@ details.more>summary,details>summary{cursor:pointer;color:var(--st);margin:8px 0
 .bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden;margin:10px 0 2px}.bar>div{height:100%;background:var(--gv)}
 .steps{margin:12px 0;padding-left:20px}.steps li{margin:8px 0}.qr{background:#fff;padding:8px;border-radius:10px;width:200px;margin:8px 0}.qr svg{display:block;width:100%;height:auto}
 h3.offer{font-size:20px;color:var(--gv)}
+/* THE ROLES AS TILES (kanban #563, the owner 2026-10-21: "you must vamp it up so it looks modern"): one card per role, its earning in one
+   line, a switch where it can be changed, the save bar only once something changed */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;transition:border-color .15s,box-shadow .15s}
+.tile.on{border-color:var(--ok);box-shadow:0 0 0 1px var(--ok) inset}.tile.changed{border-color:var(--gv);box-shadow:0 0 0 1px var(--gv) inset}
+.tile .head{display:flex;align-items:center;gap:10px}.tile h4{margin:0;font-size:16px;flex:1;min-width:0}
+.tile .ico{font-size:20px;width:38px;height:38px;min-width:38px;border-radius:10px;display:grid;place-items:center;background:var(--bg)}
+.tile .earn{color:var(--gv);font-weight:600;font-size:14px;margin:0}.tile .does{color:var(--dim);font-size:14px;margin:0;flex:1}
+.tile .foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
+.pill{font:600 12px system-ui;padding:3px 10px;border-radius:999px;background:var(--bg);color:var(--dim);white-space:nowrap}
+.pill.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}.pill.wait{background:color-mix(in srgb,var(--gv) 18%,transparent);color:var(--gv)}
+.switch{position:relative;display:inline-block;width:48px;height:28px;margin:0;flex:0 0 48px;cursor:pointer}.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:background .15s}
+.switch span::after{content:'';position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .15s}
+.switch input:checked+span{background:var(--ok)}.switch input:checked+span::after{transform:translateX(20px)}.switch input:focus-visible+span{outline:2px solid var(--st);outline-offset:2px}
+.tile a.go{color:var(--st);font-weight:600;font-size:14px;text-decoration:none}
+.savebar{position:sticky;bottom:12px;z-index:4;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;background:var(--card);border:1px solid var(--gv);border-radius:14px;padding:10px 14px;margin-top:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.savebar[hidden]{display:none}
 .confirm{display:flex;gap:10px;align-items:flex-start;margin:10px 0;color:var(--text)}.confirm input{width:auto;margin-top:4px}
 @media (max-width:820px){.layout{display:block}
   nav.side{position:sticky;top:0;z-index:5;flex-direction:row;overflow-x:auto;background:var(--bg);margin:0 -16px 8px;padding:8px 16px;border-bottom:1px solid var(--line)}
@@ -372,50 +390,57 @@ function latestLine(v) {
 async function rolesPanel() {
   const get = async (p) => { try { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; } };
   const [pub, g, gw, liq] = await Promise.all([get('/roles'), get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
-  let svc = null; try { svc = await post('/owner/services', await signed('services')); } catch { svc = null; }
   const mine = pub && (pub.nodes || []).find((x) => x.node === state.node);
   const has = (r) => !!(mine && (mine.roles || []).includes(r));
-  const installed = !!(svc && svc.ok);
-  const cmd = installed ? (svc.command || 'arenanode') : null;
-  const ROWS = [
-    ['Play and check rounds', has('verify') || has('game'), 'Replays the rounds it is drawn for and signs who won. Earns a share of each round\'s node fee.', installed ? 'Always on for a bonded node.' : 'Always on for a bonded node.'],
-    ['Pay out winners', has('settlement'), 'Co-signs the payout once a result is signed. Earns a share of each round\'s node fee.', 'Always on for a bonded node.'],
-    ['Custody (guardian)', !!(g && g.guardian), 'Holds players\' bitcoin with the other guardians of a federation. Earns the guardians\' share of every round of that federation.', installed ? `On the node's machine: <code>arena-install --add-custody</code>` : 'Set when the node is started (it runs a guardian).'],
-    ['Lightning gateway', !!(gw && gw.gatewayUrl), 'Takes deposits and pays winners over Lightning for a federation it guards. Up to 2 per federation; earns the routing fees.', 'Comes with custody: the gateway of a guardian.'],
-    ['Liquidity provider', !!liq, 'Opens incoming Lightning channels to new nodes. Earns a share of the 1 % liquidity pool.', installed ? `On the node's machine: <code>arena-install</code>, choose Liquidity provider` : 'Needs LND and 500,000 sat on testnet4.'],
+  // ONE TILE PER ROLE: [key, icon, name, what it earns, what it does, on now, how it changes ('switch' | a section to open | text)]
+  const TILES = [
+    ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.', has('verify') || has('game'), 'switch'],
+    ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.', has('settlement'), 'switch'],
+    ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Carries round data for players and other nodes.', has('relay'), 'switch'],
+    ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', g && g.guardian ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.',
+      !!(mine && mine.guardianCapable), 'switch', g && g.guardian ? 'Guarding' : null],
+    ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', !!(gw && gw.gatewayUrl), 'custody'],
+    ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', !!liq, 'liquidity'],
   ];
-  $('roles').innerHTML = ROWS.map(([t, on, does, how]) => `<div class="role"><div class="row"><span><b>${t}</b></span><b class="${on ? 'ok' : 'sub'}">${on ? 'On' : 'Off'}</b></div>
-      <p class="sub" style="margin:2px 0 4px">${does}</p><p class="sub" style="margin:0 0 8px">How to change: ${how}</p></div>`).join('')
-    + (installed ? `<p class="sub">Roles chosen at install: ${esc((svc.roles || []).join(', ') || 'none')} (settings in arena.conf on the node's machine).</p>` : '')
-    + rolesChooser(mine);
+  const canSwitch = !!mine;
+  $('roles').innerHTML = `<div class="tiles">${TILES.map(([k, ico, name, earn, does, on, how, label]) => `<div class="tile${on ? ' on' : ''}" id="tile-${k}">
+      <div class="head"><span class="ico" aria-hidden="true">${ico}</span><h4>${esc(name)}</h4><span class="pill${on ? ' on' : ''}">${esc(label || (on ? 'On' : 'Off'))}</span></div>
+      <p class="earn">${esc(earn)}</p><p class="does">${esc(does)}</p>
+      <div class="foot">${how === 'switch'
+        ? (canSwitch ? `<span></span><label class="switch" title="${esc(name)}"><input type="checkbox" id="rl-${k}" aria-label="${esc(name)}" data-was="${on ? 1 : 0}"${on ? ' checked' : ''}><span></span></label>` : '<span class="sub">Changeable once the bond counts</span>')
+        : `<a class="go" href="#${how}" data-open="${how}">${on ? 'Manage' : 'Set up'} →</a>`}</div></div>`).join('')}</div>
+    <div class="savebar" id="rl-bar" hidden><span id="rl-count"></span><span><button id="rl-cancel" type="button">Undo</button><button id="rl-save" class="primary" type="button">Review changes</button></span><div id="rl-msg" style="flex-basis:100%"></div></div>
+    ${canSwitch ? '' : '<p class="sub">This node is not in the census yet: its roles can be changed once its bond counts.</p>'}`;
+  for (const el of document.querySelectorAll('#roles a[data-open]')) el.onclick = (e) => { e.preventDefault(); const t = $(el.dataset.open); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   wireRoles(mine);
 }
-// CHANGE WHAT THE NODE ADVERTISES (kanban #553, the owner 2026-10-20: "I should be still able to setup the roles"): the roles its bond's
-// advertisement names - each a switch - saved as an advertisement update paid from the bond wallet (POST /owner/roles): first the plan,
-// then Confirm. Gateway and liquidity are services of their own and keep their setup above.
-const ROLE_SWITCHES = [['play', ['game', 'verify'], 'Play and check rounds'], ['settlement', ['settlement'], 'Pay out winners'], ['relay', ['relay'], 'Relay for other nodes']];
-function rolesChooser(mine) {
-  if (!mine) return '<p class="sub">This node is not in the census yet: its roles can be changed once its bond counts.</p>';
-  const on = new Set(mine.roles || []);
-  return `<div class="card" style="margin-top:10px"><b>Change this node's roles</b>
-    <p class="sub" style="margin:4px 0 8px">Saved on Bitcoin as an update of your bond's advertisement (no bond is spent). Counts 6 blocks later (about 1 hour).</p>
-    ${ROLE_SWITCHES.map(([k, rs, t]) => `<label style="display:block;margin:4px 0"><input type="checkbox" id="rl-${k}" ${rs.some((r) => on.has(r)) ? 'checked' : ''}> ${t}</label>`).join('')}
-    <label style="display:block;margin:4px 0"><input type="checkbox" id="rl-custody" ${mine.guardianCapable ? 'checked' : ''}> Willing to be a guardian (custody)</label>
-    <button id="rl-save" type="button" style="margin-top:6px">Save roles</button><div id="rl-msg" style="margin-top:8px"></div></div>`;
-}
+// CHANGE WHAT THE NODE ADVERTISES (kanban #553): the roles its bond's advertisement names - a switch each - saved as an advertisement update
+// paid from the bond wallet (POST /owner/roles): the bar shows how many changed, Review shows the fee, Confirm sends it
+const ROLE_SWITCHES = [['play', ['game', 'verify']], ['settlement', ['settlement']], ['relay', ['relay']]];
 function wireRoles(mine) {
-  const btn = $('rl-save'); if (!btn || !mine) return;
+  if (!mine) return;
+  const inputs = [...ROLE_SWITCHES.map(([k]) => k), 'custody'].map((k) => $('rl-' + k)).filter(Boolean);
+  const changed = () => inputs.filter((i) => (i.checked ? 1 : 0) !== Number(i.dataset.was));
+  const refresh = () => {
+    const c = changed();
+    for (const i of inputs) i.closest('.tile').classList.toggle('changed', c.includes(i));
+    $('rl-bar').hidden = !c.length; $('rl-count').textContent = `${c.length} change${c.length === 1 ? '' : 's'} not saved`; $('rl-msg').innerHTML = '';
+  };
+  for (const i of inputs) i.onchange = refresh;
+  $('rl-cancel').onclick = () => { for (const i of inputs) i.checked = Number(i.dataset.was) === 1; refresh(); };
   const chosen = () => ({ roles: ROLE_SWITCHES.filter(([k]) => $('rl-' + k).checked).flatMap(([, rs]) => rs), custody: $('rl-custody').checked });
+  const btn = $('rl-save');
   btn.onclick = async () => {
     const c = chosen(); btn.disabled = true; $('rl-msg').innerHTML = '<p class="sub">Checking…</p>';
     try {
       const p = await post('/owner/roles', await signed('roles', { ...c, post: false }));
       if (!p.ok) { $('rl-msg').innerHTML = `<p class="warn">${esc(p.why || 'not possible')}</p>`; btn.disabled = false; return; }
-      $('rl-msg').innerHTML = `<p>Fee: <b>${Number(p.plan.feeSats).toLocaleString('en-US')} sat</b> from your bond wallet. Counts after 6 blocks.</p><button id="rl-go" type="button">Confirm</button>`;
+      $('rl-msg').innerHTML = `<p>Fee <b>${Number(p.plan.feeSats).toLocaleString('en-US')} sat</b> from your bond wallet · counts after 6 blocks (about 1 hour).</p><button id="rl-go" class="primary" type="button">Confirm</button>`;
       $('rl-go').onclick = async () => {
         $('rl-go').disabled = true;
         try { const d = await post('/owner/roles', await signed('roles', { ...c, post: true }));
-          $('rl-msg').innerHTML = d.ok ? `<p class="ok"><b>Sent ✓</b> update <code>${esc(String(d.update.txid).slice(0, 16))}</code>: the new roles count after 6 blocks.</p>` : `<p class="warn">${esc(d.why)}</p>`;
+          $('rl-msg').innerHTML = d.ok ? `<p class="ok"><b>Sent ✓</b> the new roles count after 6 blocks (update <code>${esc(String(d.update.txid).slice(0, 16))}</code>).</p>` : `<p class="warn">${esc(d.why)}</p>`;
+          if (d.ok) for (const i of inputs) { i.closest('.tile').querySelector('.pill').className = 'pill wait'; i.closest('.tile').querySelector('.pill').textContent = 'Saving…'; }
         } catch (e) { $('rl-msg').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
       };
     } catch (e) { $('rl-msg').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
