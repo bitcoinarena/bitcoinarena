@@ -32527,7 +32527,7 @@ function batchDeclineId({ roundId, k }) {
   return taggedHash(TAG.marketBatchDecline, w.finish());
 }
 
-// ---- btc-updown/page/market.js
+// ---- arena-client/src/market.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET IN THE PAGE (§0A.7a; 2026-10-07, decisions A and B of plan 777): the pick sheet's
