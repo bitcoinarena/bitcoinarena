@@ -7,7 +7,9 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import '../market/main.jsx';
+import { flushSync } from 'react-dom';
 import { GameTiles } from './GameTiles.jsx';
+import { SeasonRows } from './SeasonRows.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -18,3 +20,9 @@ export function drawTiles(list, props) {
   return root;
 }
 if (typeof window !== 'undefined') window.ArenaGames = { drawTiles };
+// THE SEASON BOARD'S ROWS (the page's seasonBoard hands them over): drawn at once, so the page can watch the new rows right after
+export function drawRows(board, props) {
+  if (!board._root) board._root = createRoot(board);
+  flushSync(() => board._root.render(<SeasonRows {...props} />));
+}
+if (typeof window !== 'undefined') window.ArenaSeason = { drawRows };
