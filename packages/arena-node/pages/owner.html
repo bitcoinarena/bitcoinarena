@@ -272,6 +272,7 @@ async function area() {
     </section>
     <section id="s-services"><h2>Services</h2>
       <p class="lead">The programs this node runs and whether they answer.</p>
+      <h3 class="sh">Address</h3><div class="card" id="address"><p class="sub">reading how this node is reached…</p></div>
       <div class="card" id="services"><p class="sub">reading this node's services…</p></div>
     </section>
     <section id="s-apps"><h2>Apps</h2>
@@ -325,6 +326,7 @@ async function area() {
   capacityPlea();
   bondAnswer();
   servicesPanel();
+  addressPanel();
   emergencyPanel();
   bondPanel();
   custodyPanel();
@@ -473,6 +475,36 @@ async function servicesPanel() {
     <p><button id="svc-again">Check again</button></p>`;
   $('svc-again').onclick = () => { el.innerHTML = '<p class="sub">reading this node\'s services…</p>'; servicesPanel(); };
   need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services');
+}
+// THE NODE'S ADDRESS (kanban #563 / #562 2C, the owner 2026-10-21 "1 default"): how the world reaches it, and a switch to another way -
+// a stable one is the default. The node runs the installer's own steps for it and restarts; the progress is read again until done.
+async function addressPanel() {
+  const el = $('address');
+  let r; try { r = await post('/owner/reach', await signed('reach')); } catch (x) { r = { ok: false, why: x.message }; }
+  if (!r || !r.ok) { el.innerHTML = `<p class="sub">${r && /not installed by the Arena installer/.test(r.why || '') ? 'This node was set up by hand: its address is set on its machine.' : esc((r && r.why) || 'not readable')}</p>`; return; }
+  const p = r.progress;
+  const running = p && (p.state === 'running' || p.state === 'login');
+  el.innerHTML = `<div class="row"><span>Reached at</span><b>${esc(r.url || r.serving || '-')}</b></div>
+    <div class="row"><span>How</span><b>${esc(r.mode || '-')}${r.stable ? ' · stable' : ' · changes at every restart'}</b></div>
+    ${!r.stable ? '<p class="warnline">This address changes when the node restarts. The node tells the network its new one by itself, but a stable address is better: choose one below.</p>' : ''}
+    ${p ? `<p class="${p.state === 'failed' ? 'err' : p.state === 'done' ? 'ok' : 'sub'}">${p.state === 'login' ? `Log in to Cloudflare to go on: <a href="${esc(p.loginUrl)}" target="_blank" rel="noopener">open the login</a>` : p.state === 'running' ? `Switching to ${esc(p.mode)}…` : p.state === 'done' ? `Switched to ${esc(p.mode)}: ${esc(p.url || '')}` : `The switch to ${esc(p.mode)} failed: ${esc(p.why || '')}`}</p>` : ''}
+    ${running ? '' : `<label>Switch to <select id="rc-mode">${Object.entries(r.modes).map(([k, v]) => `<option value="${esc(k)}"${k === r.mode ? ' selected' : ''}>${esc(k)}: ${esc(v)}</option>`).join('')}</select></label>
+    <div id="rc-extra"></div><button id="rc-go" type="button" style="margin-top:6px">Switch</button><div id="rc-msg"></div>`}`;
+  if (running) { setTimeout(addressPanel, 5000); return; }
+  const extra = () => {
+    const m = $('rc-mode').value;
+    $('rc-extra').innerHTML = m === 'workers' ? '<input id="rc-token" placeholder="Cloudflare API token (Workers edit)" style="margin-top:6px"><input id="rc-sub" placeholder="workers.dev subdomain (optional)" style="margin-top:6px">'
+      : m === 'permanent' ? '<input id="rc-host" placeholder="node.example.com (a domain on your Cloudflare account)" style="margin-top:6px">' : '';
+  };
+  $('rc-mode').onchange = extra; extra();
+  $('rc-go').onclick = async () => {
+    const m = $('rc-mode').value;
+    const args = { mode: m, ...(m === 'workers' ? { cfToken: $('rc-token').value.trim(), cfSubdomain: $('rc-sub').value.trim() || null } : {}), ...(m === 'permanent' ? { hostname: $('rc-host').value.trim() } : {}) };
+    $('rc-go').disabled = true;
+    let x; try { x = await post('/owner/reach', await signed('reach', args)); } catch (e) { x = { ok: false, why: e.message }; }
+    if (!x || !x.ok) { $('rc-msg').innerHTML = `<p class="err">${esc((x && x.why) || 'not started')}</p>`; $('rc-go').disabled = false; return; }
+    addressPanel();
+  };
 }
 async function releasePanel() {
   let v = null;
