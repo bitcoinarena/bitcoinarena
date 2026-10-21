@@ -15,6 +15,7 @@ import { AppsPanel } from './AppsPanel.jsx';
 import { NetworkAppsPanel } from './NetworkAppsPanel.jsx';
 import { NetworkPanel } from './NetworkPanel.jsx';
 import { NeedsPanel } from './NeedsPanel.jsx';
+import { OwnerStart, OwnerMessage } from './OwnerStart.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -49,4 +50,7 @@ export function needsInto(element, items) {
   element._needsRoot.render(<NeedsPanel items={items} />);
   return element._needsRoot;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+// THE WAY IN (the welcome, the words, Login with Nostr, the claim) and a one-card message: each drawn fresh into the page's #view
+export function mountStart(element, props) { const root = createRoot(element); root.render(<OwnerStart {...props} />); return root; }
+export function mountMessage(element, props) { const root = createRoot(element); root.render(<OwnerMessage {...props} />); return root; }
+if (typeof window !== 'undefined') window.ArenaOwner = { mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
