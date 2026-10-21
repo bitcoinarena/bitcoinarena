@@ -1,3 +1,5 @@
 dist/test/
 # the installer carries its own copy (arena-installer/www/wizard.js)
 dist/wizard.js
+# the Arena page carries its own copy (src/arena-ui/arena-react.js)
+dist/arena.js
