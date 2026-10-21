@@ -124,7 +124,6 @@ await import(at('/owner/react.js'));
 const O = window.ArenaOwner;
 const STORE = 'arena-owner-seed:' + BASE;          // per node address, in this browser only
 const $ = (id) => document.getElementById(id);
-const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
 const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
 // LOGIN WITH NOSTR (2026-10-10: "a login with Nostr feature for node claiming instead of generating your
@@ -326,79 +325,19 @@ async function donations() {
 // and another dev sees it in his ui and can click accept or deny. As soon as the threshold is hit it becomes active"): the
 // protocol developers' set in force, every proposal with its votes and state, Accept / Deny for this node's dev clients that
 // are recipients, and a form to propose a new split (it starts from the set in force; a new row adds a developer by key)
+// drawn by React (kanban #564, BallotsPanel) from the doors it reads; a vote, a fee answer or a proposal is signed by the owner for one of this
+// node's dev clients, and the panel is drawn again in the same root
 async function ballotsPanel() {
-  let b, d, v, fz;
+  let b = null, d = null, v = null, fz = null, why = null;
   try {
     [b, d, v, fz] = await Promise.all([fetch(at('/donation-ballots'), { cache: 'no-store' }).then((r) => r.json()),
       fetch(at('/owner/donations'), { cache: 'no-store' }).then((r) => r.json()), fetch(at('/owner/dev'), { cache: 'no-store' }).then((r) => r.json()),
       fetch(at('/fees'), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : { proposals: [] })).catch(() => ({ proposals: [] }))]);
-  } catch (e) { $('ballots').innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
-  const set = (d.sets || []).find((x) => x.kind === 'protocol');
-  const mine = (v.clients || []).map((c) => ({ slug: c.slug, key: c.recipientPk, label: c.label || c.slug }));
-  const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
-  const nameOf = (key) => { const r = set && set.recipients.find((x) => x.key === key); const m = mine.find((x) => x.key === key); return esc((r && r.label) || (m && m.label) || key.slice(0, 12) + '…'); };
-  const now = set ? `<div class="card"><h3>In force: serial ${esc(String(set.serial))}</h3>${set.recipients.map((r) => `<div class="row"><span>${esc(r.label || r.key.slice(0, 12))} <span class="sub">${esc(r.key.slice(0, 12))}…</span></span><b>${pct(r.shareBps)}</b></div>`).join('')}
-      <p class="sub">Any developer here can propose a new split. It is in force for new rounds once developers holding more than half of this set accept it; rounds already published keep theirs.</p></div>` : '<div class="card"><p>No protocol developers\' set is in force on this node.</p></div>';
-  const state = (p) => p.state === 'approved' ? `<span class="ok">approved · in force from block ${esc(String(p.validFrom))}</span>` : p.state === 'refused' ? `<span class="err">refused${p.why ? ' · ' + esc(p.why) : ''}</span>` : `open · ${pct(p.acceptBps)} accepted, more than 50 % needed`;
-  const props = (b.ballots || []).slice().sort((x, y) => Number(y.serial) - Number(x.serial)).map((p) => {
-    const voters = mine.filter((m) => set && set.recipients.some((r) => r.key === m.key) && !p.votes.some((x) => x.key === m.key));
-    return `<div class="card"><h3>Proposal · serial ${esc(p.serial)} <span class="sub">${esc(p.id.slice(0, 12))}</span></h3>
-      <div class="row"><span>State</span><b>${state(p)}</b></div>
-      <div class="row"><span>Proposed by</span><b>${nameOf(p.proposer)}</b></div>
-      ${p.recipients.map((r) => `<div class="row"><span>${esc(r.label || r.key.slice(0, 12))} <span class="sub">${esc(r.key.slice(0, 12))}…</span></span><b>${pct(r.shareBps)}${r.vesting ? ` → ${pct(r.vesting.targetBps)} over ${esc(String(r.vesting.days))} days from block ${esc(String(r.vesting.startHeight))}` : ''}</b></div>`).join('')}
-      ${p.votes.map((x) => `<div class="row"><span>${nameOf(x.key)} (${pct(x.bps)})</span><b>${x.accept ? '<span class="ok">accepted</span>' : '<span class="err">denied</span>'} · block ${esc(String(x.atHeight))}</b></div>`).join('')}
-      ${p.state === 'open' ? voters.map((m) => `<button class="primary" data-vote="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="1">Accept as ${esc(m.label)}</button><button data-vote="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="0">Deny as ${esc(m.label)}</button>`).join('') : ''}
-      <div class="err" id="ve-${esc(p.id.slice(0, 16))}"></div></div>`;
-  }).join('');
-  const proposers = mine.filter((m) => set && set.recipients.some((r) => r.key === m.key));
-  const form = proposers.length && set ? `<div class="card"><h3>Propose a new split</h3>
-      <p class="sub">One row per developer: their recipient key (33 bytes, hex), a label and a share in percent now; the shares add up to 100 %.
-      To let a share grow day by day (vesting), give the share it grows to and over how many days - a newcomer starts at 0 %. Until it is reached, the part not yet vested stays with the others in their proportions.</p>
-      <div id="prow">${set.recipients.map((r) => `<div class="name-row"><input class="pk" value="${esc(r.key)}" autocomplete="off" spellcheck="false"><input class="pl" value="${esc(r.label || '')}" placeholder="label"><input class="pp" inputmode="decimal" value="${Number(r.shareBps) / 100}"><input class="pv" inputmode="decimal" placeholder="vests to %"><input class="pd" inputmode="numeric" placeholder="days"></div>`).join('')}</div>
-      <button id="padd">Add a developer</button>
-      <label>Propose as</label><select id="pby">${proposers.map((m) => `<option value="${esc(m.slug)}">${esc(m.label)}</option>`).join('')}</select>
-      <button class="primary" id="pgo">Propose</button><div class="err" id="perr2"></div></div>` : '';
-  // FEE PROPOSALS THAT CHANGE A DONATION (2026-10-17: "any change to donation percentages requires majority approval
-  // by protocol devs. The dev ui client shows this and the protocol dev may deny or give his approval"): each one this seat holds, its
-  // changes, the developers' answers so far, and - for every dev client here that has not answered - Approve and Deny, signed on this
-  // node with that client's key (POST /owner/dev/fee-answer)
-  const feeName = (k) => k.replace(/Bps$|Pct$/, '').replace(/([A-Z])/g, ' $1').toLowerCase();
-  const feeVal = (k, x) => (/Bps$/.test(k) ? (Number(x) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) : String(x)) + ' %';
-  const feeProps = (fz.proposals || []).filter((p) => p.needsDevs).map((p) => {
-    const answered = new Set((p.devs || []).map((x) => x.dev));
-    const open = !p.decision;
-    const voters = mine.filter((m) => m.key && !answered.has(String(m.key).slice(2)));
-    return `<div class="card"><h3>Fee proposal <span class="sub">${esc(p.id.slice(0, 12))}</span></h3>
-      ${p.changes.map((c) => `<div class="row"><span>${esc(feeName(c.fee))}${c.donation ? ' <span class="sub">donation</span>' : ''}</span><b>${feeVal(c.fee, c.from)} → ${feeVal(c.fee, c.to)}</b></div>`).join('')}
-      <div class="row"><span>In force from</span><b>block ${esc(String(p.activationHeight))}</b></div>
-      <div class="row"><span>State</span><b>${p.decision ? (p.decision.accepted ? '<span class="ok">accepted</span>' : `<span class="err">refused · ${esc(p.decision.why || '')}</span>`) : esc(p.vote ? 'vote ' + p.vote.state : 'signal ' + ((p.signal || {}).state || '…'))}</b></div>
-      ${(p.devs || []).map((x) => `<div class="row"><span>${esc(x.dev.slice(0, 12))}…</span><b>${x.approve ? '<span class="ok">approved</span>' : '<span class="err">denied</span>'}</b></div>`).join('')}
-      ${open ? voters.map((m) => `<button class="primary" data-fee="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="1">Approve as ${esc(m.label)}</button><button data-fee="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="0">Deny as ${esc(m.label)}</button>`).join('') : ''}
-      <div class="err" id="fe-${esc(p.id.slice(0, 16))}"></div></div>`;
-  }).join('');
-  $('ballots').innerHTML = now + props + form + feeProps;
-  for (const x of document.querySelectorAll('[data-fee]')) x.onclick = async () => {
-    const box = $('fe-' + x.dataset.p.slice(0, 16)); box.textContent = '';
-    try { await post('/owner/dev/fee-answer', signed('dev/fee-answer', { slug: x.dataset.fee, proposalId: x.dataset.p, approve: x.dataset.a === '1' })); ballotsPanel(); }
-    catch (e) { box.textContent = e.message; }
-  };
-  for (const x of document.querySelectorAll('[data-vote]')) x.onclick = async () => {
-    const box = $('ve-' + x.dataset.p.slice(0, 16)); box.textContent = '';
-    try { await post('/owner/dev/vote', signed('dev/vote', { slug: x.dataset.vote, proposalId: x.dataset.p, accept: x.dataset.a === '1' })); ballotsPanel(); }
-    catch (e) { box.textContent = e.message; }
-  };
-  if ($('padd')) $('padd').onclick = () => { const d2 = document.createElement('div'); d2.className = 'name-row'; d2.innerHTML = '<input class="pk" placeholder="02… or 03… (66 hex)" autocomplete="off" spellcheck="false"><input class="pl" placeholder="label"><input class="pp" inputmode="decimal" placeholder="%"><input class="pv" inputmode="decimal" placeholder="vests to %"><input class="pd" inputmode="numeric" placeholder="days">'; $('prow').append(d2); };
-  if ($('pgo')) $('pgo').onclick = async () => {
-    $('perr2').textContent = '';
-    const rows = [...document.querySelectorAll('#prow .name-row')].map((r) => ({ key: r.querySelector('.pk').value.trim().toLowerCase(), label: r.querySelector('.pl').value.trim(),
-      shareBps: Math.round(Number(String(r.querySelector('.pp').value || 0).replace(',', '.')) * 100),
-      ...(r.querySelector('.pd').value.trim() ? { vestBps: Math.round(Number(String(r.querySelector('.pv').value).replace(',', '.')) * 100), vestDays: Number(r.querySelector('.pd').value.trim()) } : {}) })).filter((r) => r.key);
-    const sum = rows.reduce((t, r) => t + r.shareBps, 0);
-    if (sum !== 10000) { $('perr2').textContent = `the shares add up to ${sum / 100} %, not 100 %`; return; }
-    if (rows.some((r) => !/^0[23][0-9a-f]{64}$/.test(r.key))) { $('perr2').textContent = 'every key is 66 hex characters starting 02 or 03'; return; }
-    try { await post('/owner/dev/propose', signed('dev/propose', { slug: $('pby').value, recipients: rows })); ballotsPanel(); }
-    catch (e) { $('perr2').textContent = e.message; }
-  };
+  } catch (e) { why = e.message; }
+  O.drawInto($('ballots'), 'BallotsPanel', { ballots: b, donations: d, dev: v, fees: fz, why, reread: ballotsPanel,
+    vote: (slug, proposalId, accept) => post('/owner/dev/vote', signed('dev/vote', { slug, proposalId, accept })),
+    feeAnswer: (slug, proposalId, approve) => post('/owner/dev/fee-answer', signed('dev/fee-answer', { slug, proposalId, approve })),
+    propose: (slug, recipients) => post('/owner/dev/propose', signed('dev/propose', { slug, recipients })) });
 }
 // drawn by React (kanban #564, DevClients) from GET /owner/dev, again in the same root after a change (a form being typed keeps its words);
 // a withdrawal asked is followed every 3 s until it is no longer paying (40 looks at most)
