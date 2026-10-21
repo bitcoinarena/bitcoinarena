@@ -181,13 +181,17 @@ try {
     if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);
     roundHex = rows[0].id;
     // FEDERATION=<hex prefix>: only a table of the federation this payer's wallet pays into - both grids list together
-    if (env.FEDERATION) {
+    // PROTOCOL=<n> (kanban #543, 2026-10-21): only a round of that protocol version - a grid published at one protocol beside the
+    // day's rounds of the same federation at another
+    if (env.FEDERATION || env.PROTOCOL) {
       roundHex = null;
       for (const r of rows.slice(0, 40)) {
         const k = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${r.id}`)).arrayBuffer()));
-        if (toHex(k.federationId).startsWith(String(env.FEDERATION).toLowerCase())) { roundHex = r.id; break; }
+        if (env.FEDERATION && !toHex(k.federationId).startsWith(String(env.FEDERATION).toLowerCase())) continue;
+        if (env.PROTOCOL && Number(k.protocolVersion) !== Number(env.PROTOCOL)) continue;
+        roundHex = r.id; break;
       }
-      if (!roundHex) throw new Error(`no RPS round of federation ${env.FEDERATION} among the next 40`);
+      if (!roundHex) throw new Error(`no RPS round of federation ${env.FEDERATION || 'any'}${env.PROTOCOL ? ` at protocol ${env.PROTOCOL}` : ''} among the next 40`);
     }
   }
   const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${roundHex}`)).arrayBuffer()));
