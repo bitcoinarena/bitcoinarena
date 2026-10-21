@@ -114,8 +114,8 @@ export class NetworkAppsPanel extends React.Component {
     const answered = ng ? (ng.seats || []).filter((x) => x.answered).length : 0;
     return (
       <div>
-        <div className={`summary ${foundError ? 'bad' : 'good'}`}>
-          <div><b>{foundError ? 'The network was not read' : !ng ? 'Asking the network\'s nodes…' : offers.length ? `${offers.length} app${offers.length === 1 ? '' : 's'} this node does not run` : 'This node runs every app the others do'}</b>
+        <div className={`summary ${foundError || (ng && !answered) ? 'bad' : 'good'}`}>
+          <div><b>{foundError ? 'The network was not read' : !ng ? 'Asking the network\'s nodes…' : !answered ? 'No other node answered: nothing to compare yet' : offers.length ? `${offers.length} app${offers.length === 1 ? '' : 's'} this node does not run` : 'This node runs every app the others do'}</b>
             <span className="sub">{foundError || (ng ? `${answered} of ${(ng.seats || []).length} nodes answered · ${ng.atMs ? new Date(ng.atMs).toLocaleTimeString() : '-'}` : '')}</span></div>
           <button type="button" className="mini" onClick={() => this.search(true)}>Search again</button>
         </div>
