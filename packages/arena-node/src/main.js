@@ -102,6 +102,17 @@ const db = openStore(path);
 // key and never signs a game. NONE BY DEFAULT: the engine names no app. The installer names the apps a node ships with (its apps
 // step, every app selected; apps= in arena.conf, kanban #569).
 const apps = [];
+// A TREE THAT HOLDS ONLY ITS APPS' PINS (kanban #575: bitcoin-arena no longer carries the apps, a release neither): an ARENA_APPS file that
+// is not there is fetched at its pin first (app-fetch.js), the checked files kept in .apps/ of this tree; a seat that cannot get them stops
+{
+  const named = (process.env.ARENA_APPS || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (named.some((at) => !existsSync(resolvePath(at)))) {
+    const root = fileURLToPath(new URL('../../../', import.meta.url));
+    const { ensureApps } = await import('./app-fetch.js');
+    const r = await ensureApps({ release: root, home: process.env.ARENA_HOME || resolvePath(root, '.apps'), log: (l) => console.log(`[apps] ${l}`) });
+    if (!r.ok) { console.error(`[apps] the apps could not be fetched: ${r.why}`); process.exit(3); }
+  }
+}
 for (const at of (process.env.ARENA_APPS || '').split(',').map((x) => x.trim()).filter(Boolean)) {
   const m = await import(pathToFileURL(resolvePath(at)).href);
   if (!m.GAME) throw new Error(`ARENA_APPS names ${at}, which exports no GAME`);

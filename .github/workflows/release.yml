@@ -30,6 +30,9 @@ jobs:
         run: |
           rm packages/arena-node/node_modules
           (cd packages/arena-node && npm install --omit=dev --no-audit --no-fund --no-package-lock @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3)
+      # THE APPS (kanban #575): this repository tracks none; the three a node hosts are placed from their public repositories at their pins
+      - name: apps at their pins
+        run: node tools/fetch-apps.mjs arena-app-next-block arena-app-rock-paper-scissors arena-app-up-or-down
       - name: installer tests
         working-directory: packages/arena-installer
         run: for t in test/*.test.js; do node --test --test-timeout=120000 "$t"; done
