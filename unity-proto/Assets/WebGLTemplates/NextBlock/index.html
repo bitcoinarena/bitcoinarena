@@ -5682,13 +5682,31 @@
       }
       const close = () => { if (busy) return; box.classList.remove('show'); job = null; };
       box.querySelector('.x').addEventListener('click', close);
+      // THE BOX IN REACT (kanban #564; the page's bundle, window.ArenaZap) once it has loaded: drawn from this block's own elements, which
+      // stay the state (hidden then) - every change to them draws it again, and a tap on it acts on them. Set up at the first open
+      // (the bundle is a module and loads after this script); without it these elements are the box.
+      let mirror = null;
+      const mirrorUp = () => {
+        if (mirror || !window.ArenaZap || !window.ArenaZap.draw) return;
+        const zb = box.querySelector('.zb'), host = document.createElement('div');
+        host.className = 'zb-react'; box.append(host); zb.style.display = 'none';
+        const draw = () => window.ArenaZap.draw(host, { view: { title: title.textContent, to: to.textContent,
+            amounts: Array.from(amts.children).map((b) => ({ msat: b.dataset.msat, label: b.textContent, pressed: b.getAttribute('aria-pressed') === 'true' })),
+            showMsg: !msg.hidden, msg: msg.value, goLabel: go.textContent, goDisabled: go.disabled, st: st.textContent, stKind: st.className.replace(/^st ?/, '') },
+          onChoose: (i) => { amts.children[i].click(); }, onMsg: (v) => { msg.value = v; draw(); }, onGo: () => go.click(), onClose: close });
+        mirror = new MutationObserver(draw);
+        mirror.observe(zb, { subtree: true, childList: true, characterData: true, attributes: true });
+        mirror.draw = draw;
+      };
       box.addEventListener('click', (e) => { if (e.target === box) close(); });
       async function open(j) {
+        mirrorUp();
         job = Object.assign({}, j); busy = false;
         title.textContent = j.title || 'Zap'; msg.value = ''; go.disabled = true; go.textContent = j.recipient ? 'Zap' : 'Tip';
         for (const x of amts.children) x.setAttribute('aria-pressed', String(BigInt(x.dataset.msat) === choice));
         box.classList.add('show');
         msg.hidden = !!j.recipient;
+        if (mirror) mirror.draw();   // the message's value set above is no mutation
         if (j.recipient) {
           to.textContent = 'to ' + (j.name || 'this player') + ' \u00b7 e-cash into their Bitcoin Arena wallet, from yours';
           say(''); go.disabled = false; return;
