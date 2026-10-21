@@ -371,6 +371,46 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  '8be37be1196aa62cca1f7066b40ccad10f7b33555b5315b3b174568e3585fa8c': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 16, parent 0860b4a7 - version 15 in every term, with the new client (everything drawn by React, kanban #564)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '13699356aae534eeb753de4d441dc223698f429f25aeb30ea3e25f4b4e24993e': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 4, parent 90f462c8 - version 3's rules (core f86afd62, the same decide), the table drawn by React (kanban #564, #523)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '62a940ae282fe143b65802e2a36a1dd46618738fb55c12ab1f77e5955637573e': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 5, parent 13699356 - version 4 in every term, everything drawn by React (kanban #564)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
