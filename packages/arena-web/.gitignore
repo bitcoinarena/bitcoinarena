@@ -1,1 +1,3 @@
 dist/test/
+# the installer carries its own copy (arena-installer/www/wizard.js)
+dist/wizard.js
