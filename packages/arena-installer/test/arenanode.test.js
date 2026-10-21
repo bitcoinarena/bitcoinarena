@@ -10,7 +10,7 @@ import http from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { installedServices, overview, control, doctor, servicesNamed, serviceId } from '../src/node-services.js';
+import { installedServices, overview, control, followTunnelNow, doctor, servicesNamed, serviceId } from '../src/node-services.js';
 import { main } from '../src/arenanode.js';
 import { writeCommand } from '../src/launchers.js';
 import { formatConf, parseConf } from '../../arena-node/src/arena-conf.js';
@@ -283,4 +283,23 @@ test('a node installed fresh knows its release: the one this code is part of, wh
     writeFileSync(join(home, 'state.json'), JSON.stringify({ release: { path: other } }));
     assert.equal(nodeOf(home, { ownRelease: rel }).version, '2026.1.1', 'the release state.json records wins');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a quick tunnel that came back by itself (a reboot) is followed without the owner: its newest name into arena.conf, state and the gateway, which restart; then nothing (kanban #562 2A)', async () => {
+  const n = linuxNode({ port: 8470 });
+  try {
+    const { sh, calls } = fakeSh();
+    const acts = () => calls.filter((c) => c[0] === 'systemctl' && ['start', 'stop', 'restart'].includes(c[2])).map((c) => `${c[2]} ${c[3]}`);
+    writeFileSync(join(n.home, 'arena.conf'), readFileSync(join(n.home, 'arena.conf'), 'utf8').split(NOW).join(OLD));   // the seat still on the old name
+    const one = await followTunnelNow({ home: n.home, platform: 'linux', env: n.env, sh });
+    assert.equal(one.url, `https://${NEW}`, 'the newest name in the tunnel\'s log');
+    assert.deepEqual(acts(), ['restart arena-gateway.service', 'restart arena-node.service'], 'in start order; the tunnel itself is not touched');
+    assert.deepEqual(one.restarted, ['gateway', 'node']);
+    const conf = parseConf(readFileSync(join(n.home, 'arena.conf'), 'utf8')).values;
+    assert.deepEqual([conf.public_url, conf.guardian_endpoint], [`https://${NEW}`, `wss://${NEW}/guardian`]);
+    assert.equal(JSON.parse(readFileSync(join(n.home, 'state.json'), 'utf8')).reach.url, `https://${NEW}`);
+    calls.length = 0;
+    const two = await followTunnelNow({ home: n.home, platform: 'linux', env: n.env, sh });
+    assert.deepEqual([two.restarted, acts()], [[], []], 'the same name: nothing changed, nothing restarted');
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
