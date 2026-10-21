@@ -19,7 +19,6 @@
   var R = null;
   var reactReady = import('./react.js').then(function () { R = window.ArenaForum; });
 
-  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
   function npub(hex) { return ARENACLIENT.npubOfKey(hex); }
   function sats(n) { return Number(n).toLocaleString('en-US') + ' sat'; }
   function title(p) { var t = parts(p.purpose).title; return t.length > 90 ? t.slice(0, 88) + '…' : t; }
@@ -99,18 +98,12 @@
     showKey();
   }
   function showKey() {
-    var id = $('.key .id'); id.textContent = '';
-    if (state.key) { var b = el('b', null, who(mine())); b.title = ARENACLIENT.npubOf(state.key);
-      id.append(document.createTextNode('Signed in as '), b, document.createTextNode(' · your in-game key and name')); }
-    else id.textContent = 'Read freely. To post, open the Arena once: the forum signs with the key and the name you play with.';
+    R.draw($('.key .id'), 'key', state.key ? { name: who(mine()), npub: ARENACLIENT.npubOf(state.key) } : {});
   }
   // THE BALANCE ON TOP (the owner 2026-10-17): the reserves the nodes agree on, and the most one PIP may ask
   function showBalance() {
     var b = document.getElementById('balance'); if (!b) return;
-    var r = state.reserves;
-    b.querySelector('.sats').textContent = r ? sats(r.sats) : '–';
-    b.querySelector('.sub').textContent = r ? r.agreeing + ' of ' + r.asked + ' nodes agree · a PIP may ask up to ' + sats(Math.floor(r.sats * CAP_PCT / 100))
-      : (state.reservesWhy ? 'could not be read: ' + state.reservesWhy : 'reading the nodes');
+    R.draw(b, 'balance', { reserves: state.reserves, why: state.reservesWhy, capPct: CAP_PCT });
   }
 
   function stage(p) {
@@ -307,12 +300,12 @@
     });
   }
 
-  view.append(el('div', 'empty', 'Reading the nodes…'));
   fetch(ARENA + 'daily.json').then(function (r) { return r.json(); }).then(function (d) {
     state.nodes = ((d.testnet || {}).node || []);
     return load(ARENA + 'arena-curve.js').then(function () { return load(ARENA + 'arena-client.js'); });
-  }).then(function () {
+    // the key and the reserves are drawn by React too: nothing is drawn before it is here
+  }).then(function () { return reactReady; }).then(function () {
     pickKey();
-    return reactReady.then(refresh).then(function () { view.textContent = ''; window.addEventListener('hashchange', route); route(); });
-  }).catch(function (e) { if (R) R.clear(view); view.textContent = ''; view.append(el('div', 'empty', e.message)); });
+    return refresh().then(function () { window.addEventListener('hashchange', route); route(); });
+  }).catch(function (e) { reactReady.then(function () { R.draw(view, 'empty', { text: e.message }); }); });
 })();

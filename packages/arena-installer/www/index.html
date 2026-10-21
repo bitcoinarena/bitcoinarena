@@ -212,22 +212,21 @@ const $ = (id) => document.getElementById(id);
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 let introSkipped = false;
 const introSeen = () => { if (introSkipped) return true; try { return localStorage.getItem('arena-intro-seen') === '1'; } catch { return false; } };
 async function load() {
   st = await (await fetch('/api/state')).json();
-  if (!st.ok) { document.body.innerHTML = '<main><h1>Arena node setup</h1><p>' + esc(st.why) + '</p></main>'; return; }
-  $('steps').innerHTML = STEPS.map(([k, t]) => `<li class="${st.done[k] ? 'done' : st.step === k ? 'now' : ''}">${t}</li>`).join('');
-  { const now = $('steps').querySelector('.now'); if (now) $('steps').scrollLeft = Math.max(0, now.offsetLeft - $('steps').offsetLeft - 40); }   // the current step in view
+  const R = window.ArenaWizard;
+  if (!st.ok) { R.refused(document.querySelector('main'), { why: st.why }); return; }
+  R.bar($('steps'), { steps: STEPS, done: st.done, now: st.step });   // the current step scrolled into view
   // THE INTRO: before the first step is done, until "Set up my node" (remembered in this browser where it can be)
   const intro = st.step === 'chain' && !st.done.chain && !introSeen();
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
   // THE REACT STEPS (kanban #564): the current step draws its section, every other one is taken down (its timers stop); the roles
   // draw into their list, and say when custody is on (its picture shown)
-  const R = window.ArenaWizard, ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: load };
+  const ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: load };
   if (st.step === 'roles') R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; } });
   R.show(st.step, (k) => $('s-' + k), ctx);
 }

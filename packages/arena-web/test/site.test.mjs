@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NodesList, GuardianCheck } from '../dist/test/site.mjs';
+import { NodesList, GuardianCheck, WayOut } from '../dist/test/site.mjs';
 
 test('the nodes list: a link per node, reading, not answering, or its numbers', () => {
   assert.equal(renderToStaticMarkup(React.createElement(NodesList, {})), 'Reading the nodes’ routes…');
@@ -28,4 +28,9 @@ test('the guardian check: opening, sessions, why not; the agreement once all ans
   const split = renderToStaticMarkup(React.createElement(GuardianCheck, f({ ok: false, why: 'no answer in 20 s', ms: 20000 }, { ok: true, sessions: 900, ms: 120 })));
   assert.match(split, /337ae01a… · 1 of 2 answer · sessions 900, in agreement/);
   assert.match(split, /<td class="state bad" id="s-0-0">no answer in 20 s · 20000 ms<\/td>/);
+});
+
+test('the /wallet/ page\'s way out: the address it goes to, as a link', () => {
+  assert.equal(renderToStaticMarkup(React.createElement(WayOut, { to: 'https://seat.example.com/wallet/' })),
+    'If nothing happens: <a href="https://seat.example.com/wallet/">https://seat.example.com/wallet/</a>');
 });

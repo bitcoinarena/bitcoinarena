@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Facts, NodesTable, Capacity, nodeView, capacityView } from '../dist/test/health.mjs';
+import { Facts, NodesTable, Capacity, Line, nodeView, capacityView } from '../dist/test/health.mjs';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
 const fedNo = (f) => ({ [A]: 1, [B]: 2 })[f] || null;
@@ -72,4 +72,9 @@ test('a bar cell: how far, green when done', async () => {
   const h = renderToStaticMarkup(React.createElement(Table, { head: ['What', ''], rows: [{ key: 'p', cells: ['peg-in', { bar: [90, 100] }] }, { key: 'g', cells: ['grid', { bar: [67, 6] }] }] }));
   assert.match(h, /<span class="tbar"><i class="warn" style="width:90%"><\/i><\/span>/);
   assert.match(h, /<span class="tbar"><i class="ok" style="width:100%"><\/i><\/span>/);
+});
+
+test('the reading state as one line: plain, or red with why', () => {
+  assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'read 21:40:12 UTC · 24 nodes asked' })), 'read 21:40:12 UTC · 24 nodes asked');
+  assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'could not read the network: <x>', bad: true })), '<span class="bad">could not read the network: &lt;x&gt;</span>');
 });

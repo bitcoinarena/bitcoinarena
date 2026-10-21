@@ -6,8 +6,26 @@
 // proposal's text as the HTML its own Markdown made (escaped there) - and gets the reply or the form back.
 import React from 'react';
 
+const n = (x) => Number(x).toLocaleString('en-US');
 const Stage = ({ s }) => <span className={`stage ${s.cls}`}>{s.text}</span>;
 const Avatar = ({ a, title }) => <div className="ava" style={{ background: a.colour }} title={title}>{a.initial}</div>;
+
+/** Who signs here: { name, npub } of the in-game key, or no name - then how to post. */
+export function SignedIn({ name, npub }) {
+  if (!name) return 'Read freely. To post, open the Arena once: the forum signs with the key and the name you play with.';
+  return <>Signed in as <b title={npub}>{name}</b> · your in-game key and name</>;
+}
+
+/** The reserves on top: { reserves: { sats, agreeing, asked } | null, why, capPct } - what the nodes agree on and the most one PIP may ask. */
+export function ReserveBalance({ reserves, why, capPct }) {
+  return (
+    <><span className="lbl">Protocol reserves</span><b className="sats">{reserves ? `${n(reserves.sats)} sat` : '–'}</b>
+      <span className="sub">{reserves ? `${reserves.agreeing} of ${reserves.asked} nodes agree · a PIP may ask up to ${n(Math.floor(reserves.sats * capPct / 100))} sat`
+        : why ? `could not be read: ${why}` : 'reading the nodes'}</span></>);
+}
+
+/** One line in place of a view: { text } - the nodes could not be read, say why. */
+export const Empty = ({ text }) => <div className="empty">{text}</div>;
 
 /** The thread list: { status, items: [{ pip, title, by, amount, replies, stage: { cls, text }, href }] or null while reading }. */
 export function ProposalList({ status, items }) {
@@ -81,7 +99,6 @@ export class ProposalThread extends React.Component {
 // same checks and words as before - and publish: forum.js signs with the in-game key and hands it to every node (`onPublish`).
 export const LN_ADDRESS = /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 export const LNURL = /^lnurl1[02-9ac-hj-np-z]{20,}$/i;
-const n = (x) => Number(x).toLocaleString('en-US');
 
 /** The amount and the address against the cap: [ok, words, bad]. */
 export function amountCheck({ amount, lnurl }, reserves, capPct) {

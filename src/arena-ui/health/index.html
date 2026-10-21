@@ -79,7 +79,6 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
   const satMsat = (v) => (v == null ? '-' : Math.floor(Number(v) / 1000).toLocaleString('en-US'));
   // THE REACT VIEWS (./react.js, kanban #564): loaded before the first read, the only drawing of every section
@@ -130,8 +129,9 @@
   };
 
   let reading = false;
+  const say = (text, bad = false) => H.draw($('read'), 'line', { text, bad });   // the reading state, drawn by React like the rest
   async function read() {
-    if (reading) return; reading = true; $('read').textContent = 'reading …';
+    if (reading) return; reading = true; say('reading …');
     try {
       const daily = await (await fetch('../daily.json', { cache: 'no-store' })).json();
       const net = daily.testnet || daily;
@@ -167,7 +167,7 @@
       await Promise.all(nodes.map(async (n) => { n.version = await ask(n.base, '/owner/version'); paintNodes(nodes, tip); }));
       paintNetwork({ tip, nodes, seats, roles, feds, reserves });
       paintNodes(nodes, tip);
-      $('read').textContent = 'reading each node … (' + nodes.filter((n) => n.version.ok).length + ' of ' + nodes.length + ' answered)';
+      say('reading each node … (' + nodes.filter((n) => n.version.ok).length + ' of ' + nodes.length + ' answered)');
       await Promise.all(nodes.filter((n) => n.version.ok).map(async (n) => {
         const [b, d, lc, gc] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim')]);
         Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc });
@@ -186,9 +186,9 @@
       paintLnd(nodes);
       paintGames(await gamesP);
       paintFees(fees);
-      $('read').textContent = 'read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked';
+      say('read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked');
       window.ARENA_HEALTH = { atMs: Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
-    } catch (e) { $('read').innerHTML = '<span class="bad">could not read the network: ' + esc(e.message) + '</span>'; }
+    } catch (e) { say('could not read the network: ' + e.message, true); }
     finally { reading = false; }
   }
 
@@ -307,7 +307,7 @@
         : t.kind === 'peg-in' ? ['peg-in', ...(t.outputs || []).flatMap((o, i) => [`${i ? '; ' : ''}:${o.vout} ${sat(o.sats)} sat to ${cut(o.node, 8)} in`, ...fedText(o.federation)])]
         : t.kind === 'funding' ? `funding of ${cut(t.parentOf, 10)}` : String(t.kind);
       const list = [...all.values()].sort((x, y) => (x.confirmations || 0) - (y.confirmations || 0) || String(x.kind).localeCompare(String(y.kind)));
-      $('txs-count').textContent = `(${list.length})`;
+      H.draw($('txs-count'), 'line', { text: `(${list.length})` });
       drawTable('pending-txs', ['Tx', 'What', 'Confirmations', 'Nodes'], list.map((t) => ({ key: t.txid, cls: ['mono', 'wrap'],
         cells: [cut(t.txid, 10), label(t), t.inMempool ? 'in the mempool' : `${sat(t.confirmations)}${t.height ? ` (block ${sat(t.height)})` : ''}`, `${t.seenBy} of ${answers.length}`] })),
         answers.length ? 'no transaction on its way' : 'no node answers GET /pending yet'); }

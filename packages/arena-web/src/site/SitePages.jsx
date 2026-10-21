@@ -3,7 +3,7 @@
 // THE ARENA SITE'S SMALL PAGES IN REACT (kanban #564, the owner 2026-10-21: "And also the small pages"): what /dashboard/ and /guardians/ drew
 // by hand. NodesList: each testnet4 node's way to its own dashboard, with its key, today's profit and the rounds it checked once its
 // dashboard.json answers. GuardianCheck: every guardian of the two testnet4 federations as this device reached it - its sessions and the
-// time it took, or why not - with each federation's agreement and the total. The pages keep reading the nodes; these draw what they read.
+// time it took, or why not - with each federation's agreement and the total. WayOut: the /wallet/ page's link to where it goes. The pages keep reading the nodes; these draw what they read.
 import React from 'react';
 
 const fmtSat = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' sat';
@@ -42,3 +42,6 @@ export class GuardianCheck extends React.Component {
     });
   }
 }
+
+/** The /wallet/ page's way out, while the browser goes there: { to } - the wallet's address, as a link. */
+export const WayOut = ({ to }) => <>If nothing happens: <a href={to}>{to}</a></>;

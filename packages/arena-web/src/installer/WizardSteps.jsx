@@ -21,6 +21,27 @@ export const OPT_IN_ROLES = Object.freeze(['custody', 'liquidity']);
 /** On at the start: a saved choice as saved; with none, every role but the opt-in ones. */
 export const onAtStart = (k, saved) => (saved || []).includes(k) || (!(saved || []).length && !OPT_IN_ROLES.includes(k));
 
+/**
+ * The steps along the top: { steps: [[key, title]], done: { key: true }, now } - done ones ticked, the current one marked and scrolled into
+ * view (the bar scrolls sideways on a phone).
+ */
+export class StepBar extends React.Component {
+  constructor(p) { super(p); this.now = React.createRef(); }
+  componentDidMount() { this.reveal(); }
+  componentDidUpdate() { this.reveal(); }
+  reveal() {
+    const li = this.now.current, bar = li && li.parentElement;
+    if (bar) bar.scrollLeft = Math.max(0, li.offsetLeft - bar.offsetLeft - 40);
+  }
+  render() {
+    const { steps, done = {}, now } = this.props;
+    return steps.map(([k, t]) => <li key={k} ref={k === now ? this.now : null} className={done[k] ? 'done' : k === now ? 'now' : ''}>{t}</li>);
+  }
+}
+
+/** The installer cannot set up here (GET /api/state not ok): the page's heading and why, in place of the steps. */
+export const SetupRefused = ({ why }) => <><h1>Arena node setup</h1><p>{why}</p></>;
+
 /** The wizard's message line: green when it passed, red with the reason when not. */
 export class Msg extends React.Component {
   render() {

@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ProposalList, ProposalThread } from '../dist/test/proposals.mjs';
+import { ProposalList, ProposalThread, SignedIn, ReserveBalance, Empty } from '../dist/test/proposals.mjs';
 
 const who = (name) => ({ name, npub: 'npub1' + name, avatar: { colour: 'hsl(10 70% 62%)', initial: name[0].toUpperCase() } });
 
@@ -124,4 +124,15 @@ test('a leaderboard payout: each federation\'s reserves and cap, the form, the p
   f.state.purpose = 'the best of the week'; await f.submit({ preventDefault() {} });
   assert.deepEqual(sent, [{ amountSats: 10, purpose: 'the best of the week', top: 10, federationId: data.feds[0].id }]);
   assert.match(renderToStaticMarkup(React.createElement(PayoutProposal, { ...props, data: null })), /Reading the nodes…/);
+});
+
+test('the forum\'s key line, its reserves on top and a line in place of the view, in React', () => {
+  const r = (c, p) => renderToStaticMarkup(React.createElement(c, p));
+  assert.equal(r(SignedIn, { name: 'satoshi', npub: 'npub1x' }), 'Signed in as <b title="npub1x">satoshi</b> · your in-game key and name');
+  assert.match(r(SignedIn, {}), /^Read freely\. To post, open the Arena once/);
+  assert.equal(r(ReserveBalance, { reserves: { sats: 1234567, agreeing: 5, asked: 7 }, capPct: 10 }),
+    '<span class="lbl">Protocol reserves</span><b class="sats">1,234,567 sat</b><span class="sub">5 of 7 nodes agree · a PIP may ask up to 123,456 sat</span>');
+  assert.match(r(ReserveBalance, { reserves: null, why: 'no seat answered', capPct: 10 }), /<b class="sats">–<\/b><span class="sub">could not be read: no seat answered<\/span>/);
+  assert.match(r(ReserveBalance, { reserves: null, capPct: 10 }), /<span class="sub">reading the nodes<\/span>/);
+  assert.equal(r(Empty, { text: 'could not load x <b>' }), '<div class="empty">could not load x &lt;b&gt;</div>');
 });

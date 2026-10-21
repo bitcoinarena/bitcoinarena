@@ -419,12 +419,13 @@ test('the roles step shows each role in one line, its needs as chips, the long t
 
 // EVERY STEP IS REACT'S (kanban #564, the owner 2026-10-21: "no fall backs"): the page loads the steps (/wizard.js) before its own script,
 // hands each step the wizard's state, post and reload, and draws none of them itself - no step's old markup or handlers are left
-test('the wizard page draws no step itself: the roles into their list, every other step into its section, by window.ArenaWizard', () => {
+test('the wizard page draws no step itself: the roles into their list, every other step into its section, the bar of steps and a refusal, by window.ArenaWizard', () => {
   const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
   assert.ok(html.indexOf('<script src="/wizard.js"></script>') > 0 && html.indexOf('<script src="/wizard.js"></script>') < html.indexOf('<script>\n'), 'the steps load first');
-  assert.match(html, /const R = window\.ArenaWizard, ctx = \{ st, post, get: async \(path\) => \(await fetch\(path\)\)\.json\(\), reload: load \};/);
+  assert.match(html, /const R = window\.ArenaWizard;\n  if \(!st\.ok\) \{ R\.refused\(document\.querySelector\('main'\), \{ why: st\.why \}\); return; \}\n  R\.bar\(\$\('steps'\), \{ steps: STEPS, done: st\.done, now: st\.step \}\);/, 'the bar of steps and the refusal drawn by React too');
+  assert.match(html, /const ctx = \{ st, post, get: async \(path\) => \(await fetch\(path\)\)\.json\(\), reload: load \};/);
   assert.match(html, /if \(st\.step === 'roles'\) R\.mount\('roles', \$\('roles'\), \{ \.\.\.ctx, onCustody: \(on\) => \{ \$\('custody-explain'\)\.hidden = !on; \} \}\);/);
   assert.match(html, /R\.show\(st\.step, \(k\) => \$\('s-' \+ k\), ctx\);/);
   for (const k of ['chain', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']) assert.ok(html.includes(`<section id="s-${k}"></section>`), `${k}: an empty section for React`);
-  for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"']) assert.ok(!html.includes(gone), gone);
+  for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"', 'innerHTML', 'const esc']) assert.ok(!html.includes(gone), gone);
 });
