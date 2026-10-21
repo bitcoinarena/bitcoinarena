@@ -54,6 +54,9 @@
   .loadbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--ok); } .loadbar i.warn { background: var(--warn); } .loadbar i.bad { background: var(--bad); }
   .loadbar span { position: absolute; right: -70px; top: -5px; width: 62px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
   .capnet { padding: 6px 2px 0; }
+  .tbar { display: inline-block; width: 110px; height: 6px; background: var(--line); border-radius: 3px; vertical-align: middle; position: relative; overflow: hidden; }
+  .tbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--warn); } .tbar i.ok { background: var(--ok); }
+  .strong { font-weight: 700; }
 </style>
 </head>
 <body>
@@ -88,7 +91,9 @@
   // drawn by React's Table when it is there, else as this page's own HTML (the same cells, escaped here)
   const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
   const fedCell = (fid) => { const n = fedNoOf(fid); return n ? [`Federation ${n}`, { t: cut(fid, 8), c: 'muted mono' }] : { t: cut(fid, 12), c: 'mono' }; };
-  const partHtml = (p) => (p && typeof p === 'object' ? `<span class="${p.c || ''}">${esc(p.t)}</span>` : esc(p));
+  const barHtml = (have, need) => { const pc = need ? Math.min(100, Math.round((100 * have) / need)) : 0;
+    return `<span class="tbar"><i class="${pc >= 100 ? 'ok' : 'warn'}" style="width:${pc}%"></i></span>`; };
+  const partHtml = (p) => (p && typeof p === 'object' ? (p.bar ? barHtml(...p.bar) : `<span class="${p.c || ''}">${esc(p.t)}</span>`) : esc(p));
   const cellHtml = (c) => (Array.isArray(c) ? c.map(partHtml).join(' ') : partHtml(c));
   const tableHost = {};
   function drawTable(id, head, rows, empty, foot) {
@@ -324,8 +329,8 @@
       for (const x of a.adverts || []) if (!ads.has(x.node)) ads.set(x.node, { ...x, tip: a.tip });
     }
     const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
-    const bar = (have, need) => { const pc = need ? Math.min(100, Math.round((100 * have) / need)) : 0;
-      return `<div style="width:110px;height:6px;background:var(--line);border-radius:3px"><div style="width:${pc}%;height:6px;border-radius:3px;background:${pc >= 100 ? 'var(--ok)' : 'var(--warn)'}"></div></div>`; };
+    // each row as table data (kanban #564): what, tx, confirmations, how far (a bar), what it waits for
+    const W = [null, 'mono', null, null, 'wrap'];
     const rows = [];
     // THE CHAIN SPLIT (the owner 2026-10-20, "Mining view mismatch, what is true"): each node names its tip and the rival tips of the same
     // (or more) work it knows; nodes on different tips, or a rival of the same work, mean the next block decides - and everything below
@@ -335,30 +340,31 @@
       for (const h of tips.keys()) rivals.delete(h);
       if (tips.size > 1 || rivals.size) {
         const fork = Math.min(...[...rivals.values()].map((r) => r.forkHeight + 1), Infinity);
-        const on = [...tips].map(([h, n]) => `${short(h, 10)} (${sat(n)})`).join(', ');
-        const other = [...rivals.values()].map((r) => `${short(r.hash, 10)} (${sat(r.height)}, ${r.work === 'same' ? 'the same work' : 'more work, not taken'})`).join(', ');
-        rows.push(`<tr><td>${dot('warn')}<b>the chain is split${Number.isFinite(fork) ? ` from block ${sat(fork)}` : ''}</b></td><td class="mono">-</td><td>-</td><td></td>
-          <td class="wrap">the nodes follow ${on}${other ? `; another branch: ${other}` : ''}. The next block decides which one stays - until then, confirmations below count on the nodes' own branch, and a public explorer may show the other</td></tr>`);
+        const on = [...tips].map(([h, n]) => `${cut(h, 10)} (${sat(n)})`).join(', ');
+        const other = [...rivals.values()].map((r) => `${cut(r.hash, 10)} (${sat(r.height)}, ${r.work === 'same' ? 'the same work' : 'more work, not taken'})`).join(', ');
+        rows.push({ key: 'split', dot: 'warn', cls: W, cells: [{ t: `the chain is split${Number.isFinite(fork) ? ` from block ${sat(fork)}` : ''}`, c: 'strong' }, '-', '-', '',
+          `the nodes follow ${on}${other ? `; another branch: ${other}` : ''}. The next block decides which one stays - until then, confirmations below count on the nodes' own branch, and a public explorer may show the other`] });
       }
     }
     for (const g of grids.values()) {
       const pub = g.publication, b = g.beacon;
-      const what = `${esc(g.game)} grid: ${g.slots} rounds, entry from ${new Date(Number(g.firstWindowMs)).toISOString().slice(5, 16).replace('T', ' ')} UTC`;
       const waits = !pub.height ? `its publication must confirm${pub.inMempool ? ' (in the mempool)' : ''}`
         : b.height === null ? `beacon: the first block whose median time passes ${hhmm(g.committeeTimeMs)} (median time now ${b.medianTimeMs ? hhmm(b.medianTimeMs) : '-'}), then 6 deep`
         : b.depth < 6 ? `beacon block ${sat(b.height)}: ${b.depth} of 6 deep, then its rounds are posted` : `beacon ${sat(b.height)} is ${b.depth} deep: its rounds are posted`;
-      rows.push(`<tr><td>${dot(b.depth >= 6 ? 'ok' : 'warn')}${what}</td><td class="mono">${short(pub.txid, 10)}</td><td>${sat(pub.confirmations)}</td><td>${bar(b.height === null ? 0 : b.depth, 6)}</td><td class="wrap">${waits}</td></tr>`);
+      rows.push({ key: pub.txid, dot: b.depth >= 6 ? 'ok' : 'warn', cls: W, cells: [`${g.game} grid: ${g.slots} rounds, entry from ${new Date(Number(g.firstWindowMs)).toISOString().slice(5, 16).replace('T', ' ')} UTC`,
+        cut(pub.txid, 10), sat(pub.confirmations), { bar: [b.height === null ? 0 : b.depth, 6] }, waits] });
     }
     for (const p of pegs.values()) {
       const left = p.finality && p.confirmations != null ? Math.max(0, p.finality + 1 - p.confirmations) : null;
       const waits = !p.onChain ? 'not found unspent on this node\'s chain (spent: counted, or not confirmed yet)'
         : left ? `${p.confirmations} of ${p.finality} confirmations: counts as the gateway's e-cash in about ${left >= 6 ? Math.round(left / 6) + ' h' : left * 10 + ' min'}` : 'final: counted';
-      rows.push(`<tr><td>${dot(left === 0 ? 'ok' : 'warn')}peg-in ${sat(p.sats)} sat to ${short(p.node, 10)}'s gateway in ${fedName(p.federation)}</td><td class="mono">${short(p.txid, 10)}:${esc(p.vout)}</td><td>${sat(p.confirmations)}</td><td>${bar(p.confirmations || 0, p.finality || 0)}</td><td class="wrap">${waits}</td></tr>`);
+      rows.push({ key: p.txid + ':' + p.vout, dot: left === 0 ? 'ok' : 'warn', cls: W, cells: [[`peg-in ${sat(p.sats)} sat to ${cut(p.node, 10)}'s gateway in`, ...[].concat(fedCell(p.federation))],
+        `${cut(p.txid, 10)}:${p.vout}`, sat(p.confirmations), { bar: [p.confirmations || 0, p.finality || 0] }, waits] });
     }
     for (const x of ads.values()) {
       const left = Math.max(0, Number(x.takenByTip) - Number(x.tip));
-      rows.push(`<tr><td>${dot('warn')}advertisement of ${short(x.node, 10)} <span class="muted">${esc(String(x.endpoint).replace(/^wss?:\/\//, ''))}</span></td><td class="mono">-</td><td>-</td><td></td>
-        <td class="wrap">${esc(x.changes.join('; '))} - the census takes it by block ${sat(x.takenByTip)} (${left ? `in ${left} block${left === 1 ? '' : 's'}` : 'now'})</td></tr>`);
+      rows.push({ key: 'ad' + x.node, dot: 'warn', cls: W, cells: [[`advertisement of ${cut(x.node, 10)}`, { t: String(x.endpoint).replace(/^wss?:\/\//, ''), c: 'muted' }], '-', '-', '',
+        `${x.changes.join('; ')} - the census takes it by block ${sat(x.takenByTip)} (${left ? `in ${left} block${left === 1 ? '' : 's'}` : 'now'})`] });
     }
     // THE ONE TRANSACTION LIST (the owner 2026-10-20: "Make sure that both show the same number of transactions at all times"): every
     // node's txs, one row per transaction, its furthest confirmation kept, and how many of the answering nodes name it
@@ -368,19 +374,18 @@
         if (!was) all.set(t.txid, { ...t, seenBy: 1 });
         else { was.seenBy++; if ((t.confirmations || 0) > (was.confirmations || 0)) Object.assign(was, { ...t, seenBy: was.seenBy }); }
       }
-      const label = (t) => t.kind === 'advert update' ? `advertisement update of ${short(t.node, 10)}${t.protocols ? ` (protocols to ${t.protocols})` : ''}`
-        : t.kind === 'bond' ? `bond of ${short(t.node, 10)}${t.maturity ? ` (matures ${sat(t.maturity)})` : ''}`
-        : t.kind === 'grid publication' ? `${esc(t.game)} grid publication, ${t.slots} rounds`
-        : t.kind === 'peg-in' ? `peg-in ${(t.outputs || []).map((o) => `:${esc(o.vout)} ${sat(o.sats)} sat to ${short(o.node, 8)} in ${fedName(o.federation)}`).join('; ')}`
-        : t.kind === 'funding' ? `funding of ${short(t.parentOf, 10)}` : esc(t.kind);
+      const fedText = (fid) => { const n = fedNoOf(fid); return n ? [`Federation ${n}`, { t: cut(fid, 8), c: 'muted mono' }] : [{ t: cut(fid, 12), c: 'mono' }]; };
+      const label = (t) => t.kind === 'advert update' ? `advertisement update of ${cut(t.node, 10)}${t.protocols ? ` (protocols to ${t.protocols})` : ''}`
+        : t.kind === 'bond' ? `bond of ${cut(t.node, 10)}${t.maturity ? ` (matures ${sat(t.maturity)})` : ''}`
+        : t.kind === 'grid publication' ? `${t.game} grid publication, ${t.slots} rounds`
+        : t.kind === 'peg-in' ? ['peg-in', ...(t.outputs || []).flatMap((o, i) => [`${i ? '; ' : ''}:${o.vout} ${sat(o.sats)} sat to ${cut(o.node, 8)} in`, ...fedText(o.federation)])]
+        : t.kind === 'funding' ? `funding of ${cut(t.parentOf, 10)}` : String(t.kind);
       const list = [...all.values()].sort((x, y) => (x.confirmations || 0) - (y.confirmations || 0) || String(x.kind).localeCompare(String(y.kind)));
       $('txs-count').textContent = `(${list.length})`;
-      $('pending-txs').innerHTML = '<tr><th>Tx</th><th>What</th><th>Confirmations</th><th>Nodes</th></tr>'
-        + (list.map((t) => `<tr><td class="mono">${short(t.txid, 10)}</td><td class="wrap">${label(t)}</td>
-          <td>${t.inMempool ? 'in the mempool' : `${sat(t.confirmations)}${t.height ? ` (block ${sat(t.height)})` : ''}`}</td><td>${t.seenBy} of ${answers.length}</td></tr>`).join('')
-          || `<tr><td colspan="4" class="muted">${answers.length ? 'no transaction on its way' : 'no node answers GET /pending yet'}</td></tr>`); }
-    $('pending').innerHTML = '<tr><th>What</th><th>Tx</th><th>Confirmations</th><th></th><th>Waits for</th></tr>'
-      + (rows.join('') || `<tr><td colspan="5" class="muted">${answers.length ? 'nothing pending on ' + answers.length + ' node(s)' : 'no node answers GET /pending yet'}</td></tr>`);
+      drawTable('pending-txs', ['Tx', 'What', 'Confirmations', 'Nodes'], list.map((t) => ({ key: t.txid, cls: ['mono', 'wrap'],
+        cells: [cut(t.txid, 10), label(t), t.inMempool ? 'in the mempool' : `${sat(t.confirmations)}${t.height ? ` (block ${sat(t.height)})` : ''}`, `${t.seenBy} of ${answers.length}`] })),
+        answers.length ? 'no transaction on its way' : 'no node answers GET /pending yet'); }
+    drawTable('pending', ['What', 'Tx', 'Confirmations', '', 'Waits for'], rows, answers.length ? 'nothing pending on ' + answers.length + ' node(s)' : 'no node answers GET /pending yet');
   }
 
   async function paintGateways(feds, seats, nodes) {
