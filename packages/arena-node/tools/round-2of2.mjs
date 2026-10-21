@@ -74,7 +74,7 @@ import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
-// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (§0A.4): nextblock, as nextblock/bin/node.mjs does.
+// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (§0A.4): Next Block, as arena-node/bin/node.mjs does.
 const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
 
 
