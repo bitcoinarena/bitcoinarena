@@ -47,12 +47,20 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
  *  release the seat ran (macOS node A at rc.16 still read its games and fedimintd from the rc.12 folder it was installed from); a path
  *  the new release does not hold is kept. */
 export function envForRelease(text, newRelease, exists = existsSync) {
+  // ONE PATH OR A LIST (kanban #569: apps= names every registration of every app, comma-joined): each path of a value moved on its own -
+  // the whole line read as one path kept only the part after its last release folder (measured: 22 registrations became 1)
+  const moveOne = (v) => {
+    const m = /^(.*[\\/]arena-node-\d[^\\/\s,]*)([\\/].*)?$/.exec(v);
+    if (!m || m[1] === newRelease) return v;
+    const moved = newRelease + (m[2] || '');
+    return exists(moved) ? moved : v;
+  };
   return String(text).split('\n').map((line) => {
     const cr = line.endsWith('\r') ? '\r' : '';   // a Windows node's settings end their lines in CRLF
-    const m = /^([A-Za-z0-9_]+)=(.*[\\/]arena-node-\d[^\\/\s]*)([\\/].*)?$/.exec(cr ? line.slice(0, -1) : line);
-    if (!m || m[2] === newRelease) return line;
-    const moved = newRelease + (m[3] || '');
-    return exists(moved) ? `${m[1]}=${moved}${cr}` : line;
+    const m = /^([A-Za-z0-9_]+)=(.*)$/.exec(cr ? line.slice(0, -1) : line);
+    if (!m) return line;
+    const value = m[2].split(',').map(moveOne).join(',');
+    return value === m[2] ? line : `${m[1]}=${value}${cr}`;
   }).join('\n');
 }
 

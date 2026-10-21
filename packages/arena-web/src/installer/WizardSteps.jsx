@@ -72,6 +72,50 @@ export class RolesStep extends React.Component {
   }
 }
 
+// THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer where
+// all apps are automatically selected"): one tile per app the release carries, every one switched on at first; the node hosts the ones
+// left on (each version still played: "N versions")
+export const APP_IC = Object.freeze({ nextblock: '⏱️', 'rock-paper-scissors': '✊', 'btc-updown': '📈' });
+/** On at the start: a saved choice as saved; with none, every app. */
+export const appOnAtStart = (id, saved) => !(saved || []).length || saved.includes(id);
+
+export class AppsStep extends React.Component {
+  constructor(props) {
+    super(props);
+    const info = props.st.appInfo || [];
+    this.state = { on: Object.fromEntries(info.map((a) => [a.id, appOnAtStart(a.id, props.st.apps)])), saving: false, msg: null };
+    this.save = this.save.bind(this);
+  }
+  toggle(id, v) { this.setState((s) => ({ on: { ...s.on, [id]: v } })); }
+  chosen() { return (this.props.st.appInfo || []).map((a) => a.id).filter((id) => this.state.on[id]); }
+  async save() {
+    this.setState({ saving: true, msg: null });
+    const r = await this.props.post('/api/apps', { apps: this.chosen() });
+    if (r.ok) { this.setState({ saving: false }); return this.props.reload(); }
+    this.setState({ saving: false, msg: said(r) });
+  }
+  render() {
+    const info = this.props.st.appInfo || [];
+    const { on, saving, msg } = this.state;
+    const n = this.chosen().length;
+    return (
+      <div className="aw">
+        <h2>3. Your apps</h2>
+        <p className="sub">The games your node hosts: it replays and settles their rounds. All are on; switch off one you do not want.</p>
+        <div className="tiles">
+          {info.map((a) => (
+            <Tile key={a.id} id={`app-${a.id}`} icon={APP_IC[a.id] || '🎮'} name={a.title} state={on[a.id] ? 'on' : null}
+              pill={`${a.versions} version${a.versions === 1 ? '' : 's'}`} highlight={a.short !== a.title ? a.short : ''}
+              footer={<Switch id={`ap-${a.id}`} label={a.title} checked={!!on[a.id]} onChange={(v) => this.toggle(a.id, v)} />} />))}
+        </div>
+        <p className="sub">{info.length ? (n ? `${n} of ${info.length} app${info.length === 1 ? '' : 's'} on` : 'No app on: choose at least one.') : 'This release lists no apps: the node hosts Next Block.'}</p>
+        <button type="button" disabled={saving || (info.length > 0 && !n)} onClick={this.save}>{saving ? 'Saving…' : 'Continue'}</button>
+        <Msg r={msg} />
+      </div>
+    );
+  }
+}
+
 export class SeedStep extends React.Component {
   constructor(props) {
     super(props);
@@ -96,7 +140,7 @@ export class SeedStep extends React.Component {
     const { phase, words, positions, answers, code, msg } = this.state;
     return (
       <div className="aw">
-        <h2>3. Your seed: write it down</h2>
+        <h2>4. Your seed: write it down</h2>
         <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone with them owns the node; without them a lost machine is a lost node.</p>
         {phase === 'start' ? <button type="button" id="seed-show" onClick={this.show}>Show my 24 words</button> : null}
         {phase === 'shown' ? <>
@@ -153,7 +197,7 @@ export class OwnerStep extends React.Component {
     const { mode, npub, msg } = this.state;
     return (
       <div className="aw">
-        <h2>4. Owner login</h2>
+        <h2>5. Owner login</h2>
         <p className="sub">How you sign in to your node's owner page later.</p>
         <div className="choices">
           {this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser (they stay in that browser).')}
@@ -182,7 +226,7 @@ export class PromiseStep extends React.Component {
     const typed = text.trim().toUpperCase() === PROMISE;
     return (
       <div className="aw">
-        <h2>9. Your bond: the rules</h2>
+        <h2>10. Your bond: the rules</h2>
         <div className="rules">
           <div className="rule"><div className="ic">🔒</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. It makes cheating cost more than it could ever win - that is why players can trust a node they have never met.</p></div></div>
           <div className="rule good"><div className="ic">✅</div><div><b>Stopping? Press LEAVE first.</b><p>On your owner page. Your node finishes the rounds it holds and gives notice to its federation, then you are free. Your bond comes back when its lock ends.</p></div></div>
