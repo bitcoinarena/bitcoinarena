@@ -71,6 +71,7 @@ import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
+import { createP2pTunnels, carryP2p, P2P_TUNNEL_PATHS } from './p2p-tunnel.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
@@ -8441,9 +8442,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // TWO SOCKETS ON ONE ADDRESS: /play is the game's, /guardian is this node's guardian, carried byte for byte to its
   // local API (the guardian's endpoint is the node's own public address, §23A.2). Anything else is refused as before.
   const guardianPipes = new Set();
+  // THE GUARDIANS' P2P THROUGH THE NODES (p2p-tunnel.js, kanban #562): /guardian-p2p ends here as a websocket and goes on to
+  // this node's guardian's own P2P port; every node carries the other guardians' P2P ports to their seats the same way
+  const p2pWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+  const p2pTunnels = (guardian || guardianNext) && process.env.ARENA_P2P_TUNNEL !== '0' ? createP2pTunnels({ ownKey: round.pubkey, say: (m) => console.log(m) }) : null;
+  const p2pTunnelSync = async () => {
+    let list = null;
+    try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
+    if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
+    if (list) p2pTunnels.sync(list);
+  };
+  const p2pTunnelTimer = p2pTunnels ? setInterval(() => { p2pTunnelSync().catch(() => {}); }, Number(process.env.ARENA_P2P_TUNNEL_MS || 60000)) : null;
+  if (p2pTunnelTimer) p2pTunnelTimer.unref();
+  if (p2pTunnels) setTimeout(() => { p2pTunnelSync().catch(() => {}); }, 3000).unref();
   http.on('upgrade', (req, socket, head) => {
     const at = new URL(req.url, 'http://node').pathname;
     if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
+    const p2pOf = at === P2P_TUNNEL_PATHS.guardian ? guardian : at === P2P_TUNNEL_PATHS.next ? guardianNext : null;
+    if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { carryP2p(ws, p2pOf.p2pPort); }); return; }
     // /guardian-next is the guardian-next's, carried the same way to its own API port
     const carried = at === '/guardian' ? guardian : at === '/guardian-next' ? guardianNext : null;
     if (carried && carried.apiPort) {
@@ -8864,6 +8880,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         rerunTimers.clear();
         for (const sock of wss.clients) sock.terminate();
         for (const sock of guardianPipes) sock.destroy();
+        if (p2pTunnelTimer) clearInterval(p2pTunnelTimer);
+        if (p2pTunnels) p2pTunnels.close();
+        for (const c of p2pWss.clients) c.terminate();
         wss.close();
         http.closeAllConnections();
         http.close(r);
