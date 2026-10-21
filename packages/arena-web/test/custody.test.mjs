@@ -28,3 +28,27 @@ test('liquidity: below the minimum with how much to top up; the channels given c
   assert.deepEqual([c.state.claim.depositAddress, c.state.message], ['tb1qnew', 'New address: tb1qnew']);
   assert.match(renderToStaticMarkup(React.createElement(LiquidityPanel, { initial: { loaded: true, claim: null } })), /no liquidity provider/);
 });
+
+test('liquidity: a node that is none becomes one on this page - the plan (signed, no post), then the confirm (post) - no arena-install', async () => {
+  const none = renderToStaticMarkup(React.createElement(LiquidityPanel, { initial: { loaded: true, claim: null } }));
+  assert.doesNotMatch(none, /arena-install/, 'kanban #567: no command for an owner action');
+  assert.match(none, /<button[^>]*>Set up<\/button>/);
+  const plan = { lightningPubkey: '03' + 'cd'.repeat(32), depositSats: 500000, channelSats: 100000, walletSats: 312380, reservedSats: 50000, shortSats: 238620, address: 'tb1pnode' };
+  const sent = [];
+  const api = { get: async () => null, signed: async (a, args) => ({ a, args }), post: async (p, b) => { sent.push([p, b.a, b.args.post]); return b.args.post ? { ok: true, plan, done: { roles: ['verify', 'liquidity'] } } : { ok: true, plan }; } };
+  const c = new LiquidityPanel({ api, initial: { loaded: true, claim: null } }); c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  await c.review();
+  const shown = renderToStaticMarkup(c.render());
+  assert.match(shown, /<span>Deposit into LND<\/span><b>500,000 sat<\/b><small>5 channels of 100,000 sat<\/small>/);
+  assert.match(shown, /50,000 sat kept for the gateway&#x27;s peg-in/);
+  assert.match(shown, /<b>238,620 sat short<\/b>[\s\S]*tb1pnode/);
+  assert.match(shown, />Become a liquidity provider<\/button>/);
+  const t = global.setTimeout; global.setTimeout = () => 0;
+  try { await c.become(); } finally { global.setTimeout = t; }
+  assert.deepEqual(sent, [['/owner/liquidity/become', 'liquidity/become', false], ['/owner/liquidity/become', 'liquidity/become', true]]);
+  assert.match(renderToStaticMarkup(c.render()), /is a liquidity provider now ✓/);
+  const refused = new LiquidityPanel({ api: { ...api, post: async () => ({ ok: false, why: 'this node has no Lightning (LND) set up yet' }) }, initial: { loaded: true, claim: null } });
+  refused.setState = (u) => { Object.assign(refused.state, u); };
+  await refused.review();
+  assert.match(renderToStaticMarkup(refused.render()), /no Lightning \(LND\) set up yet/);
+});
