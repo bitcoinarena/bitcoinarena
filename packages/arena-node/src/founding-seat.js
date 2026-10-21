@@ -100,6 +100,19 @@ export function guardingOpenOf({ entries = [], held = [], except = null }) {
 }
 
 /**
+ * fedimint-cli RUN, ITS OWN WORDS IN A REFUSAL (kanban #495, founding 53be35a3: the CLI prints a refusal such as "Local parameters have
+ * already been set" as JSON on stdout, so an exec error held only "Command failed: ..." and the founding's fresh setup, which reads that
+ * refusal, never started - two seated nodes posted no code): resolves the output; rejects with stdout and stderr appended to the message.
+ */
+export function execCli(execFileCb, bin, args, { timeout = 120000 } = {}) {
+  return new Promise((res, rej) => execFileCb(bin, args, { timeout }, (e, out, err) => {
+    if (!e) return res(String(out));
+    e.message = [e.message, String(out || '').trim(), String(err || '').trim()].filter(Boolean).join('\n');
+    rej(e);
+  }));
+}
+
+/**
  * The guardian's setup, through the stock CLI: `run(args)` runs fedimint-cli and answers its stdout. The code is the
  * set-local-params output without its JSON quotes.
  */
