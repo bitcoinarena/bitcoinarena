@@ -258,3 +258,34 @@ test('a seat that holds no record (no round) sees the federation the census name
   const drawn = new Set(st.seated.map((y) => y.node));
   for (let i = 0; i < 4; i++) assert.ok(!drawn.has(toHex(all[i].pub)), `B's guardian ${i}: no record, still guarding (a')`);
 });
+
+test('seats that hold no round and name no peers read the drawn nodes\' codes at their adverts\' endpoints (kanban #495: every cohort draw went void, each seat holding only its own code)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`e${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/etx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `eop${i}`, guardianCapable: true, endpoint: `ws://10.0.0.1:${6500 + i}`, guardianEndpoint: `ws://10.0.0.1:${6500 + i}/guardian`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
+  const w = { tip: 300 };
+  const seats = [];
+  const byRoot = new Map();
+  for (let i = 0; i < 12; i++) {
+    const s = createFoundingSeat({ records: () => held, entriesAt: async () => cEntries,
+      beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+      guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
+      nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
+      post: async () => {},                                  // every post lost, and no configured peers: as on the seven second-host seats
+      peers: () => [],
+      fetchJson: async (u) => { const s2 = byRoot.get(u.replace(/\/founding$/, '')); if (!s2) throw new Error('no such seat'); return s2.state(); } });
+    seats.push(s); byRoot.set(`http://10.0.0.1:${6500 + i}`, s);
+  }
+  for (const s of seats) await s.tick();
+  w.tip = 301;
+  for (const s of seats) await s.tick();                  // each makes its own code
+  for (const s of seats) await s.tick();                  // and reads the others' at their endpoints
+  const st = seats[0].state();
+  assert.deepEqual([st.trigger.kind, st.seated.length], ['cohort', 10]);
+  for (const s of seats) {
+    const x = s.state();
+    if (!x.seated.some((y) => y.node === toHex(all[seats.indexOf(s)].pub))) continue;   // an alternate holds no code of its own
+    assert.equal(x.seated.filter((y) => y.code).length, 10, 'a drawn seat holds every drawn code');
+  }
+});

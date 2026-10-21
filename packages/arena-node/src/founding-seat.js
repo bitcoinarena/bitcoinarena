@@ -189,13 +189,23 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // A SUCCESSOR HAS ITS PREDECESSOR'S SIZE: the held record's nominal (federation B: 7) - genesis's federation_nominal
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
-      current = { key, trigger: t, via, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst,
+      current = { key, trigger: t, via, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst,
         foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say }) };
       say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });
     }
-    // codes this seat missed, from the others' GET /founding
-    if (fetchJson) for (const root of peers()) {
+    // codes this seat missed, from the others' GET /founding - ASKED OF THE DRAWN NODES THEMSELVES too, at their census adverts'
+    // endpoints (kanban #495, measured 2026-10-21 on the 10-node cohort 8fbeab5e at 157,174: the seven new seats hold no round, so
+    // peers() - the configured seats and the newest held round's census - never named one another; each seat held only its own code
+    // and every draw went void, "more no-shows than alternates")
+    const drawnRoots = () => {
+      const st = current.founding.state ? current.founding.state() : {};
+      const keys = new Set([...(st.seated || []).map((x) => String(x.node || x).toLowerCase()), ...(st.alternates || []).map((x) => String(x).toLowerCase())]);
+      keys.delete(toHex(ownKey));
+      return (current.entries || []).filter((e) => e && e.advert && e.advert.endpoint && keys.has(toHex(e.pubkey)))
+        .map((e) => String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+    };
+    if (fetchJson) for (const root of [...new Set([...peers(), ...drawnRoots()])]) {
       try {
         const s = await fetchJson(`${root}/founding`);
         if (s && s.id === current.founding.id) { current.founding.takeAll(s.codes); if (s.federation === true) current.founding.federationSeen(); }
