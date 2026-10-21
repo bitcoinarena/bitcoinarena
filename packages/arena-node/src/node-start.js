@@ -11,7 +11,7 @@
 // launcher start every node through here, so whether a node is a guardian is decided by the node, never by a launcher.
 //: with ARENA_FOUNDING=1 a node without the files starts its guardian in setup mode, so it can be drawn; and a
 // guardian seated first in a successor runs a second one, the guardian-next (guardiansToStart below).
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { join } from 'node:path';
@@ -93,6 +93,20 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
           if (guardian.running) return { ok: true };
           guardian = await start('guardian');
           return guardian.running ? { ok: true } : { ok: false, why: guardian.why || 'the guardian did not start' };
+        },
+        // A SETUP FROM A FOUNDING THAT WENT VOID, STARTED AGAIN (kanban #495, measured 2026-10-21: node 6's guardian had taken its local
+        // params in the voided founding e8741283 and refused the next founding's - "Local parameters have already been set" - so its
+        // code never came): only a guardian in setup mode (no federation key yet: nothing is lost), stopped, its setup database set
+        // aside beside it (database.void-<time>, kept), and started again in a fresh setup. The founding asks it once (founding.js).
+        freshSetup: async () => {
+          if (plan.own !== 'setup' || !guardian.running) return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
+          const dir = guardian.dataDir;
+          await guardian.stop(); guardian = none;
+          const db = join(dir, 'database');
+          let kept = null;
+          if (existsSync(db)) { kept = `${db}.void-${new Date().toISOString().replace(/[:.]/g, '-')}`; renameSync(db, kept); }
+          guardian = await start('guardian');
+          return guardian.running ? { ok: true, kept } : { ok: false, why: guardian.why || 'the guardian did not start again', kept };
         },
       },
       serviceSettings: settings });

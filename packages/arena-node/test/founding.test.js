@@ -19,11 +19,15 @@ const entries = keys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/tx',
   advert: { operatorId: `op${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}` } }));
 const seed = taggedHash('TEST/beacon', Uint8Array.of(1));
 
-function network({ offline = new Set(), done = () => true } = {}) {
+function network({ offline = new Set(), done = () => true, stale = new Set(), staleError = 'Local parameters have already been set', freshFails = false } = {}) {
   const log = [];
   const seats = [];
   const fake = (i) => ({
-    localParams: async ({ leader, name, size }) => { log.push(['params', i, leader, leader ? name : null, leader ? size : null]); return `code-${i}`; },
+    localParams: async ({ leader, name, size }) => {
+      // a guardian whose params an earlier founding set (kanban #495): refused until its setup is started again
+      if (stale.has(i)) { log.push(['refused', i]); throw new Error(`Config Gen Error: Federation rpc error { method => set_local_params, 1024 => Unspecified server error: ${staleError} }`); }
+      log.push(['params', i, leader, leader ? name : null, leader ? size : null]); return `code-${i}`; },
+    freshSetup: async () => { log.push(['fresh', i]); if (freshFails) return { ok: false, why: 'the guardian did not start again' }; stale.delete(i); return { ok: true, kept: `database.void-${i}` }; },
     addPeer: async (code) => { log.push(['add', i, code]); },
     startDkg: async () => { log.push(['dkg', i]); },
     invite: async () => 'fed11invite',
@@ -207,4 +211,26 @@ test('a seated node whose seat restarts past the fifth posts its own code first 
   assert.deepEqual(st.noShows, [], 'it does not count itself a no-show');
   assert.equal(st.void, false);
   assert.deepEqual(log.filter((l) => l[0] === 'add').length, 3); assert.ok(log.some((l) => l[0] === 'dkg'), 'it adds the other three and starts its key generation');
+});
+
+// PARAMS FROM A FOUNDING THAT WENT VOID (kanban #495, measured 2026-10-21: node 6's guardian kept the params of the voided e8741283 and
+// refused 082e74b3's - "Local parameters have already been set" - so its code never came until its setup was reset by hand)
+test('a seated guardian holding an earlier founding\'s params starts its setup again once, posts its code, and the DKG runs', async () => {
+  const seated = network().seats[0].state().seated.map((x) => idx(x.node));
+  const n = network({ stale: new Set([seated[1]]) });
+  await n.round(101);
+  await n.round(102);
+  assert.deepEqual(n.log.filter((l) => l[0] === 'fresh').map((l) => l[1]), [seated[1]], 'that guardian, once');
+  assert.ok(n.log.some((l) => l[0] === 'params' && l[1] === seated[1]), 'its params taken after the fresh setup');
+  for (const i of seated) assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === i), `guardian ${i} started the DKG`);
+});
+
+test('another refusal is no reason to start the setup again; a fresh setup that does not help is not tried twice', async () => {
+  const seated = network().seats[0].state().seated.map((x) => idx(x.node));
+  const other = network({ stale: new Set([seated[2]]), staleError: 'peer unreachable' });
+  await other.round(101); await other.round(102);
+  assert.deepEqual(other.log.filter((l) => l[0] === 'fresh'), [], 'not for another error');
+  const stuck = network({ stale: new Set([seated[2]]), freshFails: true });
+  await stuck.round(101); await stuck.round(102); await stuck.round(103);
+  assert.deepEqual(stuck.log.filter((l) => l[0] === 'fresh').map((l) => l[1]), [seated[2]], 'once in a founding');
 });
