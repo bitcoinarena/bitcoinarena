@@ -549,7 +549,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       // custody added to a node with a bond: the bond's advertisement is updated to name custody and the guardian's endpoint (§5A.2)
       if (laterCustody(s)) {
         const advert = advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
-          payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null });
+          payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
         let u;
         try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
         catch (e) { return { ok: false, why: e.message }; }
