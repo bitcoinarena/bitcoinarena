@@ -4,12 +4,12 @@
 // question, source rule, fees, its 15-minute period, outcomes, 2 of 3 - and its client byte for byte (frozen by hash), but
 // with keys of its own: its developer's and three attestors' (attestors.js), never the regtest market's public test words.
 // Its developer donation goes to testnet4's donation key set, as nextblock's and Rock Paper Scissors' do.
-import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../arena-protocol/src/manifest.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
-import { UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
-import { UPDOWN_TERMS, UPDOWN_PERIOD_MS, UPDOWN_CLIENT_HASH } from '../../arena-node/test/plugins/updown/index.js';
+import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from 'arena-sdk/manifest';
+import { fromHex } from 'arena-sdk/hash';
+import { donationSetId } from 'arena-sdk/donation';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
+import { UP_DOWN_OUTCOMES } from 'arena-sdk/up-down';
+import { UPDOWN_TERMS, UPDOWN_PERIOD_MS, UPDOWN_CLIENT_HASH } from './market-terms.js';
 import { UPDOWN_TN4_ATTESTORS, UPDOWN_TN4_DEV_PUBKEY } from './attestors.js';
 
 export const BODY = {
