@@ -13,6 +13,7 @@ import { SeasonRows } from './SeasonRows.jsx';
 import { ZapCard } from './ZapCard.jsx';
 import { ChipList } from './ChipList.jsx';
 import { BalanceSplit } from './BalanceSplit.jsx';
+import { ConfirmCard } from './ConfirmCard.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -47,3 +48,10 @@ export function drawSplit(host, props) {
   flushSync(() => host._root.render(<BalanceSplit {...props} />));
 }
 if (typeof window !== 'undefined') window.ArenaBalance = { drawSplit };
+// THE PAGE'S CONFIRMATIONS (its gates hand over the words; one answer each)
+export function ask(host, props) {
+  if (!host._root) host._root = createRoot(host);
+  flushSync(() => host._root.render(<ConfirmCard key={Date.now()} {...props} />));
+}
+export function clear(host) { if (host._root) { host._root.unmount(); host._root = null; } }
+if (typeof window !== 'undefined') window.ArenaConfirm = { ask, clear };

@@ -3969,8 +3969,18 @@
         catch { /* shown as not read */ }
       }
       const $ = (id) => document.getElementById(id);
+      const statusLine = fed ? `${fed.status}${fed.signers ? ` · ${fed.signers} of ${fed.nominal} guardians signed` : ''}` : 'no signed record read';
+      const inReact = (window.ARENA_ASK_IN_REACT || (() => null))('arena-fed-confirm', { title: 'Trust this federation?', sub: 'This federation is not on this page\'s known-good list. Its guardians hold your deposit and your stake.',
+        rows: [['Federation', fid], ['Status', statusLine]], guardians: rows, guardiansEmpty: 'Its guardians could not be read from the census.', yes: 'I trust this federation' });
+      if (inReact) {
+        window.ARENA_FED_CONFIRM_SHOWN = { federation: fid, guardians: rows.length };
+        if (!(await inReact)) return { ok: false, why: 'This federation is not on this page\'s known-good list and was not confirmed: nothing is deposited or staked.' };
+        ARENACLIENT.confirmFederation(window.ARENA_BROWSER_STORE(), fid);
+        if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED();
+        return { ok: true, confirmed: true, asked: true };
+      }
       $('afc-id').textContent = fid;
-      $('afc-status').textContent = fed ? `${fed.status}${fed.signers ? ` · ${fed.signers} of ${fed.nominal} guardians signed` : ''}` : 'no signed record read';
+      $('afc-status').textContent = statusLine;
       const list = $('afc-guardians'); list.textContent = '';
       if (!rows.length) list.textContent = 'Its guardians could not be read from the census.';
       for (const g of rows) {
@@ -3992,11 +4002,24 @@
     };
     // WARNINGS BEFORE ENTRY (spec §18A.7 / §22A): the engine's from the round's own contract, the game's from
     // the seats' listing (only codes this page can name, ARENACLIENT.entryWarnings); none - nothing is shown
+    // THE CONFIRMATIONS IN REACT (kanban #564): with the page's bundle loaded (window.ArenaConfirm), a dialog's own box is hidden and the
+    // same words are asked in a React card in it; answered once, true or false. Without the bundle each gate uses its own box below.
+    window.ARENA_ASK_IN_REACT = (boxId, props) => {
+      if (!(window.ArenaConfirm && window.ArenaConfirm.ask)) return null;
+      const box = document.getElementById(boxId); if (!box) return null;
+      const own = box.querySelector(':scope > .afc-box'); if (own) own.style.display = 'none';
+      let host = box.querySelector(':scope > .afc-react');
+      if (!host) { host = document.createElement('div'); host.className = 'afc-react'; box.append(host); }
+      box.style.display = 'flex';
+      return new Promise((done) => window.ArenaConfirm.ask(host, Object.assign({}, props, { onAnswer: (v) => { box.style.display = 'none'; setTimeout(() => window.ArenaConfirm.clear(host), 0); done(v); } })));
+    };
     window.ARENA_WARNINGS_GATE = async ({ round, roundIdHex }) => {
       const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r.id === roundIdHex);
       const codes = ARENACLIENT.entryWarnings ? ARENACLIENT.entryWarnings(round, (row && row.warnings) || []) : [];
       window.ARENA_WARNINGS_SHOWN = { round: roundIdHex, codes };
       if (!codes.length) return { ok: true, codes };
+      const inReact = (window.ARENA_ASK_IN_REACT || (() => null))('arena-warn-confirm', { title: 'Before you stake', sub: 'This round\'s rules are fixed in its contract. Read what they mean for you:', items: ARENACLIENT.warningsSay(codes), yes: 'Enter anyway' });
+      if (inReact) return (await inReact) ? { ok: true, codes, confirmed: true } : { ok: false, codes, why: 'This round\'s warnings were not accepted: nothing is staked.' };
       const $ = (id) => document.getElementById(id);
       const list = $('awc-list'); list.textContent = '';
       for (const t of ARENACLIENT.warningsSay(codes)) { const li = document.createElement('li'); li.textContent = t; list.appendChild(li); }
@@ -4010,6 +4033,9 @@
     window.ARENA_SWAP_CONFIRM = async (q, from, to) => {
       const $ = (id) => document.getElementById(id);
       const sat = (msat) => `${Math.ceil(Number(msat) / 1000).toLocaleString('en-US')} sat`;
+      const swapItems = [`Move ${sat(q.amountMsat)} through a gateway that serves both.`, `Fee: ${sat(q.feeMsat)}${q.ruleKnown ? '' : ' (the gateways name no fee rule)'}.`, `Total from federation ${String(from).slice(0, 8)}: ${sat(q.totalMsat)}.`];
+      const inReact = (window.ARENA_ASK_IN_REACT || (() => null))('arena-warn-confirm', { title: 'Enter by swap', sub: `This round is in federation ${String(to).slice(0, 8)}; your money is in federation ${String(from).slice(0, 8)}.`, items: swapItems, yes: 'Swap and enter' });
+      if (inReact) { window.ARENA_SWAP_SHOWN = { amountMsat: String(q.amountMsat), feeMsat: String(q.feeMsat), from, to }; return inReact; }
       const title = $('awc-title'), sub = document.querySelector('#arena-warn-confirm .afc-sub'), go = $('awc-go');
       const was = [title.textContent, sub.textContent, go.textContent];
       title.textContent = 'Enter by swap';
