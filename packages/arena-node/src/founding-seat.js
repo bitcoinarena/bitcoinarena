@@ -103,7 +103,7 @@ export function guardingOpenOf({ entries = [], held = [], except = null }) {
  * The guardian's setup, through the stock CLI: `run(args)` runs fedimint-cli and answers its stdout. The code is the
  * set-local-params output without its JSON quotes.
  */
-export function cliSetup({ run, apiPort, password, guardianName }) {
+export function cliSetup({ run, apiPort, password, guardianName, freshSetup = null }) {
   const setup = (...a) => run(['--password', password, 'admin', 'setup', `ws://127.0.0.1:${apiPort}`, ...a]);
   const unq = (s) => String(s).trim().replace(/^"|"$/g, '');
   return {
@@ -111,6 +111,8 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
     addPeer: async (code) => { await setup('add-peer', code); },
     startDkg: async () => { await setup('start-dkg'); },
     invite: async () => null,
+    // the guardian started again in a fresh setup (node-start.js guardianControl.freshSetup), where the node runs it
+    ...(freshSetup ? { freshSetup } : {}),
     // WHETHER THE GUARDIAN WAITS IN SETUP (rehearsal 20b 2026-10-14): asked of the SETUP API itself. A guardian in setup mode
     // does not serve the admin `status` ("Method not found"), so a seat asking that never took part; `admin setup status` answers
     // "ConsensusIsRunning" once its federation runs, and a setup state (AwaitingLocalParams, SharingConnectionCodes, ...) before
