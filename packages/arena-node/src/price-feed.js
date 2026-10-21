@@ -361,10 +361,14 @@ export class PriceFeed {
    * a testnet4 seat: the beat was 13.8 % of its main thread - every 5 s it read every open round's contract out of the store and
    * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). A round's contract never
    * changes: the open ids are read (no contract), a round seen for the first time is decoded once and remembered as a price round
-   * or not, and a round no longer open is forgotten.
+   * or not, and a round no longer open is forgotten. And the list itself is read again only once a round opened, closed or had its
+   * contract changed (round.openSeq; kanban #576, profiled 2026-10-21 23:1xZ on a test host seat: reading the ~4,560 open ids every
+   * beat was 6.7 % of its main thread, a fifth of its busy time, while the open set had not moved).
    */
   #openPriceRounds() {
     if (!this.kept) this.kept = new Map();       // round hex -> its contract when a price round, else null
+    const seq = this.round.openSeq;
+    if (seq !== undefined && this.keptSeq === seq && this.keptOut) return this.keptOut;
     const ids = typeof this.round.openRoundIds === 'function' ? this.round.openRoundIds() : this.round.openRounds().map((r) => r.roundId);
     const open = new Set();
     const out = [];
@@ -380,6 +384,7 @@ export class PriceFeed {
       if (c) out.push({ roundId: id, contract: c });
     }
     for (const rh of this.kept.keys()) if (!open.has(rh)) this.kept.delete(rh);
+    this.keptSeq = seq; this.keptOut = out;
     return out;
   }
 
