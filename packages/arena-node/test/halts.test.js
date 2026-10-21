@@ -66,6 +66,33 @@ test('a stranger, a forged observation and a later session do not make or keep a
   assert.equal(me.proofOf(fid), null, 'one seat alone proves nothing');
 });
 
+// KEPT ACROSS A RESTART (kanban #326, measured 2026-10-21: T2's seats rolled at 157,238 held no observation and counted
+// abandon_blocks again): what a seat signed, and the session and first_height it saw, are read back at start.
+test('a restart keeps the observations and the clock: a seat restarted mid-way signs at abandon_blocks from the first sighting', async () => {
+  const world = { tip: 341, session: 41, down: new Set([2, 3]), posted: [] };
+  let disk = null;
+  const seat = () => createHalts({ records, censusSeats: () => seats.map((x) => x.pub), clocks, verify, sign: (h) => schnorr.sign(h, seats[0].secret),
+    ownKey: seats[0].pub, height: async () => world.tip, ask: async (ep) => { const i = Number(ep.slice(-1)); if (world.down.has(i)) throw new Error('down'); return world.session; },
+    post: async (o) => { world.posted.push(o); }, load: () => (disk === null ? [] : JSON.parse(disk)), save: (v) => { disk = JSON.stringify(v); } });
+  const a = seat();
+  await a.observe();                                       // 41 first seen at 341
+  assert.deepEqual(JSON.parse(disk).seen[fid], { session: 41, firstHeight: 341, at: JSON.parse(disk).seen[fid].at });
+  world.tip = 346;
+  const b = seat();                                        // restarted at 346: the clock is the one seen at 341
+  assert.deepEqual([b.seen(fid).session, b.seen(fid).firstHeight], [41, 341]);
+  world.tip = 351;
+  const row = (await b.observe())[0];
+  assert.deepEqual([row.session, row.firstHeight, row.signed], [41, 341, true]);
+  const c = seat();                                        // and what it signed is still held after the next restart
+  assert.equal(c.list(fid).length, 1);
+  // a higher session after a restart starts the clock again, as before
+  world.session = 42; world.tip = 352;
+  assert.deepEqual((await c.observe()).map((r) => [r.session, r.firstHeight, r.signed]), [[42, 352, undefined]]);
+  // the first format (a list of observations alone) still reads
+  disk = JSON.stringify(JSON.parse(disk).observations);
+  assert.equal(seat().list(fid).length, 1);
+});
+
 test('a guardian session count is asked over its endpoint, a local override taken first', async () => {
   const opened = [];
   class FakeWS { constructor(u) { opened.push(u); this.h = {}; setTimeout(() => this.h.open(), 1); }

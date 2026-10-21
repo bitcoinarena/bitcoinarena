@@ -49,6 +49,9 @@ export function seatedOf(record) {
 export const CHAIN_BASIS_LAG = 6;
 export const CHAIN_BASIS_STEP = 6;
 
+/** How many census seats one mirror pass asks for a record none of its guardians' nodes holds. */
+export const MIRROR_PEERS = 8;
+
 export function federationsOf(census) {
   const ids = new Map();
   for (const e of census.entries || []) for (const g of (e.advert && e.advert.guardianOf) || []) ids.set(toHex(g.federationId), g.federationId);
@@ -78,7 +81,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // memory only, and after a roll of all seats the first gathering found too few of A's guardians up to sign): `store` { load() ->
   // [{ federation, record hex }], save(federation, record hex) }; restore() checks each saved record against the census at its own
   // height before it is kept again, as a mirrored one is
-  store = null }) {
+  store = null,
+  // A RECORD NONE OF ITS GUARDIANS' NODES HOLDS (kanban #326, measured 2026-10-21 22:3xZ): T2's census guardians are the T nodes,
+  // whose seats hold no T2 record, while T2's own seats do - every other seat logged "none of its guardians holds a record" and
+  // never observed T2's halt. `peerSeats` () -> [base URL]: the census seats this seat reads; MIRROR_PEERS of them, in turn,
+  // are asked too. A record from anywhere stands only as it stands against this seat's census.
+  peerSeats = () => [] }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -375,6 +383,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }
     return { restored, of: rows.length };
   }
+  let peerTurn = 0;                          // where the next pass starts in peerSeats()
   async function mirror(federationId, b, inviteFederationId) {
     const fid = toHex(federationId);
     const censusKept = new Map();          // record height -> its census (one read per height in a pass)
@@ -382,9 +391,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
     let best = null; let why = 'none of its guardians holds a record';
-    await Promise.all(guardians.map(async (g) => {
-      const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-      if (!base) return;
+    const bases = guardians.map((g) => String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')).filter(Boolean);
+    const ask = (list) => Promise.all(list.map(async (base) => {
       try {
         const r = await fetcher(`${base}/federations`, { signal: AbortSignal.timeout(8000) });
         if (!r.ok) return;
@@ -405,6 +413,15 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         }
       } catch { /* the next guardian */ }
     }));
+    await ask(bases);
+    if (!best) {
+      let others = []; try { others = [...new Set((peerSeats() || []).map((u) => String(u).replace(/\/+$/, '')))].filter((u) => !bases.includes(u)); } catch { others = []; }
+      if (others.length) {
+        const from = (peerTurn++ * MIRROR_PEERS) % others.length;
+        await ask([...others.slice(from), ...others.slice(0, from)].slice(0, MIRROR_PEERS));
+        if (!best) why = `${why}, nor ${Math.min(MIRROR_PEERS, others.length)} of the census seats asked`;
+      }
+    }
     if (!best) return { ok: false, why, mirrored: false };
     keep(fid, best.bytes, best.v);
     return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
