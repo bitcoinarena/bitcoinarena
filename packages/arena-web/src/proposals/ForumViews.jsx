@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PROPOSALS FORUM'S READING VIEWS IN REACT (kanban #564, slice 1 of src/arena-ui/proposals): the thread list and one thread. The
-// forum's own script (forum.js) still reads the nodes, keeps the player's in-game key and signs and posts; it hands these class
-// components plain view data - names, stages, amounts, and a proposal's text as the HTML its own Markdown made (escaped there) - and
-// gets the reply back. The new-proposal, fees and payout forms stay its own for now.
+// THE PROPOSALS FORUM'S VIEWS IN REACT (kanban #564, src/arena-ui/proposals): the thread list, one thread and the three new-proposal
+// forms - the only drawing of the forum (the owner 2026-10-21: "no fall backs"). The forum's own script (forum.js) reads the nodes, keeps
+// the player's in-game key and signs and posts; it hands these class components plain view data - names, stages, amounts, and a
+// proposal's text as the HTML its own Markdown made (escaped there) - and gets the reply or the form back.
 import React from 'react';
 
 const Stage = ({ s }) => <span className={`stage ${s.cls}`}>{s.text}</span>;
-const Avatar = ({ a }) => <div className="ava" style={{ background: a.colour }}>{a.initial}</div>;
+const Avatar = ({ a, title }) => <div className="ava" style={{ background: a.colour }} title={title}>{a.initial}</div>;
 
 /** The thread list: { status, items: [{ pip, title, by, amount, replies, stage: { cls, text }, href }] or null while reading }. */
 export function ProposalList({ status, items }) {
@@ -29,7 +29,7 @@ export function ProposalList({ status, items }) {
 function Post({ p, depth, children }) {
   return (
     <article className={`post${depth ? ' reply' : ''}`} style={depth ? { '--depth': Math.min(depth, 4) } : undefined}>
-      <Avatar a={p.avatar} />
+      <Avatar a={p.avatar} title={p.npub} />
       <div>
         <div className="who"><b title={p.npub}>{p.name}</b> · {p.head}</div>
         {p.html !== undefined ? <div className="body md" dangerouslySetInnerHTML={{ __html: p.html }} /> : <div className="body">{p.text}</div>}
@@ -76,7 +76,7 @@ export class ProposalThread extends React.Component {
   }
 }
 
-// A NEW PROPOSAL (slice 2): the type switch (its other types are forum.js's own forms), the reserves and the cap, title / what it does /
+// A NEW PROPOSAL (slice 2): the type switch (the fees and payout types are their own components below), the reserves and the cap, title / what it does /
 // how it improves (Markdown, with a preview made by forum.js's own Markdown), the amount against the cap and the Lightning address - the
 // same checks and words as before - and publish: forum.js signs with the in-game key and hands it to every node (`onPublish`).
 export const LN_ADDRESS = /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;

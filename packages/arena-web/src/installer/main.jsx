@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER'S REACT STEPS, MOUNTED (kanban #564): window.ArenaWizard.show(step, sectionOf, { st, post, get, reload }) draws the
-// current step into its section when it is ported and answers true - every other ported step is taken down, so its timers stop - and
-// answers false for a step the page still draws itself; mount(step, element, props) draws one (the roles' list, with onCustody). One
-// root per element, drawn again on every load() with the new state. The page loads this file before its own script (a plain script, not a
-// module), so the first load() already finds it; without the file the page is the one it always was.
+// current step into its section and answers true - every other step is taken down, so its timers stop - and answers false for the roles,
+// which mount(step, element, props) draws into their list (with onCustody). One root per element, drawn again on every load() with the
+// new state. The page loads this file before its own script (a plain script, not a module), so the first load() already finds it; the
+// page draws no step of its own (the owner 2026-10-21: "no fall backs").
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RolesStep, SeedStep, OwnerStep, PromiseStep } from './WizardSteps.jsx';

@@ -8,17 +8,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-const section = HTML.slice(HTML.indexOf('<section class="settings-card" id="arena-set-account">'), HTML.indexOf('</section>', HTML.indexOf('id="arena-set-account"')));
+// the card is React's (kanban #564, arena-web SettingsCards: AccountCard); the page keeps its section and the CSS
+const CARDS = readFileSync(new URL('../../arena-web/src/arena/SettingsCards.jsx', import.meta.url), 'utf8');
+const section = CARDS.slice(CARDS.indexOf('export class AccountCard'));
 
 test('both delete buttons are red danger buttons', () => {
-  assert.match(section, /<button id="arena-acct-delete" type="button" class="danger">/);
-  assert.match(section, /<button id="arena-acct-go" type="button" class="primary danger" disabled>/);
+  assert.match(section, /<button id="arena-acct-delete" type="button" className="danger"/);
+  assert.match(section, /<button id="arena-acct-go" type="button" className="primary danger" disabled=\{!saved\}/);
+  assert.match(HTML, /<section class="settings-card" id="arena-set-account"><\/section>/);
   assert.match(HTML, /#arena-settings button\.danger \{ color: #ff6b6b;/);
   assert.match(HTML, /#arena-settings button\.danger\.primary \{ color: #fff; background: #c62828;/);
 });
 
 test('the section says in red, before any click, that the money is lost without the words or the key', () => {
-  const risk = section.match(/<div class="risk" id="arena-acct-risk">([^<]+)<\/div>/);
+  const risk = section.match(/<div className="risk" id="arena-acct-risk">([^<]+)<\/div>/);
   assert.ok(risk, 'a risk line');
   assert.match(risk[1], /24 words/); assert.match(risk[1], /Nostr key/); assert.match(risk[1], /lost/);
   // (2026-10-17): the warning moved BELOW the button, smaller and centered

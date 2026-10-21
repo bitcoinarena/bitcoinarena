@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FORUM'S REACT VIEWS, MOUNTED (kanban #564): window.ArenaForum.draw(element, kind, props) - kind 'list', 'thread' or 'new' - one root,
-// drawn again at every route; forum.js unmounts it (window.ArenaForum.clear) before it draws one of its own forms there.
+// THE FORUM'S REACT VIEWS, MOUNTED (kanban #564): window.ArenaForum.draw(element, kind, props) - kind 'list', 'thread', 'new', 'fees' or
+// 'payout' - one root, drawn again at every route; window.ArenaForum.clear unmounts it (a form drawn fresh after it was published).
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { ProposalList, ProposalThread, NewProposal, FeesProposal, PayoutProposal } from './ForumViews.jsx';

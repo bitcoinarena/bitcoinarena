@@ -68,16 +68,8 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .ff-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 8px 0; } .ff-row { display: flex; align-items: center; gap: 8px; }
     .ff-row b { margin-left: auto; white-space: nowrap; } .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
     .ff-note { color: var(--muted); font-size: 12.5px; }
-    .role-ic { font-size: 26px; line-height: 1; } .role-earn { color: #f7931a; font-size: 12.5px; margin-top: 3px; } .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
+    .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
     @media (max-width: 560px) { .ff-rows { grid-template-columns: 1fr; } }
-    /* THE ROLE CARDS: one line each - icon, name, what it does, its 1 % - its needs as chips, the rest behind "more" */
-    .rc { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 6px 0; } .rc:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
-    .rc-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; } .rc-top input { width: auto; margin: 0; }
-    .rc .role-ic { font-size: 22px; } .rc-name { flex: 1; min-width: 150px; } .rc-does { color: var(--muted); }
-    .rc-pct { background: #f7931a; color: #111; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-    .rc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0 34px; } .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 12px; white-space: nowrap; }
-    .chip.opt { border-color: #f7931a; color: #f7931a; } .rc-more { margin: 4px 0 0 34px; font-size: 12.5px; color: var(--muted); } .rc-more summary { cursor: pointer; } .rc-more p { margin: 4px 0; }
-    @media (max-width: 560px) { .rc-chips, .rc-more { margin-left: 0; } }   /* the badge wraps to the left edge on a phone: chips under it, not indented */
 
     /* THE INTRO: what a node is, what it earns, what it needs - before step 1 */
     #s-intro .lead { font-size: 17px; line-height: 1.5; margin: 6px 0 14px; }
@@ -129,36 +121,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     </ul>
     <button id="intro-go">Set up my node</button>
   </section>
-  <section id="s-chain">
-    <h2>1. Bitcoin connection</h2>
-    <p class="sub">Your node reads the testnet4 chain. Use your own Bitcoin Core, or an Electrum server.</p>
-    <div class="row">
-      <button class="ghost" id="k-core">My Bitcoin Core</button><button class="ghost" id="k-electrum">Electrum server</button><button class="ghost" id="k-install">Install Bitcoin Core for me</button>
-    </div>
-    <div id="core-form">
-      <label>RPC URL</label><input id="c-url" value="http://127.0.0.1:48332/">
-      <label>Cookie file (or leave empty and give user and password)</label><input id="c-cookie" placeholder="~/.bitcoin/testnet4/.cookie">
-      <div class="row"><div><label>RPC user</label><input id="c-user"></div><div><label>RPC password</label><input id="c-pass" type="password"></div></div>
-    </div>
-    <div id="el-form" hidden>
-      <label>Server</label><select id="e-pick"></select>
-      <div class="row"><div><label>Host</label><input id="e-host"></div><div><label>Port</label><input id="e-port"></div></div>
-      <label><input type="checkbox" id="e-tls" checked style="width:auto"> TLS</label>
-      <p class="sub">In Electrum mode a small bridge on this machine reads headers from the server and verified blocks from Esplora.</p>
-    </div>
-    <div id="in-form" hidden>
-      <div id="in-plan" class="sub">Checking this machine…</div>
-      <label class="role in-opt"><input type="checkbox" id="in-prune"><div><b>Pruned</b><p>Keeps the chain state and only the newest blocks: a few GB instead of the whole chain. Your node works the same.</p></div></label>
-      <label class="role in-opt"><input type="checkbox" id="in-main"><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. The Arena runs on testnet4 now.</p></div></label>
-      <button id="in-go">Install and start syncing</button>
-      <div id="sync" hidden>
-        <p class="warn"><b>Bookmark this page.</b> The first sync can take hours on testnet4 and days on mainnet. You can close this page and come back; setup continues here once testnet4 is synced. Keep the installer running (this terminal), or start it again later.</p>
-        <div id="sync-rows"></div>
-      </div>
-    </div>
-    <div id="chain-buttons"><button class="ghost" id="chain-test">Test</button><button id="chain-save">Save and go on</button></div>
-    <div class="msg" id="chain-msg"></div>
-  </section>
+  <section id="s-chain"></section>
 
   <section id="s-roles">
     <h2>2. What your node does</h2>
@@ -219,191 +182,34 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
         <div class="cx"><div class="cx-ic">&#9889;</div><b>Gateway</b><p>The Lightning door in and out. Two guardians run one each - and earn about 3&times; more.</p></div>
       </div>
     </div>
-    <button id="roles-save">Save and go on</button>
-    <div class="msg" id="roles-msg"></div>
   </section>
 
-  <section id="s-seed">
-    <h2>3. Your seed: write it down</h2>
-    <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone with them owns the node; without them a lost machine is a lost node.</p>
-    <button id="seed-show">Show my 24 words</button>
-    <div class="words" id="words"></div>
-    <button id="seed-written" hidden>I have written them down</button>
-    <div id="confirm" hidden>
-      <p>Now type back these words from your paper:</p>
-      <div class="row" id="confirm-inputs"></div>
-      <button id="seed-confirm">Confirm</button>
-    </div>
-    <div class="msg" id="seed-msg"></div>
-    <!-- THE EMERGENCY CODE (spec §23A.5a, protocol 17): shown once the words are confirmed, written down beside them -->
-    <div id="emergency" hidden>
-      <h3>Your emergency code: write it down too</h3>
-      <p class="code" id="emergency-code"></p>
-      <p>If this node will be offline longer than the network allows - about two days on mainnet, 12 blocks on testnet4 - type this code on
-      any other node's page (<code>/Dashboard/emergency</code>) or on the Arena site (<code>testnet.bitcoin-arena.io/offline/</code>) to take it out of the network. Its bond stays yours: a node with
-      no guardian role leaves at once; a guardian leaves at once if the request comes before it counts as abandoned, later it is slashed.</p>
-      <p>The code can do nothing else: no money, no settings. <b>Never type your 24 words anywhere but your own node.</b></p>
-      <button id="emergency-written">I have written the code down</button>
-    </div>
-  </section>
+  <section id="s-seed"></section>
 
-  <section id="s-owner">
-    <h2>4. Owner login</h2>
-    <p class="sub">How you sign in to your node's owner page later.</p>
-    <div class="role"><input type="radio" name="om" value="seed" id="om-seed" checked><div><b>My 24 words</b><p>Type them on the owner page in any browser (they stay in that browser).</p></div></div>
-    <div class="role"><input type="radio" name="om" value="nostr" id="om-nostr"><div><b>Nostr</b><p>Sign in with your Nostr key (a browser extension such as Alby or nos2x, or paste your npub).</p>
-      <label>npub</label><input id="npub" placeholder="npub1..."><button class="ghost" id="nip07">Read from my Nostr extension</button></div></div>
-    <button id="owner-save">Save and go on</button>
-    <div class="msg" id="owner-msg"></div>
-  </section>
+  <section id="s-owner"></section>
 
-  <section id="s-reach">
-    <h2>5. How others reach your node</h2>
-    <p class="sub">Players and other nodes connect to your node. First the installer checks whether the internet can reach this machine directly.</p>
-    <div class="row"><div><label>Port for connections from outside</label><input id="r-port"></div></div>
-    <button class="ghost" id="r-test">Test direct connection</button>
-    <div class="msg" id="r-direct"></div>
-    <div class="role"><input type="radio" name="rm" value="direct" id="rm-direct"><div><b>Direct connection</b><p>Your node listens on the port above. Needs the port open in the firewall and, behind a router, forwarded to this machine.</p></div></div>
-    <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it (Cloudflare sells one for a few dollars a year). No open ports. <b>No domain?</b> Choose workers.dev or Tailscale Funnel below.</p>
-      <button class="ghost" id="r-login">Sign up / log in to Cloudflare</button><div class="msg" id="r-login-msg"></div>
-      <label>Your node's name (under a domain on that account)</label><input id="r-host" placeholder="node.example.com"></div></div>
-    <div class="role"><input type="radio" name="rm" value="tailscale" id="rm-tailscale"><div><b>Permanent Tailscale Funnel</b><p>A fixed https name such as <code>my-pc.tail1234.ts.net</code> from your free Tailscale account - no domain needed, no open ports. Install Tailscale and log in (<code>tailscale up</code>) first; Funnel must be allowed for this machine in your tailnet.</p></div></div>
-    <div class="role"><input type="radio" name="rm" value="workers" id="rm-workers"><div><b>Permanent Cloudflare name, no domain (workers.dev)</b><p>A fixed name such as <code>arena-node-1a2b3c.yourname.workers.dev</code> on your own free Cloudflare account, no open ports: a small Worker there forwards to your node's tunnel and your node keeps it pointed at it. Free up to 100,000 requests a day (Workers Paid: $5 a month).</p>
-      <p>1. <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">Create an API token</a> from the template <b>Edit Cloudflare Workers</b>, with your account. 2. Paste it here:</p>
-      <label>Cloudflare API token</label><input id="r-cftoken" type="password" autocomplete="off" placeholder="the token Cloudflare shows once"></div></div>
-    <div class="role"><input type="radio" name="rm" value="quick" id="rm-quick"><div><b>Temporary anonymous tunnel</b><p>A random <code>trycloudflare.com</code> name, no account. It changes whenever the tunnel restarts, so others lose your node until it is announced again.</p></div></div>
-    <button id="r-save">Save and go on</button>
-    <div class="msg" id="r-msg"></div>
-  </section>
+  <section id="s-reach"></section>
 
-  <section id="s-service">
-    <h2>6. Install and start</h2>
-    <p>The node is installed as a user service, started, checked at its public address, and then you are logged in once as its owner.</p>
-    <label class="role"><input type="checkbox" id="boot" checked><div><b>Start the node again after a reboot</b><p>Recommended. It also keeps the node running when you log out.</p></div></label>
-    <button id="svc">Install and start</button><button class="ghost" id="nostr-login" hidden>Log in with Nostr</button>
-    <div class="msg" id="svc-msg"></div>
-  </section>
+  <section id="s-service"></section>
 
-  <section id="s-lightning">
-    <h2>7. Lightning (custody)</h2>
-    <p>Custody needs a Lightning node. The installer can set up <b>LND</b> here - checked download, testnet4 on your Bitcoin Core, started as a service, its wallet made from your 24 words (one seed for everything; LND's channel backup file is separate, the owner page shows where) - or connect one you already run.</p>
-    <button id="ln-own">Set up LND here</button><button class="ghost" id="ln-conn-show">Connect my LND</button><button class="ghost" id="ln-later">Set it up later</button>
-    <div id="ln-conn" hidden>
-      <label>REST address</label><input id="ln-url" placeholder="https://127.0.0.1:8080">
-      <label>Admin macaroon (hex: <code>xxd -p -c 1000 admin.macaroon</code>)</label><input id="ln-mac">
-      <label>TLS certificate (tls.cert)</label><textarea id="ln-cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-      <button id="ln-conn-go">Test and connect</button>
-    </div>
-    <div class="msg" id="ln-msg"></div>
-    <div id="ln-gw" hidden>
-      <h3>The gateway</h3>
-      <p>The Fedimint gateway pays and receives Lightning for a federation's users through this LND. Its e-cash wallet is made from your 24 words too.</p>
-      <div id="gw-seat" class="seat">
-        <div class="seat-head">&#9889; Earn more: host your federation's gateway</div>
-        <div class="seat-tiles">
-          <div class="tile"><svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="13" cy="20" r="9" fill="#f7931a"/><circle cx="27" cy="20" r="9" fill="#f7931a" opacity=".55"/></svg><b>2 seats</b><span>per federation</span></div>
-          <div class="tile"><svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="14" fill="none" stroke="#3fb950" stroke-width="3"/><path d="M20 11v10l6 4" stroke="#3fb950" stroke-width="3" fill="none" stroke-linecap="round"/></svg><b>Every day</b><span>a fresh pick - your turn comes</span></div>
-          <div class="tile"><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="24" width="9" height="9" rx="2" fill="#57606a"/><rect x="22" y="9" width="9" height="24" rx="2" fill="#f7931a"/></svg><b>~3.5&times;</b><span>a guardian's earnings</span></div>
-        </div>
-        <div class="earn">
-          <div class="bar"><span class="lbl">Guardian</span><span class="fill" style="width:28%"></span><span class="val">0.09 %</span></div>
-          <div class="bar"><span class="lbl">Gateway</span><span class="fill gw" style="width:100%"></span><span class="val">0.31 % + fees</span></div>
-          <div class="sub">of every round's volume in your federation</div>
-        </div>
-        <div class="needs">
-          <div class="need" id="need-in"><span class="ok">&#9675;</span><span class="what">Inbound (deposits)</span><span class="meter"><i style="width:0%"></i></span><span class="num">0 / <b>100,000</b> sat</span></div>
-          <div class="need" id="need-out"><span class="ok">&#9675;</span><span class="what">Outbound (payouts)</span><span class="meter"><i style="width:0%"></i></span><span class="num">0 / <b>100,000</b> sat</span></div>
-          <p class="sub">Inbound comes by itself: when your federation is founded, each of its nodes opens a channel to the next one (a ring), so every gateway gets one channel in and one out.</p>
-          <div class="need"><span class="ok">&#10003;</span><span class="what">Peg-in</span><span class="meter"><i style="width:100%"></i></span><span class="num"><b id="gs-peg">50,000</b> sat · sent automatically</span></div>
-          <div class="need"><span class="ok">&#9675;</span><span class="what">Online</span><span class="meter"><i style="width:0%"></i></span><span class="num">95 % of the day</span></div>
-        </div>
-        <details><summary>How are seats chosen?</summary>
-          <p>Only the federation's own guardians can stand. Every day (144 blocks) its guardians rank the gateways that meet the three needs above - most Lightning routed first, then channel size, uptime and bond - and take the top two. While gateways are equal it comes down to a fair draw, so every eligible gateway gets its days. A seated gateway keeps its seat unless it drops out or another routes 25 % more.</p>
-        </details>
-      </div>
-      <div id="ln-chan">
-        <p class="sub">Channels: <span id="ch-state">…</span></p>
-        <p class="sub">LND's own wallet for channels: <code id="ch-addr"></code> - <span id="ch-bal"></span></p>
-        <div class="row"><div style="flex:3"><label>Peer (pubkey@host:port)</label><input id="ch-peer" placeholder="02…@host:9735"></div><div><label>Sat</label><input id="ch-sats" value="200000"></div></div>
-        <button class="ghost" id="ch-open">Open a channel</button> <button class="ghost" id="ch-refresh">Refresh</button>
-      </div>
-      <button id="gw-setup">Set up the gateway</button><button class="ghost" id="gw-later">Without the gateway for now</button>
-      <div class="msg" id="gw-msg"></div>
-      <div id="gw-join" hidden><button id="gw-next">Continue</button></div>
-    </div>
-  </section>
+  <section id="s-lightning"></section>
 
-  <section id="s-federation">
-    <h2>8. Your federation</h2>
-    <div class="fed-explain">
-      <svg viewBox="0 0 200 180" class="fed-ring" aria-hidden="true"><circle cx="100.0" cy="20.0" r="11" fill="#f7931a"/><circle cx="141.1" cy="33.4" r="11" fill="#f7931a"/><circle cx="166.6" cy="68.4" r="11" fill="#f7931a"/><circle cx="166.6" cy="111.6" r="11" fill="#f7931a"/><circle cx="141.1" cy="146.6" r="11" fill="#f7931a"/><circle cx="100.0" cy="160.0" r="11" fill="#f7931a"/><circle cx="58.9" cy="146.6" r="11" fill="#f7931a"/><circle cx="33.4" cy="111.6" r="11" fill="#57606a"/><circle cx="33.4" cy="68.4" r="11" fill="#57606a"/><circle cx="58.8" cy="33.4" r="11" fill="#57606a"/><rect x="80" y="70" width="40" height="38" rx="6" fill="#1f6feb"/><circle cx="100" cy="86" r="6" fill="#fff"/><rect x="98" y="88" width="4" height="10" fill="#fff"/></svg>
-      <div>
-        <p class="big">A <b>federation</b> is a group of <b>10 nodes</b> that hold the players' bitcoin <b>together</b>.</p>
-        <p>&#128274; Moving any of it takes <b>7 of the 10</b>. No single node - not yours either - can take it.</p>
-        <p>&#9889; Its two gateways connect it to Lightning; every guardian earns a share of each round.</p>
-      </div>
-    </div>
-    <p class="big">How your node gets its seat - <b>automatically</b>, whichever comes first:</p>
-    <div class="choices">
-      <div class="choice"><div><b>&#10024; A new federation</b><p>Your node and <b>9 other new nodes</b> are drawn to start one together.</p></div></div>
-      <div class="choice"><div><b>&#128260; A seat in a successor</b><p>When a federation shrinks (a guardian leaves), a new one takes over its players' bitcoin: its remaining guardians first, the missing seats <b>drawn</b> from nodes like yours.</p></div></div>
-    </div>
-    <p class="sub">Nobody is invited and nobody picks: the draw is fixed by the chain, so no one can choose who guards the money. A full federation takes no new guardian.</p>
-    <button id="fed-save">Continue</button>
-    <div class="msg" id="fed-msg"></div>
-  </section>
+  <section id="s-federation"></section>
 
-  <section id="s-promise">
-    <h2>9. Your bond: the rules</h2>
-    <div class="rules">
-      <div class="rule"><div class="ic lock">&#128274;</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. It makes cheating cost more than it could ever win - that is why players can trust a node they have never met.</p></div></div>
-      <div class="rule good"><div class="ic">&#9989;</div><div><b>Stopping? Press LEAVE first.</b><p>On your owner page. Your node finishes the rounds it holds and gives notice to its federation, then you are free. Your bond comes back when its lock ends.</p></div></div>
-      <div class="rule bad"><div class="ic">&#9888;&#65039;</div><div><b>Just switching off - without LEAVE:</b>
-        <p><b class="red">Your bond is slashed: you lose it.</b> A guardian that vanishes leaves its federation short, and the bitcoin it guards at risk.</p>
-</div></div>
-    </div>
-    <label>Type <b>I UNDERSTAND</b> to go on</label><input id="promise-text" autocomplete="off" placeholder="I UNDERSTAND">
-    <button id="promise-save" disabled>Continue</button>
-    <div class="msg" id="promise-msg"></div>
-  </section>
+  <section id="s-promise"></section>
 
-  <section id="s-bond">
-    <h2>10. The bond</h2>
-    <div id="b-later-custody" hidden><p>Your node has its bond already. Adding custody updates that bond's advertisement to say your node takes custody - <b>no second bond</b>. It needs a little for that update, a reserve for the update that names your federation once it is founded, and the gateway's peg-in. Send <b id="b-need2"></b> sat to your node's wallet:</p></div>
-    <p id="b-new">Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (fees included) to your node's own wallet:</p>
-    <p><code id="b-addr" style="font-size:15px"></code></p>
-    <p class="sub">No testnet4 coins? Get them free from <a href="https://coinfaucet.eu/en/btc-testnet4/" target="_blank" rel="noopener">coinfaucet.eu</a>.</p>
-    <div id="b-custody" hidden>
-      <p id="b-custody-why">Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning - the <b>outside channel</b> (100,000 sat) to a well-connected Lightning node, which links your gateway to the wider network, and the <b>ring channel</b> (150,000 sat) your node opens to the next node of the federation. All of it stays in your node's wallet until then.</p>
-      <label>Peg-in for the gateway (sat)</label><input id="b-pegin" value="50000">
-    </div>
-    <button class="ghost" id="b-check">Check for my deposit</button>
-    <div class="msg" id="b-msg"></div>
-    <div id="b-lock" class="sub"></div>
-    <button id="b-post" disabled>Post the bond</button><button class="ghost" id="b-later">I'll post it later</button>
-  </section>
+  <section id="s-bond"></section>
 
-  <section id="s-done">
-    <h2>Done</h2>
-    <div id="done-text"></div>
-    <button id="finish">Finish</button>
-    <div class="msg" id="finish-msg"></div>
-  </section>
+  <section id="s-done"></section>
 </main>
-<!-- THE STEPS PORTED TO REACT (kanban #564, packages/arena-web): window.ArenaWizard; without the file every step is drawn below as before -->
+<!-- EVERY STEP IN REACT (kanban #564, packages/arena-web; the owner 2026-10-21: "no fall backs"): window.ArenaWizard, loaded before this
+     page's script - each step draws its whole section, the roles their list (the pictures around it stay the page's) -->
 <script src="/wizard.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-// the roles' icons and their share of the 4 % (fee.js, 2026.0.16: four pools of 1 %; custody's third to 2 random gateways per day)
-const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;', liquidity: '&#128167;' };
-const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, gateways &#8531; (2 per federation, randomly chosen each day)', liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share' };
-// THE ROLES A NEW NODE STARTS WITH: game / verify and settlement. Custody and liquidity are chosen on purpose - each needs LND and coins
-// (measured in the Windows VM on rc.14: liquidity was ticked by default, and the bond step asked a custody node for 863,000 sat)
-const OPT_IN_ROLES = ['custody', 'liquidity'];
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
-let st = null, kind = 'core', nostrTemplate = null;
+let st = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
-const say = (id, r, okText) => { const m = $(id); m.className = 'msg ' + (r.ok ? 'ok' : 'bad'); m.textContent = r.ok ? okText : (r.why || 'failed'); };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 let introSkipped = false;
@@ -417,179 +223,14 @@ async function load() {
   const intro = st.step === 'chain' && !st.done.chain && !introSeen();
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
-  // THE REACT STEPS (kanban #564): a ported step draws itself; the roles into their list (the pictures around it stay the page's)
-  const R = window.ArenaWizard || null, ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: load };
-  const reactRoles = st.step === 'roles' && !!R && R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; $('roles-save').hidden = true; } });
-  const reactStep = !!R && R.show(st.step, (k) => $('s-' + k), ctx);
-  if (st.step === 'roles' && !reactRoles) $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
-    `<div class="rc"><label class="rc-top"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && !OPT_IN_ROLES.includes(k)) ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><span class="role-ic">${ROLE_IC[k] || ''}</span>`
-    + `<span class="rc-name"><b>${esc(r.title)}</b> <span class="rc-does">${esc(r.does || '')}</span></span><span class="rc-pct">1 % of each round</span></label>`
-    + `<div class="rc-chips">${(r.chips || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('')}${OPT_IN_ROLES.includes(k) ? '<span class="chip opt">needs coins + LND</span>' : ''}</div>`
-    + `<details class="rc-more"><summary>more</summary><p>${ROLE_EARN[k] || ''}</p><p>${esc(r.needs)}</p></details></div>`).join('');
-  if (st.step === 'roles' && !reactRoles) { const cb = document.querySelector('#roles input[value=custody]'); const show = () => { $('custody-explain').hidden = !(cb && cb.checked); }; if (cb) cb.addEventListener('change', show); show(); }
-  if (st.step === 'chain' && !reactStep) $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
-  if (st.step === 'chain' && !reactStep) pickElectrum();
-  if (st.step === 'lightning' && !reactStep && st.lightning && st.lightning.pubkey) $('ln-gw').hidden = false;
-  if (st.step === 'bond' && !reactStep && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = needText(st.wallet.needSats, st.wallet.parts); $('b-need2').textContent = needText(st.wallet.needSats, st.wallet.parts); $('b-custody').hidden = !st.roles.includes('custody');
-  $('b-later-custody').hidden = !st.custodyLater; $('b-custody-why').hidden = st.custodyLater; $('b-later').textContent = st.custodyLater ? 'Later' : 'I\'ll post it later'; $('b-new').hidden = st.custodyLater; $('b-post').textContent = st.custodyLater ? 'Update my bond for custody' : 'Post the bond'; }
-  if (st.step === 'reach' && !reactStep) { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
-  if ((st.step === 'done' || st.done.service) && !(reactStep && st.step === 'done')) { const r = st.reach || {}; const sv = st.service || {};
-    const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
-      : r.mode === 'permanent' ? `at <code>${esc(r.url)}</code> through your Cloudflare tunnel (the user service <code>arena-tunnel</code>)`
-      : r.mode === 'workers' ? `at <code>${esc(r.url)}</code> - your Worker on workers.dev, forwarding to the node's tunnel (the keeper service <code>arena-workers</code> follows every new tunnel name)`
-      : r.mode === 'tailscale' ? `at <code>${esc(r.url)}</code> through Tailscale Funnel (kept by Tailscale itself; <code>tailscale funnel status</code> shows it)`
-      : `at <code>${esc(r.url || '(no name yet)')}</code> through a temporary tunnel - <b>this name changes when the tunnel restarts</b>; set up a permanent tunnel later from the owner page`;
-    $('done-text').innerHTML = `<p>Your node runs as the user service <code>arena-node</code>${sv.boot ? ' and starts again after a reboot' : ' (not started after a reboot)'}.</p>
-    <p>Others reach it ${how}.</p>
-    <p>Node key: <code>${esc(sv.identity || '')}</code></p>
-    ${st.launchers ? `<p><b>Starting it again</b> (it also starts by itself after a reboot): ${st.launchers.app ? `open <b>Arena Node</b> in your Applications (<code>${esc(st.launchers.app)}</code>) - it starts the node and opens its owner page`
-      : st.launchers.menu && /Start Menu/.test(st.launchers.menu) ? `Start menu &gt; <b>Arena Node</b> &gt; Start Arena node (and Stop, and the owner page)`
-      : `<b>Arena Node</b> in your desktop's menu, or <code>${esc(st.launchers.start)}</code>`}. The scripts - start, stop, status, owner page - are in <code>${esc(String(st.launchers.start).replace(/[\\/][^\\/]+$/, ''))}</code>.</p>` : ''}
-    ${st.launchers && st.launchers.command && st.launchers.command.name ? `<p><b>On the command line</b>: <code>${esc(st.launchers.command.name)} status</code> shows every service (the node, its guardian, LND, the gateway, Tor, the tunnel, the chain), <code>${esc(st.launchers.command.name)} doctor</code> finds problems and says the fix, <code>${esc(st.launchers.command.name)} restart lnd</code> restarts one, <code>${esc(st.launchers.command.name)} config</code> shows the settings (<code>arena.conf</code>).${st.launchers.command.note ? ` ${esc(st.launchers.command.note)}.` : ''}</p>` : ''}
-    <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>${r.url ? '' : ' (this machine only: the node has no public address yet)'} - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
-    ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
-    ${st.lightning ? `<p>Lightning: ${st.lightning.mode === 'own' ? 'LND set up here (the user service <code>arena-lnd</code>)' : 'your own LND, connected'}, node <code>${esc(st.lightning.pubkey || '')}</code>. ${st.gateway && st.gateway.testedMs ? `The gateway runs (the user service <code>arena-gateway</code>) at <code>${esc(st.gateway.publicUrl || '')}</code>${(st.gateway.federations || []).length ? ', serving ' + st.gateway.federations.map((f) => esc(f.name || String(f.federationId).slice(0, 12))).join(', ') : ', no federation joined yet'}.` : 'No gateway yet.'} Your node's federation guardian runs and waits to be drawn: when ten custody nodes guard no federation, they found one together, and your node then names it, joins its gateway to it and sends the peg-in by itself.</p>` : ''}
-    ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it cannot be withdrawn; from that block on, the owner page withdraws it, or <code>arena-install --rebond &lt;sat&gt;</code> makes it larger in one step.</p>`
-      : `<p>No bond yet: send it to <code>${esc(st.wallet ? st.wallet.address : '')}</code> and post it from the owner page. Until then your node is not drawn for rounds.</p>`}`; }
+  // THE REACT STEPS (kanban #564): the current step draws its section, every other one is taken down (its timers stop); the roles
+  // draw into their list, and say when custody is on (its picture shown)
+  const R = window.ArenaWizard, ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: load };
+  if (st.step === 'roles') R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; } });
+  R.show(st.step, (k) => $('s-' + k), ctx);
 }
-function setKind(k) { kind = k; $('core-form').hidden = k !== 'core'; $('el-form').hidden = k !== 'electrum'; $('in-form').hidden = k !== 'install'; $('chain-buttons').hidden = k === 'install';
-  for (const x of ['core', 'electrum', 'install']) $('k-' + x).className = k === x ? '' : 'ghost';
-  if (k === 'install') plan(); }
-const gb = (b) => `${Math.round(b / 2 ** 30).toLocaleString('en')} GB`;
-const dur = (ms) => ms === null || ms === undefined ? 'estimating… (a few minutes of syncing first)' : ms < 3600000 ? `about ${Math.max(1, Math.round(ms / 60000))} min` : ms < 172800000 ? `about ${Math.round(ms / 3600000)} h` : `about ${Math.round(ms / 86400000)} days`;
-async function plan() {
-  const r = await post('/api/core/plan');
-  if (r.core) { $('sync').hidden = false; $('in-go').hidden = true; return watchSync(); }
-  if (r.installed) { $('in-plan').innerHTML = `Bitcoin Core is installed here already (<code>${esc(r.installed)}</code>): choose <b>My Bitcoin Core</b> and connect it.`; $('in-go').disabled = true; return; }
-  const d = r.disk, n = r.needs;
-  $('in-plan').innerHTML = `<p>Free on this disk: <b>${gb(d.freeBytes)}</b>. Needed: testnet4 ${gb(n.testnet4.fullBytes)} (pruned ${gb(n.testnet4.prunedBytes)}), mainnet ${gb(n.mainnet.fullBytes)} (pruned ${gb(n.mainnet.prunedBytes)}).</p>`
-    + (d.warn ? `<p class="warn">${esc(d.warn)}</p>` : '<p>Enough for both full nodes.</p>');
-  $('in-prune').checked = !d.networks.testnet4.full;
-}
-let syncTimer = null;
-async function watchSync() {
-  // installed and syncing: the plan's text and its options are spent
-  $('in-plan').textContent = 'Bitcoin Core is installed on this machine and syncs.'; for (const o of document.querySelectorAll('.in-opt')) o.hidden = true;
-  const r = await (await fetch('/api/core/status')).json();
-  if (r.ok) {
-    $('sync-rows').innerHTML = Object.entries(r.networks).filter(([k]) => k === 'testnet4' || k === 'mainnet').map(([n, x]) => x.ok
-      ? `<div class="role"><div style="flex:1"><b>${n}</b> - block ${x.blocks.toLocaleString('en')} of ${x.headers.toLocaleString('en')} · ${(x.progress * 100).toFixed(2)} % · ${x.synced ? '<b>synced</b>' : dur(x.etaMs) + ' left'}
-         <div style="height:8px;background:var(--line);border-radius:4px;margin-top:6px"><div style="height:8px;width:${(x.progress * 100).toFixed(2)}%;background:var(--accent);border-radius:4px"></div></div></div></div>`
-      : `<div class="role"><b>${n}</b> - ${esc(x.why)}</div>`).join('');
-    if (r.chainSaved) return load();
-  }
-  clearTimeout(syncTimer); syncTimer = setTimeout(watchSync, 15000);
-}
-$('k-install').onclick = () => setKind('install');
-$('in-go').onclick = async (e) => { e.target.disabled = true; $('chain-msg').className = 'msg ok'; $('chain-msg').textContent = 'Downloading and checking Bitcoin Core…';
-  const r = await post('/api/core/install', { prune: $('in-prune').checked, mainnet: $('in-main').checked });
-  if (!r.ok) { e.target.disabled = false; return say('chain-msg', r); }
-  $('chain-msg').className = 'msg ok'; $('chain-msg').textContent = 'Bitcoin Core runs and syncs.'; $('sync').hidden = false; $('in-go').hidden = true; watchSync(); };
-function pickElectrum() { const v = $('e-pick').value; const s = st.electrum[v]; if (s) { $('e-host').value = s.host; $('e-port').value = s.port; $('e-tls').checked = s.tls; } }
-const chainBody = () => kind === 'core'
-  ? { kind: 'core', url: $('c-url').value.trim(), ...($('c-cookie').value.trim() ? { cookiePath: $('c-cookie').value.trim() } : { user: $('c-user').value, password: $('c-pass').value }) }
-  : { kind: 'electrum', host: $('e-host').value.trim(), port: Number($('e-port').value), tls: $('e-tls').checked };
-const chainText = (r) => { const x = r.result || r; const s = x.source || {};
-  return `${x.ok ? 'Passed' : 'Failed'}: ${x.why}\nthis source: ${s.ok ? `testnet4 (genesis checked), tip ${s.height}, ${s.latencyMs} ms${s.software ? ', ' + s.software : ''}${s.pruned ? ', pruned' : ''}` : s.why}`
-    + (x.second ? `\nsecond source ${x.second.endpoint}: ${x.second.ok ? `tip ${x.second.height}, ${x.second.latencyMs} ms` : x.second.why}` : ''); };
-$('k-core').onclick = () => setKind('core'); $('k-electrum').onclick = () => setKind('electrum'); $('e-pick').onchange = pickElectrum;
-$('chain-test').onclick = async (e) => { e.target.disabled = true; $('chain-msg').className = 'msg ok'; $('chain-msg').textContent = 'Testing...'; const r = await post('/api/chain/test', chainBody()); e.target.disabled = false; const m = $('chain-msg'); m.className = 'msg ' + (r.result && r.result.ok ? 'ok' : 'bad'); m.textContent = r.ok ? chainText(r) : r.why; };
-$('chain-save').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/chain/save', chainBody()); e.target.disabled = false; if (r.ok) return load(); const m = $('chain-msg'); m.className = 'msg bad'; m.textContent = r.result ? chainText(r) : r.why; };
-$('roles-save').onclick = async () => { const roles = [...document.querySelectorAll('#roles input:checked')].map((x) => x.value); const r = await post('/api/roles', { roles }); if (r.ok) return load(); say('roles-msg', r); };
-$('seed-show').onclick = async () => { const r = await post('/api/seed/new'); if (!r.ok) return say('seed-msg', r);
-  $('words').innerHTML = r.words.map((w, i) => `<span><b>${i + 1}</b>${esc(w)}</span>`).join(''); $('seed-show').hidden = true;
-  $('confirm-inputs').innerHTML = r.positions.map((p) => `<div><label>word ${p}</label><input data-p="${p}" autocomplete="off" spellcheck="false"></div>`).join('');
-  $('seed-written').hidden = false; $('confirm').hidden = true; };
-// THE WORDS LEAVE THE SCREEN BEFORE THEY ARE ASKED BACK (seen on the wizard's screenshot 06: the 24 words stood beside
-// the three inputs, so the check proved nothing): asked from the paper, not from the page
-$('seed-written').onclick = () => { $('words').innerHTML = ''; $('seed-written').hidden = true; $('confirm').hidden = false;
-  const first = document.querySelector('#confirm-inputs input'); if (first) first.focus(); };
-$('seed-confirm').onclick = async () => { $('words').innerHTML = ''; const answers = {}; for (const i of document.querySelectorAll('#confirm-inputs input')) answers[i.dataset.p] = i.value;
-  const r = await post('/api/seed/confirm', { answers }); if (r.ok && r.emergencyCode) { $('confirm').hidden = true; $('emergency-code').textContent = r.emergencyCode; $('emergency').hidden = false; return; }
-  if (r.ok) return load(); say('seed-msg', r); if (r.wrong) $('seed-show').hidden = false; };
-$('emergency-written').onclick = () => { $('emergency').hidden = true; load(); };
-$('nip07').onclick = async () => { if (!window.nostr) return say('owner-msg', { ok: false, why: 'no Nostr extension in this browser - paste your npub instead' }); $('npub').value = await window.nostr.getPublicKey(); $('om-nostr').checked = true; };
-$('owner-save').onclick = async () => { const mode = $('om-nostr').checked ? 'nostr' : 'seed'; const r = await post('/api/owner', { mode, npub: $('npub').value }); if (r.ok) return load(); say('owner-msg', r); };
-function showDirect(d) { const m = $('r-direct'); m.className = 'msg ' + (d.reached ? 'ok' : 'bad');
-  m.textContent = d.reached ? `Reachable from outside at ${d.address}:${d.port} - direct connection is the default.` : `Not reachable from outside: ${d.diagnosis ? d.diagnosis.advice : d.why}\nThe permanent tunnel is the default.`;
-  const def = d.reached ? 'direct' : 'permanent'; if (!document.querySelector('input[name=rm]:checked')) $('rm-' + def).checked = true; }
-function showLogin(l) { const m = $('r-login-msg'); if (l.result && l.result.ok) { m.className = 'msg ok'; m.textContent = 'Logged in to Cloudflare.'; }
-  else if (l.result) { m.className = 'msg bad'; m.textContent = l.result.why; }
-  else if (l.url) { m.className = 'msg ok'; m.innerHTML = `Open <a href="${esc(l.url)}" target="_blank" rel="noopener">this Cloudflare link</a>, sign up or log in, and choose the domain for your node. This page waits for you.`; setTimeout(pollLogin, 3000); } }
-async function pollLogin() { const s = await (await fetch('/api/state')).json(); if (s.login) showLogin(s.login); }
-$('r-test').onclick = async (e) => { e.target.disabled = true; $('r-direct').className = 'msg ok'; $('r-direct').textContent = 'Asking Arena nodes to connect back to this machine...';
-  const r = await post('/api/reach/direct', { port: Number($('r-port').value) }); e.target.disabled = false; if (!r.ok) return say('r-direct', r); showDirect(r.result); };
-$('r-login').onclick = async () => { $('rm-permanent').checked = true; const r = await post('/api/reach/login'); if (!r.ok) return say('r-login-msg', r); showLogin(r); };
-$('r-save').onclick = async (e) => { const mode = (document.querySelector('input[name=rm]:checked') || {}).value; if (!mode) return say('r-msg', { ok: false, why: 'test the direct connection first, or choose a tunnel' });
-  e.target.disabled = true; const r = await post('/api/reach/save', { mode, hostname: $('r-host').value, port: Number($('r-port').value), cfToken: $('r-cftoken').value }); e.target.disabled = false; if (r.ok) return load(); say('r-msg', r); };
-const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()} (testnet4 blocks come about every 10 minutes; the block height is the rule, the date an estimate). Until then it cannot be withdrawn; after that, the owner page withdraws it.`;
-let lnTimer = null;
-async function watchLn() {
-  const r = await post('/api/lightning/status');
-  if (r.ok) { $('ln-msg').className = 'msg ok'; $('ln-msg').textContent = `LND ${r.version || ''} runs on ${r.network}: node ${String(r.pubkey).slice(0, 16)}…, block ${r.blockHeight}${r.syncedToChain ? ', synced' : ', catching up with the chain'}${r.peers ? `. Lightning peers: ${r.peers}` : ''}${r.created ? '; its wallet was made from your words' : ''}.`; $('ln-gw').hidden = false; return; }
-  $('ln-msg').className = 'msg ' + (r.waiting ? 'ok' : 'bad'); $('ln-msg').textContent = r.waiting ? `Starting LND… (${r.why})` : r.why;
-  if (r.waiting) { clearTimeout(lnTimer); lnTimer = setTimeout(watchLn, 5000); }
-}
-$('ln-own').onclick = async (e) => { e.target.disabled = true; $('ln-msg').className = 'msg ok'; $('ln-msg').textContent = 'Downloading and checking LND, then starting it…';
-  const r = await post('/api/lightning/own', { boot: true }); e.target.disabled = false; if (!r.ok) return say('ln-msg', r); watchLn(); };
-$('ln-conn-show').onclick = () => { $('ln-conn').hidden = false; };
-$('ln-conn-go').onclick = async () => { const r = await post('/api/lightning/connect', { restUrl: $('ln-url').value, macaroonHex: $('ln-mac').value, tlsCertPem: $('ln-cert').value });
-  if (!r.ok) return say('ln-msg', r); say('ln-msg', r, `Connected: ${r.alias || ''} ${String(r.pubkey).slice(0, 16)}…, block ${r.blockHeight}.`); $('ln-gw').hidden = false; };
-let gwTimer = null;
-const fedList = (fs) => (fs || []).length ? ' Federations: ' + fs.map((f) => (f.name || String(f.federationId).slice(0, 12))).join(', ') + '.' : ' No federation joined yet.';
-async function watchGw() {
-  const r = await post('/api/gateway/status');
-  if (r.ok) { $('gw-msg').className = 'msg ok'; $('gw-msg').textContent = `The gateway runs (${r.state}) on LND ${String(r.lightningPubkey).slice(0, 16)}…, ${r.network}, block ${r.blockHeight}.` + fedList(r.federations); $('gw-join').hidden = false; showFunds(); return; }
-  $('gw-msg').className = 'msg ' + (r.waiting ? 'ok' : 'bad'); $('gw-msg').textContent = r.waiting ? `Starting the gateway… (${r.why})` : r.why;
-  if (r.waiting) { clearTimeout(gwTimer); gwTimer = setTimeout(watchGw, 5000); }
-}
-$('gw-setup').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/gateway/setup', { boot: true }); e.target.disabled = false; if (!r.ok) return say('gw-msg', r); watchGw(); };
-$('gw-later').onclick = async () => { const r = await post('/api/gateway/later'); if (!r.ok) return say('gw-msg', r); load(); };
-$('gw-next').onclick = () => load();
-$('fed-save').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/federation'); e.target.disabled = false; if (!r.ok) return say('fed-msg', r); load(); };
-$('promise-text').addEventListener('input', () => { $('promise-save').disabled = $('promise-text').value.trim().toUpperCase() !== 'I UNDERSTAND'; });
-$('promise-save').onclick = async () => { const r = await post('/api/promise', { text: $('promise-text').value }); if (!r.ok) return say('promise-msg', r); load(); };
-
-async function showFunds() {
-  const r = await post('/api/lightning/funds'); if (!r.ok) { $('ch-state').textContent = r.why; return; }
-  $('gs-peg').textContent = r.seat.minPegInSats.toLocaleString('en');
-  $('ch-addr').textContent = r.address; $('ch-bal').textContent = `${r.onchainSats.toLocaleString('en')} sat confirmed${r.unconfirmedSats ? `, ${r.unconfirmedSats.toLocaleString('en')} arriving` : ''}`;
-  const c = r.channels || { open: [], pending: [], publicCapacitySats: 0, inboundSats: 0, outboundSats: 0 };
-  $('ch-state').textContent = `${c.open.length} open, ${c.pending.length} opening; inbound ${(c.inboundSats || 0).toLocaleString('en')} sat, outbound ${(c.outboundSats || 0).toLocaleString('en')} sat (a gateway seat needs ${r.seat.minInboundSats.toLocaleString('en')} each way).`;
-  for (const [id, have, min] of [['need-in', c.inboundSats || 0, r.seat.minInboundSats], ['need-out', c.outboundSats || 0, r.seat.minOutboundSats]]) {
-    const pct = Math.min(100, Math.round(100 * have / min)); const need = document.getElementById(id);
-    need.querySelector('.meter i').style.width = pct + '%'; need.querySelector('.ok').textContent = pct >= 100 ? '\u2713' : '\u25CB';
-    need.querySelector('.num').innerHTML = `${have.toLocaleString('en')} / <b>${min.toLocaleString('en')}</b> sat`;
-  }
-}
-$('ch-refresh').onclick = showFunds;
-$('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/lightning/channel', { peer: $('ch-peer').value, sats: Number($('ch-sats').value) }); e.target.disabled = false;
-  say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
-$('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
-// the total the wallet must receive, and its parts when there are more than the bond and its fees
-const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)' };
-const needText = (need, parts) => `${Number(need).toLocaleString('en')}${parts && Object.keys(parts).length > 2 ? ` (${Object.entries(parts).map(([k, v]) => `${PART[k] || k} ${Number(v).toLocaleString('en')}`).join(', ')})` : ''}`;
-$('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
-  if (r.parts && Object.keys(r.parts).length > 2) $(r.update ? 'b-need2' : 'b-need').textContent = needText(r.needSats, r.parts);
-  const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
-  // THE NETWORK'S MINIMUM FOR A NEW NODE (§23A.3a, kanban #543): said when it is above the floor
-  const minLine = r.minimum && r.minimum.sats > 50000 ? ` The network asks a new node to bond at least ${Number(r.minimum.sats).toLocaleString('en')} sat now (its federations are filling up), so your node is useful from the start.` : '';
-  m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).'
-  m.textContent += minLine;
-  $('b-lock').textContent = r.lock ? lockText(r.lock) : ''; $('b-post').disabled = !r.enough; };
-$('b-post').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/post'); if (!r.ok) { e.target.disabled = false; return say('b-msg', r); } load(); };
-$('b-later').onclick = async () => { const r = await post('/api/bond/later'); if (r.ok) load(); };
-$('svc').onclick = async (e) => { e.target.disabled = true; $('svc-msg').className = 'msg ok'; $('svc-msg').textContent = 'Installing and starting the node (this can take a minute)...';
-  const r = await post('/api/service', { boot: $('boot').checked }); e.target.disabled = false;
-  if (!r.ok) return say('svc-msg', r);
-  if (r.template) { nostrTemplate = r.template; $('nostr-login').hidden = false; say('svc-msg', r, `The node runs (started in ${r.ms} ms). Now log in once with your Nostr key.`); return; }
-  load(); };
-$('nostr-login').onclick = async () => { if (!window.nostr) return say('svc-msg', { ok: false, why: 'no Nostr extension in this browser: use one that has your key' });
-  const t = { ...nostrTemplate, created_at: Math.floor(Date.now() / 1000) }; const ev = await window.nostr.signEvent(t);
-  const r = await post('/api/owner/login', { nostr: ev }); if (r.ok) return load(); say('svc-msg', r); };
 $('intro-go').onclick = () => { introSkipped = true; try { localStorage.setItem('arena-intro-seen', '1'); } catch { /* this visit only */ } load(); };
-$('finish').onclick = async () => { const r = await post('/api/finish'); say('finish-msg', r, `Finished. The installer has stopped. Your owner page: ${r.owner}`); $('finish').disabled = true; };
-setKind('core'); load().then(() => { if (st && st.step === 'chain' && !window.ArenaWizard) fetch('/api/state').then(() => post('/api/core/plan')).then((r) => { if (r && r.core) setKind('install'); }); });
+load();
 </script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER'S STEPS, IN REACT (kanban #564): the roles as tiles with a switch each, the 24 words and the emergency code, the owner
-// login, and the bond's rules - each a class component the wizard page mounts into its step while the steps are ported one by one. Each
+// login, and the bond's rules - each a class component the wizard page mounts into its step (the page draws none itself). Each
 // step is given the wizard's state (`st`, GET /api/state), its `post(path, body)` (the x-arena-wizard POST) and `reload()` (the page's
 // load(): the wizard moves on to the step the installer names). The doors and their answers are the installer's, unchanged.
 import React from 'react';

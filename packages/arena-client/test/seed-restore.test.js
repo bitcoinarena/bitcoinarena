@@ -77,11 +77,13 @@ test('a live run in this tab is refused with "leave the round first", and the se
 // restoreSeed; the round page under the refund fingerprint has no restore field any more.
 test('Settings has the restore field wired to restoreSeed; the round page has none', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url).pathname, 'utf8');
-  const card = page.slice(page.indexOf('id="arena-set-seed"'), page.indexOf('</section>', page.indexOf('id="arena-set-seed"')));
-  assert.match(card, /<input id="arena-seed-restore" type="password"/);
-  assert.match(card, /<button id="arena-seed-use" type="button">use my seed<\/button>/);
+  // the card is React's (kanban #564, arena-web SettingsCards: SeedCard), handed the page's restore
+  const src = readFileSync(new URL('../../arena-web/src/arena/SettingsCards.jsx', import.meta.url), 'utf8');
+  const card = src.slice(src.indexOf('export class SeedCard'));
+  assert.match(card, /<input type="password" autoComplete="off" placeholder="your 24 words, or your seed \(64 hex\)"/);
+  assert.match(card, /<button type="button" onClick=\{\(\) => this\.restore\(\)\}>use my seed<\/button>/);
   assert.match(page, /ARENACLIENT\.restoreSeed\(\{ text, session: window\.sessionStorage, kept, now: Date\.now\(\), liveRun \}\)/);
-  assert.match(page, /getElementById\('arena-seed-use'\)\.addEventListener\('click'/);
+  assert.match(page, /onRestore: \(t\) => window\.ARENA_RESTORE_SEED\(t\)/);
   const roundPage = page.slice(page.indexOf("const refundEl = document.getElementById('arena-refund')"), page.indexOf('refundEl.append(backup)') + 40);
   assert.ok(roundPage.length > 40, 'the round page block was not found');
   assert.doesNotMatch(roundPage, /use my seed|createElement\('input'\)|importSeed/, 'the round page still has a restore field');

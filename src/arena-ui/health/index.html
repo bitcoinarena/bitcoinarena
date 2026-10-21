@@ -11,8 +11,8 @@
      and each node is asked its own public doors - /owner/version, /owner/bond, /dashboard.json (its LND), /liquidity-claim,
      /gateway-claim. The federations, gateway seats, liquidity seatings, fees, reserves and games come from the seats. Six requests
      at a time, every 60 s; a node that does not answer in 10 s is red.
-     THE MODERN PAGE (kanban #564): every section drawn by React (./react.js, packages/arena-web/src/
-     health) when it is there; this page still reads everything itself, and draws them itself when it is not. -->
+     THE MODERN PAGE (kanban #564): every section drawn by React (./react.js, packages/arena-web/src/health), loaded before the first
+     read; this page reads everything itself and hands each section its data - no drawing of its own (the owner 2026-10-21: "no fall backs"). -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -63,51 +63,37 @@
   <h1>Network health</h1>
   <p class="lead">Every node of the Bitcoin Arena network (testnet4), read live from the nodes themselves - nothing here is stored or trusted beyond what each node signs or answers.</p>
   <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>every 60 s · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span><a href="../">← Bitcoin Arena</a></div>
-  <div class="card"><h2>Network</h2><div class="facts" id="network"></div></div>
-  <div class="card"><h2>Nodes</h2><div class="scroll"><table id="nodes"></table></div></div>
-  <div class="card"><h2>Capacity</h2><div class="facts" id="capacity"></div></div>
-  <div class="card"><h2>Federations</h2><div class="scroll"><table id="feds"></table></div></div>
-  <div class="card"><h2>Gateway seats</h2><div class="scroll"><table id="gateways"></table></div></div>
-  <div class="card"><h2>Pending gateways</h2><div class="scroll"><table id="gw-pending"></table></div></div>
-  <div class="card"><h2>What the network waits for</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll"><table id="pending"></table></div></div>
-  <div class="card"><h2>Transactions on their way <span id="txs-count" class="muted"></span></h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">every grid publication, peg-in, bond and advertisement update the nodes see in their mempool or last 12 blocks, with the unconfirmed or same-block parents they spent - the same list the mining view tracks (GET /pending, txs)</div><div class="scroll"><table id="pending-txs"></table></div></div>
-  <div class="card"><h2>Liquidity providers</h2><div class="scroll"><table id="liquidity"></table></div></div>
-  <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll"><table id="lnd"></table></div></div>
-  <div class="card"><h2>Games and markets</h2><div class="scroll"><table id="games"></table></div></div>
-  <div class="card"><h2>Fees in force</h2><div class="facts" id="fees"></div></div>
+  <div class="card"><h2>Network</h2><div id="network"></div></div>
+  <div class="card"><h2>Nodes</h2><div class="scroll" id="nodes"></div></div>
+  <div class="card"><h2>Capacity</h2><div id="capacity"></div></div>
+  <div class="card"><h2>Federations</h2><div class="scroll" id="feds"></div></div>
+  <div class="card"><h2>Gateway seats</h2><div class="scroll" id="gateways"></div></div>
+  <div class="card"><h2>Pending gateways</h2><div class="scroll" id="gw-pending"></div></div>
+  <div class="card"><h2>What the network waits for</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll" id="pending"></div></div>
+  <div class="card"><h2>Transactions on their way <span id="txs-count" class="muted"></span></h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">every grid publication, peg-in, bond and advertisement update the nodes see in their mempool or last 12 blocks, with the unconfirmed or same-block parents they spent - the same list the mining view tracks (GET /pending, txs)</div><div class="scroll" id="pending-txs"></div></div>
+  <div class="card"><h2>Liquidity providers</h2><div class="scroll" id="liquidity"></div></div>
+  <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll" id="lnd"></div></div>
+  <div class="card"><h2>Games and markets</h2><div class="scroll" id="games"></div></div>
+  <div class="card"><h2>Fees in force</h2><div id="fees"></div></div>
 </main>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const short = (h, n = 8) => (h ? esc(String(h).slice(0, n)) : '-');
   const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
   const satMsat = (v) => (v == null ? '-' : Math.floor(Number(v) / 1000).toLocaleString('en-US'));
-  const dot = (c) => `<span class="dot ${c}"></span>`;
-  // THE REACT VIEWS (./react.js), when they are there: loaded before the first read
+  // THE REACT VIEWS (./react.js, kanban #564): loaded before the first read, the only drawing of every section
   let H = null;
-  // A TABLE AS DATA (kanban #564): head, rows of cells - text, { t, c } (text in a class) or a list of those - and the words for none;
-  // drawn by React's Table when it is there, else as this page's own HTML (the same cells, escaped here)
+  // A TABLE AS DATA (kanban #564): head, rows of cells - text, { t, c } (text in a class), { bar: [have, need] } or a list of those - and
+  // the words for none; drawn by React's Table
   const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
   const fedCell = (fid) => { const n = fedNoOf(fid); return n ? [`Federation ${n}`, { t: cut(fid, 8), c: 'muted mono' }] : { t: cut(fid, 12), c: 'mono' }; };
-  const barHtml = (have, need) => { const pc = need ? Math.min(100, Math.round((100 * have) / need)) : 0;
-    return `<span class="tbar"><i class="${pc >= 100 ? 'ok' : 'warn'}" style="width:${pc}%"></i></span>`; };
-  const partHtml = (p) => (p && typeof p === 'object' ? (p.bar ? barHtml(...p.bar) : `<span class="${p.c || ''}">${esc(p.t)}</span>`) : esc(p));
-  const cellHtml = (c) => (Array.isArray(c) ? c.map(partHtml).join(' ') : partHtml(c));
-  const tableHost = {};
-  function drawTable(id, head, rows, empty, foot) {
-    if (H) { tableHost[id] = tableHost[id] || $(id).parentElement; return H.draw(tableHost[id], 'table', { head, rows, empty, foot }); }
-    $(id).innerHTML = '<tr>' + head.map((h) => `<th>${esc(h)}</th>`).join('') + '</tr>'
-      + (rows.length ? rows.map((r) => '<tr>' + r.cells.map((c, i) => `<td${r.cls && r.cls[i] ? ` class="${r.cls[i]}"` : ''}>${i === 0 && r.dot ? dot(r.dot) : ''}${cellHtml(c)}</td>`).join('') + '</tr>').join('')
-        : `<tr><td colspan="${head.length}" class="muted">${esc(empty)}</td></tr>`)
-      + (foot ? `<tr><td colspan="${head.length}" class="muted">${esc(foot)}</td></tr>` : '');
-  }
+  const drawTable = (id, head, rows, empty, foot) => H.draw($(id), 'table', { head, rows, empty, foot });
   // FEDERATIONS BY NUMBER (kanban #557, the owner 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
   // it belongs, federation 1,2,3 or more"): 1, 2, 3 ... by the oldest record first, then by id - the same number on every card of the page
   let FED_NO = new Map();
   const numberFeds = (list) => { FED_NO = new Map([...(list || [])].sort((a, b) => (Number(a.height) - Number(b.height)) || String(a.federation).localeCompare(String(b.federation))).map((f, i) => [String(f.federation).toLowerCase(), i + 1])); };
   const fedNoOf = (fid) => { const k = String(fid || '').toLowerCase(); for (const [id, n] of FED_NO) if (id === k || (k.length < 64 && id.startsWith(k))) return n; return null; };
-  const fedName = (fid) => { const n = fedNoOf(fid); return n ? `Federation ${n} <span class="muted mono">${short(fid, 8)}</span>` : `<span class="mono">${short(fid, 12)}</span>`; };
   const ASK_MS = 10000, AT_ONCE = 6;
   // A SEAT'S ADDRESS THROUGH daily.json's ROUTES, as the Arena page takes it (the longest host/path key wins): a seat that
   // advertises its tailnet name is reached at its public name
@@ -227,79 +213,20 @@
         return [['Last settlement (any node)', h < 1 ? Math.round(h * 60) + ' min ago' : Math.round(h) + ' h ago', h > 26 ? 'warn' : 'ok']]; })(),
       ['Funding proposals', funding ? String(funding.body.proposals.length) + (funding.body.leaderboards.length ? ' · ' + funding.body.leaderboards.length + ' leaderboard payouts' : '') : '-', ''],
     ];
-    if (H) return H.draw($('network'), 'facts', { items: facts });
-    $('network').innerHTML = facts.map(([k, v, c]) => `<div class="fact"><b class="${c}">${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+    H.draw($('network'), 'facts', { items: facts });
   }
 
-  let nodesHost = null;
   function paintNodes(nodes, tip) {
-    if (H) {
-      nodesHost = nodesHost || $('nodes').parentElement;
-      const served = Object.fromEntries(SERVED);
-      return H.draw(nodesHost, 'nodes', { rows: nodes.map((n) => H.nodeView(n, { tip, served, fedNo: fedNoOf, active: activeOf(n) })) });
-    }
-    const act = nodes.filter(activeOf), idle = nodes.filter((n) => !activeOf(n));
-    const rowsOf = (list, from) => list.map((n, k) => {
-      const i = from + k;
-      const v = n.version, b = n.bond;
-      const health = !v ? 'warn' : !v.ok ? 'bad' : n.serving === false || v.ms > 3000 ? 'warn' : 'ok';
-      const proto = v && v.ok ? Math.max(...(v.body.protocols || [0])) : null;
-      // its own answer, else the census's (the owner 2026-10-20: "the bonds take a long time to show up, if they show up at all" - a node right
-      // after a restart answers /owner/bond without one; every seat's census holds it, read once from /roles)
-      const own = b && b.ok && b.body.bond ? b.body.bond : null;
-      const bd = own || (n.bondSats ? { sats: n.bondSats } : null);
-      const lock = own && b.body.lock ? b.body.lock : (n.bondMaturity != null && Number.isFinite(Number(tip)) ? { blocksLeft: Number(n.bondMaturity) - Number(tip) } : null);
-      const role = (n.roles || []).map((r) => `<span class="tag">${esc(r)}</span>`).join('') + (n.guardianOf && n.guardianOf.length ? `<span class="tag">${n.guardianOf.map((f) => (fedNoOf(f) ? `federation ${fedNoOf(f)}` : `guardian of ${short(f, 6)}`)).join(', ')}</span>` : '')
-        + (n.liq && n.liq.ok ? '<span class="tag">liquidity</span>' : '') + (n.gw && n.gw.ok ? '<span class="tag">gateway</span>' : '');
-      return `<tr><td>${dot(health)}${i + 1}</td><td class="mono">${short(n.node, 12)}</td><td class="mono">${esc((n.base || '').replace(/^https?:\/\//, ''))}</td>
-        <td>${!v ? '<span class="muted">asking …</span>' : v.ok ? v.ms + ' ms' : `<span class="bad">${esc((v.status || '') + ' ' + v.why)}</span>`}</td>
-        <td>${v && v.ok ? esc(v.body.version || 'checkout') + (v.body.commit ? ' <span class="mono muted">' + short(v.body.commit, 7) + '</span>' : '') : '-'}</td>
-        <td>${proto == null ? '-' : proto}</td><td class="wrap">${role || '-'}</td><td>${n.serving == null ? '-' : n.serving ? '<span class="ok">yes</span>' : '<span class="warn">no</span>'}</td>
-        <td>${bd ? sat(bd.sats) + ' sat' : '-'}</td><td>${lock ? (lock.blocksLeft > 0 ? `<span class="warn">matures in ${lock.blocksLeft}</span>` : 'mature') : '-'}</td>
-        <td>${!v ? '<span class="muted">-</span>' : activeOf(n) ? `<span class="ok">active</span>${SERVED.get(n.node) ? ` <span class="muted">· ${SERVED.get(n.node)} round${SERVED.get(n.node) === 1 ? '' : 's'} in 24 h</span>` : ''}` : '<span class="muted">inactive</span>'}</td></tr>`;
-    });
-    const head = '<tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th><th>Last 24 h</th></tr>';
-    const open = document.getElementById('idle-open'), shown = open ? open.dataset.open === '1' : false;
-    $('nodes').innerHTML = head + rowsOf(act, 0).join('')
-      + (idle.length ? `<tr><td colspan="11"><button id="idle-open" type="button" data-open="${shown ? 1 : 0}" style="font-size:12px">${shown ? '▾' : '▸'} ${idle.length} inactive node${idle.length === 1 ? '' : 's'} - bonded, not answering and no round signed in 24 h</button></td></tr>`
-        + (shown ? rowsOf(idle, act.length).join('') : '') : '');
-    const btn = document.getElementById('idle-open');
-    if (btn) btn.onclick = () => { btn.dataset.open = btn.dataset.open === '1' ? '0' : '1'; paintNodes(nodes, tip); };
+    const served = Object.fromEntries(SERVED);
+    H.draw($('nodes'), 'nodes', { rows: nodes.map((n) => H.nodeView(n, { tip, served, fedNo: fedNoOf, active: activeOf(n) })) });
   }
 
   // CAPACITY PRESSURE (spec §23A.3a, kanban #543): each federation's band from the seats' GET /capacity - how full it is against what its
   // bonds cover, the bond B* each guardian would need for 50 % load and who is below it, the gateways' peg-ins against P* - and the
   // network's band (the lowest-load OPEN federation's: new deposits go there) with the installer's minimum bond
   function paintCapacity(cap, feds = []) {
-    const el = $('capacity');
-    if (H) { if (cap && cap.body) window.ARENA_HEALTH_CAPACITY = cap.body; return H.draw(el, 'capacity', { view: H.capacityView(cap && cap.body, feds, fedNoOf) }); }
-    if (!cap || !cap.body || !cap.body.federations) { el.innerHTML = '<div class="muted">no seat answers /capacity yet</div>'; return; }
-    const pct = (x) => (typeof x === 'number' ? Math.round(x * 100) + ' %' : '-');
-    const word = { CALM: ['ok', 'room left'], PRESSURE: ['warn', 'filling up'], CRITICAL: ['bad', 'deposits close soon'], FULL: ['bad', 'deposits closed'], NOT_OPEN: ['muted', 'takes no deposits'] };
-    const lines = cap.body.federations.map((f) => {
-      const [c, w] = word[f.band] || ['muted', f.band];
-      // a federation not OPEN (draining into its successor, closed): no plea, its record's status said (kanban #553)
-      const succ = (feds || []).find((x) => x.federation === f.federation && x.successor);
-      const nm = (fid) => (fedNoOf(fid) ? `Federation ${fedNoOf(fid)}` : `Federation ${short(fid, 8)}`);
-      const into = (fid) => (fedNoOf(fid) ? `Federation ${fedNoOf(fid)}` : short(fid, 8));
-      const say = f.band === 'NOT_OPEN' ? `${nm(f.federation)} is ${['DRAINING', 'CRITICAL'].includes(f.status) ? 'draining' : esc(String(f.status).toLowerCase())}${succ ? ` into ${into(succ.successor)}: new deposits and rounds go there` : ''}.`
-        : f.band === 'FULL' ? `Deposits into ${into(f.federation)} are closed until bonds rise or a new federation is founded.`
-        : f.band === 'CRITICAL' ? `Deposits into ${into(f.federation)} will close soon (${pct(f.load)}).`
-        : f.band === 'PRESSURE' ? `${nm(f.federation)} holds ${pct(f.load)} of what its bonds cover. Deposits stop at 100 %.`
-        : `${nm(f.federation)}: ${pct(f.load)} of what its bonds cover.`;
-      const below = (f.guardiansBelowTarget || []).length
-        ? ` ${f.guardiansBelowTarget.length} of ${f.guardians} guardians below the bond B* = ${sat(f.targetBondSats)} sat - increase your bond by ${[...new Set(f.guardiansBelowTarget.map((g) => sat(g.addSats)))].join(' / ')} sat (Add to bond).` : '';
-      const gw = (f.gatewaysBelowTarget || []).length ? ` ${f.gatewaysBelowTarget.length} gateway(s) below the peg-in P* = ${sat(f.targetPegInSats)} sat.` : '';
-      if (f.band === 'NOT_OPEN') return `<div>${dot(c)}<b>${esc(f.status)}</b> · ${esc(w)} - ${say}</div>`;
-      return `<div>${dot(c)}<b>${esc(f.band)}</b> · ${esc(w)} · ${esc(f.status)} - ${say}${f.band === 'CALM' ? '' : esc(below + gw)} <span class="muted">room ${sat(f.headroomSats)} sat</span></div>`;
-    });
-    const n = cap.body.network || {};
-    const [nc] = word[n.band] || ['muted'];
-    lines.push(`<div>${dot(nc)}<b>Network: ${esc(n.band || '-')}</b> - the lowest-load OPEN federation ${n.lowestFederation ? (fedNoOf(n.lowestFederation) ? `(Federation ${fedNoOf(n.lowestFederation)})` : short(n.lowestFederation, 8)) : '-'} at ${pct(n.lowestLoad)}`
-      + `${n.band && n.band !== 'CALM' ? ` · a bond of at least ${sat(n.targetBondSats)} sat puts a node first in line for the next federation` : ''}`
-      + ` · new installs bond at least ${sat(n.installMinimumBondSats)} sat</div>`);
-    el.innerHTML = lines.join('');
-    window.ARENA_HEALTH_CAPACITY = cap.body;
+    if (cap && cap.body) window.ARENA_HEALTH_CAPACITY = cap.body;
+    H.draw($('capacity'), 'capacity', { view: H.capacityView(cap && cap.body, feds, fedNoOf) });
   }
 
   function paintFeds(list) {
@@ -482,18 +409,17 @@
   }
 
   function paintFees(f) {
-    if (!f) { $('fees').innerHTML = '<div class="fact bad">no seat answered /fees</div>'; return; }
+    if (!f) return H.draw($('fees'), 'facts', { items: [['Fees in force', 'no seat answered /fees', 'bad']] });
     const i = f.body.inForce || {};
     const facts = [['Node fee (round)', (i.roundNodeBps / 100) + ' %'], ['Donation (round)', (i.roundDonationBps / 100) + ' %'], ['Reserves (round)', (i.roundReserveBps / 100) + ' %'],
       ['Market node fee', (i.marketNodeBps / 100) + ' %'], ['Market donation', (i.marketDonationBps / 100) + ' %'], ['Market reserves', (i.marketReserveBps / 100) + ' %'],
       ['Items: nodes / reserves / devs', i.itemNodesPct + ' / ' + i.itemReservesPct + ' / ' + i.itemDevsPct + ' %'], ['Website share', i.websitePct + ' %']];
-    if (H) return H.draw($('fees'), 'facts', { items: facts.map(([k, v]) => [k, v, '']) });
-    $('fees').innerHTML = facts.map(([k, v]) => `<div class="fact"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+    H.draw($('fees'), 'facts', { items: facts.map(([k, v]) => [k, v, '']) });
   }
 
   $('again').onclick = read;
   (async () => {
-    try { await import('./react.js'); H = window.ArenaHealth || null; } catch { H = null; }
+    await import('./react.js'); H = window.ArenaHealth;
     read(); setInterval(read, 60000);
   })();
 })();

@@ -65,23 +65,17 @@ test('the sheet: the pinned market\'s outcomes, the stake, the market\'s fees (0
   assert.match(pickSheet({ market: unpinned, stakeMsat: 1_000_000n }).confirm, /^eth-close is not on this page's list of known markets\. Its developer key is [0-9a-f]{16}… and its manifest [0-9a-f]{16}…/);
 });
 
-/** A fake DOM enough for the page's sheet: elements with children, classes, text, data and click handlers. */
+/** A fake DOM enough for the page's sheet: #arena-pick with its classes and its .sheet box. */
 function fakeDocument() {
-  const make = (tag) => {
-    const el = { tag, children: [], className: '', dataset: {}, handlers: {}, _text: '', type: '',
-      classList: { set: new Set(), add(c) { this.set.add(c); }, remove(c) { this.set.delete(c); }, contains(c) { return this.set.has(c); } },
-      append(...xs) { this.children.push(...xs); },
-      addEventListener(ev, f) { this.handlers[ev] = f; },
-      click() { if (this.handlers.click) this.handlers.click(); },
-      querySelector(sel) { return sel === '.sheet' ? sheet : null; },
-      get textContent() { return this._text || this.children.map((c) => c.textContent).join(' '); },
-      set textContent(t) { this._text = t; this.children = []; },
-    };
-    return el;
-  };
-  const sheet = make('div');
-  const root = make('div');
-  return { document: { getElementById: (id) => (id === 'arena-pick' ? root : null), createElement: make }, root, sheet };
+  const sheet = { textContent: '' };
+  const root = { classList: { set: new Set(), add(c) { this.set.add(c); }, remove(c) { this.set.delete(c); }, contains(c) { return this.set.has(c); } },
+    querySelector: (sel) => (sel === '.sheet' ? sheet : null) };
+  return { document: { getElementById: (id) => (id === 'arena-pick' ? root : null) }, root, sheet };
+}
+/** React's sheet (window.ArenaMarket, arena-web's market bundle) as the page calls it: what it was handed, kept. */
+function fakeArenaMarket() {
+  const opened = [];
+  return { opened, openSheet: (box, props) => { opened.push({ box, ...props }); box._react = { unmount() { box.unmounted = true; } }; return box._react; } };
 }
 function liftSheet(window, document) {
   const at = UPDOWN_PAGE.indexOf('    async function openPickSheet(');
@@ -91,45 +85,51 @@ function liftSheet(window, document) {
   return pageFunction(UPDOWN_PAGE_URL, ['window', 'document', 'ARENACLIENT', 'donationBps', 'fetch', 'AbortSignal'], UPDOWN_PAGE.slice(at, end + 6), 'return openPickSheet;')(
     window, document, ARENACLIENT, () => 500, window.fetch, { timeout: () => undefined });
 }
-const buttons = (el) => el.children.flatMap((c) => (c.tag === 'button' ? [c] : buttons(c)));
 
-test('the page\'s sheet: drawn from the pinned list, Cancel makes nothing, a choice is the pick the join takes; an unpinned one waits for the confirmation', async () => {
+test('the page\'s sheet is React\'s: handed the pinned list, Cancel makes nothing, a choice is the pick the join takes; an unpinned one waits for the confirmation', async () => {
   const id = toHex(ROUND_ID);
   // PINNED
   let picked = [];
-  const window = { confirm: () => { throw new Error('a pinned market asked a confirmation'); }, fetch: async () => { throw new Error('a pinned market fetched a manifest'); } };
+  const window = { ArenaMarket: fakeArenaMarket(), fetch: async () => { throw new Error('a pinned market fetched a manifest'); } };
   let dom = fakeDocument();
   const open = liftSheet(window, dom.document);
   await open(CONTRACT, id, ['http://seat-a'], (i) => picked.push(i));
-  const shown = buttons(dom.sheet);
-  console.log('  PAGE SHEET:', JSON.stringify({ shown: dom.root.classList.contains('show'), buttons: shown.map((b) => b.textContent), said: window.ARENA_PICK_SHEET.lines }));
+  const got = window.ArenaMarket.opened[0];
+  console.log('  PAGE SHEET:', JSON.stringify({ shown: dom.root.classList.contains('show'), outcomes: got.sheet.outcomes.map((o) => o.label), free: got.free, said: window.ARENA_PICK_SHEET.lines }));
+  assert.equal(got.box, dom.sheet, 'drawn into #arena-pick .sheet');
   assert.equal(dom.root.classList.contains('show'), true);
-  assert.deepEqual(shown.map((b) => b.textContent), [...MARKET_OUTCOMES, 'Cancel']);
-  shown.at(-1).click();                                                         // Cancel
+  assert.deepEqual(got.sheet.outcomes.map((o) => o.label), MARKET_OUTCOMES);
+  assert.equal(got.free, false);
+  assert.deepEqual(window.ARENA_PICK_SHEET.outcomes, MARKET_OUTCOMES);
+  got.onCancel();                                                               // Cancel
   assert.equal(dom.root.classList.contains('show'), false);
+  assert.equal(dom.sheet.unmounted, true, 'React let go of the sheet');
   assert.equal(window.ARENA_PICK_CHOSEN, null, 'Cancel made a pick');
   assert.deepEqual(picked, []);
   await open(CONTRACT, id, ['http://seat-a'], (i) => picked.push(i));
-  buttons(dom.sheet)[1].click();                                                // "between"
+  window.ArenaMarket.opened[1].onPick(1, false);                                 // "between"
   assert.deepEqual(picked, [1]);
+  assert.equal(dom.root.classList.contains('show'), false);
   assert.deepEqual({ ...window.ARENA_PICK_CHOSEN, manifestHex: undefined }, { round: id, pick: 1, label: 'between', gameId: toHex(MARKET.registration.gameId), confirmed: false, manifestHex: undefined });
+  // a free round: the sheet says so
+  await open({ ...CONTRACT, stakeMsat: 0n }, id, ['http://seat-a'], () => {});
+  assert.equal(window.ArenaMarket.opened[2].free, true);
 
-  // UNPINNED: the manifest from a seat; no confirmation, no pick; confirmed, the pick and the confirmed game
+  // UNPINNED: the manifest from a seat; not confirmed (its box not ticked), no pick; confirmed, the pick and the confirmed game
   const other = testAttestedGame({ name: 'eth-close', outcomes: ['up', 'down'] }).registration;
-  const asked = [];
-  let yes = false;
-  const w2 = { confirm: (text) => { asked.push(text); return yes; },
+  const w2 = { ArenaMarket: fakeArenaMarket(),
     fetch: async (url) => ({ ok: /\/game-manifest\?round=/.test(url), arrayBuffer: async () => encodeManifest(other.manifest).buffer.slice(0) }) };
   dom = fakeDocument();
   picked = [];
   const open2 = liftSheet(w2, dom.document);
   await open2({ ...CONTRACT, gameId: other.gameId }, id, ['http://seat-a'], (i) => picked.push(i));
-  buttons(dom.sheet)[0].click();
-  assert.equal(asked.length, 1);
+  const un = w2.ArenaMarket.opened[0];
+  assert.match(un.sheet.confirm, /^eth-close is not on this page's list of known markets/);
+  un.onPick(0, false);
   assert.deepEqual(picked, [], 'an unpinned market was picked without the second confirmation');
   assert.equal(w2.ARENA_PICK_CHOSEN, undefined);
-  yes = true;
-  buttons(dom.sheet)[0].click();
+  assert.equal(dom.root.classList.contains('show'), true, 'the sheet stays open');
+  un.onPick(0, true);
   assert.deepEqual(picked, [0]);
   assert.equal(w2.ARENA_PICK_CHOSEN.confirmed, true);
   assert.equal(w2.ARENA_PICK_CHOSEN.gameId, toHex(other.gameId));
