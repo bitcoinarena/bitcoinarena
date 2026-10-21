@@ -3,3 +3,5 @@ dist/test/
 dist/wizard.js
 # the Arena page carries its own copy (src/arena-ui/arena-react.js)
 dist/arena.js
+# inlined into packages/rock-paper-scissors/client/index-v4.html
+dist/rps.js
