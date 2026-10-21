@@ -16,7 +16,7 @@ export const INSIDE = Object.freeze(['guardian', 'p2p-tunnel', 'announcements'])
 export const installerIdOf = (id, installedIds = []) => (id === 'address' ? 'tunnel'
   : id === 'chain' ? (installedIds.find((x) => /^bitcoind-|^chain-bridge$/.test(x)) || null) : id);
 
-export function controlsOf({ id, installed = false, installedIds = [], toggles = {}, settings = null, boot = null }) {
+export function controlsOf({ id, installed = false, installedIds = [], toggles = {}, settings = null, boot = null, running = null }) {
   if (INSIDE.includes(id)) {
     const t = toggles[id];
     if (!t || !t.has()) return { controls: [], atBoot: null, bootSettable: false, why: (t && t.why) || 'not run by this node' };
@@ -28,5 +28,7 @@ export function controlsOf({ id, installed = false, installedIds = [], toggles =
   }
   const svc = installed ? installerIdOf(id, installedIds) : null;
   if (!svc || !installedIds.includes(svc)) return { controls: [], atBoot: null, bootSettable: false, why: 'runs outside the node: started and stopped on its machine' };
-  return { controls: ['start', 'stop', 'restart'], atBoot: boot ? boot.atBoot : null, bootSettable: !!(boot && boot.settable), ...(boot && boot.why ? { why: boot.why } : {}) };
+  // what applies now: a stopped one started, a running one stopped or restarted; all three while its state is not known
+  const controls = running === false ? ['start'] : running === true ? ['stop', 'restart'] : ['start', 'stop', 'restart'];
+  return { controls, atBoot: boot ? boot.atBoot : null, bootSettable: !!(boot && boot.settable), ...(boot && boot.why ? { why: boot.why } : {}) };
 }
