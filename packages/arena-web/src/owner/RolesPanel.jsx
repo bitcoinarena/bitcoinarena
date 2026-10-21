@@ -33,7 +33,13 @@ export class RolesPanel extends React.Component {
     const [pub, guardian, gateway, liquidity] = await Promise.all([get('/roles'), get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
     const mine = pub && (pub.nodes || []).find((x) => x.node === this.props.node) || null;
     const was = switchesOf(mine);
-    this.setState({ loaded: true, mine, guardian, gateway, liquidity, was, now: { ...was } });
+    // A GATEWAY THAT RUNS BUT HOLDS NO SEAT YET (kanban #563, measured on installer C 2026-10-21: its tile said "Off" and "Set up" while its
+    // gatewayd waited for its federation): the node's own services say whether the gateway runs; its seat claim comes only after the peg-in
+    let gatewayRuns = false;
+    if (!(gateway && gateway.gatewayUrl) && this.props.api.post && this.props.api.signed) {
+      try { const sv = await this.props.api.post('/owner/services', await this.props.api.signed('services')); gatewayRuns = !!(sv && sv.ok && (sv.services || []).some((x) => x.id === 'gateway' && x.running)); } catch { gatewayRuns = false; }
+    }
+    this.setState({ loaded: true, mine, guardian, gateway, gatewayRuns, liquidity, was, now: { ...was } });
   }
   toggle(k, on) { this.setState((s) => ({ now: { ...s.now, [k]: on }, step: 'idle', plan: null, message: null })); }
   undo() { this.setState((s) => ({ now: { ...s.was }, step: 'idle', plan: null, message: null })); }
@@ -54,14 +60,15 @@ export class RolesPanel extends React.Component {
     } catch (e) { this.setState({ step: 'review', message: e.message }); }
   }
   tiles() {
-    const { mine, guardian, gateway, liquidity } = this.state;
+    const { mine, guardian, gateway, liquidity, gatewayRuns } = this.state;
     const guarding = !!(guardian && guardian.guardian);
+    const gatewayWaits = !(gateway && gateway.gatewayUrl) && !!gatewayRuns;
     return [
       ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.'],
       ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.'],
       ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Carries round data for players and other nodes.'],
       ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null],
-      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', null, !!(gateway && gateway.gatewayUrl), 'custody'],
+      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', gatewayWaits ? 'Installed and running: it takes its federation\'s gateway seat once the federation is founded and its peg-in counts.' : 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', gatewayWaits ? 'Waiting' : null, !!(gateway && gateway.gatewayUrl) || gatewayWaits, 'custody'],
       ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', null, !!liquidity, 'liquidity'],
     ].map(([k, icon, name, highlight, does, label, onOther, section]) => ({ k, icon, name, highlight, does, label, onOther, section, mine }));
   }
@@ -82,7 +89,7 @@ export class RolesPanel extends React.Component {
                 : <span className="sub">Changeable once the bond counts</span>)
               : <a className="go" href={`#${t.section}`}>{on ? 'Manage' : 'Set up'} →</a>;
             return <Tile key={t.k} id={`tile-${t.k}`} icon={t.icon} name={t.name} highlight={t.highlight} does={t.does} state={state}
-              pill={sent && changed.includes(t.k) ? 'Saving…' : t.label || (on ? 'On' : 'Off')} pillTone={sent && changed.includes(t.k) ? 'wait' : on ? 'on' : null} footer={footer} />;
+              pill={sent && changed.includes(t.k) ? 'Saving…' : t.label || (on ? 'On' : 'Off')} pillTone={(sent && changed.includes(t.k)) || t.label === 'Waiting' ? 'wait' : on ? 'on' : null} footer={footer} />;
           })}
         </div>
         <SaveBar open={changed.length > 0} label={`${changed.length} change${changed.length === 1 ? '' : 's'} not saved`}
