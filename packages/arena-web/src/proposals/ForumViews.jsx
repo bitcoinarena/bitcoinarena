@@ -75,3 +75,71 @@ export class ProposalThread extends React.Component {
       </div>);
   }
 }
+
+// A NEW PROPOSAL (slice 2): the type switch (its other types are forum.js's own forms), the reserves and the cap, title / what it does /
+// how it improves (Markdown, with a preview made by forum.js's own Markdown), the amount against the cap and the Lightning address - the
+// same checks and words as before - and publish: forum.js signs with the in-game key and hands it to every node (`onPublish`).
+export const LN_ADDRESS = /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+export const LNURL = /^lnurl1[02-9ac-hj-np-z]{20,}$/i;
+const n = (x) => Number(x).toLocaleString('en-US');
+
+/** The amount and the address against the cap: [ok, words, bad]. */
+export function amountCheck({ amount, lnurl }, reserves, capPct) {
+  if (!amount) return [true, '', false];
+  const a = Number(amount), max = reserves ? Math.floor(reserves.sats * capPct / 100) : null;
+  if (!(a >= 1)) return [false, 'Ask at least 1 sat.', true];
+  if (!reserves) return [false, 'The reserves could not be read, so the amount cannot be checked yet.', true];
+  if (a > max) return [false, `${n(a)} sat is more than ${capPct}% of the reserves (${n(max)} sat): it could never be paid.`, true];
+  if (lnurl && !LN_ADDRESS.test(lnurl.trim()) && !LNURL.test(lnurl.trim())) return [false, 'That is not a Lightning address (you@wallet.example) or an LNURL.', true];
+  return [true, `Within the cap: ${(a * 100 / reserves.sats).toFixed(2)}% of the reserves.`, false];
+}
+
+export class NewProposal extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { title: '', content: '', improves: '', amount: '', lnurl: '', preview: false, say: '', bad: false, busy: false };
+    this.submit = this.submit.bind(this);
+  }
+  used() { return this.props.purposeLength(this.state.title, this.state.content, this.state.improves); }
+  async submit(e) {
+    e.preventDefault();
+    const s = this.state, out = (say, bad = true) => this.setState({ say, bad });
+    if (!this.props.signedIn) return out('Open the Arena once first: the forum signs with your in-game key.');
+    if (!s.title.trim() || !s.content.trim() || !s.improves.trim()) return out('Fill in the title, what it does, and how it improves Bitcoin Arena.');
+    if (/\n/.test(s.title)) return out('The title is one line.');
+    if (this.used() > 4000) return out('The three parts together are more than 4,000 characters.');
+    const [ok, words] = amountCheck(s, this.props.reserves, this.props.capPct);
+    if (!ok) return out(words);
+    if (!s.lnurl.trim()) return out('Name the Lightning address to pay.');
+    this.setState({ busy: true, say: 'Signing…', bad: false });
+    const r = await this.props.onPublish({ title: s.title, content: s.content, improves: s.improves, amount: Math.floor(Number(s.amount)), lnurl: s.lnurl });
+    this.setState({ busy: false, say: r.say, bad: !r.ok });
+  }
+  render() {
+    const { reserves: r, reservesWhy, capPct, types, hash, markdown } = this.props;
+    const s = this.state, max = r ? Math.floor(r.sats * capPct / 100) : null;
+    const used = this.used(), [, amountWords, amountBad] = amountCheck(s, r, capPct);
+    const field = (k) => ({ name: k, value: s[k], onChange: (e) => this.setState({ [k]: e.target.value, say: '' }) });
+    return (
+      <div>
+        <div className="bar"><a className="btn" href="#">← All proposals</a></div>
+        <h1>New proposal</h1>
+        <div className="types" role="radiogroup" aria-label="Type"><span className="types-label">Type</span>
+          {types.map(([h, label]) => <a key={h} className={`type${h === hash ? ' on' : ''}`} href={h} role="radio" aria-checked={h === hash ? 'true' : 'false'}>{label}</a>)}</div>
+        <form className="compose" onSubmit={this.submit}>
+          <p className="reserves-line">{r ? <>The protocol reserves hold <b>{n(r.sats)} sat</b> ({r.agreeing} of {r.asked} nodes agree). A proposal may ask at most <b>{capPct}%: {n(max)} sat</b>.</>
+            : `The reserves could not be read${reservesWhy ? `: ${reservesWhy}` : ''}. A proposal may ask at most ${capPct}% of them.`}</p>
+          <label>Title<input {...field('title')} maxLength={120} required placeholder="A short name for the PIP" /></label>
+          <label>What the proposal does <span className="hint">Markdown: # headings, **bold**, lists, `code`, links and tables (| a | b |)</span><textarea {...field('content')} rows={10} required /></label>
+          <div className="bar"><button type="button" className="btn" onClick={() => this.setState({ preview: !s.preview })}>{s.preview ? 'Hide preview' : 'Preview'}</button>
+            <span className={`say${used > 4000 ? ' bad' : ''}`}>{n(used)} of 4,000 characters</span></div>
+          {s.preview ? <div className="md preview"><h3>{s.title}</h3><div dangerouslySetInnerHTML={{ __html: markdown(s.content) }} /><h3 className="improves">How it improves Bitcoin Arena</h3><div dangerouslySetInnerHTML={{ __html: markdown(s.improves) }} /></div> : null}
+          <label>How it improves Bitcoin Arena <span className="hint">its games, its protocol, its tools or its players</span><textarea {...field('improves')} rows={4} required /></label>
+          <div className="row"><label>Amount (sat)<input {...field('amount')} type="number" min="1" step="1" required max={max || undefined} /></label>
+            <label>Lightning address to pay<input {...field('lnurl')} placeholder="you@wallet.example" required /></label></div>
+          <div className="bar"><button className="btn primary" type="submit" disabled={s.busy}>Sign and publish</button>
+            <span className={`say${(s.say ? s.bad : amountBad) ? ' bad' : ''}`}>{s.say || amountWords}</span></div>
+        </form>
+      </div>);
+  }
+}

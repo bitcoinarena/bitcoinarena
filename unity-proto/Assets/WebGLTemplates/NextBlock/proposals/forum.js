@@ -251,7 +251,25 @@
     TYPES.forEach(function (t) { var a = el('a', 'type' + (t[0] === hash ? ' on' : ''), t[1]); a.href = t[0]; a.setAttribute('role', 'radio'); a.setAttribute('aria-checked', t[0] === hash ? 'true' : 'false'); sw.append(a); });
     view.append(sw);
   }
+  // a new proposal signed with the in-game key and handed to every node, then its thread opened: { ok, say }
+  function publish(x) {
+    return (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+      if (!net) throw new Error('the nodes did not agree on their network');
+      state.network = net;
+      var p = ARENACLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: x.amount, lnurl: x.lnurl, purpose: purposeOf(x.title, x.content, x.improves) });
+      return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'proposal', hex: p.hex }).then(function (r) {
+        if (!r.ok) return { ok: false, say: 'Not taken: ' + r.why };
+        setTimeout(function () { refresh().then(function () { var q = (state.list || []).find(function (y) { return y.id === p.id; }); location.hash = q ? '#pip=' + q.pip : '#p=' + p.id; }); }, 1500);
+        return { ok: true, say: 'Published to ' + r.took + ' of ' + r.asked + ' nodes. Its 1-week signal starts now.' };
+      });
+    }).catch(function (e) { return { ok: false, say: e.message }; });
+  }
   function newView() {
+    if (R) {
+      R.draw(view, 'new', { reserves: state.reserves, reservesWhy: state.reservesWhy, capPct: CAP_PCT, types: TYPES, hash: '#new', markdown: markdown, signedIn: !!state.key,
+        purposeLength: function (t, c, i) { return purposeOf(t, c, i).length; }, onPublish: publish });
+      return;
+    }
     composeHead('#new');
     var f = el('form', 'compose');
     var r = state.reserves, max = r ? Math.floor(r.sats * CAP_PCT / 100) : null;
@@ -477,7 +495,7 @@
   function route() {
     var h = location.hash;
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
-    var own = h === '#new-leaderboard' || h === '#new-fees' || h === '#new';
+    var own = h === '#new-leaderboard' || h === '#new-fees' || (h === '#new' && !R);
     if (own && R) R.clear(view);   // the forms are this script's own: React lets go of the view first
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
@@ -492,7 +510,7 @@
       if (r.ok) { state.reserves = { sats: Number(r.totalMsat / 1000n), agreeing: r.agreeing, asked: r.asked }; state.reservesWhy = null; } else state.reservesWhy = r.why;
       showBalance();
       var typed = document.querySelector('.compose input[name=amount]');
-      if (location.hash === '#new' && !(typed && typed.value)) newView();
+      if (location.hash === '#new' && (R || !(typed && typed.value))) newView();   // React keeps what was typed
     }).catch(function (e) { state.reservesWhy = e.message; showBalance(); });
     return ARENACLIENT.fetchProposals({ nodes: state.nodes, verify: window.ARENA_CURVE.verify }).then(function (r) {
       if (!r.ok) { state.list = []; state.agreeing = 0; state.asked = r.asked; return; }
