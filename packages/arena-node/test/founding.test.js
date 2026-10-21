@@ -189,3 +189,22 @@ test('a seated-first node silent for a fifth of the window is replaced by the fi
   for (const i of st.seated.map((x) => idx(x.node))) assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === i), `seat ${i} started the DKG`);
   assert.ok(!n.log.some((l) => l[1] === 1));
 });
+
+test('a seated node whose seat restarts past the fifth posts its own code first and is no no-show of its own (kanban #495, e8741283)', async () => {
+  const n = network();
+  await n.round(101);                                   // every seated node posted; nobody started yet (one more round would)
+  const seated = n.seats[0].state().seated.map((x) => idx(x.node));
+  const r = seated[1];
+  // its seat restarts at 104 (past beacon 101 + the fifth): a fresh founding, the others' codes read back from their GET /founding first
+  const log = [];
+  const fresh = createFounding({ seed, triggerHeight: 100, entries, nominal: 4, bondMinGuardian: 500000n, foundingWindow: 10,
+    ownKey: keys[r].pub, sign: (h) => schnorr.sign(h, keys[r].secret), verify,
+    setup: { localParams: async () => `code-${r}-again`, addPeer: async (c) => { log.push(['add', c]); }, startDkg: async () => { log.push(['dkg']); }, invite: async () => null, done: async () => false },
+    post: async (m) => { for (const s of n.seats) s.take(m); } });
+  // the others' codes only: its own old one went with the restart (live, every seat restarted, so none held it)
+  for (const j of seated) if (j !== r) fresh.takeAll(n.seats[j].state().codes.filter((c) => c.node !== toHex(keys[r].pub)));
+  const st = await fresh.advance(104);
+  assert.deepEqual(st.noShows, [], 'it does not count itself a no-show');
+  assert.equal(st.void, false);
+  assert.deepEqual(log.filter((l) => l[0] === 'add').length, 3); assert.ok(log.some((l) => l[0] === 'dkg'), 'it adds the other three and starts its key generation');
+});
