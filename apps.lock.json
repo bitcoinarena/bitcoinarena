@@ -1,10 +1,44 @@
 {
-  "about": "The apps' own repositories at the commits the Arena reads them (kanban #569): tools/fetch-apps.mjs checks the listed paths out into .apps/<name>.",
+  "about": "The apps' own repositories at the commits the Arena takes them from (kanban #569): `copy` is the folder of bitcoin-arena that holds each app as it is at that commit (Next Block without its Unity project, which only its own repository holds); tools/fetch-apps.mjs checks the listed paths out into .apps/<name>, and arena-client's apps-pinned test checks every copy against its app.",
   "apps": {
     "arena-app-next-block": {
       "repo": "a tester/arena-app-next-block",
       "commit": "20ad4e45b8277b2b4bf0d08e18733c579ddc8e1e",
-      "paths": ["/unity/Assets/Plugins/", "/unity/Assets/Scripts/", "/unity/Assets/Tests/", "/unity/ProjectSettings/", "/unity/Assets/Models/bitcoin_miner_megastructure.glb", "/unity/Assets/Art/Resources/"]
+      "paths": [
+        "/*",
+        "!/unity/",
+        "/unity/Assets/Plugins/",
+        "/unity/Assets/Scripts/",
+        "/unity/Assets/Tests/",
+        "/unity/ProjectSettings/",
+        "/unity/Assets/Models/bitcoin_miner_megastructure.glb",
+        "/unity/Assets/Art/Resources/"
+      ],
+      "copy": "packages/nextblock"
+    },
+    "arena-app-hello-world": {
+      "repo": "a tester/arena-app-hello-world",
+      "commit": "09956d28d73f104f3b9e4177c99cfa726c3d3813",
+      "copy": "packages/hello-world",
+      "paths": [
+        "/*"
+      ]
+    },
+    "arena-app-rock-paper-scissors": {
+      "repo": "a tester/arena-app-rock-paper-scissors",
+      "commit": "441dc5dc1241b08e1c4a4cd94762ec2938e3f253",
+      "copy": "packages/rock-paper-scissors",
+      "paths": [
+        "/*"
+      ]
+    },
+    "arena-app-up-or-down": {
+      "repo": "a tester/arena-app-up-or-down",
+      "commit": "a5fa78aed3b3be25098d560054a14e556e84d76d",
+      "copy": "packages/btc-updown",
+      "paths": [
+        "/*"
+      ]
     }
   }
 }
