@@ -534,6 +534,11 @@ async function servicesPanel() {
 // a stable one is the default. The node runs the installer's own steps for it and restarts; the progress is read again until done.
 async function addressPanel() {
   const el = $('address');
+  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountAddress) { if (el._react) el._react.unmount(); el.innerHTML = ''; el._react = window.ArenaOwner.mountAddress(el, { api: { post, signed } }); return; }
+  } catch { /* the page's own panel */ }
   let r; try { r = await post('/owner/reach', await signed('reach')); } catch (x) { r = { ok: false, why: x.message }; }
   if (!r || !r.ok) { el.innerHTML = `<p class="sub">${r && /not installed by the Arena installer/.test(r.why || '') ? 'This node was set up by hand: its address is set on its machine.' : esc((r && r.why) || 'not readable')}</p>`; return; }
   const p = r.progress;
