@@ -29,7 +29,9 @@ test('an installed node: the installer\'s services started, stopped, restarted a
   assert.deepEqual(controlsOf({ id: 'gateway', installed: true, installedIds: ids, boot }), { controls: ['start', 'stop', 'restart'], atBoot: true, bootSettable: true });
   assert.deepEqual(installerIdOf('address', ids), 'tunnel');
   assert.deepEqual(installerIdOf('chain', ids), 'bitcoind-testnet4');
-  assert.deepEqual(controlsOf({ id: 'address', installed: true, installedIds: ids, boot }).controls, ['start', 'stop', 'restart']);
+  assert.deepEqual(controlsOf({ id: 'address', installed: true, installedIds: ids, boot }).controls, ['start', 'stop', 'restart'], 'its state not known: all three');
+  assert.deepEqual(controlsOf({ id: 'gateway', installed: true, installedIds: ids, boot, running: false }).controls, ['start'], 'stopped: start');
+  assert.deepEqual(controlsOf({ id: 'lnd', installed: true, installedIds: ids, boot, running: true }).controls, ['stop', 'restart'], 'running: stop or restart');
   assert.deepEqual(controlsOf({ id: 'node', installed: true, installedIds: ids, boot }).controls, ['restart']);
   assert.deepEqual(controlsOf({ id: 'chain', installed: true, installedIds: ['node'] }).controls, [], 'an Electrum node without Bitcoin Core here: not its service');
 });

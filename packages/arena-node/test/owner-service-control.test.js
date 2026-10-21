@@ -78,8 +78,9 @@ test('an installed node: the installer\'s gateway, tunnel (its address) and Bitc
   try {
     assert.match(unitName('gateway'), /t563x/, 'an instance no machine runs');
     const gw = await s.row('gateway');
-    assert.deepEqual([gw.controls, gw.bootSettable], [['start', 'stop', 'restart'], true]);
-    assert.deepEqual((await s.row('tunnel')).controls, ['start', 'stop', 'restart']);
+    const by = (r) => (r.running === false ? ['start'] : r.running === true ? ['stop', 'restart'] : ['start', 'stop', 'restart']);
+    assert.deepEqual([gw.controls, gw.bootSettable], [by(gw), true], 'what applies to its state now');
+    const tn = await s.row('tunnel'); assert.deepEqual(tn.controls, by(tn));
     assert.deepEqual((await s.row('node')).controls, ['restart']);
     assert.deepEqual((await s.row('announcements')).controls, ['stop', 'restart'], 'the node\'s own, on an installed node too');
     const stop = await s.ask('/owner/service', 'service', { id: 'gateway', action: 'stop' });
