@@ -181,14 +181,38 @@ h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 8px;color:var(-
 svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:#d9a400}.scroll{overflow-x:auto}
 .legend span{display:inline-block;margin-right:12px;color:var(--dim)}tr.rr{cursor:pointer}tr.rr:hover td{background:rgba(127,127,127,.08)}tr.pl>td{background:rgba(127,127,127,.05);padding:6px 6px 10px 22px}tr.pl table{font-size:12px}a{color:var(--st)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+/* THE MODERN PAGE (kanban #566): what the React page draws - cards that size to their content, stat tiles, a period switch, tables that fit */
+.dash h1{font-size:22px;font-weight:750}.dash h2{font-size:12px;letter-spacing:.07em;margin:26px 0 10px}.dash code{font-family:ui-monospace,monospace;font-size:12.5px}
+.dash-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.dash-head .sub{margin:2px 0 0}
+.btn{display:inline-block;padding:8px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);text-decoration:none;font-weight:600}
+.seg{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:3px;margin:0 0 12px}
+.seg button{border:0;background:transparent;color:var(--dim);font:600 13px system-ui;padding:7px 14px;border-radius:9px;cursor:pointer}.seg button.on{background:var(--bg);color:var(--text);box-shadow:0 0 0 1px var(--line) inset}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin:0 0 10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.stat.wide{grid-column:span 2}.stat>span{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.07em;font-weight:700}
+.stat>b{font-size:22px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.stat>small{color:var(--dim);font-size:12.5px;overflow-wrap:anywhere}
+.split{display:flex;height:8px;border-radius:4px;overflow:hidden;gap:2px;margin:6px 0 2px}.split i{display:block}
+.split-legend{display:flex;flex-wrap:wrap;gap:4px 14px}.split-legend i,.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:0}
+.dash .card{border-radius:14px;padding:16px 18px;min-width:0}.dash .card h3{font-size:14px;color:var(--text);margin:0}
+.card-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 0 10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;align-items:start}
+.kv .row{padding:7px 0;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent);flex-wrap:nowrap;gap:12px}.kv .row:last-child{border:0}
+.kv .row span{color:var(--dim);min-width:0}.kv .row b{white-space:normal;text-align:right;overflow-wrap:anywhere}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.tbl th,.tbl td{padding:7px 8px;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}.tbl .n{text-align:right;font-variant-numeric:tabular-nums}.nowrap{white-space:nowrap}
+.chart-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 6px}.chart .sub{margin:0}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.two h2{margin-top:26px}
+@media (max-width:560px){.stat.wide{grid-column:auto}.cards{grid-template-columns:1fr}}
 </style></head><body>
+<div id="app"></div><div id="legacy">
 <h1>Bitcoin Arena · Node Dashboard</h1><div class="sub" id="who">loading…</div><div class="sub"><a href="Dashboard/owner" id="ownerlink">Owner area →</a></div>
 <h2>Earnings</h2><div class="tabs" id="tabs"></div><div class="grid" id="totals" style="margin-top:8px"></div>
 <h2>Fee earned per day, last 30 days (msat)</h2><div class="card" id="chartbox"><div id="tip" role="status"></div><div class="legend"><span><i style="background:var(--gv)"></i>game/verify</span><span><i style="background:var(--st)"></i>settlement</span><span><i style="background:var(--gd)"></i>guardian</span></div><div id="chart"></div></div>
 <h2>Rounds checked</h2><div class="card scroll"><table id="rounds"></table></div>
 <h2>Settlements</h2><div class="card scroll"><div id="sstate" class="sub"></div><table id="settle"></table></div>
 <h2>Federations</h2><div class="card scroll"><table id="feds"></table></div>
-<div id="capbox"></div><div id="liqbox"></div>
+</div>
+<div class="dash"><div id="capbox"></div><div id="liqbox"></div></div>
 <script>
 const sat=(m)=>{const n=Number(m)/1000;return (n<10?n.toFixed(3):n.toFixed(n<1000?1:0)).replace(/\\.0+$/,'')+' sat'};
 const t=(ms)=>ms?new Date(ms).toISOString().replace('T',' ').slice(0,19)+' UTC':'-';
@@ -253,7 +277,10 @@ el('feds').innerHTML='<tr><th>Federation</th><th class="n">Paid rounds</th><th>F
 // THE LIQUIDITY CARD (§23A.10): a provider's free coins against the deposit minimum, the channels it gave, the top-up address
 async function liquidity(){let c=null;try{const r=await fetch('liquidity-claim',{cache:'no-store'});c=r.ok?await r.json():null}catch{c=null}if(!c){el('liqbox').innerHTML='';return}const min=500000,free=Number(c.freeSats),g=c.channels||[],held=free+g.reduce((a,x)=>a+Number(x.capacitySats),0);const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';el('liqbox').innerHTML='<h2>Liquidity provider</h2><div class="card">'+r('Free for new channels',free.toLocaleString('en')+' sat')+r('Deposit minimum (free + channels given)',min.toLocaleString('en')+' sat')+(held<min?'<p class="bad">Below the deposit minimum: no share of the liquidity pool until topped up.</p>':'<p class="ok">Above the deposit minimum: earning its share of the liquidity pool.</p>')+r('Channels given',g.length+' ('+g.reduce((a,x)=>a+Number(x.capacitySats),0).toLocaleString('en')+' sat)')+r('Top up (LND wallet)','<code>'+String(c.depositAddress||'-').replace(/[&<>"]/g,'')+'</code>')+'</div>'}
 async function capacity(){let c=null;try{const r=await fetch('capacity?node=me',{cache:'no-store'});c=r.ok?await r.json():null}catch{c=null}const p=c&&c.plea;if(!p){el('capbox').innerHTML='';return}el('capbox').innerHTML='<h2>Capacity</h2><div class="card"><p class="'+(p.level==='bad'?'bad':'warn')+'">'+String(p.says).replace(/[&<>"]/g,'')+'</p></div>'}
+// THE REACT PAGE (kanban #566) when the node carries it: the same dashboard.json, the page's own drawing hidden; this drawing otherwise
+let R=null;async function react(){if(R!==null)return R;try{await import('./dashboard/react.js');R=!!window.ArenaDashboard}catch{R=false}return R}
 async function load(){liquidity();capacity();D=await (await fetch('dashboard.json',{cache:'no-store'})).json();
+if(await react()){el('legacy').hidden=true;window.ArenaDashboard.draw(el('app'),D);return}
 el('who').textContent='node '+D.node+' · active since '+t(D.sinceMs)+' · '+D.roundsChecked+' rounds checked · as of '+t(D.nowMs);totals();chart();tables()}
 load().catch(e=>{el('who').textContent='could not read dashboard.json: '+e.message});setInterval(()=>load().catch(()=>{}),60000);
 </script></body></html>`;
