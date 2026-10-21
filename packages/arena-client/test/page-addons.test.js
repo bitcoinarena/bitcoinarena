@@ -40,7 +40,9 @@ test('the countdown box offers Buy add-ons beside exit game, shown when the game
   // never one letter a line (2026-10-18, 390 px: three buttons left the words 0 px): the box wraps, the words keep 10em, a phone gives them a row
   assert.match(UNITY_CSS, /#arena-next \{ flex-wrap: wrap; justify-content: center; \} #arena-next-say \{ min-width: min\(10em, 100%\); \}/);
   assert.match(UNITY_CSS, /@media \(max-width: 520px\) \{ #arena-next \{ width: calc\(100% - 32px\); font-size: 15px; \} #arena-next-say \{ flex-basis: 100%; text-align: center; \} \}/);
-  assert.match(UNITY_JS, /<div id="arena-next" role="status"><span id="arena-next-say"><\/span><button id="arena-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="arena-next-donate" type="button">[^<]*<\/button>)?<button id="arena-next-exit"/);
-  assert.match(UNITY_JS, /ad\.style\.display = window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance \? '' : 'none';/);
-  assert.match(UNITY_JS, /getElementById\('arena-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
+  // the box is Tick Tock's React NextRoundBox (packages/nextblock/view, kanban #564): add-ons first, then donate, then exit game
+  const VIEW = readFileSync(new URL('../../nextblock/view/NextBlockParts.jsx', import.meta.url), 'utf8');
+  assert.match(VIEW, /<span id="arena-next-say">\{line\}<\/span>\s*<button id="arena-next-addons" type="button" style=\{\{ display: addons \? '' : 'none' \}\} onClick=\{onAddons\}>Buy add-ons<\/button>\s*<button id="arena-next-donate" type="button" onClick=\{onDonate\}>♥ Donate<\/button>\s*<button id="arena-next-exit" type="button" onClick=\{onExit\}>\{exit \|\| 'exit game'\}<\/button>/);
+  assert.match(UNITY_JS, /addons: !!\(window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance\)/);
+  assert.match(UNITY_JS, /onAddons: \(\) => \{ try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\); \}/);
 });
