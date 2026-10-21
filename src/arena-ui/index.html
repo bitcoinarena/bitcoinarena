@@ -6813,20 +6813,11 @@
         const el = splitEl(); if (!el) return;
         const bal = window.ARENA_WALLET_BALANCE; const loads = window.ARENA_FED_LOADS || new Map();
         const sat = (n) => Number(n || 0).toLocaleString('en-US') + ' sat';
-        el.textContent = '';
-        const head = document.createElement('div'); head.className = 'ov-head';
         const inWallet = !!(el.closest && el.closest('#arena-wallet-modal'));   // kanban #558: one part of the Wallet, its own head and no close of its own
-        const h = document.createElement('h4'); h.textContent = inWallet ? 'By federation' : 'Your balance';
-        const x = document.createElement('button'); x.type = 'button'; x.className = 'ov-close'; x.title = 'Close'; x.textContent = '\u00d7'; if (inWallet) x.hidden = true;
-        x.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none'; });
-        head.append(h, x); el.append(head);
         const parts = bal && Array.isArray(bal.parts) ? bal.parts : [];
-        if (!parts.length) { const r = document.createElement('div'); r.className = 'row'; r.textContent = bal ? 'No federation holds funds of this wallet yet' : 'Loading your wallet \u2026'; el.append(r); }
-        for (const x of [...parts].sort((a, b) => b.sats - a.sats)) {
+        // EACH FEDERATION AS DATA (kanban #564): drawn by the page's bundle (window.ArenaBalance, React) when it has loaded, else below
+        const rows = [...parts].sort((a, b) => b.sats - a.sats).map((x) => {
           const st = loads.get(x.federation);
-          const r = document.createElement('div'); r.className = 'row';
-          const left = document.createElement('div');
-          const f = document.createElement('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '\u2026';
           // ITS HEALTH (kanban #545): a dot and a word from its verified record, what happens to the funds, and for a HALTED one when they
           // are paid back - in blocks and in time at the chain's recent pace (balance-view.js)
           const CL = typeof ARENACLIENT !== 'undefined' ? ARENACLIENT : {};
@@ -6834,22 +6825,46 @@
           // AN OPEN FEDERATION BY ITS LOAD (kanban #556: "the health indicator should be color coded: healthy: green, then amber and finally red when
           // approaching high risk levels"; the popup said "Healthy" at 433 %): green under 70 %, amber from 70 %, red from 90 %
           if (st && st.status === 'OPEN' && typeof st.load === 'number')
-            hl = st.load >= 1 ? { level: 'bad', label: 'Full', note: 'It holds more than its guardians\u2019 bonds cover.' } : st.load >= 0.9 ? { level: 'bad', label: 'Nearly full', note: '' }
+            hl = st.load >= 1 ? { level: 'bad', label: 'Full', note: 'It holds more than its guardians’ bonds cover.' } : st.load >= 0.9 ? { level: 'bad', label: 'Nearly full', note: '' }
               : st.load >= 0.7 ? { level: 'warn', label: 'Filling up', note: '' } : { level: 'ok', label: 'Healthy', note: '' };
-          const s = document.createElement('div'); s.className = 'st';
-          const dot = document.createElement('span'); dot.className = 'hl ' + hl.level;
-          s.append(dot, document.createTextNode(hl.label + (st && typeof st.load === 'number' ? ' \u00b7 load ' + Math.round(st.load * 100) + ' %' : '')));
-          left.append(f, s);
           const back = st && st.status === 'HALTED' && CL.reimbursementOf ? CL.reimbursementOf({ status: st, ...(chainFor(st) || {}) }) : null;
-          const noteText = back && back.ok ? back.line : back ? 'When it is paid back is read from the chain \u2026' : hl.note;
-          if (noteText) { const n = document.createElement('div'); n.className = 'note' + (hl.level === 'bad' ? ' bad' : ''); n.textContent = noteText; left.append(n); }
-          const v = document.createElement('b'); v.textContent = sat(x.sats);
+          return { federation: x.federation, level: hl.level, label: hl.label + (st && typeof st.load === 'number' ? ' · load ' + Math.round(st.load * 100) + ' %' : ''),
+            note: back && back.ok ? back.line : back ? 'When it is paid back is read from the chain …' : hl.note, value: sat(x.sats) };
+        });
+        const view = { title: inWallet ? 'By federation' : 'Your balance', closable: !inWallet,
+          empty: parts.length ? null : bal ? 'No federation holds funds of this wallet yet' : 'Loading your wallet …',
+          total: bal ? { label: 'Total' + (parts.length > 1 ? ' (' + parts.length + ' federations)' : ''), value: sat(bal.sats) + (bal.arriving ? ' + ' + sat(bal.arriving) + ' arriving' : '') + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : '') } : null };
+        if (window.ArenaBalance && window.ArenaBalance.drawSplit) {
+          // the React part in its own child, so paintDebug's rows can follow it in the same popup
+          if (!el._rhost) { el.textContent = ''; el._rhost = document.createElement('div'); el._rhost.className = 'split-react'; }
+          while (el.lastChild && el.lastChild !== el._rhost) el.removeChild(el.lastChild);
+          if (el.firstChild !== el._rhost) el.prepend(el._rhost);
+          window.ArenaBalance.drawSplit(el._rhost, Object.assign({ rows, onClose: () => { el.style.display = 'none'; } }, view));
+          return;
+        }
+        el.textContent = '';
+        const head = document.createElement('div'); head.className = 'ov-head';
+        const h = document.createElement('h4'); h.textContent = view.title;
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'ov-close'; x.title = 'Close'; x.textContent = '×'; if (inWallet) x.hidden = true;
+        x.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none'; });
+        head.append(h, x); el.append(head);
+        if (view.empty) { const r = document.createElement('div'); r.className = 'row'; r.textContent = view.empty; el.append(r); }
+        for (const x of rows) {
+          const r = document.createElement('div'); r.className = 'row';
+          const left = document.createElement('div');
+          const f = document.createElement('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '…';
+          const s = document.createElement('div'); s.className = 'st';
+          const dot = document.createElement('span'); dot.className = 'hl ' + x.level;
+          s.append(dot, document.createTextNode(x.label));
+          left.append(f, s);
+          if (x.note) { const n = document.createElement('div'); n.className = 'note' + (x.level === 'bad' ? ' bad' : ''); n.textContent = x.note; left.append(n); }
+          const v = document.createElement('b'); v.textContent = x.value;
           r.append(left, v); el.append(r);
         }
-        if (bal) {
+        if (view.total) {
           const t = document.createElement('div'); t.className = 'row total';
-          const a = document.createElement('div'); a.textContent = 'Total' + (parts.length > 1 ? ' (' + parts.length + ' federations)' : '');
-          const v = document.createElement('b'); v.textContent = sat(bal.sats) + (bal.arriving ? ' + ' + sat(bal.arriving) + ' arriving' : '') + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : ''); t.append(a, v); el.append(t);
+          const a = document.createElement('div'); a.textContent = view.total.label;
+          const v = document.createElement('b'); v.textContent = view.total.value; t.append(a, v); el.append(t);
         }
       };
       // THE CHAIN'S TIP AND PACE, for a halted federation's payback (kanban #545): the network's Esplora explorer (mempool.space by
