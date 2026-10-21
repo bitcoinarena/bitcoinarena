@@ -11,14 +11,14 @@
 # Writes <out>/arena-node-<version>-<os>-<arch>.tar.gz (.zip on Windows) and appends its line to <out>/SHA256SUMS.
 set -euo pipefail
 VER="$1"; OS="$2"; ARCH="$3"; OUT="$(mkdir -p "$4" && cd "$4" && pwd)"; REF="${5:-HEAD}"
-NODE_VER=24.15.0
+NODE_VER=24.22.1   # kanban #574: the 2026-10-21 security release (Brotli RCE, TLS hostname bypasses); hashes from nodejs.org SHASUMS256.txt
 CF_VER=2026.9.1
 # the runtimes, by os-arch: Node's file and SHA-256 (nodejs.org SHASUMS256.txt), cloudflared's (its release notes)
 declare -A NODE_FILE=([linux-x64]=node-v$NODE_VER-linux-x64.tar.xz [linux-arm64]=node-v$NODE_VER-linux-arm64.tar.xz
   [darwin-x64]=node-v$NODE_VER-darwin-x64.tar.gz [darwin-arm64]=node-v$NODE_VER-darwin-arm64.tar.gz [windows-x64]=node-v$NODE_VER-win-x64.zip)
-declare -A NODE_SHA=([linux-x64]=472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6 [linux-arm64]=f3d5a797b5d210ce8e2cb265544c8e482eaedcb8aa409a8b46da7e8595d0dda0
-  [darwin-x64]=ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b [darwin-arm64]=372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4
-  [windows-x64]=cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62)
+declare -A NODE_SHA=([linux-x64]=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 [linux-arm64]=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
+  [darwin-x64]=d132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035 [darwin-arm64]=89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7
+  [windows-x64]=d2046d28c2c3dcd211ac5145c0bf30e2047ef9dfb306693c8c6e2eccd8b95fa5)
 declare -A CF_FILE=([linux-x64]=cloudflared-linux-amd64 [linux-arm64]=cloudflared-linux-arm64 [darwin-x64]=cloudflared-darwin-amd64.tgz
   [darwin-arm64]=cloudflared-darwin-arm64.tgz [windows-x64]=cloudflared-windows-amd64.exe)
 declare -A CF_SHA=([linux-x64]=03f1f25d1cc93b9ad6c60569d44060bc4f17ed97075760ed8cfca4b12dcd68cc [linux-arm64]=3d97437c71848bd8df68041e12436b484a661d95073ea1937f01a845ce88faa3
