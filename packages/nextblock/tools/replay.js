@@ -25,7 +25,7 @@ if (!path) { console.error('usage: replay.js <vector.json | transcript.bin> [see
 const raw = readFileSync(path);
 if (raw[0] === 0x09) {
   const { decodeTranscript, checkTranscript, flatten } =
-    await import('../../arena-protocol/src/transcript.js');
+    await import('arena-sdk/transcript');
   const t = decodeTranscript(new Uint8Array(raw));
   const chain = checkTranscript(t);
   if (!chain.ok) { console.error(`the chain is broken at ${chain.in} ${chain.at}: ${chain.why}`); process.exit(1); }

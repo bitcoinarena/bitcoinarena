@@ -12,12 +12,12 @@ import { readFileSync } from 'node:fs';
 import { NEXTBLOCK, NEXTBLOCK_MANIFEST, NEXTBLOCK_GAME_ID, nextblockManifestBody, NEXTBLOCK_CORES, NEXTBLOCK_CORES_V3, NEXTBLOCK_ITEMS, TRUCK_F0CC_HASH } from '../plugin/nextblock.js';
 import { GAME as V2, MANIFEST_V2, GAME_ID_V2 } from '../plugin/nextblock-v2.js';
 import { GAME as V3, MANIFEST_V3, GAME_ID_V3 } from '../plugin/nextblock-v3.js';
-import { ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
-import { encodeManifestBody, manifestStands, gameIdOf } from '../../arena-protocol/src/manifest.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
-import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
+import { ITEMS_VERSION } from 'arena-sdk/constants';
+import { encodeManifestBody, manifestStands, gameIdOf } from 'arena-sdk/manifest';
+import { donationSetId } from 'arena-sdk/donation';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
+import { toHex } from 'arena-sdk/hash';
+import { verifyEd25519 } from 'arena-sdk/ed25519';
 import { hostedPlugins } from '../../arena-node/src/plugins.js';
 import { coreHashHex } from '../tools/hash-core.js';
 
