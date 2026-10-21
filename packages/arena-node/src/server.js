@@ -74,6 +74,8 @@ import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, P2P_TUNNEL_PATHS } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn } from './address-book.js';
 import { ownServices } from './own-services.js';
+import { serviceSettings } from './service-settings.js';
+import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
@@ -383,6 +385,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // ITS GUARDIAN-NEXT (§23A.6 step 1): `{ apiPort, endpoint, dataDir, setup }` when the node runs a second fedimintd for a
   // successor it is seated first in (node-start.js); carried at /guardian-next. null otherwise.
   guardianNext = null,
+  guardianControl = null,
+  serviceSettings: givenServiceSettings = null,
   // THE NODE'S OWNER (owner.js): `{ store }` - where the owner's public key and the claim code are kept
   // (files beside the database, from main.js). Without it the node has no owner area and /owner answers 404.
   owner: ownerFiles = null,
@@ -5117,16 +5121,68 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // node's services the ones the installer does not know (its address, the P2P tunnel, the announcements)
           const own = await ownServices({ port: http.address() ? http.address().port : null, chainTip, guardian, guardianNext, gatewayPort: process.env.ARENA_GATEWAY_PORT || null,
             publicEndpoint, p2pTunnels, addressBook, ownKey: toHex(round.pubkey) });
-          if (!home) return answer(200, { ok: true, manual: true, version: null, publicUrl: publicEndpoint || null, services: own, command: null, settings: null });
+          // EACH ROW WITH WHAT THE PAGE CAN DO WITH IT (service-control.js): start / stop / restart, and whether it starts at boot
+          const decorate = async (rows, ns, svcs) => {
+            const ids = svcs.map((x) => x.id);
+            return Promise.all(rows.map(async (r) => {
+              let boot = null;
+              if (ns) { const iid = r.id === 'node' ? 'node' : installerIdOf(r.id, ids); const svc = svcs.find((x) => x.id === iid); if (svc && svc.file) { try { boot = await ns.bootOf(svc); } catch { boot = null; } } }
+              return { ...r, ...controlsOf({ id: r.id, installed: !!ns, installedIds: ids, toggles: ownToggles, settings: svcSettings, boot }) };
+            }));
+          };
+          if (!home) return answer(200, { ok: true, manual: true, version: null, publicUrl: publicEndpoint || null, services: await decorate(own, null, []), command: null, settings: null });
           try {
-            const { overview } = await import('../../arena-installer/src/node-services.js');
-            const v = await overview({ home });
+            const ns = await import('../../arena-installer/src/node-services.js');
+            const v = await ns.overview({ home });
             const known = new Set(v.services.map((x) => x.id));
             const extra = own.filter((x) => !known.has(x.id) && !(x.id === 'chain' && [...known].some((k) => /^bitcoind|^chain-bridge/.test(k))) && x.id !== 'node');
+            const rows = [...v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })), ...extra];
             return answer(200, { ok: true, version: v.version, instance: v.instance, port: v.port, publicUrl: v.publicUrl, roles: v.roles, settings: v.conf ? 'arena.conf' : v.legacyEnv ? 'node.env' : null,
-              services: [...v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })), ...extra],
-              command: v.instance ? `arenanode-${v.instance}` : 'arenanode' });
-          } catch (e) { return answer(200, { ok: true, version: null, publicUrl: publicEndpoint || null, services: own, command: null, settings: null, why: `the installer's services could not be read: ${e.message}` }); }
+              services: await decorate(rows, ns, ns.installedServices({ home })), command: v.instance ? `arenanode-${v.instance}` : 'arenanode' });
+          } catch (e) { return answer(200, { ok: true, version: null, publicUrl: publicEndpoint || null, services: await decorate(own, null, []), command: null, settings: null, why: `the installer's services could not be read: ${e.message}` }); }
+        }
+        // START / STOP / RESTART A SERVICE, AND WHETHER IT STARTS AT BOOT (kanban #563): args { id, action: start | stop | restart | boot-on |
+        // boot-off } - the node's own services switched by the node, an installed node's by the installer's control; the seat restarted
+        // by a helper of its own, since the restart ends this process
+        if (url.pathname === '/owner/service') {
+          const a = owner.authorize(body, 'service');
+          if (!a.ok) return answer(a.status || 401, a);
+          const { id, action } = body.args || {};
+          if (!['start', 'stop', 'restart', 'boot-on', 'boot-off'].includes(action)) return answer(400, { ok: false, why: 'action: start, stop, restart, boot-on or boot-off' });
+          const home = process.env.ARENA_HOME;
+          const ns = home ? await import('../../arena-installer/src/node-services.js') : null;
+          const ids = ns ? ns.installedServices({ home }).map((x) => x.id) : [];
+          if (action === 'boot-on' || action === 'boot-off') {
+            const on = action === 'boot-on';
+            if (INSIDE.includes(id)) { const t = ownToggles[id]; if (!t || !t.has()) return answer(409, { ok: false, why: (t && t.why) || 'not run by this node' }); return answer(200, { ok: true, id, atBoot: svcSettings.setAtBoot(id, on) }); }
+            if (!ns) return answer(409, { ok: false, why: 'set up by hand: whether it starts at boot is set on its machine' });
+            const r = await ns.setBoot(id === 'node' ? 'node' : installerIdOf(id, ids), on, { home });
+            return answer(r.ok ? 200 : 409, { ...r, id });
+          }
+          if (INSIDE.includes(id)) {
+            const t = ownToggles[id];
+            if (!t || !t.has()) return answer(409, { ok: false, why: (t && t.why) || 'not run by this node' });
+            let r;
+            try { if (action === 'restart') { await t.stop(); r = await t.start(); } else r = await t[action](); } catch (e) { r = { ok: false, why: e.message }; }
+            console.log(`[owner] ${id}: ${action} ${r.ok ? 'done' : `failed: ${r.why}`}`);
+            return answer(r.ok ? 200 : 409, { ...r, id, running: t.running() });
+          }
+          if (!ns) return answer(409, { ok: false, why: 'set up by hand: it runs outside the node - start and stop it on its machine' });
+          if (id === 'node') {
+            if (action !== 'restart') return answer(409, { ok: false, why: 'stopping the seat would end this page: restart only' });
+            const { spawn: sp } = await import('node:child_process');
+            const lib = new URL('../../arena-installer/src/node-services.js', import.meta.url).href;
+            sp(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(lib)}); await new Promise((r) => setTimeout(r, 1000)); await m.control('restart', 'node', { home: ${JSON.stringify(home)} });`],
+              { detached: true, stdio: 'ignore', env: process.env }).unref();
+            console.log('[owner] the seat restarts');
+            return answer(200, { ok: true, id, restarting: true });
+          }
+          const iid = installerIdOf(id, ids);
+          if (!iid || !ids.includes(iid)) return answer(409, { ok: false, why: 'not a service of this node' });
+          const r = await ns.control(action, iid, { home });
+          const failed = (r.done || []).find((d) => !d.ok);
+          console.log(`[owner] ${iid}: ${action} ${r.ok ? 'done' : 'failed'}`);
+          return answer(r.ok ? 200 : 409, { ok: r.ok, id, why: r.why || (failed ? failed.why : undefined) });
         }
         // ADD TO BOND (kanban #544): signed by the owner, { sats, post } - the plan of a second bond output beside the first (the amount,
         // the fees, the new total, the maturity), and with post: true the funding and bond transactions broadcast. The wallet is the
@@ -8513,8 +8569,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (r.took) console.log(`[address] ${publicEndpoint} announced to ${r.took} of ${r.roots} seat(s)`);
     return r;
   };
-  const announceTimer = publicEndpoint ? setInterval(() => { announceAddress().catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000)) : null;
-  if (announceTimer) { announceTimer.unref(); setTimeout(() => { announceAddress().catch(() => {}); }, 5000).unref(); }
+  // STARTED AND STOPPED FROM THE OWNER PAGE, AND AT BOOT ONLY IF THE OWNER LEFT IT ON (kanban #563): the announcements and the P2P
+  // tunnel run inside the node, so the node switches them; their "at boot" kept in its store (service-settings.js)
+  const svcSettings = givenServiceSettings || serviceSettings(db);
+  let announceTimer = null;
+  const ownToggles = {
+    announcements: {
+      has: () => !!publicEndpoint, why: 'no public address set (ARENA_WSS_<port>): nothing to announce',
+      running: () => !!announceTimer,
+      start: () => { if (!announceTimer) { announceTimer = setInterval(() => { announceAddress().catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000)); announceTimer.unref();
+        setTimeout(() => { announceAddress().catch(() => {}); }, 5000).unref(); } return { ok: true }; },
+      stop: () => { if (announceTimer) { clearInterval(announceTimer); announceTimer = null; } return { ok: true }; },
+    },
+  };
+  if (publicEndpoint && svcSettings.atBoot('announcements')) ownToggles.announcements.start();
   const p2pTunnels = (guardian || guardianNext) && process.env.ARENA_P2P_TUNNEL !== '0' ? createP2pTunnels({ ownKey: round.pubkey, say: (m) => console.log(m) }) : null;
   const p2pTunnelSync = async () => {
     let list = null;
@@ -8522,9 +8590,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
     if (list) p2pTunnels.sync(list.map((e) => (e && e.advert ? { ...e, advert: { ...e.advert, endpoint: addressBook.endpointOf(e) } } : e)));
   };
-  const p2pTunnelTimer = p2pTunnels ? setInterval(() => { p2pTunnelSync().catch(() => {}); }, Number(process.env.ARENA_P2P_TUNNEL_MS || 60000)) : null;
-  if (p2pTunnelTimer) p2pTunnelTimer.unref();
-  if (p2pTunnels) setTimeout(() => { p2pTunnelSync().catch(() => {}); }, 3000).unref();
+  let p2pTunnelTimer = null;
+  ownToggles['p2p-tunnel'] = {
+    has: () => !!p2pTunnels, why: 'this node runs no guardian: no guardian\'s P2P to carry',
+    running: () => !!p2pTunnelTimer,
+    start: () => { if (!p2pTunnelTimer) { p2pTunnelTimer = setInterval(() => { p2pTunnelSync().catch(() => {}); }, Number(process.env.ARENA_P2P_TUNNEL_MS || 60000)); p2pTunnelTimer.unref();
+      setTimeout(() => { p2pTunnelSync().catch(() => {}); }, 3000).unref(); } return { ok: true }; },
+    stop: () => { if (p2pTunnelTimer) { clearInterval(p2pTunnelTimer); p2pTunnelTimer = null; } p2pTunnels.close(); return { ok: true }; },
+  };
+  if (p2pTunnels && svcSettings.atBoot('p2p-tunnel')) ownToggles['p2p-tunnel'].start();
+  if (guardianControl) ownToggles.guardian = { has: guardianControl.has, why: 'this node runs no guardian', running: guardianControl.running, start: guardianControl.start, stop: guardianControl.stop };
   http.on('upgrade', (req, socket, head) => {
     const at = new URL(req.url, 'http://node').pathname;
     if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
