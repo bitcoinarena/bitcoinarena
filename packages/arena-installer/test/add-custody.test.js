@@ -14,6 +14,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createWizard, beginAddCustody } from '../src/wizard.js';
 import { nodeState, seatEnv } from '../src/state.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
+import { emergencyOf } from '../src/seed.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -81,6 +82,7 @@ test('custody added later: the same screens, then an advertisement update of the
   const u = readAdvertUpdate(fromHex(sent[1]), { network: 'testnet4' });
   assert.equal(u.ok, true, u.why);
   assert.deepEqual([u.advert.guardianCapable, u.advert.guardianEndpoint], [true, 'wss://node.example.com/guardian'], 'the update names the node\'s guardian');
+  assert.equal(toHex(u.advert.emergencyPubkey || new Uint8Array(0)), emergencyOf(fromHex('11'.repeat(32))).pubkey, 'and keeps the emergency key: the census reads the newest advertisement');
   assert.equal(posted.bond.txid, '77'.repeat(32), 'the same bond');
   assert.deepEqual(programs, ['custody'], 'the custody agent runs');
   s = (await c.get('/api/state')).json;

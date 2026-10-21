@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createCustodyAgent, guardianOfEntry } from '../src/custody-agent.js';
+import { emergencyOf } from '../src/seed.js';
 import { nodeState } from '../src/state.js';
 import { readAdvertUpdate, checkAgainstBond } from '../../arena-protocol/src/advert-update.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
@@ -69,6 +70,7 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   const ok = await checkAgainstBond(read, { txid: fromHex(bondTxid).reverse(), vout: 0, nodePubkey: schnorr.getPublicKey(nodeSecret) }, (s, m, k) => schnorr.verify(s, m, k));
   assert.equal(ok.ok, true, ok.why);
   assert.deepEqual([toHex(read.advert.guardianOf[0].federationId), toHex(read.advert.guardianOf[0].guardianKey)], [fid, '03' + 'cd'.repeat(32)]);
+  assert.equal(toHex(read.advert.emergencyPubkey || new Uint8Array(0)), emergencyOf(fromHex('11'.repeat(32))).pubkey, 'the emergency key kept: the census reads the newest advertisement');
   assert.deepEqual([read.advert.guardianCapable, read.advert.bondMaturityHeight], [false, 157057], 'no custody binaries in this test release: capable only with them; the bond\'s maturity kept');
 
   coins = [{ txid: '6b'.repeat(32), vout: 2, sats: 55000 }];   // the update's change, confirmed
