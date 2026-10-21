@@ -45,7 +45,7 @@ fetch() { # url sha file
 }
 
 # 1. the code, from the commit (git archive: tracked files only, nothing of a working tree)
-git -C "$ROOT" archive "$REF" LICENSE packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-installer packages/nextblock \
+git -C "$ROOT" archive "$REF" LICENSE packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist/owner.js packages/arena-web/dist/arena.css packages/arena-installer packages/nextblock \
   | tar -x -C "$STAGE"
 for p in arena-node arena-protocol arena-installer nextblock; do
   rm -rf "$STAGE/packages/$p/test"
