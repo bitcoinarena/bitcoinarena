@@ -8,10 +8,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-const at = HTML.indexOf('        const plus = r.kind === ');
-const src = HTML.slice(at, HTML.indexOf("          : String(r.kind || 'entry');", at) + "          : String(r.kind || 'entry');".length);
-const doc = { createElement: () => ({ className: '', appendChild() {}, append() {} }) };
-const row = (r) => new Function('r', 'sat', 'document', src + '; return { plus, what };')(r, (m) => `${Number(BigInt(m || 0) / 1000n)} sat`, doc);
+// the page's WHAT (one wording for every row, kanban #564) and its in/out rule, lifted from paintHistory
+const whatAt = HTML.indexOf('      const WHAT = (r, sat) => ');
+const WHAT = new Function('return ' + HTML.slice(whatAt + '      const WHAT = '.length, HTML.indexOf(";\n", whatAt)))();
+const plusAt = HTML.indexOf('        const plus = r.kind === ');
+const PLUS = new Function('r', HTML.slice(plusAt, HTML.indexOf(';\n', plusAt) + 1) + ' return plus;');
+const row = (r) => ({ plus: PLUS(r), what: WHAT(r, (m) => `${Number(BigInt(m || 0) / 1000n)} sat`) });
 
 test('moves and swaps are named, with their sign; a stake stays a stake; nothing unknown becomes a stake', () => {
   assert.deepEqual(row({ kind: 'moved-in', msat: '1000000', from: 'b18947f085d4' }), { plus: true, what: 'Moved in from federation b18947f0' });
@@ -24,5 +26,5 @@ test('moves and swaps are named, with their sign; a stake stays a stake; nothing
 
 test('every federation\'s rows are listed, each tagged with its federation when there is more than one', () => {
   assert.match(HTML, /const feds = \[\.\.\.new Set\(\[fed, \.\.\.\(ARENACLIENT\.ledgerFederations \? ARENACLIENT\.ledgerFederations\(st\) : \[\]\)\]\)\];/);
-  assert.match(HTML, /what \+ \(feds\.length > 1 \? ' \\u00b7 ' \+ String\(r\.fed\)\.slice\(0, 8\) : ''\)/);
+  assert.match(HTML, /what: what \+ \(feds\.length > 1 \? ' (?:\\u00b7|·) ' \+ String\(r\.fed\)\.slice\(0, 8\) : ''\)/);
 });

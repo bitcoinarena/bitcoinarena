@@ -11,6 +11,21 @@ const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 const a = HTML.indexOf("      window.ARENA_WALLETS = window.ARENA_WALLETS || new Map();");
 const b = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
 const src = HTML.slice(a, b);
+// window.ArenaBalance.drawSplit as the page's bundle draws it (kanban #564), its parts as plain nodes of the fake document
+const drawSplit = (mk) => (host, p) => {
+  host.textContent = '';
+  const h = mk('h4'); h.textContent = p.title; host.append(h);
+  if (p.empty) { const r = mk('div'); r.className = 'row'; r.textContent = p.empty; host.append(r); }
+  for (const x of p.rows) {
+    const r = mk('div'); r.className = 'row'; const left = mk('div');
+    const f = mk('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '\u2026';
+    const s = mk('div'); s.className = 'st'; const dot = mk('span'); dot.className = 'hl ' + x.level; s.append(dot, { textContent: x.label });
+    left.append(f, s);
+    if (x.note) { const n = mk('div'); n.className = 'note'; n.textContent = x.note; left.append(n); }
+    const v = mk('b'); v.textContent = x.value; r.append(left, v); host.append(r);
+  }
+  if (p.total) { const t = mk('div'); t.className = 'row total'; const a = mk('div'); a.textContent = p.total.label; const v = mk('b'); v.textContent = p.total.value; t.append(a, v); host.append(t); }
+};
 
 test('the balance is every held federation\'s sum, a wallet opened for each held federation with a verified invite', async () => {
   assert.ok(a > 0 && b > a, 'the page carries the summing block');
@@ -60,12 +75,13 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
   // a minimal document: elements that keep their children's text
   const mk = (tag) => { const e = { tag, children: [], style: {}, className: '', _t: '', listeners: {},
     append(...c) { this.children.push(...c); }, addEventListener(k, f) { this.listeners[k] = f; }, contains: () => false,
+    prepend(x) { this.children.unshift(x); }, removeChild(x) { this.children.splice(this.children.indexOf(x), 1); }, get firstChild() { return this.children[0] || null; }, get lastChild() { return this.children[this.children.length - 1] || null; },
     set textContent(v) { this._t = v; this.children = []; }, get textContent() { return this._t + this.children.map((c) => c.textContent).join(' | '); } }; return e; };
   const split = mk('div'); split.style.display = 'none';
   // kanban #558: Settings' balance boxes are part of the Wallet itself, so they open nothing; the header's, the bar's and the lobby's open the Wallet
   const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#arena-lobby-balance': mk('div'), '#arena-hdr-bal': mk('button') };
   const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, createTextNode: (t) => ({ textContent: t }), querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
-  const window = { ARENA_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
+  const window = { ArenaBalance: { drawSplit: drawSplit(mk) }, ARENA_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
     ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };
   // the popup says each federation's health in words (kanban #545, balance-view.js)
   new Function('window', 'document', 'ARENACLIENT', src2)(window, document, { federationHealth, reimbursementOf, capacityOf, medianBlockSeconds, explorerBaseFor });
