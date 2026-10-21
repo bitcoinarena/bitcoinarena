@@ -111,6 +111,9 @@ export class Round {
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
+    // A COUNT THAT MOVES WHENEVER A ROUND OPENS, CLOSES OR HAS ITS CONTRACT CHANGED (kanban #576): a caller that keeps what it read
+    // of the open rounds reads them again only once this has moved
+    this.openSeq = 0;
     // THE GAMES THIS NODE HOSTS (§0A.4; M3 R1): a round is opened only on one of them, on a core installed for
     // it, and its run length is that core's.
     this.plugins = hostedPlugins(plugins);
@@ -158,6 +161,7 @@ export class Round {
     if (want.join() === had.join() && want.join() === recorded.join()) return false;
     const bytes = encodeRoundContract({ ...c, nodes: keys });
     this.db.prepare('UPDATE rounds SET contract = ? WHERE round_id = ?').run(bytes, roundIdBytes);
+    this.openSeq++;
     this.db.prepare('DELETE FROM signer_nodes WHERE round_id = ?').run(roundIdBytes);
     this.recordSignerNodes(roundIdBytes, keys);
     return true;
@@ -391,8 +395,9 @@ export class Round {
 
     const bytes = encodeRoundContract(contract);
     const id = roundId(contract);
-    this.db.prepare('INSERT OR IGNORE INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
+    const added = this.db.prepare('INSERT OR IGNORE INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
       .run(id, bytes, OPEN, this.now());
+    if (added.changes) this.openSeq++;
     return id;
   }
 
@@ -1506,6 +1511,7 @@ export class Round {
     if (round.state === CLOSED) return false;
     this.db.prepare('UPDATE rounds SET state = ?, closed_ms = ? WHERE round_id = ?')
       .run(CLOSED, this.now(), id);
+    this.openSeq++;
     return true;
   }
 
