@@ -72,6 +72,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, P2P_TUNNEL_PATHS } from './p2p-tunnel.js';
+import { createAddressBook, announceOwn } from './address-book.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
@@ -717,6 +718,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
   const round = new Round(db, undefined, { plugins: hosted });
+  const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
   // A CHECKPOINT EQUIVOCATION THIS SEAT HOLDS FOR THE FIRST TIME GOES TO THE ROUND'S PUBLICATION RELAYS (§25.2): both
   // signed marks over each relay's /play, where the relay records the pair itself; unawaited, best effort
   round.onEquivocation = ({ roundId, entryId, tick, stored, offered }) => {
@@ -3807,6 +3809,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
       peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
+      endpointOf: (e) => addressBook.endpointOf(e),
       postTo: async (root, m) => { await fetch(`${root}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }); },
       say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
     guardianWiring.founding = true;
@@ -4888,11 +4891,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const notice = NOTICE_BLOCKS[(rows[0] && rows[0].network) || 'mainnet'] || NOTICE_BLOCKS.mainnet;
           const floor = newest === null ? { inForce: null, pending: null } : bondMinInForce(history, newest, notice);
           const warn = newest === null ? null : bondMinWarning({ pending: floor.pending, ownBondSats: standing.ownBondSats === null ? null : BigInt(standing.ownBondSats), nowHeight: newest });
-          const address = { advertised: await advertisedEndpoint(rows, me), serving: publicEndpoint };
+          // AN ADDRESS ANNOUNCED OFF CHAIN COUNTS (kanban #562): the census may name an older one while this node's announcement names
+          // the one it answers at - found, nothing to warn about
+          const mine = addressBook.map().get(me);
+          const address = { advertised: await advertisedEndpoint(rows, me), announced: mine ? mine.endpoint : null, serving: publicEndpoint };
           return answer(200, { ...standing, bondMin: { inForce: floor.inForce === null ? null : String(floor.inForce), noticeBlocks: notice, censuses: history.length,
             pending: floor.pending ? { value: String(floor.pending.value), crossedAt: floor.pending.crossedAt, effectiveAt: floor.pending.effectiveAt } : null },
             warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : []),
-              ...(() => { const w = endpointWarning(address); return w ? [w] : []; })()], address });
+              ...(() => { if (address.announced && !endpointWarning({ advertised: address.announced, serving: address.serving })) return []; const w = endpointWarning(address); return w ? [w] : []; })()], address });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
@@ -7984,6 +7990,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // equivocation
       const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
       // A FOUNDING (§23A.2): a seated node's signed setup code, and this seat's view of the founding
+      // WHERE NODES ARE NOW, OFF CHAIN (address-book.js, kanban #562): a node's signed address announcement in, every one this seat holds out
+      if (req.method === 'POST' && url.pathname === '/address-announcement') {
+        let a; try { a = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an address announcement as JSON { node, endpoint, atMs, sig }'); }
+        const r = addressBook.take(a);
+        return r.ok ? json(res, 200, r) : text(res, 400, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/address-announcements') return json(res, 200, { announcements: addressBook.list() });
       if (req.method === 'POST' && url.pathname === '/founding') {
         if (!foundingSeat) return text(res, 404, 'this seat runs no founding (ARENA_FOUNDING)');
         let m; try { m = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a setup code as JSON { id, node, code, signature }'); }
@@ -8445,12 +8458,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GUARDIANS' P2P THROUGH THE NODES (p2p-tunnel.js, kanban #562): /guardian-p2p ends here as a websocket and goes on to
   // this node's guardian's own P2P port; every node carries the other guardians' P2P ports to their seats the same way
   const p2pWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+  // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, the owner 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
+  // address it names itself and pushed to every census node's seat every ARENA_ADDRESS_ANNOUNCE_MS (10 min) - no advertisement update
+  const announceAddress = async () => {
+    if (!publicEndpoint) return null;
+    let list = null;
+    try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
+    if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
+    const a = addressBook.own({ node: toHex(round.pubkey), endpoint: publicEndpoint, sign: (d) => schnorr.sign(d, round.identity.secret) });
+    const post = async (u, body) => (await fetch(u, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(15000) })).ok;
+    const r = await announceOwn({ announcement: a, entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), post });
+    if (r.took) console.log(`[address] ${publicEndpoint} announced to ${r.took} of ${r.roots} seat(s)`);
+    return r;
+  };
+  const announceTimer = publicEndpoint ? setInterval(() => { announceAddress().catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000)) : null;
+  if (announceTimer) { announceTimer.unref(); setTimeout(() => { announceAddress().catch(() => {}); }, 5000).unref(); }
   const p2pTunnels = (guardian || guardianNext) && process.env.ARENA_P2P_TUNNEL !== '0' ? createP2pTunnels({ ownKey: round.pubkey, say: (m) => console.log(m) }) : null;
   const p2pTunnelSync = async () => {
     let list = null;
     try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
-    if (list) p2pTunnels.sync(list);
+    if (list) p2pTunnels.sync(list.map((e) => (e && e.advert ? { ...e, advert: { ...e.advert, endpoint: addressBook.endpointOf(e) } } : e)));
   };
   const p2pTunnelTimer = p2pTunnels ? setInterval(() => { p2pTunnelSync().catch(() => {}); }, Number(process.env.ARENA_P2P_TUNNEL_MS || 60000)) : null;
   if (p2pTunnelTimer) p2pTunnelTimer.unref();
@@ -8881,6 +8909,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const sock of wss.clients) sock.terminate();
         for (const sock of guardianPipes) sock.destroy();
         if (p2pTunnelTimer) clearInterval(p2pTunnelTimer);
+        if (announceTimer) clearInterval(announceTimer);
         if (p2pTunnels) p2pTunnels.close();
         for (const c of p2pWss.clients) c.terminate();
         wss.close();
