@@ -31,3 +31,4 @@ button.primary{background:var(--gv);border-color:var(--gv);color:#1a1200}button:
 input,textarea,select{width:100%;font:15px ui-monospace,monospace;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);box-sizing:border-box}
 label{display:block;margin:8px 0 4px;color:var(--dim)}.warnline{border-left:3px solid var(--gv);padding-left:10px}
 a{color:var(--st)}code{font-family:ui-monospace,monospace}
+.confirm{display:flex;gap:10px;align-items:flex-start;margin:10px 0;color:var(--text)}.confirm input{width:auto;margin-top:4px}.info{margin:2px 0 6px}.info a{color:inherit}textarea{min-height:60px}
