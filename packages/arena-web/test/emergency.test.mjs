@@ -65,3 +65,14 @@ test('a refused leave request says why and can be tried again; Back starts over'
   await p.leave();
   assert.equal(p.state.sent.postedAt, 157211);
 });
+
+test('on the Arena site (/offline/): the seats\' own errors as they are, the seats that took the request counted, its own back link', async () => {
+  const p = page({ client: client([]), unreachable: '', backLabel: '← Bitcoin Arena', dashboardHref: '../',
+    get: async () => { throw new Error('No seat answered. Try again in a moment.'); } });
+  p.state.code = 'ARN-AAAA'; await p.find();
+  assert.equal(p.state.error, 'No seat answered. Try again in a moment.', 'no "this node did not answer" before it');
+  assert.match(renderToStaticMarkup(p.render()), /<a href="\.\.\/">← Bitcoin Arena<\/a>/);
+  const q = page({ client: client([]), unreachable: '', get: async () => named, post: async () => ({ postedAt: 157210, took: 13, asked: 14 }) });
+  q.state.code = 'ARN-AAAA'; await q.find(); await q.leave();
+  assert.match(renderToStaticMarkup(q.render()), /13 of 14 seats took the leave request \(block 157210\); each passes it on\./);
+});
