@@ -383,7 +383,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }
     return { restored, of: rows.length };
   }
-  let peerTurn = 0;                          // where the next pass starts in peerSeats()
+  const peerTurns = new Map();               // federation id hex -> passes asked: where its next pass starts in peerSeats()
   async function mirror(federationId, b, inviteFederationId) {
     const fid = toHex(federationId);
     const censusKept = new Map();          // record height -> its census (one read per height in a pass)
@@ -417,7 +417,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!best) {
       let others = []; try { others = [...new Set((peerSeats() || []).map((u) => String(u).replace(/\/+$/, '')))].filter((u) => !bases.includes(u)); } catch { others = []; }
       if (others.length) {
-        const from = (peerTurn++ * MIRROR_PEERS) % others.length;
+        const turn = peerTurns.get(fid) || 0; peerTurns.set(fid, turn + 1);
+        const from = (turn * MIRROR_PEERS) % others.length;
         await ask([...others.slice(from), ...others.slice(0, from)].slice(0, MIRROR_PEERS));
         if (!best) why = `${why}, nor ${Math.min(MIRROR_PEERS, others.length)} of the census seats asked`;
       }
