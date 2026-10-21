@@ -377,15 +377,11 @@ test('the bond step names the whole deposit from the start: custody 363,000 with
   assert.equal(sum(c), 363000);
   assert.equal(sum(depositParts({ roles: [] }, 0)), 52000);
   assert.equal(sum(depositParts({ roles: ['liquidity'] }, 0)), 552000);
-  const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\$\('b-need'\)\.textContent = needText\(st\.wallet\.needSats, st\.wallet\.parts\)/, 'the first render shows the total and its parts');
-  assert.match(html, /\$\('b-need2'\)\.textContent = needText\(st\.wallet\.needSats, st\.wallet\.parts\)/, 'custody added later too: not "Send  sat"');
+  // the step that shows it is React's BondStep (kanban #564): its first render names the total and its parts (arena-web's finish test)
 });
 
 test('a new node starts with game / verify and settlement ticked; custody and liquidity are chosen on purpose (rc.14 in the Windows VM ticked liquidity: 863,000 sat asked)', () => {
-  const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
-  assert.match(html, /const OPT_IN_ROLES = \['custody', 'liquidity'\];/);
-  assert.match(html, /\(!st\.roles\.length && !OPT_IN_ROLES\.includes\(k\)\) \? 'checked'/, 'only the roles outside OPT_IN_ROLES start ticked');
+  // the roles are drawn by React's RolesStep (kanban #564), with the same rule (arena-web's OPT_IN_ROLES and onAtStart, its wizard test)
   const opt = ['custody', 'liquidity'];
   const ticked = (st, k) => st.roles.includes(k) || (!st.roles.length && !opt.includes(k));
   assert.deepEqual(['verify', 'settlement', 'custody', 'liquidity'].filter((k) => ticked({ roles: [] }, k)), ['verify', 'settlement']);
@@ -410,12 +406,16 @@ test('the roles step shows each role in one line, its needs as chips, the long t
     assert.ok(r.needs.length > 100, `${k}: the full text kept for "more"`);
   }
   assert.ok(ROLES.liquidity.chips.includes('💰 500,000 sat') && ROLES.custody.chips.includes('🚪 port 9735'));
+});
+
+// EVERY STEP IS REACT'S (kanban #564, the owner 2026-10-21: "no fall backs"): the page loads the steps (/wizard.js) before its own script,
+// hands each step the wizard's state, post and reload, and draws none of them itself - no step's old markup or handlers are left
+test('the wizard page draws no step itself: the roles into their list, every other step into its section, by window.ArenaWizard', () => {
   const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
-  // the page's own drawing, kept for a release without the React steps (kanban #564)
-  const render = html.slice(html.indexOf("if (st.step === 'roles' && !reactRoles) $('roles').innerHTML"), html.indexOf("if (st.step === 'roles' && !reactRoles) { const cb"));
-  assert.ok(render.length > 200, 'the page still draws the roles itself');
-  assert.match(render, /<span class="rc-pct">1 % of each round<\/span>/, 'the share as a badge');
-  assert.match(render, /OPT_IN_ROLES\.includes\(k\) \? '<span class="chip opt">needs coins \+ LND<\/span>'/, 'the opt-in roles marked');
-  assert.match(render, /<details class="rc-more"><summary>more<\/summary><p>\$\{ROLE_EARN\[k\] \|\| ''\}<\/p><p>\$\{esc\(r\.needs\)\}<\/p><\/details>/, 'the prose only behind "more"');
-  assert.ok(!/<p>\$\{esc\(r\.needs\)\}<\/p><\/div><\/label>/.test(render), 'no prose in the card itself');
+  assert.ok(html.indexOf('<script src="/wizard.js"></script>') > 0 && html.indexOf('<script src="/wizard.js"></script>') < html.indexOf('<script>\n'), 'the steps load first');
+  assert.match(html, /const R = window\.ArenaWizard, ctx = \{ st, post, get: async \(path\) => \(await fetch\(path\)\)\.json\(\), reload: load \};/);
+  assert.match(html, /if \(st\.step === 'roles'\) R\.mount\('roles', \$\('roles'\), \{ \.\.\.ctx, onCustody: \(on\) => \{ \$\('custody-explain'\)\.hidden = !on; \} \}\);/);
+  assert.match(html, /R\.show\(st\.step, \(k\) => \$\('s-' \+ k\), ctx\);/);
+  for (const k of ['chain', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']) assert.ok(html.includes(`<section id="s-${k}"></section>`), `${k}: an empty section for React`);
+  for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"']) assert.ok(!html.includes(gone), gone);
 });

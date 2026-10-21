@@ -23,7 +23,7 @@ textarea{min-height:110px}
 .warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
 label{display:block;margin:8px 0 4px;color:var(--dim)}
-  table.found { width: 100%; border-collapse: collapse; } table.found th, table.found td { padding: 4px 6px; text-align: left; vertical-align: top; } .info { margin: 2px 0 6px; } .info a { color: inherit; }
+  .info { margin: 2px 0 6px; } .info a { color: inherit; }
   /* the dev key's earnings by period: scrolls sideways on a phone, numbers right-aligned */
   .tablewrap { overflow-x: auto; } table.earn { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
   table.earn th, table.earn td { padding: 4px 6px; text-align: right; white-space: nowrap; border-bottom: 1px solid rgba(255,255,255,0.06); } table.earn tbody th { text-align: left; font-weight: 500; }
@@ -57,7 +57,6 @@ h3.offer{font-size:20px;color:var(--gv)}
 .tile a.go{color:var(--st);font-weight:600;font-size:14px;text-decoration:none}
 .savebar{position:sticky;bottom:12px;z-index:4;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;background:var(--card);border:1px solid var(--gv);border-radius:14px;padding:10px 14px;margin-top:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
 .savebar[hidden]{display:none}
-.svc-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-2px 0 10px 26px}.svc-ctl button{padding:6px 12px;font-size:13px;margin:0}.svc-ctl .switch{margin-left:8px}
 .confirm{display:flex;gap:10px;align-items:flex-start;margin:10px 0;color:var(--text)}.confirm input{width:auto;margin-top:4px}
 /* THE MODERN LOOK, EVERY SECTION (kanban #565, the owner 2026-10-21: "make the rest of the owners page modern everywhere, not just the roles
    screen"): larger section titles, softer cards, key-value rows that read as label and value, compact buttons, a summary bar on top of a
@@ -119,6 +118,10 @@ const BASE = location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
 const at = (p) => BASE + p;
 document.getElementById('public').href = at('/Dashboard');
 const C = await import(at('/owner/client.js'));
+// THE REACT SCREENS (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
+// bundle is loaded once, here, and every ported panel is drawn by it alone
+await import(at('/owner/react.js'));
+const O = window.ArenaOwner;
 const STORE = 'arena-owner-seed:' + BASE;          // per node address, in this browser only
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -163,6 +166,13 @@ const post = async (path, body) => {
   if (!r.ok) throw new Error((j && j.why) || t.trim() || 'HTTP ' + r.status);
   return j;
 };
+// THE DOORS THE REACT SCREENS READ (kanban #564): the JSON as it comes; null for a door that refused; null too for one that did not answer
+const getJson = async (p) => (await fetch(at(p), { cache: 'no-store' })).json();
+const getOk = async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; };
+const getOrNull = async (p) => { try { return await getOk(p); } catch { return null; } };
+const fetchJson = async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); };
+// A REACT SCREEN INTO ITS ELEMENT (kanban #564): the one drawn there before is unmounted first
+const mount = (id, how, props) => { const el = $(id); if (el._react) el._react.unmount(); el.innerHTML = ''; return (el._react = O[how](el, props)); };
 
 // 1. NO WORDS IN THIS BROWSER: make new ones, or restore
 function welcome() {
@@ -282,10 +292,9 @@ function need(key, level, text, section) {
   if (level) needs.set(key, { level, text, section }); else needs.delete(key);
   const el = $('needs'); if (!el) return;
   const list = [...needs.values()].sort((x, y) => (x.level === 'bad' ? 0 : 1) - (y.level === 'bad' ? 0 : 1));
-  // THE REACT LIST (kanban #564) once the bundle is loaded; the page's own lines otherwise. The sidebar dots stay the page's.
-  if (window.ArenaOwner && window.ArenaOwner.needsInto) { if (!el._needsRoot) el.innerHTML = ''; window.ArenaOwner.needsInto(el, list); }
-  else el.innerHTML = list.length ? `<h3>What needs you</h3>${list.map((n) => `<p class="${n.level === 'bad' ? 'err' : 'warnline'}">${n.level === 'bad' ? '🔴' : '🟡'} ${esc(n.text)} <a href="#${n.section}">Open</a></p>`).join('')}`
-    : '<h3 class="ok">Nothing needs you ✓</h3><p class="sub">This node runs, its bond is enough and it is up to date.</p>';
+  // THE REACT LIST (kanban #564), drawn again on each change; the sidebar dots stay the page's
+  if (!el._needsRoot) el.innerHTML = '';
+  O.needsInto(el, list);
   for (const [x] of SECTIONS) { const d = $('dot-' + x); if (d) { const l = list.find((n) => n.section === x); d.className = 'dot' + (l ? ' d-' + l.level : ''); } }
 }
 // EACH APP ONCE, AT ITS NEWEST VERSION (kanban #553): [{ name, version, ... }] -> one per name, the highest version, with `older` counted
@@ -298,8 +307,6 @@ function newestApps(list) {
   }
   return [...by.values()];
 }
-// 1, 2, 3 ... 19 said as "1-19"
-const protoRange = (l) => { const n = [...l].map(Number).sort((a, b) => a - b); const out = []; for (let i = 0; i < n.length; i++) { let j = i; while (j + 1 < n.length && n[j + 1] === n[j] + 1) j++; out.push(i === j ? String(n[i]) : `${n[i]}-${n[j]}`); i = j; } return out.join(', '); };
 // BLOCKS AS DAYS AND HOURS (kanban #553: "the number of blocks left AND the estimated times in days and hours")
 const daysHours = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); const d = Math.floor(h / 24); return d ? `${d} day${d === 1 ? '' : 's'} ${h % 24} h` : `${h} h`; };
 // 3. THE OWNER AREA
@@ -347,18 +354,10 @@ async function area() {
       <p class="lead">Games, markets and networks this node runs. New ones come from other nodes; each is checked here and again by the node before it runs.</p>
       <div class="card" id="store">
       <h3>On this node</h3><div id="installed"></div>
-      <h3>Found on the network</h3>
-      <p class="sub" id="netfound-at">asking the network's nodes…</p><div id="netfound"></div>
-      <button id="netagain">Search again</button>
-      <details><summary class="sub">Or look at one node by its address</summary>
-      <label>Another node's address</label><input id="from" placeholder="https://node.example" autocomplete="off" autocapitalize="none">
-      <button id="look">Look</button></details><div class="err" id="perr"></div><div id="offer"></div></div>
+      <h3>Found on the network</h3><div id="netfound"></div></div>
       <h3 class="sh">Network</h3><div class="card" id="nets">
       <p>The network this node plays on: its chain, the donation addresses in force, the game series, and its federations.</p>
-      <div id="netmine"><p class="sub">reading this node's network…</p></div>
-      <details><summary class="sub">Take a network from another node</summary>
-      <label>Another node's address</label><input id="nfrom" placeholder="https://node.example" autocomplete="off" autocapitalize="none">
-      <button id="nlook">Look</button></details><div class="err" id="nerr"></div><div id="noffer"></div></div>
+      <div id="netmine"><p class="sub">reading this node's network…</p></div></div>
     </section>
     <section id="s-release"><h2>Updates</h2>
       <p class="lead">The version this node runs and whether a newer one is out.</p>
@@ -420,277 +419,25 @@ async function area() {
     } catch (e) { $('serr').textContent = e.message; }
   };
 }
-// THIS NODE'S STANDING (§5A.3, §5A.10B): the seatings it was drawn for and missed - from three in a row the
-// warning and the serving = false update offered - and its bond against the bracket now common: own weight, brackets served,
-// headroom, and each warning in the seat's own words (FALLING SHARE is no fault; LOSING BRACKETS / NEAR THE FLOOR are urgent)
-// THE BOND AND ITS LOCK (2026-10-18: "withdrawing the bond after the lock (communicating the lock time
-// clearly)"): the bond the census names, locked until its maturity block - the blocks to it and an estimated date - and from that
-// block on, withdrawn to an address the owner names, signed by the owner
-// THE RELEASE THIS NODE RUNS: its version and commit, the protocol versions it speaks, and how it is updated
-// A NEW RELEASE IS AVAILABLE: the newest release the Arena site names, signed with the release key (the seat checks it)
-function latestLine(v) {
-  const l = v.latest || {};
-  if (l.newer && l.latest) return `<p class="ok"><b>A new release is available: ${esc(l.latest.version)}</b>${l.latest.release ? ` - <a href="${esc(l.latest.release)}" target="_blank" rel="noopener">its release page</a> (invite only)` : ''}. Download the asset for this machine with SHA256SUMS and SHA256SUMS.sig beside it.</p>`;
-  if (l.latest) return `<div class="row"><span>Newest release</span><b>${esc(l.latest.version)} - this node is up to date</b></div>`;
-  return l.why ? `<p class="sub">Newest release: ${esc(l.why)}.</p>` : '';
+// THE PORTED PANELS, EACH ONLY ITS REACT SCREEN (kanban #564, the owner 2026-10-21: "no fall backs"): the page hands each the doors it
+// reads, its signed-request helpers and, where it reports to the Overview, the need() line
+// THE ROLES (kanban #553 / #563): what this node does and earns, a switch where a role is changed from here
+function rolesPanel() { mount('roles', 'mountRoles', { api: { get: getOrNull, post, signed }, node: state.node }); }
+// CUSTODY, ADDED LATER (2026-10-18) and THE LIQUIDITY CARD (§23A.10): a guardian or not; the provider's coins and its top-up address
+function custodyPanel() { mount('custody', 'mountCustody', { api: { get: getOk, post, signed } }); }
+function liquidityPanel() { mount('liquidity', 'mountLiquidity', { api: { get: getOk, post, signed } }); }
+// THE NODE'S SERVICES (kanban #563): each one's state, start / stop / restart and at boot; the ones that need attention on the Overview
+function servicesPanel() {
+  mount('services', 'mountServices', { api: { post, signed }, onAttention: (bad) => need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services') });
 }
-// THE ROLES (kanban #553, the owner 2026-10-20: "It also offers no options to setup the role of the node"): what this node does, each role in
-// one line - on or off, what it does and earns, how to change it - read from its public advertisement (/roles), its guardian, its gateway
-// and liquidity claims, and on an installed node its arena.conf
-async function rolesPanel() {
-  const get = async (p) => { try { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; } };
-  // THE REACT SCREEN (kanban #564, packages/arena-web) when this node serves it, mounted with this page's own login; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountRoles) {
-      const el = $('roles');
-      if (el._react) el._react.unmount();
-      el.innerHTML = '';
-      el._react = window.ArenaOwner.mountRoles(el, { api: { get, post, signed }, node: state.node });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  const [pub, g, gw, liq] = await Promise.all([get('/roles'), get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
-  const mine = pub && (pub.nodes || []).find((x) => x.node === state.node);
-  const has = (r) => !!(mine && (mine.roles || []).includes(r));
-  // ONE TILE PER ROLE: [key, icon, name, what it earns, what it does, on now, how it changes ('switch' | a section to open | text)]
-  const TILES = [
-    ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.', has('verify') || has('game'), 'switch'],
-    ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.', has('settlement'), 'switch'],
-    ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Carries round data for players and other nodes.', has('relay'), 'switch'],
-    ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', g && g.guardian ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.',
-      !!(mine && mine.guardianCapable), 'switch', g && g.guardian ? 'Guarding' : null],
-    ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', !!(gw && gw.gatewayUrl), 'custody'],
-    ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', !!liq, 'liquidity'],
-  ];
-  const canSwitch = !!mine;
-  $('roles').innerHTML = `<div class="tiles">${TILES.map(([k, ico, name, earn, does, on, how, label]) => `<div class="tile${on ? ' on' : ''}" id="tile-${k}">
-      <div class="head"><span class="ico" aria-hidden="true">${ico}</span><h4>${esc(name)}</h4><span class="pill${on ? ' on' : ''}">${esc(label || (on ? 'On' : 'Off'))}</span></div>
-      <p class="earn">${esc(earn)}</p><p class="does">${esc(does)}</p>
-      <div class="foot">${how === 'switch'
-        ? (canSwitch ? `<span></span><label class="switch" title="${esc(name)}"><input type="checkbox" id="rl-${k}" aria-label="${esc(name)}" data-was="${on ? 1 : 0}"${on ? ' checked' : ''}><span></span></label>` : '<span class="sub">Changeable once the bond counts</span>')
-        : `<a class="go" href="#${how}" data-open="${how}">${on ? 'Manage' : 'Set up'} →</a>`}</div></div>`).join('')}</div>
-    <div class="savebar" id="rl-bar" hidden><span id="rl-count"></span><span><button id="rl-cancel" type="button">Undo</button><button id="rl-save" class="primary" type="button">Review changes</button></span><div id="rl-msg" style="flex-basis:100%"></div></div>
-    ${canSwitch ? '' : '<p class="sub">This node is not in the census yet: its roles can be changed once its bond counts.</p>'}`;
-  for (const el of document.querySelectorAll('#roles a[data-open]')) el.onclick = (e) => { e.preventDefault(); const t = $(el.dataset.open); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-  wireRoles(mine);
+// THE NODE'S ADDRESS (kanban #563 / #562 2C): how the world reaches it, and a switch to another way
+function addressPanel() { mount('address', 'mountAddress', { api: { post, signed } }); }
+// THE RELEASE THIS NODE RUNS, and a new one on the Overview while it is out
+function releasePanel() {
+  mount('release', 'mountRelease', { api: { get: getJson }, onNewer: (v) => need('release', v ? 'warn' : null, `A new release is out: ${v || ''}.`, 'release') });
 }
-// CHANGE WHAT THE NODE ADVERTISES (kanban #553): the roles its bond's advertisement names - a switch each - saved as an advertisement update
-// paid from the bond wallet (POST /owner/roles): the bar shows how many changed, Review shows the fee, Confirm sends it
-const ROLE_SWITCHES = [['play', ['game', 'verify']], ['settlement', ['settlement']], ['relay', ['relay']]];
-function wireRoles(mine) {
-  if (!mine) return;
-  const inputs = [...ROLE_SWITCHES.map(([k]) => k), 'custody'].map((k) => $('rl-' + k)).filter(Boolean);
-  const changed = () => inputs.filter((i) => (i.checked ? 1 : 0) !== Number(i.dataset.was));
-  const refresh = () => {
-    const c = changed();
-    for (const i of inputs) i.closest('.tile').classList.toggle('changed', c.includes(i));
-    $('rl-bar').hidden = !c.length; $('rl-count').textContent = `${c.length} change${c.length === 1 ? '' : 's'} not saved`; $('rl-msg').innerHTML = '';
-  };
-  for (const i of inputs) i.onchange = refresh;
-  $('rl-cancel').onclick = () => { for (const i of inputs) i.checked = Number(i.dataset.was) === 1; refresh(); };
-  const chosen = () => ({ roles: ROLE_SWITCHES.filter(([k]) => $('rl-' + k).checked).flatMap(([, rs]) => rs), custody: $('rl-custody').checked });
-  const btn = $('rl-save');
-  btn.onclick = async () => {
-    const c = chosen(); btn.disabled = true; $('rl-msg').innerHTML = '<p class="sub">Checking…</p>';
-    try {
-      const p = await post('/owner/roles', await signed('roles', { ...c, post: false }));
-      if (!p.ok) { $('rl-msg').innerHTML = `<p class="warn">${esc(p.why || 'not possible')}</p>`; btn.disabled = false; return; }
-      $('rl-msg').innerHTML = `<p>Fee <b>${Number(p.plan.feeSats).toLocaleString('en-US')} sat</b> from your bond wallet · counts after 6 blocks (about 1 hour).</p><button id="rl-go" class="primary" type="button">Confirm</button>`;
-      $('rl-go').onclick = async () => {
-        $('rl-go').disabled = true;
-        try { const d = await post('/owner/roles', await signed('roles', { ...c, post: true }));
-          $('rl-msg').innerHTML = d.ok ? `<p class="ok"><b>Sent ✓</b> the new roles count after 6 blocks (update <code>${esc(String(d.update.txid).slice(0, 16))}</code>).</p>` : `<p class="warn">${esc(d.why)}</p>`;
-          if (d.ok) for (const i of inputs) { i.closest('.tile').querySelector('.pill').className = 'pill wait'; i.closest('.tile').querySelector('.pill').textContent = 'Saving…'; }
-        } catch (e) { $('rl-msg').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
-      };
-    } catch (e) { $('rl-msg').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
-    btn.disabled = false;
-  };
-}
-// CUSTODY, ADDED LATER (2026-10-18: "if custody is setup later in the UI we need the same screens"): on its own
-// machine the installer's custody screens open again - what custody is, Lightning and the gateway, the federation, the bond's rules -
-// from the Start menu / Applications / desktop menu ("Add custody") or `arena-install --add-custody`; the bond is updated, not doubled
-async function custodyPanel() {
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountCustody) {
-      const el = $('custody'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountCustody(el, { api: { get: async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; }, post, signed } });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  let g = null;
-  try { g = await (await fetch(at('/guardian'), { cache: 'no-store' })).json(); } catch { g = null; }
-  const el = $('custody');
-  if (g && g.guardian) { el.innerHTML = `<div class="row"><span>Custody</span><b>on - this node is a guardian</b></div><div class="row"><span>Guardian endpoint</span><b><code>${esc(g.endpoint || '')}</code></b></div>`; return; }
-  el.innerHTML = `<p><b>This node holds no custody.</b> A custody node is one of a federation's 10 guardians, may run one of its 2 Lightning gateways, and earns a share of every round of its federation (the guardians' third of the 4 % node fee).</p>
-    <p>To add it, on the machine the node runs on open <b>Add custody</b> (Start menu &gt; Arena Node, or the Arena Node scripts) or run <code>arena-install --add-custody</code>. The installer shows the custody screens - what custody is, Lightning and the gateway, the federation, the bond's rules - and updates your bond; no second bond.</p>
-    <p class="sub">Custody needs your own Bitcoin Core (not Electrum) and Lightning (LND, set up there).</p>`;
-}
-// THE LIQUIDITY CARD (§23A.10; 2026-10-18: "Also shows up in the dashboard and owner area to top it up"): the
-// provider's free coins against the deposit minimum (below it, no share of the liquidity pool), the channels it gave, the top-up address
-const LIQUIDITY_DEPOSIT = { testnet4: 500000, mainnet: 2500000 };
-async function liquidityPanel() {
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountLiquidity) {
-      const el = $('liquidity'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountLiquidity(el, { api: { get: async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; }, post, signed } });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  let c = null;
-  try { const r = await fetch(at('/liquidity-claim'), { cache: 'no-store' }); c = r.ok ? await r.json() : null; } catch { c = null; }
-  const el = $('liquidity');
-  if (!c) { el.innerHTML = `<p><b>This node is no liquidity provider.</b> A provider opens incoming Lightning channels to new nodes and earns a share of the 1 % liquidity pool of their federations. To become one, run <code>arena-install</code> again and choose <b>Liquidity provider</b> (it needs LND and a deposit of 500,000 sat on testnet4).</p>`; return; }
-  const min = LIQUIDITY_DEPOSIT.testnet4, free = Number(c.freeSats), given = (c.channels || []);
-  // the minimum counts free coins + the channels it gave (2026-10-18): giving liquidity never removes the share
-  const held = free + given.reduce((a, x) => a + Number(x.capacitySats), 0), low = held < min;
-  el.innerHTML = `<div class="row"><span>Free for new channels</span><b>${free.toLocaleString('en')} sat</b></div>
-    <div class="row"><span>Deposit minimum (free + channels given)</span><b>${min.toLocaleString('en')} sat</b></div>
-    ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - held).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share of the liquidity pool.</p>'}
-    <div class="row"><span>Channels given to new nodes</span><b>${given.length} (${given.reduce((a, x) => a + Number(x.capacitySats), 0).toLocaleString('en')} sat)</b></div>
-    ${given.map((x) => `<div class="row"><span><code>${esc(x.peer.slice(0, 16))}…</code></span><b>${Number(x.capacitySats).toLocaleString('en')} sat</b></div>`).join('')}
-    <div class="row"><span>Top up (LND's wallet, testnet4)</span><b><code>${esc(c.depositAddress || '(not known yet)')}</code></b></div>
-    <p><button id="liq-new-address">New address</button> <span id="liq-msg" class="sub"></span></p>`;
-  $('liq-new-address').onclick = async (e) => {
-    e.target.disabled = true; $('liq-msg').textContent = 'Asking LND for a new address…';
-    let r; try { r = await post('/owner/liquidity/new-address', await signed('liquidity/new-address')); } catch (x) { r = { ok: false, why: x.message }; }
-    if (!r.ok) { e.target.disabled = false; $('liq-msg').textContent = r.why || 'no new address'; return; }
-    await liquidityPanel(); $('liq-msg').textContent = `New address: ${r.address}`;
-  };
-}
-// THE NODE'S SERVICES: each one's state and what it answers, as `arenanode status` shows them on the node's machine
-async function servicesPanel() {
-  const el = $('services');
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountServices) { if (el._react) el._react.unmount(); el.innerHTML = ''; el._react = window.ArenaOwner.mountServices(el, { api: { post, signed }, onAttention: (bad) => need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services') }); return; }
-  } catch { /* the page's own panel */ }
-  let r; try { r = await post('/owner/services', await signed('services')); } catch (x) { r = { ok: false, why: x.message }; }
-  if (!r || !r.ok) { el.innerHTML = `<p class="sub">${r && /not installed by the Arena installer/.test(r.why || '') ? 'This node was set up by hand, without the Arena installer, so this page cannot see its programs. Its operator checks them on its machine.' : esc((r && r.why) || 'this node does not show its services')}</p>`; return; }
-  const bad = r.services.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
-  el.innerHTML = `${r.services.map((s) => {
-    const ok = s.running === null ? null : !s.running ? false : s.probe ? s.probe.ok : true;
-    return `<div class="row"><span>${ok === null ? '⚪' : ok ? '🟢' : '🔴'} ${esc(s.title)}${s.inside ? ' <span class="sub">(inside the node)</span>' : ''}</span><b>${s.running === null ? 'unknown' : s.running ? 'running' : 'stopped'}</b></div>
-      <p class="sub" style="margin:-4px 0 6px 26px">${esc(s.probe && s.running !== null ? s.probe.says : s.detail)}${s.pid ? ` · pid ${esc(s.pid)}` : ''}</p>
-      ${(s.controls || []).length || s.bootSettable ? `<div class="svc-ctl">${(s.controls || []).map((c) => `<button type="button" data-svc="${esc(s.id)}" data-act="${c}">${{ start: 'Start', stop: 'Stop', restart: 'Restart' }[c]}</button>`).join('')}
-        ${s.bootSettable ? `<label class="switch" title="Start at boot"><input type="checkbox" data-svc="${esc(s.id)}" data-boot="1" aria-label="${esc(s.title)}: start at boot"${s.atBoot ? ' checked' : ''}><span></span></label><span class="sub">at boot</span>` : ''}</div>`
-        : s.why ? `<p class="sub" style="margin:-2px 0 8px 26px">${esc(s.why)}</p>` : ''}`;
-  }).join('')}
-    <p class="${bad ? 'err' : 'ok'}">${bad ? `${bad} service(s) need attention.` : 'All services run.'}</p>
-    ${r.command ? `<p class="sub">On the node's machine: <code>${esc(r.command)} status</code>, <code>${esc(r.command)} doctor</code> (each problem with its fix), <code>${esc(r.command)} restart &lt;service&gt;</code>. Settings: ${esc(r.settings || '?')} (<code>${esc(r.command)} config</code>).</p>` : '<p class="sub">Set up by hand: start and stop these programs on the node\'s machine.</p>'}
-    <p><button id="svc-again">Check again</button></p>`;
-  $('svc-again').onclick = () => { el.innerHTML = '<p class="sub">reading this node\'s services…</p>'; servicesPanel(); };
-  // START / STOP / RESTART AND AT BOOT, one service at a time (kanban #563): the node does it, then the list is read again
-  const act = async (id, action, ctl) => {
-    if (ctl) ctl.disabled = true;
-    let x; try { x = await post('/owner/service', await signed('service', { id, action })); } catch (e) { x = { ok: false, why: e.message }; }
-    if (!x || !x.ok) { alert(`${id}: ${(x && x.why) || 'not done'}`); if (ctl) ctl.disabled = false; return; }
-    setTimeout(servicesPanel, x.restarting ? 8000 : 800);
-  };
-  for (const b of el.querySelectorAll('button[data-act]')) b.onclick = () => act(b.dataset.svc, b.dataset.act, b);
-  for (const c of el.querySelectorAll('input[data-boot]')) c.onchange = () => act(c.dataset.svc, c.checked ? 'boot-on' : 'boot-off', c);
-  need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services');
-}
-// THE NODE'S ADDRESS (kanban #563 / #562 2C, the owner 2026-10-21 "1 default"): how the world reaches it, and a switch to another way -
-// a stable one is the default. The node runs the installer's own steps for it and restarts; the progress is read again until done.
-async function addressPanel() {
-  const el = $('address');
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountAddress) { if (el._react) el._react.unmount(); el.innerHTML = ''; el._react = window.ArenaOwner.mountAddress(el, { api: { post, signed } }); return; }
-  } catch { /* the page's own panel */ }
-  let r; try { r = await post('/owner/reach', await signed('reach')); } catch (x) { r = { ok: false, why: x.message }; }
-  if (!r || !r.ok) { el.innerHTML = `<p class="sub">${r && /not installed by the Arena installer/.test(r.why || '') ? 'This node was set up by hand: its address is set on its machine.' : esc((r && r.why) || 'not readable')}</p>`; return; }
-  const p = r.progress;
-  const running = p && (p.state === 'running' || p.state === 'login');
-  el.innerHTML = `<div class="row"><span>Reached at</span><b>${esc(r.url || r.serving || '-')}</b></div>
-    <div class="row"><span>How</span><b>${esc(r.mode || '-')}${r.stable ? ' · stable' : ' · changes at every restart'}</b></div>
-    ${!r.stable ? '<p class="warnline">This address changes when the node restarts. The node tells the network its new one by itself, but a stable address is better: choose one below.</p>' : ''}
-    ${p ? `<p class="${p.state === 'failed' ? 'err' : p.state === 'done' ? 'ok' : 'sub'}">${p.state === 'login' ? `Log in to Cloudflare to go on: <a href="${esc(p.loginUrl)}" target="_blank" rel="noopener">open the login</a>` : p.state === 'running' ? `Switching to ${esc(p.mode)}…` : p.state === 'done' ? `Switched to ${esc(p.mode)}: ${esc(p.url || '')}` : `The switch to ${esc(p.mode)} failed: ${esc(p.why || '')}`}</p>` : ''}
-    ${running ? '' : `<label>Switch to <select id="rc-mode">${Object.entries(r.modes).map(([k, v]) => `<option value="${esc(k)}"${k === r.mode ? ' selected' : ''}>${esc(k)}: ${esc(v)}</option>`).join('')}</select></label>
-    <div id="rc-extra"></div><button id="rc-go" type="button" style="margin-top:6px">Switch</button><div id="rc-msg"></div>`}`;
-  if (running) { setTimeout(addressPanel, 5000); return; }
-  const extra = () => {
-    const m = $('rc-mode').value;
-    $('rc-extra').innerHTML = m === 'workers' ? '<input id="rc-token" placeholder="Cloudflare API token (Workers edit)" style="margin-top:6px"><input id="rc-sub" placeholder="workers.dev subdomain (optional)" style="margin-top:6px">'
-      : m === 'permanent' ? '<input id="rc-host" placeholder="node.example.com (a domain on your Cloudflare account)" style="margin-top:6px">' : '';
-  };
-  $('rc-mode').onchange = extra; extra();
-  $('rc-go').onclick = async () => {
-    const m = $('rc-mode').value;
-    const args = { mode: m, ...(m === 'workers' ? { cfToken: $('rc-token').value.trim(), cfSubdomain: $('rc-sub').value.trim() || null } : {}), ...(m === 'permanent' ? { hostname: $('rc-host').value.trim() } : {}) };
-    $('rc-go').disabled = true;
-    let x; try { x = await post('/owner/reach', await signed('reach', args)); } catch (e) { x = { ok: false, why: e.message }; }
-    if (!x || !x.ok) { $('rc-msg').innerHTML = `<p class="err">${esc((x && x.why) || 'not started')}</p>`; $('rc-go').disabled = false; return; }
-    addressPanel();
-  };
-}
-async function releasePanel() {
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountRelease) {
-      const el = $('release'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountRelease(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json() },
-        onNewer: (v) => need('release', v ? 'warn' : null, `A new release is out: ${v || ''}.`, 'release') });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  let v = null;
-  try { v = await (await fetch(at('/owner/version'), { cache: 'no-store' })).json(); } catch { v = null; }
-  const el = $('release');
-  if (!v) { el.innerHTML = '<p class="sub">This node does not say which version it runs.</p>'; return; }
-  // a seat run from a source checkout has no release to compare (kanban #553: the Overview said "A new release is out" to every seat)
-  need('release', v.version && v.latest && v.latest.newer ? 'warn' : null, `A new release is out: ${v.latest && v.latest.latest ? v.latest.latest.version : ''}.`, 'release');
-  el.innerHTML = `<div class="row"><span>Version</span><b>${v.version ? esc(v.version) : 'run from a source checkout'}</b></div>
-    ${v.commit ? `<div class="row"><span>Commit</span><b><code>${esc(v.commit.slice(0, 12))}</code></b></div>` : ''}
-    <div class="row"><span>Protocol versions it speaks</span><b>${esc(protoRange(v.protocols || []))}</b></div>
-    ${latestLine(v)}
-    <p class="sub">To update: ${esc(v.update)}.</p>`;
-}
-
-async function bondPanel() {
-  const el = $('bond');
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountBond) {
-      if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountBond(el, { api: { get: async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; }, post, signed } });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  const b = await readBond();
-  const n = (x) => Number(x).toLocaleString('en-US');
-  if (!b) { el.innerHTML = '<p class="sub">This node did not answer about its bond.</p>'; return; }
-  if (!b.bond) { el.innerHTML = '<p>No bond yet. Until it has one, this node is not drawn for rounds.</p>'; return; }
-  const l = b.lock;
-  const lock = !l ? '' : l.withdrawable ? 'unlocked' : `locked · ${n(l.blocksLeft)} blocks (about ${daysHours(l.estimatedMs - Date.now())})`;
-  const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
-  el.innerHTML = `<div class="row"><span>Bond</span><b>${n(b.total || b.bond.sats)} sat${outs ? ` (${outs.length} parts)` : ''}</b></div>
-    <div class="row"><span>Lock</span><b>${esc(lock)}</b></div>
-    ${b.wallet && !b.wallet.why ? `<div class="row"><span>Bond wallet</span><b>${n(b.wallet.spendableSats)} sat</b></div>` : ''}
-    <details><summary class="sub">Withdraw the bond</summary>
-      <p class="sub">Only after the lock. The node then leaves the network.</p>
-      <div class="row"><input id="wd-addr" placeholder="your ${esc(b.network || 'testnet4')} address" style="flex:1"><button id="wd" ${l && l.withdrawable ? '' : 'disabled'}>Withdraw</button></div>
-      <p class="sub" id="wd-msg"></p></details>
-    <details><summary class="sub">On the chain</summary>${(outs || [b.bond]).map((o) => `<div class="row sub"><span><code>${esc(o.txid.slice(0, 16))}…:${o.vout}</code></span><b>${n(o.sats)} sat</b></div>`).join('')}</details>`;
-  $('wd').onclick = async () => {
-    const address = $('wd-addr').value.trim();
-    if (!address) { $('wd-msg').textContent = 'Type the address the bond goes to.'; return; }
-    if (!confirm(`Withdraw the whole bond to ${address}? This node leaves the network.`)) return;
-    $('wd').disabled = true;
-    try { const r = await post('/owner/bond-withdraw', signed('bond-withdraw', { address, feeRate: 2 })); $('wd-msg').textContent = `Sent: ${r.txid} (${n(r.value)} sat)`; }
-    catch (e) { $('wd-msg').textContent = e.message; $('wd').disabled = false; }
-  };
-}
+// THE BOND AND ITS LOCK (2026-10-18): the bond, locked until its maturity block, withdrawn after it to an address the owner names
+function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed } }); }
 
 // THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much
 // to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM
@@ -702,39 +449,12 @@ async function capacityPlea() {
   $('capacity-plea').innerHTML = p ? `<div class="card"><h3>A federation you guard is filling up</h3><p class="warnline">${esc(p.says)}</p>${p.addSats ? '<p class="sub">This is optional and separate from whether your node is drawn: a larger bond lets that federation take more deposits (it lowers its load) and earns you a larger share. Add to bond is below.</p>' : ''}</div>` : '';
 }
 
-let standingRead = null;   // seatings + standing, read once: the Bond answer and the details use them
-async function standingPanel() {
-  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountStanding) {
-      const el = $('standing'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountStanding(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json() },
-        onMissed: (k) => need('missed', 'bad', `Your node missed ${k} draws in a row: check its services.`, 'services') });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  if (!standingRead) standingRead = Promise.all(['/owner/seatings', '/owner/standing'].map(async (p) => (await fetch(at(p), { cache: 'no-store' })).json()));
-  let seat, st;
-  try { [seat, st] = await standingRead; }
-  catch (e) { $('standing').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
-  const pct = (x) => (typeof x === 'number' ? (x * 100).toFixed(1) + ' %' : '-');
-  const n = (x) => esc(Number(x).toLocaleString('en-US'));
-  const warns = [...(seat.warning ? [{ urgent: true, kind: 'missed seatings', says: seat.warning.says, update: seat.warning.update }] : []), ...(st.warnings || [])];
-  // PLAIN NAMES (kanban #553): what each figure means for the owner
-  const KIND = { 'missed seatings': 'Missed draws', 'losing brackets': 'Bond below the minimum', 'near the floor': 'Bond at the minimum', 'falling share': 'Your share is shrinking', 'address changed': 'Address changed' };
-  $('standing').innerHTML = `
-    <div class="row"><span>Draws missed in a row</span><b>${esc(seat.missedInARow)}</b></div>
-    <div class="row"><span>Bond</span><b>${st.ownBondSats === null ? 'not in the census yet' : n(st.ownBondSats) + ' sat'}</b></div>
-    <div class="row"><span>Your share of all bonds</span><b>${pct(st.ownWeight)}</b></div>
-    <div class="row"><span>Recent rounds your bond qualified for</span><b>${esc(st.bracketsServed.eligible)} of ${esc(st.bracketsServed.of)}</b></div>
-    <div class="row"><span>Bond compared with the minimum most rounds ask</span><b>${typeof st.headroom === 'number' ? st.headroom.toFixed(2) + '× of ' + n(st.commonBondMinSats) + ' sat' : '-'}</b></div>
-    ${st.bondMin && st.bondMin.inForce !== null ? `<div class="row"><span>Network minimum bond now</span><b>${n(st.bondMin.inForce)} sat${st.bondMin.pending
-      ? ' · rising to ' + n(st.bondMin.pending.value) + ' sat at block ' + esc(st.bondMin.pending.effectiveAt) + ' if it holds (notice ' + esc(st.bondMin.noticeBlocks) + ' blocks)' : ''}</b></div>` : ''}
-    ${warns.length ? warns.map((w) => `<p class="${w.urgent ? 'err' : 'sub'}"><b>${esc(KIND[w.kind] || w.kind)}</b>: ${esc(w.says)}</p>${w.update ? `<p class="sub">Step out until it is fixed: <code>${esc(w.update)}</code></p>` : ''}`).join('')
-      : '<p class="sub ok">No warning: this node shows up when drawn, and its bond is above the safety margin.</p>'}`;
-  if (seat.warning) need('missed', 'bad', `Your node missed ${seat.missedInARow} draws in a row: check its services.`, 'services');
+// THIS NODE'S STANDING (§5A.3, §5A.10B): the draws it missed and its bond against the bracket now common; missed draws on the Overview
+function standingPanel() {
+  mount('standing', 'mountStanding', { api: { get: getJson }, onMissed: (k) => need('missed', 'bad', `Your node missed ${k} draws in a row: check its services.`, 'services') });
 }
+let standingRead = null;   // GET /owner/standing, read once for the Bond answer
+const readStanding = () => (standingRead = standingRead || getJson('/owner/standing'));
 // DO I NEED TO ADD TO MY BOND? (kanban #553, the owner 2026-10-20: "It is not clear if I need to increase my bond to lower the federation load
 // or not"): one answer - yes / recommended / no - with the amount and the reason, from the standing (is this node drawn?) and the
 // capacity plea (is a federation it guards full?), which are two separate questions and are said apart
@@ -745,7 +465,7 @@ const readBond = () => (bondRead = bondRead || fetch(at('/owner/bond'), { cache:
 // e.g"): one headline, a bar from the bond now to the bond that pays most, and two steps with the numbers worked out
 async function bondAnswer() {
   let st = null, c = null;
-  try { [, st] = await (standingRead || (standingPanel(), standingRead)); } catch { /* said below */ }
+  try { st = await readStanding(); } catch { /* said below */ }
   try { if (!pleaRead) capacityPlea(); c = await pleaRead; } catch { c = null; }
   const b = await readBond();
   const n = (x) => Number(x).toLocaleString('en-US');
@@ -863,243 +583,20 @@ async function leavePanel() {
   if ($('go')) $('go').onclick = () => { if ($('lok').checked) act('leave'); };
   if ($('stay')) $('stay').onclick = () => act('stay');
 }
-// THE PLUGIN STORE, LIKE AN APP STORE (2026-10-10: in the browser, no restart, updates as a
-// setting, malicious-code checks): look at another seat, Check a game - this page fetches its package and runs every check
-// itself, shown line by line - then Install or Update; Remove; automatic updates. The seat runs the same checks again, plus
-// a trial run in a sandbox, before anything runs; installing and updating take effect at once.
-async function storePanel() {
-  let mine = { hosted: [], installed: [], settings: { autoUpdate: false, sources: [] } };
-  // THE APPS ON THIS NODE AS A REACT SCREEN (kanban #564) when this node serves it; the network list and the checks below stay the page's
-  let reactInstalled = false;
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountApps) {
-      const el = $('installed'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountApps(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed } });
-      reactInstalled = true;
-    }
-  } catch { reactInstalled = false; }
-  const reload = async () => {
-    // an answer without its lists (a seat still starting) keeps the empty ones (kanban #553: the page stopped at "reading 'map'")
-    try { const got = await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json(); mine = { hosted: [], installed: [], ...got, settings: { autoUpdate: false, sources: [], ...((got && got.settings) || {}) } }; } catch { /* shown as empty */ }
-    // ONE ROW PER APP, ITS NEWEST VERSION (kanban #553: "hide older app versions"); the older ones a node keeps for the rounds that still
-    // name them are folded away under the row
-    const one = (g) => `<div class="row"><span>${esc(g.title || g.name)} <span class="sub">v${g.version}</span></span>
-      <b>${g.installed ? `<button data-remove="${esc(g.id)}">Remove</button>` : 'built in'}</b></div>`;
-    const rows = newestApps(mine.hosted).map((g) => one(g) + infoLine(g.info)
-      + (g.older.length ? `<details><summary class="sub">${g.older.length} older version${g.older.length === 1 ? '' : 's'} kept for rounds that still use ${g.older.length === 1 ? 'it' : 'them'}</summary>${g.older.sort((x, y) => y.version - x.version).map(one).join('')}</details>` : '')).join('');
-    if (reactInstalled) { const el = $('installed'); if (el._react) el._react.unmount(); el._react = window.ArenaOwner.mountApps(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed } }); return; }
-    $('installed').innerHTML = `${rows || '<p class="sub">none</p>'}
-      <label class="confirm"><input type="checkbox" id="auto" ${mine.settings.autoUpdate ? 'checked' : ''}> <span>Update apps automatically</span></label>
-      <details><summary class="sub">Where updates come from</summary>
-      <label>Nodes to take updates from (one address per line)</label><textarea id="srcs" rows="2" autocomplete="off" autocapitalize="none">${esc((mine.settings.sources || []).join('\n'))}</textarea></details>
-      <button id="saveset">Save</button>`;
-    for (const b of $('installed').querySelectorAll('button[data-remove]')) b.onclick = async () => {
-      try { await post('/owner/plugins/remove', signed('remove', { game: b.dataset.remove })); reload(); } catch (e) { $('perr').textContent = e.message; }
-    };
-    $('saveset').onclick = async () => {
-      try { await post('/owner/settings', signed('settings', { autoUpdate: $('auto').checked, sources: $('srcs').value.split(/\s+/).filter(Boolean) })); $('saveset').textContent = 'Saved ✓'; }
-      catch (e) { $('perr').textContent = e.message; }
-    };
-  };
-  await reload();
-  // THE NETWORK'S APPS AND A NODE LOOKED AT BY ADDRESS AS A REACT SCREEN (kanban #564) when this node serves it, with this page's own
-  // package checks (C.checkPackage, C.checkUpdate) - the page's list below otherwise
-  try {
-    if (window.ArenaOwner && window.ArenaOwner.mountNetworkApps) {
-      for (const id of ['netfound-at', 'netagain', 'perr', 'offer']) { const x = $(id); if (x) x.style.display = 'none'; }
-      const lookBox = $('from') && $('from').closest('details'); if (lookBox) lookBox.style.display = 'none';
-      const el = $('netfound'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountNetworkApps(el, {
-        api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed,
-          fetchJson: async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); } },
-        client: { checkPackage: C.checkPackage, checkUpdate: C.checkUpdate, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex },
-        onChanged: reload });
-      return;
-    }
-  } catch { /* the page's own list */ }
-  // THE NETWORK'S GAMES, FOUND BY THE SEAT (2026-10-11: automatic, not by address): name, type, version,
-  // the developer's signed description and website, how many seats host it, and Install (or Update, for a newer version of a
-  // game hosted here). Install checks the package in this browser first, as Check does, then the seat checks it again.
-  const found = async (fresh) => {
-    let ng = null;
-    try { ng = await (await fetch(at('/network-games' + (fresh ? '?fresh=1' : '')), { cache: 'no-store' })).json(); } catch (e) { $('netfound-at').textContent = 'the seat did not answer: ' + e.message; return; }
-    const answered = (ng.seats || []).filter((x) => x.answered).length;
-    $('netfound-at').textContent = `${answered} of ${(ng.seats || []).length} nodes answered · ${ng.atMs ? new Date(ng.atMs).toLocaleTimeString() : '-'}`;
-    const offers = (ng.games || []).filter((g) => !g.hostedHere);
-    window.OWNER_FOUND = ng;
-    if (!offers.length) { $('netfound').innerHTML = '<p class="sub">This node already has every app the other nodes run.</p>'; return; }
-    $('netfound').innerHTML = `<table class="found"><tr><th>Name</th><th>Type</th><th>Version</th><th>Seats</th><th></th></tr>${offers.map((g, i) => `
-      <tr><td><b>${esc(g.title)}</b></td><td>${esc(g.type)}</td><td>v${g.version}</td>
-      <td>${g.seats.length}</td><td><button class="primary" data-found="${i}">${g.updateOf ? 'Update' : 'Install'}</button></td></tr>
-      <tr><td colspan="5">${infoLine(g.infoSigned ? { description: g.description, website: g.website } : null) || '<div class="sub info">no signed description</div>'}<div id="frep${i}"></div></td></tr>`).join('')}</table>`;
-    for (const b of $('netfound').querySelectorAll('button[data-found]')) b.onclick = async () => {
-      const g = offers[Number(b.dataset.found)];
-      const parent = g.updateOf ? mine.hosted.find((h) => h.id === g.updateOf) || null : null;
-      const took = await checkAndTake({ g, parent, from: g.seats[0], box: $('frep' + b.dataset.found), button: b, auto: true });
-      if (took) { await found(false); $('netfound-at').insertAdjacentHTML('beforeend', ` · <span class="ok">${esc(g.title)} v${g.version} ${parent ? 'updated' : 'installed'} - running now ✓</span>`); }
-    };
-  };
-  $('netagain').onclick = () => { $('netfound-at').textContent = 'asking the network\'s seats again…'; found(true); };
-  found(false);
-  const report = (r) => `<div class="report">${r.checks.map((c) => `<div class="row"><span>${c.ok ? '✓' : '✗'} ${esc(c.check)}</span><b class="sub">${esc(c.detail || '')}</b></div>`).join('')}
-    ${r.ok ? '' : `<p class="err">${esc(r.why)}</p>`}</div>`;
-  $('look').onclick = async () => {
-    $('perr').textContent = ''; $('offer').innerHTML = '';
-    const from = $('from').value.trim().replace(/\/+$/, '');
-    let got;
-    try { got = await (await fetch(from + '/games', { cache: 'no-store' })).json(); } catch (e) { $('perr').textContent = 'That seat did not answer: ' + e.message; return; }
-    const here = new Map(mine.hosted.map((g) => [g.id, g]));
-    const offers = [];
-    for (const g of got.games || []) {
-      if (here.has(g.id)) continue;
-      // a newer version of a game hosted here: its parent is hosted, same developer
-      let parent = null;
-      for (const h of mine.hosted) if (!h.supersededBy && g.manifest && g.manifest.includes(h.id)) parent = h;
-      offers.push({ g, parent });
-    }
-    if (!offers.length) { $('offer').innerHTML = '<p class="sub">That node has nothing this node does not already have.</p>'; return; }
-    $('offer').innerHTML = offers.map(({ g, parent }, i) => `<div class="card"><div class="row"><span>${esc(g.title || g.name)}${g.attested ? ' · market' : ''} · ${esc(g.id.slice(0, 12))}…</span>
-      <b><button data-check="${i}">Check${parent ? ' update' : ''}</button></b></div><div id="rep${i}"></div></div>`).join('');
-    for (const b of $('offer').querySelectorAll('button[data-check]')) b.onclick = async () => {
-      const { g, parent } = offers[Number(b.dataset.check)];
-      await checkAndTake({ g, parent, from, box: $('rep' + b.dataset.check), button: b, auto: false });
-    };
-  };
-  // CHECK IN THIS BROWSER, THEN INSTALL OR UPDATE: the package fetched from `from`, every check shown; `auto` takes it as soon
-  // as every check passed (the network list's one Install), else the owner presses Install after reading the report
-  async function checkAndTake({ g, parent, from, box, button, auto }) {
-      box.innerHTML = '<p class="sub">checking in this browser…</p>';
-      if (button) button.disabled = true;
-      let pkg;
-      try { const r = await fetch(`${from}/plugin?game=${g.id}`, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); pkg = await r.json(); }
-      catch (e) { box.innerHTML = `<p class="err">That seat did not hand the game over: ${esc(e.message)}</p>`; return; }
-      const parentOf = (id) => { const h = parent && parent.id === C.toHex(id) ? parent : null; return h ? { gameDevPubkey: C.fromHex(h.devKey), version: h.version } : null; };
-      const r = C.checkPackage(pkg, { verify: C.verifyEd25519, want: g.id, parentOf });
-      let u = { ok: true };
-      if (r.ok && parent) u = C.checkUpdate({ gameId: parent.id, devKey: parent.devKey, version: parent.version }, r);
-      window.OWNER_REPORT = { game: g.id, ok: r.ok && u.ok, checks: r.checks, why: r.why || u.why };
-      const tid = 'take' + g.id.slice(0, 12);
-      box.innerHTML = report(r) + (u.ok ? '' : `<p class="err">${esc(u.why)}</p>`)
-        + (r.ok && u.ok ? `<button class="primary" id="${tid}">${parent ? 'Update' : 'Install'}</button><p class="sub">The seat checks it again and runs it in a sandbox first.</p>` : '');
-      if (button) button.disabled = false;
-      const t = $(tid);
-      const take = async () => {
-        t.disabled = true; t.textContent = 'the seat is checking…';
-        try {
-          const res = parent ? await post('/owner/plugins/update', signed('update', { game: g.id, from, replaces: parent.id }))
-            : await post('/owner/plugins/install', signed('install', { game: g.id, from }));
-          window.OWNER_INSTALLED = res;
-          box.innerHTML = report(res) + `<p class="ok">${parent ? 'Updated' : 'Installed'} - running now ✓</p>`;
-          await reload();
-          return true;
-        } catch (e) { t.textContent = 'refused'; box.insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); return false; }
-      };
-      if (t) t.onclick = take;
-      if (t && auto) return take();
-      return false;
-  }
+// THE PLUGIN STORE, LIKE AN APP STORE (2026-10-10: in the browser, no restart, updates as a setting, malicious-code checks): the apps on
+// this node, and the network's apps or one node's looked at by its address - checked in this browser with the page's own package checks
+// (C.checkPackage, C.checkUpdate), then installed or updated; the seat checks again and runs a trial in a sandbox first
+function storePanel() {
+  const apps = () => mount('installed', 'mountApps', { api: { get: getJson, post, signed } });
+  apps();
+  mount('netfound', 'mountNetworkApps', { api: { get: getJson, post, signed, fetchJson },
+    client: { checkPackage: C.checkPackage, checkUpdate: C.checkUpdate, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex }, onChanged: apps });
 }
-// A GAME'S DESCRIPTION AND WEBSITE, as its developer signed them; nothing when they do not stand
-function infoLine(info) {
-  if (!info || (!info.description && !info.website)) return '';
-  const site = info.website && /^https:\/\//.test(info.website) ? ` <a href="${esc(info.website)}" target="_blank" rel="noopener">${esc(info.website.replace(/^https:\/\//, ''))}</a>` : '';
-  return `<div class="sub info">${esc(info.description || '')}${site} <span title="signed by its developer key">✓ signed</span></div>`;
-}
-// THE NETWORK STORE (letter 2026-10-10: federation invite, donation sets, series and chain, on the game store's
-// check-then-install path): this seat's four settings and who signs each; another seat's network package listed with the four,
-// Check in this browser line by line, then Install or Update; Remove (refused by the seat while a round that depends on it is open)
-const WHO = {
-  chain: 'the network\'s genesis - its network id commits to the chain',
-  sets: 'the network\'s donation authority (Ed25519); a new authority only by its recovery key',
-  series: 'the protocol\'s series rules: this network, the genesis grid and lead, the set in force, a game this node hosts',
-  invite: 'the federation\'s own guardians (its signed record). Nobody types an invite: each federation\'s record carries it, and this node finds federations by itself',
-};
-// THE NETWORK IN FOUR LINES (kanban #553): what is in force, the lists and the signers folded away
-const fourRows = (n) => {
-  const sets = n.sets || [], series = n.series || [], held = series.filter((x) => x.held !== false);
-  const top = sets.reduce((a, x) => (!a || BigInt(x.serial) > BigInt(a.serial) ? x : a), null);
-  return `
-  <div class="row"><span>Chain</span><b>${esc(n.chain || '')}</b></div>
-  <div class="row"><span>Donation addresses</span><b>${top ? `set ${esc(top.serial)} in force (since block ${esc(top.validFrom)})` : 'none'}</b></div>
-  <div class="row"><span>Game series</span><b>${held.length} running${series.length > held.length ? ` · ${series.length - held.length} not on this node` : ''}</b></div>
-  <div class="row"><span>Federation</span><b>${n.federationId ? esc(String(n.federationId).slice(0, 16)) + '…' : 'found by itself'}</b></div>
-  <details><summary class="sub">Details and who signs each</summary>
-    <p class="sub"><b>Chain</b> - signed by ${WHO.chain}.</p>
-    <p class="sub"><b>Donation addresses</b> - ${sets.map((x) => `set ${esc(x.serial)} from block ${esc(x.validFrom)}`).join(', ') || 'none'}; signed by ${WHO.sets}.</p>
-    <p class="sub"><b>Game series</b> - ${series.map((x) => `${esc(x.id.slice(0, 12))}… ${x.startMs ? when(x.startMs) : ''}${x.held === false ? ' (not on this node)' : ''}`).join('<br>') || 'none'}<br>signed by ${WHO.series}.</p>
-    <p class="sub"><b>Federation</b> - signed by ${WHO.invite}.</p></details>`;
-};
-async function networkPanel() {
-  // THE REACT SCREEN (kanban #564) when this node serves it, with this page's own network checks; the panel below otherwise
-  try {
-    if (!window.ArenaOwner) await import(at('/owner/react.js'));
-    if (window.ArenaOwner && window.ArenaOwner.mountNetwork) {
-      for (const id of ['nerr', 'noffer']) { const x = $(id); if (x) x.style.display = 'none'; }
-      const lookBox = $('nfrom') && $('nfrom').closest('details'); if (lookBox) lookBox.style.display = 'none';
-      const el = $('netmine'); if (el._react) el._react.unmount(); el.innerHTML = '';
-      el._react = window.ArenaOwner.mountNetwork(el, {
-        api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed,
-          fetchJson: async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); } },
-        client: { checkNetworkPackage: C.checkNetworkPackage, checkNetworkUpdate: C.checkNetworkUpdate, verifyEd25519: C.verifyEd25519 } });
-      return;
-    }
-  } catch { /* the page's own panel */ }
-  let mine = { chain: null, own: null, installed: [] }, games = [];
-  const reload = async () => {
-    try { const got = await (await fetch(at('/owner/network'), { cache: 'no-store' })).json(); mine = { chain: null, own: null, installed: [], ...got, installed: (got && got.installed) || [] }; } catch { /* shown as empty */ }
-    try { games = (await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json()).hosted.map((g) => g.id); } catch { games = []; }
-    const inst = mine.installed.map((n) => `<div class="card"><div class="row"><span>Installed · network ${esc(n.network.slice(0, 12))}… · package ${esc(n.id.slice(0, 12))}…</span>
-      <b><button data-nremove="${esc(n.network)}">Remove</button></b></div>${fourRows(n)}</div>`).join('');
-    // A DRAINING FEDERATION (custody succession, §23A.6): no new round or deposit names it here; its successor takes them
-    const draining = (mine.draining || []).map((d) => `<p class="warnline">Federation ${esc(d.federationId.slice(0, 12))}… is being replaced by ${esc(d.successor.slice(0, 12))}… (since ${when(d.sinceMs)}): new rounds and deposits go to the new one.</p>`).join('');
-    $('netmine').innerHTML = `${draining}${mine.own && !mine.own.why ? fourRows(mine.own) : `<div class="row"><span>Chain</span><b>${esc(mine.chain || 'none named')}</b></div>`}${inst}`;
-    for (const b of $('netmine').querySelectorAll('button[data-nremove]')) b.onclick = async () => {
-      $('nerr').textContent = '';
-      try { await post('/owner/network/remove', signed('network-remove', { network: b.dataset.nremove })); reload(); } catch (e) { $('nerr').textContent = e.message; }
-    };
-  };
-  await reload();
-  const report = (r) => `<div class="report">${r.checks.map((c) => `<div class="row"><span>${c.ok ? '✓' : '✗'} ${esc(c.check)}</span><b class="sub">${esc(c.detail || '')}</b></div>`).join('')}
-    ${r.ok ? '' : `<p class="err">${esc(r.why)}</p>`}</div>`;
-  $('nlook').onclick = async () => {
-    $('nerr').textContent = ''; $('noffer').innerHTML = '';
-    const from = $('nfrom').value.trim().replace(/\/+$/, '');
-    let pkg;
-    try { const r = await fetch(from + '/network', { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); pkg = await r.json(); }
-    catch (e) { $('nerr').textContent = 'That seat did not hand its network over: ' + e.message; return; }
-    const m = pkg.manifest || {};
-    const installed = mine.installed.find((n) => n.network === m.networkId);
-    $('noffer').innerHTML = `<div class="card"><div class="row"><span>${esc(pkg.title || m.chain)} · package ${esc(String(pkg.id || '').slice(0, 12))}…</span>
-      <b><button id="ncheck">Check${installed ? ' update' : ''}</button></b></div>
-      <div class="row"><span>Chain</span><b>${esc(m.chain)}</b></div>
-      <div class="row"><span>Donation sets</span><b>${(m.donationSets || []).length} · ${(m.donationSets || []).map((x) => esc(x.slice(0, 10)) + '…').join(', ')}</b></div>
-      <div class="row"><span>Series</span><b>${(m.series || []).length} · ${(m.series || []).map((x) => esc(x.slice(0, 10)) + '…').join(', ')}</b></div>
-      <div class="row"><span>Federation</span><b>${esc(String(m.federationId).slice(0, 12))}…</b></div>
-      <div id="nrep"></div></div>`;
-    $('ncheck').onclick = () => {
-      const r = C.checkNetworkPackage(pkg, { verify: C.verifyEd25519, seatChain: mine.chain, hostsGame: (id) => games.includes(id) });
-      let u = { ok: true };
-      if (r.ok && installed) {
-        const top = installed.sets.reduce((a, x) => (BigInt(x.serial) > a ? BigInt(x.serial) : a), -1n);
-        u = C.checkNetworkUpdate({ networkId: installed.network, chain: installed.chain, topSerial: top }, r);
-      }
-      window.OWNER_NETWORK_REPORT = { network: m.networkId, ok: r.ok && u.ok, checks: r.checks, why: r.why || u.why };
-      $('nrep').innerHTML = report(r) + (u.ok ? '' : `<p class="err">${esc(u.why)}</p>`)
-        + (r.ok && u.ok ? `<button class="primary" id="ntake">${installed ? 'Update' : 'Install'}</button><p class="sub">The seat checks it again and tries its series at its own doors first.</p>` : '');
-      const t = $('ntake');
-      if (t) t.onclick = async () => {
-        t.disabled = true; t.textContent = 'the seat is checking…';
-        try {
-          const res = installed ? await post('/owner/network/update', signed('network-update', { network: m.networkId, from }))
-            : await post('/owner/network/install', signed('network-install', { network: m.networkId, from }));
-          window.OWNER_NETWORK_INSTALLED = res;
-          $('nrep').innerHTML = report(res) + `<p class="ok">${installed ? 'Updated' : 'Installed'} - in force now ✓</p>`;
-          reload();
-        } catch (e) { t.textContent = 'refused'; $('nrep').insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); }
-      };
-    };
-  };
+// THE NETWORK STORE (letter 2026-10-10): this node's network - chain, donation sets, series, federation - and another node's network
+// package, checked in this browser (C.checkNetworkPackage, C.checkNetworkUpdate), then installed or updated; Remove
+function networkPanel() {
+  mount('netmine', 'mountNetwork', { api: { get: getJson, post, signed, fetchJson },
+    client: { checkNetworkPackage: C.checkNetworkPackage, checkNetworkUpdate: C.checkNetworkUpdate, verifyEd25519: C.verifyEd25519 } });
 }
 // THE DEV CLIENT: what this seat verified for the protocol developers and for each game it hosts, in
 // sat to the msat, per round and per UTC day (GET /owner/donations, from the seat's own donation index)

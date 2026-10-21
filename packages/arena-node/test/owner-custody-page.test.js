@@ -1,29 +1,28 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S CUSTODY CARD (2026-10-18: "if custody is setup later in the UI we need the same screens"): a node
-// without custody is told how to add it - "Add custody" or arena-install --add-custody opens the installer's custody screens and updates
-// the bond; a guardian shows its endpoint.
+// THE OWNER PAGE'S CUSTODY CARD (2026-10-18: "if custody is setup later in the UI we need the same screens"), drawn only by React since
+// kanban #564 (the owner 2026-10-21: "no fall backs"): what the page hands the screen. What it says - how to add custody, a guardian's
+// endpoint - is arena-web's (test/custody.test.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
-const a = HTML.indexOf('async function custodyPanel() {');
-const body = HTML.slice(a, HTML.indexOf('\n}\n', a) + 2);
-const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-async function render(answer) {
-  const el = { innerHTML: '' }; const asked = [];
-  const fetch = async (u) => { asked.push(u); return { json: async () => answer }; };
-  await new Function('$', 'at', 'fetch', 'esc', `${body}; return custodyPanel;`)(() => el, (p) => `https://seat${p}`, fetch, esc)();
-  return { html: el.innerHTML, asked };
-}
+const block = (start) => { const a = HTML.indexOf(start); assert.ok(a >= 0, start); let i = HTML.indexOf('{', a), d = 0; for (; i < HTML.length; i++) { if (HTML[i] === '{') d++; else if (HTML[i] === '}' && !--d) break; } return HTML.slice(a, i + 1); };
+const doors = HTML.slice(HTML.indexOf('const getJson'), HTML.indexOf('\n', HTML.indexOf('const fetchJson')));
 
-test('no custody: how to add it, the same screens, no second bond; a guardian: on, its endpoint', async () => {
+test('custody: the React screen alone, with the page\'s doors (null for a refused one) and its owner requests', async () => {
   assert.ok(HTML.includes('<div class="card" id="custody">') && /custodyPanel\(\);\n\s+liquidityPanel\(\);\n\s+releasePanel\(\);/.test(HTML), 'the card, and drawn with the others');
-  const off = await render({ guardian: false });
-  assert.deepEqual(off.asked, ['https://seat/guardian']);
-  assert.match(off.html, /holds no custody/);
-  assert.match(off.html, /Add custody/); assert.match(off.html, /arena-install --add-custody/); assert.match(off.html, /no second bond/);
-  const on = await render({ guardian: true, endpoint: 'wss://node.example.com/guardian' });
-  assert.match(on.html, /on - this node is a guardian/); assert.match(on.html, /wss:\/\/node\.example\.com\/guardian/);
+  const mounted = [], asked = [];
+  const fetch = async (u) => { asked.push(u); return { ok: u.endsWith('/guardian'), json: async () => ({ guardian: true, endpoint: 'wss://node.example.com/guardian' }) }; };
+  const post = async () => ({}), signed = async () => ({});
+  new Function('at', 'fetch', 'mount', 'post', 'signed', `${doors}; ${block('function custodyPanel()')}; return custodyPanel;`)(
+    (p) => `https://seat${p}`, fetch, (id, how, props) => mounted.push({ id, how, props }), post, signed)();
+  const [m] = mounted;
+  assert.deepEqual([m.id, m.how], ['custody', 'mountCustody']);
+  assert.equal(m.props.api.post, post); assert.equal(m.props.api.signed, signed);
+  assert.deepEqual(await m.props.api.get('/guardian'), { guardian: true, endpoint: 'wss://node.example.com/guardian' });
+  assert.equal(await m.props.api.get('/gateway-claim'), null);
+  assert.deepEqual(asked, ['https://seat/guardian', 'https://seat/gateway-claim']);
+  assert.doesNotMatch(HTML, /holds no custody|arena-install --add-custody/, 'no old panel text left in the page');
 });

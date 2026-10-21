@@ -1353,58 +1353,16 @@
       <div class="muted" id="arena-money-why"></div>
       <div class="arena-fed-note" id="arena-fed-note" style="display:none"></div>
     </section>
-    <section class="settings-card" id="arena-set-name">
-      <h3>Name</h3>
-      <div class="muted">Current name</div>
-      <div class="name-row">
-        <input id="arena-name-field" type="text" autocomplete="off" spellcheck="false" maxlength="32">
-        <button id="arena-name-update" type="button" class="primary">Update</button>
-      </div>
-      <div class="muted" id="arena-name-why"></div>
-    </section>
-    <section class="settings-card" id="arena-set-graphics">
-      <h3>Graphics</h3>
-      <!-- SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings") -->
-      <label class="fps-toggle"><input type="checkbox" id="arena-fps-toggle"> Show FPS</label>
-    </section>
-    <section class="settings-card" id="arena-set-logs">
-      <h3>Client logs</h3>
-      <div class="muted">What this page did - its log lines, sockets and run state, no seed or keys - to paste to Claude.</div>
-      <button id="arena-logs-copy" type="button">Copy client logs</button>
-      <div class="muted" id="arena-logs-said"></div>
-    </section>
-    <section class="settings-card" id="arena-set-seed">
-      <h3>Seed phrase</h3>
-      <div class="muted" id="arena-settings-backup"></div>
-      <button id="arena-phrase-show" type="button" class="primary">Show seed phrase</button>
-      <!-- RESTORE, OVERWRITING THIS TAB'S SEED: the 24 words or the 64 hex -->
-      <div class="muted">Restore: your 24 words (or your seed, 64 hex) replace this tab's seed, and the page reloads.</div>
-      <div class="name-row">
-        <input id="arena-seed-restore" type="password" autocomplete="off" placeholder="your 24 words, or your seed (64 hex)">
-        <button id="arena-seed-use" type="button">use my seed</button>
-      </div>
-      <div class="muted" id="arena-seed-restore-why"></div>
-    </section>
+    <!-- THE NAME, GRAPHICS, CLIENT LOGS, SEED PHRASE AND ACCOUNT CARDS (kanban #564): drawn by React (SettingsCards, window.ArenaSettings) -->
+    <section class="settings-card" id="arena-set-name"></section>
+    <section class="settings-card" id="arena-set-graphics"></section>
+    <section class="settings-card" id="arena-set-logs"></section>
+    <section class="settings-card" id="arena-set-seed"></section>
     <!-- DELETE THIS ACCOUNT FROM THIS BROWSER (2026-10-11: "Im settings screen gibt es die Möglichkeit seinen
          Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"): this tab's phrase, its wallets' data and the
          Nostr login are forgotten here, and the start screen comes back - log in with Nostr, restore or create. Nothing is
          sent or spent: the same 24 words or Nostr key bring the wallet back in any browser. -->
-    <section class="settings-card" id="arena-set-account">
-      <h3>Account</h3>
-      <div class="muted" id="arena-acct-who"></div>
-      <button id="arena-acct-delete" type="button" class="danger">Delete this account from this browser</button>
-      <div class="risk" id="arena-acct-risk">Deleting removes this wallet from this browser. Without your 24 words or your Nostr key, the money in it is lost for good.</div>
-      <div id="arena-acct-confirm" style="display:none">
-        <div class="risk" id="arena-acct-holds"></div>
-        <label class="muted" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="checkbox" id="arena-acct-saved" style="width:auto;margin:2px 0 0">
-          <span>I have my 24 words or my Nostr key. Without them the money in this wallet cannot be opened again.</span></label>
-        <div class="name-row">
-          <button id="arena-acct-go" type="button" class="primary danger" disabled>Delete and log in again</button>
-          <button id="arena-acct-cancel" type="button">Cancel</button>
-        </div>
-      </div>
-      <div class="muted" id="arena-acct-why"></div>
-    </section>
+    <section class="settings-card" id="arena-set-account"></section>
     <!-- FEDERATIONS THIS BROWSER CONFIRMED (§23.6): not on the page's known-good list, trusted by the player -->
     <section class="settings-card" id="arena-set-federations">
       <h3>Federations you confirmed</h3>
@@ -1469,49 +1427,8 @@
        window.ArenaConfirm) when a gate asks; spec §18A.7 / §22A: a paying round whose rules make a bad bet says so before anything is locked -->
   <div id="arena-fed-confirm" role="dialog" aria-modal="true" style="display:none"></div>
   <div id="arena-warn-confirm" role="dialog" aria-modal="true" style="display:none"></div>
-  <div id="arena-wallet-start" role="dialog" aria-modal="true" aria-labelledby="ws-title">
-    <div class="ws-box">
-      <h2 id="ws-title">Your wallet</h2>
-      <p class="ws-sub">It holds what you play with and what you win, in this browser. Keep its 24 words - or your Nostr key - to open it anywhere.</p>
-      <div id="ws-main">
-        <button id="ws-new" type="button" class="primary">Create a new wallet<small>Ready at once - back up its 24 words any time in Settings</small></button>
-        <button id="ws-restore" type="button">Restore a wallet<small>Your 24 words, or your seed</small></button>
-        <button id="ws-nostr" type="button" class="nostr">Login with Nostr<small>Your Nostr account is your wallet: extension, phone signer or nsec</small></button>
-      </div>
-      <div id="ws-restore-pane" style="display:none">
-        <textarea id="ws-restore-text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="your 24 words, or your seed (64 hex)"></textarea>
-        <div class="ws-why" id="ws-restore-why"></div>
-        <button id="ws-restore-go" type="button" class="primary">Restore</button>
-        <button id="ws-restore-back" type="button" class="link">Back</button>
-      </div>
-      <div id="ws-nostr-pane" style="display:none">
-        <button id="ws-nostr-ext" type="button">Browser extension<small>Alby, nos2x and others (NIP-07)</small></button>
-        <button id="ws-nostr-connect" type="button">Phone signer<small>Amber and others: scan a code (NIP-46)</small></button>
-        <div id="ws-nostr-qrbox" style="display:none"><div class="ws-qr" id="ws-nostr-qr"></div>
-          <p class="ws-note">Scan with your signer, or <a id="ws-nostr-open" href="#" style="color:#c9a8ff">open it on this phone</a>. Waiting for it to answer…</p></div>
-        <input id="ws-bunker" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="bunker://… or you@your-bunker">
-        <button id="ws-nostr-bunker" type="button">Connect a bunker<small>nsec.app, nsecBunker, Amber's bunker link</small></button>
-        <div class="ws-or">or, only on a device you trust</div>
-        <input id="ws-nsec" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="nsec1…">
-        <button id="ws-nostr-nsec" type="button">Log in with my nsec</button>
-        <button id="ws-nostr-new" type="button">New to Nostr? Create an account</button>
-        <div class="ws-why" id="ws-nostr-why"></div>
-        <button id="ws-nostr-back" type="button" class="link">Back</button>
-      </div>
-      <div id="ws-newacct-pane" style="display:none">
-        <div class="ws-warn"><b>This is your Nostr account and your wallet.</b> Save this key now - in a password manager or on paper. Nobody can recover it for you, and anyone who has it owns your account and your winnings.</div>
-        <div class="ws-key" id="ws-newacct-nsec"></div>
-        <button id="ws-newacct-copy" type="button">Copy the key</button>
-        <input id="ws-newacct-name" maxlength="40" autocomplete="off" placeholder="your name in the game (optional)">
-        <label class="ws-check"><input type="checkbox" id="ws-newacct-saved"> I saved my key</label>
-        <div class="ws-why" id="ws-newacct-why"></div>
-        <button id="ws-newacct-go" type="button" class="primary" disabled>Continue</button>
-        <button id="ws-newacct-back" type="button" class="link">Back</button>
-      </div>
-      <div id="ws-busy" class="ws-note" style="display:none"></div>
-      <p class="ws-note" style="text-align:center;margin:8px 0 0">Questions? <a href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener" style="color:#c9a8ff">Join the community on Armada</a></p>
-    </div>
-  </div>
+  <!-- THE WALLET SCREEN (kanban #564): drawn by React (WalletStart, window.ArenaWalletStart) when this tab holds no wallet -->
+  <div id="arena-wallet-start" role="dialog" aria-modal="true" aria-labelledby="ws-title"></div>
   <!-- THE SEED PHRASE (kanban #564): drawn by React (SeedModal, window.ArenaSeed) when Settings opens it -->
   <div id="arena-seed-modal" role="dialog" aria-modal="true"></div>
   <div id="arena-lobby"></div>
@@ -3877,7 +3794,7 @@
           const head = el.querySelector(after); if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
         } else if (!line && box) box.remove();
       }
-      document.getElementById('arena-settings-backup').textContent = line || 'This wallet is backed up.';
+      if (window.ARENA_DRAW_SEED_CARD) window.ARENA_DRAW_SEED_CARD(line);
       // THE BALANCE IS READ, NEVER COMPUTED HERE. Until the player wallet of §24A.1 exists this says what
       // it honestly knows - nothing yet - rather than inventing a number the page would then be trusted for.
       const bal = window.ARENA_WALLET_BALANCE;
@@ -4831,8 +4748,6 @@
       paintSettings();
     });
     // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
-    const nameField = document.getElementById('arena-name-field');
-    const nameUpdate = document.getElementById('arena-name-update');
     // THE NAME OTHERS SEE, ALSO BEFORE THE LOBBY HAS RUN (2026-10-14 20:01Z, his phone: "It doesn't show the
     // player name" - Settings showed an empty field): the identity was only made inside the lobby's own start, so a page that had
     // not reached it showed nothing. The same identity is read from this tab's seed here (tabIdentity: the chosen name, else the
@@ -4844,18 +4759,9 @@
         return ARENACLIENT.tabIdentity({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE }).name || '';
       } catch { return ''; }
     };
-    nameField.addEventListener('input', () => {
-      const t = nameField.value.trim();
-      nameUpdate.disabled = !t || t === currentName();
-    });
-    nameUpdate.addEventListener('click', () => {
-      const t = nameField.value.trim();
-      const why = document.getElementById('arena-name-why');
-      if (!t) { why.textContent = 'A name is needed.'; return; }
-      const said = window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.setName ? window.ARENA_LOBBY_ACT.setName(t) : 'the lobby is not up yet';
-      why.textContent = said || 'Updated.';
-      paintSettings();
-    });
+    // drawn by React (kanban #564, window.ArenaSettings): the field keeps what is typed, and shows the current name otherwise
+    const drawName = () => window.ArenaSettings.name(document.getElementById('arena-set-name'), { current: currentName(),
+      onUpdate: (t) => { const said = window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.setName ? window.ARENA_LOBBY_ACT.setName(t) : 'the lobby is not up yet'; setTimeout(paintSettings, 0); return said; } });
     function paintSettings() {
       const sel = document.getElementById('arena-donation-select');
       const chosen = String(Math.round(donationBps() / 100));
@@ -4883,7 +4789,7 @@
       if (shareWhat && window.ARENA_ITEM_PRICE) shareWhat.textContent = 'A 500 sat item costs ' + String(window.ARENA_ITEM_PRICE(500)) + ' sat: ' + nodes500 + ' sat to the nodes'
         + (reserves500 ? ', ' + reserves500 + ' sat to the protocol reserves' : '')
         + (share ? ', ' + String(window.ARENA_ITEM_PRICE(500) - nodes500 - reserves500) + ' sat to the developers.' : ', nothing to the developers.');
-      if (document.activeElement !== nameField) { nameField.value = currentName(); nameUpdate.disabled = true; }
+      drawName();
       paintMoney();
     }
     // SETTINGS OPENED BEFORE THIS SCRIPT RAN: filled now, once
@@ -4935,36 +4841,16 @@
       console.log('[arena] account deleted from this browser: ' + forgot + ' wallet entries');
       return { ok: true, forgot };
     };
+    // THE ACCOUNT CARD (kanban #564: drawn by React, window.ArenaSettings): who this wallet is, what it holds said before the delete
     (function accountCard() {
-      const $ = (id) => document.getElementById(id);
-      const who = () => {
-        let n = null; try { n = JSON.parse(window.ARENA_BROWSER_STORE().getItem('arena.nostr') || 'null'); } catch { n = null; }
-        $('arena-acct-who').textContent = n && n.npub ? 'Logged in with Nostr: ' + (n.name ? n.name + ' · ' : '') + n.npub.slice(0, 16) + '…' : 'This wallet\'s key is its 24 words, kept in this browser.';
-      };
-      who();
-      $('arena-acct-delete').addEventListener('click', () => {
-        const b = window.ARENA_WALLET_BALANCE;
-        $('arena-acct-holds').textContent = b && Number.isFinite(b.sats)
-          ? 'This wallet holds ' + b.sats.toLocaleString('en-US') + ' sat' + (b.pending ? ' and ' + b.pending.toLocaleString('en-US') + ' sat pending' : '') + '. Withdraw it first.'
-          : '';   // the risk line above says what is lost
-        $('arena-acct-saved').checked = false; $('arena-acct-go').disabled = true; $('arena-acct-why').textContent = '';
-        $('arena-acct-confirm').style.display = ''; $('arena-acct-delete').style.display = 'none';
-      });
-      $('arena-acct-saved').addEventListener('change', () => { $('arena-acct-go').disabled = !$('arena-acct-saved').checked; });
-      $('arena-acct-cancel').addEventListener('click', () => { $('arena-acct-confirm').style.display = 'none'; $('arena-acct-delete').style.display = ''; });
-      $('arena-acct-go').addEventListener('click', () => {
-        const r = window.ARENA_DELETE_ACCOUNT();
-        if (!r.ok) { $('arena-acct-why').textContent = r.why; return; }
-        $('arena-acct-why').textContent = 'Deleted from this browser - opening the start screen';
-        location.reload();
-      });
+      let n = null; try { n = JSON.parse(window.ARENA_BROWSER_STORE().getItem('arena.nostr') || 'null'); } catch { n = null; }
+      window.ArenaSettings.account(document.getElementById('arena-set-account'), {
+        who: n && n.npub ? 'Logged in with Nostr: ' + (n.name ? n.name + ' · ' : '') + n.npub.slice(0, 16) + '…' : 'This wallet\'s key is its 24 words, kept in this browser.',
+        holds: () => { const b = window.ARENA_WALLET_BALANCE;
+          return b && Number.isFinite(b.sats) ? 'This wallet holds ' + b.sats.toLocaleString('en-US') + ' sat' + (b.pending ? ' and ' + b.pending.toLocaleString('en-US') + ' sat pending' : '') + '. Withdraw it first.' : ''; },
+        onDelete: () => window.ARENA_DELETE_ACCOUNT(), onDeleted: () => location.reload() });
     })();
-    document.getElementById('arena-seed-use').addEventListener('click', () => {
-      const why = document.getElementById('arena-seed-restore-why');
-      const got = window.ARENA_RESTORE_SEED(document.getElementById('arena-seed-restore').value);
-      why.textContent = got.ok ? 'restored - reloading' : got.why;
-    });
-    document.getElementById('arena-phrase-show').addEventListener('click', () => {
+    const showPhrase = () => {
       const seed = walletSeed();
       const made = seed ? ARENACLIENT.phraseFromSeed(seed) : { ok: false, why: 'no wallet yet' };
       // THE MODAL IN REACT (kanban #564; the page's bundle, window.ArenaSeed): the words and the quiz, the backup recorded by
@@ -4976,7 +4862,13 @@
         onRecord: (words) => (st ? ARENACLIENT.verifyAndRecord({ typed: words.join(' '), phrase: made.phrase, storage: st, seed }) : { ok: false, why: 'no wallet to back up yet' }),
         onQuiz: (q) => { window.ARENA_VERIFY = q; if (q.done) paintMoney(); },
         onClose: () => { seedModal.style.display = 'none'; window.ARENA_VERIFY = null; setTimeout(() => window.ArenaSeed.close(host), 0); paintMoney(); } });
-    });
+    };
+    // THE SEED CARD (kanban #564: drawn by React, window.ArenaSettings): the backup line paintMoney reads, Show, and the restore that
+    // replaces this tab's seed (ARENA_RESTORE_SEED)
+    let backupLine = '';
+    window.ARENA_DRAW_SEED_CARD = (line = backupLine) => { backupLine = line || '';
+      window.ArenaSettings.seed(document.getElementById('arena-set-seed'), { backup: backupLine, onShow: showPhrase, onRestore: (t) => window.ARENA_RESTORE_SEED(t) }); };
+    window.ARENA_DRAW_SEED_CARD();
     setInterval(paintMoney, 1000);
     // ---------------------------------------------------------------- the run's link to the signer nodes, said while it is driven: Tick Tock's page part, packages/nextblock/page/unity-page.js (kanban #521)
 
@@ -5009,10 +4901,7 @@
         return was && was.tab !== THIS_TAB && Date.now() - Number(was.beat) < 6000 ? String(was.round || '') : null;
       } catch { return null; }
     };
-    document.getElementById('arena-logs-copy').addEventListener('click', async () => {
-      const said = document.getElementById('arena-logs-said');
-      said.textContent = window.ARENA_COPY_LOGS ? await window.ARENA_COPY_LOGS() : 'this page keeps no client logs';
-    });
+    window.ArenaSettings.logs(document.getElementById('arena-set-logs'), { onCopy: async () => (window.ARENA_COPY_LOGS ? window.ARENA_COPY_LOGS() : 'this page keeps no client logs') });
     // the balance read again every 10 s (a read, never a spend)
     setInterval(() => { if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }, 10000);
 
@@ -7574,10 +7463,9 @@
     (() => {
       let on = false; try { on = window.ARENA_BROWSER_STORE().getItem('arena.fps.show') === '1'; } catch { /* off */ }
       document.body.classList.toggle('arena-fps-on', on);
-      const box = document.getElementById('arena-fps-toggle'); if (!box) return;
-      box.checked = on;
-      box.addEventListener('change', () => { try { window.ARENA_BROWSER_STORE().setItem('arena.fps.show', box.checked ? '1' : '0'); } catch { /* this page only */ }
-        document.body.classList.toggle('arena-fps-on', box.checked); });
+      window.ArenaSettings.graphics(document.getElementById('arena-set-graphics'), { on, onToggle: (v) => {
+        try { window.ARENA_BROWSER_STORE().setItem('arena.fps.show', v ? '1' : '0'); } catch { /* this page only */ }
+        document.body.classList.toggle('arena-fps-on', v); } });
     })();
     window.ARENA_DONATE_OPEN = (gameName = null) => {
       let el = document.getElementById('arena-donate');
@@ -7714,101 +7602,50 @@
       try { sessionStorage.removeItem('arena.nostr.showWords'); } catch { /* none */ }
       if (already) return;
       box.style.display = 'flex';
-      const panes = (which) => { for (const id of ['ws-main', 'ws-restore-pane', 'ws-nostr-pane', 'ws-newacct-pane']) $(id).style.display = id === which ? '' : 'none'; };
-      // a step that runs (its text ends in "…"): the ring and the seconds since the first step of this wait
-      let busySince = 0, busyTick = null;
-      const busy = (text) => {
-        const el = $('ws-busy'); const wait = !!text && text.endsWith('\u2026');
-        el.style.display = text ? '' : 'none'; el.classList.toggle('on', wait);
-        if (!wait) { el.textContent = text || ''; clearInterval(busyTick); busyTick = null; busySince = 0; return; }
-        if (!busySince) busySince = Date.now();
-        el.innerHTML = '<span class="ws-spin" aria-hidden="true"></span><span class="ws-step"></span><span class="ws-secs"></span>';
-        el.querySelector('.ws-step').textContent = text;
-        const secs = () => { const s = Math.floor((Date.now() - busySince) / 1000); const at = el.querySelector('.ws-secs'); if (at) at.textContent = s ? s + ' s' : ''; };
-        secs(); if (!busyTick) busyTick = setInterval(secs, 500);
-      };
       window.ARENA_WALLET_BUSY = () => ({ text: $('ws-busy').textContent, ring: !!$('ws-busy').querySelector('.ws-spin') });
       const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
       // CREATE: the seed made here, and straight into the game (2026-10-11: "showing the seed and forcing a
       // check interrupts the flow. Put the seed display and the mandatory check in settings, as a backup") - its 24 words and
       // their check are in Settings (Seed phrase), and the lobby's backup line leads there
-      $('ws-new').onclick = () => {
-        let seed = null;
-        try { seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { busy('This browser cannot keep a wallet: ' + e.message); return; }
+      const create = () => {
+        try { ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { return { ok: false, why: 'This browser cannot keep a wallet: ' + e.message }; }
         if (window.ARENA_SEED_KEEPER) window.ARENA_SEED_KEEPER.beat();
         window.ARENA_WALLET_SCREEN.made = 'new';
         done();
-      };
-      $('ws-restore').onclick = () => { panes('ws-restore-pane'); $('ws-restore-text').focus(); };
-      $('ws-restore-back').onclick = () => panes('ws-main');
-      $('ws-restore-go').onclick = () => {
-        const got = window.ARENA_RESTORE_SEED ? window.ARENA_RESTORE_SEED($('ws-restore-text').value) : { ok: false, why: 'the page is still loading - try again' };
-        $('ws-restore-why').textContent = got.ok ? 'restored - opening your wallet' : got.why;
+        return { ok: true };
       };
       // NOSTR: its bundle only now
       let N = null;
       const nostr = () => window.ARENA_NOSTR_LOAD().then((x) => (N = x));
-      const why = (e) => { busy(''); $('ws-nostr-why').textContent = e && e.message ? e.message : String(e); };
-      const buttons = (on) => { for (const b of $('ws-nostr-pane').querySelectorAll('button')) b.disabled = !on; };
       // THE ACCOUNT'S SEED, made this tab's: the page reloads with it (ARENA_RESTORE_SEED)
       // A NEW ACCOUNT: its seed is made without asking the relays for one, and its name is the one just typed
-      async function login(signer, how, made = null) {
-        busy(made ? 'Making your wallet and keeping it on Nostr\u2026' : 'Reading your wallet from Nostr\u2026');
+      async function login(signer, how, made, busy) {
+        busy(made ? 'Making your wallet and keeping it on Nostr…' : 'Reading your wallet from Nostr…');
         const got = await N.seedFor(signer, { fresh: !!made });
         const hex = Array.from(got.seed, (b) => b.toString(16).padStart(2, '0')).join('');
         let profile = made ? { name: made.name || null } : null;
-        if (!made) try { busy('Reading your Nostr profile\u2026'); profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
+        if (!made) try { busy('Reading your Nostr profile…'); profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
         try { window.ARENA_BROWSER_STORE().setItem('arena.nostr', JSON.stringify({ npub: N.npubOf(signer.pubkey), how, name: profile && profile.name || null, at: Date.now() })); } catch { /* shown once */ }
         window.ARENA_WALLET_SCREEN.nostr = { how, created: got.created, from: got.from, relays: got.relays, npub: N.npubOf(signer.pubkey) };
         try { await signer.close(); } catch { /* gone */ }
-        busy(got.created ? 'Your wallet is made and kept on Nostr - opening it\u2026' : 'Your wallet is back - opening it\u2026');
+        busy(got.created ? 'Your wallet is made and kept on Nostr - opening it…' : 'Your wallet is back - opening it…');
         const r = window.ARENA_RESTORE_SEED ? window.ARENA_RESTORE_SEED(hex) : { ok: false, why: 'the page is still loading' };
-        if (!r.ok) why(new Error(r.why));
+        if (!r.ok) throw new Error(r.why);
       }
-      const attempt = (how, make) => async () => {
-        $('ws-nostr-why').textContent = ''; buttons(false);
-        try { await nostr(); await login(await make(), how); } catch (e) { why(e); } finally { buttons(true); }
-      };
-      $('ws-nostr').onclick = () => { panes('ws-nostr-pane'); nostr().catch(why); };
-      $('ws-nostr-back').onclick = () => { panes('ws-main'); busy(''); };
-      $('ws-nostr-ext').onclick = attempt('extension', () => N.extensionSigner(window.nostr));
-      $('ws-nostr-bunker').onclick = attempt('bunker', () => N.bunkerSigner($('ws-bunker').value, { onauth: (u) => window.open(u, '_blank') }));
-      $('ws-nostr-nsec').onclick = attempt('nsec', () => N.signerFromNsec($('ws-nsec').value));
-      $('ws-nostr-connect').onclick = async () => {
-        $('ws-nostr-why').textContent = '';
-        try {
-          await nostr();
-          const c = N.nostrConnect({ url: location.origin, onauth: (u) => window.open(u, '_blank') });
-          $('ws-nostr-qr').innerHTML = N.textQrSvg(c.uri);
-          $('ws-nostr-open').href = c.uri;
-          $('ws-nostr-qrbox').style.display = '';
-          window.ARENA_WALLET_SCREEN.connectUri = c.uri;
-          buttons(false); $('ws-nostr-back').disabled = false;
-          await login(await c.signer, 'nostrconnect');
-        } catch (e) { why(e); } finally { buttons(true); }
-      };
-      // A NEW NOSTR ACCOUNT: its key shown, "I saved my key" before anything else; its name published, its seed derived
-      let fresh = null;
-      $('ws-nostr-new').onclick = async () => {
-        try { await nostr(); } catch (e) { why(e); return; }
-        fresh = N.newAccount();
-        $('ws-newacct-nsec').textContent = fresh.nsec;
-        $('ws-newacct-saved').checked = false; $('ws-newacct-go').disabled = true;
-        panes('ws-newacct-pane');
-      };
-      $('ws-newacct-saved').onchange = () => { $('ws-newacct-go').disabled = !$('ws-newacct-saved').checked; };
-      $('ws-newacct-copy').onclick = () => { navigator.clipboard.writeText(fresh.nsec).then(() => { $('ws-newacct-copy').textContent = 'Copied ✓'; }, () => {}); };
-      $('ws-newacct-back').onclick = () => { fresh = null; panes('ws-nostr-pane'); };
-      $('ws-newacct-go').onclick = async () => {
-        const go = $('ws-newacct-go'); const label = go.textContent;
-        $('ws-newacct-why').textContent = ''; go.disabled = true;
-        go.innerHTML = '<span class="ws-spin" aria-hidden="true"></span>Creating your account\u2026';   // at once, on the press
-        try {
-          const name = $('ws-newacct-name').value.trim();
-          if (name) { busy('Creating your Nostr account\u2026'); await N.publishProfile(fresh.signer, name); }
-          await login(fresh.signer, 'new', { name });
-        } catch (e) { $('ws-newacct-why').textContent = e.message; go.textContent = label; go.disabled = false; busy(''); }
-      };
+      // THE PANES IN REACT (kanban #564; the page's bundle, window.ArenaWalletStart): the page's rules handed over
+      const onauth = (u) => window.open(u, '_blank');
+      window.ArenaWalletStart.open(box, {
+        create,
+        restore: (text) => (window.ARENA_RESTORE_SEED ? window.ARENA_RESTORE_SEED(text) : { ok: false, why: 'the page is still loading - try again' }),
+        nostr: {
+          load: nostr, login,
+          extension: () => N.extensionSigner(window.nostr),
+          bunker: (v) => N.bunkerSigner(v, { onauth }),
+          nsec: (v) => N.signerFromNsec(v),
+          connect: () => { const c = N.nostrConnect({ url: location.origin, onauth }); window.ARENA_WALLET_SCREEN.connectUri = c.uri; return { uri: c.uri, svg: N.textQrSvg(c.uri), signer: c.signer }; },
+          newAccount: () => N.newAccount(),
+          publish: (signer, name) => N.publishProfile(signer, name),
+        } });
     })();
   </script>
 </body>

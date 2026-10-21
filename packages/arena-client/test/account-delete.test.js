@@ -79,8 +79,11 @@ test('delete: this tab\'s phrase, its wallets and the Nostr login are forgotten;
 });
 
 test('the Account card asks before it deletes: the balance said, "I have my 24 words or my Nostr key" ticked first', () => {
-  const card = HTML.slice(HTML.indexOf('<section class="settings-card" id="arena-set-account">'), HTML.indexOf('</section>', HTML.indexOf('id="arena-set-account"')));
+  // the card is React's (kanban #564, arena-web SettingsCards: AccountCard); the page hands it what the wallet holds and the delete
+  const src = readFileSync(new URL('../../arena-web/src/arena/SettingsCards.jsx', import.meta.url), 'utf8');
+  const card = src.slice(src.indexOf('export class AccountCard'));
   assert.match(card, /Delete this account from this browser/);
-  assert.match(card, /<button id="arena-acct-go" type="button" class="primary" disabled>/, 'disabled until the box is ticked');
+  assert.match(card, /<button id="arena-acct-go" type="button" className="primary danger" disabled=\{!saved\}/, 'disabled until the box is ticked');
+  assert.match(HTML, /onDelete: \(\) => window\.ARENA_DELETE_ACCOUNT\(\), onDeleted: \(\) => location\.reload\(\)/);
   assert.match(card, /I have my 24 words or my Nostr key/);
 });

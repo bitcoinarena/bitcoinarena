@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DashboardPage, sat, short, earningsOf } from '../dist/test/dashboard.mjs';
+import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep } from '../dist/test/dashboard.mjs';
 
 const NOW = Date.UTC(2026, 9, 21, 11, 0);
 const zero = { gameVerifyMsat: '0', settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '0', gatewayCostMsat: '0', profitMsat: '0' };
@@ -58,4 +58,69 @@ test('the month: the earned number, its roles as a bar, the profit after costs',
   assert.match(h, /<span>Earned · this month<\/span><b>27.8 sat<\/b><div class="split"/);
   assert.match(h, /Game \/ verify 9.046 sat/);
   assert.match(h, /<span>Profit<\/span><b class="ok">20.8 sat<\/b><small>after 7 sat of Lightning and gateway costs<\/small>/);
+});
+
+// WHAT THE PAGE'S OWN SCRIPT DREW, NOW HERE (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported,
+// no fall backs"): a round opened to its players (the nets of the 2026-10-05 follow-up on comment 318), the notes, every host row, the
+// capacity plea, the liquidity card, and the words for a dashboard.json that could not be read.
+test('an opened round\'s players: the net with its sign, ok / bad by its sign, pending blank, each with its replay', () => {
+  assert.deepEqual([signedSat('286000'), signedSat('-4000'), signedSat('0'), signedSat(null)], ['+286 sat', '-4 sat', '0 sat', '']);
+  assert.deepEqual([score(500000), score(null), score(123)], ['5.00000', '-', '0.00123']);
+  const row = (p) => ({ entry: 'e'.repeat(64), player: 'p'.repeat(64), stakeMsat: '100000', score: 500000, signedBy: 2, ...p });
+  const h = renderToStaticMarkup(React.createElement(Players, { result: { id: 'r1', free: false, players: [
+    row({ name: 'winner', outcome: 'DELIVERED', result: 'won', netMsat: '286000' }), row({ name: 'loser', outcome: 'FORFEIT', result: 'lost', netMsat: '-100000' }),
+    row({ name: 'waiting', outcome: null, result: 'pending', netMsat: null }), row({ name: 'even', outcome: 'FAILED', result: 'stake back', netMsat: '0' })] } }));
+  assert.match(h, /<th>Won or lost<\/th><th class="n">Net<\/th><th>Replay<\/th>/);
+  assert.match(h, /<td>winner<\/td><td>DELIVERED<\/td><td class="n">5.00000<\/td><td class="n">2<\/td><td class="n">100 sat<\/td><td class="ok">won<\/td><td class="n ok">\+286 sat<\/td>/);
+  assert.match(h, /<td class="bad">lost<\/td><td class="n bad">-100 sat<\/td>/);
+  assert.match(h, /<td>waiting<\/td><td>not signed yet<\/td>.*?<td>pending<\/td><td class="n"><\/td>/, 'pending: blank, no class');
+  assert.match(h, /<td>stake back<\/td><td class="n">0 sat<\/td>/, 'zero: no "+", no class');
+  assert.match(h, /<a href="replay\?round=r1&amp;entry=e{64}" target="_blank" rel="noopener">replay<\/a>/);
+  assert.match(renderToStaticMarkup(React.createElement(Players, { result: { error: 'HTTP 404' } })), /could not read api\/round-result: HTTP 404/);
+  assert.match(renderToStaticMarkup(React.createElement(Players, { result: { loading: true } })), /reading api\/round-result…/);
+  assert.match(renderToStaticMarkup(React.createElement(Players, { result: { id: 'r1', players: [] } })), /no players in this round/);
+});
+
+test('a round row opens to its players, read once through readResult; a second click closes it', async () => {
+  const asked = [];
+  const p = new DashboardPage({ data: D, readResult: async (id) => { asked.push(id); return { id, players: [] }; } });
+  p.setState = (u) => Object.assign(p.state, typeof u === 'function' ? u(p.state) : u);
+  const id = D.rounds[0].id;
+  assert.match(renderToStaticMarkup(p.render()), /<tr class="rr" aria-expanded="false">/);
+  await p.toggle(id);
+  assert.deepEqual(asked, [id]);
+  assert.match(renderToStaticMarkup(p.render()), /<tr class="pl"><td colSpan="6"><p class="sub">no players in this round<\/p><\/td><\/tr>/i);
+  await p.toggle(id); await p.toggle(id);
+  assert.deepEqual(asked, [id], 'read once');
+});
+
+test('the notes (hyphens kept), every host row, the capacity plea and the liquidity card; an unreadable dashboard.json', () => {
+  const now = NOW;
+  const hosts = { lnd: { alias: 'lnd-testnet4', pubkey: '0274e26122c7b8fc00', activeChannels: 1, localMsat: '1082086628', remoteMsat: '459114372', routingFeesMsat30d: '0', forwards30d: 0, paidFeesMsat: '8000', paymentsWithFee: 2, readAtMs: now },
+    gateway: { name: 'gw-a', state: 'Running', federations: [{ id: '337ae01a', name: 'blwp-testnet4', ecashMsat: '248999936' }], lightningMsat: '1082086628', inboundMsat: '459114372', onchainSat: '20446',
+      payments30d: { incoming: { success: 0, failure: 0, feesMsat: '0' }, outgoing: { success: 0, failure: 2, feesMsat: '0' } }, readAtMs: now } };
+  const notes = { guardian: 'the guardian third', lightning: 'this node hosts LND lnd-testnet4', gateway: 'this node pays no gateway' };
+  const h = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, hosts, notes, capacity: { level: 'bad', says: 'this node is full' },
+    liquidity: { freeSats: '300000', channels: [{ capacitySats: '100000' }], depositAddress: 'tb1qexample' } } }));
+  assert.equal(keep('lnd-testnet4'), 'test-host\u2011testnet4');
+  assert.match(h, /<h3>Notes<\/h3><div class="notes"><p>the guardian third<\/p><p>this node hosts LND test-host\u2011testnet4<\/p>/);
+  assert.match(h, /<h3>Hosts<\/h3>/);
+  for (const [k, v] of [['Node key', '0274e26122c7b8fc…'], ['Fees its payments paid', '8 sat · 2 payments'], ['E-cash in blwp-testnet4', '249000 sat'], ['Lightning balance', '1082087 sat'],
+    ['On-chain', '20446 sat'], ['Payments out, 30 days', '0 ok · 2 failed · fees 0 sat'], ['Read', '21 Oct 11:00']])
+    assert.ok(h.includes(`<span>${k}</span><b>${v}</b>`), `${k}: ${v}`);
+  assert.match(h, /<h2>Capacity<\/h2><div class="card"><p class="bad">this node is full<\/p>/);
+  assert.match(h, /<h2>Liquidity provider<\/h2>/);
+  assert.match(h, /<p class="bad">Below the deposit minimum: no share of the liquidity pool until topped up.<\/p>/);
+  assert.ok(h.includes('<span>Channels given</span><b>1 (100,000 sat)</b>'));
+  assert.ok(h.includes('<span>Top up (LND wallet)</span><b><code>tb1qexample</code></b>'));
+  const ok = renderToStaticMarkup(React.createElement(Liquidity, { claim: { freeSats: '500000', channels: [] } }));
+  assert.match(ok, /<p class="ok">Above the deposit minimum/);
+  assert.equal(renderToStaticMarkup(React.createElement(DashboardPage, { data: { error: 'HTTP 502' } })),
+    '<div class="dash"><h1>Node dashboard</h1><p class="bad">could not read dashboard.json: HTTP 502</p></div>');
+});
+
+test('the dev client card: its last recovery', () => {
+  const dev = { ...D.devClient, lastRecovery: { at: '2026-10-21T09:00:00Z', ok: true, unclaimedMsat: '2000' } };
+  const h = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, devClient: dev } }));
+  assert.ok(h.includes('<span>Last recovery</span><b>21 Oct 09:00 · ok, +2 sat</b>'));
 });

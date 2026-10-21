@@ -22,12 +22,15 @@ test('an empty node: every category and period is there, at 0, with 30 days of c
   assert.equal(typeof d.node, 'string');
 });
 
-test('the page draws dashboard.json and names every category', () => {
+// THE PAGE IS REACT'S (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
+// page reads dashboard.json and hands it to /dashboard/react.js; how every category is drawn is packages/arena-web's dashboard test.
+test('the page reads dashboard.json and hands it to the React dashboard, with no drawing of its own', () => {
   const h = dashboardHtml();
   assert.match(h, /<title>Bitcoin Arena · Node Dashboard<\/title>/);   //: the engine's name on its node pages
-  assert.match(h, /fetch\('dashboard\.json'/);
-  for (const n of ['Game/verify fee', 'Settlement fee', 'Guardian/custody fee', 'Other earnings', 'Lightning costs', 'Gateway costs', 'Absolute profit'])
-    assert.ok(h.includes(n), n);
+  assert.match(h, /json\('dashboard\.json'\)/);
+  assert.match(h, /<script type="module">\n[^\n]*\n[^\n]*\nimport '\.\/dashboard\/react\.js';/, 'the bundle is imported unconditionally');
+  assert.match(h, /window\.ArenaDashboard\.draw\(document\.getElementById\('app'\),D,readResult\)/);
+  assert.doesNotMatch(h, /id="legacy"|innerHTML|function (totals|tables|chart|devCard|hostsCard)\(/, 'no fall back');
 });
 
 // THE ROUNDS ARE CLICKABLE (2026-10-03 22:25, plan accepted 2026-10-04): against a real node holding a round with an
@@ -61,10 +64,12 @@ test('a real node: /dashboard opens a round to its players from api/round-result
       stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     });
     const page = await (await fetch(`http://127.0.0.1:${node.port}/dashboard`)).text();
-    assert.ok(page.includes(`fetch('api/round-result?round='+id`), 'the opened row reads this node\'s own api/round-result, relative');
-    assert.ok(page.includes(`tr.closest('tr.rr')`) || page.includes(`closest('tr.rr')`), 'the whole round row is the toggle');
-    assert.ok(page.includes('<a href="replay?round=') && page.includes('target="_blank"'), 'each player links its replay in a new window');
-    assert.ok(page.includes('not signed yet'));
+    assert.ok(page.includes(`json('api/round-result?round='+encodeURIComponent(id))`), 'the opened row reads this node\'s own api/round-result, relative');
+    assert.ok(page.includes(`import './dashboard/react.js';`), 'the row, its players and their replay links are the React dashboard\'s (arena-web Players)');
+    const bundle = await fetch(`http://127.0.0.1:${node.port}/dashboard/react.js`);
+    assert.equal(bundle.status, 200, 'the node serves the bundle beside the page');
+    const js = await bundle.text();
+    assert.ok(js.includes('replay?round=') && js.includes('not signed yet'), 'each player links its replay; an unsigned outcome said');
     const j = await (await fetch(`http://127.0.0.1:${node.port}/api/round-result?round=${toHex(rid)}`)).json();
     assert.equal(j.id, toHex(rid));
     assert.equal(j.players.length, 1);
@@ -103,7 +108,7 @@ test('a real node that hosts an LND and a gateway shows them in dashboard.json; 
     assert.equal(d.totals.day.gatewayCostMsat, '0');
     assert.equal(d.totals.day.profitMsat, '-1000');
     const page = await (await fetch(`http://127.0.0.1:${hosting.port}/dashboard`)).text();
-    assert.ok(page.includes('function hostsCard()') && page.includes('<h3>Hosts</h3>'));
+    assert.ok(page.includes(`import './dashboard/react.js';`), 'the Hosts card is the React dashboard\'s (arena-web dashboard test)');
     const n = await (await fetch(`http://127.0.0.1:${bare.port}/dashboard.json`)).json();
     assert.equal(n.hosts, null);
     assert.equal(n.notes.lightning, 'this node holds no Lightning channel');
@@ -116,28 +121,17 @@ test('a real node that hosts an LND and a gateway shows them in dashboard.json; 
 // value both shrank and wrapped ("Routing fees, 30 / days" beside "0 sat · 0 / forwards"); the Notes card took the subtitle's
 // word-break:break-all and split inside words ("th e", "roun d", "gate way"); the fee chart's day lived only in an SVG title;
 // the Player column showed 8 hex of the key, because api/round-result read only a record's custom name.
-test('the page: Notes wrap on words, a Hosts value never wraps inside itself, the chart has a hover or tap box', () => {
+test('the page: Notes wrap on words, a Hosts value never wraps inside itself (the React cards keep the page\'s styles)', () => {
   const page = dashboardHtml();
   const css = page.slice(page.indexOf('<style>'), page.indexOf('</style>'));
-  // NOTES: their own class, words kept whole; only a single token longer than the card may break
-  assert.doesNotMatch(page, /<h3>Notes<\/h3><div class="sub"/, 'the Notes card still uses the subtitle\'s break-all');
-  assert.match(page, /<h3>Notes<\/h3><div class="notes">/);
+  // NOTES: their own class, words kept whole; only a single token longer than the card may break (React: <div class="notes">, keep())
   assert.match(css, /\.notes\{[^}]*word-break:normal[^}]*overflow-wrap:anywhere/);
   // HOSTS: the value is one unbroken piece; the row wraps it under its label when the pair does not fit
   assert.match(css, /\.row\{[^}]*flex-wrap:wrap/);
   assert.match(css, /\.row b\{[^}]*white-space:nowrap[^}]*margin-left:auto/);
-  // THE CHART: a box that follows the pointer or a tap and names the day and its three amounts
-  assert.match(page, /<div id="tip"/);
-  assert.match(page, /tip\.textContent=d\.day\+': game\/verify '\+g\+' msat · settlement '\+st\+' msat · guardian '\+gd\+' msat'/);
-  assert.match(page, /addEventListener\('pointermove'/);
-  // MEASURED LIVE (test host Chrome, 1280 px): a node name in a note broke at its hyphen ("test-host- / testnet4"), and at 390 px
-  // the box ran past the chart card's edge. A note's hyphens do not break; the box wraps inside the card.
-  assert.match(page, /const keep=\(t\)=>String\(t\)\.replace\(\/-\/g,'\\u2011'\)/);
-  assert.match(page, /<p>'\+keep\(D\.notes\.guardian\)\+'<\/p><p>'\+keep\(D\.notes\.lightning\)\+'<\/p><p>'\+keep\(D\.notes\.gateway\)\+'<\/p>/);
-  assert.match(css, /#tip\{[^}]*white-space:normal[^}]*max-width:calc\(100% - 8px\)/);
-  assert.match(page, /<title>'\+d\.day\+': game\/verify /, 'the SVG title went');
-  // THE PLAYER COLUMN draws the name, never a slice of the key
-  assert.doesNotMatch(page, /String\(p\.player\|\|''\)\.slice\(0,8\)/);
+  // THE OPENED ROUND'S PLAYERS: the row is a toggle, its players indented under it
+  assert.match(css, /tr\.rr\{cursor:pointer\}/);
+  assert.match(css, /tr\.pl>td\{/);
 });
 
 test('api/round-result names every player: the custom name, else the lobby\'s generated name, else the key\'s generated name marked', async () => {
@@ -252,38 +246,4 @@ test('a paying round with this node\'s results: an ACCEPTED settlement earns its
     assert.deepEqual([no.d.totals.owed.gameVerifyMsat, no.d.totals.owed.settlementMsat], [String(no.mine.gameVerify), String(no.mine.settlement)], `${state}: the same money, owed`);
     assert.ok(no.d.days.every((x) => x.gameVerifyMsat === '0' && x.settlementMsat === '0'), `${state}: nothing on the chart`);
   }
-});
-
-// THE ROUNDS TABLE'S NET, AS THE DASHBOARD DRAWS IT (follow-up, 2026-10-05 on comment 318). The
-// page dashboardHtml() serves draws each player's result and netMsat from api/round-result with its own code: signedSat
-// ("+" before a positive net), the cell's class (ok positive, bad negative, none at zero or pending). Its renderer is lifted
-// out of the page as served and run with the four results playerBalance answers for a paying round.
-test('the dashboard draws a paying round\'s nets: "+286 sat" ok, "-4 sat" and "-100 sat" bad, pending blank', () => {
-  const page = dashboardHtml();
-  const script = page.slice(page.indexOf('<script>') + '<script>'.length, page.lastIndexOf('</script>'));
-  const line = (start) => { const at = script.indexOf(start); assert.ok(at >= 0, `the page has ${start}`); return script.slice(at, script.indexOf('\n', at)); };
-  const at = script.indexOf('function playersOf(id){');
-  const playersOfSrc = script.slice(at, script.indexOf('\nfunction readPlayers(', at));
-  const players = new Map();
-  const playersOf = new Function('players', [line('const sat='), line('const esc='), line('const score='), line('const signedSat='), playersOfSrc, 'return playersOf;'].join('\n'))(players);
-  const row = (p) => ({ entry: 'e'.repeat(64), player: 'p'.repeat(64), name: p.name, stakeMsat: '100000', outcome: p.outcome, score: 500000, signedBy: 2, ...p });
-  players.set('r1', { id: 'r1', free: false, players: [
-    row({ name: 'winner', outcome: 'DELIVERED', result: 'won', netMsat: '286000' }),
-    row({ name: 'back', outcome: 'FAILED', result: 'stake back', netMsat: '-4000' }),
-    row({ name: 'loser', outcome: 'FORFEIT', result: 'lost', netMsat: '-100000' }),
-    row({ name: 'waiting', outcome: 'DELIVERED', result: 'pending', netMsat: null }),
-    row({ name: 'even', outcome: 'FAILED', result: 'stake back', netMsat: '0' }),
-  ] });
-  const html = playersOf('r1');
-  // each row's cells in order: player, outcome, score, signed by, stake, won or lost, net, replay
-  const cells = Object.fromEntries(html.split('<tr>').slice(2).map((tr) => {
-    const td = [...tr.matchAll(/<td(?: class="([^"]*)")?>(.*?)<\/td>/g)].map((m) => ({ cls: (m[1] || '').trim(), text: m[2] }));
-    return [td[0].text, { result: td[5].text, resultClass: td[5].cls, net: td[6].text, netClass: td[6].cls.replace(/^n\s*/, '') }];
-  }));
-  assert.deepEqual(cells.winner, { result: 'won', resultClass: 'ok', net: '+286 sat', netClass: 'ok' });
-  assert.deepEqual(cells.back, { result: 'stake back', resultClass: 'bad', net: '-4 sat', netClass: 'bad' });
-  assert.deepEqual(cells.loser, { result: 'lost', resultClass: 'bad', net: '-100 sat', netClass: 'bad' });
-  assert.deepEqual(cells.waiting, { result: 'pending', resultClass: '', net: '', netClass: '' }, 'pending: blank, no class');
-  assert.deepEqual(cells.even, { result: 'stake back', resultClass: '', net: '0 sat', netClass: '' }, 'zero: no "+", no class');
-  assert.match(html, /<th>Won or lost<\/th><th class="n">Net<\/th>/);
 });

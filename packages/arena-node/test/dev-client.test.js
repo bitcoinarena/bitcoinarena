@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A DEV CLIENT BESIDE A NODE, ON ITS DASHBOARD (2026-10-14: "make sure node 1 and node 2 show it in their dashboard,
-// each node can set up a dev client and it would show there"): read from the client's own files, never its key.
+// each node can set up a dev client and it would show there"): read from the client's own files, never its key. Its card on the
+// dashboard is the React dashboard's (kanban #564: no fall backs) - packages/arena-web's dashboard test draws it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { devClientSnapshot } from '../src/dev-client.js';
-import { dashboardHtml } from '../src/dashboard.js';
 
 const A = '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', B = 'b18947f085d40df3ce4bc8ac64df9c45256223e88fe7fdbdebf3eae13fb10b73';
 
@@ -36,16 +36,4 @@ test('the snapshot: what the dev received, holds per federation and withdrew - a
   assert.ok(!JSON.stringify(s).includes('cd'.repeat(32)), 'the secret never leaves key.json');
   assert.equal(devClientSnapshot(null), null, 'no directory named: no card');
   assert.match(devClientSnapshot(mkdtempSync(join(tmpdir(), 'none-'))).error, /no donor.json/);
-});
-
-test('the dashboard draws the dev client card from that snapshot', () => {
-  const html = dashboardHtml();
-  const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
-  const body = script.slice(0, script.indexOf('function devCard')) .match(/const (sat|t|esc)=[^\n]*/g).join('\n');
-  const devCard = script.slice(script.indexOf('function devCard'), script.indexOf('function hostsCard'));
-  const D = { devClient: devClientSnapshot(devDir()) };
-  const card = new Function('D', `${body}\n${devCard}\nreturn devCard();`)(D);
-  assert.match(card, /Dev client · dev a/); assert.match(card, /Donations received<\/span><b>3 · 2\.780 sat/);
-  assert.match(card, /holds 38\.6 sat/); assert.match(card, /Last withdrawal<\/span><b>Success/); assert.match(card, /asked 14 nodes/);
-  assert.equal(new Function('D', `${body}\n${devCard}\nreturn devCard();`)({ devClient: null }), '', 'no dev client: no card');
 });
