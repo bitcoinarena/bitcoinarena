@@ -10,7 +10,7 @@
 //
 //     node tools/publish-webgl.mjs <DXT output> <ASTC output> <out dir> [--release]
 //
-// --release attaches the folder to a GitHub release of a tester/arena-app-next-block, tagged with the build's name (webgl-...; gh; one asset per
+// --release attaches the folder to a GitHub release of a tester/arena-app-next-block, tagged webgl-nextblock-<version> (gh; one asset per
 // file, its path in the name with "/" as "__", and webgl.json).
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -26,18 +26,20 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const copy = (from, to) => { mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); };
 
 const builds = readdirSync(join(dxt, 'Build'));
-const name = builds.find((f) => f.endsWith('.loader.js'))?.replace(/\.loader\.js$/, '');
-if (!name) throw new Error(`${dxt}/Build holds no loader`);
+// Unity names the files after its output folder; the client's name is the app's and its version, so every release has its own
+const dxtName = builds.find((f) => f.endsWith('.loader.js'))?.replace(/\.loader\.js$/, '');
+if (!dxtName) throw new Error(`${dxt}/Build holds no loader`);
 const version = readFileSync(join(dxt, 'build.txt'), 'utf8').trim();
+const name = `nextblock-${version}`;
 // ONE COMMIT: the ASTC output's code is the DXT output's, byte for byte
 const astcName = readdirSync(join(astc, 'Build')).find((f) => f.endsWith('.loader.js')).replace(/\.loader\.js$/, '');
 for (const k of ['loader.js', 'framework.js.unityweb', 'wasm.unityweb']) {
-  if (!readFileSync(join(dxt, 'Build', `${name}.${k}`)).equals(readFileSync(join(astc, 'Build', `${astcName}.${k}`))))
+  if (!readFileSync(join(dxt, 'Build', `${dxtName}.${k}`)).equals(readFileSync(join(astc, 'Build', `${astcName}.${k}`))))
     throw new Error(`the ASTC output's ${k} differs from the DXT output's: not one commit - nothing is published`);
 }
 
 if (existsSync(out)) rmSync(out, { recursive: true });
-for (const k of ['loader.js', 'framework.js.unityweb', 'wasm.unityweb', 'data.unityweb']) copy(join(dxt, 'Build', `${name}.${k}`), join(out, 'Build', `${name}.${k}`));
+for (const k of ['loader.js', 'framework.js.unityweb', 'wasm.unityweb', 'data.unityweb']) copy(join(dxt, 'Build', `${dxtName}.${k}`), join(out, 'Build', `${name}.${k}`));
 copy(join(astc, 'Build', `${astcName}.data.unityweb`), join(out, 'Build', `${name}-astc.data.unityweb`));
 for (const p of walk(join(dxt, 'StreamingAssets'))) copy(p, join(out, 'StreamingAssets', relative(join(dxt, 'StreamingAssets'), p)));
 for (const p of walk(join(astc, 'StreamingAssets'))) copy(p, join(out, 'StreamingAssets-astc', relative(join(astc, 'StreamingAssets'), p)));
@@ -58,7 +60,7 @@ writeFileSync(join(out, 'webgl.json'), JSON.stringify(manifest, null, 1) + '\n')
 console.log(`${name} (${version}): ${Object.keys(files).length} files, ${(Object.values(files).reduce((t, f) => t + f.bytes, 0) / 1048576).toFixed(1)} MB -> ${out}`);
 
 if (flags.includes('--release')) {
-  const tag = name.startsWith('webgl-') ? name : `webgl-${name}`;
+  const tag = `webgl-${name}`;
   const staged = join(out, '..', `${tag}-assets`);
   if (existsSync(staged)) rmSync(staged, { recursive: true });
   mkdirSync(staged);
