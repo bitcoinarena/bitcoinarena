@@ -5,7 +5,7 @@
 // Remove for an installed one (POST /owner/plugins/remove, signed), and the update settings: update automatically, and the nodes updates
 // come from (POST /owner/settings, signed). Read from GET /owner/plugins. (Found on the network / look at a node: the next slice.)
 import React from 'react';
-import { Button } from '../design/components.jsx';
+import { Button, Switch } from '../design/components.jsx';
 
 /** Each app once, its newest version, with the older ones under it. */
 export function newestApps(list) {
@@ -50,10 +50,21 @@ export class AppsPanel extends React.Component {
       this.setState({ saved: true, error: null });
     } catch (e) { this.setState({ error: e.message }); }
   }
-  one(g) {
+  /** One app as a card (kanban #565): its name, its version, its kind, its developer's signed description, Remove or "built in". */
+  card(g) {
     return (
-      <div className="row" key={`${g.id}`}><span>{g.title || g.name} <span className="sub">v{g.version}</span></span>
-        <b>{g.installed ? <Button onClick={() => this.remove(g.id)}>Remove</Button> : 'built in'}</b></div>);
+      <div key={g.id} className="app-card" id={`app-${String(g.id).slice(0, 12)}`}>
+        <div className="app-head"><span className="app-ic" aria-hidden="true">{(g.title || g.name || '?').slice(0, 1).toUpperCase()}</span>
+          <b className="app-name">{g.title || g.name}</b><span className="pill">v{g.version}</span></div>
+        <InfoLine info={g.info} />
+        <div className="app-foot">
+          <span className="sub">{g.installed ? 'installed here' : 'built into this node'}</span>
+          {g.installed ? <button type="button" className="mini" onClick={() => this.remove(g.id)}>Remove</button> : <span className="pill on">built in</span>}
+        </div>
+        {g.older && g.older.length ? <details><summary className="sub">{g.older.length} older version{g.older.length === 1 ? '' : 's'} kept for rounds that still use {g.older.length === 1 ? 'it' : 'them'}</summary>
+          {[...g.older].sort((x, y) => y.version - x.version).map((o) => (
+            <div className="row" key={o.id}><span>{o.title || o.name} <span className="sub">v{o.version}</span></span><b>{o.installed ? <button type="button" className="mini" onClick={() => this.remove(o.id)}>Remove</button> : 'built in'}</b></div>))}</details> : null}
+      </div>);
   }
   render() {
     const { loaded, mine, auto, sources, saved, error } = this.state;
@@ -61,18 +72,17 @@ export class AppsPanel extends React.Component {
     const apps = newestApps(mine.hosted);
     return (
       <div>
-        {apps.length ? apps.map((g) => (
-          <React.Fragment key={g.id}>
-            {this.one(g)}<InfoLine info={g.info} />
-            {g.older.length ? <details><summary className="sub">{g.older.length} older version{g.older.length === 1 ? '' : 's'} kept for rounds that still use {g.older.length === 1 ? 'it' : 'them'}</summary>
-              {[...g.older].sort((x, y) => y.version - x.version).map((o) => this.one(o))}</details> : null}
-          </React.Fragment>)) : <p className="sub">none</p>}
-        <label className="confirm"><input type="checkbox" style={{ width: 'auto' }} checked={auto} onChange={(e) => this.setState({ auto: e.target.checked, saved: false })} /> <span>Update apps automatically</span></label>
-        <details><summary className="sub">Where updates come from</summary>
-          <label>Nodes to take updates from (one address per line)</label>
-          <textarea rows="2" autoComplete="off" autoCapitalize="none" value={sources} onChange={(e) => this.setState({ sources: e.target.value, saved: false })} /></details>
-        <Button onClick={this.save}>{saved ? 'Saved ✓' : 'Save'}</Button>
-        {error ? <p className="err">{error}</p> : null}
+        {apps.length ? <div className="app-grid">{apps.map((g) => this.card(g))}</div> : <p className="sub">No app on this node yet.</p>}
+        <h3 className="sh">Updates</h3>
+        <div className="settings-card">
+          <div className="set-row"><div><b>Update apps automatically</b><p className="sub">A newer version from the nodes below is checked in this node and taken.</p></div>
+            <Switch id="auto-update" label="Update apps automatically" checked={auto} onChange={(on) => this.setState({ auto: on, saved: false })} /></div>
+          <details><summary className="sub">Where updates come from</summary>
+            <label htmlFor="sources">Nodes to take updates from (one address per line)</label>
+            <textarea id="sources" rows="2" autoComplete="off" autoCapitalize="none" value={sources} onChange={(e) => this.setState({ sources: e.target.value, saved: false })} /></details>
+          <Button primary={!saved} onClick={this.save}>{saved ? 'Saved ✓' : 'Save'}</Button>
+          {error ? <p className="err">{error}</p> : null}
+        </div>
       </div>
     );
   }
