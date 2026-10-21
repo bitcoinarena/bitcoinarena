@@ -7,8 +7,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { GAME as V1 } from './rock-paper-scissors.js';
-import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
+import { fromHex } from 'arena-sdk/hash';
 
 export const MANIFEST_V4_HEX = '1c00010013726f636b2d70617065722d73636973736f7273db57bd7ad41ef92d72fb53a6d4bf5f4b614150fadeedf5430be1af7814091dab0000000490f462c823bdd382dce3a72c2bf25999575d727e8ea81459b8b4dce80b63339c030001f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f03100010d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172000000000000000000000103040000000200015c724514c0fba4a8a360ff646a8a050c79627c8f34369377fa54c7c38d4f11faa5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c237790203000000000001d4c002000281c01afe20050ea2672fe3ab5db1ad8cc290c7530753626e0517a98f07e6df3dde28c1f81fc3332fb1aed985999d3ff9826434dba84087c738559c48e788b502';
 export const MANIFEST_V4 = decodeManifest(fromHex(MANIFEST_V4_HEX));
