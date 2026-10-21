@@ -47,3 +47,31 @@ test('a reply goes to the post whose Reply was pressed; taken: the form empties;
   assert.deepEqual([t.state.text, t.state.replyTo, t.state.bad, t.state.say], ['', null, false, 'Posted to 5 of 5 nodes.']);
   t.state.text = '  '; await t.send({ preventDefault() {} }); assert.equal(sent.length, 2, 'nothing to send');
 });
+
+test('a new proposal: the reserves and the cap, the amount checked as typed, the length counted, refused before signing, then published', async () => {
+  const { NewProposal, amountCheck } = await import('../dist/test/proposals.mjs');
+  const R = { sats: 114000, agreeing: 14, asked: 14 };
+  assert.deepEqual(amountCheck({ amount: '20000' }, R, 10), [false, '20,000 sat is more than 10% of the reserves (11,400 sat): it could never be paid.', true]);
+  assert.deepEqual(amountCheck({ amount: '1000', lnurl: 'not an address' }, R, 10)[1], 'That is not a Lightning address (you@wallet.example) or an LNURL.');
+  assert.deepEqual(amountCheck({ amount: '1140', lnurl: 'you@wallet.example' }, R, 10), [true, 'Within the cap: 1.00% of the reserves.', false]);
+  assert.equal(amountCheck({ amount: '5' }, null, 10)[1], 'The reserves could not be read, so the amount cannot be checked yet.');
+  const sent = [];
+  const props = { reserves: R, capPct: 10, types: [['#new', 'Payout to Lightning address'], ['#new-fees', 'Change fees']], hash: '#new', markdown: (s) => `<p>${s}</p>`, signedIn: true,
+    purposeLength: (t, c, i) => `${t}\n\n${c}\n\n${i}`.length, onPublish: async (x) => { sent.push(x); return { ok: true, say: 'Published to 14 of 14 nodes. Its 1-week signal starts now.' }; } };
+  const h = renderToStaticMarkup(React.createElement(NewProposal, props));
+  assert.match(h, /The protocol reserves hold <b>114,000 sat<\/b> \(14 of 14 nodes agree\)\. A proposal may ask at most <b>10%: 11,400 sat<\/b>\./);
+  assert.match(h, /<a class="type on" href="#new" role="radio" aria-checked="true">Payout to Lightning address<\/a><a class="type" href="#new-fees"/);
+  assert.match(h, /4 of 4,000 characters/);
+  const f = new NewProposal(props); f.setState = (u) => Object.assign(f.state, typeof u === 'function' ? u(f.state) : u);
+  await f.submit({ preventDefault() {} });
+  assert.equal(f.state.say, 'Fill in the title, what it does, and how it improves Bitcoin Arena.');
+  Object.assign(f.state, { title: 'A leaderboard', content: 'Pay the top 3', improves: 'More players', amount: '1140', lnurl: '' });
+  await f.submit({ preventDefault() {} });
+  assert.equal(f.state.say, 'Name the Lightning address to pay.'); assert.equal(sent.length, 0);
+  f.state.lnurl = 'you@wallet.example';
+  await f.submit({ preventDefault() {} });
+  assert.deepEqual(sent, [{ title: 'A leaderboard', content: 'Pay the top 3', improves: 'More players', amount: 1140, lnurl: 'you@wallet.example' }]);
+  assert.deepEqual([f.state.bad, f.state.say], [false, 'Published to 14 of 14 nodes. Its 1-week signal starts now.']);
+  const out = new NewProposal({ ...props, signedIn: false }); out.setState = (u) => Object.assign(out.state, u);
+  await out.submit({ preventDefault() {} }); assert.match(out.state.say, /^Open the Arena once first/);
+});
