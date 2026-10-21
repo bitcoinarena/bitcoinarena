@@ -17,6 +17,8 @@ import { NetworkPanel } from './NetworkPanel.jsx';
 import { NeedsPanel } from './NeedsPanel.jsx';
 import { OwnerStart, OwnerMessage } from './OwnerStart.jsx';
 import { OwnerArea } from './OwnerArea.jsx';
+import { BondAnswer, CapacityPlea } from './BondOffer.jsx';
+import { LeavePanel } from './LeavePanel.jsx';
 import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
@@ -65,4 +67,7 @@ export function areaInto(element, props) {
   } else element._react.render(<OwnerArea {...props} />);
   return element._react;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+export function mountBondAnswer(element, props) { const root = createRoot(element); root.render(<BondAnswer {...props} />); return root; }
+export function mountPlea(element, props) { const root = createRoot(element); root.render(<CapacityPlea {...props} />); return root; }
+export function mountLeave(element, props) { const root = createRoot(element); root.render(<LeavePanel {...props} />); return root; }
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

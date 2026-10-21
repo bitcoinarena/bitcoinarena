@@ -8,10 +8,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
+// the panels' places are React's (kanban #564, arena-web OwnerArea): each a <Place id=…/> the page draws its panel into
+const AREA = readFileSync(new URL('../../arena-web/src/owner/OwnerArea.jsx', import.meta.url), 'utf8');
 const block = (start) => { const a = HTML.indexOf(start); assert.ok(a >= 0, start); let i = HTML.indexOf('{', a), d = 0; for (; i < HTML.length; i++) { if (HTML[i] === '{') d++; else if (HTML[i] === '}' && !--d) break; } return HTML.slice(a, i + 1); };
 
 test('the address: the React screen alone, in the Services section, with the page\'s owner requests', () => {
-  assert.ok(HTML.includes('<div class="card" id="address">') && /\n {2}addressPanel\(\);\n/.test(HTML));
+  assert.ok(AREA.includes('<Place id="address" />') && /\n {2}addressPanel\(\);\n/.test(HTML));
   const mounted = [];
   const post = async () => ({}), signed = async () => ({});
   new Function('mount', 'post', 'signed', `${block('function addressPanel()')}; return addressPanel;`)((id, how, props) => mounted.push({ id, how, props }), post, signed)();

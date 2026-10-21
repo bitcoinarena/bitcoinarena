@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
+// the panels' places are React's (kanban #564, arena-web OwnerArea): each a <Place id=…/> the page draws its panel into
+const AREA = readFileSync(new URL('../../arena-web/src/owner/OwnerArea.jsx', import.meta.url), 'utf8');
 /** A function of the page, from its name to its closing brace. */
 const block = (start) => { const a = HTML.indexOf(start); assert.ok(a >= 0, start); let i = HTML.indexOf('{', a), d = 0; for (; i < HTML.length; i++) { if (HTML[i] === '{') d++; else if (HTML[i] === '}' && !--d) break; } return HTML.slice(a, i + 1); };
 const doors = HTML.slice(HTML.indexOf('const getJson'), HTML.indexOf('\n', HTML.indexOf('const fetchJson')));
@@ -22,7 +24,7 @@ function run(answers) {
 }
 
 test('the roles card is the React screen alone: mounted with the node, the page\'s owner requests and its doors', async () => {
-  assert.ok(HTML.includes('<div class="card" id="roles">') && /\n {2}rolesPanel\(\);\n/.test(HTML), 'the card, and drawn with the others');
+  assert.ok(AREA.includes('<Place id="roles" />') && /\n {2}rolesPanel\(\);\n/.test(HTML), 'the card, and drawn with the others');
   const { mounted: [m], post, signed } = run({ '/roles': { nodes: [{ node: 'me', roles: ['game'] }] }, '/guardian': null, '/gateway-claim': new Error('down') });
   assert.deepEqual([m.id, m.how, m.props.node], ['roles', 'mountRoles', 'me']);
   assert.equal(m.props.api.post, post); assert.equal(m.props.api.signed, signed);
