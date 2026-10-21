@@ -17,6 +17,8 @@ import { ConfirmCard } from './ConfirmCard.jsx';
 import { WalletHistory } from './WalletHistory.jsx';
 import { CustodyCard } from './CustodyCard.jsx';
 import { SeedModal } from './SeedModal.jsx';
+import { WalletStart } from './WalletStart.jsx';
+import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -67,3 +69,11 @@ if (typeof window !== 'undefined') window.ArenaWallet = { drawHistory, drawCusto
 export function openSeed(host, props) { into(host, <SeedModal key={Date.now()} {...props} />); }
 export function closeSeed(host) { if (host._root) { host._root.unmount(); host._root = null; } }
 if (typeof window !== 'undefined') window.ArenaSeed = { open: openSeed, close: closeSeed };
+// THE WALLET SCREEN (the page's wallet start hands it its rules: create, restore, the Nostr login)
+export function openWalletStart(host, props) { into(host, <WalletStart {...props} />); }
+if (typeof window !== 'undefined') window.ArenaWalletStart = { open: openWalletStart };
+// SETTINGS' OWN CARDS: each drawn into its section with what the page hands it
+if (typeof window !== 'undefined') window.ArenaSettings = {
+  name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),
+  logs: (host, props) => into(host, <LogsCard {...props} />), seed: (host, props) => into(host, <SeedCard {...props} />),
+  account: (host, props) => into(host, <AccountCard {...props} />) };

@@ -13,15 +13,14 @@
   var forum = document.getElementById('forum');
   var view = document.getElementById('view');
   var $ = function (q) { return forum.querySelector(q); };
-  var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, replyTo: null, reserves: null, names: {} };
-  // THE READING VIEWS IN REACT (kanban #564): the list and a thread drawn by ./react.js (packages/arena-web/src/proposals) when it is
-  // there, from view data made here; this script still reads, signs and posts, and draws everything itself without it
+  var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, reserves: null, names: {} };
+  // EVERY VIEW IN REACT (kanban #564, the owner 2026-10-21: "no fall backs"): the list, a thread and the three new-proposal forms drawn by
+  // ./react.js (packages/arena-web/src/proposals) from view data made here; this script reads, signs and posts, and draws none of them
   var R = null;
-  var reactReady = import('./react.js').then(function () { R = window.ArenaForum || null; }).catch(function () { R = null; });
+  var reactReady = import('./react.js').then(function () { R = window.ArenaForum; });
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
   function npub(hex) { return ARENACLIENT.npubOfKey(hex); }
-  function short(n) { return n.slice(0, 10) + '…' + n.slice(-4); }
   function sats(n) { return Number(n).toLocaleString('en-US') + ' sat'; }
   function title(p) { var t = parts(p.purpose).title; return t.length > 90 ? t.slice(0, 88) + '…' : t; }
   // A PIP'S THREE PARTS (kanban #432, the owner 2026-10-17: "Separate title field. Content on what the proposal does, in markdown including
@@ -80,7 +79,6 @@
   function colour(hex) { var h = parseInt(hex.slice(0, 6), 16) % 360; return 'hsl(' + h + ' 70% 62%)'; }
   function who(hex) { return ARENACLIENT.forumNameOf(hex, state.names); }
   function pip(p) { return 'PIP-' + p.pip; }
-  function avatar(hex) { var a = el('div', 'ava', (who(hex).match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase()); a.style.background = colour(hex); a.title = npub(hex); return a; }
   function mine() { return state.key ? ARENACLIENT.toHex(window.ARENA_CURVE.pointX(state.key)) : null; }
   function load(src) { return new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = function () { bad(new Error('could not load ' + src)); }; document.head.appendChild(s); }); }
   // THE IN-GAME KEY: the wallet phrases this browser keeps for the Arena page (arena.seeds); the one whose wallet holds the most here,
@@ -114,7 +112,6 @@
     b.querySelector('.sub').textContent = r ? r.agreeing + ' of ' + r.asked + ' nodes agree · a PIP may ask up to ' + sats(Math.floor(r.sats * CAP_PCT / 100))
       : (state.reservesWhy ? 'could not be read: ' + state.reservesWhy : 'reading the nodes');
   }
-  function say(node, text, bad) { node.textContent = text; node.classList.toggle('bad', !!bad); }
 
   function stage(p) {
     if (p.cancelled) return { cls: 'no', text: 'Stopped' };
@@ -139,41 +136,9 @@
     return Object.assign({ name: n, npub: npub(hex), head: head, avatar: { colour: colour(hex), initial: (n.match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase() } }, more);
   }
   function listView() {
-    if (R) {
-      R.draw(view, 'list', { status: state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…',
-        items: state.list && state.list.map(function (p) { return { pip: p.pip, href: '#pip=' + p.pip, title: title(p), by: who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl,
-          amount: sats(p.amountSats), replies: String(p.comments.length), stage: stage(p) }; }) });
-      return;
-    }
-    view.textContent = '';
-    var bar = el('div', 'bar');
-    var st = el('span', 'say', state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…');
-    // ONE NEW PROPOSAL (kanban #548, the owner 2026-10-20: "instead of buttons "Change fees" "Leaderboard payout" and "New Proposal" it is
-    // all grouped under new proposal - there is a type option which can be switched"): the type is chosen in the form
-    var nw = el('a', 'btn primary grow', 'New proposal'); nw.href = '#new';
-    bar.append(st, nw); view.append(bar);
-    var t = el('div', 'topics');
-    var th = el('div', 'th'); th.append(el('span', null, 'Proposal'), el('span', 'n', 'Amount'), el('span', 'n', 'Replies'), el('span', 'n', 'Stage')); t.append(th);
-    if (state.list && !state.list.length) t.append(el('div', 'empty', 'No proposals yet. Start the first one.'));
-    (state.list || []).forEach(function (p) {
-      var a = el('a', 'topic'); a.href = '#pip=' + p.pip;
-      var c = el('span', 't'); c.append(el('span', 'pip', pip(p)), document.createTextNode(' ' + title(p)), el('span', 'by', who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl));
-      var sg = stage(p);
-      a.append(c, el('span', 'amt', sats(p.amountSats)), el('span', 'n', String(p.comments.length)), el('span', 'stage ' + sg.cls, sg.text));
-      t.append(a);
-    });
-    view.append(t);
-  }
-
-  function postNode(hex, head, body, extra, depth) {
-    var p = el('article', 'post' + (depth ? ' reply' : '')); if (depth) p.style.setProperty('--depth', Math.min(depth, 4));
-    var col = el('div');
-    var line = el('div', 'who'); var b = el('b', null, who(hex)); b.title = npub(hex); line.append(b, document.createTextNode(' · ' + head));
-    var bd = el('div', 'body'); if (body && body.html !== undefined) { bd.classList.add('md'); bd.innerHTML = body.html; } else bd.textContent = body;
-    col.append(line, bd);
-    if (extra) col.append(extra);
-    p.append(avatar(hex), col);
-    return { node: p, col: col };
+    R.draw(view, 'list', { status: state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…',
+      items: state.list && state.list.map(function (p) { return { pip: p.pip, href: '#pip=' + p.pip, title: title(p), by: who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl,
+        amount: sats(p.amountSats), replies: String(p.comments.length), stage: stage(p) }; }) });
   }
 
   // a reply signed with the in-game key and handed to every node: { ok, say }
@@ -188,69 +153,21 @@
   }
   function threadView(id) {
     var p = (state.list || []).find(function (x) { return x.id === id; });
-    if (R) {
-      var status = state.list ? 'That proposal is not held by five nodes.' : 'Reading the nodes…';
-      if (!p) { R.draw(view, 'thread', { thread: null, status: status, onReply: function () { return Promise.resolve({ ok: false, say: '' }); } }); return; }
-      var pp = parts(p.purpose), comments = [], byParent = {};
-      p.comments.forEach(function (c) { (byParent[c.parent] = byParent[c.parent] || []).push(c); });
-      (function walk(parent, depth) { (byParent[parent] || []).forEach(function (c) { comments.push(postData(c.author, 'block ' + c.atHeight, { id: c.id, depth: depth + 1, text: c.text })); walk(c.id, depth + 1); }); })(ROOT, 0);
-      R.draw(view, 'thread', { status: status, onReply: function (text, parentId) { return postReply(p, text, parentId); },
-        thread: { heading: pip(p) + ' · ' + title(p), amount: sats(p.amountSats), lnurl: p.lnurl, stage: stage(p), stageLine: stageLine(p), comments: comments,
-          post: postData(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes',
-            { html: markdown(pp.content || pp.title) + (pp.improves ? '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(pp.improves) : '') }) } });
-      return;
-    }
-    view.textContent = '';
-    var back = el('a', 'btn', '← All proposals'); back.href = '#';
-    var bar = el('div', 'bar'); bar.append(back); view.append(bar);
-    if (!p) { view.append(el('div', 'empty', state.list ? 'That proposal is not held by five nodes.' : 'Reading the nodes…')); return; }
-    var sg = stage(p);
-    view.append(el('h1', null, pip(p) + ' · ' + title(p)));
-    var facts = el('div', 'facts');
-    var amt = el('span'); amt.append(el('b', null, sats(p.amountSats)), document.createTextNode(' to ' + p.lnurl)); facts.append(amt, el('span', 'stage ' + sg.cls, sg.text), el('span', null, stageLine(p)));
-    var pp = parts(p.purpose);
-    // an older proposal of one line: its whole line is what it says (the title above is cut at 90 characters)
-    var html = markdown(pp.content || pp.title) + (pp.improves ? '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(pp.improves) : '');
-    view.append(postNode(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes', { html: html }, facts, 0).node);
-    var byParent = {};
+    var status = state.list ? 'That proposal is not held by five nodes.' : 'Reading the nodes…';
+    if (!p) { R.draw(view, 'thread', { thread: null, status: status, onReply: function () { return Promise.resolve({ ok: false, say: '' }); } }); return; }
+    var pp = parts(p.purpose), comments = [], byParent = {};
     p.comments.forEach(function (c) { (byParent[c.parent] = byParent[c.parent] || []).push(c); });
-    (function walk(parent, depth) {
-      (byParent[parent] || []).forEach(function (c) {
-        var acts = el('div', 'acts'); var r = el('button', null, 'Reply'); r.type = 'button';
-        r.addEventListener('click', function () { state.replyTo = c.id; ta.placeholder = 'Reply to ' + who(c.author); ta.focus(); });
-        acts.append(r);
-        view.append(postNode(c.author, 'block ' + c.atHeight, c.text, acts, depth + 1).node);
-        walk(c.id, depth + 1);
-      });
-    })(ROOT, 0);
-    var form = el('form', 'compose'); var ta = el('textarea'); ta.rows = 4; ta.maxLength = 4000; ta.placeholder = 'Write a reply';
-    var send = el('button', 'btn primary', 'Post reply'); send.type = 'submit'; var out = el('span', 'say');
-    var row = el('div', 'bar'); row.append(send, out); form.append(ta, row);
-    form.addEventListener('submit', function (e) {
-      e.preventDefault(); if (!ta.value.trim()) return;
-      if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
-      var c = ARENACLIENT.signedComment({ secretKey: state.key, proposalId: p.id, parentId: state.replyTo, atHeight: state.tip, text: ta.value });
-      say(out, 'Sending…');
-      ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'comment', hex: c.hex }).then(function (r) {
-        if (!r.ok) { say(out, 'Not taken: ' + r.why, true); return; }
-        say(out, 'Posted to ' + r.took + ' of ' + r.asked + ' nodes.'); ta.value = ''; state.replyTo = null; setTimeout(function () { refresh().then(route); }, 1500);
-      });
-    });
-    view.append(form);
+    (function walk(parent, depth) { (byParent[parent] || []).forEach(function (c) { comments.push(postData(c.author, 'block ' + c.atHeight, { id: c.id, depth: depth + 1, text: c.text })); walk(c.id, depth + 1); }); })(ROOT, 0);
+    R.draw(view, 'thread', { status: status, onReply: function (text, parentId) { return postReply(p, text, parentId); },
+      thread: { heading: pip(p) + ' · ' + title(p), amount: sats(p.amountSats), lnurl: p.lnurl, stage: stage(p), stageLine: stageLine(p), comments: comments,
+        // an older proposal of one line: its whole line is what it says (the heading is cut at 90 characters)
+        post: postData(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes',
+          { html: markdown(pp.content || pp.title) + (pp.improves ? '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(pp.improves) : '') }) } });
   }
 
   // THE TYPE OF A NEW PROPOSAL (kanban #548): payout to a Lightning address (the default), a leaderboard payout, or a change of fees -
   // one form, its fields following the type; the Why is never optional
   var TYPES = [['#new', 'Payout to Lightning address'], ['#new-leaderboard', 'Leaderboard payout'], ['#new-fees', 'Change fees']];
-  function composeHead(hash) {
-    view.textContent = '';
-    var back = el('a', 'btn', '← All proposals'); back.href = '#';
-    var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'New proposal'));
-    var sw = el('div', 'types'); sw.setAttribute('role', 'radiogroup'); sw.setAttribute('aria-label', 'Type');
-    sw.append(el('span', 'types-label', 'Type'));
-    TYPES.forEach(function (t) { var a = el('a', 'type' + (t[0] === hash ? ' on' : ''), t[1]); a.href = t[0]; a.setAttribute('role', 'radio'); a.setAttribute('aria-checked', t[0] === hash ? 'true' : 'false'); sw.append(a); });
-    view.append(sw);
-  }
   // a new proposal signed with the in-game key and handed to every node, then its thread opened: { ok, say }
   function publish(x) {
     return (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
@@ -265,63 +182,8 @@
     }).catch(function (e) { return { ok: false, say: e.message }; });
   }
   function newView() {
-    if (R) {
-      R.draw(view, 'new', { reserves: state.reserves, reservesWhy: state.reservesWhy, capPct: CAP_PCT, types: TYPES, hash: '#new', markdown: markdown, signedIn: !!state.key,
-        purposeLength: function (t, c, i) { return purposeOf(t, c, i).length; }, onPublish: publish });
-      return;
-    }
-    composeHead('#new');
-    var f = el('form', 'compose');
-    var r = state.reserves, max = r ? Math.floor(r.sats * CAP_PCT / 100) : null;
-    var reservesLine = r ? 'The protocol reserves hold <b>' + r.sats.toLocaleString('en-US') + ' sat</b> (' + r.agreeing + ' of ' + r.asked + ' nodes agree). A proposal may ask at most <b>' + CAP_PCT + '%: ' + max.toLocaleString('en-US') + ' sat</b>.'
-      : 'The reserves could not be read' + (state.reservesWhy ? ': ' + state.reservesWhy : '') + '. A proposal may ask at most ' + CAP_PCT + '% of them.';
-    f.innerHTML = '<p class="reserves-line">' + reservesLine + '</p>' +
-      '<label>Title<input name="title" maxlength="120" required placeholder="A short name for the PIP"></label>' +
-      '<label>What the proposal does <span class="hint">Markdown: # headings, **bold**, lists, `code`, links and tables (| a | b |)</span><textarea name="content" rows="10" required></textarea></label>' +
-      '<div class="bar"><button type="button" class="btn preview-go">Preview</button><span class="say count"></span></div><div class="md preview" hidden></div>' +
-      '<label>How it improves Bitcoin Arena <span class="hint">its games, its protocol, its tools or its players</span><textarea name="improves" rows="4" required></textarea></label>' +
-      '<div class="row"><label>Amount (sat)<input name="amount" type="number" min="1" step="1" required' + (max ? ' max="' + max + '"' : '') + '></label><label>Lightning address to pay<input name="lnurl" placeholder="you@wallet.example" required></label></div>' +
-      '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
-    var check = function () {
-      var a = Number(f.amount.value), out = f.querySelector('.out');
-      if (!f.amount.value) { say(out, ''); return true; }
-      if (!(a >= 1)) { say(out, 'Ask at least 1 sat.', true); return false; }
-      if (!r) { say(out, 'The reserves could not be read, so the amount cannot be checked yet.', true); return false; }
-      if (a > max) { say(out, a.toLocaleString('en-US') + ' sat is more than ' + CAP_PCT + '% of the reserves (' + max.toLocaleString('en-US') + ' sat): it could never be paid.', true); return false; }
-      if (!/^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(f.lnurl.value.trim()) && !/^lnurl1[02-9ac-hj-np-z]{20,}$/i.test(f.lnurl.value.trim())) { if (f.lnurl.value) { say(out, 'That is not a Lightning address (you@wallet.example) or an LNURL.', true); return false; } }
-      say(out, 'Within the cap: ' + (a * 100 / r.sats).toFixed(2) + '% of the reserves.'); return true;
-    };
-    f.amount.addEventListener('input', check); f.lnurl.addEventListener('input', check);
-    // the one signed text holds all three parts: at most 4,000 characters (the record's limit), counted as typed
-    var used = function () { return purposeOf(f.title.value, f.content.value, f.improves.value).length; };
-    var count = function () { var n = used(); say(f.querySelector('.count'), n.toLocaleString('en-US') + ' of 4,000 characters', n > 4000); return n <= 4000; };
-    [f.title, f.content, f.improves].forEach(function (x) { x.addEventListener('input', count); });
-    f.querySelector('.preview-go').addEventListener('click', function () {
-      var pv = f.querySelector('.preview'); pv.hidden = !pv.hidden; this.textContent = pv.hidden ? 'Preview' : 'Hide preview';
-      pv.innerHTML = '<h3>' + esc(f.title.value) + '</h3>' + markdown(f.content.value) + '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(f.improves.value);
-    });
-    count();
-    f.addEventListener('submit', function (e) {
-      e.preventDefault(); var out = f.querySelector('.out');
-      if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
-      if (!f.title.value.trim() || !f.content.value.trim() || !f.improves.value.trim()) { say(out, 'Fill in the title, what it does, and how it improves Bitcoin Arena.', true); return; }
-      if (/\n/.test(f.title.value)) { say(out, 'The title is one line.', true); return; }
-      if (!count()) { say(out, 'The three parts together are more than 4,000 characters.', true); return; }
-      if (!check() || !f.lnurl.value.trim()) { if (!f.lnurl.value.trim()) say(out, 'Name the Lightning address to pay.', true); return; }
-      var amount = Number(f.amount.value);
-      say(out, 'Signing…');
-      (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
-        if (!net) throw new Error('the nodes did not agree on their network');
-        state.network = net;
-        var p = ARENACLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: Math.floor(amount), lnurl: f.lnurl.value, purpose: purposeOf(f.title.value, f.content.value, f.improves.value) });
-        return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'proposal', hex: p.hex }).then(function (r) { return { r: r, id: p.id }; });
-      }).then(function (x) {
-        if (!x.r.ok) { say(out, 'Not taken: ' + x.r.why, true); return; }
-        say(out, 'Published to ' + x.r.took + ' of ' + x.r.asked + ' nodes. Its 1-week signal starts now.');
-        setTimeout(function () { refresh().then(function () { var q = (state.list || []).find(function (y) { return y.id === x.id; }); location.hash = q ? '#pip=' + q.pip : '#p=' + x.id; }); }, 1500);
-      }).catch(function (x) { say(out, x.message, true); });
-    });
-    view.append(f);
+    R.draw(view, 'new', { reserves: state.reserves, reservesWhy: state.reservesWhy, capPct: CAP_PCT, types: TYPES, hash: '#new', markdown: markdown, signedIn: !!state.key,
+      purposeLength: function (t, c, i) { return purposeOf(t, c, i).length; }, onPublish: publish });
   }
 
   // CHANGE FEES (kanban #462, the owner 2026-10-17: "Proposal type change fees. Any of the fees, all combinations can be changed with a
@@ -342,7 +204,7 @@
     if (!st.ok) return { changes: null, say: st.why, bad: true };
     return { changes: ch, say: ch.length + ' fee' + (ch.length === 1 ? '' : 's') + ' in one proposal' + (st.donations.length ? ' · changes a donation: most of the protocol developers must approve' : '') + '.', bad: false };
   }
-  function feesReact() {
+  function feesView() {
     var common = { types: TYPES, hash: '#new-fees', feeVal: feeVal, markdown: markdown, signedIn: !!state.key, check: function () { return { changes: null, say: '', bad: false }; }, onPublish: function () { return Promise.resolve({ ok: false, say: '' }); } };
     R.draw(view, 'fees', Object.assign({}, common, { data: null }));
     ARENACLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
@@ -362,7 +224,7 @@
             return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'fee', hex: p.hex }).then(function (y) {
               if (!y.ok) return { ok: false, say: 'Not taken: ' + y.why };
               window.ARENA_FEE_PROPOSAL = { id: p.id, took: y.took, asked: y.asked };
-              setTimeout(function () { R.clear(view); feesReact(); }, 1500);
+              setTimeout(function () { R.clear(view); feesView(); }, 1500);
               return { ok: true, say: 'Published to ' + y.took + ' of ' + y.asked + ' nodes. Its signal starts now.' };
             });
           }).catch(function (e) { return { ok: false, say: e.message }; });
@@ -370,83 +232,13 @@
       window.ARENA_FEES_VIEW = { inForce: r.fees, tip: r.tip, proposals: r.proposals.length, agreeing: r.agreeing };
     }).catch(function (e) { R.draw(view, 'fees', Object.assign({}, common, { data: null, error: e.message })); });
   }
-  function feesView() {
-    if (R) return feesReact();
-    composeHead('#new-fees');
-    var box = el('div', 'empty', 'Reading the fees from the nodes…'); view.append(box);
-    ARENACLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
-      box.remove();
-      if (!r.ok) { view.append(el('div', 'empty', r.why)); return; }
-      state.fees = r;
-      var f = el('form', 'compose fees');
-      var rows = Object.keys(ARENACLIENT.FEES).map(function (k) {
-        var lim = r.limits[k], unit = ARENACLIENT.FEE_UNITS[k];
-        return '<tr><td>' + esc(FEE_NAMES[k] || k) + (lim.donation ? ' <span class="hint">donation</span>' : '') + '</td><td>' + feeVal(k, r.fees[k]) + '</td><td>' + feeVal(k, lim.min) + ' – ' + feeVal(k, lim.max)
-          + '</td><td><input name="' + k + '" type="number" step="1" min="' + lim.min + '" max="' + lim.max + '" placeholder="' + r.fees[k] + '"> ' + (unit === 'bps' ? 'bps' : '%') + '</td></tr>';
-      }).join('');
-      var earliest = ARENACLIENT.earliestActivation(Number(r.tip), r.schedule);
-      f.innerHTML = '<p class="reserves-line">Fees in force at block ' + r.tip + ' (' + r.agreeing + ' of ' + r.asked + ' nodes agree). Fill in only the fees to change; leave the others empty. A round takes at most '
-        + r.sums.roundMaxBps / 100 + ' %, an item\'s parts add up to ' + r.sums.itemPct + ' %, a market takes at most ' + r.sums.marketMaxBps / 100 + ' %. A donation is never 0, and a change to one needs most of the protocol developers.</p>'
-        + '<div class="tbl"><table><thead><tr><th>Fee</th><th>In force</th><th>Limit</th><th>New value</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-        + '<div class="row"><label>Applies from block<input name="activation" type="number" step="1" min="' + earliest + '" value="' + earliest + '"></label></div>'
-        + '<label>Why <span class="hint">required: what the change does and for whom</span><textarea name="purpose" rows="5" maxlength="4000" required></textarea></label>'
-        + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
-      var typed = function () { var t = {}; Object.keys(ARENACLIENT.FEES).forEach(function (k) { t[k] = f[k].value; }); return t; };
-      var check = function () {
-        var out = f.querySelector('.out'), ch;
-        try { ch = ARENACLIENT.feeChangesFrom(r.fees, typed()); } catch (e) { say(out, e.message, true); return null; }
-        if (!ch.length) { say(out, 'Change at least one fee.'); return null; }
-        var p = { networkId: new Uint8Array(32), author: new Uint8Array(32), publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch, purpose: f.purpose.value };
-        var st = ARENACLIENT.feeProposalStands(p, { current: r.fees, schedule: r.schedule });
-        if (!st.ok) { say(out, st.why, true); return null; }
-        say(out, ch.length + ' fee' + (ch.length === 1 ? '' : 's') + ' in one proposal' + (st.donations.length ? ' · changes a donation: most of the protocol developers must approve' : '') + '.');
-        return ch;
-      };
-      f.addEventListener('input', check);
-      f.addEventListener('submit', function (e) {
-        e.preventDefault(); var out = f.querySelector('.out');
-        if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
-        var ch = check(); if (!ch) return;
-        if (!f.purpose.value.trim()) { say(out, 'Say why: a proposal always gives its reason.', true); f.purpose.focus(); return; }
-        say(out, 'Signing…');
-        (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
-          if (!net) throw new Error('the nodes did not agree on their network');
-          state.network = net;
-          var p = ARENACLIENT.signedFeeProposal({ secretKey: state.key, networkId: net, publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch,
-            purpose: f.purpose.value, current: r.fees, schedule: r.schedule, curve: window.ARENA_CURVE });
-          if (!p.ok) throw new Error(p.why);
-          return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'fee', hex: p.hex }).then(function (x) { return { x: x, id: p.id }; });
-        }).then(function (y) {
-          if (!y.x.ok) { say(out, 'Not taken: ' + y.x.why, true); return; }
-          window.ARENA_FEE_PROPOSAL = { id: y.id, took: y.x.took, asked: y.x.asked };
-          say(out, 'Published to ' + y.x.took + ' of ' + y.x.asked + ' nodes. Its signal starts now.');
-          setTimeout(feesView, 1500);
-        }).catch(function (x) { say(out, x.message, true); });
-      });
-      view.append(f);
-      view.append(el('h2', null, 'Fee proposals'));
-      if (!r.proposals.length) view.append(el('div', 'empty', 'No fee proposals yet.'));
-      r.proposals.forEach(function (p) {
-        var c = el('div', 'fee-prop');
-        var d = p.decision ? (p.decision.accepted ? 'accepted · in force from block ' + p.activationHeight : 'refused · ' + p.decision.why)
-          : p.vote ? 'vote ' + p.vote.state : 'signal ' + (p.signal ? p.signal.state : '…');
-        c.innerHTML = '<div class="bar"><b>' + esc(p.id.slice(0, 12)) + '…</b><span class="say">' + esc(d) + '</span></div>'
-          + '<ul>' + p.changes.map(function (x) { return '<li>' + esc(FEE_NAMES[x.fee] || x.fee) + ': ' + feeVal(x.fee, x.from) + ' → ' + feeVal(x.fee, x.to) + '</li>'; }).join('') + '</ul>'
-          + (p.needsDevs ? '<p class="hint">Changes a donation: protocol developers ' + p.devs.filter(function (x) { return x.approve; }).length + ' approve, ' + p.devs.filter(function (x) { return !x.approve; }).length + ' deny.</p>' : '')
-          + (p.purpose ? '<div class="md">' + markdown(p.purpose) + '</div>' : '');
-        view.append(c);
-      });
-      window.ARENA_FEES_VIEW = { inForce: r.fees, tip: r.tip, proposals: r.proposals.length, agreeing: r.agreeing };
-    }).catch(function (e) { box.textContent = e.message; });
-  }
-
   // A LEADERBOARD PAYOUT REQUEST (kanban #460, the owner 2026-10-17: "distribution of X sats for the best 10 p&l of last week"; 2026-10-18:
   // "YES >= 25 % of the voting weight is enough on its own"): which game, market or all, the top N, the amount from one federation's
   // reserves (at most 10 % of them), equal or per place, the last 7 / 14 days or month, and the payment date. Its vote: 2 weeks from
   // publication, bond-weighted, no signal; it passes at YES >= 25 % of the voting weight. The winners' payouts land in their wallets as
   // zaps do. Below, every request with its vote.
   // the payout form in React (kanban #564): the request built and checked here, through the client - { ok, why } | { ok, request, say }
-  function payoutReact() {
+  function payoutView() {
     var common = { types: TYPES, hash: '#new-leaderboard', markdown: markdown, signedIn: !!state.key, check: function () { return { ok: false, why: '' }; }, onPublish: function () { return Promise.resolve({ ok: false, say: '' }); } };
     R.draw(view, 'payout', Object.assign({}, common, { data: null }));
     var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
@@ -484,7 +276,7 @@
           return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'leaderboard', hex: p.hex }).then(function (y) {
             if (!y.ok) return { ok: false, say: 'Not taken: ' + y.why };
             window.ARENA_LEADERBOARD_PAYOUT = { id: p.id, took: y.took, asked: y.asked };
-            setTimeout(function () { R.clear(view); payoutReact(); }, 1500);
+            setTimeout(function () { R.clear(view); payoutView(); }, 1500);
             return { ok: true, say: 'Published to ' + y.took + ' of ' + y.asked + ' nodes. Its 2-week vote starts now.' };
           });
         }).catch(function (e) { return { ok: false, say: e.message }; });
@@ -492,97 +284,9 @@
       window.ARENA_PAYOUT_VIEW = { tip: tip, federations: feds.length, requests: list.length };
     }).catch(function (e) { R.draw(view, 'payout', Object.assign({}, common, { data: null, error: e.message })); });
   }
-  function payoutView() {
-    if (R) return payoutReact();
-    composeHead('#new-leaderboard');
-    var box = el('div', 'empty', 'Reading the nodes…'); view.append(box);
-    var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-    Promise.all([ARENACLIENT.fetchLeaderboards({ nodes: state.nodes }), fetch(base + '/reserves').then(function (r) { return r.json(); }).catch(function () { return { federations: [] }; })]).then(function (x) {
-      box.remove();
-      var lbs = x[0], feds = (x[1].federations || []).filter(function (f) { return f.key || f.reserveKey; });
-      var tip = Number(lbs.tip || state.tip || 0);
-      // WHAT EACH FEDERATION HOLDS, PROMINENTLY (kanban #548: "The leaderboard payouts must also more prominently how much is available in
-      // each federation and the max amounts"): its protocol reserves now and the most one payout may take from them (10 %)
-      var avail = el('div', 'avail');
-      if (!feds.length) avail.append(el('div', 'empty', 'No federation with a reserve key answered: nothing can be paid out now.'));
-      feds.forEach(function (fd) {
-        var held = Math.floor(Number(fd.heldMsat || 0) / 1000);
-        var c = el('div', 'avail-fed');
-        c.append(el('div', 'avail-name', 'Federation ' + fd.federationId.slice(0, 8)),
-          el('div', 'avail-row', ''), el('div', 'avail-row', ''));
-        c.children[1].append(el('span', null, 'Reserves now'), el('b', null, held.toLocaleString('en-US') + ' sat'));
-        c.children[2].append(el('span', null, 'Max for one payout (10 %)'), el('b', 'max', Math.floor(held / 10).toLocaleString('en-US') + ' sat'));
-        avail.append(c);
-      });
-      view.append(avail);
-      var f = el('form', 'compose payout');
-      var fedOpts = feds.map(function (fd) { var held = Math.floor(Number(fd.heldMsat || 0) / 1000); return '<option value="' + esc(fd.federationId) + '">' + esc(fd.federationId.slice(0, 8)) + ' · reserves ' + held.toLocaleString('en-US') + ' sat · up to ' + Math.floor(held / 10).toLocaleString('en-US') + ' sat</option>'; }).join('');
-      var day = new Date(Date.now() + 15 * 86400000); day.setUTCHours(0, 0, 0, 0);
-      f.innerHTML = '<p class="reserves-line">Pays the best players of a season by P&L from one federation\'s protocol reserves, as e-cash into their Arena wallets. Its vote runs 2 weeks from publication, weighted by bond, with no signal; it passes when YES is at least 25 % of the voting weight. At most 10 % of that federation\'s reserves.</p>'
-        + '<div class="row"><label>Leaderboard<select name="scope"><option value="0">All games and markets</option><option value="1">One game</option><option value="2">One market</option></select></label><label>Game or market name<input name="game" placeholder="e.g. btc-updown-15m" disabled></label></div>'
-        + '<div class="row"><label>Top<input name="top" type="number" min="1" max="' + ARENACLIENT.LB_TOP_MAX + '" value="10"></label><label>Amount (sat)<input name="amount" type="number" min="1" step="1"></label></div>'
-        + '<div class="row"><label>Paid from<select name="fed">' + (fedOpts || '<option value="">no federation with a reserve key answered</option>') + '</select></label><label>Period<select name="period">' + ARENACLIENT.LB_PERIOD_DAYS.map(function (d) { return '<option value="' + d + '">' + (d === 30 ? 'last month (30 days)' : 'last ' + d + ' days') + '</option>'; }).join('') + '</select></label></div>'
-        + '<div class="row"><label>Split per place <span class="hint">empty: equal; or percents, one per place, e.g. 50, 30, 20</span><input name="split" placeholder="equal"></label><label>Payment date (UTC)<input name="date" type="date" value="' + day.toISOString().slice(0, 10) + '"></label></div>'
-        + '<label>Why <span class="hint">required: why these players, this amount</span><textarea name="purpose" rows="3" maxlength="4000" required></textarea></label>'
-        + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
-      f.scope.addEventListener('change', function () { f.game.disabled = f.scope.value === '0'; });
-      var built = function () {
-        var sp = ARENACLIENT.splitFromPercents(f.split.value, Number(f.top.value));
-        if (!sp.ok) return sp;
-        var dateMs = Date.parse(f.date.value + 'T00:00:00Z');
-        if (!(dateMs > Date.now())) return { ok: false, why: 'the payment date is in the future' };
-        return { ok: true, scope: Number(f.scope.value), gameName: f.game.value.trim(), top: Number(f.top.value), amountSats: f.amount.value ? Math.floor(Number(f.amount.value)) : 0,
-          federationId: f.fed.value, splitBps: sp.splitBps, periodDays: Number(f.period.value), paymentHeight: ARENACLIENT.heightAtDate({ tip: tip, nowMs: Date.now(), dateMs: dateMs }), purpose: f.purpose.value };
-      };
-      var check = function () {
-        var out = f.querySelector('.out'), b = built();
-        if (!b.ok) { say(out, b.why, true); return null; }
-        var fd = feds.find(function (z) { return z.federationId === b.federationId; });
-        var cap = fd ? Math.floor(Number(fd.heldMsat || 0) / 1000 / 10) : 0;
-        if (b.amountSats && fd && b.amountSats > cap) { say(out, b.amountSats.toLocaleString('en-US') + ' sat is more than 10 % of that federation\'s reserves (' + cap.toLocaleString('en-US') + ' sat): it could never be paid.', true); return null; }
-        say(out, 'Pays the top ' + b.top + ' at block ' + b.paymentHeight + (b.splitBps.length ? ' by the split' : ', equal') + '.'); return b;
-      };
-      f.addEventListener('input', check);
-      f.addEventListener('submit', function (e) {
-        e.preventDefault(); var out = f.querySelector('.out');
-        if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
-        var b = check(); if (!b) return;
-        if (!b.amountSats) { say(out, 'Name the amount.', true); return; }
-        if (!b.purpose.trim()) { say(out, 'Say why: a proposal always gives its reason.', true); f.purpose.focus(); return; }
-        say(out, 'Signing…');
-        (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
-          if (!net) throw new Error('the nodes did not agree on their network');
-          state.network = net;
-          var p = ARENACLIENT.signedLeaderboardPayout(Object.assign({ secretKey: state.key, networkId: net, publishedHeight: tip, curve: window.ARENA_CURVE }, b));
-          if (!p.ok) throw new Error(p.why);
-          return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'leaderboard', hex: p.hex }).then(function (y) { return { y: y, id: p.id }; });
-        }).then(function (z) {
-          if (!z.y.ok) { say(out, 'Not taken: ' + z.y.why, true); return; }
-          window.ARENA_LEADERBOARD_PAYOUT = { id: z.id, took: z.y.took, asked: z.y.asked };
-          say(out, 'Published to ' + z.y.took + ' of ' + z.y.asked + ' nodes. Its 2-week vote starts now.');
-          setTimeout(payoutView, 1500);
-        }).catch(function (x) { say(out, x.message, true); });
-      });
-      view.append(f, el('h2', null, 'Leaderboard payout requests'));
-      var list = lbs.ok ? lbs.leaderboards : [];
-      if (!list.length) view.append(el('div', 'empty', lbs.ok ? 'No leaderboard payouts yet.' : lbs.why));
-      list.forEach(function (p) {
-        var v = p.vote || {}, cnt = v.count || {};
-        var c = el('div', 'fee-prop');
-        c.innerHTML = '<div class="bar"><b>Top ' + p.top + ' · ' + Number(p.amountSats).toLocaleString('en-US') + ' sat</b><span class="say">' + esc(v.state || '…') + (cnt.yesOfAllPct !== undefined ? ' · YES ' + cnt.yesOfAllPct + ' % of the voting weight (25 % passes)' : '') + '</span></div>'
-          + '<p class="hint">' + esc(p.scope === 0 ? 'all games and markets' : p.gameName) + ' · last ' + p.periodDays + ' days · paid at block ' + p.paymentHeight + ' from ' + esc(p.federation.slice(0, 8)) + (p.splitBps && p.splitBps.length ? ' · split ' + p.splitBps.map(function (b) { return b / 100 + ' %'; }).join(' / ') : ' · equal') + '</p>'
-          + (p.purpose ? '<div class="md">' + markdown(p.purpose) + '</div>' : '');
-        view.append(c);
-      });
-      window.ARENA_PAYOUT_VIEW = { tip: tip, federations: feds.length, requests: list.length };
-    }).catch(function (e) { box.textContent = e.message; });
-  }
-
   function route() {
     var h = location.hash;
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
-    var own = !R && (h === '#new-leaderboard' || h === '#new-fees' || h === '#new');
-    if (own && R) R.clear(view);   // the forms are this script's own: React lets go of the view first
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
     else if (h === '#new') newView();
@@ -595,8 +299,7 @@
     ARENACLIENT.fetchReservesTotal({ nodes: state.nodes }).then(function (r) {
       if (r.ok) { state.reserves = { sats: Number(r.totalMsat / 1000n), agreeing: r.agreeing, asked: r.asked }; state.reservesWhy = null; } else state.reservesWhy = r.why;
       showBalance();
-      var typed = document.querySelector('.compose input[name=amount]');
-      if (location.hash === '#new' && (R || !(typed && typed.value))) newView();   // React keeps what was typed
+      if (location.hash === '#new') newView();   // React keeps what was typed
     }).catch(function (e) { state.reservesWhy = e.message; showBalance(); });
     return ARENACLIENT.fetchProposals({ nodes: state.nodes, verify: window.ARENA_CURVE.verify }).then(function (r) {
       if (!r.ok) { state.list = []; state.agreeing = 0; state.asked = r.asked; return; }
@@ -610,7 +313,6 @@
     return load(ARENA + 'arena-curve.js').then(function () { return load(ARENA + 'arena-client.js'); });
   }).then(function () {
     pickKey();
-    window.addEventListener('hashchange', route);
-    return reactReady.then(refresh).then(function () { if (R) R.clear(view); route(); });
+    return reactReady.then(refresh).then(function () { view.textContent = ''; window.addEventListener('hashchange', route); route(); });
   }).catch(function (e) { if (R) R.clear(view); view.textContent = ''; view.append(el('div', 'empty', e.message)); });
 })();

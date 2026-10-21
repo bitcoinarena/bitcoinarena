@@ -5,6 +5,9 @@
 // chosen as one large number with its roles as a bar, what it is owed, its profit; the 30 days as a stacked chart; the dev clients
 // each in a card whose table fits (short dates, one line each); the hosts and the games; the rounds, settlements and federations as
 // tables that scroll inside their card. Empty rows are left out; nothing runs past its card on a desktop or a phone.
+// THE ONLY DRAWING (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): what
+// the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
+// the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
@@ -105,6 +108,7 @@ export class DevClient extends React.Component {
           ...(S.games || []).map((g) => [`For ${g.title || g.game}`, `${sat(g.msat)} · ${g.donations}`]),
           ['Rounds this node no longer holds', S.unknownMsat && S.unknownMsat !== '0' ? sat(S.unknownMsat) : null],
           ['Unclaimed in issuance', (V.unclaimed || []).length ? V.unclaimed.map((u) => sat(u.msat)).join(', ') : null],
+          ['Last recovery', V.lastRecovery ? `${short(Date.parse(V.lastRecovery.at), now)} · ${V.lastRecovery.ok ? `ok, +${sat(V.lastRecovery.unclaimedMsat)}` : `failed: ${V.lastRecovery.why || ''}`}` : null],
           ['Last pass', V.lastPass ? `${short(Date.parse(V.lastPass.at), now)} · asked ${V.lastPass.seats} nodes${V.lastPass.unanswered ? ` (${V.lastPass.unanswered} unanswered)` : ''}` : null]]} />
         {(V.recent || []).length ? (
           <div className="scroll"><table className="tbl"><thead><tr><th>Round</th><th>Federation</th><th className="n">Donation</th><th className="n">When</th></tr></thead>
@@ -113,46 +117,110 @@ export class DevClient extends React.Component {
   }
 }
 
-export class DashboardPage extends React.Component {
-  constructor(props) { super(props); this.state = { period: 'day' }; }
+/** A player's score as the node writes it: 100000ths, five decimals. */
+export const score = (v) => (v === null || v === undefined ? '-' : `${Math.trunc(v / 100000)}.${String(Math.abs(v) % 100000).padStart(5, '0')}`);
+/** A net with its sign: "+286 sat", "-4 sat", blank while pending. */
+export const signedSat = (m) => (m === null || m === undefined || m === '' ? '' : `${Number(m) > 0 ? '+' : ''}${sat(m)}`);
+/** A note's hyphens do not break (measured at 1280 px: "test-host- / testnet4"): a name in a note stays one word. */
+export const keep = (t) => String(t).replace(/-/g, '‑');
+const tone = (m) => (m === null || m === undefined || m === '' ? '' : Number(m) > 0 ? 'ok' : Number(m) < 0 ? 'bad' : '');
+
+/** THE ROUNDS ARE CLICKABLE (2026-10-03, plan accepted 2026-10-04; in React for kanban #564): an opened round's players from this node's
+ *  own api/round-result - every value the endpoint's own (outcome, score, signers, stake, result, netMsat) - each with its replay. */
+export class Players extends React.Component {
   render() {
-    const D = this.props.data; const now = D.nowMs; const { period } = this.state;
+    const a = this.props.result;
+    if (!a || a.loading) return <p className="sub">reading api/round-result…</p>;
+    if (a.error) return <p className="bad">could not read api/round-result: {a.error}</p>;
+    if (!(a.players || []).length) return <p className="sub">no players in this round</p>;
+    return (
+      <table className="tbl"><thead><tr><th>Player</th><th>Outcome</th><th className="n">Score</th><th className="n">Signed by</th><th className="n">Stake</th><th>Won or lost</th><th className="n">Net</th><th>Replay</th></tr></thead>
+        <tbody>{a.players.map((p, i) => { const c = tone(p.netMsat); return (
+          <tr key={p.entry || i}><td>{p.name || ''}</td><td>{p.outcome || 'not signed yet'}</td><td className="n">{score(p.score)}</td><td className="n">{p.signedBy | 0}</td><td className="n">{sat(p.stakeMsat)}</td>
+            <td className={c || undefined}>{p.result || ''}</td><td className={`n${c ? ` ${c}` : ''}`}>{signedSat(p.netMsat)}</td>
+            <td><a href={`replay?round=${encodeURIComponent(a.id)}&entry=${encodeURIComponent(p.entry)}`} target="_blank" rel="noopener">replay</a></td></tr>); })}</tbody></table>);
+  }
+}
+
+/** THE LIQUIDITY CARD (§23A.10): a provider's free coins against the deposit minimum, the channels it gave, the top-up address. */
+export const DEPOSIT_MIN_SATS = 500000;
+export class Liquidity extends React.Component {
+  render() {
+    const c = this.props.claim; const g = c.channels || [];
+    const free = Number(c.freeSats), given = g.reduce((a, x) => a + Number(x.capacitySats), 0), n = (x) => `${x.toLocaleString('en')} sat`;
+    return (
+      <section><h2>Liquidity provider</h2><div className="card">
+        <Rows rows={[['Free for new channels', n(free)], ['Deposit minimum (free + channels given)', n(DEPOSIT_MIN_SATS)]]} />
+        {free + given < DEPOSIT_MIN_SATS ? <p className="bad">Below the deposit minimum: no share of the liquidity pool until topped up.</p>
+          : <p className="ok">Above the deposit minimum: earning its share of the liquidity pool.</p>}
+        <Rows rows={[['Channels given', `${g.length} (${n(given)})`], ['Top up (LND wallet)', <code>{String(c.depositAddress || '-')}</code>]]} />
+      </div></section>);
+  }
+}
+
+export class DashboardPage extends React.Component {
+  constructor(props) { super(props); this.state = { period: 'day', open: {}, players: {} }; }
+  async toggle(id) {
+    const open = !this.state.open[id]; const had = this.state.players[id];
+    this.setState((s) => ({ open: { ...s.open, [id]: open } }));
+    if (!open || (had && !had.error) || !this.props.readResult) return;
+    this.setState((s) => ({ players: { ...s.players, [id]: { loading: true } } }));
+    let res; try { res = await this.props.readResult(id); } catch (e) { res = { error: e.message }; }
+    this.setState((s) => ({ players: { ...s.players, [id]: res } }));
+  }
+  render() {
+    const D = this.props.data;
+    if (D.error) return <div className="dash"><h1>Node dashboard</h1><p className="bad">could not read dashboard.json: {D.error}</p></div>;
+    const now = D.nowMs; const { period } = this.state;
     const H = D.hosts || {}; const L = H.lnd, G = H.gateway;
     const devs = [...(D.devClient ? [D.devClient] : []), ...(D.devClients || [])];
     const states = Object.entries(D.settlementsByState || {});
+    const notes = D.notes ? [D.notes.guardian, D.notes.lightning, D.notes.gateway].filter(Boolean) : [];
+    const hostsRead = Math.max((L && L.readAtMs) || 0, (G && G.readAtMs) || 0);
     return (
       <div className="dash">
         <header className="dash-head">
           <div><h1>Node dashboard</h1><p className="sub"><code>{String(D.node).slice(0, 16)}…</code> · active since {short(D.sinceMs, now)} · {D.roundsChecked} rounds checked</p></div>
           <a className="btn" href="Dashboard/owner">Owner area →</a>
         </header>
+        {D.capacity ? <section><h2>Capacity</h2><div className="card"><p className={D.capacity.level === 'bad' ? 'bad' : 'warn'}>{String(D.capacity.says)}</p></div></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
-        {devs.length || L || G || (D.byGame || []).length ? (
+        {devs.length || L || G || (D.byGame || []).length || notes.length ? (
           <section><h2>Money around this node</h2>
             <div className="cards">
               {devs.map((V, i) => <DevClient key={i} client={V} nowMs={now} />)}
               {L || G ? (
                 <div className="card"><h3>Hosts</h3>
-                  <Rows rows={[...(L ? (L.error ? [['LND', `not read: ${L.error}`]] : [['LND', L.alias], ['Active channels', L.activeChannels], ['Local / remote', `${sat(L.localMsat)} / ${sat(L.remoteMsat)}`],
-                    ['Routing fees, 30 days', `${sat(L.routingFeesMsat30d)} · ${L.forwards30d} forwards`]]) : []),
+                  <Rows rows={[...(L ? (L.error ? [['LND', `not read: ${L.error}`]] : [['LND', L.alias], ['Node key', L.pubkey ? `${L.pubkey.slice(0, 16)}…` : null], ['Active channels', L.activeChannels], ['Local / remote', `${sat(L.localMsat)} / ${sat(L.remoteMsat)}`],
+                    ['Routing fees, 30 days', `${sat(L.routingFeesMsat30d)} · ${L.forwards30d} forwards`], ['Fees its payments paid', L.paidFeesMsat !== undefined ? `${sat(L.paidFeesMsat)} · ${L.paymentsWithFee} payments` : null]]) : []),
                   ...(G ? (G.error ? [[`Gateway ${G.name}`, `not read: ${G.error}`]] : [['Gateway', `${G.name} · ${G.state}`], ...(G.federations || []).map((f) => [`E-cash in ${f.name || f.id.slice(0, 8)}`, sat(f.ecashMsat)]),
-                    ['Inbound liquidity', sat(G.inboundMsat)]]) : [])]} /></div>) : null}
+                    ['Lightning balance', G.lightningMsat !== undefined ? sat(G.lightningMsat) : null], ['Inbound liquidity', sat(G.inboundMsat)], ['On-chain', G.onchainSat !== undefined ? `${G.onchainSat} sat` : null],
+                    ...(G.payments30d ? [['in', 'incoming'], ['out', 'outgoing']].map(([w, k]) => [`Payments ${w}, 30 days`, `${G.payments30d[k].success} ok · ${G.payments30d[k].failure} failed · fees ${sat(G.payments30d[k].feesMsat)}`]) : [])]) : []),
+                  ['Read', hostsRead ? short(hostsRead, now) : null]]} /></div>) : null}
               {(D.byGame || []).length ? (
                 <div className="card"><h3>By game</h3>
-                  <Rows rows={D.byGame.map((g) => [g.name || (g.game ? g.game.slice(0, 12) : '(no game)'), `${g.rounds} round${g.rounds === 1 ? '' : 's'} · ${sat(earningsOf(g.earned || {}).earned)}`])} /></div>) : null}
+                  <Rows rows={D.byGame.map((g) => { const owed = g.owed ? earningsOf({ ...g.owed, otherMsat: 0 }).earned : 0n;
+                    return [g.name || (g.game ? g.game.slice(0, 12) : '(no game)'), `${g.rounds} round${g.rounds === 1 ? '' : 's'} · ${sat(earningsOf(g.earned || {}).earned)}${owed > 0n ? ` · ${sat(owed)} owed` : ''}`]; })} /></div>) : null}
+              {notes.length ? <div className="card"><h3>Notes</h3><div className="notes">{notes.map((n, i) => <p key={i}>{keep(n)}</p>)}</div></div> : null}
             </div>
           </section>) : null}
+        {D.liquidity ? <Liquidity claim={D.liquidity} /> : null}
         <section><h2>Rounds checked</h2>
           <div className="card scroll"><table className="tbl"><thead><tr><th>Round</th><th>Started</th><th>Game</th><th className="n">Entries</th><th className="n">Earned</th><th>Settled</th></tr></thead>
             <tbody>{(D.rounds || []).slice(0, 50).map((r) => {
-              const earned = big(r.gameVerifyMsat) + big(r.settlementMsat) + big(r.guardianMsat); const st = r.settlement && r.settlement.state;
-              return <tr key={r.id}><td><code>{r.id.slice(0, 8)}</code></td><td className="nowrap">{short(r.startMs, now)}</td><td>{r.gameName || r.game || ''}</td><td className="n">{r.entries}</td><td className="n">{earned > 0n ? sat(earned) : '-'}</td><td className={st === 'ACCEPTED' ? 'ok' : st === 'REFUSED' ? 'bad' : 'sub'}>{st ? st.toLowerCase() : '-'}</td></tr>;
+              const earned = big(r.gameVerifyMsat) + big(r.settlementMsat) + big(r.guardianMsat); const st = r.settlement && r.settlement.state; const isOpen = !!(this.state.open || {})[r.id];
+              return (<React.Fragment key={r.id}>
+                <tr className="rr" aria-expanded={isOpen ? 'true' : 'false'} onClick={() => this.toggle(r.id)}><td><code>{isOpen ? '▾ ' : '▸ '}{r.id.slice(0, 8)}</code></td><td className="nowrap">{short(r.startMs, now)}</td>
+                  <td>{r.gameName || r.game || ''}{r.score ? <span className="sub"> · <b>{r.score.score[0]} : {r.score.score[1]}</b> {r.score.identities.join(' vs ')}</span> : null}{r.kind ? <span className="sub"> · {r.kind}</span> : null}</td>
+                  <td className="n">{r.entries}</td><td className="n">{earned > 0n ? sat(earned) : '-'}</td><td className={st === 'ACCEPTED' ? 'ok' : st === 'REFUSED' ? 'bad' : 'sub'}>{st ? st.toLowerCase() : '-'}</td></tr>
+                {isOpen ? <tr className="pl"><td colSpan={6}><Players result={(this.state.players || {})[r.id]} /></td></tr> : null}
+              </React.Fragment>);
             })}</tbody></table></div></section>
         <section className="two">
           <div><h2>Settlements</h2><div className="card scroll">
             <p className="sub">{states.length ? states.map(([k, v]) => `${v} ${k.toLowerCase()}`).join(' · ') : 'none yet'}</p>
-            <table className="tbl"><tbody>{(D.settlements || []).slice(0, 20).map((s, i) => <tr key={i}><td><code>{s.round.slice(0, 8)}</code></td><td className="nowrap">{short(s.madeMs, now)}</td><td className={s.state === 'ACCEPTED' ? 'ok' : s.state === 'REFUSED' ? 'bad' : ''}>{String(s.state).toLowerCase()}</td></tr>)}</tbody></table></div></div>
+            <table className="tbl"><tbody>{(D.settlements || []).slice(0, 20).map((s, i) => <tr key={i} title={s.why || undefined}><td><code>{s.round.slice(0, 8)}</code></td><td className="nowrap">{short(s.madeMs, now)}</td><td className={s.state === 'ACCEPTED' ? 'ok' : s.state === 'REFUSED' ? 'bad' : ''}>{String(s.state).toLowerCase()}</td></tr>)}</tbody></table></div></div>
           <div><h2>Federations</h2><div className="card scroll"><table className="tbl"><thead><tr><th>Federation</th><th className="n">Paid rounds</th><th className="n">Last</th></tr></thead>
             <tbody>{(D.federations || []).map((f) => <tr key={f.federation}><td><code>{f.federation.slice(0, 12)}</code></td><td className="n">{f.rounds}</td><td className="n nowrap">{short(f.lastMs, now)}</td></tr>)}</tbody></table></div></div>
         </section>

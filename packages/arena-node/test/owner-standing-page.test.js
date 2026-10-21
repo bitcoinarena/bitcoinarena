@@ -1,51 +1,32 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S STANDING PANEL: the page's own standingPanel, run on the doors' answers - the missed
-// seatings' warning with the serving = false update, and the bond's standing with each warning in the seat's words.
+// THE OWNER PAGE'S STANDING, CAPACITY PLEA AND BOND OFFER: the standing is drawn only by React since kanban #564 (the owner 2026-10-21: "no
+// fall backs") - its figures and warnings are arena-web's (test/standing.test.mjs) - so the page is checked for what it hands the screen;
+// the capacity plea and the bond offer are still the page's own, run on the doors' answers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { nodeStanding, endpointWarning } from '../src/node-standing.js';
-import { seatingWarning } from '../src/seatings.js';
+import { nodeStanding } from '../src/node-standing.js';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
-// from the shared read (kanban #553: the Bond answer reads the same) to the end of standingPanel
-const a = HTML.indexOf('let standingRead = null;');
-const body = HTML.slice(a, HTML.indexOf('\n}\n', HTML.indexOf('async function standingPanel() {')) + 2);
 const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-
-async function render(seatings, standing) {
-  const el = { innerHTML: '' };
-  const fetch = async (u) => ({ json: async () => (u.endsWith('/owner/seatings') ? seatings : standing) });
-  const fn = new Function('$', 'at', 'fetch', 'esc', 'need', `${body}; return standingPanel;`)(() => el, (p) => `https://seat${p}`, fetch, esc, () => {});
-  await fn();
-  return el.innerHTML;
-}
 const me = 'aa'.repeat(32);
 const rounds = (bondMin, bonds) => [{ atMs: 2, bondMinSats: bondMin, entries: bonds.map(([k, b]) => ({ pubkey: k, bondSats: b })), excluded: [] }];
+const block = (start) => { const a = HTML.indexOf(start); assert.ok(a >= 0, start); let i = HTML.indexOf('{', a), d = 0; for (; i < HTML.length; i++) { if (HTML[i] === '{') d++; else if (HTML[i] === '}' && !--d) break; } return HTML.slice(a, i + 1); };
+const line = (start) => { const a = HTML.indexOf(start); assert.ok(a >= 0, start); return HTML.slice(a, HTML.indexOf('\n', a)); };
 
-test('three seatings missed and a bond under the common bracket: both warnings, the update named', async () => {
-  const st = nodeStanding({ me, rounds: rounds(200000n, [[me, 150000n], ['bb'.repeat(32), 300000n]]) });
-  const html = await render({ missedInARow: 3, warning: seatingWarning(3) }, st);
-  // kanban #553: plain names for each figure and warning
-  assert.match(html, /Draws missed in a row<\/span><b>3/);
-  assert.match(html, /Missed draws/); assert.match(html, /serving = false/); assert.match(html, /ARENA_ADVERT_SERVING=false/);
-  assert.match(html, /Bond below the minimum/); assert.match(html, /0\.75× of 200,000 sat/);
-  assert.match(html, /Bond<\/span><b>150,000 sat/);
-});
-
-test('seated when drawn and a bond above the margin: no warning', async () => {
-  const st = nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) });
-  const html = await render({ missedInARow: 0, warning: null }, st);
-  assert.match(html, /No warning/); assert.doesNotMatch(html, /class="err"/);
-});
-
-test('the bond_min in force and a pending rise, with its escalation in the warnings', async () => {
-  const st = { ...nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) }), bondMin: { inForce: '50000', noticeBlocks: 144, pending: { value: '80000', crossedAt: 300, effectiveAt: 444 } } };
-  st.warnings = [{ kind: 'bond_min rise (T-3d)', urgent: true, says: 'bond_min rises to 80000 sat at block 444' }];
-  const html = await render({ missedInARow: 0, warning: null }, st);
-  assert.match(html, /Network minimum bond now<\/span><b>50,000 sat · rising to 80,000 sat at block 444 if it holds \(notice 144 blocks\)/);
-  assert.match(html, /bond_min rise \(T-3d\)/);
+test('the standing: the React screen alone, reading the doors as they answer; missed draws marked red on the Overview, under Services', async () => {
+  assert.ok(HTML.includes('<div class="card" id="standing">') && /\n {2}standingPanel\(\);\n/.test(HTML));
+  const mounted = [], needs = [];
+  const fetch = async (u) => ({ json: async () => ({ asked: u }) });
+  new Function('at', 'fetch', 'mount', 'need', `${line('const getJson')}; ${block('function standingPanel()')}; return standingPanel;`)(
+    (p) => `https://seat${p}`, fetch, (id, how, props) => mounted.push({ id, how, props }), (...a) => needs.push(a))();
+  const [m] = mounted;
+  assert.deepEqual([m.id, m.how], ['standing', 'mountStanding']);
+  assert.deepEqual(await m.props.api.get('/owner/seatings'), { asked: 'https://seat/owner/seatings' });
+  m.props.onMissed(3);
+  assert.deepEqual(needs, [['missed', 'bad', 'Your node missed 3 draws in a row: check its services.', 'services']]);
+  assert.doesNotMatch(HTML, /Draws missed in a row|Recent rounds your bond qualified for/, 'no old panel left in the page');
 });
 
 // THE CAPACITY PLEA (kanban #543): the page's own capacityPlea, run on GET /capacity?node=me - the seat's words shown, nothing while CALM
@@ -69,7 +50,7 @@ test('the capacity plea: the seat\'s words for this node when a federation fills
 // THE BOND AS AN OFFER (kanban #553, the owner 2026-10-20: "The operator does not need to add a bond, he can if he wants to earn more ... more
 // direct instructions how to deposit ... I need to calculate myself"; "earn 350% more e.g"): headline, bar, two steps with the numbers worked out
 test('the bond offer: "Earn up to N× more", the sat to send (worked out from the wallet and the fees) and one button; nothing to earn: no offer', async () => {
-  const all = fnOf('let standingRead = null;', 'standingPanel') + fnOf('let pleaRead = null;', 'capacityPlea') + fnOf('let bondRead = null;', 'bondAnswer')
+  const all = `${line('const getJson')}\n${line('let standingRead = null;')}\n${line('const readStanding')}\n` + fnOf('let pleaRead = null;', 'capacityPlea') + fnOf('let bondRead = null;', 'bondAnswer')
     + "\nconst fedLabel = (fid) => `Federation ${String(fid).slice(0, 8)}`;\n";
   const offer = async (capacity, standing, bond) => {
     const els = {}, needs = [];
@@ -95,13 +76,4 @@ test('the bond offer: "Earn up to N× more", the sat to send (worked out from th
   assert.match(rich.html, /✓ Your bond wallet has enough/); assert.doesNotMatch(rich.html, /Send \d/);
   const calm = await offer({ ok: true, plea: null, mine: [{ ...m, band: 'CALM', load: 0.4 }] }, st, bond);
   assert.match(calm.html, /No federation you guard pays extra/); assert.doesNotMatch(calm.html, /Earn up to/);
-});
-
-test('the advertisement names another address than the node answers at: "Address changed", both addresses named (kanban #562)', async () => {
-  const st = nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) });
-  st.warnings.push(endpointWarning({ advertised: 'https://keeps-ahead-employ-thomas.trycloudflare.com', serving: 'https://cottage-usually-pete-path.trycloudflare.com' }));
-  const html = await render({ missedInARow: 0, warning: null }, st);
-  assert.match(html, /class="err"><b>Address changed<\/b>/);
-  assert.match(html, /answers at https:\/\/cottage-usually-pete-path\.trycloudflare\.com, but its advertisement names https:\/\/keeps-ahead-employ-thomas/);
-  assert.doesNotMatch(html, /No warning/);
 });

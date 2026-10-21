@@ -109,7 +109,9 @@ test('title, content and "how it improves Bitcoin Arena" round-trip through the 
   const evil = markdown('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://bitcoin-arena.io)\n\n| <b>a</b> |\n|---|\n| <script> |');
   assert.ok(!/<img|<script|<b>a|href="javascript/.test(evil), evil);
   assert.match(evil, /href="https:\/\/bitcoin-arena\.io"/);
-  for (const t of ['Title', 'What the proposal does', 'How it improves Bitcoin Arena', 'of 4,000 characters']) assert.ok(JS.includes(t), t);
+  // the form is React's (kanban #564: forum.js draws no view of its own)
+  const VIEWS = readFileSync(new URL('../../arena-web/src/proposals/ForumViews.jsx', import.meta.url), 'utf8');
+  for (const t of ['Title', 'What the proposal does', 'How it improves Bitcoin Arena', 'of 4,000 characters']) assert.ok(VIEWS.includes(t), t);
   assert.match(FORUM, /PIPs improve Bitcoin Arena as a whole: its games, its protocol/);
 });
 
