@@ -1,0 +1,23 @@
+{
+  "about": "What a node hosts of this app (kanban #569): the registrations it loads, every version still played. The installer lists the app with these, selected.",
+  "id": "btc-updown",
+  "title": "Bitcoin Up or Down",
+  "short": "Up or Down",
+  "registrations": [
+    "plugin/btc-updown.js",
+    "plugin/btc-updown-v2.js",
+    "plugin/btc-updown-v3.js",
+    "plugin/btc-updown-v4.js",
+    "plugin/btc-updown-v5.js",
+    "plugin/btc-updown-v6.js",
+    "plugin/btc-updown-v7.js",
+    "plugin/btc-updown-v8.js",
+    "plugin/btc-updown-v9.js",
+    "plugin/btc-updown-v10.js",
+    "plugin/btc-updown-v11.js",
+    "plugin/btc-updown-v12.js",
+    "plugin/btc-updown-v13.js",
+    "plugin/btc-updown-v14.js",
+    "plugin/btc-updown-v15.js"
+  ]
+}

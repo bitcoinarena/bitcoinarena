@@ -15,6 +15,13 @@
     "engines": "bash tools/run-engines.sh",
     "versions": "bash tools/run-versions.sh",
     "arch": "bash tools/run-arch.sh",
-    "acceptance": "npm run guard && npm test && npm run engines && npm run versions && npm run arch"
+    "acceptance": "npm run guard && npm test && npm run engines && npm run versions && npm run arch",
+    "publish-webgl": "node tools/publish-webgl.mjs"
+  },
+  "dependencies": {
+    "arena-sdk": "github:a tester/arena-sdk#v0.2.0"
+  },
+  "devDependencies": {
+    "acorn": "8.14.0"
   }
 }
