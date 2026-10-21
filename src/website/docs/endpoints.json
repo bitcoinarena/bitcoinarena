@@ -10055,7 +10055,7 @@
   "needsAuth": "none",
   "pathParams": []
  },
-{
+ {
   "method": "GET",
   "path": "/capacity",
   "params": "none",
@@ -10163,6 +10163,49 @@
     "status": "502",
     "contentType": "application/json",
     "description": "The provider service did not answer or failed."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/liquidity/become",
+  "params": "body JSON signed request, action \"liquidity/become\", args {post}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, plan} (without post) or {ok, plan, done}; 400 {ok:false, why} (no Bitcoin Core, no LND, LND not answering, a provider already); 401/403 when not the owner; 501 on a node not set up by the installer",
+  "purpose": "An installed node becomes a liquidity provider from its owner page (\"Set up\", then \"Become a liquidity provider\"): without post the plan - LND tested, the deposit against the node's wallet, a custody node's peg-in kept aside; with post the provider service on its LND, the agent that sends the deposit, the role and its settings.",
+  "audience": "operator/monitoring",
+  "line": 5277,
+  "summary": "Become a liquidity provider (installed node)",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"liquidity/become\", args {post}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, plan:{lightningPubkey, depositSats, walletSats, reservedSats, shortSats, address, channelSats}, done?}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "{ok:false, why}: not possible on this node yet."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "Not a node set up by the installer."
    }
   ],
   "headers": [],

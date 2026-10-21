@@ -2,7 +2,8 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER DASHBOARD'S CUSTODY AND LIQUIDITY, IN REACT (kanban #564). Custody: whether this node is a guardian (GET /guardian) and where
 // its guardian is reached, else how to add custody. Liquidity: what a provider holds free for new channels against the deposit minimum
-// (free + the channels it gave, 2026-10-18), the channels it gave, its top-up address and a new one (POST /owner/liquidity/new-address).
+// (free + the channels it gave, 2026-10-18), the channels it gave, its top-up address and a new one (POST /owner/liquidity/new-address);
+// a node that is none becomes one here (POST /owner/liquidity/become, kanban #567), not with the installer.
 import React from 'react';
 import { Button } from '../design/components.jsx';
 
@@ -42,7 +43,11 @@ export function standingOf(claim, network = 'testnet4') {
 }
 
 export class LiquidityPanel extends React.Component {
-  constructor(props) { super(props); this.state = { loaded: false, claim: null, busy: false, message: null, ...(props.initial || {}) }; this.newAddress = this.newAddress.bind(this); }
+  constructor(props) {
+    super(props);
+    this.state = { loaded: false, claim: null, busy: false, message: null, plan: null, done: false, ...(props.initial || {}) };
+    this.newAddress = this.newAddress.bind(this); this.review = this.review.bind(this); this.become = this.become.bind(this);
+  }
   componentDidMount() { if (!this.state.loaded && this.props.api) this.read(); }
   async read() {
     let c = null; try { c = await this.props.api.get('/liquidity-claim'); } catch { c = null; }
@@ -55,10 +60,43 @@ export class LiquidityPanel extends React.Component {
     await this.read();
     this.setState({ busy: false, message: `New address: ${r.address}` });
   }
+  // BECOME ONE HERE (kanban #567): the plan first (POST /owner/liquidity/become without post), then the confirm sets it up
+  async review() {
+    this.setState({ busy: true, message: 'Checking LND and the wallet…' });
+    let r; try { r = await this.props.api.post('/owner/liquidity/become', await this.props.api.signed('liquidity/become', { post: false })); } catch (x) { r = { ok: false, why: x.message }; }
+    this.setState({ busy: false, plan: r && r.ok ? r.plan : null, message: r && r.ok ? null : (r && r.why) || 'no answer' });
+  }
+  async become() {
+    this.setState({ busy: true, message: 'Setting up the provider service…' });
+    let r; try { r = await this.props.api.post('/owner/liquidity/become', await this.props.api.signed('liquidity/become', { post: true })); } catch (x) { r = { ok: false, why: x.message }; }
+    if (!r || !r.ok) return this.setState({ busy: false, message: (r && r.why) || 'no answer' });
+    this.setState({ busy: false, done: true, message: null });
+    setTimeout(() => this.read(), 15000);
+  }
+  offer() {
+    const { busy, message, plan: p, done } = this.state;
+    if (done) return <div><p className="ok"><b>This node is a liquidity provider now ✓</b> Its provider service runs on LND; the deposit of {n(p.depositSats)} sat goes from the node's wallet into LND as soon as the wallet holds it.</p></div>;
+    return (
+      <div>
+        <p><b>This node is no liquidity provider.</b> A provider opens incoming Lightning channels to new nodes and earns a share of the 1 % liquidity pool of their federations.</p>
+        {p ? (
+          <div>
+            <div className="stats">
+              <div className="stat"><span>Deposit into LND</span><b>{n(p.depositSats)} sat</b><small>{n(p.depositSats / p.channelSats)} channels of {n(p.channelSats)} sat</small></div>
+              <div className="stat"><span>Node wallet</span><b>{n(p.walletSats)} sat</b>{p.reservedSats ? <small>{n(p.reservedSats)} sat kept for the gateway's peg-in</small> : null}</div>
+            </div>
+            {p.shortSats
+              ? <p className="warn">The wallet is <b>{n(p.shortSats)} sat short</b>. You can set it up now: the deposit goes out once you send that to <code>{p.address}</code>.</p>
+              : <p className="ok">The wallet holds enough: the deposit goes out within a minute.</p>}
+            <p><Button primary disabled={busy} onClick={this.become}>Become a liquidity provider</Button> <span className="sub">{message}</span></p>
+          </div>)
+          : <p><Button primary disabled={busy} onClick={this.review}>Set up</Button> <span className="sub">{message}</span></p>}
+      </div>);
+  }
   render() {
     const { loaded, claim: c, busy, message } = this.state;
     if (!loaded) return <p className="sub">reading whether this node is a liquidity provider…</p>;
-    if (!c) return <p><b>This node is no liquidity provider.</b> A provider opens incoming Lightning channels to new nodes and earns a share of the 1 % liquidity pool of their federations. To become one, run <code>arena-install</code> again and choose <b>Liquidity provider</b>.</p>;
+    if (!c) return this.offer();
     const st = standingOf(c);
     return (
       <div>
