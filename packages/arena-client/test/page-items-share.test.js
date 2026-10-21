@@ -29,10 +29,12 @@ test('Advanced settings is the last menu item of Settings and opens a screen of 
   assert.ok(!/arena-donation-select/.test(main), 'the donation dropdown is on the Advanced screen only');
   assert.match(screen, /style="display:none"/);
   assert.match(screen, /<h2 id="arena-advanced-title">ADVANCED SETTINGS<\/h2><button id="arena-advanced-back" type="button">/);
-  assert.match(screen, /<select id="arena-donation-select"/);
-  const share = screen.slice(screen.indexOf('<select id="arena-items-share-select"'), screen.indexOf('</select>', screen.indexOf('arena-items-share-select')));
-  assert.deepEqual([...share.matchAll(/<option value="(\d+)"( selected)?>(\d+)%<\/option>/g)].map((m) => [Number(m[1]), !!m[2]]),
-    [[40, true], [30, false], [20, false], [10, false], [0, false]]);   // the reserves' terms: 40 .. 0 %
+  // the donation and the in-game share are React's cards on the Advanced screen (kanban #564, arena-web SettingsCards)
+  for (const id of ['arena-set-advanced', 'arena-set-items-share', 'arena-set-debug-feds']) assert.match(screen, new RegExp(`<section class="settings-card" id="${id}"></section>`));
+  const cardsSrc = readFileSync(new URL('../../arena-web/src/arena/SettingsCards.jsx', import.meta.url), 'utf8');
+  assert.match(cardsSrc, /<select id="arena-donation-select"/);
+  assert.match(cardsSrc, /const \{ share, shares = \[40, 30, 20, 10, 0\], lead, what = '', onChange \} = this\.props;/, 'the reserves\' terms: 40 .. 0 %');
+  assert.match(html, /shares: terms \? terms\.shares : \[40, 30, 20, 10, 0\]/, 'the shop\'s terms when known');
   // the menu item opens the screen, Back and Settings' Close hide it
   assert.match(html, /getElementById\('arena-advanced-go'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('arena-settings-advanced'\)\.style\.display = '';/);
   assert.match(html, /getElementById\('arena-advanced-back'\)\.addEventListener\('click', \(\) => \{ document\.getElementById\('arena-settings-advanced'\)\.style\.display = 'none'; \}\);/);

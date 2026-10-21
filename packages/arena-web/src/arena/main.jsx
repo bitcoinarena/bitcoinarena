@@ -18,7 +18,7 @@ import { WalletHistory } from './WalletHistory.jsx';
 import { CustodyCard } from './CustodyCard.jsx';
 import { SeedModal } from './SeedModal.jsx';
 import { WalletStart } from './WalletStart.jsx';
-import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard } from './SettingsCards.jsx';
+import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -76,4 +76,7 @@ if (typeof window !== 'undefined') window.ArenaWalletStart = { open: openWalletS
 if (typeof window !== 'undefined') window.ArenaSettings = {
   name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),
   logs: (host, props) => into(host, <LogsCard {...props} />), seed: (host, props) => into(host, <SeedCard {...props} />),
-  account: (host, props) => into(host, <AccountCard {...props} />) };
+  account: (host, props) => into(host, <AccountCard {...props} />),
+  federations: (host, props) => into(host, <ConfirmedFederationsCard {...props} />), community: (host, props) => into(host, <CommunityCard {...props} />),
+  donation: (host, props) => into(host, <DonationCard {...props} />), itemsShare: (host, props) => into(host, <ItemsShareCard {...props} />),
+  debug: (host, props) => into(host, <DebugCard {...props} />) };

@@ -49,7 +49,8 @@ function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const document = { getElementById: (id) => (els[id] = els[id] || node(id)), createElement: node };
   // the browser's store through the page's one door, window.ARENA_BROWSER_STORE: the same fake as `localStorage`
   const window = { ARENA_FED_STATUS: status, ARENA_CURVE: {}, ARENA_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, ARENA_BROWSER_STORE: () => storage,
-    ArenaConfirm: { ask: (host, props) => dialogs.push(props), clear: () => {} } };   // the page's bundle (React) as a record of what it was asked to show
+    ArenaConfirm: { ask: (host, props) => dialogs.push(props), clear: () => {} },
+    ArenaSettings: { federations: (host, props) => { host.drawn = props; } } };   // Settings' list drawn by React (kanban #564): what it is handed   // the page's bundle (React) as a record of what it was asked to show
   const dialogs = [];
   const asked = [];
   const ARENACLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
@@ -120,14 +121,11 @@ test('Settings lists the confirmed federation; after Forget it is asked again', 
   fed.confirmFederation(storage, fid, 1);
   const p = page({ storage, checked: census(UNKNOWN) });
   p.paintConfirmed();
-  const list = p.els['arena-fed-confirmed'].children;
-  assert.equal(list.length, 1);
-  const [label, forget] = list[0].children;
-  assert.equal(label.textContent, fid.slice(0, 16) + '…');
-  assert.equal(forget.textContent, 'Forget');
-  forget.listeners.click();
+  const drawn = () => p.els['arena-set-federations'].drawn;
+  assert.deepEqual(drawn().list.map((c) => c.federation), [fid], 'the confirmed federation listed');
+  drawn().onForget(fid);
   assert.equal(fed.federationConfirmed(storage, fid), false);
-  assert.match(p.els['arena-fed-confirmed'].innerHTML, /none/);
+  assert.deepEqual(drawn().list, [], 'drawn again: none left');
   const asking = p.gate({ round: round(UNKNOWN), invite: invite(UNKNOWN), roundIdHex: 'ab', nodes: [] });
   await p.answer(false);
   assert.equal((await asking).ok, false, 'asked again');

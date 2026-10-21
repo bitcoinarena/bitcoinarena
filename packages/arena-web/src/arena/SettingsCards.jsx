@@ -28,12 +28,12 @@ export class NameCard extends React.Component {
   }
 }
 
-// SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings"): the switch alone, in its host inside the page's
-// Graphics card (Tick Tock's quality select stands before it)
+// SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings")
 export class GraphicsCard extends React.Component {
   constructor(props) { super(props); this.state = { on: !!props.on }; }
   render() {
     return (<>
+      <h3>Graphics</h3>
       <label className="fps-toggle"><input type="checkbox" id="arena-fps-toggle" checked={this.state.on} onChange={(e) => { this.setState({ on: e.target.checked }); this.props.onToggle(e.target.checked); }} /> Show FPS</label>
     </>);
   }
@@ -102,6 +102,74 @@ export class AccountCard extends React.Component {
           </div>
         </div>) : null}
       <div className="muted">{why}</div>
+    </>);
+  }
+}
+
+// FEDERATIONS YOU CONFIRMED (§23.6): not on the page's known-good list, trusted by the player; Forget and the page asks again
+export class ConfirmedFederationsCard extends React.Component {
+  render() {
+    const { list = [], onForget } = this.props;
+    return (<>
+      <h3>Federations you confirmed</h3>
+      <div className="muted">Federations not on this page's known-good list that you chose to trust. Forget one and the page asks again.</div>
+      <div id="arena-fed-confirmed">
+        {list.length ? list.map((c) => (
+          <div key={c.federation} className="name-row"><code>{c.federation.slice(0, 16)}…</code>
+            <button type="button" data-federation={c.federation} onClick={() => onForget(c.federation)}>Forget</button></div>))
+          : <div className="muted">none</div>}
+      </div>
+    </>);
+  }
+}
+
+// THE COMMUNITY (2026-10-09: "Armada is the Discord"): the Bitcoin Arena community on Armada - log in with the Nostr key
+export class CommunityCard extends React.Component {
+  render() {
+    return (<>
+      <h3>Community</h3>
+      <div className="muted">Chat with players, node operators and game developers on Armada - log in with your Nostr key.</div>
+      <a id="arena-armada-link" href={this.props.href} target="_blank" rel="noopener" style={{ color: '#c9a8ff', fontWeight: 600 }}>Join Bitcoin Arena on Armada →</a>
+    </>);
+  }
+}
+
+// ADVANCED SETTINGS' CARDS (2026-10-16): the donation share of each paid entry, the in-game items' developers' share, the debug switch -
+// each a choice the page keeps and prices by; drawn here with what the page reads
+export class DonationCard extends React.Component {
+  render() {
+    const { pct, recipients = '', onChange } = this.props;
+    return (<>
+      <h3>Donation</h3>
+      <div className="muted">A share of each paid entry to the protocol and game developers</div>
+      <select id="arena-donation-select" aria-label="Donation" value={String(pct)} onChange={(e) => onChange(Number(e.target.value))}>
+        {[0, 1, 2, 3, 4, 5].map((v) => <option key={v} value={String(v)}>{v}%</option>)}
+      </select>
+      <div className="muted">{recipients}</div>
+    </>);
+  }
+}
+export class ItemsShareCard extends React.Component {
+  render() {
+    const { share, shares = [40, 30, 20, 10, 0], lead, what = '', onChange } = this.props;
+    return (<>
+      <h3>In-game items</h3>
+      <div className="muted">{lead}</div>
+      <select id="arena-items-share-select" aria-label="In-game items: developers' share" value={String(share)} onChange={(e) => onChange(Number(e.target.value))}>
+        {shares.map((v) => <option key={v} value={String(v)}>{v}%</option>)}
+      </select>
+      <div className="muted">{what}</div>
+    </>);
+  }
+}
+export class DebugCard extends React.Component {
+  constructor(props) { super(props); this.state = { on: !!props.on }; }
+  render() {
+    return (<>
+      <h3>Debug</h3>
+      <label className="menu-row" style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+        <input type="checkbox" id="arena-debug-feds" checked={this.state.on} onChange={(e) => { this.setState({ on: e.target.checked }); this.props.onToggle(e.target.checked); }} />
+        Show every federation in the balance, with its capacity and a deposit into it</label>
     </>);
   }
 }
