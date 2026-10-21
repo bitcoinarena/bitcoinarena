@@ -27,10 +27,19 @@ test('a chosen game puts its name and its icon in the loading screen\'s title', 
   const from = HTML.indexOf("        if (document.documentElement.classList.contains('other-game')) { const n = document.getElementById('site-name');");
   assert.ok(from > 0);
   const src = HTML.slice(from, HTML.indexOf("i.textContent = ''; }\n", HTML.indexOf("else if (i && document.documentElement.classList.contains('arena-root'))", from)) + 21);
-  const el = () => ({ textContent: '', kids: [], append(x) { this.kids.push(x); } });
-  const els = { 'site-name': el(), 'site-icons': el() };
-  const document = { documentElement: { classList: { contains: (c) => c === 'other-game' } }, getElementById: (id) => els[id], createElement: () => ({}) };
-  pageFunction(PAGE, ['document', 'window', 'game'], src)(document, {}, { name: 'btc-updown-15m', title: 'Bitcoin Up or Down', icon: 'https://x/icon.svg' });
-  assert.equal(els['site-name'].textContent, 'Bitcoin Up or Down');
-  assert.equal(els['site-icons'].kids.length, 1); assert.equal(els['site-icons'].kids[0].src, 'https://x/icon.svg');
+  // the icons box as the page has it: empty, or holding the page's own copy of the icon (a data: image) since the first paint
+  const el = (img = null) => ({ textContent: '', kids: img ? [img] : [], append(x) { this.kids.push(x); }, querySelector: (q) => (q === 'img' ? img : null) });
+  const run = (icons) => {
+    const els = { 'site-name': el(), 'site-icons': icons };
+    const document = { documentElement: { classList: { contains: (c) => c === 'other-game' } }, getElementById: (id) => els[id], createElement: () => ({}) };
+    pageFunction(PAGE, ['document', 'window', 'game'], src)(document, {}, { name: 'btc-updown-15m', title: 'Bitcoin Up or Down', icon: 'https://x/icon.svg' });
+    return els;
+  };
+  const fetched = run(el());
+  assert.equal(fetched['site-name'].textContent, 'Bitcoin Up or Down');
+  assert.equal(fetched['site-icons'].kids.length, 1); assert.equal(fetched['site-icons'].kids[0].src, 'https://x/icon.svg');
+  // the page's own copy stays: the icon is not fetched again over it
+  const own = { src: 'data:image/svg+xml,<svg/>' };
+  const kept = run(el(own));
+  assert.deepEqual(kept['site-icons'].kids, [own]);
 });
