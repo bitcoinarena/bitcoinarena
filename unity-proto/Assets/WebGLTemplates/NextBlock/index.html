@@ -2080,8 +2080,9 @@
   </script>
 
   <!-- UP/DOWN'S PAGE PART (kanban #521): the markets' code and the pick sheet, from packages/btc-updown/page; before the main script, whose names it shares -->
-  <!-- the market's React views (kanban #564, packages/arena-web): market-page.js draws its pick sheet with them when they loaded -->
-  <script type="module" src="games/btc-updown/market-react-page.js"></script>
+  <!-- the Arena page's React views (kanban #564, packages/arena-web): the market's pick sheet (market-page.js draws it with them when they
+       loaded) and the games screen's tiles; without the file the page draws both itself -->
+  <script type="module" src="arena-react.js"></script>
   <script src="games/btc-updown/market-page.js"></script>
   <!-- TICK TOCK'S PAGE PART (kanban #521): the Unity bridge, from packages/nextblock/page; the build's loader is named here, where the template is filled -->
   <script>window.ARENA_UNITY_LOADER = 'Build/{{{ LOADER_FILENAME }}}';</script>
@@ -5995,71 +5996,82 @@
           // THE TILES: games first, then prediction markets; each its logo, type, signed description and players
           const typeOf = (g) => (g.attested ? 'market' : g.manifest && g.manifest.resultType === 3 ? 'head-to-head' : 'game');
           const groups = [['Games', tiles.filter((g) => !g.attested)], ['Prediction markets', tiles.filter((g) => g.attested)]];
-          for (const [label, games] of groups) {
-            if (!games.length) continue;
-            const sec = document.createElement('section'); sec.className = 'group';
-            const h = document.createElement('h3'); h.textContent = label + ' \u00b7 ' + games.length; sec.append(h);
-            const grid = document.createElement('div'); grid.className = 'grid'; sec.append(grid);
-            for (const g of games) {
-              const kind = typeOf(g);
-              const b = document.createElement('button'); b.type = 'button'; b.className = 'tile game ' + (kind === 'market' ? 'market' : 'play-game'); b.dataset.game = g.id;
-              const head = document.createElement('div'); head.className = 'head';
-              const logo = document.createElement('div'); logo.className = 'logo';
-              if (g.icon) {
-                // its second route first, then the address as listed, then its initial
-                const i = document.createElement('img'); const via = window.ARENA_ROUTED_URL ? window.ARENA_ROUTED_URL(g.icon) : g.icon;
-                i.src = via; i.alt = ''; i.onerror = () => { if (i.src !== g.icon && via !== g.icon) { i.src = g.icon; return; } logo.textContent = (g.title || '?').slice(0, 1); }; logo.append(i);
+          // THE TILES IN REACT (kanban #564, packages/arena-web GameTiles): the same tiles, drawn by the Arena page's bundle when it loaded -
+          // the page's checks and taps handed in; the page's own drawing below otherwise
+          const reactTiles = window.ArenaGames && window.ArenaGames.drawTiles && ARENACLIENT.checkedGameInfo;
+          if (reactTiles) window.ArenaGames.drawTiles(list, { tiles,
+            verifyInfo: (g) => (ARENACLIENT.checkedGameInfoOfTile || ARENACLIENT.checkedGameInfo)(g, pageEd25519Verify),
+            routed: window.ARENA_ROUTED_URL || null, onChoose: (g) => chosen(g),
+            onChip: (g, kind) => { if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); },
+            onSeason: (g) => { if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); },
+            onTip: window.ARENA_ZAP ? (g, info) => window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }) : null });
+          else {
+            for (const [label, games] of groups) {
+              if (!games.length) continue;
+              const sec = document.createElement('section'); sec.className = 'group';
+              const h = document.createElement('h3'); h.textContent = label + ' \u00b7 ' + games.length; sec.append(h);
+              const grid = document.createElement('div'); grid.className = 'grid'; sec.append(grid);
+              for (const g of games) {
+                const kind = typeOf(g);
+                const b = document.createElement('button'); b.type = 'button'; b.className = 'tile game ' + (kind === 'market' ? 'market' : 'play-game'); b.dataset.game = g.id;
+                const head = document.createElement('div'); head.className = 'head';
+                const logo = document.createElement('div'); logo.className = 'logo';
+                if (g.icon) {
+                  // its second route first, then the address as listed, then its initial
+                  const i = document.createElement('img'); const via = window.ARENA_ROUTED_URL ? window.ARENA_ROUTED_URL(g.icon) : g.icon;
+                  i.src = via; i.alt = ''; i.onerror = () => { if (i.src !== g.icon && via !== g.icon) { i.src = g.icon; return; } logo.textContent = (g.title || '?').slice(0, 1); }; logo.append(i);
+                }
+                else logo.textContent = (g.title || '?').slice(0, 1);
+                const who = document.createElement('div');
+                const name = document.createElement('div'); name.className = 'name'; name.textContent = g.title;
+                const badge = document.createElement('span'); badge.className = 'badge';
+                badge.textContent = kind === 'market' ? 'Prediction market' : kind === 'head-to-head' ? 'Head-to-head game' : 'Game';
+                who.append(name, badge); head.append(logo, who);
+                const play = document.createElement('span'); play.className = 'play'; play.textContent = (kind === 'market' ? 'Trade' : 'Play') + ' \u2192';
+                const desc = document.createElement('div'); desc.className = 'desc none'; desc.textContent = 'No signed description.';
+                const signed = document.createElement('div'); signed.className = 'signed';
+                const stats = document.createElement('div'); stats.className = 'stats';
+                // A COUNT: its icon (shown in the compact layout), its number, its word (the details layout) - and the words in its title
+                const ICONS = { nodes: '<path d="M8 1.5 14 5v6l-6 3.5L2 11V5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/>',
+                  players: '<circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/>',
+                  rounds: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.4 5.2v5.6L11 8z" fill="currentColor"/>' };
+                const chip = (n, word, kind, idle, shown = word) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
+                  const dot = document.createElement('i'); const ico = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ico.setAttribute('class', 'ico'); ico.setAttribute('viewBox', '0 0 16 16'); ico.setAttribute('aria-hidden', 'true'); ico.innerHTML = ICONS[kind];
+                  const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + shown; c.append(dot, ico, document.createTextNode(n >= 1000 ? (n >= 10000 ? Math.floor(n / 1000) : Math.floor(n / 100) / 10) + 'k' : String(n)), w);
+                  // ITS LIST ON A TAP, not the game: the tile's own tap still picks the game
+                  c.classList.add('opens'); c.setAttribute('role', 'button'); c.tabIndex = 0;
+                  const open = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); };
+                  c.addEventListener('click', open); c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+                  return c; };
+                const live = g.live || { rounds: 0, players: 0 };
+                stats.append(chip(g.nodes.length, 'node' + (g.nodes.length === 1 ? '' : 's'), 'nodes', false),
+                  chip(live.players, 'player' + (live.players === 1 ? '' : 's'), 'players', !live.players),
+                  chip(live.rounds, 'live round' + (live.rounds === 1 ? '' : 's'), 'rounds', !live.rounds, 'round' + (live.rounds === 1 ? '' : 's')));
+                // ITS SEASON BOARD: its own tap, as a chip's is - the tile's tap still picks the game
+                const season = document.createElement('span'); season.className = 'season-go'; season.setAttribute('role', 'button'); season.tabIndex = 0;
+                season.title = 'Leaderboard: ' + (g.title || g.name) + ' over the last days';
+                season.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg>';
+                season.append('Leaderboard');
+                const openSeason = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); };
+                season.addEventListener('click', openSeason); season.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openSeason(e); });
+                b.append(play, head, desc, signed, stats, season);
+                if (!g.known) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = 'Not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16); b.append(w); }
+                // THE DESCRIPTION ONLY WHEN ITS DEVELOPER SIGNED IT (game-info.js): checked here, never taken from a seat
+                if (ARENACLIENT.checkedGameInfo) (ARENACLIENT.checkedGameInfoOfTile || ARENACLIENT.checkedGameInfo)(g, pageEd25519Verify).then((info) => {
+                  if (!info) return;
+                  desc.className = 'desc'; desc.textContent = info.description;
+                  signed.textContent = '\u2713 signed by its developer';
+                  if (info.website) { const a = document.createElement('a'); a.href = info.website; a.target = '_blank'; a.rel = 'noopener'; a.textContent = new URL(info.website).host; a.addEventListener('click', (e) => e.stopPropagation()); signed.append(' \u00b7 ', a); }
+                  // A TIP TO ITS DEVELOPER: only to the address the developer key signed (game-info.js)
+                  if (info.lightning && window.ARENA_ZAP) { const t = document.createElement('button'); t.type = 'button'; t.className = 'tip-dev'; t.textContent = '\u26a1 Tip the developer';
+                    t.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }); });
+                    signed.append(' \u00b7 ', t); }
+                }).catch(() => {});
+                b.addEventListener('click', () => chosen(g));
+                grid.append(b);
               }
-              else logo.textContent = (g.title || '?').slice(0, 1);
-              const who = document.createElement('div');
-              const name = document.createElement('div'); name.className = 'name'; name.textContent = g.title;
-              const badge = document.createElement('span'); badge.className = 'badge';
-              badge.textContent = kind === 'market' ? 'Prediction market' : kind === 'head-to-head' ? 'Head-to-head game' : 'Game';
-              who.append(name, badge); head.append(logo, who);
-              const play = document.createElement('span'); play.className = 'play'; play.textContent = (kind === 'market' ? 'Trade' : 'Play') + ' \u2192';
-              const desc = document.createElement('div'); desc.className = 'desc none'; desc.textContent = 'No signed description.';
-              const signed = document.createElement('div'); signed.className = 'signed';
-              const stats = document.createElement('div'); stats.className = 'stats';
-              // A COUNT: its icon (shown in the compact layout), its number, its word (the details layout) - and the words in its title
-              const ICONS = { nodes: '<path d="M8 1.5 14 5v6l-6 3.5L2 11V5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/>',
-                players: '<circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/>',
-                rounds: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.4 5.2v5.6L11 8z" fill="currentColor"/>' };
-              const chip = (n, word, kind, idle, shown = word) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
-                const dot = document.createElement('i'); const ico = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ico.setAttribute('class', 'ico'); ico.setAttribute('viewBox', '0 0 16 16'); ico.setAttribute('aria-hidden', 'true'); ico.innerHTML = ICONS[kind];
-                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + shown; c.append(dot, ico, document.createTextNode(n >= 1000 ? (n >= 10000 ? Math.floor(n / 1000) : Math.floor(n / 100) / 10) + 'k' : String(n)), w);
-                // ITS LIST ON A TAP, not the game: the tile's own tap still picks the game
-                c.classList.add('opens'); c.setAttribute('role', 'button'); c.tabIndex = 0;
-                const open = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); };
-                c.addEventListener('click', open); c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
-                return c; };
-              const live = g.live || { rounds: 0, players: 0 };
-              stats.append(chip(g.nodes.length, 'node' + (g.nodes.length === 1 ? '' : 's'), 'nodes', false),
-                chip(live.players, 'player' + (live.players === 1 ? '' : 's'), 'players', !live.players),
-                chip(live.rounds, 'live round' + (live.rounds === 1 ? '' : 's'), 'rounds', !live.rounds, 'round' + (live.rounds === 1 ? '' : 's')));
-              // ITS SEASON BOARD: its own tap, as a chip's is - the tile's tap still picks the game
-              const season = document.createElement('span'); season.className = 'season-go'; season.setAttribute('role', 'button'); season.tabIndex = 0;
-              season.title = 'Leaderboard: ' + (g.title || g.name) + ' over the last days';
-              season.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg>';
-              season.append('Leaderboard');
-              const openSeason = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); };
-              season.addEventListener('click', openSeason); season.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openSeason(e); });
-              b.append(play, head, desc, signed, stats, season);
-              if (!g.known) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = 'Not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16); b.append(w); }
-              // THE DESCRIPTION ONLY WHEN ITS DEVELOPER SIGNED IT (game-info.js): checked here, never taken from a seat
-              if (ARENACLIENT.checkedGameInfo) (ARENACLIENT.checkedGameInfoOfTile || ARENACLIENT.checkedGameInfo)(g, pageEd25519Verify).then((info) => {
-                if (!info) return;
-                desc.className = 'desc'; desc.textContent = info.description;
-                signed.textContent = '\u2713 signed by its developer';
-                if (info.website) { const a = document.createElement('a'); a.href = info.website; a.target = '_blank'; a.rel = 'noopener'; a.textContent = new URL(info.website).host; a.addEventListener('click', (e) => e.stopPropagation()); signed.append(' \u00b7 ', a); }
-                // A TIP TO ITS DEVELOPER: only to the address the developer key signed (game-info.js)
-                if (info.lightning && window.ARENA_ZAP) { const t = document.createElement('button'); t.type = 'button'; t.className = 'tip-dev'; t.textContent = '\u26a1 Tip the developer';
-                  t.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }); });
-                  signed.append(' \u00b7 ', t); }
-              }).catch(() => {});
-              b.addEventListener('click', () => chosen(g));
-              grid.append(b);
+              list.append(sec);
             }
-            list.append(sec);
           }
           // THE LAYOUT: compact unless this browser chose the details; the switch flips it and keeps the choice
           {
