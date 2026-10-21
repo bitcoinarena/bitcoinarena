@@ -820,6 +820,16 @@ async function leavePanel() {
 // a trial run in a sandbox, before anything runs; installing and updating take effect at once.
 async function storePanel() {
   let mine = { hosted: [], installed: [], settings: { autoUpdate: false, sources: [] } };
+  // THE APPS ON THIS NODE AS A REACT SCREEN (kanban #564) when this node serves it; the network list and the checks below stay the page's
+  let reactInstalled = false;
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountApps) {
+      const el = $('installed'); if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountApps(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed } });
+      reactInstalled = true;
+    }
+  } catch { reactInstalled = false; }
   const reload = async () => {
     // an answer without its lists (a seat still starting) keeps the empty ones (kanban #553: the page stopped at "reading 'map'")
     try { const got = await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json(); mine = { hosted: [], installed: [], ...got, settings: { autoUpdate: false, sources: [], ...((got && got.settings) || {}) } }; } catch { /* shown as empty */ }
@@ -829,6 +839,7 @@ async function storePanel() {
       <b>${g.installed ? `<button data-remove="${esc(g.id)}">Remove</button>` : 'built in'}</b></div>`;
     const rows = newestApps(mine.hosted).map((g) => one(g) + infoLine(g.info)
       + (g.older.length ? `<details><summary class="sub">${g.older.length} older version${g.older.length === 1 ? '' : 's'} kept for rounds that still use ${g.older.length === 1 ? 'it' : 'them'}</summary>${g.older.sort((x, y) => y.version - x.version).map(one).join('')}</details>` : '')).join('');
+    if (reactInstalled) { const el = $('installed'); if (el._react) el._react.unmount(); el._react = window.ArenaOwner.mountApps(el, { api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed } }); return; }
     $('installed').innerHTML = `${rows || '<p class="sub">none</p>'}
       <label class="confirm"><input type="checkbox" id="auto" ${mine.settings.autoUpdate ? 'checked' : ''}> <span>Update apps automatically</span></label>
       <details><summary class="sub">Where updates come from</summary>
