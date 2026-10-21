@@ -196,6 +196,8 @@ th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:t
 .dash .card{border-radius:14px;padding:16px 18px;min-width:0}.dash .card h3{font-size:14px;color:var(--text);margin:0}
 .card-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 0 10px}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;align-items:start}
+/* a dev client's card takes the row: its stat cards side by side, its table at full width (in a column of 320 px the dates were cut) */
+.cards>.card.dev{grid-column:1/-1}
 .kv .row{padding:7px 0;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent);flex-wrap:nowrap;gap:12px}.kv .row:last-child{border:0}
 .kv .row span{color:var(--dim);min-width:0}.kv .row b{white-space:normal;text-align:right;overflow-wrap:anywhere}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
