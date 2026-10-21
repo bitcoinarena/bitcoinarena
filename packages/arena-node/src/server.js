@@ -3794,10 +3794,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the CLI's refusal in its error's message (founding-seat.js execCli: fedimint-cli says it on stdout)
     const runCli = (args) => execCli(execFileCb, process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args);
     const foundingSetup = cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16),
-      freshSetup: guardianControl && guardianControl.freshSetup ? () => guardianControl.freshSetup() : null });
+      freshSetup: guardianControl && guardianControl.freshSetup ? () => guardianControl.freshSetup() : null,
+      codeFile: guardian.dataDir ? `${guardian.dataDir}/founding-code.json` : null });
     // THE GUARDIAN-NEXT'S SETUP: a guardian in consensus seated first in a successor takes part through it
     const nextSetup = guardianNext && guardianNext.apiPort && guardianNext.dataDir
-      ? cliSetup({ run: runCli, apiPort: guardianNext.apiPort, password: readFileSync(`${guardianNext.dataDir}/admin-password`, 'utf8').trim(), guardianName: toHex(round.pubkey).slice(0, 16) })
+      ? cliSetup({ run: runCli, apiPort: guardianNext.apiPort, password: readFileSync(`${guardianNext.dataDir}/admin-password`, 'utf8').trim(), guardianName: toHex(round.pubkey).slice(0, 16),
+        codeFile: `${guardianNext.dataDir}/founding-code.json` })
       : null;
     foundingSeat = createFoundingSeat({
       // each held record with its body: a DRAINING one seats its seated guardians first; the notices are read against it

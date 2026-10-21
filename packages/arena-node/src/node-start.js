@@ -64,7 +64,9 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   const plan = guardiansToStart(path, chain.env || process.env);
   // the node's key names its guardians' P2P port, the one every node carries to it (p2p-tunnel.js, kanban #562)
   let nodeKey = null; try { nodeKey = nodeIdentity(db).pubkey; } catch { nodeKey = null; }
+  // a guardian waiting in setup is kept across a restart of its node (guardian.js pidfileUnits, kanban #495): its local params live in its memory
   const start = (slot) => startGuardian({ nodePort: options.port, host: options.host || '127.0.0.1', storePath: path, slot, nodeKey,
+    keep: (slot === 'next' ? plan.next : plan.own) === 'setup',
     bitcoindUrl: chain.bitcoindUrl, cookiePath: chain.cookiePath, call: chain.call,
     ...(chain.env ? { env: chain.env } : {}), ...(chain.tailscale !== undefined ? { tailscale: chain.tailscale } : {}),
     ...(chain.log ? { log: chain.log } : {}) });
@@ -87,7 +89,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
       guardianControl: {
         has: () => !!plan.own,
         running: () => !!guardian.running,
-        stop: async () => { if (!guardian.running) return { ok: true }; await guardian.stop(); guardian = none; return { ok: true }; },
+        stop: async () => { if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; },
         start: async () => {
           if (!plan.own) return { ok: false, why: 'this node holds no guardian key and waits in no setup: it runs no guardian' };
           if (guardian.running) return { ok: true };
@@ -101,7 +103,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
         freshSetup: async () => {
           if (plan.own !== 'setup' || !guardian.running) return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
           const dir = guardian.dataDir;
-          await guardian.stop(); guardian = none;
+          await (guardian.halt || guardian.stop)(); guardian = none;   // a kept guardian really stops here (its stop leaves it running)
           const db = join(dir, 'database');
           let kept = null;
           if (existsSync(db)) { kept = `${db}.void-${new Date().toISOString().replace(/[:.]/g, '-')}`; renameSync(db, kept); }

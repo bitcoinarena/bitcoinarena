@@ -86,7 +86,16 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     if (started || !setup || !isSeated(own) || posted) return;
     try {
       let code;
-      try { code = await setup.localParams({ leader: position(own) === 0, name, size: nominal }); }
+      // THE CODE THIS NODE POSTED BEFORE IT WAS STARTED AGAIN (kanban #495, measured 2026-10-21 22:2xZ on 53be35a3: seven seated nodes
+      // restarted after their codes were out took new local params - a new TLS key - while their peers kept the first codes, and every
+      // DKG connection failed "invalid peer certificate: BadSignature"): the same code again, never new params, never a fresh setup.
+      // Its guardian kept the params behind it (guardian.js: a guardian waiting in setup outlives its node).
+      const saved = typeof setup.savedCode === 'function' ? setup.savedCode() : null;
+      const again = !!saved && saved.id === toHex(id);
+      if (again) {
+        code = saved.code;
+        say({ founding: toHex(id).slice(0, 16), ownCode: 'the code posted before this start, again' });
+      } else try { code = await setup.localParams({ leader: position(own) === 0, name, size: nominal }); }
       catch (e) {
         // PARAMS FROM A FOUNDING THAT WENT VOID (kanban #495): the guardian took them for an earlier founding and refuses new ones; it is
         // started again in a fresh setup - once in this founding, only before this node's code is posted - and asked again
@@ -96,6 +105,9 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
         say({ founding: toHex(id).slice(0, 16), freshSetup: r.ok ? 'the guardian\'s setup started again (its old setup kept)' : r.why });
         if (!r.ok) throw e;
         code = await setup.localParams({ leader: position(own) === 0, name, size: nominal });
+      }
+      if (!again && typeof setup.saveCode === 'function') {
+        try { setup.saveCode(toHex(id), code); } catch (e) { say({ founding: toHex(id).slice(0, 16), ownCode: `posted, not kept for a restart: ${e.message}` }); }
       }
       const signature = toHex(sign(setupDigest(id, ownKey, code, tagAt('foundingSetup', { height: triggerHeight }))));
       const m = { id: toHex(id), node: own, code, signature };
