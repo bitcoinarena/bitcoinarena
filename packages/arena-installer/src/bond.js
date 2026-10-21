@@ -19,7 +19,6 @@ import { advertUpdatePayload } from '../../arena-protocol/src/advert-update.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { bondMarker, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex, taggedHash, sha256 } from '../../arena-protocol/src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tweakPoint, combine } from '../../arena-node/src/curve.js';
 
 export const NETWORK = 'testnet4';
@@ -31,6 +30,13 @@ const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;  
 const CHUNK = 80;
 /** Testnet4's blocks, for saying when a height is reached: ten minutes each (often faster: the date is an estimate, the height is the rule). */
 export const BLOCK_MS = 600000;
+
+/**
+ * NEXT BLOCK'S GAME ID, the one game every node's advertisement names (hostedGames). A constant, not an import of the app: a release no
+ * longer carries the apps (kanban #575) - they are downloaded after the installer starts - so nothing here may import one. test/bond.test.js
+ * checks it is the id of the Next Block the Arena pins.
+ */
+export const NEXTBLOCK_GAME_ID = fromHex('495516ae59539661062cd72fd8716afbb378bd386297ab09b20aba0a2cd44150');
 
 /**
  * THE BLOCKS A BOND MAY WAIT TO CONFIRM. A bond counts in the census only when its maturity is at least its confirmation height plus the

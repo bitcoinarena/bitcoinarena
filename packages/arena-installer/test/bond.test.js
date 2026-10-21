@@ -62,3 +62,10 @@ test('the bond: two transactions, the census reads the second as this node\'s te
   assert.deepEqual(bondCounts({ maturity: 157156, confirmedAt: 157012 }), { counts: true, short: 0 }, 'installer node B: no block to spare');
   assert.equal(bondCounts({ maturity: lock.maturity, confirmedAt: 156900 + 1 + BOND_SLACK_BLOCKS }).counts, true, 'now a day late still counts');
 });
+
+// kanban #575: the release no longer carries the apps, so bond.js names Next Block's game id as a constant - the id of the pinned app
+test('the advertisement\'s hosted game is the id of the Next Block the Arena pins', async () => {
+  const { NEXTBLOCK_GAME_ID } = await import('../src/bond.js');
+  const app = await import('../../nextblock/plugin/nextblock.js');
+  assert.equal(toHex(NEXTBLOCK_GAME_ID), toHex(app.NEXTBLOCK_GAME_ID));
+});

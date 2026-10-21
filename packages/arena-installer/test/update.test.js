@@ -436,3 +436,23 @@ test('Windows: an old updater beside a manual update is ended with its release, 
     assert.equal(calls.filter((c) => c[0] === 'schtasks' && c[1] === '/run').length, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// kanban #575: a release carries only its apps' pins; the update fetches them before it stops anything
+test('the new release\'s apps are fetched first: one that cannot be fetched leaves the node running, nothing stopped', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-apps-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const env = { XDG_CONFIG_HOME: join(root, 'config'), USER: 'test' };
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const v1 = join(root, 'releases/arena-node-2026.1.1-linux-x64'), v2 = join(root, 'releases/arena-node-2026.1.2-linux-x64');
+  writeFileSync(join(home, 'node.env'), 'ARENA_BIND=127.0.0.1\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4' }));
+  mkdirSync(unitDir(env), { recursive: true });
+  writeFileSync(join(unitDir(env), UNIT), legacySeatUnit({ node: process.execPath, release: v1, home, port: 1 }));
+  const calls = [], asked = [];
+  const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
+  const r = await updateNode({ home, newRelease: v2, port: 1, env, sh, nowMs: () => 0, platform: 'linux',
+    fetchApps: async (o) => { asked.push(o.release); return { ok: false, why: 'plugin/x.js answered 404 (from github.com/a tester/arena-app-up-or-down)' }; } });
+  assert.deepEqual(r, { ok: false, why: 'the new release\'s apps: plugin/x.js answered 404 (from github.com/a tester/arena-app-up-or-down)' });
+  assert.deepEqual(asked, [v2], 'the new release\'s apps, into the new release');
+  assert.ok(!calls.some((c) => / stop /.test(c)), 'nothing stopped');
+});

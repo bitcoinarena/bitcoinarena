@@ -33,20 +33,29 @@ test('every bundle the node and the installer serve is tracked, so the release c
   assert.ok(tracked.has('packages/arena-installer/www/wizard.js'), 'the installer\'s steps are tracked');
 });
 
-// THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer where
-// all apps are automatically selected"): the installer lists every packages/<app>/app.json of the release, so the release must carry each
-// app - and arena-sdk with its link packages/node_modules/arena-sdk, which the apps' registrations import as arena-sdk/<name>
-test('build-release.sh archives every app with an app.json, and arena-sdk with its link', () => {
+// THE APPS (kanban #575, the owner 2026-10-21: "the installer downloads the 3 apps automatically, no longer built in"): the release carries
+// none of the apps, only their pins (apps.lock.json, apps.files.json), and arena-sdk with its link packages/node_modules/arena-sdk, which
+// the downloaded apps' registrations import as arena-sdk/<name>
+test('build-release.sh archives the apps\' pins, not the apps, and arena-sdk with its link', () => {
   const sh = readFileSync(join(repo, 'tools/release/build-release.sh'), 'utf8');
   const start = sh.split('\n').findIndex((l) => l.startsWith('git -C "$ROOT" archive "$REF"'));
   const lines = sh.split('\n'); let archive = '';
   for (let i = start; i < lines.length; i++) { archive += ` ${lines[i].replace(/\\$/, '')} `; if (!lines[i].endsWith('\\')) break; }
   const apps = readdirSync(join(repo, 'packages')).filter((d) => existsSync(join(repo, 'packages', d, 'app.json')));
-  assert.deepEqual(apps.sort(), ['btc-updown', 'nextblock', 'rock-paper-scissors'], 'the three preinstalled apps');
-  for (const p of [...apps, 'arena-sdk', 'node_modules/arena-sdk']) assert.match(archive, new RegExp(` packages/${p} `), `the archive carries packages/${p}`);
-  const loop = lines.find((l) => /^for p in arena-node /.test(l));
+  assert.deepEqual(apps.sort(), ['btc-updown', 'nextblock', 'rock-paper-scissors'], 'the three apps a node downloads');
+  for (const p of apps) assert.doesNotMatch(archive, new RegExp(` packages/${p} `), `the archive does not carry packages/${p}`);
+  for (const f of ['apps.lock.json', 'apps.files.json']) assert.match(archive, new RegExp(` ${f.replace('.', '\\.')} `), `the archive carries ${f}`);
+  for (const p of ['arena-sdk', 'node_modules/arena-sdk']) assert.match(archive, new RegExp(` packages/${p} `), `the archive carries packages/${p}`);
   // arena-sdk/manifest-sign points at the developer's signing module: it travels too (it imports only the protocol)
   assert.match(archive, / packages\/arena-donor\/src\/manifest-sign\.js /, 'the archive carries manifest-sign');
-  for (const p of [...apps, 'arena-sdk']) assert.ok(loop.split(/[\s;]+/).includes(p), `${p}'s tests and node_modules link are dropped`);
+  const loop = lines.find((l) => /^for p in arena-node /.test(l));
+  assert.ok(loop.split(/[\s;]+/).includes('arena-sdk'), 'arena-sdk\'s tests and node_modules link are dropped');
   assert.match(sh, /rm "\$STAGE\/packages\/node_modules\/arena-sdk"; cp -R "\$STAGE\/packages\/arena-sdk" "\$STAGE\/packages\/node_modules\/arena-sdk"/, 'Windows: a copy, not a link');
+});
+
+// nothing the installer loads before the apps are fetched may import one (it would not start from a release without them)
+test('no module of the installer or the seat imports an app', () => {
+  const files = execFileSync('git', ['ls-files', 'packages/arena-installer/src', 'packages/arena-installer/bin', 'packages/arena-node/src'], { cwd: repo, encoding: 'utf8' }).split('\n').filter((f) => /\.(m?js)$/.test(f));
+  const importsApp = files.filter((f) => /(from|import\()\s*['"][./]*\/(nextblock|rock-paper-scissors|btc-updown|hello-world)\//.test(readFileSync(join(repo, f), 'utf8')));
+  assert.deepEqual(importsApp, []);
 });

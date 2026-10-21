@@ -136,6 +136,14 @@ if (args.includes('--add-custody')) {
   if (!r.ok) { console.error(r.why); process.exit(1); }
 }
 
+// THE APPS (kanban #575): the release carries only their pins; each is downloaded from its repository and checked before the wizard
+// lists them (app-fetch.js, the same the seat's start runs). An app that cannot be fetched stops here, with why.
+{
+  const { ensureApps } = await import('../../arena-node/src/app-fetch.js');
+  const apps = await ensureApps({ release, home, log: (l) => console.log(l) });
+  if (!apps.ok) { console.error(`The apps could not be downloaded: ${apps.why}\nCheck this computer's internet connection and start arena-install again.`); process.exit(1); }
+}
+
 let tunnel = null, server = null;
 const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l), onDone: () => {
   // the public address when the node has one (2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")

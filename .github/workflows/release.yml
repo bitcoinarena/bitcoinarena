@@ -72,7 +72,7 @@ jobs:
             out/SHA256SUMS
 
   # A FRESH INSTALL OF EACH ASSET ON ITS OWN SYSTEM (F.1): unpacked into an empty directory, its seat started on its own runtime hosting
-  # nextblock, and (Linux, macOS) its installer started and its setup link entered
+  # nextblock - its apps fetched at their pins first (kanban #575) - and (Linux, macOS) its installer started and its setup link entered
   smoke:
     needs: build
     strategy:
@@ -97,6 +97,10 @@ jobs:
           set -eu
           mkdir run && tar -xzf out/arena-node-*-${{ matrix.asset }}.tar.gz -C run
           R=$(echo "$PWD"/run/arena-node-*)
+          # the asset carries no app, only their pins (kanban #575): fetched from GitHub and checked, as the installer and the seat's start do
+          [ ! -e "$R/packages/nextblock" ] || { echo "the asset still carries packages/nextblock"; exit 1; }
+          "$R/runtime/node" "$R/packages/arena-node/src/app-fetch.js" "$R" "$PWD/home"
+          test -f "$R/packages/nextblock/.arena-app.json"
           (cd "$R/packages/arena-node" && ARENA_DONATION_NETWORK=testnet4 ARENA_APPS="$R/packages/nextblock/plugin/nextblock.js" \
             "$R/runtime/node" src/main.js 31917 "$PWD/seat.db" > "$PWD/seat.log" 2>&1 &)
           for i in $(seq 1 90); do curl -sf -o /dev/null http://127.0.0.1:31917/identity && break; sleep 1; done
@@ -116,6 +120,10 @@ jobs:
         run: |
           Expand-Archive -Path (Get-ChildItem out\arena-node-*-windows-x64.zip).FullName -DestinationPath run
           $R = (Get-ChildItem run\arena-node-*).FullName
+          # the asset carries no app, only their pins (kanban #575): fetched from GitHub and checked, as the installer and the seat's start do
+          if (Test-Path "$R\packages\nextblock") { "the asset still carries packages\nextblock"; exit 1 }
+          & "$R\runtime\node.exe" "$R\packages\arena-node\src\app-fetch.js" "$R" "$PWD\home"; if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Test-Path "$R\packages\nextblock\.arena-app.json")) { exit 1 }
           $env:ARENA_DONATION_NETWORK = 'testnet4'; $env:ARENA_APPS = "$R\packages\nextblock\plugin\nextblock.js"
           Start-Process -FilePath "$R\runtime\node.exe" -ArgumentList 'src\main.js','31917',"$PWD\seat.db" -WorkingDirectory "$R\packages\arena-node" -RedirectStandardOutput seat.log -RedirectStandardError seat.err
           $ok = $false; for ($i = 0; $i -lt 90; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:31917/identity | Out-Null; $ok = $true; break } catch { Start-Sleep 1 } }
