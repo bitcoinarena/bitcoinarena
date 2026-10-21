@@ -65,7 +65,9 @@ if (flags.includes('--release')) {
   if (existsSync(staged)) rmSync(staged, { recursive: true });
   mkdirSync(staged);
   for (const rel of [...Object.keys(files), 'webgl.json']) copyFileSync(join(out, rel), join(staged, rel.replaceAll('/', '__')));
-  execFileSync('gh', ['release', 'create', tag, '--repo', REPO, '--title', `Next Block WebGL ${name} (${version})`,
+  // the tag on the commit the client was built from: the checkout this runs in
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('gh', ['release', 'create', tag, '--repo', REPO, '--target', commit, '--title', `Next Block WebGL ${name} (${version})`,
     '--notes', `Tick Tock, Next Block's WebGL client ${name}, product version ${version}: ${Object.keys(files).length} files. webgl.json lists each file's SHA-256 (and for each brotli .unityweb the SHA-256 of its unpacked bytes, what the Arena pins). An asset's name is its path with "/" as "__".`,
     ...readdirSync(staged).map((f) => join(staged, f))], { stdio: 'inherit' });
   console.log(`released ${tag} on ${REPO}`);
