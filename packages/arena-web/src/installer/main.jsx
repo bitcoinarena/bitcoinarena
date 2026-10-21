@@ -9,9 +9,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RolesStep, SeedStep, OwnerStep, PromiseStep } from './WizardSteps.jsx';
 import { ChainStep, ReachStep, ServiceStep, FederationStep } from './SetupSteps.jsx';
+import { LightningStep, BondStep, DoneStep } from './FinishSteps.jsx';
 import css from './wizard.css';
 
-const STEPS = { roles: RolesStep, chain: ChainStep, seed: SeedStep, owner: OwnerStep, reach: ReachStep, service: ServiceStep, federation: FederationStep, promise: PromiseStep };
+const STEPS = { roles: RolesStep, chain: ChainStep, seed: SeedStep, owner: OwnerStep, reach: ReachStep, service: ServiceStep,
+  lightning: LightningStep, federation: FederationStep, promise: PromiseStep, bond: BondStep, done: DoneStep };
 // the steps that draw their whole section (the roles draw only their list: the pictures around it stay the page's)
 const SECTIONS = Object.keys(STEPS).filter((k) => k !== 'roles');
 
