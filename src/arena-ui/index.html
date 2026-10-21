@@ -1355,7 +1355,11 @@
     </section>
     <!-- THE NAME, GRAPHICS, CLIENT LOGS, SEED PHRASE AND ACCOUNT CARDS (kanban #564): drawn by React (SettingsCards, window.ArenaSettings) -->
     <section class="settings-card" id="arena-set-name"></section>
-    <section class="settings-card" id="arena-set-graphics"></section>
+    <!-- GRAPHICS: its frame here, Tick Tock's quality select put before the switch (packages/nextblock/page/unity-page.js), the FPS switch React's -->
+    <section class="settings-card" id="arena-set-graphics">
+      <h3>Graphics</h3>
+      <div id="arena-fps-host"></div>
+    </section>
     <section class="settings-card" id="arena-set-logs"></section>
     <section class="settings-card" id="arena-set-seed"></section>
     <!-- DELETE THIS ACCOUNT FROM THIS BROWSER (2026-10-11: "Im settings screen gibt es die Möglichkeit seinen
@@ -7463,7 +7467,7 @@
     (() => {
       let on = false; try { on = window.ARENA_BROWSER_STORE().getItem('arena.fps.show') === '1'; } catch { /* off */ }
       document.body.classList.toggle('arena-fps-on', on);
-      window.ArenaSettings.graphics(document.getElementById('arena-set-graphics'), { on, onToggle: (v) => {
+      window.ArenaSettings.graphics(document.getElementById('arena-fps-host'), { on, onToggle: (v) => {
         try { window.ARENA_BROWSER_STORE().setItem('arena.fps.show', v ? '1' : '0'); } catch { /* this page only */ }
         document.body.classList.toggle('arena-fps-on', v); } });
     })();
