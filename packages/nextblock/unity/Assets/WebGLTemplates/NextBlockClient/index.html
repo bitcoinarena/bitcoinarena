@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0 -->
+<!-- Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE. -->
+<!-- NEXT BLOCK'S OWN WEBGL TEMPLATE (kanban #569): the build's Build/ folder is what the app publishes (tools/publish-webgl.mjs) and
+     what the Arena page loads, hash-pinned. This page only runs the client by itself, for a developer: the Arena's page - header,
+     wallet, lobby, Settings, the footer with Donate - is the Arena's, built by the Arena, never this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{{ PRODUCT_NAME }}} {{{ PRODUCT_VERSION }}}</title>
+  <style>html, body { margin: 0; height: 100%; background: #0d1117; color: #e8eaed; font: 14px system-ui, sans-serif; }
+    #canvas { width: 100%; height: 100%; display: block; } #say { position: fixed; left: 12px; bottom: 10px; opacity: .7; }</style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1"></canvas>
+  <div id="say">{{{ PRODUCT_NAME }}} {{{ PRODUCT_VERSION }}} · __TOTAL_MB__ MB · the client alone (the Arena's page is not here)</div>
+  <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+  <script>
+    createUnityInstance(document.getElementById('canvas'), {
+      dataUrl: 'Build/{{{ DATA_FILENAME }}}', frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}', codeUrl: 'Build/{{{ CODE_FILENAME }}}',
+      streamingAssetsUrl: 'StreamingAssets', companyName: '{{{ COMPANY_NAME }}}', productName: '{{{ PRODUCT_NAME }}}', productVersion: '{{{ PRODUCT_VERSION }}}',
+    }, (p) => { document.getElementById('say').textContent = Math.round(p * 100) + ' %'; })
+      .then(() => { document.getElementById('say').textContent = '{{{ PRODUCT_NAME }}} {{{ PRODUCT_VERSION }}}'; })
+      .catch((e) => { document.getElementById('say').textContent = String(e); });
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # KANBAN #524: THE UNITY-FACING "blwp" NAMES, RENAMED TOGETHER WITH THE NEXT UNITY BUILD. One pass, re-runnable (a second run
 # changes nothing), run from the repository root:  python3 tools/rename/unity524.py [--check]
-#   C# (unity-proto/Assets):  namespace Blwp -> Arena; Blwp<Name> identifiers (BlwpCore, BlwpNet, the 61 jslib entry points) ->
+#   C# (packages/nextblock/unity/Assets):  namespace Blwp -> Arena; Blwp<Name> identifiers (BlwpCore, BlwpNet, the 61 jslib entry points) ->
 #                             Arena<Name>; "[blwp]" log lines -> "[arena]"; the files and folder named so, their .meta moved with
 #                             them (Unity keeps a script's GUID in its .meta, so no scene or prefab reference changes)
 #   the jslib:                the same identifiers; window.BLWP_<X> -> window.ARENA_<X> (the page answers both names, index.html);
@@ -48,7 +48,7 @@ def rewrite(path, fn):
         if not CHECK:
             with open(path, 'w', encoding='utf-8') as f: f.write(t)
 
-A = os.path.join(ROOT, 'unity-proto/Assets')
+A = os.path.join(ROOT, 'packages/nextblock/unity/Assets')
 for d, _, fs in os.walk(A):
     for n in fs:
         p = os.path.join(d, n)
@@ -71,12 +71,12 @@ for base in ['packages/arena-client/test', 'packages/arena-node/test', 'packages
                 rewrite(p, fn)
 
 # the files and the folder, each with its .meta
-moves = [('unity-proto/Assets/Scripts/Blwp/BlwpCore.cs', 'unity-proto/Assets/Scripts/Blwp/ArenaCore.cs'),
-         ('unity-proto/Assets/Scripts/Blwp/BlwpNet.cs', 'unity-proto/Assets/Scripts/Blwp/ArenaNet.cs'),
-         ('unity-proto/Assets/Scripts/Blwp/BlwpLayout.cs', 'unity-proto/Assets/Scripts/Blwp/ArenaLayout.cs'),
-         ('unity-proto/Assets/Tests/BlwpBridgeTests.cs', 'unity-proto/Assets/Tests/ArenaBridgeTests.cs'),
-         ('unity-proto/Assets/Plugins/WebGL/blwp.jslib', 'unity-proto/Assets/Plugins/WebGL/arena.jslib'),
-         ('unity-proto/Assets/Scripts/Blwp', 'unity-proto/Assets/Scripts/Arena')]
+moves = [('packages/nextblock/unity/Assets/Scripts/Blwp/BlwpCore.cs', 'packages/nextblock/unity/Assets/Scripts/Blwp/ArenaCore.cs'),
+         ('packages/nextblock/unity/Assets/Scripts/Blwp/BlwpNet.cs', 'packages/nextblock/unity/Assets/Scripts/Blwp/ArenaNet.cs'),
+         ('packages/nextblock/unity/Assets/Scripts/Blwp/BlwpLayout.cs', 'packages/nextblock/unity/Assets/Scripts/Blwp/ArenaLayout.cs'),
+         ('packages/nextblock/unity/Assets/Tests/BlwpBridgeTests.cs', 'packages/nextblock/unity/Assets/Tests/ArenaBridgeTests.cs'),
+         ('packages/nextblock/unity/Assets/Plugins/WebGL/blwp.jslib', 'packages/nextblock/unity/Assets/Plugins/WebGL/arena.jslib'),
+         ('packages/nextblock/unity/Assets/Scripts/Blwp', 'packages/nextblock/unity/Assets/Scripts/Arena')]
 for a, b in moves:
     pa, pb = os.path.join(ROOT, a), os.path.join(ROOT, b)
     for x, y in [(pa, pb), (pa + '.meta', pb + '.meta')]:

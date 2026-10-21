@@ -48,6 +48,6 @@ test('a round link held to its start tells Unity not to drive on its play=1; any
   assert.equal(undecided({ search: '?round=ab&play=10' }), false);
   const after = PAGE.slice(PAGE.indexOf('const joinOrBackToTheLobby'), PAGE.indexOf('const joinOrBackToTheLobby') + 600);
   assert.match(after, /window\.ARENA_LINK_AUTOPLAY = !held;\n {6}if \(held\) return;/, 'decided as soon as the link is held or not');
-  const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   assert.match(jslib, /ArenaLinkAutoPlay: function \(\) \{\n {4}var v = window\.ARENA_LINK_AUTOPLAY;\n {4}return v === null \? -1 : v === false \? 0 : v === true \? 1 : 2;/);
 });

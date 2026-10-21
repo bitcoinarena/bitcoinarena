@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const PACKAGES = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ENGINE = ['arena-protocol', 'arena-node', 'arena-client', 'arena-donor'];
-const GAME = [resolve(PACKAGES, 'nextblock'), resolve(PACKAGES, '../unity-proto')];
+const GAME = [resolve(PACKAGES, 'nextblock')];   // its Unity project included (packages/nextblock/unity, kanban #569)
 
 const codeOf = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:\\])\/\/[^\n]*/g, '$1 ');
 const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir).flatMap((f) => {

@@ -234,7 +234,7 @@ test('the page ships the client it is written against, and one consumer of onGho
   // AND THE PAGE ASKS. `arena.jslib` is the one file these suites cannot load,
   // so what is checked here is that it calls the module that CAN be measured -
   // not that it reimplements the rule beside it.
-  const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/arena.jslib', 'utf8');
+  const jslib = readFileSync(root + 'packages/nextblock/unity/Assets/Plugins/WebGL/arena.jslib', 'utf8');
   assert.match(jslib, /ARENACLIENT\.watchGhosts\(net\.client, net\.where\)/,
     'the page never asks to be shown the other trucks');
   assert.equal(/onGhost\s*=/.test(jslib), false,

@@ -51,7 +51,7 @@
     })();
   </script>
   <!-- THIS SITE'S OWN GAME (2026-10-09: "The Rock Paper Scissors page must not show Tick Tock, Next Block
-       while connecting"): a deploy for one game names it here (unity-proto/tools/fill-template.mjs --game <name>), or a link
+       while connecting"): a deploy for one game names it here (tools/build-arena-page.mjs), or a link
        names it (?game=<name>). A site whose game is not nextblock never shows nextblock's title, pictures or loading bar: its
        own splash from the first paint, and that game is the one the page opens. Empty: nextblock's page, as before. -->
   <meta name="arena-site-game" content="">
@@ -2146,20 +2146,67 @@
     // the build's files are brotli, unpacked by the browser as they arrive: the stream sees unpacked bytes, so each file's
     // packed and unpacked size (written in when the page is filled - fill-template.mjs) turn them back into the bytes downloaded
     const BUILD_SIZES = (() => { try { return JSON.parse('__BUILD_SIZES__'); } catch (e) { return {}; } })();
+    // NEXT BLOCK'S CLIENT, HASH-PINNED (kanban #569, the owner 2026-10-21: "The Arena page loads that build like any other app client,
+    // hash-pinned"): the app publishes its WebGL client (a release of arena-app-next-block), the Arena pins every file of it
+    // (tools/pin-app-webgl.mjs: src/arena-ui/apps/nextblock.webgl-pin.json) and builds this page with the hashes inside it
+    // (tools/build-arena-page.mjs). Every file of the client the page fetches - Unity's loader through ARENA_PINNED_SCRIPT, the
+    // framework, the wasm and the data through Unity's own fetch, the streamed models and catalogs - is checked here: its bytes as the
+    // browser hands them (a brotli .unityweb unpacked) must hash to its pin, or the file never reaches Unity and the load stops by name.
+    // A client path the pins do not name is refused too; a page built without pins starts no client.
+    const APP_PINS = (() => { try { return JSON.parse('__APP_BUILD_PINS__'); } catch { return null; } })();
+    const CLIENT = /^(Build|ServerData|StreamingAssets|StreamingAssets-astc)\/|^textures\.json$/;
+    const PAGE_BASE = new URL('.', location.href);
+    window.ARENA_CLIENT_CHECKED = {};
+    /** The pin of a client file by its URL ({ rel, hash }), null for a URL that is no client file, a refusal for one that is unpinned. */
+    const pinOf = (url) => {
+      const u = new URL(url, location.href);
+      if (u.origin !== PAGE_BASE.origin || !u.pathname.startsWith(PAGE_BASE.pathname)) return null;
+      const rel = decodeURIComponent(u.pathname.slice(PAGE_BASE.pathname.length));
+      if (!CLIENT.test(rel)) return null;
+      if (!APP_PINS) return { rel, why: 'this page was built without its client\'s pins' };
+      return APP_PINS[rel] ? { rel, hash: APP_PINS[rel] } : { rel, why: 'it is not a file of the pinned client' };
+    };
+    const hexOf = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
+    async function checkPinned(pin, bytes) {
+      if (pin.why) { window.ARENA_CLIENT_CHECKED[pin.rel] = false; window.ARENA_CLIENT_REFUSED = window.ARENA_CLIENT_REFUSED || pin.rel + ' (' + pin.why + ')'; throw new Error(pin.rel + ' refused: ' + pin.why); }
+      const ok = hexOf(await crypto.subtle.digest('SHA-256', bytes)) === pin.hash;
+      window.ARENA_CLIENT_CHECKED[pin.rel] = ok;
+      if (!ok) { window.ARENA_CLIENT_REFUSED = window.ARENA_CLIENT_REFUSED || pin.rel + ' (its bytes hash to something else)'; throw new Error(pin.rel + ' is not the pinned client: its bytes hash to something else'); }
+      return bytes;
+    }
     (() => {
       const realFetch = window.fetch.bind(window);
+      /** A client script (Unity's loader) fetched, checked against its pin and handed out as a blob URL: what runs is what was hashed. */
+      window.ARENA_PINNED_SCRIPT = async (path) => {
+        const pin = pinOf(path) || { rel: String(path), why: 'it is not a client file' };
+        const r = await realFetch(path);
+        if (!r.ok) throw new Error(path + ': HTTP ' + r.status);
+        return URL.createObjectURL(new Blob([await checkPinned(pin, await r.arrayBuffer())], { type: 'text/javascript' }));
+      };
       window.fetch = function (input, init) {
         const url = String((input && input.url) || input);
-        if (!/(^|\/)Build\/[^?#]*\.unityweb/.test(url) || typeof TransformStream !== 'function') return realFetch(input, init);
+        const pin = pinOf(url);
+        if (!pin) return realFetch(input, init);
+        // A CLIENT FILE OTHER THAN THE COUNTED BUILD FILES: read whole, checked, handed on
+        if (!/(^|\/)Build\/[^?#]*\.unityweb/.test(url) || typeof TransformStream !== 'function')
+          return realFetch(input, init).then((r) => (!r.ok ? r : r.arrayBuffer().then((b) => checkPinned(pin, b))
+            .then((b) => new Response(b, { status: r.status, statusText: r.statusText, headers: r.headers }))));
         return realFetch(input, init).then((r) => {
           if (!r.ok || !r.body) return r;
           const name = url.split(/[?#]/)[0].split('/').pop(), sz = BUILD_SIZES[name];
           const packed = r.headers.get('content-encoding') && sz && sz[1] ? sz[0] / sz[1] : 1;   // downloaded bytes per byte read
           const f = { total: (sz && sz[0]) || Number(r.headers.get('content-length')) || 0, got: 0, ratio: packed, done: false };
           DL.files.set(url, f); if (!DL.t0) DL.t0 = performance.now();
+          // the bytes are passed on as they arrive (the bar moves) and kept: at the end they are hashed, and a file that is not the pinned
+          // one ends its stream with an error before Unity can take it
+          const kept = [];
           const counted = r.body.pipeThrough(new TransformStream({
-            transform(chunk, c) { const n = chunk.byteLength * f.ratio; f.got += n; DL.samples.push([performance.now(), n]); c.enqueue(chunk); },
-            flush() {
+            transform(chunk, c) { const n = chunk.byteLength * f.ratio; f.got += n; DL.samples.push([performance.now(), n]); kept.push(chunk); c.enqueue(chunk); },
+            async flush(c) {
+              const all = new Uint8Array(kept.reduce((t, x) => t + x.byteLength, 0)); let at = 0;
+              for (const x of kept) { all.set(x, at); at += x.byteLength; }
+              kept.length = 0;
+              try { await checkPinned(pin, all); } catch (e) { console.error('[arena] ' + e.message); c.error(e); return; }
               f.done = true; if (f.total) f.got = f.total;
               // all three in (the framework, the wasm, the data): the download's end
               const names = [...DL.files.keys()].join(' ');
@@ -2274,6 +2321,9 @@
     }
 
     function fail(message) {
+      // A CLIENT FILE REFUSED BY ITS PIN IS THE REASON (kanban #569, measured on preview 92bd57a6 with a wrong wasm pin: Unity, its wasm
+      // stream ended in the page's error, tried again and aborted with "expected magic word 00 61 73 6d" - the page says why instead)
+      if (window.ARENA_CLIENT_REFUSED) message = 'This game\'s client is not the one the Arena pinned, so it does not start: ' + window.ARENA_CLIENT_REFUSED;
       err.textContent = message;
       err.classList.add('show');
       stage.textContent = 'Could not start';

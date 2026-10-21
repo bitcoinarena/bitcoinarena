@@ -3,7 +3,7 @@
 // The core's own chart words (src/chart.js) for the Unity painter's EditMode tests: the painter is tested on what the
 // core hands a page, not on numbers a test made up.
 //
-//   node tools/chart-fixture.mjs > ../../unity-proto/Assets/Tests/Fixtures/chart-words.txt
+//   node tools/chart-fixture.mjs > unity/Assets/Tests/Fixtures/chart-words.txt
 import { init, step, submitSample, teleport, bayZ, START_X } from '../src/sim.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';

@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const root = new URL('../../../', import.meta.url).pathname;
-const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/arena.jslib', 'utf8');
+const jslib = readFileSync(root + 'packages/nextblock/unity/Assets/Plugins/WebGL/arena.jslib', 'utf8');
 const bundle = readFileSync(root + 'packages/arena-client/dist/arena-client.js', 'utf8');
 
 test('the bridge closes a session whose round is not the one the page has joined', () => {
