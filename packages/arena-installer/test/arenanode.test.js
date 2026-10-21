@@ -10,7 +10,7 @@ import http from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { installedServices, overview, control, followTunnelNow, doctor, servicesNamed, serviceId } from '../src/node-services.js';
+import { installedServices, overview, control, bootOf, setBoot, followTunnelNow, doctor, servicesNamed, serviceId } from '../src/node-services.js';
 import { main } from '../src/arenanode.js';
 import { writeCommand } from '../src/launchers.js';
 import { formatConf, parseConf } from '../../arena-node/src/arena-conf.js';
@@ -301,5 +301,35 @@ test('a quick tunnel that came back by itself (a reboot) is followed without the
     calls.length = 0;
     const two = await followTunnelNow({ home: n.home, platform: 'linux', env: n.env, sh });
     assert.deepEqual([two.restarted, acts()], [[], []], 'the same name: nothing changed, nothing restarted');
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
+test('start at boot, one service at a time (kanban #563): Linux - the unit enabled or disabled; macOS - the agent\'s RunAtLoad; Windows - said, not per service', async () => {
+  const n = linuxNode({ port: 8470 });
+  try {
+    const calls = [];
+    const enabled = new Set(['arena-gateway.service']);
+    const sh = async (cmd, args) => {
+      calls.push([cmd, ...args]);
+      if (cmd === 'systemctl' && args[1] === 'is-enabled') return { ok: enabled.has(args[2]), out: enabled.has(args[2]) ? 'enabled\n' : 'disabled\n', err: '' };
+      if (cmd === 'systemctl' && (args[1] === 'enable' || args[1] === 'disable')) { args[1] === 'enable' ? enabled.add(args[2]) : enabled.delete(args[2]); return { ok: true, out: '', err: '' }; }
+      return { ok: true, out: '', err: '' };
+    };
+    const svcs = installedServices({ home: n.home, platform: 'linux', env: n.env });
+    const gw = svcs.find((x) => x.id === 'gateway'), tunnel = svcs.find((x) => x.id === 'tunnel');
+    assert.deepEqual(await bootOf(gw, { platform: 'linux', sh }), { atBoot: true, settable: true });
+    assert.deepEqual(await bootOf(tunnel, { platform: 'linux', sh }), { atBoot: false, settable: true });
+    assert.deepEqual(await setBoot('tunnel', true, { home: n.home, platform: 'linux', env: n.env, sh }), { ok: true, id: 'tunnel', atBoot: true });
+    assert.deepEqual(calls.at(-1), ['systemctl', '--user', 'enable', 'arena-tunnel.service']);
+    assert.equal((await setBoot('gateway', false, { home: n.home, platform: 'linux', env: n.env, sh })).atBoot, false);
+    assert.ok(!enabled.has('arena-gateway.service'));
+    assert.equal(calls.filter((c) => ['start', 'stop', 'restart'].includes(c[2])).length, 0, 'nothing started or stopped by it');
+    // macOS: the launch agent's RunAtLoad, read and set with PlistBuddy on the agent's file
+    const plist = [];
+    const shMac = async (cmd, args) => { plist.push([cmd, ...args]); return { ok: true, out: args[1] === 'Print :RunAtLoad' ? 'true\n' : '', err: '' }; };
+    assert.deepEqual(await bootOf({ id: 'gateway', name: 'io.x.gateway', file: '/L/io.x.gateway.plist' }, { platform: 'darwin', sh: shMac }), { atBoot: true, settable: true });
+    assert.equal((await bootOf({ id: 'guardian', file: null }, { platform: 'darwin', sh: shMac })).settable, false, 'inside the node: not the installer\'s');
+    const win = await bootOf({ id: 'gateway', name: 'arena-gateway.cmd', file: 'C:/x.cmd' }, { platform: 'win32', sh: shMac });
+    assert.deepEqual([win.settable, /at login/.test(win.why)], [false, true]);
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
