@@ -17,6 +17,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { join } from 'node:path';
 import { serve } from './server.js';
 import { startGuardian } from './guardian.js';
+import { nodeIdentity } from './store.js';
 
 /** Whether the node on this store holds a guardian key: both ceremony files beside it, both parsing (`dir` '.guardian-next' for the second). */
 export function holdsGuardianKey(storePath, dir = '.guardian') {
@@ -60,7 +61,9 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   const none = { running: false, stop: async () => {} };
   let guardian = none, next = none;
   const plan = guardiansToStart(path, chain.env || process.env);
-  const start = (slot) => startGuardian({ nodePort: options.port, host: options.host || '127.0.0.1', storePath: path, slot,
+  // the node's key names its guardians' P2P port, the one every node carries to it (p2p-tunnel.js, kanban #562)
+  let nodeKey = null; try { nodeKey = nodeIdentity(db).pubkey; } catch { nodeKey = null; }
+  const start = (slot) => startGuardian({ nodePort: options.port, host: options.host || '127.0.0.1', storePath: path, slot, nodeKey,
     bitcoindUrl: chain.bitcoindUrl, cookiePath: chain.cookiePath, call: chain.call,
     ...(chain.env ? { env: chain.env } : {}), ...(chain.tailscale !== undefined ? { tailscale: chain.tailscale } : {}),
     ...(chain.log ? { log: chain.log } : {}) });
@@ -69,7 +72,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
     try { next = await start('next'); } catch (e) { await guardian.stop(); throw e; }
   }
   const stopBoth = async () => { try { await next.stop(); } finally { await guardian.stop(); } };
-  const as = (g, setup) => ({ apiPort: g.apiPort, endpoint: g.endpoint, dataDir: g.dataDir, ...(setup ? { setup: true } : {}) });
+  const as = (g, setup) => ({ apiPort: g.apiPort, p2pPort: g.p2pPort, endpoint: g.endpoint, dataDir: g.dataDir, ...(setup ? { setup: true } : {}) });
   let node;
   try {
     node = await serve(db, {

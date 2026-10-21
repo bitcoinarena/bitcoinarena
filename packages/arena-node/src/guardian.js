@@ -31,6 +31,7 @@ import { spawn, execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { p2pTunnelPort } from './p2p-tunnel.js';
 
 /** The guardian's ports, all local: offsets from the node's own port, so four nodes on one machine never collide. */
 export function guardianPorts(nodePort) {
@@ -92,7 +93,11 @@ export function guardianEndpoint(nodePort, { host = '127.0.0.1', tailscale = nul
 }
 
 /** Everything fedimintd is started with - derived, never typed. `ports` the slot's (guardianPorts, or guardianNextPorts). */
-export function guardianEnv({ nodePort, dataDir, network, chain = network, bitcoindUrl, cookieSecret, password, endpoint, ports = guardianPorts(nodePort) }) {
+// THE P2P URL (kanban #562): with `p2pUrlPort` - p2p-tunnel.js p2pTunnelPort of the node key - the port every node carries to
+// this node through its seat; without, the local bind port as before (a guardian whose federation is founded keeps the URL
+// its config holds: Fedimint reads FM_P2P_URL at the ceremony only)
+export function guardianEnv({ nodePort, dataDir, network, chain = network, bitcoindUrl, cookieSecret, password, endpoint, ports = guardianPorts(nodePort),
+  p2pUrlPort = null }) {
   const env = {
     FM_DATA_DIR: dataDir,
     FM_BITCOIN_NETWORK: network,
@@ -103,7 +108,7 @@ export function guardianEnv({ nodePort, dataDir, network, chain = network, bitco
     FM_BIND_P2P: `127.0.0.1:${ports.p2p}`,
     FM_BIND_UI: `127.0.0.1:${ports.ui}`,
     FM_BIND_METRICS: `127.0.0.1:${ports.metrics}`,
-    FM_P2P_URL: `fedimint://127.0.0.1:${ports.p2p}`,
+    FM_P2P_URL: `fedimint://127.0.0.1:${p2pUrlPort || ports.p2p}`,
     FM_API_URL: endpoint,
     FM_ENABLE_IROH: 'false',
     FM_PASSWORD_API: password,
@@ -152,7 +157,7 @@ export const systemdUnits = {
 // fedimintd on a data dir without a finished ceremony waits in setup mode (a founding drives it, founding-seat.js); with one, it
 // runs the federation.
 export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, cookiePath, call, env = process.env,
-  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000, units = systemdUnits, slot = 'guardian' }) {
+  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000, units = systemdUnits, slot = 'guardian', nodeKey = null }) {
   const S = GUARDIAN_SLOTS[slot];
   if (!S) throw new Error(`guardian: no slot ${slot}`);
   const tag = `[${S.unit}]`;
@@ -192,7 +197,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const endpoint = slot === 'next'
     ? env[`ARENA_GUARDIAN_NEXT_ENDPOINT_${nodePort}`] || (named ? named.replace(/\/guardian\/?$/, '') + S.path : guardianEndpoint(nodePort, { host, tailscale: ts, path: S.path }))
     : named || guardianEndpoint(nodePort, { host, tailscale: ts });
-  const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports,
+  const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
   // A GUARDIAN THAT OUTLIVES ITS NODE (2026-10-03, after the restart that held deposits: "2. Separate guardian and
@@ -204,11 +209,11 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     const unit = guardianUnit(nodePort, slot);
     if (await units.active(unit)) {
       log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-      return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, slot, stop: async () => {} };
+      return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {} };
     }
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
-    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, slot, stop: async () => {} };
+    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {} };
   }
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
@@ -216,7 +221,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   child.on('exit', (code, sig) => { exited = true; log(`[guardian] fedimintd exited (${sig || code})`); });
   log(`[guardian] fedimintd ${child.pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
   return {
-    running: true, endpoint, network, chain, dataDir, apiPort: ports.api, pid: child.pid, slot,
+    running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot,
     stop: () => new Promise((r) => {
       if (exited) return r();
       child.once('exit', () => r());
