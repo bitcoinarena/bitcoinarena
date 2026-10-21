@@ -5,6 +5,8 @@
 // looked at by address shows the report and waits for Install. The page's client offers the five functions the screen is given.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { NetworkAppsPanel, offersOf } from '../dist/test/network-apps.mjs';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -63,4 +65,10 @@ test('a node looked at by address: what it offers with the version it would upda
 test('the page\'s own client offers the five functions the screen is given', async () => {
   const C = await import('../../arena-node/pages/owner-client.js');
   for (const f of ['checkPackage', 'checkUpdate', 'verifyEd25519', 'toHex', 'fromHex']) assert.equal(typeof C[f], 'function', f);
+});
+
+test('no node answered: said so, not "this node runs every app the others do" (kanban #565, measured on installer 4003758b: "0 of 0 nodes answered")', async () => {
+  const html = renderToStaticMarkup(React.createElement(NetworkAppsPanel, { initial: { ng: { seats: [], games: [], atMs: 1 }, hosted: [] } }));
+  assert.match(html, /<div class="summary bad"><div><b>No other node answered: nothing to compare yet<\/b>/);
+  assert.doesNotMatch(html, /runs every app the others do/);
 });
