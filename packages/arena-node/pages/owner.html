@@ -982,6 +982,20 @@ const fourRows = (n) => {
     <p class="sub"><b>Federation</b> - signed by ${WHO.invite}.</p></details>`;
 };
 async function networkPanel() {
+  // THE REACT SCREEN (kanban #564) when this node serves it, with this page's own network checks; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountNetwork) {
+      for (const id of ['nerr', 'noffer']) { const x = $(id); if (x) x.style.display = 'none'; }
+      const lookBox = $('nfrom') && $('nfrom').closest('details'); if (lookBox) lookBox.style.display = 'none';
+      const el = $('netmine'); if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountNetwork(el, {
+        api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed,
+          fetchJson: async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); } },
+        client: { checkNetworkPackage: C.checkNetworkPackage, checkNetworkUpdate: C.checkNetworkUpdate, verifyEd25519: C.verifyEd25519 } });
+      return;
+    }
+  } catch { /* the page's own panel */ }
   let mine = { chain: null, own: null, installed: [] }, games = [];
   const reload = async () => {
     try { const got = await (await fetch(at('/owner/network'), { cache: 'no-store' })).json(); mine = { chain: null, own: null, installed: [], ...got, installed: (got && got.installed) || [] }; } catch { /* shown as empty */ }
