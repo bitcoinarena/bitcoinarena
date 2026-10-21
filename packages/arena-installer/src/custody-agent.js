@@ -14,7 +14,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast, addressScript } from './wallet.js';
-import { advertFor, buildAdvertUpdate, buildSend } from './bond.js';
+import { advertFor, buildAdvertUpdate, buildSend, EMERGENCY_IN_ADVERT } from './bond.js';
+import { emergencyOf } from './seed.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
 import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClose } from './lnd.js';
 
@@ -131,7 +132,10 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       const nodeSecret = nodeSecretOf();
       const { schnorr } = await import('@noble/curves/secp256k1.js');
       const advert = { ...advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
-        payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null }),
+        payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+        // THE EMERGENCY KEY KEPT (§23A.5a): the census reads a node's newest advertisement, and an update without the key left a guardian
+        // unable to leave by its emergency code ("that node's advertisement names no emergency key") - the guardians it exists for
+        emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null }),
         guardianOf: [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }] };
       let u;
       try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
