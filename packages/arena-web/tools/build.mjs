@@ -8,43 +8,49 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-mkdirSync(join(root, 'dist', 'test'), { recursive: true });
+// THE RELEASE'S CHECK (kanban #564, the owner 2026-10-21: "pack the release"): ARENA_WEB_OUT builds every bundle into that folder and
+// nothing else - no copies into the pages' folders, no test modules - so a test can compare them with the dist/ a release ships
+const ALONE = process.env.ARENA_WEB_OUT || null;
+const dist = ALONE || join(root, 'dist');
+const copy = (from, to) => { if (!ALONE) copyFileSync(from, to); };
+mkdirSync(ALONE ? dist : join(dist, 'test'), { recursive: true });
 await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/owner.js'), legalComments: 'none' });
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'owner.js'), legalComments: 'none' });
 // THE ARENA PAGE'S ONE BUNDLE: the market's pick sheet and the games screen's tiles, React once - into src/arena-ui, the page's own
 // folder (tools/sync-arena-ui.mjs copies it into the Unity template with the rest)
 // a CLASSIC script, loaded before the page's main script (kanban #564, the owner 2026-10-21: "Delete the old html code of those components
 // you have ported, no fall backs"): every React view is there when the page's first line runs
 await build({ entryPoints: [join(root, 'src/arena/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/arena.js'), legalComments: 'none' });
-copyFileSync(join(root, 'dist/arena.js'), join(root, '../../src/arena-ui/arena-react.js'));
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'arena.js'), legalComments: 'none' });
+copy(join(dist, 'arena.js'), join(root, '../../src/arena-ui/arena-react.js'));
 // THE INSTALLER'S STEPS: one plain script (the wizard page loads it before its own), its stylesheet inside; beside the wizard's page,
 // which the installer serves from its www/ (the release carries packages/arena-installer whole)
 await build({ entryPoints: [join(root, 'src/installer/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/wizard.js'), legalComments: 'none' });
-copyFileSync(join(root, 'dist/wizard.js'), join(root, '../arena-installer/www/wizard.js'));
+  loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'wizard.js'), legalComments: 'none' });
+copy(join(dist, 'wizard.js'), join(root, '../arena-installer/www/wizard.js'));
 // THE NODE DASHBOARD (kanban #566): served by the node at /dashboard/react.js beside its page
 await build({ entryPoints: [join(root, 'src/dashboard/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/dashboard.js'), legalComments: 'none' });
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'dashboard.js'), legalComments: 'none' });
 // THE NODE'S ROUNDS PAGE (kanban #564): served by the node at /rounds/react.js beside pages/rounds.html
 await build({ entryPoints: [join(root, 'src/rounds/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/rounds.js'), legalComments: 'none' });
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'rounds.js'), legalComments: 'none' });
 // "MY NODE IS OFFLINE" (kanban #564): served by the node at /emergency/react.js beside pages/emergency.html
 await build({ entryPoints: [join(root, 'src/emergency/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/emergency.js'), legalComments: 'none' });
-copyFileSync(join(root, 'dist/emergency.js'), join(root, '../../src/arena-ui/offline/react.js'));   // the Arena site's /offline/ too
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'emergency.js'), legalComments: 'none' });
+copy(join(dist, 'emergency.js'), join(root, '../../src/arena-ui/offline/react.js'));   // the Arena site's /offline/ too
 // THE NETWORK HEALTH PAGE'S VIEWS (kanban #564): beside its page in src/arena-ui/health (the page's folder ships with the Arena page)
 await build({ entryPoints: [join(root, 'src/health/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/health.js'), legalComments: 'none' });
-copyFileSync(join(root, 'dist/health.js'), join(root, '../../src/arena-ui/health/react.js'));
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'health.js'), legalComments: 'none' });
+copy(join(dist, 'health.js'), join(root, '../../src/arena-ui/health/react.js'));
 // THE PROPOSALS FORUM'S READING VIEWS (kanban #564): beside forum.js in src/arena-ui/proposals
 await build({ entryPoints: [join(root, 'src/proposals/main.jsx')], bundle: true, format: 'esm', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/proposals.js'), legalComments: 'none' });
-copyFileSync(join(root, 'dist/proposals.js'), join(root, '../../src/arena-ui/proposals/react.js'));
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'proposals.js'), legalComments: 'none' });
+copy(join(dist, 'proposals.js'), join(root, '../../src/arena-ui/proposals/react.js'));
 // ROCK PAPER SCISSORS' TABLE: one plain script, inlined into its version-4 client by packages/rock-paper-scissors/tools/build-client-v4.mjs
 await build({ entryPoints: [join(root, 'src/rps/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
-  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/rps.js'), legalComments: 'none' });
-copyFileSync(join(root, 'src/design/arena.css'), join(root, 'dist/arena.css'));
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'rps.js'), legalComments: 'none' });
+copyFileSync(join(root, 'src/design/arena.css'), join(dist, 'arena.css'));
+if (ALONE) { console.log(`built the served bundles into ${ALONE}`); process.exit(0); }
 for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['bond', 'src/owner/BondPanel.jsx'], ['custody', 'src/owner/CustodyPanels.jsx'], ['standing', 'src/owner/StandingPanel.jsx'], ['release', 'src/owner/ReleasePanel.jsx'], ['apps', 'src/owner/AppsPanel.jsx'], ['network-apps', 'src/owner/NetworkAppsPanel.jsx'], ['network', 'src/owner/NetworkPanel.jsx'], ['needs', 'src/owner/NeedsPanel.jsx'], ['market', 'src/market/MarketViews.jsx'], ['games', 'src/arena/GameTiles.jsx'], ['season', 'src/arena/SeasonRows.jsx'], ['zap', 'src/arena/ZapCard.jsx'], ['chips', 'src/arena/ChipList.jsx'], ['balance', 'src/arena/BalanceSplit.jsx'], ['confirm', 'src/arena/ConfirmCard.jsx'], ['wallet', 'src/arena/WalletHistory.jsx'], ['custody-card', 'src/arena/CustodyCard.jsx'], ['seed', 'src/arena/SeedModal.jsx'], ['rps', 'src/rps/RpsView.jsx'], ['dashboard', 'src/dashboard/DashboardPage.jsx'], ['rounds', 'src/rounds/RoundsPage.jsx'], ['emergency', 'src/emergency/EmergencyPage.jsx'], ['health', 'src/health/HealthViews.jsx'], ['proposals', 'src/proposals/ForumViews.jsx'], ['wizard', 'src/installer/WizardSteps.jsx'], ['setup', 'src/installer/SetupSteps.jsx'], ['finish', 'src/installer/FinishSteps.jsx'], ['components', 'src/design/components.jsx']])
   await build({ entryPoints: [join(root, entry)], bundle: true, format: 'esm', jsx: 'automatic', platform: 'node', external: ['react', 'react-dom', 'react/jsx-runtime'],
     outfile: join(root, `dist/test/${name}.mjs`) });

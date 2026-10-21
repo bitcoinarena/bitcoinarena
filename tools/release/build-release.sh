@@ -45,7 +45,9 @@ fetch() { # url sha file
 }
 
 # 1. the code, from the commit (git archive: tracked files only, nothing of a working tree)
-git -C "$ROOT" archive "$REF" LICENSE packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist/owner.js packages/arena-web/dist/arena.css packages/arena-installer packages/nextblock \
+# (all of packages/arena-web/dist: every page script the node serves, packed by esbuild - its pages draw only with React, kanban #564;
+# arena-web/test/dist-fresh checks each is the build of its source, arena-installer/test/release-bundles that each is tracked)
+git -C "$ROOT" archive "$REF" LICENSE packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist packages/arena-installer packages/nextblock \
   | tar -x -C "$STAGE"
 for p in arena-node arena-protocol arena-installer nextblock; do
   rm -rf "$STAGE/packages/$p/test"
