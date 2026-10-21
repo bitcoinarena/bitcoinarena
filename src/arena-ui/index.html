@@ -281,7 +281,7 @@
     #arena-deposit .dep-tabs button, .wd-tabs button { padding: 5px 10px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; border-radius: 4px; cursor: pointer; }
     #arena-deposit .dep-tabs button.on, .wd-tabs button.on,
     #arena-settings .wd-tabs button.on { background: #f7931a; color: #111; border-color: #f7931a; }   /* over Settings' own button style */
-    #arena-withdraw-panel.empty input, #arena-withdraw-panel.empty button { opacity: .4; pointer-events: none; }
+    #arena-withdraw-panel .wd-panel.empty input, #arena-withdraw-panel .wd-panel.empty button { opacity: .4; pointer-events: none; }
     #arena-deposit .dep-custom input, .wd-custom input { width: 9em; padding: 4px; }
     /* A FIXED HEIGHT (2026-09-30: "the deposit window never jumps when the QR changes"): the QR square, the amount
        line, the custom row, the invoice line and the status keep their space whether filled or not. */
@@ -1336,12 +1336,8 @@
         <div class="muted" id="arena-history-fed"></div>
         <div id="arena-history-rows"></div>
       </div>
-      <div id="arena-withdraw-panel" style="display:none">
-        <div class="muted" id="arena-wd-amount"></div>
-        <input id="arena-wd-invoice" type="text" autocomplete="off" placeholder="Paste an invoice from your own Lightning wallet" style="width:100%;box-sizing:border-box;margin:6px 0">
-        <div class="muted" id="arena-wd-chosen"></div>
-        <button id="arena-wd-go" type="button">Withdraw</button>
-      </div>
+      <!-- THE WITHDRAW PANEL (kanban #564): drawn by React (WithdrawPanel, window.ArenaWithdraw) when it is opened -->
+      <div id="arena-withdraw-panel" style="display:none"></div>
       <!-- ALL FEDERATIONS AT A GLANCE (2026-10-12: on the deposit part of Settings, inline): funds held,
            how many, health before deposits stop (green / yellow / red, its meaning in the tooltip) and possible capacity -->
       <div id="arena-custody" style="margin:8px 0 10px;padding:9px 11px;border:1px solid #2a3442;border-radius:10px;background:#11161d;font-size:13px;line-height:1.5"></div>
@@ -4155,24 +4151,6 @@
       if (gear) gear.addEventListener('click', () => { document.getElementById('arena-settings-go').click(); });
       setInterval(paintWalletBar, 1000);
     }
-    // THE DEPOSIT MODAL (2026-09-30 20:53, GROSS-INVOICE-2053): a close; the message when the wallet cannot fund the
-    // round; the tabs "1 round", "2 rounds", "5 rounds", "10 rounds", "Custom" - each this round's stake times the count,
-    // Custom an amount the player writes; every switch a new GROSS invoice - its amount, its QR code and its text. A paid
-    // invoice closes it; the close rejects the offer (nothing is paid, the join stops).
-    // THE PAYMENT STATUS LINE AND BAR (deposit and withdrawal, 2026-09-30): `set(step, words, kind)` - step of 3
-    // fills the bar, kind '' / 'busy' (moving stripes) / 'ok' (green) / 'fail' (red).
-    function payStatus(parent, before = null) {
-      const wrap = document.createElement('div'); wrap.className = 'pay-status';
-      const text = document.createElement('div'); text.className = 'pay-status-text';
-      const bar = document.createElement('div'); bar.className = 'pay-bar';
-      const fill = document.createElement('div'); fill.className = 'pay-bar-fill';
-      bar.appendChild(fill); wrap.append(text, bar);
-      parent.insertBefore(wrap, before);
-      return { el: wrap, set(step, words, kind = '') {
-        text.textContent = words; fill.style.width = `${Math.max(0, Math.min(3, step)) / 3 * 100}%`;
-        wrap.className = 'pay-status' + (kind ? ' ' + kind : ''); wrap.style.display = ''; },
-      hide() { wrap.style.display = 'none'; } };
-    }
     // WHY ONE ROUND'S DEPOSIT IS MORE THAN ITS STAKE: the round's need - the stake lock, the node fee lock, the
     // donation, and the fee allowance when fees are charged - rounded up to the smallest whole sat that holds 1, 2, 5 and 10
     // rounds (page-lock.js oneRoundDepositMsat). Notes are 1 msat since "1 sat = 1 sat" (2026-10-01), so those fees
@@ -4291,81 +4269,30 @@
         roundIdHex: row.id || null, roundStake: BigInt(ARENACLIENT.lobbyStakeSats(row.raw)) * 1000n,
         invite: (held && out.invite) || (into && into.invite) || pick.invite || lob.federation, seed, depositFederation: pick, withdrawFrom: out, gateways: window.ARENA_LEDGER_GATEWAYS || [] };
     }
+    // THE WITHDRAW PANEL (kanban #564: drawn by React, window.ArenaWithdraw - WithdrawPanel): the invoice defines the amount (2026-10-01,
+    // "1 and 3"). The page hands over the balance it already read for this federation (kanban #539: said and usable at once), the exact
+    // amount after fees (playerWithdrawable, noted in ARENA_WITHDRAW_SAID for the probes), the invoice's amount, the wallet's withdraw with
+    // the pasted invoice, the money why-line and the history read again after
     function openWithdraw(ctx) {
-      // THE INVOICE DEFINES THE AMOUNT (2026-10-01, "1 and 3"): no selector - the page says how much can be withdrawn,
-      // the player makes an invoice in their own wallet for up to that, and the page reads the amount off the invoice.
       const panel = document.getElementById('arena-withdraw-panel');
-      const amountEl = document.getElementById('arena-wd-amount'); const inv = document.getElementById('arena-wd-invoice');
-      const chosenEl = document.getElementById('arena-wd-chosen');
       const why = document.getElementById('arena-money-why');
-      panel.style.display = ''; why.textContent = ''; chosenEl.textContent = ''; inv.value = '';
-      // WHAT IS HAPPENING NOW, UNDER THE PASTED INVOICE (2026-09-30): one status line and bar, made once
-      const go = document.getElementById('arena-wd-go');
-      const status = openWithdraw.status || (openWithdraw.status = payStatus(go.parentNode, go.nextSibling));
-      status.hide();
-      const satOf = (msat) => `${(BigInt(msat) / 1000n).toLocaleString('en-US')} sat`;
-      // CUSTOM OVER THE BALANCE, IN PLAYER WORDS (2026-09-30): never the wallet library's msat sentence
-      const TOO_MUCH = 'Not enough to withdraw that amount after fees. Choose a smaller amount.';
-      let canMsat = null; let chosen = null;
-      // off until the wallet says how much it can send; off for good at 0
-      const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; go.disabled = !on; };
-      // THE BALANCE THE PAGE ALREADY READ, AT ONCE (kanban #539, the owner 2026-10-19 ~20:02Z: "Withdrawing ... just says checking for a long
-      // time. Eventually it works"). The exact amount after fees (playerWithdrawable) asks every gateway the federation lists, and one
-      // that does not answer from the player's network is waited out - measured: gateway A's Funnel address gave no answer in 26-30 s from
-      // our own LAN while it answered the internet in under 2 s. So the wallet's own balance in this federation, read for the header, is
-      // said and usable now; the exact amount replaces it when it comes. A withdrawal sent first is checked by the wallet as before.
+      panel.style.display = ''; why.textContent = '';
       const fidHex = ctx.round && ctx.round.federationId ? ARENACLIENT.toHex(ctx.round.federationId) : '';
       const part = window.ARENA_WALLET_BALANCE && (window.ARENA_WALLET_BALANCE.parts || []).find((x) => x.federation === fidHex);
       const knownSat = part ? Number(part.sats) : null;
-      usable(knownSat > 0);
       window.ARENA_WITHDRAW_SAID = { atMs: Date.now(), knownSat, exact: null };
-      amountEl.textContent = knownSat > 0
-        ? `You have ${knownSat.toLocaleString('en-US')} sat. Make an invoice in your own wallet for a little less (the Lightning fee comes off) and paste it here - the exact most is being read.`
-        : 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.';
-      const readInvoice = () => {
-        const a = ARENACLIENT.invoiceAmountMsat(inv.value);
-        chosen = a.ok ? a.msat : null;
-        chosenEl.textContent = a.ok ? `You withdraw ${satOf(a.msat)}.` : a.why;
-        if (a.ok && canMsat !== null && a.msat > canMsat) status.set(3, TOO_MUCH, 'fail'); else status.hide();
-      };
-      inv.oninput = readInvoice;
-      (async () => {
-        try {
-          const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-          const can = await ARENACLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient, storage: vault() });
-          canMsat = can;
-          usable(can > 0n);
+      const lockClient = async () => { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); return wasm.LockClient; };
+      window.ArenaWithdraw.open(panel, { knownSat,
+        readExact: async () => {
+          const can = await ARENACLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: await lockClient(), storage: vault() });
           if (window.ARENA_WITHDRAW_SAID) { window.ARENA_WITHDRAW_SAID.exact = String(can); window.ARENA_WITHDRAW_SAID.exactAfterMs = Date.now() - window.ARENA_WITHDRAW_SAID.atMs; }
-          if (can > 0n && inv.value) readInvoice();   // an invoice pasted meanwhile is checked against the exact amount
-          amountEl.textContent = can > 0n ? `You can withdraw up to ${satOf(can)}. Make an invoice in your own wallet for any amount up to that and paste it here.`
-            : 'Your wallet is empty, so there is nothing to withdraw.';
-        } catch (e) { amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
-      })();
-      document.getElementById('arena-wd-go').onclick = async () => {
-        readInvoice();
-        const pasted = String(inv.value || '').trim();
-        if (!pasted) { why.textContent = 'Paste an invoice first.'; return; }
-        if (!chosen) return;
-        if (canMsat !== null && chosen > canMsat) { why.textContent = ''; status.set(3, TOO_MUCH, 'fail'); return; }
-        why.textContent = '';
-        const n = satOf(chosen);
-        const host = (u) => { try { return new URL(u).host; } catch { return String(u || ''); } };
-        status.set(0.5, 'Opening your wallet …', 'busy');
-        const onStep = (step) => {
-          if (/invoice of/.test(step)) status.set(1, 'Checking your invoice …', 'busy');
-          else if (/withdrawing over Lightning/.test(step)) status.set(2, `Sending ${n} over Lightning …`, 'busy');
-        };
-        try {
-          const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-          const out = await ARENACLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
-            storage: vault(), amountMsat: chosen, gateways: ctx.gateways, onStep, invoiceFor: async () => ({ ok: true, invoice: pasted }) });
-          if (out.ok) status.set(3, `Done! ${n} were sent to your Lightning wallet` + (host(out.gateway) ? ` via ${host(out.gateway)}.` : '.'), 'ok');
-          else if (out.state === 'Refunded') status.set(3, `The payment could not be completed. Your ${n} are back in your wallet.`, 'fail');
-          else if (out.withdrawableMsat != null && chosen > BigInt(out.withdrawableMsat)) status.set(3, TOO_MUCH, 'fail');
-          else status.set(3, 'Withdrawal failed: ' + out.why, 'fail');
-          paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
-        } catch (e) { status.set(3, 'Withdrawal failed: ' + (e && e.message ? e.message : e), 'fail'); }
-      };
+          return can;
+        },
+        invoiceAmount: (text) => ARENACLIENT.invoiceAmountMsat(text),
+        send: async ({ amountMsat, invoice, onStep }) => ARENACLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed,
+          LockClient: await lockClient(), storage: vault(), amountMsat, gateways: ctx.gateways, onStep, invoiceFor: async () => ({ ok: true, invoice }) }),
+        say: (text) => { why.textContent = text; },
+        onSent: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
     }
     // STILL LOADING, SAID AS SUCH (2026-10-12 17:47: "Also show a loading message for deposit and federation
     // load if it hasn't loaded yet"): until the wallet's balance or the federations' records were first tried - or for the first

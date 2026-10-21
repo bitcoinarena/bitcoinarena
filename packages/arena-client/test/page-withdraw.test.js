@@ -1,88 +1,59 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE WITHDRAW PANEL'S EARLY STOP AND ITS WORDS (plan comment 298, Go 2026-10-05). index.html's
-// openWithdraw is lifted out of the page by its text and run as it is, against a fake panel, a fake status bar and fake
-// ARENACLIENT readers. The page refuses an invoice above the readable balance before the wallet spends - the library checks
-// too, but the page's own stop and the words the player sees are what is measured here.
+// WHAT THE PAGE HANDS THE WITHDRAW PANEL (kanban #564: the panel is React's, WithdrawPanel - its words and its early stop are tested in
+// packages/arena-web/test/withdraw.test.mjs). index.html's openWithdraw is lifted out of the page by its text and run against stubs: the
+// panel shown and the why-line cleared, the balance the page already read for this federation (kanban #539), the exact amount read with
+// this round's wallet and noted for the probes, the wallet's withdraw with the panel's amount and invoice, the why-line and the history.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-const SRC = (() => { const at = PAGE.indexOf('    function openWithdraw(ctx) {'); assert.ok(at > 0); return PAGE.slice(at, PAGE.indexOf('\n    }\n', at) + 6); })();
-const TOO_MUCH = 'Not enough to withdraw that amount after fees. Choose a smaller amount.';
-const tick = () => new Promise((r) => setTimeout(r, 10));
+const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
+const HTML = readFileSync(PAGE, 'utf8');
+const SRC = (() => { const at = HTML.indexOf('    function openWithdraw(ctx) {'); assert.ok(at > 0); return HTML.slice(at, HTML.indexOf('\n    }\n', at) + 6); })();
 
-function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, gateway: 'https://gw.example/x' }) }) {
-  const el = (id) => ({ id, style: {}, textContent: '', value: '', disabled: false, classList: { on: new Set(), toggle(c, v) { if (v) this.on.add(c); else this.on.delete(c); } } });
-  const els = Object.fromEntries(['arena-withdraw-panel', 'arena-wd-amount', 'arena-wd-invoice', 'arena-wd-chosen', 'arena-money-why', 'arena-wd-go'].map((id) => [id, el(id)]));
-  const status = { shown: [], set(step, words, kind) { this.shown.push({ step, words, kind }); }, hide() { this.shown.push({ hidden: true }); } };
-  const calls = { withdraw: [] };
-  const ARENACLIENT = {
-    invoiceAmountMsat: (text) => (text && invoiceMsat !== null ? { ok: true, msat: invoiceMsat } : { ok: false, why: 'Paste a Lightning invoice.' }),
-    playerWithdrawable: async () => { if (can instanceof Error) throw can; return can; },
-    withdrawPlayerWallet: async (o) => { calls.withdraw.push(o); return withdraw(o); },
-  };
-  const window = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
-  const document = { getElementById: (id) => els[id] };
-  const openWithdraw = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['document', 'window', 'ARENACLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
-    document, window, ARENACLIENT, () => status, () => ({}), () => {});
-  openWithdraw({ round: {}, invite: 'fed1', seed: new Uint8Array(32), gateways: [] });
-  const type = (text) => { els['arena-wd-invoice'].value = text; els['arena-wd-invoice'].oninput(); };
-  const go = () => els['arena-wd-go'].onclick();
-  const last = () => status.shown.filter((s) => !s.hidden).at(-1);
-  return { els, status, calls, type, go, last };
+function open({ parts, exact = 990000n }) {
+  const els = { 'arena-withdraw-panel': { style: { display: 'none' } }, 'arena-money-why': { textContent: 'old words' } };
+  const calls = { open: [], withdrawable: [], withdraw: [], history: 0, balance: 0 };
+  const fid = new Uint8Array(32).fill(7);
+  const window = { ARENA_WALLET_BALANCE: { parts }, ARENA_READ_BALANCE: () => { calls.balance++; },
+    ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: { lock: true } }),
+    ArenaWithdraw: { open: (host, props) => calls.open.push({ host, props }) } };
+  const ARENACLIENT = { toHex: (b) => Buffer.from(b).toString('hex'), invoiceAmountMsat: (t) => ({ ok: true, msat: BigInt(t.length) }),
+    playerWithdrawable: async (o) => { calls.withdrawable.push(o); return exact; },
+    withdrawPlayerWallet: async (o) => { calls.withdraw.push(o); return { ok: true }; } };
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
+    { getElementById: (id) => els[id] }, window, ARENACLIENT, () => ({ store: 1 }), () => { calls.history++; });
+  const ctx = { round: { federationId: fid }, invite: 'fed1x', seed: 's', gateways: ['gw'] };
+  fn(ctx);
+  return { els, calls, window, ctx, props: calls.open[0].props, fidHex: Buffer.from(fid).toString('hex') };
 }
 
-test('the balance line: how much can be withdrawn; an empty wallet; a balance that cannot be read', async () => {
-  const p = panel({ can: 50000n });
-  // the same sentence while the balance is read, so the overlay keeps its size
-  assert.equal(p.els['arena-wd-amount'].textContent, 'You can withdraw up to \u2026 sat (checking). Make an invoice in your own wallet for any amount up to that and paste it here.');
-  await tick();
-  assert.equal(p.els['arena-wd-amount'].textContent, 'You can withdraw up to 50 sat. Make an invoice in your own wallet for any amount up to that and paste it here.');
-  assert.deepEqual([p.els['arena-wd-invoice'].disabled, p.els['arena-wd-go'].disabled], [false, false]);
-  const empty = panel({ can: 0n });
-  await tick();
-  assert.equal(empty.els['arena-wd-amount'].textContent, 'Your wallet is empty, so there is nothing to withdraw.');
-  assert.deepEqual([empty.els['arena-wd-invoice'].disabled, empty.els['arena-wd-go'].disabled], [true, true], 'off for good at 0');
-  const broken = panel({ can: new Error('the federation did not answer') });
-  await tick();
-  assert.equal(broken.els['arena-wd-amount'].textContent, 'Your balance could not be read (the federation did not answer). Try again in a moment.');
+test('the panel opens with the balance the page already read for this federation, or none', () => {
+  const fidHex = Buffer.from(new Uint8Array(32).fill(7)).toString('hex');
+  const p = open({ parts: [{ federation: 'ab'.repeat(32), sats: 5 }, { federation: fidHex, sats: 999 }] });
+  assert.equal(p.els['arena-withdraw-panel'].style.display, '');
+  assert.equal(p.els['arena-money-why'].textContent, '');
+  assert.equal(p.calls.open[0].host, p.els['arena-withdraw-panel']);
+  assert.equal(p.props.knownSat, 999);
+  assert.equal(p.window.ARENA_WITHDRAW_SAID.knownSat, 999);
+  assert.equal(open({ parts: [{ federation: 'ab'.repeat(32), sats: 500 }] }).props.knownSat, null);
 });
 
-test('an invoice above the balance: the player\'s words at once, and on go the wallet is never asked to spend', async () => {
-  const p = panel({ can: 50000n, invoiceMsat: 60000n });
-  await tick();
-  p.type('lnbc600n1over');
-  assert.equal(p.els['arena-wd-chosen'].textContent, 'You withdraw 60 sat.');
-  assert.deepEqual(p.last(), { step: 3, words: TOO_MUCH, kind: 'fail' });
-  await p.go();
-  assert.equal(p.calls.withdraw.length, 0, 'the wallet\'s withdraw was not called');
-  assert.deepEqual(p.last(), { step: 3, words: TOO_MUCH, kind: 'fail' });
-  const none = panel({ can: 50000n, invoiceMsat: 30000n });
-  await tick();
-  await none.go();
-  assert.equal(none.els['arena-money-why'].textContent, 'Paste an invoice first.');
-  assert.equal(none.calls.withdraw.length, 0);
-});
-
-test('an invoice within the balance is withdrawn for its amount, and every outcome is said in the player\'s words', async () => {
-  const cases = [
-    [async () => ({ ok: true, gateway: 'https://gw.example/x' }), { step: 3, words: 'Done! 30 sat were sent to your Lightning wallet via gw.example.', kind: 'ok' }],
-    [async () => ({ ok: false, state: 'Refunded' }), { step: 3, words: 'The payment could not be completed. Your 30 sat are back in your wallet.', kind: 'fail' }],
-    [async () => ({ ok: false, withdrawableMsat: '20000', why: 'the fee' }), { step: 3, words: TOO_MUCH, kind: 'fail' }],
-    [async () => ({ ok: false, why: 'no route' }), { step: 3, words: 'Withdrawal failed: no route', kind: 'fail' }],
-    [async () => { throw new Error('the wallet closed'); }, { step: 3, words: 'Withdrawal failed: the wallet closed', kind: 'fail' }],
-  ];
-  for (const [withdraw, said] of cases) {
-    const p = panel({ can: 50000n, invoiceMsat: 30000n, withdraw });
-    await tick();
-    p.type('  lnbc300n1ok  ');
-    await p.go();
-    assert.equal(p.calls.withdraw.length, 1);
-    assert.equal(p.calls.withdraw[0].amountMsat, 30000n, 'the invoice\'s amount');
-    assert.deepEqual(await p.calls.withdraw[0].invoiceFor(), { ok: true, invoice: 'lnbc300n1ok' }, 'the pasted invoice, trimmed');
-    assert.deepEqual(p.last(), said);
-  }
+test('the exact amount, the invoice\'s amount, the withdraw, the why-line and the history: the page\'s rules', async () => {
+  const p = open({ parts: [] });
+  assert.equal(await p.props.readExact(), 990000n);
+  assert.deepEqual([p.calls.withdrawable[0].invite, p.calls.withdrawable[0].round, p.calls.withdrawable[0].LockClient], ['fed1x', p.ctx.round, { lock: true }]);
+  assert.equal(p.window.ARENA_WITHDRAW_SAID.exact, '990000');
+  assert.deepEqual(p.props.invoiceAmount('lnbc1'), { ok: true, msat: 5n });
+  const onStep = () => {};
+  assert.deepEqual(await p.props.send({ amountMsat: 30000n, invoice: 'lnbc300n1ok', onStep }), { ok: true });
+  const w = p.calls.withdraw[0];
+  assert.deepEqual([w.amountMsat, w.gateways, w.onStep, w.seed], [30000n, ['gw'], onStep, 's']);
+  assert.deepEqual(await w.invoiceFor(), { ok: true, invoice: 'lnbc300n1ok' });
+  p.props.say('Paste an invoice first.');
+  assert.equal(p.els['arena-money-why'].textContent, 'Paste an invoice first.');
+  p.props.onSent();
+  assert.deepEqual([p.calls.history, p.calls.balance], [1, 1]);
 });
