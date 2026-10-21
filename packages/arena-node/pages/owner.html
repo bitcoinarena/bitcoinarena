@@ -499,6 +499,11 @@ async function liquidityPanel() {
 // THE NODE'S SERVICES: each one's state and what it answers, as `arenanode status` shows them on the node's machine
 async function servicesPanel() {
   const el = $('services');
+  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountServices) { if (el._react) el._react.unmount(); el.innerHTML = ''; el._react = window.ArenaOwner.mountServices(el, { api: { post, signed }, onAttention: (bad) => need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services') }); return; }
+  } catch { /* the page's own panel */ }
   let r; try { r = await post('/owner/services', await signed('services')); } catch (x) { r = { ok: false, why: x.message }; }
   if (!r || !r.ok) { el.innerHTML = `<p class="sub">${r && /not installed by the Arena installer/.test(r.why || '') ? 'This node was set up by hand, without the Arena installer, so this page cannot see its programs. Its operator checks them on its machine.' : esc((r && r.why) || 'this node does not show its services')}</p>`; return; }
   const bad = r.services.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
