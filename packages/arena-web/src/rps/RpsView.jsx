@@ -93,7 +93,8 @@ class StageHost extends React.Component {
   componentDidMount() { this.place(); }
   componentDidUpdate() { this.place(); }
   place() { const { stage } = this.props; if (this.ref.current && stage.box.parentNode !== this.ref.current) this.ref.current.append(stage.box); }
-  render() { return <><div className="stage-host" ref={this.ref} />{createPortal(this.props.children, this.props.stage.ov)}</>; }
+  // NO BOX OF ITS OWN: the card is a flex column whose .stage grows (flex: 1) - a wrapper between them drew the stage at its minimum height
+  render() { return <><div className="stage-host" style={{ display: 'contents' }} ref={this.ref} />{createPortal(this.props.children, this.props.stage.ov)}</>; }
 }
 
 export class RpsView extends React.Component {
