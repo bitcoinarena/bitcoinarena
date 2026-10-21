@@ -14,6 +14,10 @@
   var view = document.getElementById('view');
   var $ = function (q) { return forum.querySelector(q); };
   var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, replyTo: null, reserves: null, names: {} };
+  // THE READING VIEWS IN REACT (kanban #564): the list and a thread drawn by ./react.js (packages/arena-web/src/proposals) when it is
+  // there, from view data made here; this script still reads, signs and posts, and draws everything itself without it
+  var R = null;
+  var reactReady = import('./react.js').then(function () { R = window.ArenaForum || null; }).catch(function () { R = null; });
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
   function npub(hex) { return ARENACLIENT.npubOfKey(hex); }
@@ -130,7 +134,17 @@
     return 'Signal open until block ' + s.signalEnd + ' · ' + (p.signals || 0) + ' node signal' + (p.signals === 1 ? '' : 's');
   }
 
+  function postData(hex, head, more) {
+    var n = who(hex);
+    return Object.assign({ name: n, npub: npub(hex), head: head, avatar: { colour: colour(hex), initial: (n.match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase() } }, more);
+  }
   function listView() {
+    if (R) {
+      R.draw(view, 'list', { status: state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…',
+        items: state.list && state.list.map(function (p) { return { pip: p.pip, href: '#pip=' + p.pip, title: title(p), by: who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl,
+          amount: sats(p.amountSats), replies: String(p.comments.length), stage: stage(p) }; }) });
+      return;
+    }
     view.textContent = '';
     var bar = el('div', 'bar');
     var st = el('span', 'say', state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…');
@@ -162,8 +176,30 @@
     return { node: p, col: col };
   }
 
+  // a reply signed with the in-game key and handed to every node: { ok, say }
+  function postReply(p, text, parentId) {
+    if (!state.key) return Promise.resolve({ ok: false, say: 'Open the Arena once first: the forum signs with your in-game key.' });
+    var c = ARENACLIENT.signedComment({ secretKey: state.key, proposalId: p.id, parentId: parentId, atHeight: state.tip, text: text });
+    return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'comment', hex: c.hex }).then(function (r) {
+      if (!r.ok) return { ok: false, say: 'Not taken: ' + r.why };
+      setTimeout(function () { refresh().then(route); }, 1500);
+      return { ok: true, say: 'Posted to ' + r.took + ' of ' + r.asked + ' nodes.' };
+    });
+  }
   function threadView(id) {
     var p = (state.list || []).find(function (x) { return x.id === id; });
+    if (R) {
+      var status = state.list ? 'That proposal is not held by five nodes.' : 'Reading the nodes…';
+      if (!p) { R.draw(view, 'thread', { thread: null, status: status, onReply: function () { return Promise.resolve({ ok: false, say: '' }); } }); return; }
+      var pp = parts(p.purpose), comments = [], byParent = {};
+      p.comments.forEach(function (c) { (byParent[c.parent] = byParent[c.parent] || []).push(c); });
+      (function walk(parent, depth) { (byParent[parent] || []).forEach(function (c) { comments.push(postData(c.author, 'block ' + c.atHeight, { id: c.id, depth: depth + 1, text: c.text })); walk(c.id, depth + 1); }); })(ROOT, 0);
+      R.draw(view, 'thread', { status: status, onReply: function (text, parentId) { return postReply(p, text, parentId); },
+        thread: { heading: pip(p) + ' · ' + title(p), amount: sats(p.amountSats), lnurl: p.lnurl, stage: stage(p), stageLine: stageLine(p), comments: comments,
+          post: postData(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes',
+            { html: markdown(pp.content || pp.title) + (pp.improves ? '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(pp.improves) : '') }) } });
+      return;
+    }
     view.textContent = '';
     var back = el('a', 'btn', '← All proposals'); back.href = '#';
     var bar = el('div', 'bar'); bar.append(back); view.append(bar);
@@ -441,6 +477,8 @@
   function route() {
     var h = location.hash;
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
+    var own = h === '#new-leaderboard' || h === '#new-fees' || h === '#new';
+    if (own && R) R.clear(view);   // the forms are this script's own: React lets go of the view first
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
     else if (h === '#new') newView();
@@ -469,6 +507,6 @@
   }).then(function () {
     pickKey();
     window.addEventListener('hashchange', route);
-    return refresh().then(route);
-  }).catch(function (e) { view.textContent = ''; view.append(el('div', 'empty', e.message)); });
+    return reactReady.then(refresh).then(function () { if (R) R.clear(view); route(); });
+  }).catch(function (e) { if (R) R.clear(view); view.textContent = ''; view.append(el('div', 'empty', e.message)); });
 })();
