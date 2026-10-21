@@ -8,6 +8,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "arena-sdk": "github:a tester/arena-sdk#v0.1.0"
+    "arena-sdk": "github:a tester/arena-sdk#v0.1.1"
   }
 }
