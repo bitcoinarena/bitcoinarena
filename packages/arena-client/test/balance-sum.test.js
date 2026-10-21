@@ -10,7 +10,8 @@ import { readFileSync } from 'node:fs';
 const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const a = HTML.indexOf("      window.ARENA_WALLETS = window.ARENA_WALLETS || new Map();");
 const b = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
-const src = HTML.slice(a, b);
+// every sum is kept for this phrase (kanban #572, ce093ab: the page's top-level lastBalance) - here the kept sums are counted on window
+const src = 'const lastBalance = (bal) => { window.ARENA_KEPT_SUMS = (window.ARENA_KEPT_SUMS || 0) + 1; };\n' + HTML.slice(a, b);
 // window.ArenaBalance.drawSplit as the page's bundle draws it (kanban #564), its parts as plain nodes of the fake document
 const drawSplit = (mk) => (host, p) => {
   host.textContent = '';
