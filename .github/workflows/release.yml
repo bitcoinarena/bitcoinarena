@@ -36,6 +36,13 @@ jobs:
       - name: seat doors the installer uses
         working-directory: packages/arena-node
         run: node --test --test-timeout=120000 test/reach-check.test.js
+      # THE PAGE SCRIPTS THE ASSET CARRIES ARE THE BUILD OF THIS COMMIT (kanban #564): the node's pages draw only with React, packed by
+      # esbuild into packages/arena-web/dist; built again here at the pinned versions and compared byte for byte
+      - name: page bundles fresh
+        working-directory: packages/arena-web
+        run: |
+          npm install --no-audit --no-fund --no-package-lock esbuild@0.25.12 react@19.3.1 react-dom@19.3.1
+          node --test --test-timeout=120000 test/dist-fresh.test.mjs
 
   # EVERY ASSET IS ASSEMBLED ON LINUX (GNU tar and zip, fixed order and times: the same bytes from the same commit), then installed
   # fresh on its own system (smoke)
