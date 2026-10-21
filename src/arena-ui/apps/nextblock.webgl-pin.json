@@ -1,0 +1,119 @@
+{
+ "app": "nextblock",
+ "title": "Tick Tock, Next Block",
+ "repo": "a tester/arena-app-next-block",
+ "release": "webgl-nextblock-0.0.10",
+ "build": "nextblock-0.0.10",
+ "productVersion": "0.0.10",
+ "files": {
+  "Build/nextblock-0.0.10-astc.data.unityweb": {
+   "sha256": "4d06997bebaae8d23974f3f763c56fabbf8c9890f000cc340f6001cc38c5cbb2",
+   "unpackedSha256": "b0fd8e690e96883e1c9be328ae7fefbefc4dfe9dd6b5fad12d2047788ed107cf"
+  },
+  "Build/nextblock-0.0.10.data.unityweb": {
+   "sha256": "fe71e69a768aace7d714e5562747f88b2720ab826d6c0699c6dc45b99900c1b2",
+   "unpackedSha256": "325b9e25febe28bb80ed9d14530049ec5219bcc59243d28182a3a651b5da4748"
+  },
+  "Build/nextblock-0.0.10.framework.js.unityweb": {
+   "sha256": "c49dfeb7a245c724a76ce5be4916966a7ec2f85dbc8242556c5cdc2b4452e838",
+   "unpackedSha256": "9c775540231ba0f8f314cdfeb26663953f392d2dcca78cb4d60fa3c2ee4d3ddf"
+  },
+  "Build/nextblock-0.0.10.loader.js": {
+   "sha256": "ec9ff35aed49162fa60bc9c89f2079bc681443bc5f8e3180fa40a91f1daee692"
+  },
+  "Build/nextblock-0.0.10.wasm.unityweb": {
+   "sha256": "b11a49f0d891bc7241f8534ebc5dae6a4414080004f14c6bc0671e20b09b5677",
+   "unpackedSha256": "9da8fc9ff5af3a677fba7992b5de49edd848f3addd1d8b3c1a450084467e9baa"
+  },
+  "ServerData/WebGL/highdetail_assets_model_bomb_76cf255f615633e4e88ca906854f1d1c.bundle": {
+   "sha256": "9b128897d661a773ce0eb50832edcbe19a96cff6bdd539e8c7c8f121ffad237f"
+  },
+  "ServerData/WebGL/highdetail_assets_model_bomb_a40e7753fbde71026abe0c0171680d7b.bundle": {
+   "sha256": "9fa69239854cdc3c422940b13843e8f1d003792fcf12f6bb3f3f46cfc27c58f8"
+  },
+  "ServerData/WebGL/highdetail_assets_model_bomber-bear_67dd47a3d06908eaf8759e88af9b90d6.bundle": {
+   "sha256": "7aa538e96539cdc0785ac877b3c0a8b35f28e42ffdb91a3cade5d05dcdfe7759"
+  },
+  "ServerData/WebGL/highdetail_assets_model_bomber-bull_682fc4532b1a9a2a9f5ec23b965bb701.bundle": {
+   "sha256": "d19c8d497adfc13209508dd0980f4099c3d6c35d5ccab99ab9143b84823c7fc9"
+  },
+  "ServerData/WebGL/highdetail_assets_model_bomber_3dc95f384d8c32a9f6ee78325011842b.bundle": {
+   "sha256": "3fec9bad3caae0e10004031fe6c2015f6d14129490a476c909aacc6b8a1a77ca"
+  },
+  "ServerData/WebGL/highdetail_assets_model_helicopter_89b791be1972a3663b6ae2ded64bc547.bundle": {
+   "sha256": "a022181ec8103e99a696a45b9e2c7b1cabb89c89155b9d5aa9e12c336a20491e"
+  },
+  "ServerData/WebGL/highdetail_assets_model_helicopter_eb31b1f6041277e250a3ff722ce3a1d9.bundle": {
+   "sha256": "1d0c49a4e00550e68fa5ab9e8702d37e14dc4940cd70bbb235d6f36174a451ef"
+  },
+  "ServerData/WebGL/highdetail_assets_model_miner_a0506a7cce80616bfd5a2807c4062190.bundle": {
+   "sha256": "c847d2f84fbe12c44de61a0a82986b00fe5a4532a78f5906e9382da3b736c66f"
+  },
+  "ServerData/WebGL/highdetail_assets_model_mushroom_db78070919f81aa5cdef7c6d7aecfc03.bundle": {
+   "sha256": "3237a4b12d1f553a4cf779be4fd33dd486e54065f7233e1af1b30eedd815766c"
+  },
+  "ServerData/WebGL/highdetail_assets_model_postoffice_7524aece8fba56ed853ae6c3134325be.bundle": {
+   "sha256": "b028313d3cb035c74ccbdd8426643a1da12e99347c837016b6de1a94ce751adb"
+  },
+  "ServerData/WebGL/highdetail_assets_model_soldier_36a58c3adea67937217a15daa1b06028.bundle": {
+   "sha256": "557ce9763963e9feb71c1cbf1166fb703b2e7b2b885f38fbed04663851627dca"
+  },
+  "ServerData/WebGL/highdetail_assets_model_soldier_d74500247cfcb3e9331de0dbaccb0bfa.bundle": {
+   "sha256": "80756e4ccb9fbdd7f3b92295a9a39cda7d299257f8138f5a5ef22037cd07abc1"
+  },
+  "ServerData/WebGL/highdetail_assets_model_tank_4bc0aef01962c9112098590c00ca4f78.bundle": {
+   "sha256": "930816a1e021c022fef2fa2f870c1412db537deffd39bb606ac98be88fab16c1"
+  },
+  "ServerData/WebGL/highdetail_assets_model_tank_9ba016df221a1b31fbc7c504cdf28de2.bundle": {
+   "sha256": "06079e09f1d3c1ceab6f1ab834a272740beabb6ac9bc58c7e53f064497a1e9ee"
+  },
+  "ServerData/WebGL/highdetail_assets_model_truck_4ce9c5c64a56ca906b1b5a806f2855e3.bundle": {
+   "sha256": "33781b0f1acf1ec4f509c8eed9652397d0cc267aa2856e302317297aaf19ab83"
+  },
+  "ServerData/WebGL/highdetail_assets_model_truck_7fe2ecb3ee01ea96eaed165257f2da18.bundle": {
+   "sha256": "20761704d7e2980614659a75989fe15027a89e56bc718b6e391d86c2c18e26e4"
+  },
+  "StreamingAssets-astc/UnityServicesProjectConfiguration.json": {
+   "sha256": "305fc5459629efb20c036b0f02f6fa60db356658fa8fad32acdd50f1046fe8eb"
+  },
+  "StreamingAssets-astc/aa/AddressablesLink/link.xml": {
+   "sha256": "fad864453440af10523836846e9efa69e4ebbe258270cc5563c49a79d42035a0"
+  },
+  "StreamingAssets-astc/aa/WebGL/979ebaa5a17ed2834a47fa1373510580_unitybuiltinassets_552449aba6d01b8239891d3fa0e25005.bundle": {
+   "sha256": "f58f9c7267d5d726e5ad438f1c90b4e0d9bb6c7a3f4b3c09b38b56f0a470b881"
+  },
+  "StreamingAssets-astc/aa/catalog.bin": {
+   "sha256": "46de4048a7ca627171aaf36dd5e64f9e26fc6523afd4f0b35a20f61205f72992"
+  },
+  "StreamingAssets-astc/aa/catalog.hash": {
+   "sha256": "517e78f5fc95bce83ec902c44a28c2229709931a2a3d78f4086c9d712f3b693c"
+  },
+  "StreamingAssets-astc/aa/settings.json": {
+   "sha256": "0dd9706aad9bc192bd7a73ca3986a27ea60b03478dbf38dcc5bed709d4129823"
+  },
+  "StreamingAssets/UnityServicesProjectConfiguration.json": {
+   "sha256": "305fc5459629efb20c036b0f02f6fa60db356658fa8fad32acdd50f1046fe8eb"
+  },
+  "StreamingAssets/aa/AddressablesLink/link.xml": {
+   "sha256": "fad864453440af10523836846e9efa69e4ebbe258270cc5563c49a79d42035a0"
+  },
+  "StreamingAssets/aa/WebGL/979ebaa5a17ed2834a47fa1373510580_unitybuiltinassets_552449aba6d01b8239891d3fa0e25005.bundle": {
+   "sha256": "f58f9c7267d5d726e5ad438f1c90b4e0d9bb6c7a3f4b3c09b38b56f0a470b881"
+  },
+  "StreamingAssets/aa/catalog.bin": {
+   "sha256": "cfa514cc8d9d2805b50f1c53f2b2004748723a8fdb1baab848b50177ec9347c2"
+  },
+  "StreamingAssets/aa/catalog.hash": {
+   "sha256": "5078a8225354c1ea78e5af771de783d238ed770f94049f0985b7b3d310e6bd9f"
+  },
+  "StreamingAssets/aa/settings.json": {
+   "sha256": "0dd9706aad9bc192bd7a73ca3986a27ea60b03478dbf38dcc5bed709d4129823"
+  },
+  "build.txt": {
+   "sha256": "85c0d27d1175b31356be65681f65e3f4ec1cee120e01ca4583e36502bac327fc"
+  },
+  "textures.json": {
+   "sha256": "515be552b7724eb690631b6f9dfa4c71bf8c8da050f8dda3fd47e30d1d899efc"
+  }
+ }
+}
