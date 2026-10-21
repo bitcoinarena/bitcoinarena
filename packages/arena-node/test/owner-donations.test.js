@@ -64,6 +64,7 @@ test('a set that pays Lightning addresses (serial 1 on testnet4) names each by i
   const r = donationReport({ protocolSets: [{ networkId: new Uint8Array(32), serial: 1, recipients: [{ lnurl: 'dev@example.com', shareBps: 6667 }, { lnurl: 'other@example.com', shareBps: 3333 }] }],
     rowsFor: () => { throw new Error('no key to look up'); } });
   assert.deepEqual(r.sets[0].recipients.map((x) => [x.key, x.lnurl, x.totalMsat]), [['', 'dev@example.com', '0'], ['', 'other@example.com', '0']]);
-  const html = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
-  assert.match(html, /\$\{x\.key \? esc\(x\.key\.slice\(0, 12\)\) \+ '…' : esc\(x\.lnurl \|\| 'a Lightning address'\)\}/, 'the page shows the LNURL when there is no key');
+  // drawn by React (kanban #564, arena-web DonationsPanels: WaitingDonations - its render is tested in arena-web donations.test.mjs)
+  const view = readFileSync(new URL('../../arena-web/src/owner/DonationsPanels.jsx', import.meta.url), 'utf8');
+  assert.ok(view.includes("x.key ? x.key.slice(0, 12) + '…' : x.lnurl || 'a Lightning address'"), 'the page shows the LNURL when there is no key');
 });
