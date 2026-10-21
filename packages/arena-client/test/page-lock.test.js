@@ -970,12 +970,14 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   const fromWallet = [...page.matchAll(/ARENACLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
   const settingsAt = page.indexOf("document.getElementById('arena-wd-go').onclick = async () => {");
   const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
-  // AND A ZAP OR A TIP: the zap box's pay(), reached only from its Zap press - one call, inside it
+  // AND A ZAP OR A TIP: the zap box's pay(), reached only from its Zap press - send(), which the React card's Zap button alone calls
+  // (onGo: () => send(), kanban #564) - one call, inside it
   const zapPayAt = page.indexOf('async function pay(invoice) {');
-  const zapGoAt = page.indexOf("go.addEventListener('click', async () => {", zapPayAt);
+  const zapGoAt = page.indexOf('async function send() {', zapPayAt);
+  assert.equal(page.split('send()').length - 1, 1 + 1, 'send() is called from the card\'s Zap press alone (its definition and onGo)');
   const zapPays = [...page.matchAll(/return pay\(invoice\);/g)].map((m) => m.index);
   assert.equal(zapPays.length, 1);
-  assert.ok(inside(zapPays[0], zapGoAt, '\n      });\n'), 'a zap is paid outside its Zap press');
+  assert.ok(inside(zapPays[0], zapGoAt, '\n      }\n'), 'a zap is paid outside its Zap press');
   assert.equal(fromWallet.length, 3);
   for (const i of fromWallet)
     assert.ok(inside(i, withdrawAt, '\n    };\n') || inside(i, settingsAt, '\n      };\n') || inside(i, zapPayAt, '\n      }\n'),

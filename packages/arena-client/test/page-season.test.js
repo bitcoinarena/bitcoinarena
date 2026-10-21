@@ -17,6 +17,10 @@ const BUNDLE = createRequire(import.meta.url)('../../../src/arena-ui/arena-clien
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const SEASON = slice('    (function seasonBoard() {', '\n    })();\n');
 
+// window.ArenaSeason as the page's bundle draws it (kanban #564; its markup - badges, "you", Zap, a tapped badge's words - is tested in
+// arena-web/test/season.test.mjs): the board keeps what the page handed it, one row per player with its data-player (the same element while the player stays, as React keeps it), as the page's
+// badge book and its observer need
+const ArenaSeason = { drawRows: (board, props) => { board.drawn = props; board.li = board.li || new Map(); board.children = props.rows.map((r) => { if (!board.li.has(r.player)) board.li.set(r.player, { tag: 'li', dataset: { player: r.player }, children: [], textContent: r.name }); return board.li.get(r.player); }); board.querySelectorAll = () => board.children; } };
 const key = (n) => n.toString(16).padStart(2, '0').repeat(32);
 const ME = key(0xb2);
 const GAME = { id: key(0x0a), name: 'nextblock', title: 'Tick Tock, Next Block', nodes: ['https://seat-1.example', 'https://seat-2.example', 'https://seat-3.example'] };
@@ -76,7 +80,7 @@ function liftSeason({ seats = {} } = {}) {
   const timers = new Map(); let nextTimer = 1;
   const setTimeout = (f, ms) => { const id = nextTimer++; timers.set(id, { f, ms }); return id; };
   const clearTimeout = (id) => { timers.delete(id); };
-  const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME } };
+  const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ArenaSeason };
   pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'fetch', 'setTimeout', 'clearTimeout', 'AbortSignal'], SEASON)(
     dom.document, window, BUNDLE, fetch, setTimeout, clearTimeout, { timeout: () => undefined });
   const fire = async () => { const [[id, t]] = [...timers]; timers.delete(id); t.f(); await settle(); };
@@ -85,9 +89,7 @@ function liftSeason({ seats = {} } = {}) {
 const settle = () => new Promise((r) => setImmediate(r));
 // THE SEASON'S OWN ASKS: a drawn board then asks its seats which of them award badges (page-season-badges.test.js)
 const seasonAsks = (asked) => asked.filter((u) => new URL(u).pathname === '/season');
-const rowsOf = (board) => board.children.map((li) => ({ rank: li.children[0].textContent, who: li.children[1].children[0].textContent,
-  line: li.children[1].children[1].textContent, net: li.children[2].textContent, mine: li.className.split(' ').includes('mine'),
-  cls: li.children[2].className }));
+const rowsOf = (board) => (board.drawn ? board.drawn.rows : []).map((r) => ({ rank: r.rank, name: r.name, rounds: r.rounds, wins: r.wins, best: r.best, net: r.net, mine: !!r.mine, sign: r.sign }));
 
 test('opened from a tile: the game\'s seats in turn, the first that answers, the board drawn with the viewer\'s row marked', async () => {
   const p = liftSeason({ seats: { 'https://seat-1.example': 'down' } });
@@ -102,8 +104,8 @@ test('opened from a tile: the game\'s seats in turn, the first that answers, the
   const rows = rowsOf(p.parts['.board']);
   console.log('  SEASON:', JSON.stringify(rows));
   assert.deepEqual(rows, [
-    { rank: '1', who: 'satoshi', line: '6 rounds · 4 wins · best 83.04450', net: '+29 sat', mine: false, cls: 'net up' },
-    { rank: '2', who: 'brave-otter-0042you', line: '3 rounds · 0 wins · best 1.20000', net: '+3 sat', mine: true, cls: 'net up' },
+    { rank: 1, name: 'satoshi', rounds: 6, wins: 4, best: '83.04450', net: '+29 sat', mine: false, sign: 1 },
+    { rank: 2, name: 'brave-otter-0042', rounds: 3, wins: 0, best: '1.20000', net: '+3 sat', mine: true, sign: 1 },
   ]);
   assert.match(p.parts['.foot'].textContent, /9 rounds counted .* answered by seat-2\.example$/);
   assert.equal(p.window.ARENA_SEASON_LAST.seat, 'https://seat-2.example');
@@ -181,9 +183,9 @@ test('no seat answers: said, the board from before kept, and asked again in 30 s
 });
 
 test('its ways in: a link on each tile, the strip beside the gear and the wallet bar once a game is chosen; hidden in the clean view', async () => {
-  assert.match(HTML, /season\.className = 'season-go'/);
-  assert.match(HTML, /b\.append\(play, head, desc, signed, stats, season\);/);
-  assert.match(HTML, /window\.ARENA_SEASON\.open\(g\)/);
+  // each tile's link is React's (arena-web GameTiles, onSeason); the page hands it the board's opener
+  assert.match(HTML, /onSeason: \(g\) => \{ if \(window\.ARENA_SEASON\) window\.ARENA_SEASON\.open\(g\); \},/);
+  assert.match(readFileSync(new URL('../../arena-web/src/arena/GameTiles.jsx', import.meta.url), 'utf8'), /className="season-go"[^\n]*this\.props\.onSeason\(g\)/);
   // the class follows the choice within a few lines (22b2b331 put the wallet's early start between them)
   assert.match(HTML, /window\.ARENA_GAME_CHOSEN = game;\n(?:.*\n){1,6}\s+document\.body\.classList\.add\('arena-game-chosen'\);/);
   assert.match(HTML, /<button id="arena-season-go" type="button"/);

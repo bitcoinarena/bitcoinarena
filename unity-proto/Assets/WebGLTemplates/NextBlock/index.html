@@ -1465,26 +1465,10 @@
   });
   </script>
   <!-- A FEDERATION NOT ON THE KNOWN-GOOD LIST (§23.6): shown with its guardians, confirmed or not used -->
-  <div id="arena-fed-confirm" role="dialog" aria-modal="true" aria-labelledby="afc-title" style="display:none">
-    <div class="afc-box">
-      <h2 id="afc-title">Trust this federation?</h2>
-      <p class="afc-sub">This federation is not on this page's known-good list. Its guardians hold your deposit and your stake.</p>
-      <div class="afc-row"><span>Federation</span><b id="afc-id"></b></div>
-      <div class="afc-row"><span>Status</span><b id="afc-status"></b></div>
-      <div class="afc-guardians" id="afc-guardians"></div>
-      <div class="afc-buttons"><button type="button" id="afc-trust" class="primary">I trust this federation</button><button type="button" id="afc-cancel">Cancel</button></div>
-    </div>
-  </div>
-  <!-- WARNINGS BEFORE ENTRY (spec §18A.7 / §22A): a paying round whose rules make a bad bet says so, and the
-       player confirms, before anything is locked -->
-  <div id="arena-warn-confirm" role="dialog" aria-modal="true" aria-labelledby="awc-title" style="display:none">
-    <div class="afc-box">
-      <h2 id="awc-title">Before you stake</h2>
-      <p class="afc-sub">This round's rules are fixed in its contract. Read what they mean for you:</p>
-      <ul id="awc-list"></ul>
-      <div class="afc-buttons"><button type="button" id="awc-go" class="primary">Enter anyway</button><button type="button" id="awc-cancel">Cancel</button></div>
-    </div>
-  </div>
+  <!-- THE CONFIRMATIONS (kanban #564): "Trust this federation?", "Before you stake", "Enter by swap" - drawn by React (ConfirmCard,
+       window.ArenaConfirm) when a gate asks; spec §18A.7 / §22A: a paying round whose rules make a bad bet says so before anything is locked -->
+  <div id="arena-fed-confirm" role="dialog" aria-modal="true" style="display:none"></div>
+  <div id="arena-warn-confirm" role="dialog" aria-modal="true" style="display:none"></div>
   <div id="arena-wallet-start" role="dialog" aria-modal="true" aria-labelledby="ws-title">
     <div class="ws-box">
       <h2 id="ws-title">Your wallet</h2>
@@ -1528,32 +1512,8 @@
       <p class="ws-note" style="text-align:center;margin:8px 0 0">Questions? <a href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener" style="color:#c9a8ff">Join the community on Armada</a></p>
     </div>
   </div>
-  <div id="arena-seed-modal" role="dialog" aria-modal="true">
-    <div class="modal-box">
-      <div id="arena-seed-words">
-        <h3>Your seed phrase</h3>
-        <!-- WHY, SAID WHERE THE WORDS ARE (2026-10-17: "when it says back up now and the modal opens there is space
-             for a message explaining why user needs to do it. Needs to fit mobile as well") -->
-        <div class="seed-why" id="arena-seed-why"><b>These 24 words are your wallet.</b> Your sats are kept only in this browser: if it is cleared, or
-          this phone is lost or replaced, these words are the only way to get them back. Write them on paper, in order, and keep them
-          offline. Never share them: whoever has them can take your sats.</div>
-        <div id="arena-phrase" class="seed-grid"></div>
-        <button id="arena-verify-start" type="button" class="primary">Verify seed phrase</button>
-        <button id="arena-seed-close" type="button">Close</button>
-      </div>
-      <div id="arena-verify-step" style="display:none">
-        <h3>Verify seed phrase</h3>
-        <div>Word <span class="verify-n" id="arena-verify-n">1</span> of 24</div>
-        <div class="opt-grid" id="arena-verify-options"></div>
-        <div class="why" id="arena-verify-why"></div>
-        <button id="arena-verify-cancel" type="button">Cancel</button>
-      </div>
-      <div id="arena-verify-done" style="display:none">
-        <div class="done">Seed phrase verified</div>
-        <button id="arena-verify-close" type="button" class="primary">Done</button>
-      </div>
-    </div>
-  </div>
+  <!-- THE SEED PHRASE (kanban #564): drawn by React (SeedModal, window.ArenaSeed) when Settings opens it -->
+  <div id="arena-seed-modal" role="dialog" aria-modal="true"></div>
   <div id="arena-lobby"></div>
   <div id="arena-players"></div>
   <div id="arena-refund"></div>
@@ -1885,7 +1845,7 @@
   <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
   <!-- THE GAME'S SHOP: its items, each bought once with this wallet and kept for good -->
   <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
-  <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
+  <div id="arena-zap" role="dialog" aria-modal="true" aria-label="Zap"></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a></div><div class="foot-row"><span class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</span><button type="button" class="donate-btn" title="Donate to the protocol developers" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate</button></div></div></div>
   <div id="boot" data-build="{{{ PRODUCT_VERSION }}}">
@@ -2084,7 +2044,7 @@
   <!-- UP/DOWN'S PAGE PART (kanban #521): the markets' code and the pick sheet, from packages/btc-updown/page; before the main script, whose names it shares -->
   <!-- the Arena page's React views (kanban #564, packages/arena-web): the market's pick sheet (market-page.js draws it with them when they
        loaded) and the games screen's tiles; without the file the page draws both itself -->
-  <script type="module" src="arena-react.js"></script>
+  <script src="arena-react.js"></script>
   <script src="games/btc-updown/market-page.js"></script>
   <!-- TICK TOCK'S PAGE PART (kanban #521): the Unity bridge, from packages/nextblock/page; the build's loader is named here, where the template is filled -->
   <script>window.ARENA_UNITY_LOADER = 'Build/{{{ LOADER_FILENAME }}}';</script>
@@ -3970,44 +3930,21 @@
       }
       const $ = (id) => document.getElementById(id);
       const statusLine = fed ? `${fed.status}${fed.signers ? ` · ${fed.signers} of ${fed.nominal} guardians signed` : ''}` : 'no signed record read';
-      const inReact = (window.ARENA_ASK_IN_REACT || (() => null))('arena-fed-confirm', { title: 'Trust this federation?', sub: 'This federation is not on this page\'s known-good list. Its guardians hold your deposit and your stake.',
+      const inReact = window.ARENA_ASK_IN_REACT('arena-fed-confirm', { title: 'Trust this federation?', sub: 'This federation is not on this page\'s known-good list. Its guardians hold your deposit and your stake.',
         rows: [['Federation', fid], ['Status', statusLine]], guardians: rows, guardiansEmpty: 'Its guardians could not be read from the census.', yes: 'I trust this federation' });
-      if (inReact) {
-        window.ARENA_FED_CONFIRM_SHOWN = { federation: fid, guardians: rows.length };
-        if (!(await inReact)) return { ok: false, why: 'This federation is not on this page\'s known-good list and was not confirmed: nothing is deposited or staked.' };
-        ARENACLIENT.confirmFederation(window.ARENA_BROWSER_STORE(), fid);
-        if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED();
-        return { ok: true, confirmed: true, asked: true };
-      }
-      $('afc-id').textContent = fid;
-      $('afc-status').textContent = statusLine;
-      const list = $('afc-guardians'); list.textContent = '';
-      if (!rows.length) list.textContent = 'Its guardians could not be read from the census.';
-      for (const g of rows) {
-        const d = document.createElement('div'); d.className = 'afc-g';
-        d.innerHTML = `<b></b> · bond <span></span> sat<br><code></code><br><code></code>`;
-        d.querySelector('b').textContent = g.operator || '(no operator name)';
-        d.querySelector('span').textContent = Number(g.bondSats).toLocaleString('en-US');
-        const codes = d.querySelectorAll('code'); codes[0].textContent = 'node ' + g.nodeKey; codes[1].textContent = g.endpoint || '(no endpoint)';
-        list.appendChild(d);
-      }
       window.ARENA_FED_CONFIRM_SHOWN = { federation: fid, guardians: rows.length };
-      const box = $('arena-fed-confirm'); box.style.display = 'flex';
-      const trusted = await new Promise((done) => { $('afc-trust').onclick = () => done(true); $('afc-cancel').onclick = () => done(false); });
-      box.style.display = 'none';
-      if (!trusted) return { ok: false, why: 'This federation is not on this page\'s known-good list and was not confirmed: nothing is deposited or staked.' };
+      if (!(await inReact)) return { ok: false, why: 'This federation is not on this page\'s known-good list and was not confirmed: nothing is deposited or staked.' };
       ARENACLIENT.confirmFederation(window.ARENA_BROWSER_STORE(), fid);
       if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED();
       return { ok: true, confirmed: true, asked: true };
+      
     };
     // WARNINGS BEFORE ENTRY (spec §18A.7 / §22A): the engine's from the round's own contract, the game's from
     // the seats' listing (only codes this page can name, ARENACLIENT.entryWarnings); none - nothing is shown
-    // THE CONFIRMATIONS IN REACT (kanban #564): with the page's bundle loaded (window.ArenaConfirm), a dialog's own box is hidden and the
-    // same words are asked in a React card in it; answered once, true or false. Without the bundle each gate uses its own box below.
+    // THE CONFIRMATIONS IN REACT (kanban #564; the page's bundle, window.ArenaConfirm): the gate's words asked in a React card in its
+    // dialog; answered once, true or false
     window.ARENA_ASK_IN_REACT = (boxId, props) => {
-      if (!(window.ArenaConfirm && window.ArenaConfirm.ask)) return null;
-      const box = document.getElementById(boxId); if (!box) return null;
-      const own = box.querySelector(':scope > .afc-box'); if (own) own.style.display = 'none';
+      const box = document.getElementById(boxId);
       let host = box.querySelector(':scope > .afc-react');
       if (!host) { host = document.createElement('div'); host.className = 'afc-react'; box.append(host); }
       box.style.display = 'flex';
@@ -4018,15 +3955,8 @@
       const codes = ARENACLIENT.entryWarnings ? ARENACLIENT.entryWarnings(round, (row && row.warnings) || []) : [];
       window.ARENA_WARNINGS_SHOWN = { round: roundIdHex, codes };
       if (!codes.length) return { ok: true, codes };
-      const inReact = (window.ARENA_ASK_IN_REACT || (() => null))('arena-warn-confirm', { title: 'Before you stake', sub: 'This round\'s rules are fixed in its contract. Read what they mean for you:', items: ARENACLIENT.warningsSay(codes), yes: 'Enter anyway' });
-      if (inReact) return (await inReact) ? { ok: true, codes, confirmed: true } : { ok: false, codes, why: 'This round\'s warnings were not accepted: nothing is staked.' };
-      const $ = (id) => document.getElementById(id);
-      const list = $('awc-list'); list.textContent = '';
-      for (const t of ARENACLIENT.warningsSay(codes)) { const li = document.createElement('li'); li.textContent = t; list.appendChild(li); }
-      const box = $('arena-warn-confirm'); box.style.display = 'flex';
-      const go = await new Promise((done) => { $('awc-go').onclick = () => done(true); $('awc-cancel').onclick = () => done(false); });
-      box.style.display = 'none';
-      return go ? { ok: true, codes, confirmed: true } : { ok: false, codes, why: 'This round\'s warnings were not accepted: nothing is staked.' };
+      const inReact = window.ARENA_ASK_IN_REACT('arena-warn-confirm', { title: 'Before you stake', sub: 'This round\'s rules are fixed in its contract. Read what they mean for you:', items: ARENACLIENT.warningsSay(codes), yes: 'Enter anyway' });
+      return (await inReact) ? { ok: true, codes, confirmed: true } : { ok: false, codes, why: 'This round\'s warnings were not accepted: nothing is staked.' };
     };
     // THE SWAP'S PRESS: the amount, the fee both gateway legs cost and the federations, shown in the
     // warnings dialog's frame; "Swap and enter" moves the notes, Cancel leaves them (the deposit offer follows)
@@ -4034,23 +3964,9 @@
       const $ = (id) => document.getElementById(id);
       const sat = (msat) => `${Math.ceil(Number(msat) / 1000).toLocaleString('en-US')} sat`;
       const swapItems = [`Move ${sat(q.amountMsat)} through a gateway that serves both.`, `Fee: ${sat(q.feeMsat)}${q.ruleKnown ? '' : ' (the gateways name no fee rule)'}.`, `Total from federation ${String(from).slice(0, 8)}: ${sat(q.totalMsat)}.`];
-      const inReact = (window.ARENA_ASK_IN_REACT || (() => null))('arena-warn-confirm', { title: 'Enter by swap', sub: `This round is in federation ${String(to).slice(0, 8)}; your money is in federation ${String(from).slice(0, 8)}.`, items: swapItems, yes: 'Swap and enter' });
-      if (inReact) { window.ARENA_SWAP_SHOWN = { amountMsat: String(q.amountMsat), feeMsat: String(q.feeMsat), from, to }; return inReact; }
-      const title = $('awc-title'), sub = document.querySelector('#arena-warn-confirm .afc-sub'), go = $('awc-go');
-      const was = [title.textContent, sub.textContent, go.textContent];
-      title.textContent = 'Enter by swap';
-      sub.textContent = `This round is in federation ${String(to).slice(0, 8)}; your money is in federation ${String(from).slice(0, 8)}.`;
-      const list = $('awc-list'); list.textContent = '';
-      for (const t of [`Move ${sat(q.amountMsat)} through a gateway that serves both.`, `Fee: ${sat(q.feeMsat)}${q.ruleKnown ? '' : ' (the gateways name no fee rule)'}.`, `Total from federation ${String(from).slice(0, 8)}: ${sat(q.totalMsat)}.`]) {
-        const li = document.createElement('li'); li.textContent = t; list.appendChild(li);
-      }
-      go.textContent = 'Swap and enter';
+      const inReact = window.ARENA_ASK_IN_REACT('arena-warn-confirm', { title: 'Enter by swap', sub: `This round is in federation ${String(to).slice(0, 8)}; your money is in federation ${String(from).slice(0, 8)}.`, items: swapItems, yes: 'Swap and enter' });
       window.ARENA_SWAP_SHOWN = { amountMsat: String(q.amountMsat), feeMsat: String(q.feeMsat), from, to };
-      const box = $('arena-warn-confirm'); box.style.display = 'flex';
-      const yes = await new Promise((done) => { go.onclick = () => done(true); $('awc-cancel').onclick = () => done(false); });
-      box.style.display = 'none';
-      [title.textContent, sub.textContent, go.textContent] = was;
-      return yes;
+      return inReact;
     };
     window.ARENA_PAINT_CONFIRMED = () => {
       const el = document.getElementById('arena-fed-confirmed'); if (!el) return;
@@ -4739,7 +4655,7 @@
       const fedEl = document.getElementById('arena-history-fed'); const rowsEl = document.getElementById('arena-history-rows');
       if (!fedEl || !rowsEl) return;
       const lob = window.ARENA_LEDGER_LOBBY;
-      const clearRows = () => { if (rowsEl._root && window.ArenaWallet) window.ArenaWallet.drawHistory(rowsEl, { rows: [], empty: '' }); else rowsEl.textContent = ''; };
+      const clearRows = () => window.ArenaWallet.drawHistory(rowsEl, { rows: [], empty: '' });
       if (!lob || !lob.federation) { fedEl.textContent = 'No federation named by this lobby'; clearRows(); return; }
       let fed;
       try { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
@@ -4778,7 +4694,7 @@
         window.ARENA_HISTORY_REPLAY = link.url;
         if (win) win.location.href = link.url; else window.open(link.url, '_blank', 'noopener');
       };
-      // EACH ROW AS DATA (kanban #564): drawn by the page's bundle (window.ArenaWallet, React) when it has loaded, else below
+      // EACH ROW AS DATA (kanban #564), drawn by the page's bundle (window.ArenaWallet, React)
       const view = rows.map((r, i) => {
         const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in';
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
@@ -4786,17 +4702,7 @@
         return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
           onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null };
       });
-      if (window.ArenaWallet && window.ArenaWallet.drawHistory) { window.ArenaWallet.drawHistory(rowsEl, { rows: view, empty: EMPTY }); return; }
-      if (!view.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = EMPTY; rowsEl.append(e); return; }
-      for (const v of view) {
-        const el = document.createElement('div');
-        el.className = `hist-row ${v.plus ? 'plus' : 'minus'}` + (v.onOpen ? ' clickable' : '');
-        for (const [cls, text] of [['hist-when', v.when], ['hist-what', v.what], ['hist-amt', v.amt]]) {
-          const c = document.createElement('span'); c.className = cls; c.textContent = text; if (cls === 'hist-what') c.title = text; el.appendChild(c);   // the whole line on hover or long press (kanban #558)
-        }
-        if (v.onOpen) { el.title = 'Open this round\'s replay in a new window'; el.addEventListener('click', v.onOpen); }
-        rowsEl.appendChild(el);
-      }
+      window.ArenaWallet.drawHistory(rowsEl, { rows: view, empty: EMPTY });
     }
     // SETTINGS: three things and a Close, and the phrase is only shown when asked for.
     const settingsPanel = () => document.getElementById('arena-settings');
@@ -4814,22 +4720,10 @@
       // COLOURFUL SO IT IS READ (2026-10-12): the card tinted by its band, each value in its own colour, the health a pill
       const tint = { green: 'rgba(63,185,80,.12)', yellow: 'rgba(210,153,34,.14)', red: 'rgba(248,81,73,.14)' }[said.band] || 'rgba(139,148,158,.1)';
       el.style.borderColor = color; el.style.background = `linear-gradient(135deg, ${tint}, #11161d 70%)`;
-      // THE LINES AS DATA (kanban #564): drawn by the page's bundle (window.ArenaWallet, React) when it has loaded, else below
+      // THE LINES AS DATA (kanban #564), drawn by the page's bundle (window.ArenaWallet, React)
       const rows = [];
       const row = (k, v, tip, c, pill) => { rows.push({ k, v, tip: tip || '', color: c, pill: pill || null }); };
-      const draw = () => {
-        if (window.ArenaWallet && window.ArenaWallet.drawCustody) { window.ArenaWallet.drawCustody(el, { rows }); return; }
-        el.textContent = '';
-        const head = document.createElement('div'); head.style.cssText = 'font-weight:700;font-size:14px;color:#f7931a;margin-bottom:4px';
-        head.textContent = '🏦 Federations'; el.appendChild(head);
-        for (const r of rows) {
-          const d = document.createElement('div'); d.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:1px 0';
-          const x = document.createElement('span'); x.textContent = r.k; x.style.color = '#a9b3c1'; const y = document.createElement('b'); y.textContent = r.v;
-          y.style.cssText = r.pill ? `font-weight:700;color:#0d1117;background:${r.pill};border-radius:999px;padding:1px 10px` : `font-weight:700;color:${r.color || '#e6edf5'}`;
-          if (r.pill) y.title = r.tip;
-          d.append(x, y); if (r.tip) { d.title = r.tip; d.style.cursor = 'help'; } el.appendChild(d);
-        }
-      };
+      const draw = () => window.ArenaWallet.drawCustody(el, { rows });;
       // HOW MANY NODES THE NETWORK HAS (2026-10-12): the bonded nodes of the newest census this page checked -
       // shown whatever the federations' records say, it is the chain's own count
       { const nc = ARENACLIENT.newestCheckedCensus ? ARENACLIENT.newestCheckedCensus() : null;
@@ -4998,41 +4892,7 @@
     // Verify seed phrase - one word at a time, 1 to 24, each out of four taken from this phrase. A wrong tap does not
     // advance. After word 24 the backup is recorded by the same rule as before (verifyAndRecord) and the modal says so.
     const seedModal = document.getElementById('arena-seed-modal');
-    const seedPanes = (which) => {
-      for (const [id, name] of [['arena-seed-words', 'words'], ['arena-verify-step', 'verify'], ['arena-verify-done', 'done']])
-        document.getElementById(id).style.display = which === name ? '' : 'none';
-    };
-    const closeSeed = () => { seedModal.style.display = 'none'; window.ARENA_VERIFY = null; paintMoney(); };
     const randomIndex = (n) => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
-    let verify = null;
-    function paintVerify() {
-      const n = verify.at + 1;
-      document.getElementById('arena-verify-n').textContent = String(n);
-      const right = verify.words[verify.at];
-      const others = [...new Set(verify.words.filter((w) => w !== right))];
-      const options = [right];
-      while (options.length < 4 && others.length) options.push(others.splice(randomIndex(others.length), 1)[0]);
-      for (let i = options.length - 1; i > 0; i--) { const j = randomIndex(i + 1); [options[i], options[j]] = [options[j], options[i]]; }
-      const box = document.getElementById('arena-verify-options');
-      box.textContent = '';
-      for (const w of options) {
-        const b = document.createElement('button'); b.type = 'button'; b.textContent = w; b.dataset.word = w;
-        b.addEventListener('click', () => pick(w));
-        box.appendChild(b);
-      }
-      window.ARENA_VERIFY = { word: n, options, right };
-    }
-    function pick(w) {
-      const why = document.getElementById('arena-verify-why');
-      if (w !== verify.words[verify.at]) { why.textContent = `Not word ${verify.at + 1}. Try again.`; return; }
-      why.textContent = '';
-      verify.at += 1;
-      if (verify.at < verify.words.length) { paintVerify(); return; }
-      const said = ARENACLIENT.verifyAndRecord({ typed: verify.words.join(' '), phrase: verify.phrase, storage: verify.st, seed: verify.seed });
-      window.ARENA_VERIFY = { done: !!said.ok };
-      if (!said.ok) { why.textContent = said.why; return; }
-      seedPanes('done'); paintMoney();
-    }
     // RESTORE, OVERWRITING THIS TAB'S ONE SEED (join.js restoreSeed): refused before anything is written for a
     // live run in this tab (the lobby is not showing), a wrong word (by name), or a seed another open tab holds. On success:
     // its wallet is recovered on its first open here (markSeedRecover), the phrase is kept, and the page reloads.
@@ -5107,29 +4967,16 @@
     document.getElementById('arena-phrase-show').addEventListener('click', () => {
       const seed = walletSeed();
       const made = seed ? ARENACLIENT.phraseFromSeed(seed) : { ok: false, why: 'no wallet yet' };
-      const grid = document.getElementById('arena-phrase');
-      grid.textContent = '';
-      seedModal.style.display = 'flex'; seedPanes('words');
-      if (!made.ok) { grid.textContent = made.why; document.getElementById('arena-verify-start').style.display = 'none'; return; }
-      document.getElementById('arena-verify-start').style.display = '';
-      made.words.forEach((w, i) => {
-        const cell = document.createElement('div'); cell.className = 'seed-cell';
-        const num = document.createElement('span'); num.className = 'n'; num.textContent = String(i + 1);
-        const word = document.createElement('span'); word.textContent = w;
-        cell.append(num, word); grid.appendChild(cell);
-      });
+      // THE MODAL IN REACT (kanban #564; the page's bundle, window.ArenaSeed): the words and the quiz, the backup recorded by
+      // verifyAndRecord here
+      let host = seedModal.querySelector(':scope > .seed-react'); if (!host) { host = document.createElement('div'); host.className = 'seed-react'; seedModal.append(host); }
+      seedModal.style.display = 'flex';
+      const st = backupStore();
+      window.ArenaSeed.open(host, { words: made.ok ? made.words : [], notReady: made.ok ? null : made.why, random: randomIndex,
+        onRecord: (words) => (st ? ARENACLIENT.verifyAndRecord({ typed: words.join(' '), phrase: made.phrase, storage: st, seed }) : { ok: false, why: 'no wallet to back up yet' }),
+        onQuiz: (q) => { window.ARENA_VERIFY = q; if (q.done) paintMoney(); },
+        onClose: () => { seedModal.style.display = 'none'; window.ARENA_VERIFY = null; setTimeout(() => window.ArenaSeed.close(host), 0); paintMoney(); } });
     });
-    document.getElementById('arena-verify-start').addEventListener('click', () => {
-      const seed = walletSeed(); const st = backupStore();
-      const made = seed ? ARENACLIENT.phraseFromSeed(seed) : null;
-      if (!made || !made.ok || !st) { document.getElementById('arena-phrase').textContent = 'no wallet to back up yet'; return; }
-      verify = { words: made.words, phrase: made.phrase, at: 0, st, seed };
-      document.getElementById('arena-phrase').textContent = '';            // the words go: verify is from memory
-      document.getElementById('arena-verify-why').textContent = '';
-      seedPanes('verify'); paintVerify();
-    });
-    for (const id of ['arena-seed-close', 'arena-verify-cancel', 'arena-verify-close'])
-      document.getElementById(id).addEventListener('click', closeSeed);
     setInterval(paintMoney, 1000);
     // ---------------------------------------------------------------- the run's link to the signer nodes, said while it is driven: Tick Tock's page part, packages/nextblock/page/unity-page.js (kanban #521)
 
@@ -5584,23 +5431,8 @@
         return (j.rounds || []).filter((x) => x.game && ids.has(String(x.game.id).toLowerCase()) && Date.parse(x.endTime) > now)
           .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)).map((x) => Object.assign({ nowMs: now }, x));
       }
-      // THE LIST AS BLOCKS (kanban #564): notes, the legend and rows - drawn by the page's bundle (window.ArenaChips, a React class
-      // component) when it has loaded, else by drawBlocks below; the same blocks either way
-      const drawBlocks = (blocks) => {
-        if (window.ArenaChips && window.ArenaChips.draw) { window.ArenaChips.draw(body, { blocks, icons: ROLE_ICONS, words: ROLE_WORDS }); return; }
-        body.textContent = '';
-        for (const b of blocks) {
-          if (b.note !== undefined) { body.append(note(b.note)); continue; }
-          if (b.legend) { body.append(legend()); continue; }
-          const x = b.row;
-          let right = null;
-          if (x.right) { if (x.right.href) { right = el('a', null, x.right.text); right.href = x.right.href; right.target = '_blank'; right.rel = 'noopener'; } else right = el('span', 'tag' + (x.right.live ? ' live' : ''), x.right.text); }
-          const r = row(x.t, x.s, right);
-          if (x.who && x.who.length) { const w = el('div', 'who'); for (const y of x.who) { const sp = el('span'); sp.title = ROLE_WORDS[y.k]; sp.append(icon(y.k), y.text); w.append(sp); } r.querySelector('.main').append(w); }
-          if (x.roles) { const ic = el('span', 'roles'); for (const y of x.roles) { const sp = el('span', 'role' + (y.on ? ' on' : '')); sp.append(icon(y.k)); sp.title = y.title; ic.append(sp); } if (right) r.insertBefore(ic, right); else r.append(ic); }
-          body.append(r);
-        }
-      };
+      // THE LIST AS BLOCKS (kanban #564): notes, the legend and rows, drawn by the page's bundle (window.ArenaChips, a React class component)
+      const drawBlocks = (blocks) => { window.ArenaChips.draw(body, { blocks, icons: ROLE_ICONS, words: ROLE_WORDS }); };;
       window.ARENA_CHIP_LIST = async function (g, kind) {
         const name = g.title || g.name;
         if (kind === 'nodes') {
@@ -5705,9 +5537,14 @@
       const box = document.getElementById('arena-zap');
       if (!box || !ARENACLIENT.sendZap) return;
       const RELAYS = window.ARENA_ZAP_RELAYS || ['wss://relay.bitcoin-arena.io'];
-      const title = box.querySelector('h3'), to = box.querySelector('.to'), amts = box.querySelector('.amts'), msg = box.querySelector('.msg');
-      const go = box.querySelector('.go'), st = box.querySelector('.st');
-      const say = (t, kind = '') => { st.textContent = t; st.className = 'st' + (kind ? ' ' + kind : ''); };
+      // THE BOX IN REACT (kanban #564; the page's bundle, window.ArenaZap): drawn from `v` at every change, its taps handed back here
+      const CHOICES = (ARENACLIENT.ZAP_CHOICES_SAT || [21, 100, 1000]).map((sat) => BigInt(sat) * 1000n);
+      const v = { title: 'Zap', to: '', showMsg: false, msg: '', goLabel: 'Zap', goDisabled: true, st: '', stKind: '' };
+      const host = document.createElement('div'); host.className = 'zb-react'; box.append(host);
+      const paint = () => window.ArenaZap.draw(host, { view: { ...v, amounts: CHOICES.map((m) => ({ msat: String(m), label: Number(m / 1000n).toLocaleString('en-US') + ' sat', pressed: m === choice })) },
+        onChoose: (i) => { choice = CHOICES[i]; paint(); }, onMsg: (t) => { v.msg = t; paint(); }, onGo: () => send(), onClose: () => close() });
+      const set = (o) => { Object.assign(v, o); paint(); };
+      const say = (t, kind = '') => set({ st: t, stKind: kind });
       const store = () => window.sessionStorage;
       const noSeed = () => { throw new Error('this tab has no wallet yet: create or restore one first'); };
       const sign = (t) => ARENACLIENT.identitySignEvent(t, { storage: store(), random: noSeed, curve: window.ARENA_CURVE });
@@ -5730,53 +5567,23 @@
         try { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } catch { /* history only */ }
         return out.ok ? { ok: true, preimage: out.preimage, by: 'your player wallet' } : { ok: false, why: out.why };
       }
-      let job = null, choice = BigInt((ARENACLIENT.ZAP_CHOICES_SAT || [21])[0]) * 1000n, busy = false;
-      for (const sat of ARENACLIENT.ZAP_CHOICES_SAT || [21, 100, 1000]) {
-        const b = document.createElement('button'); b.type = 'button'; b.textContent = Number(sat).toLocaleString('en-US') + ' sat'; b.dataset.msat = String(BigInt(sat) * 1000n);
-        b.addEventListener('click', () => { choice = BigInt(b.dataset.msat); for (const x of amts.children) x.setAttribute('aria-pressed', String(x === b)); });
-        amts.append(b);
-      }
+      let job = null, choice = CHOICES[0], busy = false;
       const close = () => { if (busy) return; box.classList.remove('show'); job = null; };
-      box.querySelector('.x').addEventListener('click', close);
-      // THE BOX IN REACT (kanban #564; the page's bundle, window.ArenaZap) once it has loaded: drawn from this block's own elements, which
-      // stay the state (hidden then) - every change to them draws it again, and a tap on it acts on them. Set up at the first open
-      // (the bundle is a module and loads after this script); without it these elements are the box.
-      let mirror = null;
-      const mirrorUp = () => {
-        if (mirror || !window.ArenaZap || !window.ArenaZap.draw) return;
-        const zb = box.querySelector('.zb'), host = document.createElement('div');
-        host.className = 'zb-react'; box.append(host); zb.style.display = 'none';
-        const draw = () => window.ArenaZap.draw(host, { view: { title: title.textContent, to: to.textContent,
-            amounts: Array.from(amts.children).map((b) => ({ msat: b.dataset.msat, label: b.textContent, pressed: b.getAttribute('aria-pressed') === 'true' })),
-            showMsg: !msg.hidden, msg: msg.value, goLabel: go.textContent, goDisabled: go.disabled, st: st.textContent, stKind: st.className.replace(/^st ?/, '') },
-          onChoose: (i) => { amts.children[i].click(); }, onMsg: (v) => { msg.value = v; draw(); }, onGo: () => go.click(), onClose: close });
-        mirror = new MutationObserver(draw);
-        mirror.observe(zb, { subtree: true, childList: true, characterData: true, attributes: true });
-        mirror.draw = draw;
-      };
       box.addEventListener('click', (e) => { if (e.target === box) close(); });
       async function open(j) {
-        mirrorUp();
         job = Object.assign({}, j); busy = false;
-        title.textContent = j.title || 'Zap'; msg.value = ''; go.disabled = true; go.textContent = j.recipient ? 'Zap' : 'Tip';
-        for (const x of amts.children) x.setAttribute('aria-pressed', String(BigInt(x.dataset.msat) === choice));
+        set({ title: j.title || 'Zap', msg: '', goDisabled: true, goLabel: j.recipient ? 'Zap' : 'Tip', showMsg: !j.recipient, to: '', st: '', stKind: '' });
         box.classList.add('show');
-        msg.hidden = !!j.recipient;
-        if (mirror) mirror.draw();   // the message's value set above is no mutation
-        if (j.recipient) {
-          to.textContent = 'to ' + (j.name || 'this player') + ' \u00b7 e-cash into their Bitcoin Arena wallet, from yours';
-          say(''); go.disabled = false; return;
-        }
+        if (j.recipient) { set({ to: 'to ' + (j.name || 'this player') + ' \u00b7 e-cash into their Bitcoin Arena wallet, from yours', st: '', goDisabled: false }); return; }
         if (!job.address) {
-          to.textContent = ''; say('Looking up ' + (j.name || 'this player') + '\u2019s Lightning address \u2026');
+          say('Looking up ' + (j.name || 'this player') + '\u2019s Lightning address \u2026');
           const mine = job;
           const addr = await ARENACLIENT.playerLightningAddress(j.recipient, { relays: RELAYS, curve: window.ARENA_CURVE }).catch(() => null);
           if (mine !== job) return;
           if (!addr) { say((j.name || 'This player') + ' takes no zaps yet: their profile names no Lightning address.', 'bad'); return; }
           job.address = addr;
         }
-        to.textContent = 'to ' + job.address + (nwcUri() ? ' \u00b7 paid by your connected wallet' : ' \u00b7 paid from your player wallet');
-        say(''); go.disabled = false;
+        set({ to: 'to ' + job.address + (nwcUri() ? ' \u00b7 paid by your connected wallet' : ' \u00b7 paid from your player wallet'), st: '', stKind: '', goDisabled: false });
       }
       // A PLAYER'S ZAP: e-cash in one federation of this wallet that holds the amount, to the player's identity key
       async function zapInFederation(mine) {
@@ -5792,24 +5599,24 @@
         if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
         return got.ok ? { ok: true, zapped: true, txid: got.txid } : { ok: false, why: (got.step ? got.step + ': ' : '') + got.why };
       }
-      go.addEventListener('click', async () => {
+      async function send() {
         if (job && job.recipient && !busy) {
-          busy = true; go.disabled = true;
+          busy = true; set({ goDisabled: true });
           const mine = job;
           const out = await zapInFederation(mine).catch((e) => ({ ok: false, why: e.message }));
           busy = false;
           window.ARENA_ZAP_LAST = { at: Date.now(), recipient: mine.recipient, msat: String(choice), ok: !!out.ok, zapped: !!out.ok, why: out.why || null, txid: out.txid || null, inFederation: true };
           if (out.ok) say('Zapped ' + ARENACLIENT.zapSatLine(choice) + ' \u2713 \u00b7 ' + (mine.name || 'the player') + ' collects it into their wallet', 'ok');
-          else { say('Not sent: ' + out.why, 'bad'); go.disabled = false; }
+          else { say('Not sent: ' + out.why, 'bad'); set({ goDisabled: false }); }
           return;
         }
         if (!job || !job.address || busy) return;
-        busy = true; go.disabled = true;
+        busy = true; set({ goDisabled: true });
         const mine = job;
         say('Asking ' + job.address + ' for an invoice \u2026');
         let out;
         try {
-          out = await ARENACLIENT.sendZap({ address: job.address, recipient: job.recipient || null, amountMsat: choice, comment: msg.value.trim(),
+          out = await ARENACLIENT.sendZap({ address: job.address, recipient: job.recipient || null, amountMsat: choice, comment: v.msg.trim(),
             relays: RELAYS, sign: job.recipient ? sign : null, about: job.about || null,
             pay: async (invoice) => { say('Paying ' + ARENACLIENT.zapSatLine(choice) + ' \u2026'); return pay(invoice); } });
         } catch (e) { out = { ok: false, why: e && e.message ? e.message : String(e) }; }
@@ -5817,8 +5624,9 @@
         window.ARENA_ZAP_LAST = { at: Date.now(), address: mine.address, msat: String(choice), ok: !!out.ok, zapped: !!out.zapped, why: out.why || null,
           paymentHash: out.paymentHash || null, request: out.request ? out.request.id : null };
         if (out.ok) say((out.zapped ? 'Zapped ' : 'Tipped ') + ARENACLIENT.zapSatLine(choice) + ' \u2713' + (out.zapped ? ' \u00b7 the receipt goes to the relay' : ''), 'ok');
-        else { say('Not sent: ' + out.why, 'bad'); go.disabled = false; }
-      });
+        else { say('Not sent: ' + out.why, 'bad'); set({ goDisabled: false }); }
+      }
+      paint();
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && box.classList.contains('show')) close(); });
       window.ARENA_ZAP = { open, close };
       // THE ZAPS SENT TO THIS PLAYER, COLLECTED INTO ITS WALLET: every seat of every listed game asked once a minute what was
@@ -5844,13 +5652,10 @@
       const s = { open: false, game: null, days: 7, timer: null, ask: 0, book: null, seen: null };
       const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; };
       const myBadges = box.querySelector('.mybadges');
-      // THE ROWS DRAWN NOW, by player: where each one's icons go (.bdg) and its tapped badge's words (.bt)
-      let slots = new Map();
-      // THE ROWS IN REACT (kanban #564, the Arena page's bundle: window.ArenaSeason) when it loaded: drawn from the last board, again
-      // whenever a player's badges come in; this block's own rows otherwise
-      const R = () => (window.ArenaSeason && window.ArenaSeason.drawRows ? window.ArenaSeason : null);
+      // THE ROWS IN REACT (kanban #564, the Arena page's bundle: window.ArenaSeason): drawn from the last board, again whenever a
+      // player's badges come in
       let reactRows = [];
-      const drawReact = () => R().drawRows(board, { rows: reactRows, badgesOf: (p) => (s.book ? s.book.get(p) : null), via: (u) => via(u),
+      const drawReact = () => window.ArenaSeason.drawRows(board, { rows: reactRows, badgesOf: (p) => (s.book ? s.book.get(p) : null), via: (u) => via(u),
         onZap: window.ARENA_ZAP ? (r) => window.ARENA_ZAP.open({ title: 'Zap ' + r.name, recipient: r.player, name: r.name }) : null });
       // WHO IS LOOKING: the tab's identity key - the one a round's lobby record names, which is who a season counts a round
       // under. Before the lobby has made it (the choice of games comes first) it is made here from the tab's seed, only when
@@ -5866,21 +5671,6 @@
         return [];
       };
       const via = (u) => (window.ARENA_ROUTED_URL ? window.ARENA_ROUTED_URL(u) : u);
-      // A BADGE'S GLYPH: its colour and its mark (drawn by CSS from data-mark, so the row's text stays the name and "you")
-      const glyph = (i, b) => { i.textContent = ''; i.classList.add('g'); i.setAttribute('data-mark', b.glyph.mark); i.setAttribute('style', '--bc:' + b.glyph.colour); };
-      const drawBadges = (slot, merged) => {
-        slot.icons.textContent = '';
-        for (const b of merged.badges) {
-          const i = el('button', 'bi');
-          i.type = 'button'; i.title = b.title; i.setAttribute('aria-label', b.title);
-          // THE SEAT'S IMAGE when its definition names one, from the seat by its route; one that does not load is the glyph
-          if (b.image) { const img = el('img'); img.alt = ''; img.width = 18; img.height = 18; img.src = via(b.image); img.addEventListener('error', () => glyph(i, b)); i.append(img); }
-          else glyph(i, b);
-          // A TAP SAYS IT (a phone hovers nothing); the same badge tapped again hides it
-          i.addEventListener('click', (e) => { e.stopPropagation(); slot.say.textContent = slot.say.textContent === b.title ? '' : b.title; });
-          slot.icons.append(i);
-        }
-      };
       const sayMine = () => {
         const me = viewer()[0];
         const merged = me && s.book ? s.book.get(me) : null;
@@ -5900,8 +5690,7 @@
           timeout: (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined),
           onBadges: (player, merged) => {
             if (book !== s.book) return;           // a closed board's late answer
-            if (R()) drawReact();
-            else for (const slot of slots.get(player) || []) drawBadges(slot, merged);
+            drawReact();
             if (player === viewer()[0]) sayMine();
           } });
         s.book = book;
@@ -5935,49 +5724,12 @@
         state.className = 'state'; state.textContent = v.empty || '';
         h2.textContent = v.title;
         head.textContent = v.header;
-        if (R()) {
-          reactRows = v.rows;
-          drawReact();
-          foot.textContent = [v.more ? v.more + ' more player' + (v.more === 1 ? '' : 's') + ' below' : null, v.foot,
-            v.seat ? 'answered by ' + v.seat.replace(/^https?:\/\//, '') : null].filter(Boolean).join(' \u00b7 ');
-          sayMine();
-          askBadges(Array.from(board.querySelectorAll('li[data-player]')));
-          return;
-        }
-        board.textContent = '';
-        slots = new Map();
-        const drawn = [];
-        v.rows.forEach((r, i) => {
-          const li = el('li', 'row' + (r.mine ? ' mine' : '') + (i > 0 && r.rank !== v.rows[i - 1].rank + 1 ? ' gap' : ''));
-          li.dataset.player = r.player;
-          const who = el('div', 'who');
-          const n = el('div', 'n');
-          // THE BADGES AFTER THE NAME, before "you": filled now when the book has them, else when they come in
-          const slot = { icons: el('span', 'bdg'), say: el('div', 'bt') };
-          n.append(el('span', 'nm', r.name), slot.icons);
-          if (r.mine) n.append(el('span', 'you', 'you'));
-          // A ZAP FOR ANY OTHER PLAYER (e-cash to their identity key, in the federation)
-          else if (window.ARENA_ZAP && /^[0-9a-f]{64}$/.test(String(r.player))) {
-            const z = el('button', 'zap', '\u26a1 Zap'); z.type = 'button'; z.title = 'Zap ' + r.name;
-            z.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_ZAP.open({ title: 'Zap ' + r.name, recipient: r.player, name: r.name }); });
-            n.append(z);
-          }
-          who.append(n, el('div', 's', [r.rounds + ' round' + (r.rounds === 1 ? '' : 's'), r.wins + ' win' + (r.wins === 1 ? '' : 's'), 'best ' + r.best].join(' \u00b7 ')), slot.say);
-          const net = el('b', 'net' + (r.sign > 0 ? ' up' : r.sign < 0 ? ' down' : ''), r.net);
-          net.title = r.netMsat + ' msat';
-          li.append(el('span', 'rank', String(r.rank)), who, net);
-          board.append(li);
-          if (!slots.has(r.player)) slots.set(r.player, []);
-          slots.get(r.player).push(slot);
-          const had = s.book && s.book.get(r.player);
-          if (had) drawBadges(slot, had);
-          drawn.push(li);
-        });
+        reactRows = v.rows;
+        drawReact();
         foot.textContent = [v.more ? v.more + ' more player' + (v.more === 1 ? '' : 's') + ' below' : null, v.foot,
           v.seat ? 'answered by ' + v.seat.replace(/^https?:\/\//, '') : null].filter(Boolean).join(' \u00b7 ');
-        // THE BOARD IS DRAWN: now its badges are asked for (and the viewer's line said again from what the book holds)
         sayMine();
-        askBadges(drawn);
+        askBadges(Array.from(board.querySelectorAll('li[data-player]')));
       };
       const schedule = () => { clearTimeout(s.timer); s.timer = s.open ? setTimeout(load, POLL_MS) : null; };
       async function load() {
@@ -6002,7 +5754,7 @@
         s.game = g; s.open = true;
         if (days) s.days = Number(days);
         pressDays();
-        if (!same) { if (board._root && R()) { reactRows = []; drawReact(); } else board.textContent = ''; foot.textContent = ''; head.textContent = ''; slots = new Map(); dropBook(); }
+        if (!same) { reactRows = []; drawReact(); foot.textContent = ''; head.textContent = ''; dropBook(); }
         h2.textContent = g.title || g.name;
         state.className = 'state'; state.textContent = 'Asking the nodes \u2026';
         box.classList.add('show');
@@ -6083,86 +5835,14 @@
         const list = el.querySelector('.list');
         list.textContent = '';
         game = await new Promise((chosen) => {
-          // THE TILES: games first, then prediction markets; each its logo, type, signed description and players
-          const typeOf = (g) => (g.attested ? 'market' : g.manifest && g.manifest.resultType === 3 ? 'head-to-head' : 'game');
-          const groups = [['Games', tiles.filter((g) => !g.attested)], ['Prediction markets', tiles.filter((g) => g.attested)]];
-          // THE TILES IN REACT (kanban #564, packages/arena-web GameTiles): the same tiles, drawn by the Arena page's bundle when it loaded -
-          // the page's checks and taps handed in; the page's own drawing below otherwise
-          const reactTiles = window.ArenaGames && window.ArenaGames.drawTiles && ARENACLIENT.checkedGameInfo;
-          if (reactTiles) window.ArenaGames.drawTiles(list, { tiles,
+          // THE TILES IN REACT (kanban #564, packages/arena-web GameTiles): drawn by the Arena page's bundle, the page's checks and taps
+          // handed in; the page's own drawing is gone (the owner 2026-10-21: "no fall backs")
+          window.ArenaGames.drawTiles(list, { tiles,
             verifyInfo: (g) => (ARENACLIENT.checkedGameInfoOfTile || ARENACLIENT.checkedGameInfo)(g, pageEd25519Verify),
             routed: window.ARENA_ROUTED_URL || null, onChoose: (g) => chosen(g),
             onChip: (g, kind) => { if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); },
             onSeason: (g) => { if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); },
             onTip: window.ARENA_ZAP ? (g, info) => window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }) : null });
-          else {
-            for (const [label, games] of groups) {
-              if (!games.length) continue;
-              const sec = document.createElement('section'); sec.className = 'group';
-              const h = document.createElement('h3'); h.textContent = label + ' \u00b7 ' + games.length; sec.append(h);
-              const grid = document.createElement('div'); grid.className = 'grid'; sec.append(grid);
-              for (const g of games) {
-                const kind = typeOf(g);
-                const b = document.createElement('button'); b.type = 'button'; b.className = 'tile game ' + (kind === 'market' ? 'market' : 'play-game'); b.dataset.game = g.id;
-                const head = document.createElement('div'); head.className = 'head';
-                const logo = document.createElement('div'); logo.className = 'logo';
-                if (g.icon) {
-                  // its second route first, then the address as listed, then its initial
-                  const i = document.createElement('img'); const via = window.ARENA_ROUTED_URL ? window.ARENA_ROUTED_URL(g.icon) : g.icon;
-                  i.src = via; i.alt = ''; i.onerror = () => { if (i.src !== g.icon && via !== g.icon) { i.src = g.icon; return; } logo.textContent = (g.title || '?').slice(0, 1); }; logo.append(i);
-                }
-                else logo.textContent = (g.title || '?').slice(0, 1);
-                const who = document.createElement('div');
-                const name = document.createElement('div'); name.className = 'name'; name.textContent = g.title;
-                const badge = document.createElement('span'); badge.className = 'badge';
-                badge.textContent = kind === 'market' ? 'Prediction market' : kind === 'head-to-head' ? 'Head-to-head game' : 'Game';
-                who.append(name, badge); head.append(logo, who);
-                const play = document.createElement('span'); play.className = 'play'; play.textContent = (kind === 'market' ? 'Trade' : 'Play') + ' \u2192';
-                const desc = document.createElement('div'); desc.className = 'desc none'; desc.textContent = 'No signed description.';
-                const signed = document.createElement('div'); signed.className = 'signed';
-                const stats = document.createElement('div'); stats.className = 'stats';
-                // A COUNT: its icon (shown in the compact layout), its number, its word (the details layout) - and the words in its title
-                const ICONS = { nodes: '<path d="M8 1.5 14 5v6l-6 3.5L2 11V5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/>',
-                  players: '<circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/>',
-                  rounds: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.4 5.2v5.6L11 8z" fill="currentColor"/>' };
-                const chip = (n, word, kind, idle, shown = word) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
-                  const dot = document.createElement('i'); const ico = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ico.setAttribute('class', 'ico'); ico.setAttribute('viewBox', '0 0 16 16'); ico.setAttribute('aria-hidden', 'true'); ico.innerHTML = ICONS[kind];
-                  const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + shown; c.append(dot, ico, document.createTextNode(n >= 1000 ? (n >= 10000 ? Math.floor(n / 1000) : Math.floor(n / 100) / 10) + 'k' : String(n)), w);
-                  // ITS LIST ON A TAP, not the game: the tile's own tap still picks the game
-                  c.classList.add('opens'); c.setAttribute('role', 'button'); c.tabIndex = 0;
-                  const open = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); };
-                  c.addEventListener('click', open); c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
-                  return c; };
-                const live = g.live || { rounds: 0, players: 0 };
-                stats.append(chip(g.nodes.length, 'node' + (g.nodes.length === 1 ? '' : 's'), 'nodes', false),
-                  chip(live.players, 'player' + (live.players === 1 ? '' : 's'), 'players', !live.players),
-                  chip(live.rounds, 'live round' + (live.rounds === 1 ? '' : 's'), 'rounds', !live.rounds, 'round' + (live.rounds === 1 ? '' : 's')));
-                // ITS SEASON BOARD: its own tap, as a chip's is - the tile's tap still picks the game
-                const season = document.createElement('span'); season.className = 'season-go'; season.setAttribute('role', 'button'); season.tabIndex = 0;
-                season.title = 'Leaderboard: ' + (g.title || g.name) + ' over the last days';
-                season.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg>';
-                season.append('Leaderboard');
-                const openSeason = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); };
-                season.addEventListener('click', openSeason); season.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openSeason(e); });
-                b.append(play, head, desc, signed, stats, season);
-                if (!g.known) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = 'Not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16); b.append(w); }
-                // THE DESCRIPTION ONLY WHEN ITS DEVELOPER SIGNED IT (game-info.js): checked here, never taken from a seat
-                if (ARENACLIENT.checkedGameInfo) (ARENACLIENT.checkedGameInfoOfTile || ARENACLIENT.checkedGameInfo)(g, pageEd25519Verify).then((info) => {
-                  if (!info) return;
-                  desc.className = 'desc'; desc.textContent = info.description;
-                  signed.textContent = '\u2713 signed by its developer';
-                  if (info.website) { const a = document.createElement('a'); a.href = info.website; a.target = '_blank'; a.rel = 'noopener'; a.textContent = new URL(info.website).host; a.addEventListener('click', (e) => e.stopPropagation()); signed.append(' \u00b7 ', a); }
-                  // A TIP TO ITS DEVELOPER: only to the address the developer key signed (game-info.js)
-                  if (info.lightning && window.ARENA_ZAP) { const t = document.createElement('button'); t.type = 'button'; t.className = 'tip-dev'; t.textContent = '\u26a1 Tip the developer';
-                    t.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }); });
-                    signed.append(' \u00b7 ', t); }
-                }).catch(() => {});
-                b.addEventListener('click', () => chosen(g));
-                grid.append(b);
-              }
-              list.append(sec);
-            }
-          }
           // THE LAYOUT: compact unless this browser chose the details; the switch flips it and keeps the choice
           {
             let layout = 'compact'; try { if (window.ARENA_BROWSER_STORE().getItem('arena.games.layout') === 'list') layout = 'list'; } catch { /* storage blocked */ }
@@ -6876,7 +6556,7 @@
         const sat = (n) => Number(n || 0).toLocaleString('en-US') + ' sat';
         const inWallet = !!(el.closest && el.closest('#arena-wallet-modal'));   // kanban #558: one part of the Wallet, its own head and no close of its own
         const parts = bal && Array.isArray(bal.parts) ? bal.parts : [];
-        // EACH FEDERATION AS DATA (kanban #564): drawn by the page's bundle (window.ArenaBalance, React) when it has loaded, else below
+        // EACH FEDERATION AS DATA (kanban #564), drawn by the page's bundle (window.ArenaBalance, React)
         const rows = [...parts].sort((a, b) => b.sats - a.sats).map((x) => {
           const st = loads.get(x.federation);
           // ITS HEALTH (kanban #545): a dot and a word from its verified record, what happens to the funds, and for a HALTED one when they
@@ -6890,38 +6570,12 @@
         const view = { title: inWallet ? 'By federation' : 'Your balance', closable: !inWallet,
           empty: parts.length ? null : bal ? 'No federation holds funds of this wallet yet' : 'Loading your wallet …',
           total: bal ? { label: 'Total' + (parts.length > 1 ? ' (' + parts.length + ' federations)' : ''), value: sat(bal.sats) + (bal.arriving ? ' + ' + sat(bal.arriving) + ' arriving' : '') + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : '') } : null };
-        if (window.ArenaBalance && window.ArenaBalance.drawSplit) {
+
           // the React part in its own child, so paintDebug's rows can follow it in the same popup
           if (!el._rhost) { el.textContent = ''; el._rhost = document.createElement('div'); el._rhost.className = 'split-react'; }
           while (el.lastChild && el.lastChild !== el._rhost) el.removeChild(el.lastChild);
           if (el.firstChild !== el._rhost) el.prepend(el._rhost);
           window.ArenaBalance.drawSplit(el._rhost, Object.assign({ rows, onClose: () => { el.style.display = 'none'; } }, view));
-          return;
-        }
-        el.textContent = '';
-        const head = document.createElement('div'); head.className = 'ov-head';
-        const h = document.createElement('h4'); h.textContent = view.title;
-        const x = document.createElement('button'); x.type = 'button'; x.className = 'ov-close'; x.title = 'Close'; x.textContent = '×'; if (inWallet) x.hidden = true;
-        x.addEventListener('click', (e) => { e.stopPropagation(); el.style.display = 'none'; });
-        head.append(h, x); el.append(head);
-        if (view.empty) { const r = document.createElement('div'); r.className = 'row'; r.textContent = view.empty; el.append(r); }
-        for (const x of rows) {
-          const r = document.createElement('div'); r.className = 'row';
-          const left = document.createElement('div');
-          const f = document.createElement('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '…';
-          const s = document.createElement('div'); s.className = 'st';
-          const dot = document.createElement('span'); dot.className = 'hl ' + x.level;
-          s.append(dot, document.createTextNode(x.label));
-          left.append(f, s);
-          if (x.note) { const n = document.createElement('div'); n.className = 'note' + (x.level === 'bad' ? ' bad' : ''); n.textContent = x.note; left.append(n); }
-          const v = document.createElement('b'); v.textContent = x.value;
-          r.append(left, v); el.append(r);
-        }
-        if (view.total) {
-          const t = document.createElement('div'); t.className = 'row total';
-          const a = document.createElement('div'); a.textContent = view.total.label;
-          const v = document.createElement('b'); v.textContent = view.total.value; t.append(a, v); el.append(t);
-        }
       };
       // THE CHAIN'S TIP AND PACE, for a halted federation's payback (kanban #545): the network's Esplora explorer (mempool.space by
       // default, `arena.explorer` names another or `off`), read at most once a minute per network

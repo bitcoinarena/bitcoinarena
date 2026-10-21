@@ -6,7 +6,7 @@
 // are drawn before any badge is in; then each row's icons fill in (the seat's image where its definition names one, the
 // glyph where not), the viewer's row too, and "Your badges: N" under the header; each player is asked once per badge seat
 // for the board's life - through the 30 s re-ask and a day switch - and nothing while closed; only the rows on screen when
-// the page can tell (IntersectionObserver); a tap says the badge in words.
+// the page can tell (IntersectionObserver); a tap's words are React's (arena-web/test/season.test.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -19,6 +19,10 @@ const BUNDLE = createRequire(import.meta.url)('../../../src/arena-ui/arena-clien
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const SEASON = slice('    (function seasonBoard() {', '\n    })();\n');
 
+// window.ArenaSeason as the page's bundle draws it (kanban #564; its markup - badges, "you", Zap, a tapped badge's words - is tested in
+// arena-web/test/season.test.mjs): the board keeps what the page handed it, one row per player with its data-player (the same element while the player stays, as React keeps it), as the page's
+// badge book and its observer need
+const ArenaSeason = { drawRows: (board, props) => { board.drawn = props; board.li = board.li || new Map(); board.children = props.rows.map((r) => { if (!board.li.has(r.player)) board.li.set(r.player, { tag: 'li', dataset: { player: r.player }, children: [], textContent: r.name }); return board.li.get(r.player); }); board.querySelectorAll = () => board.children; } };
 const key = (n) => n.toString(16).padStart(2, '0').repeat(32);
 const ME = key(0xb2), SAT = key(0x11), BOB = key(0x33);
 const GAME = { id: key(0x0a), name: 'nextblock', title: 'Tick Tock, Next Block', nodes: ['https://seat-1.example', 'https://seat-2.example', 'https://seat-3.example'] };
@@ -103,7 +107,7 @@ function liftSeason({ observer } = {}) {
   const timers = new Map(); let nextTimer = 1;
   const setTimeout = (f, ms) => { const id = nextTimer++; timers.set(id, { f, ms }); return id; };
   const clearTimeout = (id) => { timers.delete(id); };
-  const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ARENA_ROUTED_URL: (u) => u.replace('https://', 'https://r.') };
+  const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ARENA_ROUTED_URL: (u) => u.replace('https://', 'https://r.'), ArenaSeason };
   pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'fetch', 'setTimeout', 'clearTimeout', 'AbortSignal', 'IntersectionObserver'], SEASON)(
     dom.document, window, BUNDLE, fetch, setTimeout, clearTimeout, { timeout: () => undefined }, observer);
   const fire = async () => { const [[id, t]] = [...timers]; timers.delete(id); t.f(); await settle(); };
@@ -111,9 +115,12 @@ function liftSeason({ observer } = {}) {
 }
 const settle = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r)); };
 const rowOf = (board, i) => board.children[i];
-const nameLine = (li) => li.children[1].children[0];
-const iconsOf = (li) => nameLine(li).children[1].children.map((b) => ({ title: b.title, img: b.children[0] ? b.children[0].src : null,
-  mark: b.attrs['data-mark'] || null, style: b.attrs.style || null }));
+const namesOf = (board) => board.drawn.rows.map((r) => r.name + (r.mine ? 'you' : ''));
+// a row's icons as the page hands them to React: the book's badges for that player, an image through the seat's route, else the glyph
+const iconsOf = (board, i) => {
+  const d = board.drawn; const m = d.rows[i] ? d.badgesOf(d.rows[i].player) : null;
+  return (m ? m.badges : []).map((b) => ({ title: b.title, img: b.image ? d.via(b.image) : null, mark: b.image ? null : b.glyph.mark, style: b.image ? null : '--bc:' + b.glyph.colour }));
+};
 const badgeAsks = (asked) => asked.filter((u) => u.includes('/badges?'));
 const defAsks = (asked) => asked.filter((u) => u.endsWith('/badge-definitions'));
 
@@ -124,15 +131,15 @@ test('rows first, icons after: each row\'s badges from the badge seat, the viewe
   await settle();
   // THE BOARD IS DRAWN while every badge answer is still on its way: rows, names, no icons, no line
   assert.equal(p.parts['.board'].children.length, 3);
-  assert.deepEqual(p.parts['.board'].children.map((li) => nameLine(li).textContent), ['satoshi', 'brave-otter-0042you', 'bob']);
-  assert.deepEqual(p.parts['.board'].children.map((li) => iconsOf(li).length), [0, 0, 0]);
+  assert.deepEqual(namesOf(p.parts['.board']), ['satoshi', 'brave-otter-0042you', 'bob']);
+  assert.deepEqual([0, 1, 2].map((i) => iconsOf(p.parts['.board'], i).length), [0, 0, 0]);
   assert.equal(p.parts['.mybadges'].textContent, '');
   assert.equal(p.asked[0], 'https://r.seat-1.example/season?game=nextblock&days=7&scope=network', 'the board asked first');
   assert.deepEqual(defAsks(p.asked), ['https://r.seat-1.example/badge-definitions', 'https://r.seat-2.example/badge-definitions', 'https://r.seat-3.example/badge-definitions']);
   p.hold.on = false;
   for (const x of p.pending.splice(0)) x.go();
   await settle();
-  const icons = [0, 1, 2].map((i) => iconsOf(rowOf(p.parts['.board'], i)));
+  const icons = [0, 1, 2].map((i) => iconsOf(p.parts['.board'], i));
   console.log('  BADGES:', JSON.stringify(icons));
   assert.deepEqual(icons[0], [
     { title: 'First win: Won a staked round of a game for the first time.', img: 'https://r.seat-2.example/badge-image/arena-first-win.svg', mark: null, style: null },
@@ -141,7 +148,7 @@ test('rows first, icons after: each row\'s badges from the badge seat, the viewe
   assert.deepEqual(icons[1].map((x) => x.title.split(':')[0]), ['First win', 'Five rounds'], 'the viewer\'s row too, in the catalogue\'s order');
   assert.deepEqual(icons[2], [], 'bob: none, nothing shown');
   assert.equal(p.parts['.mybadges'].textContent, 'Your badges: 2');
-  assert.equal(nameLine(rowOf(p.parts['.board'], 1)).textContent, 'brave-otter-0042you', 'the row\'s words are still the name and "you"');
+  assert.equal(namesOf(p.parts['.board'])[1], 'brave-otter-0042you', 'the row\'s words are still the name and "you"');
   // ONE REQUEST PER PLAYER, of the one seat that awards badges; none of the seat that said `on: false` or the one that is down
   const once = () => {
     const b = badgeAsks(p.asked);
@@ -156,14 +163,8 @@ test('rows first, icons after: each row\'s badges from the badge seat, the viewe
   p.days[1].click();
   await settle();
   once();
-  assert.equal(iconsOf(rowOf(p.parts['.board'], 0)).length, 2);
+  assert.equal(iconsOf(p.parts['.board'], 0).length, 2);
   assert.equal(p.parts['.mybadges'].textContent, 'Your badges: 2');
-  // A TAP SAYS IT on the row's own line; the same badge again hides it
-  const say = rowOf(p.parts['.board'], 0).children[1].children[2];
-  nameLine(rowOf(p.parts['.board'], 0)).children[1].children[1].click();
-  assert.equal(say.textContent, 'Season top 3: Finished first, second or third on a game\'s weekly board (Monday to Monday, UTC).');
-  nameLine(rowOf(p.parts['.board'], 0)).children[1].children[1].click();
-  assert.equal(say.textContent, '');
 });
 
 test('closed: nothing asked, a late answer not drawn; opened again, a new board\'s life asks again', async () => {
@@ -187,7 +188,7 @@ test('closed: nothing asked, a late answer not drawn; opened again, a new board\
   for (const x of p.pending.splice(0)) x.go();
   await settle();
   assert.equal(p.asked.length, before, 'a board closed while its seats were asked asks nobody after');
-  assert.equal(iconsOf(rowOf(p.parts['.board'], 0)).length, 0, 'and draws nothing');
+  assert.equal(iconsOf(p.parts['.board'], 0).length, 0, 'and draws nothing');
   assert.equal(p.parts['.mybadges'].textContent, '');
 });
 
@@ -211,6 +212,6 @@ test('only the rows on screen: an IntersectionObserver names the rows seen, and 
   await settle();
   assert.deepEqual(badgeAsks(p.asked).map((u) => new URL(u).searchParams.get('player')), [ME, SAT]);
   assert.equal(seen.watched.size, 2, 'a row seen once is watched no more');
-  assert.equal(iconsOf(rowOf(p.parts['.board'], 0)).length, 2);
-  assert.equal(iconsOf(rowOf(p.parts['.board'], 2)).length, 0, 'bob, never on screen, never asked');
+  assert.equal(iconsOf(p.parts['.board'], 0).length, 2);
+  assert.equal(iconsOf(p.parts['.board'], 2).length, 0, 'bob, never on screen, never asked');
 });
