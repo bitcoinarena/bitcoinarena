@@ -3805,6 +3805,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
       peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
+      postTo: async (root, m) => { await fetch(`${root}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }); },
       say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
     guardianWiring.founding = true;
     // WHY A TICK STARTS NO FOUNDING, said once per reason (measured live 2026-10-15: a held notice started nothing, silently)
