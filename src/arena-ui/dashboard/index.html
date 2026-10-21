@@ -12,26 +12,22 @@ h1{font-size:22px;margin:0 0 4px}p{color:var(--dim);margin:0 0 18px}a{color:#4fa
 <p>Each testnet4 node serves its own dashboard: its own earnings, the rounds it checked, its settlements and federations.</p>
 <div id="list">Reading the nodes' routes…</div>
 </main>
+<script src="../site-react.js"></script>
 <script>
 // THE NODES' DASHBOARDS, ONE PAGE EACH (2026-10-03 22:15: "Dashboard is not unified, it is PER node"). This is only a
 // way in: each node's route is the Cloudflare tunnel daily.json names for it (testnet.alt, renamed when a tunnel restarts),
 // else its Funnel path; today's profit is read from that node's own /dashboard.json.
 const FUNNEL = 'seat.example.com';
-const fmt = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' sat';
+// drawn by React (kanban #564, the site's small pages: window.ArenaSite.nodes - NodesList); this page reads the routes and each node's numbers
 (async () => {
   let alt = {};
   try { const d = await (await fetch('../daily.json', { cache: 'no-store' })).json(); alt = (d && d.testnet && d.testnet.alt) || {}; } catch { /* the Funnel paths */ }
-  const list = document.getElementById('list'); list.textContent = '';
-  for (let n = 1; n <= 7; n++) {
-    const host = alt[`${FUNNEL}/guardian-${n}`] || FUNNEL;
-    const base = `https://${host}/guardian-${n}`;
-    const row = document.createElement('div'); row.className = 'row';
-    row.innerHTML = `<a href="${base}/dashboard">Node ${n}</a><span class="k">reading…</span>`;
-    list.appendChild(row);
-    fetch(`${base}/dashboard.json`, { cache: 'no-store' }).then((r) => r.json()).then((d) => {
-      row.querySelector('.k').innerHTML = `<span>${d.node.slice(0, 12)}…</span> · today <span class="v">${fmt(d.totals.day.profitMsat)}</span> · ${d.roundsChecked} rounds checked`;
-    }).catch(() => { row.querySelector('.k').textContent = 'not answering now'; });
-  }
+  const list = document.getElementById('list');
+  const rows = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ n, base: `https://${alt[`${FUNNEL}/guardian-${n}`] || FUNNEL}/guardian-${n}`, read: null }));
+  const draw = () => window.ArenaSite.nodes(list, { rows: rows.map((r) => ({ n: r.n, href: `${r.base}/dashboard`, read: r.read })) });
+  draw();
+  for (const r of rows) fetch(`${r.base}/dashboard.json`, { cache: 'no-store' }).then((x) => x.json())
+    .then((d) => { r.read = { node: d.node, dayMsat: d.totals.day.profitMsat, rounds: d.roundsChecked }; draw(); }, () => { r.read = false; draw(); });
 })();
 </script>
 </body></html>
