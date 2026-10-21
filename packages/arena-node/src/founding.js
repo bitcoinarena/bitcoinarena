@@ -81,6 +81,16 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
    * One advance at chain height `tip`: the void at the window's end, no-shows past their fifth, this node's code, the DKG once all
    * codes are in, and whether the federation now runs.
    */
+  async function postOwn() {
+    if (started || !setup || !isSeated(own) || posted) return;
+    try {
+      const code = await setup.localParams({ leader: position(own) === 0, name, size: nominal });
+      const signature = toHex(sign(setupDigest(id, ownKey, code, tagAt('foundingSetup', { height: triggerHeight }))));
+      const m = { id: toHex(id), node: own, code, signature };
+      take(m); posted = true;
+      try { await post(m); } catch { /* the others read GET /founding too */ }
+    } catch (e) { say({ founding: toHex(id).slice(0, 16), ownCode: `not made yet: ${e.message}` }); }
+  }
   async function advance(tip) {
     if (!draw.ok || failed || federation) return state();
     // THE FEDERATION RUNS: this node's guardian, seated and past its DKG, is in consensus
@@ -93,6 +103,11 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
       say({ founding: toHex(id).slice(0, 16), void: true, at: tip, windowEnd });
       return state();
     }
+    // THIS NODE'S CODE, once it is seated (position 0 leads: it names the federation and its size) - BEFORE the no-shows are counted
+    // (kanban #495, measured 2026-10-21 10:22Z: seated nodes restarted after the beacon held no code of their own at their first
+    // advance past the fifth, so each counted itself a no-show and the founding e8741283 went void at 4 seats); a seat that cannot
+    // reach its guardian's setup yet counts as before
+    await postOwn();
     // NO-SHOWS: a seated node with no code a fifth of the window after it was seated - only while the DKG has not started
     if (!started) {
       const missing = seated.filter((e) => !codes.has(toHex(e.pubkey)) && tip >= seatedSince.get(toHex(e.pubkey)) + fifth).map((e) => toHex(e.pubkey));
@@ -106,14 +121,8 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
       }
     }
     if (started) return state();
-    // THIS NODE'S CODE, once it is seated (position 0 leads: it names the federation and its size)
-    if (setup && isSeated(own) && !posted) {
-      const code = await setup.localParams({ leader: position(own) === 0, name, size: nominal });
-      const signature = toHex(sign(setupDigest(id, ownKey, code, tagAt('foundingSetup', { height: triggerHeight }))));
-      const m = { id: toHex(id), node: own, code, signature };
-      take(m); posted = true;
-      try { await post(m); } catch { /* the others read GET /founding too */ }
-    }
+    // ... and again once the no-shows are counted: an alternate seated just now posts its code in this same advance
+    await postOwn();
     // THE KEY GENERATION, once every seated node's code is held
     if (setup && isSeated(own) && posted && seated.every((e) => codes.has(toHex(e.pubkey)))) {
       for (const e of seated) { const k = toHex(e.pubkey); if (k !== own) await setup.addPeer(codes.get(k).code); }
