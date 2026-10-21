@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE ONE DOOR A GAME IMPORTS THE ARENA THROUGH (kanban #568, the owner 2026-10-21: "Make the games in a way that they are stand alone and can be
+// outsourced to its own GitHub repository. Arena loads them"): every arena-sdk subpath is the protocol's own module - the same bindings,
+// so a game and the seat that hosts it share one manifest codec and one hash - and a game moved onto it imports nothing else of the Arena,
+// its id unchanged.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+
+test('every subpath is the protocol module itself', async () => {
+  for (const sub of Object.keys(pkg.exports)) {
+    const name = sub.slice(2);
+    const viaSdk = await import(`arena-sdk/${name}`);
+    const own = await import(`../../arena-protocol/src/${name}.js`);
+    assert.deepEqual(Object.keys(viaSdk).sort(), Object.keys(own).sort(), name);
+    for (const k of Object.keys(own)) assert.equal(viaSdk[k], own[k], `${name}.${k} is the same binding`);
+  }
+});
+
+// every import of a game's files: its own (./ or ../ inside it) or arena-sdk - nothing else of the Arena
+const filesOf = (dir) => readdirSync(dir).flatMap((f) => { const p = join(dir, f); if (f === 'node_modules') return [];
+  return statSync(p).isDirectory() ? filesOf(p) : /\.(m?js)$/.test(f) ? [p] : []; });
+const outside = (game) => {
+  const base = join(root, '..', game);
+  return filesOf(base).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/(?:from|import\()\s*'([^']+)'/g)].map((m) => m[1])
+    .filter((s) => (s.startsWith('.') ? !join(f, '..', s).startsWith(base + '/') : !s.startsWith('arena-sdk/') && !s.startsWith('node:')))
+    .map((s) => `${f.slice(base.length + 1)}: ${s}`));
+};
+
+test('hello-world imports only itself and arena-sdk, and its game id is what the network knows', async () => {
+  assert.deepEqual(outside('hello-world'), []);
+  const { GAME } = await import('../../hello-world/plugin/hello-world.js');
+  assert.equal(Buffer.from(GAME.gameId).toString('hex'), '32ee1aa45e485eb2bc6b35d118a79f9724ab8019a0ceeb71eda45a84200c130f');
+});

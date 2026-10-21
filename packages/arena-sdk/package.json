@@ -1,0 +1,17 @@
+{
+  "name": "arena-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "What a game imports from the Arena (kanban #568): the protocol's manifest, hashes, donation sets, series and encodings - one door, so a game can live in its own repository and take the Arena as a dependency.",
+  "exports": {
+    "./manifest": "./src/manifest.js",
+    "./hash": "./src/hash.js",
+    "./donation": "./src/donation.js",
+    "./testnet4-donation-set-keys": "./src/testnet4-donation-set-keys.js",
+    "./series": "./src/series.js",
+    "./encode": "./src/encode.js",
+    "./display-name": "./src/display-name.js",
+    "./genesis-ids": "./src/genesis-ids.js"
+  }
+}
