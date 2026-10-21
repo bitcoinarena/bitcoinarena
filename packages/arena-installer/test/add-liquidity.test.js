@@ -2,7 +2,8 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // AN INSTALLED NODE BECOMES A LIQUIDITY PROVIDER FROM ITS OWNER PAGE (kanban #567): the plan (LND tested, the deposit against the node's
 // wallet, a custody node's peg-in kept aside), then the provider service and the deposit's agent installed, the role and its settings
-// written - as the wizard's bond step does; refused without Bitcoin Core, without LND, when LND does not answer, and twice.
+// written - as the wizard's bond step does; a node without LND gets it installed and started first (the confirm answers `waiting`
+// until LND answers); refused without Bitcoin Core, when LND does not answer, and twice.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from 'node:fs';
@@ -58,13 +59,44 @@ test('a node with no agent gets it too; a custody node keeps its peg-in aside', 
   assert.equal((await addLiquidityOnNode({ home: sent.home, release: '/rel', state: sent.state, kit: sent.kit })).plan.reservedSats, 0, 'a peg-in sent is no longer kept aside');
 });
 
-test('refused: Electrum, no LND, LND not answering', async () => {
+test('refused: Electrum, LND not answering', async () => {
   const e = node({ chain: { kind: 'electrum' } });
   assert.match((await addLiquidityOnNode({ home: e.home, release: '/rel', state: e.state, kit: e.kit })).why, /your own Bitcoin Core/);
-  const l = node({ lightning: null });
-  assert.match((await addLiquidityOnNode({ home: l.home, release: '/rel', state: l.state, kit: l.kit })).why, /no Lightning \(LND\) set up yet/);
   const d = node();
   const r = await addLiquidityOnNode({ home: d.home, release: '/rel', state: d.state, kit: { ...d.kit, testLnd: async () => ({ ok: false, why: 'connection refused' }) }, post: true });
   assert.match(r.why, /LND does not answer: connection refused/);
   assert.equal(d.installed.length, 0);
+});
+
+test('no LND yet: the confirm installs it and waits; again while it starts; once it answers the provider is set up on it', async () => {
+  const n = node({ lightning: null });
+  const lnd = { mode: 'own', restUrl: 'https://127.0.0.1:10080', lnddir: join(n.home, 'lnd') };
+  let starting = 2; const calls = [];
+  const kit = { ...n.kit,
+    setUpOwnLnd: async ({ state, release }) => { calls.push(['install', release]); state.save({ lightning: lnd }); return { ok: true, peers: 'not reachable from outside: Tor gives LND an onion address' }; },
+    lndReady: async ({ state }) => { calls.push(['ready']); if (--starting > 0) return { ok: false, waiting: true, why: 'LND is not answering yet' }; state.save({ lightning: { ...lnd, pubkey: '02' + 'ef'.repeat(32) } }); return { ok: true, pubkey: '02' + 'ef'.repeat(32) }; } };
+  const go = (post) => addLiquidityOnNode({ home: n.home, release: '/rel', state: n.state, kit, post });
+  const p = await go(false);
+  assert.deepEqual([p.ok, p.plan.lightning, p.plan.lightningPubkey], [true, 'install', null]);
+  assert.equal(calls.length, 0, 'the plan installs nothing');
+  const a = await go(true);
+  assert.match(a.waiting, /LND is installed and starting \(not reachable from outside: Tor/);
+  assert.deepEqual(n.installed, [], 'no provider before LND answers');
+  const b = await go(true);
+  assert.deepEqual([b.plan.lightning, b.waiting], ['starting', 'LND is starting: LND is not answering yet']);
+  const c = await go(true);
+  assert.equal(c.ok, true, c.why); assert.ok(c.done, 'set up');
+  assert.equal(c.plan.lightningPubkey, '02' + 'ef'.repeat(32));
+  assert.deepEqual(calls, [['install', '/rel'], ['ready'], ['ready']]);
+  assert.deepEqual(n.installed.map((x) => x.id), ['liquidity']);
+  assert.ok(n.installed[0].args.includes(join(n.home, 'lnd')), 'the provider on the new LND');
+  assert.deepEqual(n.state.read().roles, ['verify', 'settlement', 'liquidity']);
+});
+
+test('an LND install that fails says why and sets nothing up', async () => {
+  const n = node({ lightning: null });
+  const r = await addLiquidityOnNode({ home: n.home, release: '/rel', state: n.state, post: true,
+    kit: { ...n.kit, setUpOwnLnd: async () => ({ ok: false, why: 'the download\'s checksum does not match' }) } });
+  assert.match(r.why, /LND could not be installed: the download's checksum does not match/);
+  assert.deepEqual([n.installed.length, n.state.read().roles], [0, ['verify', 'settlement']]);
 });

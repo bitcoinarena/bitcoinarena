@@ -10,6 +10,7 @@ import { Button } from '../design/components.jsx';
 /** The liquidity deposit minimum (sat): free coins + the channels given. */
 export const LIQUIDITY_DEPOSIT = Object.freeze({ testnet4: 500000, mainnet: 2500000 });
 const n = (x) => Number(x).toLocaleString('en-US');
+const WAIT_MS = 10000;
 
 export class CustodyPanel extends React.Component {
   constructor(props) { super(props); this.state = { loaded: false, guardian: null, ...(props.initial || {}) }; }
@@ -66,10 +67,16 @@ export class LiquidityPanel extends React.Component {
     let r; try { r = await this.props.api.post('/owner/liquidity/become', await this.props.api.signed('liquidity/become', { post: false })); } catch (x) { r = { ok: false, why: x.message }; }
     this.setState({ busy: false, plan: r && r.ok ? r.plan : null, message: r && r.ok ? null : (r && r.why) || 'no answer' });
   }
-  async become() {
-    this.setState({ busy: true, message: 'Setting up the provider service…' });
+  // a node without LND: the first confirm installs it and answers `waiting`; asked again every 10 s until LND answers (at most 10 min)
+  async become(tries = 0) {
+    this.setState({ busy: true, message: this.state.plan && this.state.plan.lightning === 'install' && !tries ? 'Installing LND…' : 'Setting up the provider service…' });
     let r; try { r = await this.props.api.post('/owner/liquidity/become', await this.props.api.signed('liquidity/become', { post: true })); } catch (x) { r = { ok: false, why: x.message }; }
     if (!r || !r.ok) return this.setState({ busy: false, message: (r && r.why) || 'no answer' });
+    if (r.waiting) {
+      if (tries >= 60) return this.setState({ busy: false, message: `${r.waiting} - still not up after 10 minutes: try again later` });
+      this.setState({ message: r.waiting });
+      return void setTimeout(() => this.become(tries + 1), WAIT_MS);
+    }
     this.setState({ busy: false, done: true, message: null });
     setTimeout(() => this.read(), 15000);
   }
@@ -82,6 +89,7 @@ export class LiquidityPanel extends React.Component {
         {p ? (
           <div>
             <div className="stats">
+              <div className="stat"><span>Lightning (LND)</span><b>{p.lightning === 'install' ? 'Installed now' : p.lightning === 'starting' ? 'Starting' : 'Running'}</b><small>{p.lightning === 'install' ? 'on your Bitcoin Core; Tor if no port is open' : p.lightningPubkey ? `${p.lightningPubkey.slice(0, 16)}…` : ''}</small></div>
               <div className="stat"><span>Deposit into LND</span><b>{n(p.depositSats)} sat</b><small>{n(p.depositSats / p.channelSats)} channels of {n(p.channelSats)} sat</small></div>
               <div className="stat"><span>Node wallet</span><b>{n(p.walletSats)} sat</b>{p.reservedSats ? <small>{n(p.reservedSats)} sat kept for the gateway's peg-in</small> : null}</div>
             </div>
