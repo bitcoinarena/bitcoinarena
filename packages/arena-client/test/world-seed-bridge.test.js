@@ -57,7 +57,7 @@ const METRES = (w) => w / 65536;
  */
 function shippedBridge(globals) {
   const src = readFileSync(
-    new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+    new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const names = Object.keys(globals);
   // EVERY `$`-PREFIXED MEMBER, not just the one this file happened to need.
   // Emscripten turns each into a top-level function that the exported ones

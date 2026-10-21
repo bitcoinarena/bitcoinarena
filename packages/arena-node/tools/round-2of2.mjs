@@ -1579,7 +1579,7 @@ export function servePage(build, { host = '127.0.0.1', port = 8000 } = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const host = process.env.ARENA_BIND || '127.0.0.1';
   const build = process.env.ARENA_BUILD
-    || new URL('../../nextblock/unity/build/webgl', import.meta.url).pathname;
+    || new URL('../../../.apps/arena-app-next-block/unity/build/webgl', import.meta.url).pathname;
 
   // THE PAGE IS SERVED FROM HERE unless somebody names another one, because
   // the daily is https and these daemons are not. Same build, same scheme as

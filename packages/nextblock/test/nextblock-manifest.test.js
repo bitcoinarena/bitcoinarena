@@ -21,11 +21,11 @@ import { verifyEd25519 } from 'arena-sdk/ed25519';
 import { hostedPlugins } from 'arena-sdk/host';
 import { coreHashHex } from '../tools/hash-core.js';
 
-const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
+const CLIENTS = JSON.parse(readFileSync(new URL('../plugin/clients.json', import.meta.url), 'utf8'));   // the app's own list (kanban #569)
 
 test('nextblock\'s newest signed manifest (version 3) is the body its registration builds, signed by its developer key', () => {
   const body = {
-    ...nextblockManifestBody({ clients: Object.values(LIST.games.nextblock.pinned).flat(), gameDevPubkey: MANIFEST_V2.gameDevPubkey,
+    ...nextblockManifestBody({ clients: Object.values(CLIENTS.pinned).flat(), gameDevPubkey: MANIFEST_V2.gameDevPubkey,
       gameDonationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients), cores: NEXTBLOCK_CORES_V3 }),
     version: 3, parentManifestId: GAME_ID_V2, items: NEXTBLOCK_ITEMS.map((i) => ({ ...i })), requiredProtocolVersion: ITEMS_VERSION,
   };

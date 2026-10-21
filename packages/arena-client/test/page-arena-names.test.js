@@ -39,7 +39,7 @@ test('BLWPCLIENT and BLWP_CURVE are ARENACLIENT and ARENA_CURVE, set after the a
 });
 
 test('every ARENA_ name Unity\'s bridge reads or writes is one the page or the bridge sets (kanban #524)', () => {
-  const jslib = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   const unityPage = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url), 'utf8');
   const used = [...new Set([...jslib.matchAll(/\bARENA_([A-Z][A-Z_]*)\b/g)].map((m) => m[1]))];
   for (const n of used) {

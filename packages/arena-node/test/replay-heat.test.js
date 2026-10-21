@@ -211,8 +211,8 @@ test('the ghost of a loaded run is at the pose that run actually reached', () =>
  */
 test('nothing writes a heat any more, and the browser bundle offers no way to', () => {
   const root = new URL('../../../', import.meta.url).pathname;
-  const jslib = readFileSync(root + 'packages/nextblock/unity/Assets/Plugins/WebGL/arena.jslib', 'utf8');
-  const cs = readFileSync(root + 'packages/nextblock/unity/Assets/Scripts/Arena/ArenaCore.cs', 'utf8');
+  const jslib = readFileSync(root + '.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', 'utf8');
+  const cs = readFileSync(root + '.apps/arena-app-next-block/unity/Assets/Scripts/Arena/ArenaCore.cs', 'utf8');
   const bundle = readFileSync(root + 'packages/nextblock/dist/blwp-core.js', 'utf8');
 
   assert.equal(/ArenaSetHeat\s*:/.test(jslib), false, 'the bridge still exports a heat door');
@@ -248,7 +248,7 @@ test('nothing writes a heat any more, and the browser bundle offers no way to', 
  */
 test('the loadout gauge is made of the core\'s own constants', () => {
   const root = new URL('../../../', import.meta.url).pathname;
-  const cs = readFileSync(root + 'packages/nextblock/unity/Assets/Scripts/Cargo/CargoBay.cs', 'utf8');
+  const cs = readFileSync(root + '.apps/arena-app-next-block/unity/Assets/Scripts/Cargo/CargoBay.cs', 'utf8');
 
   const at = (re, what) => {
     const m = cs.match(re);

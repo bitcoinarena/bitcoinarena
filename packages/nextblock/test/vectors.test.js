@@ -16,7 +16,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { init, step, submitLiquidation } from '../src/sim.js';
 import { hash } from '../src/state.js';
 
-const DIR = new URL('../../../test-vectors/', import.meta.url).pathname;
+const DIR = new URL('../test-vectors/', import.meta.url).pathname;
 const index = JSON.parse(readFileSync(DIR + 'index.json', 'utf8'));
 
 for (const entry of index.vectors) {
