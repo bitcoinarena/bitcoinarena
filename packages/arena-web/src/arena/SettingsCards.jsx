@@ -28,12 +28,12 @@ export class NameCard extends React.Component {
   }
 }
 
-// SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings")
+// SHOW FPS (2026-10-17: "show fps is default off everywhere, there is a toggle in settings"): the switch alone, in its host inside the page's
+// Graphics card (Tick Tock's quality select stands before it)
 export class GraphicsCard extends React.Component {
   constructor(props) { super(props); this.state = { on: !!props.on }; }
   render() {
     return (<>
-      <h3>Graphics</h3>
       <label className="fps-toggle"><input type="checkbox" id="arena-fps-toggle" checked={this.state.on} onChange={(e) => { this.setState({ on: e.target.checked }); this.props.onToggle(e.target.checked); }} /> Show FPS</label>
     </>);
   }
