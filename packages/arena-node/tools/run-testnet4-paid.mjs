@@ -508,7 +508,13 @@ if (env.PAID_RPS_GRID === '1') {
       const committee = mtp + Number(env.RPS_GRID_COMMITTEE_LEAD_MS || 45 * 60000) + 500;
       // AND A SHORT SERIES' LEAD (2026-10-12, S; series.js gridIsValid): the first start - 80 s before the first close -
       // at least 45 min after the committee time
-      const firstClose = Math.max(Date.now() + leadMs, committee + 45 * 60000 + 80000 + 1000, lastCloseMs + 8000);
+      // AND THE BEACON SIX DEEP BEFORE THE FIRST SEATING (kanban #494/#543, measured 2026-10-21): a grid's table is seated once, by
+      // its first round, and the seats post a round only once its beacon is 6 deep - grid 2887838f (published 157,165, beacon
+      // 157,178) was posted at 157,184, 05:47Z, after its first round's start 05:28Z, so no table was ever seated and every paid
+      // entry was refused ("no certificate naming its game signer nodes"). With blocks 20 min apart the first close is at least
+      // RPS_GRID_SEED_WAIT_MS (default 7 blocks, 140 min) past the committee time
+      const seedWait = Number(env.RPS_GRID_SEED_WAIT_MS || 140 * 60000);
+      const firstClose = Math.max(Date.now() + leadMs, committee + Math.max(45 * 60000, seedWait) + 80000 + 1000, lastCloseMs + 8000);
       // THE DONATION SET IN FORCE AT THE GRID'S CENSUS HEIGHT, as every seat checks it (server.js donationSetFor; measured
       // 17:54Z: grid 474c23f1 named the harness's older set and seat 31281 refused its first round - "at census height
       // 156098 this network's donation set in force is serial 3")
