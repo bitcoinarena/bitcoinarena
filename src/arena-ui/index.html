@@ -2095,6 +2095,40 @@
     try { const k = lastKey(); const was = k && JSON.parse(vault().getItem(k) || 'null');
       if (was && !window.ARENA_WALLET_BALANCE) { window.ARENA_WALLET_BALANCE = { sats: Number(was.sats) || 0, pending: 0, arriving: 0, merging: 0, parts: was.parts || [], federation: was.federation || '', last: was.atMs };
         paintHeaderBalance(); } } catch { /* none kept */ }
+    // A SIGNATURE CHECKED ONCE (kanban #573: with a game open, the federations' records were checked again on every pass - 1.2 s of 6 s of the
+    // page's thread): a BIP-340 check is a pure function of its signature, message and key, so an answer is kept (20,000 at most) and the
+    // same signed record is not checked twice. Every caller that handed the curve's verify over hands this one.
+    window.ARENA_VERIFY_KEPT = (() => {
+      const kept = new Map();
+      const hex = (b) => { let h = ''; for (const x of b) h += (x < 16 ? '0' : '') + x.toString(16); return h; };
+      return (sig, msg, key) => {
+        if (!window.ARENA_CURVE || !window.ARENA_CURVE.verify) return false;
+        let id = null;
+        try { id = hex(sig) + '.' + hex(msg) + '.' + hex(key); } catch { id = null; }
+        if (id !== null && kept.has(id)) return kept.get(id);
+        const ok = !!window.ARENA_CURVE.verify(sig, msg, key);
+        if (id !== null) { if (kept.size >= 20000) kept.clear(); kept.set(id, ok); }
+        return ok;
+      };
+    })();
+    // THE LOBBY'S SIGNATURES OFF THE PAGE'S THREAD (kanban #573, playtest 2026-10-21: "the Rps game is lagging a bit on an iPhone 16, animations
+    // are not smooth"; measured with its client open: the page checked 11,677 BIP-340 signatures in 10 s, 3.4 s of the thread the game draws
+    // on, on an M1 Max - a phone's CPU is several times slower): each paint's checks go to one worker running the same arena-curve.js, in one
+    // batch. fetchLobby falls back to checking on the page if the worker is not there or does not answer.
+    window.ARENA_VERIFY_MANY = (() => {
+      try {
+        const src = 'importScripts(' + JSON.stringify(new URL('arena-curve.js', location.href).href) + ');'
+          + 'onmessage = (e) => { const C = globalThis.ARENA_CURVE; postMessage({ id: e.data.id, ok: e.data.list.map((a) => { try { return !!C.verify(a.sig, a.msg, a.key); } catch { return false; } }) }); };';
+        const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+        const waiting = new Map(); let seq = 0;
+        w.onmessage = (e) => { const f = waiting.get(e.data.id); if (f) { waiting.delete(e.data.id); f.done(e.data.ok); } };
+        w.onerror = () => { for (const f of waiting.values()) f.fail(new Error('the signature worker failed')); waiting.clear(); };
+        return (list) => new Promise((done, fail) => {
+          const id = ++seq; waiting.set(id, { done, fail }); w.postMessage({ id, list });
+          setTimeout(() => { if (waiting.delete(id)) fail(new Error('the signature worker did not answer in 20 s')); }, 20000);
+        });
+      } catch { return null; }
+    })();
     function vault() {
       try { const s = window.localStorage; s.getItem('arena.vault'); return s; } catch { return window.sessionStorage; }
     }
@@ -2465,8 +2499,8 @@
             // EVERY FEDERATION THE SEATS LIST, each record checked against this census: the round's own is its
             // status; the others' loads say whether Move is offered (§23A.3: above 90 %, to one below 50 %)
             const all = ARENACLIENT.federationStatuses
-              ? await ARENACLIENT.federationStatuses({ nodes, census, verify: window.ARENA_CURVE.verify })
-              : new Map([[fedHex, await ARENACLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.ARENA_CURVE.verify })]]);
+              ? await ARENACLIENT.federationStatuses({ nodes, census, verify: window.ARENA_VERIFY_KEPT })
+              : new Map([[fedHex, await ARENACLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.ARENA_VERIFY_KEPT })]]);
             const fs = all.get(fedHex) || { status: 'unverified', allows: ARENACLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading"
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
@@ -2878,10 +2912,10 @@
             const census = ARENACLIENT.checkedCensusFor(named.round);
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
             for (const old of (census ? ARENACLIENT.ledgerFederations(vault()) : []).filter((f) => f !== here)) {
-              const st = await ARENACLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.ARENA_CURVE.verify });
+              const st = await ARENACLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT });
               if (st.status !== 'DRAINING' || st.successorId !== here || !st.invite) continue;
               const su = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === here ? window.ARENA_FED_STATUS
-                : { ...(await ARENACLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.ARENA_CURVE.verify })), invite: named.federation };
+                : { ...(await ARENACLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT })), invite: named.federation };
               const moved = await ARENACLIENT.migratePlayerWallet({ round: Object.assign({}, named.round, { federationId: ARENACLIENT.fromHex(old) }), invite: st.invite,
                 seed, LockClient: wasm.LockClient, storage: vault(), status: st, successor: { ...su, invite: su.invite || named.federation },
                 onState: (m) => onStep(m.state === 'moving' ? `moving your balance out of federation ${old.slice(0, 8)} (being replaced): ${Math.floor(Number(m.leftMsat) / 1000)} sat to go`
@@ -3888,7 +3922,7 @@
       let fed = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === fid ? window.ARENA_FED_STATUS : null;
       // THE SIGNED STATUS, asked of the seats here when no join asked it yet - a deposit is opened before any join
       if (!fed && census && nodes && nodes.length) {
-        try { fed = { ...(await ARENACLIENT.federationStatus({ federationIdHex: fid, nodes, census, verify: window.ARENA_CURVE.verify })), federation: fid }; }
+        try { fed = { ...(await ARENACLIENT.federationStatus({ federationIdHex: fid, nodes, census, verify: window.ARENA_VERIFY_KEPT })), federation: fid }; }
         catch { /* shown as not read */ }
       }
       const $ = (id) => document.getElementById(id);
@@ -5913,7 +5947,7 @@
               if (window.ARENA_LEARN_NODES) window.ARENA_LEARN_NODES(best.census);
               const round = best.x.c;
               const fedHex = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
-              const all = await ARENACLIENT.federationStatuses({ nodes, census: best.census, verify: window.ARENA_CURVE.verify });
+              const all = await ARENACLIENT.federationStatuses({ nodes, census: best.census, verify: window.ARENA_VERIFY_KEPT });
               const fs = all.get(fedHex) || [...all.values()][0] || { status: 'unverified', allows: ARENACLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record' };
               window.ARENA_FED_TRIED = true;
               window.ARENA_FED_STATUS = { ...fs, federation: fs.federation || fedHex };
@@ -6431,7 +6465,7 @@
         // 2 OF 2 (M3.3-34): each signer node's listing is its own BIP-340 signature,
         // checked with the curve the daemons sign under; Join is offered only
         // when the round's threshold of its own signer nodes say open and assigned.
-        const read = (nodes) => ARENACLIENT.fetchLobby({ nodes,
+        const read = (nodes) => ARENACLIENT.fetchLobby({ nodes, verifyMany: window.ARENA_VERIFY_MANY,
           verify: (s, m, k) => !!(window.ARENA_CURVE && window.ARENA_CURVE.verify && window.ARENA_CURVE.verify(s, m, k)) })
           .catch((e) => ({ rows: [], refused: [e.message], unanswered: [], failed: (nodes || []).map(String), asked: (nodes || []).length }));
         // EACH SIDE DRAWN AS SOON AS IT ANSWERS (2026-10-01: both rows, always): measured on the live page, a paint
