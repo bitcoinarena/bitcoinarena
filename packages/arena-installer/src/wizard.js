@@ -671,6 +671,13 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'" });
       return res.end(page());
     }
+    // THE STEPS PORTED TO REACT (kanban #564): the page's one script beside it, built by packages/arena-web; without it the page draws
+    // every step itself
+    if (req.method === 'GET' && url.pathname === '/wizard.js') {
+      let body; try { body = readFileSync(new URL('../www/wizard.js', import.meta.url)); } catch { return json(res, 404, { ok: false, why: 'this release carries no React steps' }); }
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return res.end(body);
+    }
     const door = api[`${req.method} ${url.pathname}`];
     if (!door) return json(res, 404, { ok: false, why: 'no such door' });
     if (req.method === 'POST' && req.headers['x-arena-wizard'] !== '1') return json(res, 403, { ok: false, why: 'missing x-arena-wizard' });

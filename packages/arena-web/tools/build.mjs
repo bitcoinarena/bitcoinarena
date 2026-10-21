@@ -15,8 +15,13 @@ await build({ entryPoints: [join(root, 'src/market/main.jsx')], bundle: true, fo
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/market.js'), legalComments: 'none' });
 // and beside Up/Down's page part, where the Arena page loads its games' page code (tools/sync-arena-ui.mjs copies *-page.js to games/<game>/)
 copyFileSync(join(root, 'dist/market.js'), join(root, '../btc-updown/page/market-react-page.js'));
+// THE INSTALLER'S STEPS: one plain script (the wizard page loads it before its own), its stylesheet inside; beside the wizard's page,
+// which the installer serves from its www/ (the release carries packages/arena-installer whole)
+await build({ entryPoints: [join(root, 'src/installer/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
+  loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(root, 'dist/wizard.js'), legalComments: 'none' });
+copyFileSync(join(root, 'dist/wizard.js'), join(root, '../arena-installer/www/wizard.js'));
 copyFileSync(join(root, 'src/design/arena.css'), join(root, 'dist/arena.css'));
-for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['bond', 'src/owner/BondPanel.jsx'], ['custody', 'src/owner/CustodyPanels.jsx'], ['standing', 'src/owner/StandingPanel.jsx'], ['release', 'src/owner/ReleasePanel.jsx'], ['apps', 'src/owner/AppsPanel.jsx'], ['network-apps', 'src/owner/NetworkAppsPanel.jsx'], ['network', 'src/owner/NetworkPanel.jsx'], ['needs', 'src/owner/NeedsPanel.jsx'], ['market', 'src/market/MarketViews.jsx'], ['components', 'src/design/components.jsx']])
+for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['bond', 'src/owner/BondPanel.jsx'], ['custody', 'src/owner/CustodyPanels.jsx'], ['standing', 'src/owner/StandingPanel.jsx'], ['release', 'src/owner/ReleasePanel.jsx'], ['apps', 'src/owner/AppsPanel.jsx'], ['network-apps', 'src/owner/NetworkAppsPanel.jsx'], ['network', 'src/owner/NetworkPanel.jsx'], ['needs', 'src/owner/NeedsPanel.jsx'], ['market', 'src/market/MarketViews.jsx'], ['wizard', 'src/installer/WizardSteps.jsx'], ['components', 'src/design/components.jsx']])
   await build({ entryPoints: [join(root, entry)], bundle: true, format: 'esm', jsx: 'automatic', platform: 'node', external: ['react', 'react-dom', 'react/jsx-runtime'],
     outfile: join(root, `dist/test/${name}.mjs`) });
-console.log('built dist/owner.js, dist/arena.css, dist/test/');
+console.log('built dist/owner.js, dist/market.js, dist/wizard.js, dist/arena.css, dist/test/');

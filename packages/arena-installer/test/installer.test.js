@@ -115,7 +115,12 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
     broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
   const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
   const gwKit = { configureGateway };
-  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit, gwKit,
+  // THE NETWORK'S BOND TARGET, fixed at the floor: the live seats' GET /capacity said 250,000 sat on 2026-10-21 (band CALM), which turned
+  // this test red on every machine that reached them; the rest of the wizard's fetches go out as they are
+  const fetcher = (url, o) => (/bitcoin-arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
+    ? { testnet: { node: ['https://a.example', 'https://b.example'] } } : { network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 }))
+    : /\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify({ network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 })) : fetch(url, o));
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, fetcher, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit, gwKit,
     launch: (o) => writeLaunchers({ ...o, platform: 'linux', env: { XDG_DATA_HOME: join(home, 'xdg'), HOME: home } }) });
   const server = http.createServer((q, s) => wizard.handle(q, s));
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
@@ -130,6 +135,9 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(enter.status, 303); assert.match(enter.headers['set-cookie'][0], /HttpOnly; SameSite=Strict/);
   assert.equal((await client(port).get(`/?t=${token}`)).status, 403, 'the token works once');
   assert.equal((await c.get('/')).status, 200, 'the page, with the session');
+  const steps = await c.get('/wizard.js');
+  assert.equal(steps.status, 200, 'the React steps, with the session (kanban #564)'); assert.match(steps.headers['content-type'], /^text\/javascript/);
+  assert.equal((await client(port).get('/wizard.js')).status, 401, 'not without it');
   assert.equal((await c.req('POST', '/api/roles', { roles: ['verify'] })).status, 403, 'a POST without x-arena-wizard is refused');
 
   let s = (await c.get('/api/state')).json;
@@ -403,7 +411,9 @@ test('the roles step shows each role in one line, its needs as chips, the long t
   }
   assert.ok(ROLES.liquidity.chips.includes('💰 500,000 sat') && ROLES.custody.chips.includes('🚪 port 9735'));
   const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
-  const render = html.slice(html.indexOf("if (st.step === 'roles') $('roles').innerHTML"), html.indexOf("if (st.step === 'roles') { const cb"));
+  // the page's own drawing, kept for a release without the React steps (kanban #564)
+  const render = html.slice(html.indexOf("if (st.step === 'roles' && !reactRoles) $('roles').innerHTML"), html.indexOf("if (st.step === 'roles' && !reactRoles) { const cb"));
+  assert.ok(render.length > 200, 'the page still draws the roles itself');
   assert.match(render, /<span class="rc-pct">1 % of each round<\/span>/, 'the share as a badge');
   assert.match(render, /OPT_IN_ROLES\.includes\(k\) \? '<span class="chip opt">needs coins \+ LND<\/span>'/, 'the opt-in roles marked');
   assert.match(render, /<details class="rc-more"><summary>more<\/summary><p>\$\{ROLE_EARN\[k\] \|\| ''\}<\/p><p>\$\{esc\(r\.needs\)\}<\/p><\/details>/, 'the prose only behind "more"');
