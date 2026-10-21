@@ -12,18 +12,6 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     function pickFor(roundIdHex) { const c = window.ARENA_PICK_CHOSEN; return c && c.round === roundIdHex ? c : null; }
     // an unpinned market the player confirmed a second time on the sheet (§0A.6): only that game, only for that join
     function confirmedMarkets() { const c = window.ARENA_PICK_CHOSEN; return c && c.confirmed ? new Set([c.gameId]) : null; }
-    // A HEAD-TO-HEAD MOVE: the move a head-to-head game's client chose, read by the join it starts: { round, move }
-    window.ARENA_HIDDEN_CHOSEN = null;
-    function hiddenFor(roundIdHex) { const c = window.ARENA_HIDDEN_CHOSEN; return c && c.round === roundIdHex ? c : null; }
-    // THE TAB'S HIDDEN MOVES, kept with the tab's seed (sessionStorage): the move and its salt until they are revealed - a
-    // reload between entry and reveal must not lose the salt, or the move could never be shown and the entry forfeits
-    const HIDDEN_KEY = 'arena.h2h.moves';
-    function readHidden() { try { return JSON.parse(window.sessionStorage.getItem(HIDDEN_KEY) || '[]'); } catch { return []; } }
-    function rememberHidden(h) {
-      try { const all = readHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
-      catch { /* kept for this page only */ }
-    }
-    window.ARENA_HIDDEN_MOVES = readHidden;
     // THE TAB'S PICKS, kept with the tab's seed (sessionStorage): what the lobby's market lines are made of
     const PICKS_KEY = 'arena.market.picks';
     function readPicks() { try { return JSON.parse(window.sessionStorage.getItem(PICKS_KEY) || '[]'); } catch { return []; } }
