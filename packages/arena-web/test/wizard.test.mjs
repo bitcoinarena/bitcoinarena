@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RolesStep, SeedStep, OwnerStep, PromiseStep, onAtStart, OPT_IN_ROLES } from '../dist/test/wizard.mjs';
+import { RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep, onAtStart, OPT_IN_ROLES, appOnAtStart } from '../dist/test/wizard.mjs';
 
 const roleInfo = {
   verify: { title: 'Game / verify', does: 'replays and signs rounds', chips: ['🔒 bond', '🌐 https address'], needs: 'Replays each round it is seated on.', slice: 1 },
@@ -94,4 +94,39 @@ test('promise: Continue only once I UNDERSTAND is typed; posted as typed', async
   await c.save();
   assert.deepEqual(posts, [['/api/promise', { text: 'i understand ' }]]);
   assert.match(renderToStaticMarkup(c.render()), /Your bond is slashed: you lose it/);
+});
+
+// THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer where
+// all apps are automatically selected")
+const appInfo = [
+  { id: 'nextblock', title: 'Tick Tock, Next Block', short: 'Next Block', versions: 4 },
+  { id: 'btc-updown', title: 'Bitcoin Up or Down', short: 'Up or Down', versions: 15 },
+  { id: 'rock-paper-scissors', title: 'Rock Paper Scissors', short: 'Rock Paper Scissors', versions: 3 },
+];
+test('apps: a tile per app, every one switched on, its versions counted; a saved choice shown as saved', () => {
+  const html = renderToStaticMarkup(React.createElement(AppsStep, { st: { appInfo, apps: [] }, post: async () => ({}), reload() {} }));
+  assert.equal((html.match(/class="tile[ "]/g) || []).length, 3);
+  for (const a of appInfo) {
+    assert.match(html, new RegExp(`class="tile on" id="app-${a.id}"`));
+    assert.match(html, new RegExp(`<input type="checkbox" id="ap-${a.id}"[^>]*checked=""`), `${a.id} switched on`);
+  }
+  assert.match(html, /<h4>Tick Tock, Next Block<\/h4>[\s\S]*?4 versions/);
+  assert.match(html, /15 versions/); assert.match(html, /3 versions/);
+  assert.match(html, /3 of 3 apps on/);
+  assert.deepEqual(appInfo.map((a) => appOnAtStart(a.id, ['btc-updown'])), [false, true, false]);
+  const saved = renderToStaticMarkup(React.createElement(AppsStep, { st: { appInfo, apps: ['btc-updown'] }, post: async () => ({}), reload() {} }));
+  assert.match(saved, /class="tile" id="app-nextblock"/); assert.match(saved, /class="tile on" id="app-btc-updown"/);
+});
+
+test('apps: Continue posts the apps that are on and moves on; none on cannot continue; a refusal is shown', async () => {
+  const posts = []; let reloaded = 0;
+  const c = driven(AppsStep, { st: { appInfo, apps: [] }, post: async (p, b) => { posts.push([p, b]); return { ok: true }; }, reload: () => { reloaded++; } });
+  c.toggle('btc-updown', false);
+  await c.save();
+  assert.deepEqual(posts, [['/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] }]]); assert.equal(reloaded, 1);
+  for (const a of appInfo) c.toggle(a.id, false);
+  assert.match(renderToStaticMarkup(c.render()), /<button type="button" disabled="">Continue<\/button>/);
+  const d = driven(AppsStep, { st: { appInfo, apps: [] }, post: async () => ({ ok: false, why: 'no app chess in this release' }), reload() {} });
+  await d.save();
+  assert.match(renderToStaticMarkup(d.render()), /class="msg bad"[^>]*>no app chess in this release/);
 });
