@@ -54,3 +54,14 @@ test('capacity: a band with its load bar and plea; a federation not open says wh
   assert.match(h, /<b>Network: PRESSURE<\/b> - the lowest-load OPEN federation \(Federation 1\) at 82 % · a bond of at least 80,000 sat/);
   assert.match(renderToStaticMarkup(React.createElement(Capacity, { view: capacityView(null) })), /no seat answers \/capacity yet/);
 });
+
+test('a table from the page\'s data: the dot in the first cell, parts in their classes, text never HTML, the words for none, a foot', async () => {
+  const { Table } = await import('../dist/test/health.mjs');
+  const h = renderToStaticMarkup(React.createElement(Table, { head: ['Federation', 'Status', 'Load'], foot: '13 of 14 seats answered',
+    rows: [{ key: 'a', dot: 'bad', cls: [null, null, null], cells: [['Federation 1', { t: '337ae01a', c: 'muted mono' }], ['OPEN', '·', { t: 'FULL', c: 'bad' }], { t: '433 %', c: 'bad' }] },
+      { key: 'b', cells: ['<img src=x>', '-', 7] }] }));
+  assert.match(h, /<td><span class="dot bad"><\/span>Federation 1 <span class="muted mono">337ae01a<\/span><\/td><td>OPEN · <span class="bad">FULL<\/span><\/td><td><span class="bad">433 %<\/span><\/td>/);
+  assert.match(h, /<td>&lt;img src=x&gt;<\/td><td>-<\/td><td>7<\/td>/);
+  assert.match(h, /<tr><td colspan="3" class="muted">13 of 14 seats answered<\/td><\/tr>/i);
+  assert.match(renderToStaticMarkup(React.createElement(Table, { head: ['A', 'B'], rows: [], empty: 'no node serves a liquidity claim' })), /<td colspan="2" class="muted">no node serves a liquidity claim<\/td>/i);
+});
