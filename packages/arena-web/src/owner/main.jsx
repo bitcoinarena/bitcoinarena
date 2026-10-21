@@ -19,6 +19,7 @@ import { OwnerStart, OwnerMessage } from './OwnerStart.jsx';
 import { OwnerArea } from './OwnerArea.jsx';
 import { BondAnswer, CapacityPlea } from './BondOffer.jsx';
 import { LeavePanel } from './LeavePanel.jsx';
+import { WaitingDonations, DevClients } from './DonationsPanels.jsx';
 import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
@@ -70,4 +71,15 @@ export function areaInto(element, props) {
 export function mountBondAnswer(element, props) { const root = createRoot(element); root.render(<BondAnswer {...props} />); return root; }
 export function mountPlea(element, props) { const root = createRoot(element); root.render(<CapacityPlea {...props} />); return root; }
 export function mountLeave(element, props) { const root = createRoot(element); root.render(<LeavePanel {...props} />); return root; }
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+// A PANEL DRAWN AGAIN IN THE SAME ROOT (its state kept: a form being typed keeps its words): by its kind's name
+const KINDS = { WaitingDonations, DevClients };
+export function drawInto(element, kind, props) {
+  const C = KINDS[kind];
+  if (!element._react || element._react._kind !== kind) {
+    if (element._react) element._react.unmount();
+    element.innerHTML = ''; element._react = createRoot(element); element._react._kind = kind;
+  }
+  element._react.render(<C {...props} />);
+  return element._react;
+}
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
