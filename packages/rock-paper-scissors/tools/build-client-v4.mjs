@@ -8,13 +8,13 @@
 //      reads the client between them) - the reasons live in version 3's file and in this tool;
 //   4. checked: the file parses, the round logic (seatAt, paint, the taps) is version 3's line for line, nothing of the above is left.
 //
-//   node packages/arena-web/tools/build.mjs && node packages/rock-paper-scissors/tools/build-client-v4.mjs
+//   node packages/rock-paper-scissors/tools/build-view.mjs && node packages/rock-paper-scissors/tools/build-client-v4.mjs
 // Writes client/index-v4.html; a new hash, so the manifest is signed next (tools/sign-manifest-v4.mjs).
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const V3 = new URL('../client/index.html', import.meta.url);
 const OUT = new URL('../client/index-v4.html', import.meta.url);
-const BUNDLE = new URL('../../arena-web/dist/rps.js', import.meta.url);
+const BUNDLE = new URL('../dist/rps-view.js', import.meta.url);
 
 /** Replace exactly one occurrence, or stop: a v3 that changed under this tool is not rewritten blind. */
 function once(text, from, to) {
