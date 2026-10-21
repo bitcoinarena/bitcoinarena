@@ -26,6 +26,18 @@ const drawSplit = (mk) => (host, p) => {
     const v = mk('b'); v.textContent = x.value; r.append(left, v); host.append(r);
   }
   if (p.total) { const t = mk('div'); t.className = 'row total'; const a = mk('div'); a.textContent = p.total.label; const v = mk('b'); v.textContent = p.total.value; t.append(a, v); host.append(t); }
+  // the debug rows the page hands it (kanban #564: BalanceSplit draws them under the total)
+  if (p.debug) {
+    const h2 = mk('div'); h2.className = 'dbg-h'; h2.textContent = 'All federations (debug) \u00b7 ' + p.debug.rows.length; host.append(h2);
+    for (const x of p.debug.rows) {
+      const r = mk('div'); r.className = 'row'; const left = mk('div');
+      const f = mk('div'); f.textContent = 'Federation ' + x.federation.slice(0, 8) + '\u2026';
+      const s = mk('div'); s.textContent = x.state; const c = mk('div'); c.textContent = x.cap; left.append(f, s, c);
+      if (x.note) { const n = mk('div'); n.className = 'note bad'; n.textContent = x.note; left.append(n); }
+      const b = mk('button'); b.className = 'dep-here'; b.disabled = !x.canDeposit; b.addEventListener('click', (e) => { e.stopPropagation(); x.onDeposit(); });
+      r.append(left, b); host.append(r);
+    }
+  }
 };
 function fakeDom() {
   const mk = (tag) => {
