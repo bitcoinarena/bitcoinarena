@@ -247,3 +247,18 @@ export class DepositModal extends React.Component {
       </>);
   }
 }
+
+/** THE WAIT BEFORE THE OFFER (2026-10-12 16:44: the box opens on the tap and says what it waits for; the invoice fills it when it is made):
+ *  its close, its title, the page's backup warning, and the line - what it waits for, or why there is no deposit. */
+export class DepositWait extends React.Component {
+  render() {
+    const { title, line, onClose } = this.props;
+    return (
+      <>
+        <button type="button" className="dep-close" title="Close" onClick={onClose}>{'×'}</button>
+        <div className="dep-title">{title}</div>
+        <div className="dep-backup-host" style={{ display: 'contents' }} />
+        <div className="dep-why">{line}</div>
+      </>);
+  }
+}

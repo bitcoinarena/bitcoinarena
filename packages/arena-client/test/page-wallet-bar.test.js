@@ -39,9 +39,9 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
   const ARENACLIENT = { depositDonationMsat: () => 1000n, marketForRound: () => null,
     settingsDepositOffer: async (o) => { if (depositFails) throw new Error(depositFails); did.push(['offer', o.invite, String(o.donationMsat)]); return { offer: 1 }; } };
   const intervals = [];
-  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault', 'paintHistory', 'setInterval', 'setTimeout', 'clearTimeout'],
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'depositWait', 'donationBps', 'vault', 'paintHistory', 'setInterval', 'setTimeout', 'clearTimeout'],
     [OPEN, WIRED], 'return { openMoney, paintWalletBar };');
-  const api = fn(document, window, ARENACLIENT, () => ctx, (c) => did.push(['withdraw', c.invite]), (offer, opts) => did.push(['modal', opts.title, !!opts.overSettings]),
+  const api = fn(document, window, ARENACLIENT, () => ctx, (c) => did.push(['withdraw', c.invite]), (offer, opts) => did.push(['modal', opts.title, !!opts.overSettings]), () => null,
     () => 0, () => ({}), () => {}, (f, ms) => intervals.push([f, ms]), () => 0, () => {});
   return { ...api, els, did, window, intervals, click: (id) => clicks[id]() };
 }
