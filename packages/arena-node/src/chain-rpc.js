@@ -200,3 +200,20 @@ export async function headersToTip(call, { count } = {}) {
   }
   return { headers, firstHeight, tipHeight: tip };
 }
+
+/**
+ * A CENSUS FROM A VIEW, READ ONCE MORE WITH FRESH HASHES WHEN IT IS NOT A CHAIN (kanban #495, measured 2026-10-21 on the three installer
+ * nodes: every founding census since 157,115 failed "that is not a chain: this header does not follow the one before it" - blocksOver keeps
+ * a height's hash once it is DEEP_BLOCKS under a read's top, and one kept while the node followed another branch was never read again).
+ * `read()` the view (blocksOver with `cache`), `derive(view)` the census of it. Answers the census; on "not a chain" the cache's kept
+ * hashes are dropped and the view is read and derived once more.
+ */
+export async function censusWithFreshHashes({ read, derive, cache }) {
+  let census = derive(await read());
+  if (!census.ok && /not a chain/.test(String(census.why)) && cache && cache.hashes && cache.hashes.size) {
+    cache.hashes.clear();
+    census = derive(await read());
+  }
+  return census;
+}
+

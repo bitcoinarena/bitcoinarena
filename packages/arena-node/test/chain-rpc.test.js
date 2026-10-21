@@ -235,3 +235,26 @@ test('a second census view asks only its top DEEP_BLOCKS heights; the cookie is 
   assert.equal(await rpc('getblockcount'), 7, 'the 401 reads the new cookie and asks again');
   assert.equal(reads, 2);
 });
+
+// A KEPT HASH FROM A BRANCH THE CHAIN LEFT (kanban #495, measured 2026-10-21 on the three installer nodes: every founding census since
+// 157,115 failed "that is not a chain: this header does not follow the one before it")
+test('a census that is not a chain is read once more with the kept hashes dropped; one that is a chain is read once', async () => {
+  const { censusWithFreshHashes, blockCache } = await import('../src/chain-rpc.js');
+  const cache = blockCache();
+  cache.putHash(100, 'stale');
+  let reads = 0;
+  const derive = () => (cache.hashes.has(100) ? { ok: false, why: 'that is not a chain: this header does not follow the one before it' } : { ok: true, entries: [] });
+  const got = await censusWithFreshHashes({ read: async () => { reads++; return {}; }, derive, cache });
+  assert.deepEqual([got.ok, reads, cache.hashes.size], [true, 2, 0]);
+  // a good view: one read, the kept hashes kept
+  cache.putHash(101, 'fine'); reads = 0;
+  const ok = await censusWithFreshHashes({ read: async () => { reads++; return {}; }, derive: () => ({ ok: true, entries: [] }), cache });
+  assert.deepEqual([ok.ok, reads, cache.hashes.size], [true, 1, 1]);
+  // another failure is not retried
+  reads = 0;
+  const other = await censusWithFreshHashes({ read: async () => { reads++; return {}; }, derive: () => ({ ok: false, why: 'no bond' }), cache });
+  assert.deepEqual([other.ok, reads], [false, 1]);
+  // and the seat's chain census uses it
+  const main = (await import('node:fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.match(main, /censusWithFreshHashes\(\{ read, derive: \(view\) => censusOfView\(view, contract\), cache: blocksKept \}\)/);
+});
