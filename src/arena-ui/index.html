@@ -2078,6 +2078,23 @@
     function pageFrontendPk() {
       try { return window.ARENA_FRONTEND_PK ? ARENACLIENT.fromHex(window.ARENA_FRONTEND_PK) : null; } catch { return null; }
     }
+    // THIS WALLET'S LAST BALANCE, AT ONCE (playtest 2026-10-21 ~19:45Z: "when having a wallet with 0 sats it takes 20-30 seconds to display the
+    // balance of 0"): every sum is kept per phrase in this browser (lastBalance); a page that opens shows it from its first paint while its
+    // first sum runs (marked `last`, replaced by the sum when it lands), so a known wallet never waits on "– sat"
+    function lastKey() { const ph = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16); return /^[0-9a-f]{16}$/.test(ph) ? 'arena.wallet.last.' + ph : null; }
+    function lastBalance(b) { const k = lastKey(); if (!k) return; try { vault().setItem(k, JSON.stringify({ sats: b.sats, parts: b.parts, federation: b.federation, atMs: Date.now() })); } catch { /* not kept */ } }
+    // a game's own header (Unity's, the leaderboard's, the shop's) shows the same balance - painted by the wallet bar each second, and here
+    // at once when this wallet's last balance is known
+    function paintHeaderBalance() {
+      const hb = window.ARENA_WALLET_BALANCE; const he = document.getElementById('arena-hdr-sats');
+      // MERGING, AS AN ICON (the owner 2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
+      // it; a ⇄ beside it says part of it is still coming in from this browser's other wallets, the sentence on hover / long press
+      const mergeTip = hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
+      if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) he.textContent = t; he.title = mergeTip; }
+    }
+    try { const k = lastKey(); const was = k && JSON.parse(vault().getItem(k) || 'null');
+      if (was && !window.ARENA_WALLET_BALANCE) { window.ARENA_WALLET_BALANCE = { sats: Number(was.sats) || 0, pending: 0, arriving: 0, merging: 0, parts: was.parts || [], federation: was.federation || '', last: was.atMs };
+        paintHeaderBalance(); } } catch { /* none kept */ }
     function vault() {
       try { const s = window.localStorage; s.getItem('arena.vault'); return s; } catch { return window.sessionStorage; }
     }
@@ -4069,12 +4086,7 @@
     // player could only ever deposit by joining. Painted while the bar is up; why-not lines under it, for 8 s; a wait ("…")
     // until what it waits for answers.
     function paintWalletBar() {
-      // a game's own header (Unity's, the leaderboard's, the shop's) shows the same balance
-      { const hb = window.ARENA_WALLET_BALANCE; const he = document.getElementById('arena-hdr-sats');
-        // MERGING, AS AN ICON (the owner 2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
-        // it; a ⇄ beside it says part of it is still coming in from this browser's other wallets, the sentence on hover / long press
-        const mergeTip = hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
-        if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) he.textContent = t; he.title = mergeTip; } }
+      paintHeaderBalance();
       const bar = document.getElementById('arena-wallet-bar');
       if (!bar || !(document.body.classList.contains('arena-own-client') || document.body.classList.contains('arena-picking'))) return;
       const bal = window.ARENA_WALLET_BALANCE;
@@ -6075,15 +6087,17 @@
           const missing = held.filter((f) => !window.ARENA_WALLETS.has(f));
           if (seed && missing.length && ARENACLIENT.openPlayerWallet) {
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-            for (const fid of missing) {
+            // SIDE BY SIDE (playtest 2026-10-21 ~19:45Z: "when having a wallet with 0 sats it takes 20-30 seconds to display the balance of 0" - one
+            // wallet opened after another, about 2 s each in a desktop Chrome, several times that on a phone)
+            await Promise.all(missing.map(async (fid) => {
               const st = statuses.find((x) => x && x.invite && String(x.federation).toLowerCase() === fid);
               // no verified status with an invite (a CRITICAL federation, or the statuses not landed yet): the invite its wallet was opened
               // with before - a deposit pending there is resumed and its funds summed all the same (2026-10-20, 1,000 sat in b18947f0)
               const inv = (st && st.invite) || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), fid) : null);
-              if (!inv) continue;
+              if (!inv) return;
               try { window.ARENA_KEEP_WALLET(fid, await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inv, seed, LockClient: wasm.LockClient, storage: vault() })); }
               catch (e) { console.log('[arena] the wallet in federation ' + fid.slice(0, 16) + ' did not open: ' + (e && e.message ? e.message : e)); }
-            }
+            }));
           }
           // NOTES STILL ARRIVING: a restore's re-issue, a deposit's notes, a payment's change count in the balance
           // only once issued - measured: 0 sat for more than 6 minutes after a restore of a seed holding 3000 - so what is being
@@ -6116,9 +6130,13 @@
               else parts.push({ federation: f, sats: Number(m / 1000n), arriving: 0, merging: Number(m / 1000n) });
             }
             sum += merging; }
-          if (parts.length) {
-            window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), parts,
+          // A BALANCE ALWAYS ONCE SUMMED (the same playtest: with no held federation's wallet open the balance was never set and the bar said
+          // "– sat" until some later read): nothing open is 0 sat, with how many held federations could not be read beside it
+          const unread = held.filter((f) => !window.ARENA_WALLETS.has(f)).length;
+          if (parts.length || seed) {
+            window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), parts, unread,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
+            lastBalance(window.ARENA_WALLET_BALANCE);
             if (arriving > 0n) { console.log('[arena] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 3000); }
             if (parts.length > 1) console.log('[arena] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
           }

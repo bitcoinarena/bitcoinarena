@@ -15,6 +15,8 @@ const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const OPEN = slice('    function openMoney(which, say = ', '\n      })();\n    }\n');
+// the header balance the bar paints (kanban #564 playtest fix: its own function, painted at once from the last balance)
+const HDR = slice('    function paintHeaderBalance() {', '\n    }\n');
 const WIRED = slice("    for (const [id, which] of [['arena-deposit-go', 'deposit'], ['arena-move-go', 'move'],", '\n      setInterval(paintWalletBar, 1000);\n    }\n');
 
 function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab'.repeat(32), roundStake: 100000n, invite: 'fed1', seed: 'seed', gateways: [] },
@@ -40,7 +42,7 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
     settingsDepositOffer: async (o) => { if (depositFails) throw new Error(depositFails); did.push(['offer', o.invite, String(o.donationMsat)]); return { offer: 1 }; } };
   const intervals = [];
   const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'depositWait', 'donationBps', 'vault', 'paintHistory', 'setInterval', 'setTimeout', 'clearTimeout'],
-    [OPEN, WIRED], 'return { openMoney, paintWalletBar };');
+    [HDR, OPEN, WIRED], 'return { openMoney, paintWalletBar };');
   const api = fn(document, window, ARENACLIENT, () => ctx, (c) => did.push(['withdraw', c.invite]), (offer, opts) => did.push(['modal', opts.title, !!opts.overSettings]), () => null,
     () => 0, () => ({}), () => {}, (f, ms) => intervals.push([f, ms]), () => 0, () => {});
   return { ...api, els, did, window, intervals, click: (id) => clicks[id]() };
