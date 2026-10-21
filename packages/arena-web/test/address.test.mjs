@@ -14,14 +14,16 @@ function driven(api) { const c = new AddressPanel({ api, pollMs: 10 }); c.setSta
 
 test('what it shows: the address, the warning while it is a quick tunnel, the modes; a stable one no warning; the login link while waiting', () => {
   const html = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: quick, mode: 'quick' } }));
-  assert.match(html, /Reached at<\/span><b>https:\/\/cottage-usually-pete-path/);
+  assert.match(html, /<code class="addr-url">https:\/\/cottage-usually-pete-path/);
+  assert.match(html, /<span class="pill wait">Changes at every restart<\/span>/);
   assert.match(html, /changes when the node restarts/);
-  for (const m of Object.keys(MODES)) assert.match(html, new RegExp(`<option value="${m}"`));
+  for (const m of Object.keys(MODES)) assert.match(html, new RegExp(`<input type="radio" name="reach-mode"[^>]*value="${m}"`), `a card for ${m}`);
+  assert.match(html, /<label class="choice on now">/, 'the way in now is marked and chosen');
   const stable = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...quick, mode: 'permanent', stable: true } } }));
   assert.doesNotMatch(stable, /changes when the node restarts/);
   const login = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...quick, progress: { state: 'login', mode: 'permanent', loginUrl: 'https://dash.cloudflare.com/argotunnel?x=1' } } } }));
   assert.match(login, /href="https:\/\/dash\.cloudflare\.com\/argotunnel\?x=1"/);
-  assert.doesNotMatch(login, /<select/, 'one switch at a time');
+  assert.doesNotMatch(login, /name="reach-mode"/, 'one switch at a time');
   const manual = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ok: false, why: 'this node was not installed by the Arena installer: its address is its operator\'s own' } } }));
   assert.match(manual, /set up by hand/);
 });
