@@ -5,9 +5,9 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { RPS_MANIFEST_HEX } from './rps-manifest.js';
-import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
-import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { fromHex, toHex } from 'arena-sdk/hash';
+import { decodeManifest, gameIdOf } from 'arena-sdk/manifest';
+import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
 import { INFO } from './info.js';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
