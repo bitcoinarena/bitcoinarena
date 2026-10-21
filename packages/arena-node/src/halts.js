@@ -31,7 +31,7 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   const storedObs = Array.isArray(stored) ? stored : (stored && stored.observations) || [];
   for (const o of storedObs) { try { keep(decodeWithSig(o)); } catch { /* a stored observation that no longer reads */ } }
   for (const [fid, w] of Object.entries((stored && !Array.isArray(stored) && stored.seen) || {})) {
-    if (Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) seen.set(fid, { session: w.session, firstHeight: w.firstHeight, heard: w.heard !== false, answering: [], at: Number(w.at) || 0 });
+    if (Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) seen.set(fid, { session: w.session, firstHeight: w.firstHeight, heard: w.heard === undefined ? w.session > 0 : !!w.heard, answering: [], at: Number(w.at) || 0 });
   }
 
   function decodeWithSig(o) { return { ...decodeHaltObservation(fromHex(String(o.observation))), signature: fromHex(String(o.signature)) }; }
