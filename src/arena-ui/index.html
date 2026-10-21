@@ -2056,7 +2056,7 @@
         last = t;
         if (t - since >= 500 && frames) {
           const r = fpsOf(frames, t - since, worst, best);
-          el.textContent = 'avg ' + r.avg + ' · min ' + r.min + ' · max ' + r.max + ' fps';
+          window.ArenaText.say(el, 'avg ' + r.avg + ' · min ' + r.min + ' · max ' + r.max + ' fps');
           el.className = r.avg >= 50 ? 'good' : r.avg >= 30 ? 'ok' : 'bad';
           window.ARENA_FPS = { ...r, fps: r.avg, worstMs: Math.round(worst), at: Math.round(t) };
           frames = 0; worst = 0; best = Infinity; since = t;
@@ -2092,7 +2092,7 @@
       // MERGING, AS AN ICON (the owner 2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
       // it; a ⇄ beside it says part of it is still coming in from this browser's other wallets, the sentence on hover / long press
       const mergeTip = hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
-      if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) he.textContent = t; he.title = mergeTip; }
+      if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) window.ArenaText.say(he, t); he.title = mergeTip; }
     }
     try { const k = lastKey(); const was = k && JSON.parse(vault().getItem(k) || 'null');
       if (was && !window.ARENA_WALLET_BALANCE) { window.ARENA_WALLET_BALANCE = { sats: Number(was.sats) || 0, pending: 0, arriving: 0, merging: 0, parts: was.parts || [], federation: was.federation || '', last: was.atMs };
@@ -2246,15 +2246,15 @@
         const now = performance.now();
         while (DL.samples.length && DL.samples[0][0] < now - 1000) DL.samples.shift();
         const rate = DL.samples.reduce((t, x) => t + x[1], 0);           // bytes in the last second
-        if (!files.length) { if (document.getElementById('pctwrap') && document.getElementById('pctwrap').classList.contains('on')) el.textContent = 'from the browser cache'; return; }
+        if (!files.length) { if (document.getElementById('pctwrap') && document.getElementById('pctwrap').classList.contains('on')) window.ArenaText.say(el, 'from the browser cache'); return; }
         if (DL.t1) {
           const sec = (DL.t1 - DL.t0) / 1000;
           // read in well under a second: the browser's own cache, not the network
-          el.textContent = sec < 0.75 ? mb(got) + ' MB from the browser cache' : mb(got) + ' MB in ' + sec.toFixed(1) + ' s \u00b7 ' + mb(got / sec) + ' MB/s';
-          const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) note.textContent = mb(total) + ' MB';
+          window.ArenaText.say(el, sec < 0.75 ? mb(got) + ' MB from the browser cache' : mb(got) + ' MB in ' + sec.toFixed(1) + ' s \u00b7 ' + mb(got / sec) + ' MB/s');
+          const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) window.ArenaText.say(note, mb(total) + ' MB');
           window.ARENA_DOWNLOAD_LINE = el.textContent; clearInterval(tick); return; }
-        el.textContent = mb(got) + (total ? ' / ' + mb(total) : '') + ' MB \u00b7 ' + mb(rate) + ' MB/s';
-        const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) note.textContent = mb(total) + ' MB';
+        window.ArenaText.say(el, mb(got) + (total ? ' / ' + mb(total) : '') + ' MB \u00b7 ' + mb(rate) + ' MB/s');
+        const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) window.ArenaText.say(note, mb(total) + ' MB');
         window.ARENA_DOWNLOAD_LINE = el.textContent;
       }, 250);
     })();
@@ -2290,8 +2290,8 @@
         if (n <= subStep || !re.test(text)) continue;
         subStep = n;
         window.ARENA_SUB_STEPS.push([n, Math.round(performance.now())]);
-        pct.textContent = n + ' %' + (parseFloat(TOTAL_MB) ? '  ·  ' + TOTAL_MB + ' / ' + TOTAL_MB + ' MB' : '');
-        stage.textContent = label;
+        window.ArenaText.say(pct, n + ' %' + (parseFloat(TOTAL_MB) ? '  ·  ' + TOTAL_MB + ' / ' + TOTAL_MB + ' MB' : ''));
+        window.ArenaText.say(stage, label);
       }
     }
     for (const k of ['log', 'warn', 'info']) {
@@ -2306,11 +2306,11 @@
       // megabytes as well as percent: a percentage alone says nothing about
       // whether the wait is ten seconds or two minutes
       const done = (parseFloat(TOTAL_MB) || 0) * clamped;
-      pct.textContent = parseFloat(TOTAL_MB)
+      window.ArenaText.say(pct, parseFloat(TOTAL_MB)
         ? `${Math.round(clamped * 100)} %  ·  ${done.toFixed(1)} / ${TOTAL_MB} MB`
-        : `${Math.round(clamped * 100)} %`;
+        : `${Math.round(clamped * 100)} %`);
       for (let i = STAGES.length - 1; i >= 0; i--) {
-        if (clamped >= STAGES[i][0]) { stage.textContent = STAGES[i][1]; break; }
+        if (clamped >= STAGES[i][0]) { window.ArenaText.say(stage, STAGES[i][1]); break; }
       }
       // AT 90 % the download is done and Unity's own start begins: the creep bar runs, the sub-steps take the number
       if (clamped >= 0.9 && clamped < 1 && pct.dataset.unity !== '90') {
@@ -2338,7 +2338,7 @@
       let noted = null;
       try { noted = ARENACLIENT.notedDonationForLink(location.search, { storage: window.sessionStorage, curve: window.ARENA_CURVE }); } catch { noted = null; }
       if (!noted) return;
-      el.textContent = ARENACLIENT.donationPaidLine(noted);
+      window.ArenaText.say(el, ARENACLIENT.donationPaidLine(noted));
       el.classList.add('show');
     }
 
@@ -2346,9 +2346,9 @@
       // A CLIENT FILE REFUSED BY ITS PIN IS THE REASON (kanban #569, measured on preview 92bd57a6 with a wrong wasm pin: Unity, its wasm
       // stream ended in the page's error, tried again and aborted with "expected magic word 00 61 73 6d" - the page says why instead)
       if (window.ARENA_CLIENT_REFUSED) message = 'This game\'s client is not the one the Arena pinned, so it does not start: ' + window.ARENA_CLIENT_REFUSED;
-      err.textContent = message;
+      window.ArenaText.say(err, message);
       err.classList.add('show');
-      stage.textContent = 'Could not start';
+      window.ArenaText.say(stage, 'Could not start');
     }
 
     // THE LOADING SCREEN CANNOT SIT FOREVER (2026-09-17). Measured before, on this screen: a loader request that never
@@ -2885,7 +2885,7 @@
           const wasm = await window.ARENA_LOCK_WASM();
           await wasm.default();
           const onStep = (step) => {
-            if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
+            if (stageEl) window.ArenaText.say(stageEl, 'Stake lock: ' + step + ' …');
             // A ROUND ALREADY SHOWN LOADED keeps its countdown on the line; the lock's steps go to the console
             if (window.ARENA_JOIN && !window.ARENA_JOIN.loaded) window.ARENA_JOIN.stage = 'stake lock: ' + step;
             console.log('[arena] stake lock: ' + step);
@@ -2966,7 +2966,7 @@
             },
           }));
           console.log('[arena] join step <- deposit (in the player wallet)');
-          if (depositEl) depositEl.textContent = '';
+          if (depositEl) window.ArenaText.say(depositEl, '');
           return wallet;
         })();
         // ONLY WHEN A DEPOSIT WAS STARTED (JOIN-TIME-1359, measured 2026-10-02 13:07Z): a round this browser already holds a lock
@@ -3015,8 +3015,8 @@
             signerNodes: signerNodes.signerNodes, nodes: named.nodes, curve: window.ARENA_CURVE,
           }, {
             onWait: (short) => {
-              if (stageNow) stageNow.textContent = 'Waiting for the round\'s signer nodes to make its claim key: '
-                + String(short.attested || 0) + ' of ' + String(short.needed || '?') + ' …';
+              if (stageNow) window.ArenaText.say(stageNow, 'Waiting for the round\'s signer nodes to make its claim key: '
+                + String(short.attested || 0) + ' of ' + String(short.needed || '?') + ' …');
             },
           });
           if (!att.ok) {
@@ -3115,7 +3115,7 @@
               needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             window.ARENA_STAKE_LOCK = stakeLock;
-            if (stageEl) stageEl.textContent = ARENACLIENT.lockLine(stakeLock);
+            if (stageEl) window.ArenaText.say(stageEl, ARENACLIENT.lockLine(stakeLock));
             console.log('[arena] stake lock kept from before the reload, at '
               + ARENACLIENT.toHex(stakeLock.outpoint.txid) + ':' + String(stakeLock.outpoint.outIdx));
           } else try {
@@ -3159,8 +3159,8 @@
             // on uses this lock, not a second deposit.
             ARENACLIENT.saveLock(vault(), Object.assign({ stake, lock: made, federationId: named.round.federationId }, whose));
             window.ARENA_STAKE_LOCK = stakeLock;
-            if (depositEl) depositEl.textContent = '';
-            if (stageEl) stageEl.textContent = ARENACLIENT.lockLine(stakeLock);
+            if (depositEl) window.ArenaText.say(depositEl, '');
+            if (stageEl) window.ArenaText.say(stageEl, ARENACLIENT.lockLine(stakeLock));
             console.log('[arena] stake locked at ' + ARENACLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx)
               + (made.accepted ? ' (submitted; the guardians accept it while the entry goes out)' : ''));
             // THE ACCEPTANCE BEHIND THE ENTRY (OPEN-LIST-2140 item 3): the entry names the submitted outpoints at once; a lock
@@ -3853,7 +3853,7 @@
       // A PHONE GETS THE SHORT WORDS (measured at 360 px: the ten-line warning covered the game's title); the button
       // beside it and Settings say the rest, the full sentence is its title
       const notice = document.getElementById('arena-backup-notice');
-      if (notice) { notice.textContent = line; notice.title = line || ''; }
+      if (notice) { window.ArenaText.say(notice, line); notice.title = line || ''; }
       // IN THE LOADING SCREEN, ALWAYS, NOT OVER THE LOBBY: the box sits in #boot, so it goes with the loading screen
       const warn = document.getElementById('arena-backup-warn');
       if (warn) warn.style.display = line ? 'flex' : 'none';
@@ -3867,11 +3867,8 @@
         let box = el.querySelector('.dep-backup');
         if (line && !box) {
           box = document.createElement('div'); box.className = 'dep-backup';
-          const t = document.createElement('span'); t.textContent = line;
-          const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Back up now';
-          b.addEventListener('click', () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'arena-deposit') { el.textContent = ''; el.className = ''; } else el.classList.remove('show');
-            const cta = document.getElementById('arena-backup-cta'); if (cta) cta.click(); });
-          box.append(t, b);
+          window.ArenaBits.backup(box, { line, onBackup: () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'arena-deposit') { el.textContent = ''; el.className = ''; } else el.classList.remove('show');
+            const cta = document.getElementById('arena-backup-cta'); if (cta) cta.click(); } });
           const slot = el.querySelector('.dep-backup-host'), head = el.querySelector(after);
           if (slot) slot.append(box); else if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
         } else if (!line && box) box.remove();
@@ -3889,16 +3886,16 @@
       const pending = known ? sat(bal.pending) : loadingBal ? '\u2026' : '\u2013';
       for (const [id, v] of [['arena-lobby-confirmed', confirmed], ['arena-bal-confirmed', confirmed],
         ['arena-lobby-pending', pending], ['arena-bal-pending', pending]]) {
-        const el = document.getElementById(id); if (el) el.textContent = v;
+        const el = document.getElementById(id); if (el) window.ArenaText.say(el, v);
       }
       // THE FEDERATION ONCE (2026-10-02: "don't show the federation id twice"): the history names it in full
       // THE SPLIT, ONLY WHEN THERE IS ONE: the sum above is every federation's; this line says where it sits (2026-10-13)
       const split = known && Array.isArray(bal.parts) && bal.parts.length > 1
         ? 'Across ' + bal.parts.length + ' federations: ' + bal.parts.map((x) => x.federation.slice(0, 8) + ' ' + sat(x.sats)).join(' · ') : '';
       const mergingLine = known && bal.merging > 0 ? ' (' + sat(bal.merging) + ' of it still merging in from your other wallets in this browser)' : '';
-      document.getElementById('arena-balance-line').textContent = known ? (split || (mergingLine ? 'Total' : '')) + mergingLine : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
+      window.ArenaText.say(document.getElementById('arena-balance-line'), known ? (split || (mergingLine ? 'Total' : '')) + mergingLine : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet');
       const why = document.getElementById('arena-money-why');
-      if (why && !isBackedUp()) why.textContent = '';
+      if (why && !isBackedUp()) window.ArenaText.say(why, '');
     }
     // ONE DEPOSIT AND ONE WITHDRAW FOR EVERY GAME (2026-10-10: "Align the deposit process of nextblock,
     // Rock Paper Scissors, and the prediction UI. It must be the same everywhere. A game must not implement deposit itself.
@@ -3984,10 +3981,10 @@
       const said = mine ? [ARENACLIENT.federationSays(mine.status), ARENACLIENT.loadSays ? ARENACLIENT.loadSays(mine) : '',
         ARENACLIENT.moveSays && window.ARENA_FED_MOVE && window.ARENA_FED_MOVE.from === mine.federation ? ARENACLIENT.moveSays(window.ARENA_FED_MOVE) : ''].filter(Boolean).join(' ') : '';
       const says = said ? 'Federation ' + mine.federation.slice(0, 8) + ' · ' + said : '';   // named, as on the chip
-      if (note) { if (note.textContent !== says) note.textContent = says; note.style.display = says ? '' : 'none'; }
+      if (note) { if (note.textContent !== says) window.ArenaText.say(note, says); note.style.display = says ? '' : 'none'; }
       for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
     };
-    function openMoney(which, say = (t) => { document.getElementById('arena-money-why').textContent = t; }, opts = {}) {
+    function openMoney(which, say = (t) => { window.ArenaText.say(document.getElementById('arena-money-why'), t); }, opts = {}) {
       // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
       // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
       const ctx = moneyContext(which, opts.seatRound || null);
@@ -4066,7 +4063,7 @@
         box.querySelector('.wd-close').onclick = () => {
           box.classList.remove('show');
           const h = openMoney.wdHome; h.wp[0].insertBefore(wp, h.wp[1]); h.why[0].insertBefore(why, h.why[1]);
-          wp.style.display = 'none'; why.textContent = '';
+          wp.style.display = 'none'; window.ArenaText.say(why, '');
         };
         openWithdraw(ctx);
         return Promise.resolve({ ok: true });
@@ -4130,11 +4127,11 @@
       // "Loading …" for as long as the page stayed open - no balance is read before there is a wallet)
       const start = document.getElementById('arena-wallet-start');
       const noWallet = !!start && getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().height > 0;
-      document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
-        : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
-      document.getElementById('arena-wb-pending').textContent = (bal && bal.arriving ? ' · ' + Number(bal.arriving).toLocaleString('en-US') + ' arriving' : '')
+      window.ArenaText.say(document.getElementById('arena-wb-sats'), bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
+        : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat');
+      window.ArenaText.say(document.getElementById('arena-wb-pending'), (bal && bal.arriving ? ' · ' + Number(bal.arriving).toLocaleString('en-US') + ' arriving' : '')
         + (bal && bal.merging ? ' \u21c4' : '')
-        + (bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '');
+        + (bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : ''));
       document.getElementById('arena-wb-pending').title = bal && bal.merging ? Number(bal.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
       // THE PAYING ROUND'S SETTLEMENT FACTS: the part of its lobby line from "signer nodes" / "selected nodes" on
       const ap = document.getElementById('arena-approval');
@@ -4146,13 +4143,13 @@
         // THE FEES OF THE ROUND JOINED: the set in force at its census height
         const jf = window.ARENA_JOIN_FEES;
         const said = jf ? (say ? say + ' · ' : '') + 'Fees ' + jf.line : say;
-        if (ap.textContent !== said) ap.textContent = said;
+        if (ap.textContent !== said) window.ArenaText.say(ap, said);
       }
     }
     {
       let sayTimer = null;
-      const barSay = (t) => { const el = document.getElementById('arena-wb-why'); if (!el) return; el.textContent = t; clearTimeout(sayTimer);
-        if (t && !t.endsWith('\u2026')) sayTimer = setTimeout(() => { el.textContent = ''; }, 8000); };   // a wait stays until it ends
+      const barSay = (t) => { const el = document.getElementById('arena-wb-why'); if (!el) return; window.ArenaText.say(el, t); clearTimeout(sayTimer);
+        if (t && !t.endsWith('\u2026')) sayTimer = setTimeout(() => { window.ArenaText.say(el, ''); }, 8000); };   // a wait stays until it ends
       window.ARENA_WALLET_BAR_SAY = barSay;
       for (const [id, which] of [['arena-wb-deposit', 'deposit'], ['arena-wb-withdraw', 'withdraw']]) {
         const el = document.getElementById(id);
@@ -4160,8 +4157,8 @@
       }
       // A GAME'S OWN HEADER, THE SAME TWO, its why-line under that header
       let hdrTimer = null;
-      const hdrSay = (t) => { const el = document.getElementById('arena-hdr-why'); if (!el) return; el.textContent = t; clearTimeout(hdrTimer);
-        if (t && !t.endsWith('\u2026')) hdrTimer = setTimeout(() => { el.textContent = ''; }, 8000); };
+      const hdrSay = (t) => { const el = document.getElementById('arena-hdr-why'); if (!el) return; window.ArenaText.say(el, t); clearTimeout(hdrTimer);
+        if (t && !t.endsWith('\u2026')) hdrTimer = setTimeout(() => { window.ArenaText.say(el, ''); }, 8000); };
       for (const [id, which] of [['arena-hdr-deposit', 'deposit'], ['arena-hdr-withdraw', 'withdraw']]) {
         const el = document.getElementById(id);
         if (el) el.addEventListener('click', () => { openMoney(which, hdrSay, { overlay: true }); });
@@ -4314,7 +4311,7 @@
     function openWithdraw(ctx) {
       const panel = document.getElementById('arena-withdraw-panel');
       const why = document.getElementById('arena-money-why');
-      panel.style.display = ''; why.textContent = '';
+      panel.style.display = ''; window.ArenaText.say(why, '');
       const fidHex = ctx.round && ctx.round.federationId ? ARENACLIENT.toHex(ctx.round.federationId) : '';
       const part = window.ARENA_WALLET_BALANCE && (window.ARENA_WALLET_BALANCE.parts || []).find((x) => x.federation === fidHex);
       const knownSat = part ? Number(part.sats) : null;
@@ -4329,7 +4326,7 @@
         invoiceAmount: (text) => ARENACLIENT.invoiceAmountMsat(text),
         send: async ({ amountMsat, invoice, onStep }) => ARENACLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed,
           LockClient: await lockClient(), storage: vault(), amountMsat, gateways: ctx.gateways, onStep, invoiceFor: async () => ({ ok: true, invoice }) }),
-        say: (text) => { why.textContent = text; },
+        say: (text) => { window.ArenaText.say(why, text); },
         onSent: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
     }
     // STILL LOADING, SAID AS SUCH (2026-10-12 17:47: "Also show a loading message for deposit and federation
@@ -4357,20 +4354,16 @@
       if (!fedEl || !rowsEl) return;
       const lob = window.ARENA_LEDGER_LOBBY;
       const clearRows = () => window.ArenaWallet.drawHistory(rowsEl, { rows: [], empty: '' });
-      if (!lob || !lob.federation) { fedEl.textContent = 'No federation named by this lobby'; clearRows(); return; }
+      if (!lob || !lob.federation) { window.ArenaBits.fedChip(fedEl, { say: 'No federation named by this lobby' }); clearRows(); return; }
       let fed;
       try { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
-      catch (e) { fedEl.textContent = 'The federation id could not be read: ' + (e && e.message ? e.message : e); return; }
+      catch (e) { window.ArenaBits.fedChip(fedEl, { say: 'The federation id could not be read: ' + (e && e.message ? e.message : e) }); return; }
       const knew = window.ARENA_LEDGER_FEDERATION === fed;
       window.ARENA_LEDGER_FEDERATION = fed;
       if (!knew && window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();   // the note follows this chip
-      fedEl.textContent = '';
-      // ITS DOT BY ITS HEALTH (the same rule as the balance split; grey while its record is not read)
+      // ITS DOT BY ITS HEALTH (the same rule as the balance split; grey while its record is not read) - a React chip, a tap copies the id
       { const hl = window.ARENA_FED_HEALTH ? window.ARENA_FED_HEALTH(fed) : { level: 'idle', label: '' };
-        const chip = document.createElement('span'); chip.className = 'fed-chip ' + hl.level; chip.title = fed + (hl.label ? ' \u00b7 ' + hl.label : '') + ' - tap to copy';
-        chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4);
-        chip.addEventListener('click', () => { try { navigator.clipboard.writeText(fed).then(() => { chip.textContent = 'Copied'; setTimeout(() => { chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4); }, 1200); }); } catch { /* no clipboard */ } });
-        fedEl.append(chip); }
+        window.ArenaBits.fedChip(fedEl, { fed, level: hl.level, label: hl.label }); }
       const st = vault();
       try { ARENACLIENT.ledgerReadSavedStakes(st, fed); } catch { /* nothing to read */ }
       // EVERY FEDERATION'S HISTORY, ONE LIST (the owner 2026-10-20 18:4xZ: "it doesn't show the complete history" - his deposits sat in 4dc88be7 and
@@ -4840,7 +4833,7 @@
       // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN (M3.2 6e): the
       // client's line off the client's state - which on a reload is the tab's
       // notes - painted before the lock branch, so a lock round shows it too.
-      document.getElementById('arena-donation').textContent = ARENACLIENT.donationPaidLine(window.ARENA_DONATION_PAID);
+      window.ArenaText.say(document.getElementById('arena-donation'), ARENACLIENT.donationPaidLine(window.ARENA_DONATION_PAID));
       // (NO "WHERE THE STAKE WENT" LINE: it read the signer nodes' hold state, the hold's amount and the
       // round's pool, which were THRESHOLD_LN's and are no longer reported - §23.6, RULED 2026-09-22 22:59.)
       // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
@@ -4850,22 +4843,22 @@
       // deposit invoice the whole time the page waited for it.
       if (shown && ARENACLIENT.roundLocks(shown)) {
         const lockShown = window.ARENA_STAKE_LOCK || (window.ARENA_COLLECT && window.ARENA_COLLECT.stakeLock);
-        document.getElementById('arena-owed').textContent = lockShown
+        window.ArenaText.say(document.getElementById('arena-owed'), lockShown
           ? ARENACLIENT.lockLine(lockShown)
-          : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
+          : 'this round\'s stake goes into a federation lock: pay the deposit shown below');
         // WHAT IS OWED, AS LOOKED AT (W4 / 6d): still in the federation until the player withdraws.
-        document.getElementById('arena-settled').textContent = window.ARENA_COLLECT_LINE || ARENACLIENT.owedToLine(window.ARENA_OWED);
+        window.ArenaText.say(document.getElementById('arena-settled'), window.ARENA_COLLECT_LINE || ARENACLIENT.owedToLine(window.ARENA_OWED));
         // AND THE WITHDRAW: what is owed or already in the tab's wallet, what went, or why not;
         // the field and the button only while there is something to withdraw.
         const inTab = window.ARENA_WITHDRAWABLE !== undefined && window.ARENA_WITHDRAWABLE !== null && window.ARENA_WITHDRAWABLE > 0n;
         const canWithdraw = inTab || !!(window.ARENA_OWED && window.ARENA_OWED.owedMsat > 0n);
-        document.getElementById('arena-wallet-withdraw').textContent = window.ARENA_WITHDRAWING
+        window.ArenaText.say(document.getElementById('arena-wallet-withdraw'), window.ARENA_WITHDRAWING
           ? `Withdrawing - do not close this tab until it says Withdrawn (what is collected is kept in this tab): ${window.ARENA_WITHDRAW_STEP || ''}`
           : window.ARENA_ELSEWHERE ? 'This round\'s withdrawal is open in another tab of this browser - withdraw it there, or close that tab'
-          : ARENACLIENT.withdrawLine(window.ARENA_WITHDRAWN, canWithdraw ? window.ARENA_WITHDRAWABLE : null);
+          : ARENACLIENT.withdrawLine(window.ARENA_WITHDRAWN, canWithdraw ? window.ARENA_WITHDRAWABLE : null));
         const offer = canWithdraw && !window.ARENA_WITHDRAWING && !window.ARENA_ELSEWHERE;
         for (const id of ['arena-withdraw-invoice', 'arena-withdraw-go']) document.getElementById(id).style.display = offer ? '' : 'none';
-        document.getElementById('arena-spent').textContent = '';
+        window.ArenaText.say(document.getElementById('arena-spent'), '');
         document.getElementById('arena-nwc').style.display = 'none';
         return;
       }
@@ -4943,7 +4936,7 @@
       // the close "not paid yet", and the federation block from which the round's lock comes back to the player's key
       const when = total > 0n && closeMs ? ARENACLIENT.pendingWindowLine({ closeMs, provisional,
         expiration: ARENACLIENT.savedLockExpiration ? ARENACLIENT.savedLockExpiration(vault(), closeRound) : null }) : '';
-      const whenEl = document.getElementById('arena-bal-pending-when'); if (whenEl) whenEl.textContent = when;
+      const whenEl = document.getElementById('arena-bal-pending-when'); if (whenEl) window.ArenaText.say(whenEl, when);
       const chip = document.getElementById('arena-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
       paintMoney();
       } finally { st.busy = false; }
@@ -5084,7 +5077,7 @@
         const name = g.title || g.name;
         if (kind === 'nodes') {
           const nodes = g.nodes || [];
-          title.textContent = nodes.length + ' node' + (nodes.length === 1 ? '' : 's') + ' · ' + name;
+          window.ArenaText.say(title, nodes.length + ' node' + (nodes.length === 1 ? '' : 's') + ' · ' + name);
           const head = [{ note: 'The nodes that answered for this game. Each one runs its own public dashboard.' }, { legend: true }];
           drawBlocks(head);
           pop.classList.add('show');
@@ -5102,7 +5095,7 @@
           drawBlocks(blocks);
           return;
         }
-        title.textContent = (kind === 'players' ? 'Players' : 'Open rounds') + ' · ' + name;
+        window.ArenaText.say(title, (kind === 'players' ? 'Players' : 'Open rounds') + ' · ' + name);
         drawBlocks([{ note: 'Asking the nodes …' }]);
         pop.classList.add('show');
         let rounds, roles = null;
@@ -5320,13 +5313,13 @@
       const sayMine = () => {
         const me = viewer()[0];
         const merged = me && s.book ? s.book.get(me) : null;
-        if (myBadges) myBadges.textContent = (ARENACLIENT.yourBadgesLine && ARENACLIENT.yourBadgesLine(merged)) || '';
+        if (myBadges) window.ArenaText.say(myBadges, (ARENACLIENT.yourBadgesLine && ARENACLIENT.yourBadgesLine(merged)) || '');
       };
       const dropBook = () => {
         if (s.book) s.book.close();
         if (s.seen) s.seen.disconnect();
         s.book = null; s.seen = null;
-        if (myBadges) myBadges.textContent = '';
+        if (myBadges) window.ArenaText.say(myBadges, '');
       };
       // THE BOOK OF THIS BOARD'S LIFE, made at its first drawn board: its answers fill the rows drawn at the time they come in
       const bookOf = () => {
@@ -5363,17 +5356,17 @@
         if (!v.ok) {
           // A FAILED ASK KEEPS THE BOARD IT HAD: the rows of 30 s ago are still the season's, and an empty screen is not
           state.className = 'state bad';
-          state.textContent = board.children.length ? 'No node answered just now; this is the board from before. Asking again in 30 s.'
-            : 'No node answered the leaderboard just now. Asking again in 30 s.';
+          window.ArenaText.say(state, board.children.length ? 'No node answered just now; this is the board from before. Asking again in 30 s.'
+            : 'No node answered the leaderboard just now. Asking again in 30 s.');
           return;
         }
-        state.className = 'state'; state.textContent = v.empty || '';
-        h2.textContent = v.title;
-        head.textContent = v.header;
+        state.className = 'state'; window.ArenaText.say(state, v.empty || '');
+        window.ArenaText.say(h2, v.title);
+        window.ArenaText.say(head, v.header);
         reactRows = v.rows;
         drawReact();
-        foot.textContent = [v.more ? v.more + ' more player' + (v.more === 1 ? '' : 's') + ' below' : null, v.foot,
-          v.seat ? 'answered by ' + v.seat.replace(/^https?:\/\//, '') : null].filter(Boolean).join(' \u00b7 ');
+        window.ArenaText.say(foot, [v.more ? v.more + ' more player' + (v.more === 1 ? '' : 's') + ' below' : null, v.foot,
+          v.seat ? 'answered by ' + v.seat.replace(/^https?:\/\//, '') : null].filter(Boolean).join(' \u00b7 '));
         sayMine();
         askBadges(Array.from(board.querySelectorAll('li[data-player]')));
       };
@@ -5400,9 +5393,9 @@
         s.game = g; s.open = true;
         if (days) s.days = Number(days);
         pressDays();
-        if (!same) { reactRows = []; drawReact(); foot.textContent = ''; head.textContent = ''; dropBook(); }
-        h2.textContent = g.title || g.name;
-        state.className = 'state'; state.textContent = 'Asking the nodes \u2026';
+        if (!same) { reactRows = []; drawReact(); window.ArenaText.say(foot, ''); window.ArenaText.say(head, ''); dropBook(); }
+        window.ArenaText.say(h2, g.title || g.name);
+        state.className = 'state'; window.ArenaText.say(state, 'Asking the nodes \u2026');
         box.classList.add('show');
         load();
       };
@@ -5410,7 +5403,7 @@
         const d = Number(b.dataset.days);
         if (d === s.days) return;
         s.days = d; pressDays();
-        state.className = 'state'; state.textContent = 'Asking the nodes \u2026';
+        state.className = 'state'; window.ArenaText.say(state, 'Asking the nodes \u2026');
         load();
       });
       box.querySelector('.back').addEventListener('click', close);
@@ -5456,7 +5449,7 @@
         if (got && got.games && got.games.length) break;
         if (i < waits.length - 1) {
           const st = document.getElementById('stage');
-          if (st) st.textContent = 'Looking for the game\'s nodes \u2026 (try ' + (i + 2) + ' of ' + waits.length + ')';
+          if (st) window.ArenaText.say(st, 'Looking for the game\'s nodes \u2026 (try ' + (i + 2) + ' of ' + waits.length + ')');
           console.log('[arena] no games answered within ' + waits[i] + ' ms - asking again');
           await new Promise((r) => setTimeout(r, 1500));
         }
@@ -5502,7 +5495,7 @@
           el.classList.add('show');
           document.body.classList.add('arena-picking');
           // SETTINGS BEFORE A GAME IS CHOSEN names Bitcoin Arena, not Next Block (the chosen game's name replaces it after)
-          { const small = document.querySelector('#arena-settings .settings-head h2 small'); if (small) small.textContent = 'Bitcoin Arena'; }
+          { const small = document.querySelector('#arena-settings .settings-head h2 small'); if (small) window.ArenaText.say(small, 'Bitcoin Arena'); }
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
         });
         el.classList.remove('show');
@@ -5527,10 +5520,10 @@
       // Next block even though I am in RPS"): the Settings head and its mark, and the bare root's splash while the game loads
       if (game.name !== 'nextblock') {
         const head = document.querySelector('#arena-settings .settings-head h2');
-        if (head) { const small = head.querySelector('small'); if (small) small.textContent = game.title || game.name;
+        if (head) { const small = head.querySelector('small'); if (small) window.ArenaText.say(small, game.title || game.name);
           const mark = head.querySelector('img.mark'); if (mark) { if (game.icon) { const via = window.ARENA_ROUTED_URL ? window.ARENA_ROUTED_URL(game.icon) : game.icon; mark.onerror = () => { if (mark.src !== game.icon) mark.src = game.icon; }; mark.src = via; } else mark.remove(); } }
         // the loading screen's title: the game's name and its icon, as on its tile
-        if (document.documentElement.classList.contains('other-game')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name;
+        if (document.documentElement.classList.contains('other-game')) { const n = document.getElementById('site-name'); if (n) window.ArenaText.say(n, game.title || game.name);
           const i = document.getElementById('site-icons');
           const inPage = i && i.querySelector('img') && /^data:/.test(i.querySelector('img').src);   // the page's own copy since the first paint
           if (i && game.icon && !inPage) { const img = document.createElement('img'); const via = window.ARENA_ROUTED_URL ? window.ARENA_ROUTED_URL(game.icon) : game.icon; img.alt = '';
@@ -5832,8 +5825,8 @@
     function gameNotLoaded(e) {
       const el = document.getElementById('arena-games');
       const g = window.ARENA_GAME_CHOSEN || {};
-      el.querySelector('h2').textContent = (g.title || 'That game') + ' cannot be loaded';
-      el.querySelector('.why').textContent = e.message;
+      window.ArenaText.say(el.querySelector('h2'), (g.title || 'That game') + ' cannot be loaded');
+      window.ArenaText.say(el.querySelector('.why'), e.message);
       // the way back, drawn by React (kanban #564, BackToArena) in a host of its own: the list's tiles are gone with this game
       const list = el.querySelector('.list'); list.textContent = '';
       const host = document.createElement('div'); list.append(host);
@@ -6257,7 +6250,7 @@
             cap: 'reserve ' + sat(cap.reserve) + ' / cap ' + sat(cap.cap) + ' sat \u00b7 room ' + sat(cap.headroom) + ' sat' + (st.signers ? ' \u00b7 ' + st.signers + ' signers' : ''),
             note: back ? (back.ok ? back.line : 'When it is paid back is read from the chain \u2026') : '', canDeposit: !!st.invite,
             onDeposit: () => { el.style.display = 'none';
-              openMoney('deposit', (t) => { const w = document.getElementById('arena-hdr-why'); if (w) w.textContent = t; }, { overlay: true, federation: st }); } };
+              openMoney('deposit', (t) => { const w = document.getElementById('arena-hdr-why'); if (w) window.ArenaText.say(w, t); }, { overlay: true, federation: st }); } };
         }) };
       };
       // THE WALLET (kanban #558): Settings' wallet section and the balance by federation moved into one modal the first time it opens - every
@@ -7051,10 +7044,10 @@
       const sheet = document.getElementById('arena-shop'); if (!sheet) return;
       const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && ARENACLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
       const list = sheet.querySelector('.items'); const state = sheet.querySelector('.state');
-      const say = (t, bad) => { state.textContent = t || ''; state.classList.toggle('bad', !!bad); };
+      const say = (t, bad) => { window.ArenaText.say(state, t || ''); state.classList.toggle('bad', !!bad); };
       // "SHOP" ONCE (2026-10-19: "shop is shown twice. one amber title is enough"): the amber line says Shop, the
       // title is the game's name, as the leaderboard's
-      const title = document.getElementById('arena-shop-title'); if (title) title.textContent = (chosen && (chosen.title || chosen.name)) || 'Shop';
+      const title = document.getElementById('arena-shop-title'); if (title) window.ArenaText.say(title, (chosen && (chosen.title || chosen.name)) || 'Shop');
       sheet.classList.add('show'); window.ArenaShop.draw(list, { items: [], owned: [], use: null, picture() {}, what() {}, price: (x) => x, onUse() {}, onBuy() {} });
       say(shop ? 'Reading what you own …' : 'This game sells nothing.');
       if (!shop) return;
@@ -7185,7 +7178,7 @@
         const key = j.round + ':' + (cls === 'held' ? 'held' : j.state) + ':' + (j.why || '');
         if (key !== shownKey) { shownKey = key; doneAt = cls === 'ok' || cls === 'bad' ? Date.now() : 0; }
         if (closedKey === key || (doneAt && Date.now() - doneAt > (cls === 'bad' ? 20000 : 8000))) { box.classList.remove('on'); return; }
-        txt.textContent = line; box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
+        window.ArenaText.say(txt, line); box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
         window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
       }, 500);
     })();
@@ -7275,7 +7268,7 @@
         ? loadTheGameClient((ARENACLIENT.fetchGames && window.ARENA_GAME_CHOSEN) || null).catch(gameNotLoaded)
         // ANOTHER GAME'S SITE NEVER FALLS BACK TO NEXTBLOCK: no Unity - its splash says the nodes are not reached
         : window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock'
-          ? (document.getElementById('stage').textContent = 'The game\'s nodes are not reachable right now - try again in a moment.')
+          ? (window.ArenaText.say(document.getElementById('stage'), 'The game\'s nodes are not reachable right now - try again in a moment.'))
           : window.ARENA_START_UNITY()))
       .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
   </script>

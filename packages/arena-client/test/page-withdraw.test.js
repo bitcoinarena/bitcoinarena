@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -17,7 +18,7 @@ function open({ parts, exact = 990000n }) {
   const els = { 'arena-withdraw-panel': { style: { display: 'none' } }, 'arena-money-why': { textContent: 'old words' } };
   const calls = { open: [], withdrawable: [], withdraw: [], history: 0, balance: 0 };
   const fid = new Uint8Array(32).fill(7);
-  const window = { ARENA_WALLET_BALANCE: { parts }, ARENA_READ_BALANCE: () => { calls.balance++; },
+  const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: { parts }, ARENA_READ_BALANCE: () => { calls.balance++; },
     ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: { lock: true } }),
     ArenaWithdraw: { open: (host, props) => calls.open.push({ host, props }) } };
   const ARENACLIENT = { toHex: (b) => Buffer.from(b).toString('hex'), invoiceAmountMsat: (t) => ({ ok: true, msat: BigInt(t.length) }),

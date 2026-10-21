@@ -22,3 +22,29 @@ export class RefundKey extends React.Component {
 export class BackToArena extends React.Component {
   render() { return <button type="button" className="game" onClick={this.props.onBack}>{'← Arena'}</button>; }
 }
+
+/** A line of words the page keeps (a status, a balance, a count): { text } - its element's only content. */
+export const Text = ({ text }) => (text === undefined || text === null ? '' : String(text));
+
+/**
+ * The history's federation: { say } a line in its place (none named, not readable), else { fed, level, label } - its chip with the dot of
+ * its health; a tap copies the id and says "Copied" for 1.2 s.
+ */
+export class FedChip extends React.Component {
+  constructor(p) { super(p); this.state = { copied: false }; }
+  componentWillUnmount() { clearTimeout(this.timer); }
+  copy() {
+    const { fed } = this.props;
+    try { navigator.clipboard.writeText(fed).then(() => { this.setState({ copied: true }); clearTimeout(this.timer); this.timer = setTimeout(() => this.setState({ copied: false }), 1200); }); } catch { /* no clipboard */ }
+  }
+  render() {
+    const { say, fed, level = 'idle', label = '' } = this.props;
+    if (!fed) return say || '';
+    return (
+      <span className={`fed-chip ${level}`} title={fed + (label ? ' · ' + label : '') + ' - tap to copy'} onClick={() => this.copy()}>
+        {this.state.copied ? 'Copied' : 'Federation ' + fed.slice(0, 8) + '…' + fed.slice(-4)}</span>);
+  }
+}
+
+/** A popup's backup warning: { line, onBackup } - the words, and the button that closes the popup and opens the 24 words. */
+export const BackupBox = ({ line, onBackup }) => <><span>{line}</span><button type="button" onClick={onBackup}>Back up now</button></>;

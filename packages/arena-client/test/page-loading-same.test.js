@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -32,7 +33,7 @@ test('a chosen game puts its name and its icon in the loading screen\'s title', 
   const run = (icons) => {
     const els = { 'site-name': el(), 'site-icons': icons };
     const document = { documentElement: { classList: { contains: (c) => c === 'other-game' } }, getElementById: (id) => els[id], createElement: () => ({}) };
-    pageFunction(PAGE, ['document', 'window', 'game'], src)(document, {}, { name: 'btc-updown-15m', title: 'Bitcoin Up or Down', icon: 'https://x/icon.svg' });
+    pageFunction(PAGE, ['document', 'window', 'game'], src)(document, { ArenaText }, { name: 'btc-updown-15m', title: 'Bitcoin Up or Down', icon: 'https://x/icon.svg' });
     return els;
   };
   const fetched = run(el());

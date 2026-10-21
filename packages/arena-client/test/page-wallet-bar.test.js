@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -36,7 +37,7 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
   els.withdrawBox = { body, close, shown, home };
   const did = [];
   const document = { getElementById: (id) => els[id] || null, body: { classList: { contains: (c) => c === 'arena-own-client' && ownClient } } };
-  const window = { ARENA_WALLET_BALANCE: balance, sessionStorage: {}, ARENA_PAINT_SETTINGS: () => did.push('paint settings'),
+  const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: balance, sessionStorage: {}, ARENA_PAINT_SETTINGS: () => did.push('paint settings'),
     ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: 'LC' }) };
   const ARENACLIENT = { depositDonationMsat: () => 1000n, marketForRound: () => null,
     settingsDepositOffer: async (o) => { if (depositFails) throw new Error(depositFails); did.push(['offer', o.invite, String(o.donationMsat)]); return { offer: 1 }; } };
@@ -133,7 +134,7 @@ test('the way back is in the bar, the balance on the right, the client\'s own ba
   const src = HTML.slice(from, HTML.indexOf('\n', HTML.indexOf('wbBack.onclick', from)) + 1);
   let sheet = null, closed = 0, backs = 0; const btn = {};
   const document = { getElementById: () => btn, querySelector: () => (sheet ? { click: () => { closed++; } } : null) };
-  const window = { ARENA_GAME: { back: () => { backs++; } } };
+  const window = { ArenaText, ArenaBits, ARENA_GAME: { back: () => { backs++; } } };
   pageFunction(PAGE, ['document', 'window'], src)(document, window);
   //: over a sheet ← closes it and goes back to the arena too
   sheet = true; btn.onclick(); sheet = null; btn.onclick();

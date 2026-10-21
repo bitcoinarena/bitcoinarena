@@ -14,6 +14,7 @@ import { federationStatus, federationStatuses, federationSays, loadSays, loadRef
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -30,7 +31,7 @@ function page(status, extra = {}) {
   // the wallet's own federation (its chip) holds the round's status unless a test names another
   const st = status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined;
   const mine = wallet || (st ? st.federation || 'f'.repeat(64) : undefined);
-  const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
+  const window = { ArenaText, ArenaBits, ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
   const did = [];
   const ARENACLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
   const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'depositWait', 'donationBps', 'vault'],

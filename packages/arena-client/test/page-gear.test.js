@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -27,7 +28,7 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
   const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 430, height: 932 }) };
   // the backup warning sits in the loading screen: it is gone with #boot
   const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'arena-backup-warn' && !boot ? null : els[id] || null) };
-  const window = { ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
+  const window = { ArenaText, ArenaBits, ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const ARENACLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
   pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
     document, window, ARENACLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
@@ -51,7 +52,7 @@ function page() {
   const panel = { style: { display: 'none' } };
   const document = { getElementById: (id) => (id === 'arena-settings' ? panel
     : id === 'arena-settings-go' ? { addEventListener: (ev, fn) => { listeners[ev] = fn; } } : null) };
-  const window = {};
+  const window = { ArenaText, ArenaBits };
   pageFunction(PAGE, ['document', 'window'], EARLY)(document, window);
   return { click: () => listeners.click(), panel, window };
 }

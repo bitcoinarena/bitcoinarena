@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pendingWindowLine, savedLockExpiration } from '../src/page-lock.js';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const at = html.indexOf('    async function lookThePending() {');
@@ -17,7 +18,7 @@ function page({ answers, done = [] }) {
   const kept = new Map([['arena.pending.r1', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e1', nodes: ['http://a', 'http://b', 'http://c'] })]]);
   const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
   const els = { 'arena-bal-pending-when': { textContent: '' }, 'arena-lobby-pending': { parentNode: { title: '' } } };
-  const window = { ARENA_WALLET_BALANCE: { sats: 10, pending: 0 } };
+  const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: { sats: 10, pending: 0 } };
   const fetch = async (u) => { const a = answers[new URL(u).host]; return a ? { ok: true, json: async () => a } : { ok: false }; };
   // the page's own line functions (3f1e2674 had the page call them; this stub lacked them since)
   const ARENACLIENT = { savedCollects: () => done.map((r) => ({ roundIdHex: r, done: { payout: 'x' } })), pendingWindowLine, savedLockExpiration };
@@ -101,7 +102,7 @@ test('two entries of one round in one browser: each tab asks only about its own 
   const fetch = async (u) => { const e = new URL(u).searchParams.get('entry'); asked.push(e); return { ok: true, json: async () => signed(e === 'e1' ? '192000' : '0') }; };
   const tab = (mine) => {
     const session = new Map(mine ? [['arena.pending.mine', JSON.stringify(mine)]] : []);
-    const window = { ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
+    const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
     const run = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'ARENACLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
     return run(() => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.ARENA_PENDING_SATS);
   };
@@ -141,7 +142,7 @@ test('a settled answer is asked again only after 30 s, a provisional one at ever
   const run = (provisional) => {
     const counted = { asked: 0 };
     const fetch = async () => { counted.asked++; await new Promise((r) => setTimeout(r, 20)); return { ok: true, json: async () => signed('192000', { provisional }) }; };
-    const window = { ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
+    const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
     const look = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'ARENACLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending;')(
       () => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {});
     return { look, counted, window };
@@ -162,7 +163,7 @@ test('a round no signer node answers for is asked again after 10 s, not at every
   const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
   let asked = 0;
   const fetch = async () => { asked++; return { ok: false, status: 404, json: async () => null }; };
-  const window = { ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
+  const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
   const look = pageFunction(new URL('../../../src/arena-ui/index.html', import.meta.url), ['vault', 'ARENACLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending;')(
     () => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {});
   for (let k = 0; k < 5; k++) await look();

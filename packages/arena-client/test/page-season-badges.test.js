@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -107,7 +108,7 @@ function liftSeason({ observer } = {}) {
   const timers = new Map(); let nextTimer = 1;
   const setTimeout = (f, ms) => { const id = nextTimer++; timers.set(id, { f, ms }); return id; };
   const clearTimeout = (id) => { timers.delete(id); };
-  const window = { ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ARENA_ROUTED_URL: (u) => u.replace('https://', 'https://r.'), ArenaSeason };
+  const window = { ArenaText, ArenaBits, ARENA_IDENTITY: { name: 'brave-otter-0042', pubkey: ME }, ARENA_ROUTED_URL: (u) => u.replace('https://', 'https://r.'), ArenaSeason };
   pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'fetch', 'setTimeout', 'clearTimeout', 'AbortSignal', 'IntersectionObserver'], SEASON)(
     dom.document, window, BUNDLE, fetch, setTimeout, clearTimeout, { timeout: () => undefined }, observer);
   const fire = async () => { const [[id, t]] = [...timers]; timers.delete(id); t.f(); await settle(); };

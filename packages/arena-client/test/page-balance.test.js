@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -21,7 +22,7 @@ function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 93
   for (const id of ['arena-money', 'arena-settings', 'arena-lobby-balance', 'arena-backup-notice', 'arena-backup-warn', 'arena-settings-backup',
     'arena-lobby-confirmed', 'arena-bal-confirmed', 'arena-lobby-pending', 'arena-bal-pending', 'arena-balance-line', 'arena-money-why']) el(id);
   const document = { getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => canvas } : id === 'boot' ? null : els[id] || null) };
-  const window = { ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: balance, unityInstance: {} };
+  const window = { ArenaText, ArenaBits, ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: balance, unityInstance: {} };
   const ARENACLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
   pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], SRC, 'return paintMoney();')(
     document, window, ARENACLIENT, () => driving, () => ({}), () => 'seed', () => false, () => false);

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pendingWindowLine, savedLockExpiration } from '../src/page-lock.js';
 import { pageFunction } from './page-script.js';
+import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -28,7 +29,7 @@ function page({ record, theLook, collect }) {
   const marked = [];
   const els = {};
   const document = { getElementById: (id) => (els[id] = els[id] || { textContent: '', parentNode: { title: '' } }) };
-  const window = { sessionStorage: { getItem: () => null }, ARENA_WALLET_BALANCE: { sats: 173, pending: 0 } };
+  const window = { ArenaText, ArenaBits, sessionStorage: { getItem: () => null }, ARENA_WALLET_BALANCE: { sats: 173, pending: 0 } };
   const ARENACLIENT = {
     savedCollects: () => [record], roundLocks: () => true, owedToLine: () => 'line', toHex: () => '00'.repeat(32),
     markCollectDone: (v, rid) => { marked.push(rid); record.done = { payout: 'line' }; },
