@@ -25,6 +25,7 @@
     "./tick": "./src/tick.js",
     "./genesis": "./src/genesis.js",
     "./ballot-chain": "./src/ballot-chain.js",
-    "./batch": "./src/batch.js"
+    "./batch": "./src/batch.js",
+    "./host": "./src/host.js"
   }
 }

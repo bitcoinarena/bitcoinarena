@@ -14,7 +14,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 // the two that are not the protocol's: manifest signing (the developer's tools) and its ed25519
-const FROM = { 'manifest-sign': '../../arena-donor/src/manifest-sign.js', ed25519: '../../arena-node/src/ed25519.js' };
+const FROM = { 'manifest-sign': '../../arena-donor/src/manifest-sign.js', ed25519: '../../arena-node/src/ed25519.js', host: '../../arena-node/src/plugins.js' };
 
 test('every subpath is the Arena module itself', async () => {
   for (const sub of Object.keys(pkg.exports)) {
