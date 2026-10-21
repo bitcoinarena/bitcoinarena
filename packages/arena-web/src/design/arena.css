@@ -1,0 +1,28 @@
+/* THE ARENA'S DESIGN TOKENS AND PIECES (kanban #564): taken from the owner page, so the React pages and the old ones look the same while they are ported */
+:root{--bg:#0f1218;--card:#171c25;--line:#2a3140;--text:#e6e9ef;--dim:#8b93a3;--gv:#f2a93b;--st:#4fa3ff;--ok:#3fbf7f;--bad:#e25c5c;color-scheme:dark}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f5f6f8;--card:#fff;--line:#dde1e7;--text:#1b2230;--dim:#5d6676;color-scheme:light}}
+:root[data-theme="light"]{--bg:#f5f6f8;--card:#fff;--line:#dde1e7;--text:#1b2230;--dim:#5d6676;color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+button{font:600 15px system-ui;border-radius:10px;padding:11px 16px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;margin:4px 6px 4px 0}
+button.primary{background:var(--gv);border-color:var(--gv);color:#1a1200}button:disabled{opacity:.5;cursor:default}
+.sub{color:var(--dim)}.ok{color:var(--ok)}.err{color:var(--bad)}
+.warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
+/* THE ROLES AS TILES (kanban #563, the owner 2026-10-21: "you must vamp it up so it looks modern"): one card per role, its earning in one
+   line, a switch where it can be changed, the save bar only once something changed */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;transition:border-color .15s,box-shadow .15s}
+.tile.on{border-color:var(--ok);box-shadow:0 0 0 1px var(--ok) inset}.tile.changed{border-color:var(--gv);box-shadow:0 0 0 1px var(--gv) inset}
+.tile .head{display:flex;align-items:center;gap:10px}.tile h4{margin:0;font-size:16px;flex:1;min-width:0}
+.tile .ico{font-size:20px;width:38px;height:38px;min-width:38px;border-radius:10px;display:grid;place-items:center;background:var(--bg)}
+.tile .earn{color:var(--gv);font-weight:600;font-size:14px;margin:0}.tile .does{color:var(--dim);font-size:14px;margin:0;flex:1}
+.tile .foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
+.pill{font:600 12px system-ui;padding:3px 10px;border-radius:999px;background:var(--bg);color:var(--dim);white-space:nowrap}
+.pill.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}.pill.wait{background:color-mix(in srgb,var(--gv) 18%,transparent);color:var(--gv)}
+.switch{position:relative;display:inline-block;width:48px;height:28px;margin:0;flex:0 0 48px;cursor:pointer}.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:background .15s}
+.switch span::after{content:'';position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .15s}
+.switch input:checked+span{background:var(--ok)}.switch input:checked+span::after{transform:translateX(20px)}.switch input:focus-visible+span{outline:2px solid var(--st);outline-offset:2px}
+.tile a.go{color:var(--st);font-weight:600;font-size:14px;text-decoration:none}
+.savebar{position:sticky;bottom:12px;z-index:4;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;background:var(--card);border:1px solid var(--gv);border-radius:14px;padding:10px 14px;margin-top:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.savebar[hidden]{display:none}

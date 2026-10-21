@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE OWNER DASHBOARD'S ROLES, IN REACT (kanban #564, first screen ported; the tiles of kanban #563, the owner 2026-10-21: "vamp it up so it
+// looks modern"). A class component: what the node does read from its seat (GET /roles, /guardian, /gateway-claim, /liquidity-claim), one
+// tile per role, a switch where the role is changed from here, the save bar once something changed, then the fee and Confirm
+// (POST /owner/roles, signed by the owner). `api` = { get(path), post(path, body), signed(action, args) }; `node` the node's key.
+import React from 'react';
+import { Tile, Switch, Button, SaveBar } from '../design/components.jsx';
+
+/** The roles the node's advertisement names, a switch each; custody is its guardian_capable flag. */
+export const ROLE_SWITCHES = Object.freeze([['play', ['game', 'verify']], ['settlement', ['settlement']], ['relay', ['relay']]]);
+export const SWITCHABLE = Object.freeze(['play', 'settlement', 'relay', 'custody']);
+
+/** What is on now, from the node's census row. */
+export function switchesOf(mine) {
+  const has = (r) => !!(mine && (mine.roles || []).includes(r));
+  return { play: has('verify') || has('game'), settlement: has('settlement'), relay: has('relay'), custody: !!(mine && mine.guardianCapable) };
+}
+/** The switches the owner changed. */
+export const changedOf = (was, now) => SWITCHABLE.filter((k) => !!was[k] !== !!now[k]);
+/** What /owner/roles is asked for. */
+export const askOf = (now) => ({ roles: ROLE_SWITCHES.filter(([k]) => now[k]).flatMap(([, rs]) => rs), custody: !!now.custody });
+
+export class RolesPanel extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { loaded: false, mine: null, guardian: null, gateway: null, liquidity: null, was: {}, now: {}, step: 'idle', plan: null, message: null, ...(props.initial || {}) };
+    this.undo = this.undo.bind(this); this.review = this.review.bind(this); this.confirm = this.confirm.bind(this);
+  }
+  async componentDidMount() {
+    if (this.state.loaded || !this.props.api) return;
+    const get = async (p) => { try { return await this.props.api.get(p); } catch { return null; } };
+    const [pub, guardian, gateway, liquidity] = await Promise.all([get('/roles'), get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
+    const mine = pub && (pub.nodes || []).find((x) => x.node === this.props.node) || null;
+    const was = switchesOf(mine);
+    this.setState({ loaded: true, mine, guardian, gateway, liquidity, was, now: { ...was } });
+  }
+  toggle(k, on) { this.setState((s) => ({ now: { ...s.now, [k]: on }, step: 'idle', plan: null, message: null })); }
+  undo() { this.setState((s) => ({ now: { ...s.was }, step: 'idle', plan: null, message: null })); }
+  async review() {
+    this.setState({ step: 'checking', message: 'Checking…' });
+    try {
+      const p = await this.props.api.post('/owner/roles', await this.props.api.signed('roles', { ...askOf(this.state.now), post: false }));
+      if (!p || !p.ok) return this.setState({ step: 'idle', message: (p && p.why) || 'not possible' });
+      this.setState({ step: 'review', plan: p.plan, message: null });
+    } catch (e) { this.setState({ step: 'idle', message: e.message }); }
+  }
+  async confirm() {
+    this.setState({ step: 'sending' });
+    try {
+      const d = await this.props.api.post('/owner/roles', await this.props.api.signed('roles', { ...askOf(this.state.now), post: true }));
+      if (!d || !d.ok) return this.setState({ step: 'review', message: (d && d.why) || 'not sent' });
+      this.setState({ step: 'sent', txid: d.update && d.update.txid, message: null });
+    } catch (e) { this.setState({ step: 'review', message: e.message }); }
+  }
+  tiles() {
+    const { mine, guardian, gateway, liquidity } = this.state;
+    const guarding = !!(guardian && guardian.guardian);
+    return [
+      ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.'],
+      ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.'],
+      ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Carries round data for players and other nodes.'],
+      ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null],
+      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', null, !!(gateway && gateway.gatewayUrl), 'custody'],
+      ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', null, !!liquidity, 'liquidity'],
+    ].map(([k, icon, name, highlight, does, label, onOther, section]) => ({ k, icon, name, highlight, does, label, onOther, section, mine }));
+  }
+  render() {
+    const { loaded, mine, was, now, step, plan, message } = this.state;
+    if (!loaded) return <p className="sub">reading this node's roles…</p>;
+    const changed = changedOf(was, now);
+    const sent = step === 'sent';
+    return (
+      <div>
+        <div className="tiles">
+          {this.tiles().map((t) => {
+            const switchable = SWITCHABLE.includes(t.k);
+            const on = switchable ? !!was[t.k] : t.onOther;
+            const state = changed.includes(t.k) ? 'changed' : on ? 'on' : null;
+            const footer = switchable
+              ? (mine ? [<span key="s" />, <Switch key="w" id={`rl-${t.k}`} label={t.name} checked={!!now[t.k]} disabled={sent} onChange={(v) => this.toggle(t.k, v)} />]
+                : <span className="sub">Changeable once the bond counts</span>)
+              : <a className="go" href={`#${t.section}`}>{on ? 'Manage' : 'Set up'} →</a>;
+            return <Tile key={t.k} id={`tile-${t.k}`} icon={t.icon} name={t.name} highlight={t.highlight} does={t.does} state={state}
+              pill={sent && changed.includes(t.k) ? 'Saving…' : t.label || (on ? 'On' : 'Off')} pillTone={sent && changed.includes(t.k) ? 'wait' : on ? 'on' : null} footer={footer} />;
+          })}
+        </div>
+        <SaveBar open={changed.length > 0} label={`${changed.length} change${changed.length === 1 ? '' : 's'} not saved`}
+          message={sent ? <p className="ok"><b>Sent ✓</b> the new roles count after 6 blocks.</p>
+            : step === 'review' && plan ? <p>Fee <b>{Number(plan.feeSats).toLocaleString('en-US')} sat</b> from your bond wallet · counts after 6 blocks (about 1 hour).</p>
+              : message ? <p className="warn">{message}</p> : null}>
+          {sent ? null : step === 'review'
+            ? [<Button key="u" onClick={this.undo}>Undo</Button>, <Button key="c" primary onClick={this.confirm}>Confirm</Button>]
+            : [<Button key="u" onClick={this.undo}>Undo</Button>, <Button key="r" primary disabled={step === 'checking'} onClick={this.review}>Review changes</Button>]}
+        </SaveBar>
+        {mine ? null : <p className="sub">This node is not in the census yet: its roles can be changed once its bond counts.</p>}
+      </div>
+    );
+  }
+}
