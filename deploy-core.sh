@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 # The page to deploy: the last Unity build, or - for the Daily's keeper after a reboot has emptied
 # /tmp - the copy of the last deployed page kept on persistent disk (ARENA_BUILD_DIR).
-BUILD="${ARENA_BUILD_DIR:-$ROOT/unity-proto/build/webgl}"
+BUILD="${ARENA_BUILD_DIR:-$ROOT/packages/nextblock/unity/build/webgl}"
 PROJECT="${1:-btc-logistics-core}"
 
 if [ "$PROJECT" = "btc-logistics-war" ]; then
@@ -31,8 +31,8 @@ cp "$ROOT/deploy/_headers" "$BUILD/_headers"
 # a 404 so Unity never starts. It shipped that way once (2026-09-09 16:08, found
 # by hand-injecting the loader in a browser). The copy is how the page is
 # edited and stays; what stops here is an unfilled copy reaching Cloudflare.
-node "$ROOT/unity-proto/tools/fill-template.mjs" "$BUILD"
-node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
+node "$ROOT/tools/fill-template.mjs" "$BUILD"
+node "$ROOT/tools/fill-template.mjs" --check "$BUILD"
 
 # THE LOBBY'S SIGNER NODES GO BESIDE THE PAGE ON EVERY DEPLOY (2026-09-15 12:54: the Daily lobby
 # must list rounds). The page's bare root shows the lobby only from daily.json (index.html reads

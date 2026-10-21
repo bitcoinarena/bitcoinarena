@@ -15,7 +15,7 @@ import { CANDLES, CANDLE_WEST, CANDLE_EAST, CANDLE_BODY_HALF, BAND_X } from '../
 import { MINER_X, MINER_DOOR_X, MINER_MOUTH_HALF } from '../src/rules/map.js';
 
 const ONE = 65536, m = (q) => (q / ONE).toFixed(2).padStart(8);
-const GLB = new URL('../../../unity-proto/Assets/Models/bitcoin_miner_megastructure.glb', import.meta.url).pathname;
+const GLB = new URL('../unity/Assets/Models/bitcoin_miner_megastructure.glb', import.meta.url).pathname;
 const HEIGHT_SCALE = 0.45;                       // DeliveryGate.MinerScale
 const TURN = true;                               // DeliveryGate.FaceThePlayer, 180 degrees about y
 

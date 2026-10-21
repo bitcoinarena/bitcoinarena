@@ -69,7 +69,7 @@ test('the join refuses on "donation set in force" at its donation-set step, befo
 // onDrop called net.client.reconnect with net.client already null (the session-error path nulled it without closing the
 // client): "TypeError: Cannot read properties of null (reading 'reconnect')"; Unity's loader then ran its error handler, whose
 // default is alert() - a modal that holds the tab (CDP Runtime.evaluate and Page.enable unanswered, renderer ~2% CPU).
-const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+const JSLIB = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
 
 test('an uncaught page error is logged, never alerted: the Unity config names an errorHandler that answers true', () => {
   const at = PAGE.indexOf('    const config = {');

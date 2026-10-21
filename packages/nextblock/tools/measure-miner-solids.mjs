@@ -25,7 +25,7 @@ import { BOX_WORDS } from '../src/rules/solids.js';
 import { init } from '../src/sim.js';
 
 const ONE = 65536, M = (q) => q / ONE;
-const GLB = new URL('../../../unity-proto/Assets/Models/bitcoin_miner_megastructure.glb', import.meta.url).pathname;
+const GLB = new URL('../unity/Assets/Models/bitcoin_miner_megastructure.glb', import.meta.url).pathname;
 const HEIGHT_SCALE = 0.45;                       // DeliveryGate.MinerScale
 const MINER_ORIGIN = M(MINER_X);
 

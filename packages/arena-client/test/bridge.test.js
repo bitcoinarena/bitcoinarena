@@ -38,7 +38,7 @@ import { HOSTED } from '../../arena-node/test/plugins/hosted.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const require = createRequire(import.meta.url);
 const core = require('../../nextblock/dist/blwp-core.js');
-const JSLIB = new URL('../../../unity-proto/Assets/Plugins/WebGL/arena.jslib', import.meta.url);
+const JSLIB = new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url);
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();

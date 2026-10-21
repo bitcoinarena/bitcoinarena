@@ -11,7 +11,7 @@ ROOT = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=Tr
 SPDX = 'SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0'
 COPY = 'Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.'
 GUARD = 'Protected by LICENSE section 2: no copy or fork may change the network id or the protocol developers\' donation set here.'
-INCLUDE = re.compile(r'^(packages/|unity-proto/Assets/(Scripts|Editor|Tests)/|tools/)')
+INCLUDE = re.compile(r'^(packages/|packages/nextblock/unity/Assets/(Scripts|Editor|Tests)/|tools/)')
 EXCLUDE = re.compile(r'(^|/)node_modules/|/dist/|^packages/[^/]+/plugin/|^packages/nextblock/(src|frozen|config)/'
                      r'|^packages/arena-client/(lock-client|nostr)/|WebGLTemplates/|^src/arena-ui/')
 KINDS = {'.js': '//', '.mjs': '//', '.cs': '//', '.sh': '#', '.py': '#'}

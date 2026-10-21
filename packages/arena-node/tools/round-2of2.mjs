@@ -74,7 +74,7 @@ import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
-// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (§0A.4): Next Block, as arena-node/bin/node.mjs does.
+// A LAUNCHER HANDS ITS NODES THE APPS THEY HOST (§0A.4): Next Block, as the installer's apps step does (ARENA_APPS).
 const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
 
 
@@ -1579,7 +1579,7 @@ export function servePage(build, { host = '127.0.0.1', port = 8000 } = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const host = process.env.ARENA_BIND || '127.0.0.1';
   const build = process.env.ARENA_BUILD
-    || new URL('../../../unity-proto/build/webgl', import.meta.url).pathname;
+    || new URL('../../nextblock/unity/build/webgl', import.meta.url).pathname;
 
   // THE PAGE IS SERVED FROM HERE unless somebody names another one, because
   // the daily is https and these daemons are not. Same build, same scheme as

@@ -34,6 +34,6 @@ test('every bundle in dist/ and every copy beside its page is the build of this 
     same(join(repo, 'src/arena-ui/proposals/react.js'), 'proposals.js');
     same(join(repo, 'src/arena-ui/offline/react.js'), 'emergency.js');
     same(join(repo, 'packages/arena-installer/www/wizard.js'), 'wizard.js');
-    assert.deepEqual(stale, [], 'not rebuilt: run node packages/arena-web/tools/build.mjs (and tools/sync-arena-ui.mjs)');
+    assert.deepEqual(stale, [], 'not rebuilt: run node packages/arena-web/tools/build.mjs ');
   } finally { rmSync(out, { recursive: true, force: true }); }
 });

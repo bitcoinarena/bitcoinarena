@@ -186,8 +186,8 @@ test('picked: the join of a pick ends \'picked\' before the session\'s globals -
   assert.ok(pickJoin > 0 && pickReturn > pickJoin && entryWritten > pickReturn, 'the pick does not return before the entry the session opens');
   assert.doesNotMatch(PAGE.slice(pickJoin, pickReturn), /window\.ARENA_ENTRY =|warmTheSession\(/);
   // and Unity: unchanged, it waits on "joined" and adopts only "joining"/"joined" (no C# change in slice 2)
-  const lobbyCs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Arena/DailyLobby.cs', import.meta.url), 'utf8');
-  const splash = readFileSync(new URL('../../../unity-proto/Assets/Scripts/SplashScreen.cs', import.meta.url), 'utf8');
+  const lobbyCs = readFileSync(new URL('../../nextblock/unity/Assets/Scripts/Arena/DailyLobby.cs', import.meta.url), 'utf8');
+  const splash = readFileSync(new URL('../../nextblock/unity/Assets/Scripts/SplashScreen.cs', import.meta.url), 'utf8');
   assert.match(lobbyCs, /if \(s\.join\.state != "joined"\) return "wait";/);
   assert.match(splash, /\(_lobby\.join\.state == "joining" \|\| _lobby\.join\.state == "joined"\)/);
 });
