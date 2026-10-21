@@ -18,7 +18,7 @@ import { hash } from '../src/state.js';
 
 const require = createRequire(import.meta.url);
 const bundled = require('../dist/blwp-core.js');
-const DIR = new URL('../../../test-vectors/', import.meta.url).pathname;
+const DIR = new URL('../test-vectors/', import.meta.url).pathname;
 const index = JSON.parse(readFileSync(DIR + 'index.json', 'utf8'));
 
 test('the bundle exposes what the bridge needs', () => {

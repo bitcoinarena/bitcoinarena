@@ -10,7 +10,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { init, step, submitLiquidation, UNITS } from '../src/sim.js';
 import { hash } from '../src/state.js';
 
-const DIR = new URL('../../../test-vectors/', import.meta.url).pathname;
+const DIR = new URL('../test-vectors/', import.meta.url).pathname;
 mkdirSync(DIR, { recursive: true });
 
 const CASES = [

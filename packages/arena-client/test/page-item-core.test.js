@@ -58,7 +58,7 @@ test('the shop, the run\'s items and their unlocks are wired into the page', () 
   assert.match(html, /frontendPk: pageFrontendPk\(\), items: runItems,/);
   assert.match(html, /window\.ARENA_ITEM_UNLOCKS = roundManifest \? ARENACLIENT\.entryUnlocks\(window\.ARENA_ENTRY, roundManifest\) : \[\];/);
   assert.match(html, /await window\.ARENA_LOAD_CORE\(ARENACLIENT\.roundCoreHex\(named\.round\)\)/);
-  const jslib = readFileSync(new URL('../../nextblock/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
+  const jslib = readFileSync(new URL('../../../.apps/arena-app-next-block/unity/Assets/Plugins/WebGL/arena.jslib', import.meta.url), 'utf8');
   assert.equal((jslib.match(/b\.core\.init\(net\.seedWord, arenaWithItems\(/g) || []).length, 2, 'both run starts take the unlocks');
   assert.match(jslib, /ArenaTruckBed: function/);
 });

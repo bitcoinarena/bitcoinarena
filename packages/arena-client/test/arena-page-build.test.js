@@ -18,9 +18,12 @@ test('the page is src/arena-ui and the apps\' page parts; Next Block\'s Unity pr
   assert.ok(s['games/nextblock/unity-page.js'].endsWith('packages/nextblock/page/unity-page.js'));
   assert.ok(s['games/btc-updown/market-page.js'].endsWith('packages/btc-updown/page/market-page.js'));
   assert.ok(!Object.keys(s).some((k) => CLIENT_PATHS.some((p) => k === p || k.startsWith(p + '/'))), 'no client file comes from the Arena\'s source');
-  assert.equal(existsSync(new URL('packages/nextblock/unity/Assets/WebGLTemplates/NextBlock', ROOT)), false, 'the Arena page is not a Unity template');
-  assert.equal(existsSync(new URL('unity-proto', ROOT)), false, 'the Unity project is the app\'s: packages/nextblock/unity');
-  assert.ok(existsSync(new URL('packages/nextblock/unity/Assets/WebGLTemplates/NextBlockClient/index.html', ROOT)), 'the app\'s own template');
+  // THE UNITY PROJECT IS THE APP'S REPOSITORY'S (the owner 2026-10-21: "Do not leave the Unity project in bitcoin-arena")
+  assert.equal(existsSync(new URL('unity-proto', ROOT)), false, 'no unity-proto');
+  assert.equal(existsSync(new URL('packages/nextblock/unity', ROOT)), false, 'no copy of it in packages/nextblock');
+  const lock = JSON.parse(readFileSync(new URL('apps.lock.json', ROOT), 'utf8'));
+  assert.equal(lock.apps['arena-app-next-block'].repo, 'a tester/arena-app-next-block', 'the Arena reads it from the app at a pinned commit');
+  assert.match(lock.apps['arena-app-next-block'].commit, /^[0-9a-f]{40}$/);
 });
 
 test('the page is filled with the pinned client: its file names, product and UI version, sizes and pins (unpacked for a .unityweb)', () => {

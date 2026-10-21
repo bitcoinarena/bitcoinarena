@@ -8,7 +8,7 @@
 // difference there is that it runs in a worker and the transcript comes off
 // the wire rather than off disk.
 //
-//   node tools/replay.js ../../test-vectors/slalom.json
+//   node tools/replay.js test-vectors/slalom.json
 
 import { readFileSync } from 'node:fs';
 import { init, step } from '../src/sim.js';
