@@ -210,6 +210,49 @@ test('what does not count toward 2 of 2: a node down, a stranger\'s key, one key
   await assert.rejects(fetchLobby({ nodes: [A, B], fetcher: network({ nodes: {}, contracts }).fetcher, nowMs: NOW }), /no verify was injected/);
 });
 
+test('only a listing that could count has its signature checked, once (kanban #573: 12,761 checks in 10 s with a game open)', async () => {
+  const c = contractAt(BigInt(NOW) - 1000n);
+  const { contracts, id } = roundsOf({ r: c });
+  const rid = id.r;
+  const C = 'http://127.0.0.3:18583';
+  let checks = 0;
+  const counting = (...a) => { checks++; return verify(...a); };
+  const run = async (nodes, extraNodes = []) => (await fetchLobby({ nodes: [A, B, ...extraNodes], fetcher: network({ nodes, contracts }).fetcher, nowMs: NOW, verify: counting }));
+  // both signer nodes and a third node that is no signer node of this round: 2 checks, the third's listing never checked
+  checks = 0;
+  const three = await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid)] },
+    [C]: { secret: stranger, rounds: [listing(stranger, rid)] } }, [C]);
+  assert.equal(`${three.rows[0].signerNodesAgree}/${three.rows[0].needed} ${three.rows[0].joinable ? 'join' : 'no join'}`, '2/2 join');
+  assert.equal(checks, 2, 'the stranger\'s listing is not checked');
+  // a signer node's listing that says it is not assigned there cannot count: not checked either
+  checks = 0;
+  const notAssigned = await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid, { assignedHere: false })] } });
+  assert.equal(notAssigned.rows[0].signerNodesAgree, 1);
+  assert.equal(checks, 1);
+  // a forged listing that could count is still refused: its check runs and fails
+  checks = 0;
+  const tampered = await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid, { assignedHere: false, tamper: { assignedHere: true } })] } });
+  assert.deepEqual([tampered.rows[0].signerNodesAgree, checks], [1, 2]);
+});
+
+test('verifyMany: the listings that could count checked in one batch, none by verify; a batch that fails leaves them to verify (kanban #573)', async () => {
+  const c = contractAt(BigInt(NOW) - 1000n);
+  const { contracts, id } = roundsOf({ r: c });
+  const rid = id.r;
+  const C = 'http://127.0.0.3:18583';
+  const nodes = { [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid, { assignedHere: false, tamper: { assignedHere: true } })] },
+    [C]: { secret: stranger, rounds: [listing(stranger, rid)] } };
+  let single = 0; const batches = [];
+  const one = (...a) => { single++; return verify(...a); };
+  const many = async (list) => { batches.push(list.length); return list.map((a) => verify(a.sig, a.msg, a.key)); };
+  const got = await fetchLobby({ nodes: [A, B, C], fetcher: network({ nodes, contracts }).fetcher, nowMs: NOW, verify: one, verifyMany: many });
+  assert.deepEqual([batches, single], [[2], 0], 'one batch of the two signer nodes\' listings, nothing checked on the page');
+  assert.equal(got.rows[0].signerNodesAgree, 1, 'the tampered listing still refused');
+  single = 0;
+  const broken = await fetchLobby({ nodes: [A, B, C], fetcher: network({ nodes, contracts }).fetcher, nowMs: NOW, verify: one, verifyMany: async () => { throw new Error('no worker'); } });
+  assert.deepEqual([broken.rows[0].signerNodesAgree, single], [1, 2], 'checked by verify instead');
+});
+
 test('a silent signer node costs one limit, not the lobby: the other still lists, the silent one is named, no join (2026-09-17)', async () => {
   // MEASURED BEFORE, on the Daily with one tunnel silent: /rounds failed after 125.1 s and the next node's took 60 s, all while
   // the page sat on "Connecting …". The silent node here never answers at all.
