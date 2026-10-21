@@ -171,3 +171,31 @@ test('a quick tunnel\'s new name is followed, the seat restarted on it - and no 
   assert.match((await agent.tick()).idle, /waits to be drawn/, 'then on with its other steps');
   assert.equal(sent.length, 0, 'no transaction for an address: the seat announces it off chain');
 });
+
+test('a custody and liquidity node whose liquidity deposit cannot be paid yet still publishes its guardian seat (kanban #495, node 4003758b)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'custody-liq-'));
+  const state = nodeState(home);
+  writeFileSync(join(home, 'seed.hex'), '11'.repeat(32));
+  const nodeSecret = new Uint8Array(32).fill(6);
+  const db = new DatabaseSync(join(home, 'node.db'));
+  db.exec('CREATE TABLE identity (one INTEGER PRIMARY KEY, secret BLOB)'); db.prepare('INSERT INTO identity VALUES (0, ?)').run(nodeSecret); db.close();
+  state.save({ roles: ['verify', 'custody', 'liquidity'], chain: { kind: 'core' }, owner: { pubkey: 'ab'.repeat(32) }, reach: { mode: 'permanent', url: 'https://node.example.com' },
+    bond: { txid: '77'.repeat(32), vout: 0, sats: '50000', maturity: 157057 }, custody: { pegInSats: 50000 }, lightning: { pubkey: '02' + '99'.repeat(32) } });
+  const sent = [];
+  // 312,380 sat in the wallet, as on the live node: enough for the update, not for the 500,000 sat deposit
+  const chainKit = { coinsOf: async () => ({ tip: 157000, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 312380 }] }),
+    broadcast: async (_c, hex) => { sent.push(hex); return toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()); } };
+  const logs = [];
+  const agent = createCustodyAgent({ state, release: home, chainKit, log: (m) => logs.push(m), nowMs: () => 1_800_000_000_000,
+    lnd: { funds: async () => ({ ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', onchainSats: 0 }) } });
+  assert.match((await agent.tick()).idle, /waits to be drawn/, 'no federation yet: custody waits, the deposit said in the log');
+  assert.match(logs.join('\n'), /the liquidity deposit is not sent yet: .* - custody goes on/);
+  const dir = join(home, 'node.db.guardian'); mkdirSync(dir);
+  writeFileSync(join(dir, 'invite-code'), `"${inviteForGuardians(fromHex('ee'.repeat(32)), [{ url: 'wss://node.example.com/guardian', peer: 2 }])}"\n`);
+  writeFileSync(join(dir, 'local.json'), JSON.stringify({ identity: 2 }));
+  writeFileSync(join(dir, 'consensus.json'), JSON.stringify({ broadcast_public_keys: { 2: '03' + 'cd'.repeat(32) } }));
+  const r = await agent.tick();
+  assert.equal(r.did, 'guardian_of', r.why);
+  const read = readAdvertUpdate(fromHex(sent[1]), { network: 'testnet4' });
+  assert.equal(toHex(read.advert.guardianOf[0].federationId), 'ee'.repeat(32));
+});
