@@ -1,5 +1,5 @@
 {
-  "about": "The apps' own repositories at the commits the Arena takes them from (kanban #569): `copy` is the folder of bitcoin-arena that holds each app as it is at that commit (Next Block without its Unity project, which only its own repository holds); tools/fetch-apps.mjs checks the listed paths out into .apps/<name>, and arena-client's apps-pinned test checks every copy against its app.",
+  "about": "The apps' own repositories at the commits the Arena takes them from (kanban #569, #575): bitcoin-arena tracks no app. tools/fetch-apps.mjs checks the listed paths out into .apps/<name> and places each app at `copy` (not tracked; Next Block without its Unity project, which only its own repository holds); arena-client's apps-pinned test checks every placed app against its checkout, and apps.files.json (tools/pin-apps.mjs) names the files a node downloads of each.",
   "apps": {
     "arena-app-next-block": {
       "repo": "a tester/arena-app-next-block",

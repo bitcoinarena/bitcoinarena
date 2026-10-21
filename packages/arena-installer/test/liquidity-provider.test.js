@@ -52,12 +52,14 @@ test('the claim proves the free balance: every coin signed by its address key fo
       coins: async () => ({ ok: true, coins }), signWithAddr: async ({ address, message }) => { signed.push([address, message]); return { ok: true, signature: `sig:${address}` }; } } });
   await p.tick();
   assert.deepEqual(claim.funds.map((f) => [f.txid.slice(0, 2), f.vout, f.sats, f.signature]), [['aa', 1, '400000', 'sig:tb1pone'], ['bb', 0, '200000', 'sig:tb1qtwo']], 'largest first');
-  assert.deepEqual(signed[0], ['tb1pone', fundsMessage(k.hex, 'aa'.repeat(32), 1)], 'the message names this node and the coin');
+  // under the tag of the claim's time (tag-switch.js): ARENA/ once the switch point has passed, as the provider signs it
+  const { tagAt } = await import('../../arena-protocol/src/tag-switch.js');
+  assert.deepEqual(signed[0], ['tb1pone', fundsMessage(k.hex, 'aa'.repeat(32), 1, tagAt('liquidityFunds', { ms: Number(claim.atMs) }))], 'the message names this node and the coin');
   await p.tick();
   assert.equal(signed.length, 2, 'each coin signed once');
   coins = coins.slice(1); await p.tick();
   assert.deepEqual(claim.funds.map((f) => f.txid.slice(0, 2)), ['bb'], 'the spent coin is gone');
-  assert.deepEqual(Object.keys(state.fundSigs), ['bb'.repeat(32) + ':0']);
+  assert.deepEqual(Object.keys(state.fundSigs), [`${'bb'.repeat(32)}:0:${tagAt('liquidityFunds', { ms: Number(claim.atMs) })}`], 'a signature is kept per coin and tag');
 });
 
 test('a provider reached twice (its seat and as a peer) is one provider: never drawn for both of a node\'s channels', async () => {

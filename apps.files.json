@@ -1,5 +1,5 @@
 {
-  "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the copies; never by hand.",
+  "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
       "commit": "20ad4e45b8277b2b4bf0d08e18733c579ddc8e1e",

@@ -3,3 +3,10 @@ node_modules/
 *.log
 devnet-data/
 .apps/
+# the apps (kanban #575): placed from their own repositories at their pins by tools/fetch-apps.mjs, never tracked here
+/packages/nextblock/
+/packages/rock-paper-scissors/
+/packages/btc-updown/
+/packages/hello-world/
+/packages/*.placing/
+/packages/*.fetching/
