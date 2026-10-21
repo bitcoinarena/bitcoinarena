@@ -32,3 +32,4 @@ input,textarea,select{width:100%;font:15px ui-monospace,monospace;padding:10px;b
 label{display:block;margin:8px 0 4px;color:var(--dim)}.warnline{border-left:3px solid var(--gv);padding-left:10px}
 a{color:var(--st)}code{font-family:ui-monospace,monospace}
 .confirm{display:flex;gap:10px;align-items:flex-start;margin:10px 0;color:var(--text)}.confirm input{width:auto;margin-top:4px}.info{margin:2px 0 6px}.info a{color:inherit}textarea{min-height:60px}
+table.found{width:100%;border-collapse:collapse}table.found th,table.found td{padding:4px 6px;text-align:left;vertical-align:top}

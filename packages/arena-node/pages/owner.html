@@ -854,6 +854,21 @@ async function storePanel() {
     };
   };
   await reload();
+  // THE NETWORK'S APPS AND A NODE LOOKED AT BY ADDRESS AS A REACT SCREEN (kanban #564) when this node serves it, with this page's own
+  // package checks (C.checkPackage, C.checkUpdate) - the page's list below otherwise
+  try {
+    if (window.ArenaOwner && window.ArenaOwner.mountNetworkApps) {
+      for (const id of ['netfound-at', 'netagain', 'perr', 'offer']) { const x = $(id); if (x) x.style.display = 'none'; }
+      const lookBox = $('from') && $('from').closest('details'); if (lookBox) lookBox.style.display = 'none';
+      const el = $('netfound'); if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountNetworkApps(el, {
+        api: { get: async (p) => (await fetch(at(p), { cache: 'no-store' })).json(), post, signed,
+          fetchJson: async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); } },
+        client: { checkPackage: C.checkPackage, checkUpdate: C.checkUpdate, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex },
+        onChanged: reload });
+      return;
+    }
+  } catch { /* the page's own list */ }
   // THE NETWORK'S GAMES, FOUND BY THE SEAT (2026-10-11: automatic, not by address): name, type, version,
   // the developer's signed description and website, how many seats host it, and Install (or Update, for a newer version of a
   // game hosted here). Install checks the package in this browser first, as Check does, then the seat checks it again.
