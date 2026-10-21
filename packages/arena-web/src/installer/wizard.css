@@ -1,0 +1,25 @@
+/* THE INSTALLER'S REACT STEPS (kanban #564): arena.css's tiles and switches, inside .aw only, on the wizard's own colours - the steps not
+   yet ported keep the page's look, and nothing here touches them */
+.aw{--gv:var(--accent);--dim:var(--muted);--st:#58a6ff}
+.aw .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:10px 0}
+.aw .tile{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;transition:border-color .15s,box-shadow .15s}
+.aw .tile.on{border-color:var(--gv);box-shadow:0 0 0 1px var(--gv) inset;background:rgba(247,147,26,.06)}
+.aw .tile .head{display:flex;align-items:center;gap:10px}.aw .tile h4{margin:0;font-size:16px;flex:1;min-width:0}
+.aw .tile .ico{font-size:20px;width:38px;height:38px;min-width:38px;border-radius:10px;display:grid;place-items:center;background:var(--card)}
+.aw .tile .earn{color:var(--text);font-size:14px;margin:0}.aw .tile .does{margin:0;flex:1;display:flex;flex-wrap:wrap;gap:4px}
+.aw .tile .foot{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-top:4px}
+.aw .chip{border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:12px;white-space:nowrap;color:var(--muted)}
+.aw .more{font-size:12.5px;color:var(--muted);flex:1}.aw .more summary{cursor:pointer}.aw .more p{margin:4px 0}
+.aw .pill{font:600 12px system-ui;padding:3px 10px;border-radius:999px;background:var(--card);color:var(--dim);white-space:nowrap}
+.aw .pill.on{background:rgba(63,185,80,.15);color:var(--ok)}.aw .pill.wait{background:rgba(247,147,26,.15);color:var(--gv)}
+.aw .switch{position:relative;display:inline-block;width:48px;height:28px;margin:0;flex:0 0 48px;cursor:pointer}.aw .switch input{opacity:0;width:0;height:0;position:absolute}
+.aw .switch span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:background .15s}
+.aw .switch span::after{content:'';position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .15s}
+.aw .switch input:checked+span{background:var(--gv)}.aw .switch input:checked+span::after{transform:translateX(20px)}.aw .switch input:focus-visible+span{outline:2px solid var(--st);outline-offset:2px}
+.aw .switch input:disabled+span{opacity:.5}
+.aw .choice.on{border-color:var(--gv);background:rgba(247,147,26,.06)}.aw .choice input[type=radio]{width:auto;margin-top:4px}
+.aw .msg{display:block}
+@media (max-width:560px){.aw .tiles{grid-template-columns:1fr}}
+/* the chips keep their height in a tall tile; the owner's choices are labels, not the page's small grey field labels */
+.aw .tile .does{align-items:flex-start;align-content:flex-start}
+.aw label.choice{color:var(--text);font-size:15px;margin:0}
