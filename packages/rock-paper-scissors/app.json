@@ -1,0 +1,11 @@
+{
+  "about": "What a node hosts of this app (kanban #569): the registrations it loads, every version still played. The installer lists the app with these, selected.",
+  "id": "rock-paper-scissors",
+  "title": "Rock Paper Scissors",
+  "short": "Rock Paper Scissors",
+  "registrations": [
+    "plugin/rock-paper-scissors.js",
+    "plugin/rock-paper-scissors-v2.js",
+    "plugin/rock-paper-scissors-v3.js"
+  ]
+}
