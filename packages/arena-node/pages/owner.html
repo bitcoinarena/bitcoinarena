@@ -463,6 +463,15 @@ function wireRoles(mine) {
 // machine the installer's custody screens open again - what custody is, Lightning and the gateway, the federation, the bond's rules -
 // from the Start menu / Applications / desktop menu ("Add custody") or `arena-install --add-custody`; the bond is updated, not doubled
 async function custodyPanel() {
+  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountCustody) {
+      const el = $('custody'); if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountCustody(el, { api: { get: async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; }, post, signed } });
+      return;
+    }
+  } catch { /* the page's own panel */ }
   let g = null;
   try { g = await (await fetch(at('/guardian'), { cache: 'no-store' })).json(); } catch { g = null; }
   const el = $('custody');
@@ -475,6 +484,15 @@ async function custodyPanel() {
 // provider's free coins against the deposit minimum (below it, no share of the liquidity pool), the channels it gave, the top-up address
 const LIQUIDITY_DEPOSIT = { testnet4: 500000, mainnet: 2500000 };
 async function liquidityPanel() {
+  // THE REACT SCREEN (kanban #564) when this node serves it; the panel below otherwise
+  try {
+    if (!window.ArenaOwner) await import(at('/owner/react.js'));
+    if (window.ArenaOwner && window.ArenaOwner.mountLiquidity) {
+      const el = $('liquidity'); if (el._react) el._react.unmount(); el.innerHTML = '';
+      el._react = window.ArenaOwner.mountLiquidity(el, { api: { get: async (p) => { const r = await fetch(at(p), { cache: 'no-store' }); return r.ok ? r.json() : null; }, post, signed } });
+      return;
+    }
+  } catch { /* the page's own panel */ }
   let c = null;
   try { const r = await fetch(at('/liquidity-claim'), { cache: 'no-store' }); c = r.ok ? await r.json() : null; } catch { c = null; }
   const el = $('liquidity');
