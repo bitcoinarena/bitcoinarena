@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -31,4 +31,22 @@ test('every bundle the node and the installer serve is tracked, so the release c
   const wizard = readFileSync(join(repo, 'packages/arena-installer/src/wizard.js'), 'utf8');
   assert.match(wizard, /new URL\('\.\.\/www\/wizard\.js', import\.meta\.url\)/);
   assert.ok(tracked.has('packages/arena-installer/www/wizard.js'), 'the installer\'s steps are tracked');
+});
+
+// THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer where
+// all apps are automatically selected"): the installer lists every packages/<app>/app.json of the release, so the release must carry each
+// app - and arena-sdk with its link packages/node_modules/arena-sdk, which the apps' registrations import as arena-sdk/<name>
+test('build-release.sh archives every app with an app.json, and arena-sdk with its link', () => {
+  const sh = readFileSync(join(repo, 'tools/release/build-release.sh'), 'utf8');
+  const start = sh.split('\n').findIndex((l) => l.startsWith('git -C "$ROOT" archive "$REF"'));
+  const lines = sh.split('\n'); let archive = '';
+  for (let i = start; i < lines.length; i++) { archive += ` ${lines[i].replace(/\\$/, '')} `; if (!lines[i].endsWith('\\')) break; }
+  const apps = readdirSync(join(repo, 'packages')).filter((d) => existsSync(join(repo, 'packages', d, 'app.json')));
+  assert.deepEqual(apps.sort(), ['btc-updown', 'nextblock', 'rock-paper-scissors'], 'the three preinstalled apps');
+  for (const p of [...apps, 'arena-sdk', 'node_modules/arena-sdk']) assert.match(archive, new RegExp(` packages/${p} `), `the archive carries packages/${p}`);
+  const loop = lines.find((l) => /^for p in arena-node /.test(l));
+  // arena-sdk/manifest-sign points at the developer's signing module: it travels too (it imports only the protocol)
+  assert.match(archive, / packages\/arena-donor\/src\/manifest-sign\.js /, 'the archive carries manifest-sign');
+  for (const p of [...apps, 'arena-sdk']) assert.ok(loop.split(/[\s;]+/).includes(p), `${p}'s tests and node_modules link are dropped`);
+  assert.match(sh, /rm "\$STAGE\/packages\/node_modules\/arena-sdk"; cp -R "\$STAGE\/packages\/arena-sdk" "\$STAGE\/packages\/node_modules\/arena-sdk"/, 'Windows: a copy, not a link');
 });

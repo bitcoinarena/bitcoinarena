@@ -203,7 +203,7 @@ export class ReachStep extends React.Component {
     const rec = defaultMode(direct);
     return (
       <div className="aw">
-        <h2>5. How others reach your node</h2>
+        <h2>6. How others reach your node</h2>
         <p className="sub">Players and other nodes connect to your node. First the installer checks whether the internet can reach this machine directly.</p>
         <div className="row"><div><label htmlFor="r-port">Port for connections from outside</label><input id="r-port" value={port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
         <button type="button" className="ghost" id="r-test" disabled={testing} onClick={this.test}>Test direct connection</button>
@@ -254,7 +254,7 @@ export class ServiceStep extends React.Component {
     const { boot, busy, template, msg } = this.state;
     return (
       <div className="aw">
-        <h2>6. Install and start</h2>
+        <h2>7. Install and start</h2>
         <p>The node is installed as a user service, started, checked at its public address, and then you are logged in once as its owner.</p>
         <label className={`choice${boot ? ' on' : ''}`}><input type="checkbox" id="boot" checked={boot} onChange={(e) => this.setState({ boot: e.target.checked })} />
           <div><b>Start the node again after a reboot</b><p>Recommended. It also keeps the node running when you log out.</p></div></label>
@@ -292,7 +292,7 @@ export class FederationStep extends React.Component {
   render() {
     return (
       <div className="aw">
-        <h2>8. Your federation</h2>
+        <h2>9. Your federation</h2>
         <div className="fed-explain">
           <FedRing />
           <div>

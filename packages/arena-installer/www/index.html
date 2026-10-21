@@ -184,6 +184,8 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     </div>
   </section>
 
+  <section id="s-apps"></section>
+
   <section id="s-seed"></section>
 
   <section id="s-owner"></section>
@@ -207,7 +209,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 <script src="/wizard.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
+const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

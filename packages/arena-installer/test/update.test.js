@@ -24,10 +24,11 @@ const legacyPlist = ({ node, release, home, port }) => `<?xml version="1.0" enco
   + `  <key>WorkingDirectory</key><string>${release}/packages/arena-node</string>\n  <key>RunAtLoad</key><true/>\n</dict>\n</plist>\n`;
 const freePort = () => new Promise((ok) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)); }); });
 
-/** A release tree from the repo at HEAD (what build-linux.sh archives), its npm dependencies linked. */
+/** A release tree from the repo at HEAD (what build-linux.sh archives), its npm dependencies linked. With arena-sdk and its link (kanban
+ *  #569): the apps' registrations import arena-sdk/<name> - without it the seat did not start ("Cannot find package 'arena-sdk'"). */
 function releaseFrom(dir) {
   mkdirSync(dir, { recursive: true });
-  execFileSync('sh', ['-c', `git -C "${REPO}" archive HEAD packages/arena-node/src packages/arena-node/pages packages/arena-node/package.json packages/arena-protocol packages/arena-client/src packages/nextblock | tar -x -C "${dir}"`]);
+  execFileSync('sh', ['-c', `git -C "${REPO}" archive HEAD packages/arena-node/src packages/arena-node/pages packages/arena-node/package.json packages/arena-protocol packages/arena-client/src packages/nextblock packages/arena-sdk packages/node_modules/arena-sdk | tar -x -C "${dir}"`]);
   symlinkSync(join(REPO, 'packages/arena-node/node_modules'), join(dir, 'packages/arena-node/node_modules'));
   return dir;
 }

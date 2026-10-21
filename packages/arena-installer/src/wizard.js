@@ -11,7 +11,7 @@
 //   - every POST carries `x-arena-wizard: 1`, a header no cross-site form can send and no cross-site fetch can send without a
 //     preflight this server never answers.
 //
-// THE STEPS (C), each tested before it is saved: chain -> roles -> seed (written down, asked back) -> owner (the seed's key or a Nostr
+// THE STEPS (C), each tested before it is saved: chain -> roles -> apps (kanban #569: the release's apps, all chosen) -> seed (written down, asked back) -> owner (the seed's key or a Nostr
 // key, bound before the node's first start) -> reach (ruling 7: direct when seats reach it, else a permanent Cloudflare tunnel, or a
 // quick one) -> service (installed, started at boot if the user wants, healthy, reachable at its public address; then one signed
 // owner login against the running node) -> done. The state is on disk after every step (state.js), so the wizard can be closed and resumed.
@@ -21,7 +21,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf } from './seed.js';
-import { nextStep, seatConf, ROLES, guardianSetupOf } from './state.js';
+import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf } from './state.js';
+import { appsIn, appsView, chosenApps } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
@@ -141,13 +142,15 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
 
   const view = () => {
     const s = state.read();
-    return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
-      chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
+    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
+      chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0);
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
+  // THE RELEASE'S APPS (kanban #569): read once - the release folder does not change under a running wizard
+  const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
 
   // THE STEPS' DOORS. Each answers { ok, ... } and saves only what passed.
@@ -236,6 +239,17 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         state.save({ done: roles.includes('custody') ? rest : { ...rest, federation: (state.read().done || {}).federation, promise: (state.read().done || {}).promise } });
       }
       return { ok: true, roles };
+    },
+
+    // THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer
+    // where all apps are automatically selected"): the ones the seat hosts, at least one; an app this release does not carry is refused
+    'POST /api/apps': async (b) => {
+      const apps = [...new Set((Array.isArray(b.apps) ? b.apps : []).map(String))];
+      const unknown = apps.filter((id) => !releaseApps.some((a) => a.id === id));
+      if (unknown.length) return { ok: false, why: `no app ${unknown.join(', ')} in this release` };
+      if (!apps.length && releaseApps.length) return { ok: false, why: `choose at least one app: ${releaseApps.map((a) => a.short).join(', ')}` };   // (a release from before app.json: nothing to choose, Next Block as before)
+      mark('apps', { apps });
+      return { ok: true, apps };
     },
 
     // THE SEED: shown once (C.5), kept in memory until the user types back CONFIRM_WORDS words; only then written (0600). A node that

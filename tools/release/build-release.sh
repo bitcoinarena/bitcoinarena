@@ -47,9 +47,13 @@ fetch() { # url sha file
 # 1. the code, from the commit (git archive: tracked files only, nothing of a working tree)
 # (all of packages/arena-web/dist: every page script the node serves, packed by esbuild - its pages draw only with React, kanban #564;
 # arena-web/test/dist-fresh checks each is the build of its source, arena-installer/test/release-bundles that each is tracked)
+# THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed"): every app with an app.json - the
+# installer's apps step lists them, all chosen - and arena-sdk, which their registrations import as arena-sdk/<name> through the tracked
+# link packages/node_modules/arena-sdk (arena-installer/test/release-bundles checks this line carries each)
 git -C "$ROOT" archive "$REF" LICENSE packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist packages/arena-installer packages/nextblock \
+  packages/rock-paper-scissors packages/btc-updown packages/arena-sdk packages/node_modules/arena-sdk packages/arena-donor/src/manifest-sign.js \
   | tar -x -C "$STAGE"
-for p in arena-node arena-protocol arena-installer nextblock; do
+for p in arena-node arena-protocol arena-installer nextblock rock-paper-scissors btc-updown arena-sdk; do
   rm -rf "$STAGE/packages/$p/test"
   [ -L "$STAGE/packages/$p/node_modules" ] && rm "$STAGE/packages/$p/node_modules"
 done
@@ -135,6 +139,8 @@ for BIN in gatewayd fedimintd fedimint-cli; do
 done
 
 if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; cp -R "$STAGE/packages/arena-node/node_modules" "$STAGE/packages/arena-installer/node_modules"; fi
+# (and the apps' arena-sdk, a link the .zip would lose too: a copy of the folder - kanban #569)
+if [ "$OS" = windows ]; then rm "$STAGE/packages/node_modules/arena-sdk"; cp -R "$STAGE/packages/arena-sdk" "$STAGE/packages/node_modules/arena-sdk"; fi
 
 # 4. the launcher: the installer on the release's own runtime, cloudflared beside it
 if [ "$OS" = windows ]; then
