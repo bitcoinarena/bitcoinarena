@@ -202,8 +202,6 @@ function newestApps(list) {
   }
   return [...by.values()];
 }
-// BLOCKS AS DAYS AND HOURS (kanban #553: "the number of blocks left AND the estimated times in days and hours")
-const daysHours = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); const d = Math.floor(h / 24); return d ? `${d} day${d === 1 ? '' : 's'} ${h % 24} h` : `${h} h`; };
 // 3. THE OWNER AREA
 async function area() {
   let me;     // the node's answer to the login, as before (the identity is the outer \`me\` behind signed())
@@ -264,14 +262,10 @@ function releasePanel() {
 function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed } }); }
 
 // THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much
-// to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM
+// to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM - drawn by React (kanban #564, CapacityPlea)
 let pleaRead = null;   // the capacity plea, read once: the Bond answer and the Capacity card use it
-async function capacityPlea() {
-  if (!pleaRead) pleaRead = fetch(at('/capacity?node=me'), { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
-  const c = await pleaRead;
-  const p = c && c.plea && !(c.mine || []).length ? c.plea : null;   // a guardian's plea is in the Bond answer, with its amount and share
-  $('capacity-plea').innerHTML = p ? `<div class="card"><h3>A federation you guard is filling up</h3><p class="warnline">${esc(p.says)}</p>${p.addSats ? '<p class="sub">This is optional and separate from whether your node is drawn: a larger bond lets that federation take more deposits (it lowers its load) and earns you a larger share. Add to bond is below.</p>' : ''}</div>` : '';
-}
+const readPlea = () => (pleaRead = pleaRead || fetch(at('/capacity?node=me'), { cache: 'no-store' }).then((r) => r.json()).catch(() => null));
+async function capacityPlea() { mount('capacity-plea', 'mountPlea', { capacity: await readPlea() }); }
 
 // THIS NODE'S STANDING (§5A.3, §5A.10B): the draws it missed and its bond against the bracket now common; missed draws on the Overview
 function standingPanel() {
@@ -284,108 +278,25 @@ const readStanding = () => (standingRead = standingRead || getJson('/owner/stand
 // capacity plea (is a federation it guards full?), which are two separate questions and are said apart
 let bondRead = null;   // GET /owner/bond, read once for the offer and the card
 const readBond = () => (bondRead = bondRead || fetch(at('/owner/bond'), { cache: 'no-store' }).then((r) => r.json()).catch(() => null));
-// THE BOND, AS AN OFFER (kanban #553, the owner 2026-10-20: "The operator does not need to add a bond, he can if he wants to earn more. Less
-// text, more graphics and more direct instructions how to deposit and what is available ... I need to calculate myself"; "earn 350% more
-// e.g"): one headline, a bar from the bond now to the bond that pays most, and two steps with the numbers worked out
+// THE BOND, AS AN OFFER (kanban #553): drawn by React (kanban #564, BondAnswer) from the standing, the capacity plea and the bond the seat
+// answered; the page hands over the bond wallet's address, the plan and the add (each a signed owner request), the QR, and need()
 async function bondAnswer() {
-  let st = null, c = null;
-  try { st = await readStanding(); } catch { /* said below */ }
-  try { if (!pleaRead) capacityPlea(); c = await pleaRead; } catch { c = null; }
-  const b = await readBond();
-  const n = (x) => Number(x).toLocaleString('en-US');
-  const el = $('bond-answer');
-  // the federation that pays most for a bigger bond (the weighting is on while it is filling up)
-  const offers = ((c && c.mine) || []).filter((m) => Number(m.addSats) > 0 && ['PRESSURE', 'CRITICAL', 'FULL'].includes(m.band))
-    .sort((x, y) => y.ifRaised / y.now - x.ifRaised / x.now);
-  const w = st && (st.warnings || []).find((x) => x.kind === 'losing brackets');
-  const drawn = !st || st.ownBondSats === null ? '<p class="sub">Your bond is not counted yet: this node is not drawn for rounds until it is.</p>'
-    : w ? `<p class="err">⚠ Your bond is below what most rounds ask (${n(st.commonBondMinSats)} sat): add ${n(Math.max(0, Number(st.commonBondMinSats) - Number(st.ownBondSats)))} sat to be drawn again.</p>`
-    : '<p class="ok">✓ Your bond is enough: this node is drawn for rounds.</p>';
-  if (w) need('bond', 'bad', `Your bond is too small to be drawn for rounds. Add ${n(Math.max(0, Number(st.commonBondMinSats) - Number(st.ownBondSats)))} sat.`, 'bond');
-  if (!offers.length) { el.innerHTML = `<h3>Your bond</h3>${drawn}<p class="sub">No federation you guard pays extra for a bigger bond right now. This page tells you when one does.</p>`; return; }
-  const m = offers[0], add = Number(m.addSats), x = m.ifRaised / m.now;
-  const times = x >= 1.95 ? `${x.toFixed(1)}× more` : `${Math.round((x - 1) * 100)} % more`;
-  const fed = fedLabel(m.federation);
-  need('earn', 'warn', `Earn up to ${times} from ${fed}: add ${n(add)} sat to your bond.`, 'bond');
-  const now = Number(m.bondSats), target = Number(m.targetBondSats), pct = Math.max(2, Math.min(100, Math.round(now * 100 / target)));
-  const wl = b && b.wallet && !b.wallet.why ? b.wallet : null;
-  const send = wl ? Math.max(0, add + Number(wl.addOverheadSats || 0) - Number(wl.spendableSats)) : null;
-  el.innerHTML = `<h3 class="offer">💰 Earn up to ${times}</h3>
-    <p>${fed} is ${Math.round(m.load * 100)} % full and pays guardians with bigger bonds more. Optional.</p>
-    <div class="bar"><div style="width:${pct}%"></div></div>
-    <div class="row sub" style="border:0"><span>your bond ${n(now)} sat</span><span>${n(target)} sat</span></div>
-    <ol class="steps">
-      ${send === null ? '' : send > 0 ? `<li><b>Send ${n(send)} sat</b> to your bond wallet<div id="ab-addr" class="sub">getting the address…</div></li>` : '<li class="ok">✓ Your bond wallet has enough.</li>'}
-      <li><button class="primary" id="ab-go" ${send > 0 ? 'disabled' : ''}>Add ${n(add)} sat to my bond</button>${send > 0 ? '<span class="sub"> - once the coins have arrived</span>' : ''}<div id="ab-msg"></div></li>
-    </ol>
-    ${drawn}`;
-  if (wl && send > 0) {
-    try { const r = await post('/owner/bond-wallet/address', signed('bond-wallet/address'));
-      $('ab-addr').innerHTML = `<div class="path"><code>${esc(r.address)}</code><button id="ab-copy">Copy</button></div><div class="qr">${C.textQrSvg('bitcoin:' + r.address + '?amount=' + (send / 1e8).toFixed(8))}</div>
-        <p class="sub">Your bond wallet has ${n(wl.spendableSats)} sat. This adds the rest and about ${n(wl.addOverheadSats)} sat for fees.</p>`;
-      $('ab-copy').onclick = () => { navigator.clipboard.writeText(r.address).then(() => { $('ab-copy').textContent = 'Copied ✓'; }, () => {}); };
-    } catch (e) { $('ab-addr').textContent = e.message; }
-  }
-  $('ab-go').onclick = () => addBond(add);
+  let standing = null;
+  try { standing = await readStanding(); } catch { /* said by the answer */ }
+  const [capacity, bond] = await Promise.all([readPlea(), readBond()]);
+  mount('bond-answer', 'mountBondAnswer', { standing, capacity, bond, qr: (t) => C.textQrSvg(t),
+    address: () => post('/owner/bond-wallet/address', signed('bond-wallet/address')),
+    plan: async (sats) => (await post('/owner/add-bond', signed('add-bond', { sats: String(sats), post: false }))).plan,
+    add: (sats) => post('/owner/add-bond', signed('add-bond', { sats: String(sats), post: true })),
+    onNeed: (key, level, text) => need(key, level, text, 'bond') });
 }
-const fedLabel = (fid) => `Federation ${String(fid).slice(0, 8)}`;
-// ADD TO THE BOND: the plan, then one button (kanban #553: posted from the page)
-async function addBond(add) {
-  const n = (x) => Number(x).toLocaleString('en-US');
-  $('ab-go').disabled = true; $('ab-msg').textContent = 'Working it out…';
-  try {
-    const p = (await post('/owner/add-bond', signed('add-bond', { sats: String(add), post: false }))).plan;
-    $('ab-msg').innerHTML = `<div class="warn">Bond ${n(p.bondSats)} → <b>${n(p.totalSats)} sat</b> · fees ${n(p.fees.total)} sat · locked until block ${esc(p.maturity)} (about ${daysHours(p.lock.estimatedMs - Date.now())}) · counts in about an hour</div>
-      <button class="primary" id="ab-post">Confirm</button> <button id="ab-cancel">Cancel</button>`;
-    $('ab-cancel').onclick = () => { $('ab-msg').textContent = ''; $('ab-go').disabled = false; };
-    $('ab-post').onclick = async () => {
-      $('ab-post').disabled = true;
-      try { const d = await post('/owner/add-bond', signed('add-bond', { sats: String(add), post: true })); $('ab-msg').innerHTML = `<p class="ok"><b>Done ✓</b> ${n(p.addSats)} sat added (<code>${esc(d.bond.txid.slice(0, 16))}…</code>). It counts in about an hour.</p>`; }
-      catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-go').disabled = false; }
-    };
-  } catch (e) { $('ab-msg').innerHTML = `<p class="err">${esc(e.message)}</p>`; $('ab-go').disabled = false; }
-}
-// LEAVE WITHOUT BEING SLASHED: from the moment the owner signs Leave this seat takes no new round and
-// serves the ones it holds to their end; it is free once the last is past its objection window and settled. Custody: only if
-// the federation keeps its threshold without this guardian.
-const when = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+// LEAVE WITHOUT BEING SLASHED: from the moment the owner signs Leave this seat takes no new round and serves the ones it holds to their
+// end - drawn by React (kanban #564, LeavePanel) from what the seat says of leaving and of the bond's lock; Leave and Stay are signed here
 async function leavePanel() {
-  let st, b = null;
-  try { st = await (await fetch(at('/owner/leave'), { cache: 'no-store' })).json(); }
-  catch (e) { $('leave').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
-  try { b = await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json(); } catch { b = null; }
-  const free = st.freeNow ? 'now' : st.freeAtMs ? when(st.freeAtMs) : 'once its last paying round is paid out';
-  // WHEN THE BOND IS FREE (kanban #553, the owner 2026-10-20: "his bond will not immediatly be released, be sure to display the number of
-  // blocks left AND the estimated times in days and hours"): the bond's lock - its maturity block - is the rule, the time an estimate
-  const l = b && b.lock;
-  const bondLine = !b || !b.bond ? 'This node has no bond in the census.'
-    : !l ? 'Its lock is shown once this node reads the chain.'
-    : l.withdrawable ? `Your bond is already unlocked (since block ${esc(l.maturity)}): you can withdraw it in the Bond section once this node has left.`
-    : `Your bond stays locked until block <b>${esc(l.maturity)}</b>: <b>${esc(Number(l.blocksLeft).toLocaleString('en-US'))} blocks</b> from now, about <b>${daysHours(l.estimatedMs - Date.now())}</b> (around ${esc(when(l.estimatedMs))}). Leaving does not shorten this.`;
-  $('leave').innerHTML = st.leaving ? `
-    <p class="answer"><b>This node is leaving</b> (since ${esc(when(st.leavingAtMs))}).</p>
-    <div class="row"><span>Rounds it still finishes</span><b>${esc(st.owed)}</b></div>
-    <div class="row"><span>Free to switch off</span><b>${esc(free)}</b></div>
-    <p>${bondLine}</p>
-    <div class="err" id="lerr"></div><button id="stay">Stay: take rounds again</button>` : `
-    <p>Leaving takes this node out of the network for good. It finishes the rounds it already holds, so nobody loses a round, and you are never penalised for leaving.</p>
-    <div class="warn"><b>Before you leave:</b>
-      <ul style="margin:6px 0 0 18px;padding:0">
-        <li>From now on this node takes no new rounds and earns no new fees.</li>
-        <li><b>Your bond is not paid back at once.</b> ${bondLine}</li>
-        <li>Keep the node running until it has finished its rounds (${esc(st.owed)} now; free to switch off ${esc(free)}).</li>
-        ${st.custody.guardian ? `<li>It holds custody: ${st.custody.allowed ? 'its federation keeps enough guardians without it, so it may leave.' : '<b>its federation would not keep enough guardians without it, so it may not leave yet.</b>'}</li>` : ''}
-      </ul></div>
-    <label class="confirm"><input type="checkbox" id="lok"> <span>I understand: this node stops taking rounds for good${!l ? '.' : l.withdrawable
-      ? ', and I withdraw my bond myself (Bond section) once it has finished its rounds.' : `, and my bond stays locked until block ${esc(l.maturity)} - ${esc(Number(l.blocksLeft).toLocaleString('en-US'))} blocks, about ${daysHours(l.estimatedMs - Date.now())}.`}</span></label>
-    <div class="err" id="lerr"></div><button class="primary" id="go" disabled>Leave the network</button>`;
-  const act = async (action) => {
-    $('lerr').textContent = '';
-    try { await post('/owner/' + action, signed(action)); leavePanel(); } catch (e) { $('lerr').textContent = e.message; }
-  };
-  if ($('lok')) $('lok').onchange = () => { $('go').disabled = !$('lok').checked || (st.custody.guardian && !st.custody.allowed); };
-  if ($('go')) $('go').onclick = () => { if ($('lok').checked) act('leave'); };
-  if ($('stay')) $('stay').onclick = () => act('stay');
+  let leave = null, bond = null, why = null;
+  try { leave = await (await fetch(at('/owner/leave'), { cache: 'no-store' })).json(); } catch (e) { why = e.message; }
+  try { bond = await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json(); } catch { bond = null; }
+  mount('leave', 'mountLeave', { leave, bond, why, act: async (action) => { await post('/owner/' + action, signed(action)); leavePanel(); } });
 }
 // THE PLUGIN STORE, LIKE AN APP STORE (2026-10-10: in the browser, no restart, updates as a setting, malicious-code checks): the apps on
 // this node, and the network's apps or one node's looked at by its address - checked in this browser with the page's own package checks
