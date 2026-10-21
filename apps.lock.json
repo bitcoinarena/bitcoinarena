@@ -26,7 +26,7 @@
     },
     "arena-app-rock-paper-scissors": {
       "repo": "a tester/arena-app-rock-paper-scissors",
-      "commit": "14ca1b166090f0e412458bdd5040997d9115f53d",
+      "commit": "01113771e1b4da85af1c3cd8a585e9799a2ff36f",
       "copy": "packages/rock-paper-scissors",
       "paths": [
         "/*"
@@ -34,7 +34,7 @@
     },
     "arena-app-up-or-down": {
       "repo": "a tester/arena-app-up-or-down",
-      "commit": "e3bfd453889024072a942a3c62e19e2b4f074a46",
+      "commit": "4ed00f376086b0fa3f3e92712ef0775bd2f6d56b",
       "copy": "packages/btc-updown",
       "paths": [
         "/*"
