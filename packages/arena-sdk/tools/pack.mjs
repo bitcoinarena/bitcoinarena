@@ -19,14 +19,16 @@ if (!out || !version) { console.error('usage: pack.mjs <out dir> <version>'); pr
 const pkg = JSON.parse(readFileSync(join(sdk, 'package.json'), 'utf8'));
 // the npm packages the copied modules may import, at the versions the Arena's seats run
 const PINNED = { '@noble/curves': '2.4.0', '@noble/hashes': '2.4.0' };
-const specs = (text) => [...text.matchAll(/(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+'([^']+)'|import\(\s*'([^']+)'\s*\)/g)].map((m) => m[1] || m[2]);
+// what a module loads: its imports, and the files it starts as workers (new URL('./x.js', import.meta.url) - the core sandbox's)
+const specs = (text) => [...text.matchAll(/(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+'([^']+)'|import\(\s*'([^']+)'\s*\)|new URL\(\s*'(\.{1,2}\/[^']+\.m?js)'\s*,\s*import\.meta\.url\s*\)/g)]
+  .map((m) => m[1] || m[2] || m[3]);
 
 const seen = new Set(); const npm = new Set();
 const walk = (file) => {
   if (seen.has(file)) return;
   seen.add(file);
   for (const s of specs(readFileSync(file, 'utf8'))) {
-    if (s.startsWith('node:')) continue;
+    if (/^[a-z][a-z0-9+.-]*:/.test(s)) continue;   // node:fs, and the core sandbox's own arena:core - names no file holds
     if (s.startsWith('.')) { const f = resolve(dirname(file), s); if (!existsSync(f)) throw new Error(`${relative(repo, file)} imports ${s}, which is not there`); walk(f); continue; }
     const name = s.startsWith('@') ? s.split('/').slice(0, 2).join('/') : s.split('/')[0];
     if (!PINNED[name]) throw new Error(`${relative(repo, file)} imports ${s}: no pinned version for ${name}`);

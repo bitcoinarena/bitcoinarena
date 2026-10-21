@@ -16,7 +16,7 @@ import { genesisFor } from 'arena-sdk/genesis';
 import { computeGenesisConfigHash } from '../config/game-config.js';
 import { contractWarnings } from 'arena-sdk/contracts';
 import { NEXTBLOCK, nextblockRoundWarnings } from '../plugin/nextblock.js';
-import { hostedPlugins } from '../../arena-node/src/plugins.js';
+import { hostedPlugins } from 'arena-sdk/host';
 import { toHex } from 'arena-sdk/hash';
 
 test('the engine\'s sha256 and the core\'s give the same digests, and both are SHA-256', () => {

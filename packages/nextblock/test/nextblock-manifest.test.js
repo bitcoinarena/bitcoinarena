@@ -18,7 +18,7 @@ import { donationSetId } from 'arena-sdk/donation';
 import { TESTNET4_DONATION_SET_KEYS } from 'arena-sdk/testnet4-donation-set-keys';
 import { toHex } from 'arena-sdk/hash';
 import { verifyEd25519 } from 'arena-sdk/ed25519';
-import { hostedPlugins } from '../../arena-node/src/plugins.js';
+import { hostedPlugins } from 'arena-sdk/host';
 import { coreHashHex } from '../tools/hash-core.js';
 
 const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
