@@ -249,6 +249,22 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       const sheet = ARENACLIENT.pickSheet({ market, contract });
       const el = document.getElementById('arena-pick');
       const box = el.querySelector('.sheet');
+      // THE REACT SHEET (kanban #564) when the page loaded the market bundle: the same pick, the same second confirmation for an unlisted
+      // market (a box to tick before any outcome), the same Cancel; this page's own sheet below otherwise
+      if (window.ArenaMarket && window.ArenaMarket.openSheet) {
+        const shut = () => { el.classList.remove('show'); if (box._react) { box._react.unmount(); box._react = null; } box.textContent = ''; };
+        window.ArenaMarket.openSheet(box, { sheet, free: !ARENACLIENT.roundPays(contract),
+          onPick: (index, confirmed) => {
+            if (sheet.confirm && !confirmed) return;
+            shut();
+            window.ARENA_PICK_CHOSEN = { round: id, pick: index, label: sheet.outcomes[index].label, gameId: market.gameId, confirmed: !!market.needsConfirm, manifestHex };
+            onPick(index);
+          },
+          onCancel: () => { shut(); window.ARENA_PICK_CHOSEN = null; console.log('[arena] pick sheet ' + id.slice(0, 16) + ': cancelled, nothing made'); } });
+        el.classList.add('show');
+        window.ARENA_PICK_SHEET = { round: id, market: market.name, outcomes: sheet.outcomes.map((x) => x.label), lines: sheet.lines, confirm: sheet.confirm };
+        return;
+      }
       box.textContent = '';
       const h = document.createElement('h3'); h.textContent = sheet.title;
       const lines = document.createElement('div'); lines.className = 'lines';

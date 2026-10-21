@@ -2080,6 +2080,8 @@
   </script>
 
   <!-- UP/DOWN'S PAGE PART (kanban #521): the markets' code and the pick sheet, from packages/btc-updown/page; before the main script, whose names it shares -->
+  <!-- the market's React views (kanban #564, packages/arena-web): market-page.js draws its pick sheet with them when they loaded -->
+  <script type="module" src="games/btc-updown/market-react-page.js"></script>
   <script src="games/btc-updown/market-page.js"></script>
   <!-- TICK TOCK'S PAGE PART (kanban #521): the Unity bridge, from packages/nextblock/page; the build's loader is named here, where the template is filled -->
   <script>window.ARENA_UNITY_LOADER = 'Build/{{{ LOADER_FILENAME }}}';</script>
