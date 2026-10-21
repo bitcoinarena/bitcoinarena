@@ -22,10 +22,12 @@ function driven(api, props = {}) {
 
 test('what it shows: the lights, what each answers, the controls where there are any, the reason where not', () => {
   const html = renderToStaticMarkup(React.createElement(ServicesPanel, { initial: { loaded: true, answer: { ok: true, command: null, services: rows } } }));
-  assert.equal(needsAttention(rows), 1); assert.match(html, /1 service\(s\) need attention/);
+  assert.equal(needsAttention(rows), 1); assert.match(html, /<div class="summary bad"><div><b>1 needs attention<\/b><span class="sub">3 of 4 services answer<\/span>/);
+  assert.match(html, /<div class="svc-card down" id="svc-gateway"><div class="svc-head"><span class="led down" aria-hidden="true"><\/span><b class="svc-name">/, 'the stopped gateway: a red card');
+  assert.match(html, /<h3 class="sh">On this machine<\/h3>[\s\S]*<h3 class="sh">Inside the node<\/h3>/, 'grouped where they run');
   assert.deepEqual(rows.map(lightOf), ['🟢', '🔴', '🟢', '🟢']);
-  assert.match(html, /<button type="button">Start<\/button>/, 'the stopped gateway: Start');
-  assert.match(html, />Stop<\/button><button type="button">Restart</, 'the running announcements: Stop, Restart');
+  assert.match(html, /<button type="button" class="mini">Start<\/button>/, 'the stopped gateway: Start');
+  assert.match(html, />Stop<\/button><button type="button" class="mini">Restart</, 'the running announcements: Stop, Restart');
   assert.match(html, /id="boot-gateway"(?![^>]*checked)/, 'the gateway does not start at boot');
   assert.match(html, /runs outside the node/, 'the chain: why there are no buttons');
   assert.match(html, /Set up by hand/);
