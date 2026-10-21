@@ -315,9 +315,30 @@ const ONE_COEFFICIENT = (() => {
 /**
  * The aggregate itself, with the caller's curve doing the sum.
  */
+// AGGREGATES KEPT, PER CURVE (kanban #573: a page reading the census spent ~4 s of 6 s in this, with a game open - every bond aggregates the
+// same arbitration set again, and a bond is recognized more than once): the aggregate is a pure function of the keys and the curve, so a
+// set seen before is answered from here. Bounded: past 4096 sets the store starts over.
+const AGGREGATES = new WeakMap();   // combine -> Map(keys hex -> { ok, key, terms })
+const keysHex = (keys) => {
+  if (!Array.isArray(keys) || !keys.every((k) => k instanceof Uint8Array)) return null;
+  let h = ''; for (const k of keys) { for (const b of k) h += (b < 16 ? '0' : '') + b.toString(16); h += '.'; }
+  return h;
+};
 export function aggregateKeys(keys, { combine } = {}) {
   if (typeof combine !== 'function')
     return { ok: false, why: 'no curve was given to add the keys with' };
+  const id = keysHex(keys);
+  let kept = AGGREGATES.get(combine);
+  if (id && kept && kept.has(id)) { const k = kept.get(id); return { ok: true, key: k.key.slice(), terms: k.terms }; }
+  const made = aggregateKeysNow(keys, combine);
+  if (id && made.ok) {
+    if (!kept) AGGREGATES.set(combine, (kept = new Map()));
+    if (kept.size >= 4096) kept.clear();
+    kept.set(id, { key: made.key.slice(), terms: made.terms });
+  }
+  return made;
+}
+function aggregateKeysNow(keys, combine) {
   let terms;
   try { terms = keyAggCoefficients(keys); }
   catch (e) { return { ok: false, why: e.message }; }

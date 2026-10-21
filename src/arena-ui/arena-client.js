@@ -5925,9 +5925,30 @@ const ONE_COEFFICIENT = (() => {
 /**
  * The aggregate itself, with the caller's curve doing the sum.
  */
+// AGGREGATES KEPT, PER CURVE (kanban #573: a page reading the census spent ~4 s of 6 s in this, with a game open - every bond aggregates the
+// same arbitration set again, and a bond is recognized more than once): the aggregate is a pure function of the keys and the curve, so a
+// set seen before is answered from here. Bounded: past 4096 sets the store starts over.
+const AGGREGATES = new WeakMap();   // combine -> Map(keys hex -> { ok, key, terms })
+const keysHex = (keys) => {
+  if (!Array.isArray(keys) || !keys.every((k) => k instanceof Uint8Array)) return null;
+  let h = ''; for (const k of keys) { for (const b of k) h += (b < 16 ? '0' : '') + b.toString(16); h += '.'; }
+  return h;
+};
 function aggregateKeys(keys, { combine } = {}) {
   if (typeof combine !== 'function')
     return { ok: false, why: 'no curve was given to add the keys with' };
+  const id = keysHex(keys);
+  let kept = AGGREGATES.get(combine);
+  if (id && kept && kept.has(id)) { const k = kept.get(id); return { ok: true, key: k.key.slice(), terms: k.terms }; }
+  const made = aggregateKeysNow(keys, combine);
+  if (id && made.ok) {
+    if (!kept) AGGREGATES.set(combine, (kept = new Map()));
+    if (kept.size >= 4096) kept.clear();
+    kept.set(id, { key: made.key.slice(), terms: made.terms });
+  }
+  return made;
+}
+function aggregateKeysNow(keys, combine) {
   let terms;
   try { terms = keyAggCoefficients(keys); }
   catch (e) { return { ok: false, why: e.message }; }
@@ -29072,11 +29093,16 @@ function dailyLobbySearch(daily) {
 }
 
 /** Is this node's listing of this round its signer node's own signed word? */
-function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
+function lobbySigned(verify, args) {
+  const a = lobbySignedArgs(args);
+  try { return !!a && !!verify(a.sig, a.msg, a.key); } catch { return false; }
+}
+/** What a listing's signature is checked with - { sig, msg, key } - or null for one that does not parse. */
+function lobbySignedArgs({ id, nodeKey, nowMs, x }) {
   try {
-    return !!verify(fromHex(String(x.sig)), lobbyListingId({ roundId: fromHex(id), nodePubkey: fromHex(nodeKey), nowMs: BigInt(nowMs),
-      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing) }), fromHex(nodeKey));
-  } catch { return false; }
+    return { sig: fromHex(String(x.sig)), msg: lobbyListingId({ roundId: fromHex(id), nodePubkey: fromHex(nodeKey), nowMs: BigInt(nowMs),
+      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing) }), key: fromHex(nodeKey) };
+  } catch { return null; }
 }
 
 /**
@@ -29096,7 +29122,7 @@ const UNREADABLE_MS = 30000;
 /** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
-async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
+async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
@@ -29131,10 +29157,18 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
         const id = String(x && x.id).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
         if (!said.has(id)) said.set(id, []);
-        const signed = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at) && lobbySigned(verify, { id, nodeKey, nowMs: at, x });
+        // THE SIGNATURE CHECKED WHEN IT IS FIRST ASKED, ONCE (kanban #573, playtest 2026-10-21: "the Rps game is lagging a bit on an iPhone
+        // 16" - measured with its client open: 12,761 BIP-340 checks in 10 s, 3.7 s of the main thread on an M1 Max, one for every seat's
+        // listing of every round on each paint, while only a round's own signer nodes count): `signed` is read only for a listing that
+        // could count - fresh, from a signer node of that round, open and assigned there (c.counts below) - and kept
+        let checked = null;
+        const parses = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at);
+        const signedNow = () => (checked === null ? (checked = parses && lobbySigned(verify, { id, nodeKey, nowMs: at, x })) : checked);
         said.get(id).push({ node, key: nodeKey, joined: Number(x.joined) || 0, playing: Number(x.playing) || 0,
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
-          signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
+          get signed() { return signedNow(); }, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
+          // for verifyMany (below): what it is checked with, and its answer kept
+          checkArgs: () => (parses ? lobbySignedArgs({ id, nodeKey, nowMs: at, x }) : null), setChecked: (ok) => { checked = !!ok; },
           names: Array.isArray(x.names) ? x.names : [],
           // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7): the seat's word, only known codes kept (entry-warnings.js)
           warnings: Array.isArray(x.warnings) ? x.warnings.filter((k) => typeof k === 'string') : [],
@@ -29152,6 +29186,23 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
       .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
+  // EVERY SIGNATURE THAT COULD COUNT, CHECKED IN ONE BATCH OFF THE PAGE'S THREAD (kanban #573): `verifyMany([{ sig, msg, key }])` answers
+  // a promise of booleans (the page runs it in a worker); without it each listing is checked by `verify` when it is first asked, as before
+  if (typeof verifyMany === 'function') {
+    const todo = [];
+    for (const [id, counts] of said) {
+      const contract = CONTRACTS.get(id);
+      if (!contract || BigInt(Math.floor(nowMs)) >= contract.entryCloseMs) continue;
+      const signerNodes = new Set(contract.nodes.map((k) => toHex(k)));
+      for (const c of counts) if (c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere) { const a = c.checkArgs(); if (a) todo.push([c, a]); else c.setChecked(false); }
+    }
+    if (todo.length) {
+      let ok = null;
+      try { ok = await verifyMany(todo.map(([, a]) => a)); } catch { ok = null; }
+      // a batch that did not answer leaves each listing to `verify`, as before
+      if (Array.isArray(ok) && ok.length === todo.length) todo.forEach(([c], i) => c.setChecked(ok[i] === true));
+    }
+  }
   for (const [id, counts] of said) {
     const contract = CONTRACTS.get(id);
     if (!contract) continue;
@@ -29175,7 +29226,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     try { needed = receiptsNeeded(contract.gameVerifySlots); } catch { needed = contract.nodes.length; }
     const agreeing = new Set();
     for (const c of counts) {
-      c.counts = !!(c.signed && c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere);
+      c.counts = !!(c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere && c.signed);   // the signature last: it is the costly part
       if (c.counts) agreeing.add(c.key);
     }
     // THE SEATED (§5A.7): where the seats seat, the row lists who a certificate seats - and is not joined before one stands
