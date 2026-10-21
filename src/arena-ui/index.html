@@ -5772,6 +5772,12 @@
       const myBadges = box.querySelector('.mybadges');
       // THE ROWS DRAWN NOW, by player: where each one's icons go (.bdg) and its tapped badge's words (.bt)
       let slots = new Map();
+      // THE ROWS IN REACT (kanban #564, the Arena page's bundle: window.ArenaSeason) when it loaded: drawn from the last board, again
+      // whenever a player's badges come in; this block's own rows otherwise
+      const R = () => (window.ArenaSeason && window.ArenaSeason.drawRows ? window.ArenaSeason : null);
+      let reactRows = [];
+      const drawReact = () => R().drawRows(board, { rows: reactRows, badgesOf: (p) => (s.book ? s.book.get(p) : null), via: (u) => via(u),
+        onZap: window.ARENA_ZAP ? (r) => window.ARENA_ZAP.open({ title: 'Zap ' + r.name, recipient: r.player, name: r.name }) : null });
       // WHO IS LOOKING: the tab's identity key - the one a round's lobby record names, which is who a season counts a round
       // under. Before the lobby has made it (the choice of games comes first) it is made here from the tab's seed, only when
       // the tab has one already: a board is never the reason a seed is minted.
@@ -5820,7 +5826,8 @@
           timeout: (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined),
           onBadges: (player, merged) => {
             if (book !== s.book) return;           // a closed board's late answer
-            for (const slot of slots.get(player) || []) drawBadges(slot, merged);
+            if (R()) drawReact();
+            else for (const slot of slots.get(player) || []) drawBadges(slot, merged);
             if (player === viewer()[0]) sayMine();
           } });
         s.book = book;
@@ -5854,6 +5861,15 @@
         state.className = 'state'; state.textContent = v.empty || '';
         h2.textContent = v.title;
         head.textContent = v.header;
+        if (R()) {
+          reactRows = v.rows;
+          drawReact();
+          foot.textContent = [v.more ? v.more + ' more player' + (v.more === 1 ? '' : 's') + ' below' : null, v.foot,
+            v.seat ? 'answered by ' + v.seat.replace(/^https?:\/\//, '') : null].filter(Boolean).join(' \u00b7 ');
+          sayMine();
+          askBadges(Array.from(board.querySelectorAll('li[data-player]')));
+          return;
+        }
         board.textContent = '';
         slots = new Map();
         const drawn = [];
@@ -5912,7 +5928,7 @@
         s.game = g; s.open = true;
         if (days) s.days = Number(days);
         pressDays();
-        if (!same) { board.textContent = ''; foot.textContent = ''; head.textContent = ''; slots = new Map(); dropBook(); }
+        if (!same) { if (board._root && R()) { reactRows = []; drawReact(); } else board.textContent = ''; foot.textContent = ''; head.textContent = ''; slots = new Map(); dropBook(); }
         h2.textContent = g.title || g.name;
         state.className = 'state'; state.textContent = 'Asking the nodes \u2026';
         box.classList.add('show');
