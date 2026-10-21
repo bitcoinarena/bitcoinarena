@@ -139,7 +139,7 @@ const operatorFiles = {
   writePairing: (uri) => writeFileSync(`${path}.operator-pairing`, uri + '\n', { mode: 0o600 }),
   endpoint: (process.env[`ARENA_WSS_${port}`] || `http://${host}:${port}`).replace(/^ws(s?):/, 'http$1:'),
 };
-const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, operator: operatorFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+const options = { port, host, publicEndpoint: process.env[`ARENA_WSS_${port}`] || null, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, operator: operatorFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
 // THE COMMITTEE'S PRICE FEED (§11): read BTC/USD every 5 s and lead / sign the attested price samples

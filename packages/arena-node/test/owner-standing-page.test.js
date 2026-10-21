@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { nodeStanding } from '../src/node-standing.js';
+import { nodeStanding, endpointWarning } from '../src/node-standing.js';
 import { seatingWarning } from '../src/seatings.js';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
@@ -95,4 +95,13 @@ test('the bond offer: "Earn up to N× more", the sat to send (worked out from th
   assert.match(rich.html, /✓ Your bond wallet has enough/); assert.doesNotMatch(rich.html, /Send \d/);
   const calm = await offer({ ok: true, plea: null, mine: [{ ...m, band: 'CALM', load: 0.4 }] }, st, bond);
   assert.match(calm.html, /No federation you guard pays extra/); assert.doesNotMatch(calm.html, /Earn up to/);
+});
+
+test('the advertisement names another address than the node answers at: "Address changed", both addresses named (kanban #562)', async () => {
+  const st = nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) });
+  st.warnings.push(endpointWarning({ advertised: 'https://keeps-ahead-employ-thomas.trycloudflare.com', serving: 'https://cottage-usually-pete-path.trycloudflare.com' }));
+  const html = await render({ missedInARow: 0, warning: null }, st);
+  assert.match(html, /class="err"><b>Address changed<\/b>/);
+  assert.match(html, /answers at https:\/\/cottage-usually-pete-path\.trycloudflare\.com, but its advertisement names https:\/\/keeps-ahead-employ-thomas/);
+  assert.doesNotMatch(html, /No warning/);
 });
