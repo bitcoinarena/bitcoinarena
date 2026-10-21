@@ -18,10 +18,12 @@ test('each app once at its newest version, older ones folded, the signed descrip
   const apps = newestApps(hosted);
   assert.deepEqual(apps.map((a) => [a.id, a.older.map((o) => o.id)]), [['bb', ['aa']], ['cc', []]]);
   const html = renderToStaticMarkup(React.createElement(AppsPanel, { initial: { loaded: true, mine: { hosted, settings: { autoUpdate: true, sources: ['https://n1.example'] } }, auto: true, sources: 'https://n1.example' } }));
-  assert.match(html, /Up\/Down <span class="sub">v15/);
+  // a card per app (kanban #565): its initial, its name, its version as a pill
+  assert.match(html, /<span class="app-ic" aria-hidden="true">U<\/span><b class="app-name">Up\/Down<\/b><span class="pill">v15<\/span>/);
   assert.match(html, /1 older version kept for rounds that still use it/);
   assert.match(html, /Will BTC be up in 15 min\?/); assert.match(html, /href="https:\/\/arena\.example"/);
-  assert.match(html, /Next Block <span class="sub">v3<\/span><\/span><b>built in/);
+  assert.match(html, /<b class="app-name">Next Block<\/b><span class="pill">v3<\/span>[\s\S]*?built into this node<\/span><span class="pill on">built in<\/span>/);
+  assert.equal((html.match(/class="app-card"/g) || []).length, 2, 'each app once');
   assert.match(html, /type="checkbox"[^>]*checked=""/);
 });
 
