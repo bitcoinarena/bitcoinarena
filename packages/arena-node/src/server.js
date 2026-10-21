@@ -5947,12 +5947,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             closedTime: closedMs ? new Date(Number(closedMs)).toISOString() : null, free: c.stakeMsat === 0n, stakeMsat: String(c.stakeMsat),
             joined: players.joined, committee: committeeOf(rid), game: gameOfContract(c), outcome: outcomeOf(rid, c) };
         };
-        // an open round whose end has passed is finished too, waiting for its close
+        // an open round whose end has passed is finished too, waiting for its close - and only that: an open round the listing left
+        // out (not announced, not of a game hosted here) that has not ended is not finished (measured 2026-10-21 on a test host seat:
+        // 1,569 "finished" rounds, among them RPS rounds starting 3 h later, none joined)
         for (const roundId of openHeld()) {
           const id = toHex(roundId);
           if (seen.has(id)) continue;
           const h = heldOf(roundId);
           if (h.bad) continue;
+          let endMs; try { endMs = roundEndMs(h.c); } catch { endMs = h.c.entryCloseMs; }
+          if (BigInt(endMs) > BigInt(nowMs)) continue;
           finished.push(rowOf(roundId, h.c, null));
         }
         for (const held of round.finishedRounds(200)) {
