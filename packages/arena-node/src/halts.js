@@ -12,13 +12,23 @@
 //            active census seat and its signature stands.
 //   PROVE    haltOf(fid): the halt proof over the kept observations against the newest record held, voided by any session this
 //            seat saw after S. A federation it proves is HALTED for the liquidation (liquidations.js), from the proof's height.
+//   KEPT     across restarts (kanban #326, measured 2026-10-21 22:2xZ: T2's seats, rolled at 157,238, held no observation and
+//            counted abandon_blocks again from the roll): `save({ observations, seen })` after each change, `load()` at start - the
+//            observations held, and what this seat saw of each federation (its session and first_height). Sessions only grow, so a
+//            session seen again after a restart has not moved since; a higher one restarts the clock as before. A stored list of
+//            observations alone (the first format) still reads.
 import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltObservationId } from '../../arena-protocol/src/halt-proof.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey, height, ask, post = async () => {}, load = () => [], save = () => {}, say = () => {} }) {
   const seen = new Map();                    // federation hex -> { session, firstHeight, answering: [peer key], at }
   const kept = new Map();                    // federation hex -> Map(observer hex -> observation)
-  for (const o of load() || []) { try { keep(decodeWithSig(o)); } catch { /* a stored observation that no longer reads */ } }
+  const stored = (() => { try { return load(); } catch { return null; } })();
+  const storedObs = Array.isArray(stored) ? stored : (stored && stored.observations) || [];
+  for (const o of storedObs) { try { keep(decodeWithSig(o)); } catch { /* a stored observation that no longer reads */ } }
+  for (const [fid, w] of Object.entries((stored && !Array.isArray(stored) && stored.seen) || {})) {
+    if (Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) seen.set(fid, { session: w.session, firstHeight: w.firstHeight, answering: [], at: Number(w.at) || 0 });
+  }
 
   function decodeWithSig(o) { return { ...decodeHaltObservation(fromHex(String(o.observation))), signature: fromHex(String(o.signature)) }; }
   const asJson = (o) => ({ observation: toHex(encodeHaltObservation(o)), signature: toHex(o.signature) });
@@ -30,7 +40,8 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     m.set(toHex(o.observer), o);
     return true;
   }
-  const persist = () => save([...kept.values()].flatMap((m) => [...m.values()].map(asJson)));
+  const persist = () => save({ observations: [...kept.values()].flatMap((m) => [...m.values()].map(asJson)),
+    seen: Object.fromEntries([...seen].map(([fid, w]) => [fid, { session: w.session, firstHeight: w.firstHeight, at: w.at }])) });
 
   /** One pass over every federation this seat holds a record of; answers what it saw and signed. */
   async function observe() {
@@ -47,8 +58,10 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
       const was = seen.get(fid);
       // A NEW SESSION RESTARTS THE CLOCK; a federation none of whose guardians answers keeps the last session it was seen at
       const now = !was || (top !== null && top > was.session) ? { session: top === null ? (was ? was.session : 0) : top, firstHeight: tip } : was;
+      const moved = now !== was;
       now.answering = ok.map((a) => a.peerKey); now.at = Date.now();
       seen.set(fid, now);
+      if (moved) persist();
       const row = { federation: fid.slice(0, 16), session: now.session, firstHeight: now.firstHeight, height: tip, answering: ok.length, of: (held.record.guardians || []).length };
       if (tip - now.firstHeight >= clocks.abandonBlocks) {
         const o = signHaltObservation({ federationId: fromHex(fid), session: now.session, firstHeight: now.firstHeight, height: tip,

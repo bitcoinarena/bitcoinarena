@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { statusFor, buildFederationRecord, encodeFederationRecord, decodeFederationRecord, federationRecordId, joinSignedRecord,
   splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
-import { federationRecords, guardiansOf } from '../src/federation-records.js';
+import { federationRecords, guardiansOf, MIRROR_PEERS } from '../src/federation-records.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { readFileSync } from 'node:fs';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -257,6 +257,43 @@ test('a seat that holds the invite but whose gather no guardian signs keeps the 
   assert.deepEqual([got[0].ok, got[0].mirrored, got[0].status, got[0].signers], [true, true, 'OPEN', 7], got[0].why);
   assert.ok(got[0].gathered, 'the gather\'s own refusal is kept beside the mirrored record');
   assert.equal(o.list().length, 1);
+});
+
+// A RECORD NONE OF ITS GUARDIANS' NODES HOLDS (kanban #326, measured 2026-10-21): T2's census guardians are the T nodes, whose
+// seats hold no T2 record, while T2's own seats do - so a seat asks the census seats it reads too, a few each pass, in turn.
+test('a record none of its guardians\' nodes holds is mirrored from the census seats, in turn, and still checked against the census', async () => {
+  const s = seven();
+  for (const seat of s.seats) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
+  const me = { secret: new Uint8Array(32).fill(0x57) }; me.pubkey = schnorr.getPublicKey(me.secret);
+  const others = Array.from({ length: 12 }, (_, i) => `https://seat${i}.test`);
+  const asked = [];
+  const o = federationRecords({
+    round: { pubkey: me.pubkey, identity: { secret: me.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => s.census }, inviteFor: () => null, networkId: NET, peerSeats: () => others,
+    fetcher: async (url) => {
+      asked.push(url.replace(/\/federations$/, ''));
+      // the guardians' own nodes hold nothing; only seat11 (the federation's seat outside its census guardians) holds the record
+      if (url === 'https://seat11.test/federations') return new Response(JSON.stringify({ federations: s.seats[0].list() }), { status: 200 });
+      return new Response(JSON.stringify({ federations: [] }), { status: 200 });
+    },
+  });
+  const first = await o.gatherAll(inviteFederationId);
+  assert.equal(first[0].ok, false);
+  assert.match(first[0].why, /^none of its guardians holds a record, nor 8 of the census seats asked$/);
+  assert.deepEqual(asked.filter((u) => u.endsWith(".test")), others.slice(0, MIRROR_PEERS), 'eight seats on the first pass');
+  asked.length = 0;
+  const second = await o.gatherAll(inviteFederationId);
+  assert.deepEqual([second[0].ok, second[0].mirrored, second[0].status, second[0].signers], [true, true, 'OPEN', 7], second[0].why);
+  assert.deepEqual(asked.filter((u) => u.endsWith(".test")), [...others.slice(MIRROR_PEERS), ...others.slice(0, MIRROR_PEERS)].slice(0, MIRROR_PEERS), "the next eight, in turn");
+  assert.equal(verifyFederationRecord(fromHex(o.list()[0].record), { census: s.census.entries, verify, inviteFederationId }).ok, true);
+  // a census that bonds too few of its guardians keeps nothing, wherever the record came from
+  const short = federationRecords({
+    round: { pubkey: me.pubkey, identity: { secret: me.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => ({ ok: true, entries: s.census.entries.slice(0, 4) }) }, inviteFor: () => null, networkId: NET, peerSeats: () => ['https://seat11.test'],
+    fetcher: async (url) => new Response(JSON.stringify({ federations: url === 'https://seat11.test/federations' ? s.seats[0].list() : [] }), { status: 200 }),
+  });
+  assert.equal((await short.gatherAll(inviteFederationId))[0].ok, false);
+  assert.deepEqual(short.list(), []);
 });
 
 test('a mirrored record that does not stand against the seat\'s own census is not kept', async () => {
