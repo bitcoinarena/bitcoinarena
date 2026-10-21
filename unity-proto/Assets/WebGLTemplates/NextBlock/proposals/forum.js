@@ -445,7 +445,55 @@
   // reserves (at most 10 % of them), equal or per place, the last 7 / 14 days or month, and the payment date. Its vote: 2 weeks from
   // publication, bond-weighted, no signal; it passes at YES >= 25 % of the voting weight. The winners' payouts land in their wallets as
   // zaps do. Below, every request with its vote.
+  // the payout form in React (kanban #564): the request built and checked here, through the client - { ok, why } | { ok, request, say }
+  function payoutReact() {
+    var common = { types: TYPES, hash: '#new-leaderboard', markdown: markdown, signedIn: !!state.key, check: function () { return { ok: false, why: '' }; }, onPublish: function () { return Promise.resolve({ ok: false, say: '' }); } };
+    R.draw(view, 'payout', Object.assign({}, common, { data: null }));
+    var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+    Promise.all([ARENACLIENT.fetchLeaderboards({ nodes: state.nodes }), fetch(base + '/reserves').then(function (r) { return r.json(); }).catch(function () { return { federations: [] }; })]).then(function (x) {
+      if (location.hash !== '#new-leaderboard') return;
+      var lbs = x[0], feds = (x[1].federations || []).filter(function (f) { return f.key || f.reserveKey; });
+      var tip = Number(lbs.tip || state.tip || 0);
+      var day = new Date(Date.now() + 15 * 86400000); day.setUTCHours(0, 0, 0, 0);
+      var held = function (fd) { return Math.floor(Number(fd.heldMsat || 0) / 1000); };
+      var list = lbs.ok ? lbs.leaderboards : [];
+      var data = { feds: feds.map(function (fd) { return { id: fd.federationId, held: held(fd), max: Math.floor(held(fd) / 10) }; }), tip: tip, topMax: ARENACLIENT.LB_TOP_MAX, periods: ARENACLIENT.LB_PERIOD_DAYS,
+        defaultDate: day.toISOString().slice(0, 10), listEmpty: lbs.ok ? 'No leaderboard payouts yet.' : lbs.why,
+        list: list.map(function (p) { var v = p.vote || {}, cnt = v.count || {};
+          return { id: p.id || (p.federation + p.paymentHeight + p.top), title: 'Top ' + p.top + ' · ' + Number(p.amountSats).toLocaleString('en-US') + ' sat',
+            vote: (v.state || '…') + (cnt.yesOfAllPct !== undefined ? ' · YES ' + cnt.yesOfAllPct + ' % of the voting weight (25 % passes)' : ''),
+            line: (p.scope === 0 ? 'all games and markets' : p.gameName) + ' · last ' + p.periodDays + ' days · paid at block ' + p.paymentHeight + ' from ' + p.federation.slice(0, 8) + (p.splitBps && p.splitBps.length ? ' · split ' + p.splitBps.map(function (b) { return b / 100 + ' %'; }).join(' / ') : ' · equal'),
+            purpose: p.purpose }; }) };
+      var check = function (v) {
+        var sp = ARENACLIENT.splitFromPercents(v.split, Number(v.top));
+        if (!sp.ok) return sp;
+        var dateMs = Date.parse(v.date + 'T00:00:00Z');
+        if (!(dateMs > Date.now())) return { ok: false, why: 'the payment date is in the future' };
+        var b = { scope: Number(v.scope), gameName: v.game.trim(), top: Number(v.top), amountSats: v.amount ? Math.floor(Number(v.amount)) : 0, federationId: v.fed, splitBps: sp.splitBps,
+          periodDays: Number(v.period), paymentHeight: ARENACLIENT.heightAtDate({ tip: tip, nowMs: Date.now(), dateMs: dateMs }), purpose: v.purpose };
+        var fd = feds.find(function (z) { return z.federationId === b.federationId; }), cap = fd ? Math.floor(held(fd) / 10) : 0;
+        if (b.amountSats && fd && b.amountSats > cap) return { ok: false, why: b.amountSats.toLocaleString('en-US') + ' sat is more than 10 % of that federation\'s reserves (' + cap.toLocaleString('en-US') + ' sat): it could never be paid.' };
+        return { ok: true, request: b, say: 'Pays the top ' + b.top + ' at block ' + b.paymentHeight + (b.splitBps.length ? ' by the split' : ', equal') + '.' };
+      };
+      R.draw(view, 'payout', Object.assign({}, common, { data: data, check: check, onPublish: function (b) {
+        return (state.network ? Promise.resolve(state.network) : ARENACLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+          if (!net) throw new Error('the nodes did not agree on their network');
+          state.network = net;
+          var p = ARENACLIENT.signedLeaderboardPayout(Object.assign({ secretKey: state.key, networkId: net, publishedHeight: tip, curve: window.ARENA_CURVE }, b));
+          if (!p.ok) throw new Error(p.why);
+          return ARENACLIENT.postFunding({ nodes: state.nodes, kind: 'leaderboard', hex: p.hex }).then(function (y) {
+            if (!y.ok) return { ok: false, say: 'Not taken: ' + y.why };
+            window.ARENA_LEADERBOARD_PAYOUT = { id: p.id, took: y.took, asked: y.asked };
+            setTimeout(function () { R.clear(view); payoutReact(); }, 1500);
+            return { ok: true, say: 'Published to ' + y.took + ' of ' + y.asked + ' nodes. Its 2-week vote starts now.' };
+          });
+        }).catch(function (e) { return { ok: false, say: e.message }; });
+      } }));
+      window.ARENA_PAYOUT_VIEW = { tip: tip, federations: feds.length, requests: list.length };
+    }).catch(function (e) { R.draw(view, 'payout', Object.assign({}, common, { data: null, error: e.message })); });
+  }
   function payoutView() {
+    if (R) return payoutReact();
     composeHead('#new-leaderboard');
     var box = el('div', 'empty', 'Reading the nodes…'); view.append(box);
     var base = String((state.nodes || [])[0] || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
@@ -533,7 +581,7 @@
   function route() {
     var h = location.hash;
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
-    var own = h === '#new-leaderboard' || ((h === '#new-fees' || h === '#new') && !R);
+    var own = !R && (h === '#new-leaderboard' || h === '#new-fees' || h === '#new');
     if (own && R) R.clear(view);   // the forms are this script's own: React lets go of the view first
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
