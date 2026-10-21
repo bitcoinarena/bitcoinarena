@@ -65,3 +65,11 @@ test('a table from the page\'s data: the dot in the first cell, parts in their c
   assert.match(h, /<tr><td colspan="3" class="muted">13 of 14 seats answered<\/td><\/tr>/i);
   assert.match(renderToStaticMarkup(React.createElement(Table, { head: ['A', 'B'], rows: [], empty: 'no node serves a liquidity claim' })), /<td colspan="2" class="muted">no node serves a liquidity claim<\/td>/i);
 });
+
+test('a bar cell: how far, green when done', async () => {
+  const { Table, barPct } = await import('../dist/test/health.mjs');
+  assert.deepEqual([barPct(90, 100), barPct(7, 6), barPct(0, 0)], [90, 100, 0]);
+  const h = renderToStaticMarkup(React.createElement(Table, { head: ['What', ''], rows: [{ key: 'p', cells: ['peg-in', { bar: [90, 100] }] }, { key: 'g', cells: ['grid', { bar: [67, 6] }] }] }));
+  assert.match(h, /<span class="tbar"><i class="warn" style="width:90%"><\/i><\/span>/);
+  assert.match(h, /<span class="tbar"><i class="ok" style="width:100%"><\/i><\/span>/);
+});
