@@ -21,7 +21,7 @@
 // one would report "unauthorised" for a node that is perfectly healthy.
 import { readFileSync } from 'node:fs';
 import { fromHex } from '../../arena-protocol/src/hash.js';
-import { HEADER_BYTES } from '../../arena-protocol/src/chain.js';
+import { HEADER_BYTES, blockHashOf } from '../../arena-protocol/src/chain.js';
 import { splitBlock } from '../../arena-protocol/src/block.js';
 import { timed } from './slow.js';
 
@@ -217,3 +217,30 @@ export async function censusWithFreshHashes({ read, derive, cache }) {
   return census;
 }
 
+
+/** Does every block of a view (blocksOver's answer) name the block before it? The link check alone - no work, no merkle roots. */
+export function viewLinks(view) {
+  const blocks = (view && view.blocks) || [];
+  for (let i = 1; i < blocks.length; i++) {
+    const prev = blockHashOf(blocks[i - 1].header), named = blocks[i].header.subarray(4, 36);
+    for (let k = 0; k < 32; k++) if (prev[k] !== named[k]) return false;
+  }
+  return true;
+}
+
+/**
+ * A ROUND'S VIEW, READ ONCE MORE WITH FRESH HASHES WHEN IT DOES NOT LINK (kanban #576, measured 2026-10-21 ~22:00Z on node-15: its
+ * rounds' views all failed "that is not a chain: this header does not follow the one before it" - a height's hash kept while the node
+ * followed another branch, as censusWithFreshHashes found for the founding census - so no round was ever assigned, and the series
+ * writer asked again on every turn of the loop: 100 % of a core, its loop held ~155 ms thousands of times). The views of rounds were
+ * read without that repair. `read()` the view (blocksOver with `cache`); a view that does not link drops the cache's kept hashes and
+ * is read once more.
+ */
+export async function viewWithFreshHashes({ read, cache }) {
+  let view = await read();
+  if (cache && cache.hashes && cache.hashes.size && !viewLinks(view)) {
+    cache.hashes.clear();
+    view = await read();
+  }
+  return view;
+}
