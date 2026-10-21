@@ -3967,9 +3967,7 @@
         const seedF = typeof walletSeed === 'function' ? walletSeed() : null;
         if (!seedF) { say('Create your wallet first: Settings \u2192 Wallet.'); return Promise.resolve({ ok: false, why: 'no wallet' }); }
         const fixed = opts.federation;
-        const el = document.getElementById('arena-deposit');
-        if (el) { el.textContent = ''; el.className = 'deposit-modal over-settings'; el.style.width = 'min(92vw, 420px)';
-          const t = document.createElement('div'); t.className = 'dep-why'; t.textContent = 'Opening your wallet in federation ' + String(fixed.federation).slice(0, 8) + '\u2026 and making the invoice'; el.append(t); }
+        const wait = depositWait('Deposit into federation ' + String(fixed.federation).slice(0, 8) + '\u2026 (debug)', 'Opening your wallet in federation ' + String(fixed.federation).slice(0, 8) + '\u2026 and making the invoice');
         return (async () => {
           try {
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
@@ -3980,7 +3978,7 @@
             if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(String(fixed.federation).toLowerCase(), offer.client);
             showDepositOffer(offer, { title: 'Deposit into federation ' + String(fixed.federation).slice(0, 8) + '\u2026 (debug)', overSettings: true });
             say(''); return { ok: true };
-          } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (el) el.textContent = why; return { ok: false, why }; }
+          } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (wait) wait.say(why); return { ok: false, why }; }
         })();
       }
       // A DEPOSIT WITH NO ROUND LISTED (2026-10-12 "Yes": Deposit works on the games screen before a game is
@@ -3998,9 +3996,7 @@
       // THE NO-ROUND DEPOSIT: plain amounts into the same player wallet, opened from the lobby's federation (walletDepositOffer)
       if (noRound) {
         say('Opening your wallet and making the invoice \u2026');
-        const el = document.getElementById('arena-deposit');
-        if (el) { el.textContent = ''; el.className = 'deposit-modal over-settings'; el.style.width = 'min(92vw, 420px)';
-          const t = document.createElement('div'); t.className = 'dep-why'; t.textContent = 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)'; el.append(t); }
+        const wait = depositWait('Deposit into your player wallet', 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)');
         return (async () => {
           try {
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
@@ -4011,7 +4007,7 @@
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
             say('');
             return { ok: true };
-          } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (el) el.textContent = why; return { ok: false, why }; }
+          } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (wait) wait.say(why); return { ok: false, why }; }
         })();
       }
       if (which === 'withdraw' && opts.overlay) {
@@ -4044,29 +4040,13 @@
       // THE MODAL AT ONCE (2026-10-12 16:44: "Clicking deposit on the main screen is laggy, it does not open
       // the deposit modal at all"; measured in Chrome: 14.2 s from the tap to the modal, the player wallet joining the federation
       // all that time): the box opens on the tap with what it waits for, and the invoice fills it when it is made
-      const waitBox = which === 'deposit' ? (() => {
-        const el = document.getElementById('arena-deposit');
-        if (!el) return null;
-        // ON TOP OF THE GAMES SCREEN (2026-10-13 08:5x: "Deposit doesn't open at all modal when I click it";
-        // measured in WebKit: the box opened inside the loading screen's #boot, whose stacking context (z 10) lies under
-        // #arena-games (z 37) - nothing showed until 15 s later): out of #boot, to the page itself, as over a game
-        if (el.parentElement !== document.body) document.body.appendChild(el);
-        el.textContent = ''; el.className = 'deposit-modal over-settings';
-        el.style.width = 'min(92vw, 420px)';   // the waiting box was as narrow as its title and cut its line (the owner's 17:46 screenshot)
-        const close = document.createElement('button'); close.type = 'button'; close.className = 'dep-close'; close.textContent = '\u00d7'; close.title = 'Close';
-        close.addEventListener('click', () => { el.textContent = ''; el.className = ''; });
-        const t = document.createElement('div'); t.className = 'dep-title'; t.textContent = 'Deposit into your player wallet';
-        const w = document.createElement('div'); w.className = 'dep-why'; w.textContent = 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)';
-        el.append(close, t, w);
-        try { paintMoney(); } catch { /* painted on the next pass */ }   // its backup warning with it
-        return { el, w };
-      })() : null;
+      const waitBox = which === 'deposit' ? depositWait('Deposit into your player wallet', 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)') : null;
       return (async () => {
         // A FEDERATION NOT ON THE LIST IS SHOWN AND CONFIRMED FIRST; Move takes notes out, so it is not asked
         if (which === 'deposit' && window.ARENA_FEDERATION_GATE) {
           const lob = window.ARENA_LEDGER_LOBBY || {};
           const gate = await window.ARENA_FEDERATION_GATE({ round: ctx.round, invite: ctx.invite, roundIdHex: ctx.roundIdHex, nodes: lob.nodes || [] });
-          if (!gate.ok) { say(gate.why); if (waitBox && waitBox.el.contains(waitBox.w)) waitBox.w.textContent = gate.why; return { ok: false, why: gate.why }; }
+          if (!gate.ok) { say(gate.why); if (waitBox) waitBox.say(gate.why); return { ok: false, why: gate.why }; }
         }
         try {
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
@@ -4082,7 +4062,7 @@
           showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           say('');
           return { ok: true };
-        } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (waitBox && waitBox.el.contains(waitBox.w)) waitBox.w.textContent = why; return { ok: false, why }; }
+        } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (waitBox) waitBox.say(why); return { ok: false, why }; }
       })();
     }
     // WITHDRAW AND MOVE OPEN THEIR OVERLAYS (kanban #554, the owner 2026-10-20: "Clicking on withdrawal raises, and error message instead of opening the
@@ -4172,6 +4152,25 @@
       } catch { made = null; }
       if (st <= 0n || one === st) return made || '';
       return `A round costs ${sats(st)}. You deposit ${sats(one)} per round: the stake, plus the round's node fee and donation, rounded up to a whole sat. Whatever a round does not use stays in your wallet.`;
+    }
+    // THE WAIT BEFORE THE OFFER (2026-10-12 16:44: "Clicking deposit on the main screen is laggy, it does not open the deposit modal at
+    // all"; measured 14.2 s from the tap to the modal): the box opens on the tap with what it waits for, drawn by React (kanban #564,
+    // DepositWait), on top of the games screen (2026-10-13 08:5x: out of #boot's stacking context, to the page itself) and as wide as the
+    // window it becomes (the owner's 17:46 screenshot). `say(line)` - why there is no deposit - only while this wait is still shown.
+    function depositWait(title, line) {
+      const el = document.getElementById('arena-deposit');
+      if (!el) return null;
+      if (el.parentElement !== document.body) document.body.appendChild(el);
+      if (el._deposit) { try { el._deposit.unmount(); } catch { /* its host was cleared */ } el._deposit = null; }
+      el.textContent = ''; el.className = 'deposit-modal over-settings'; el.style.width = 'min(92vw, 420px)';
+      const host = document.createElement('div'); host.className = 'dep-host'; host.style.display = 'contents';
+      el.appendChild(host);
+      const wait = window.ArenaDeposit.wait(host, { title, line, onClose: () => {
+        if (el._deposit !== wait) return;
+        wait.unmount(); el._deposit = null; el.textContent = ''; el.className = ''; } });
+      el._deposit = wait;
+      try { paintMoney(); } catch { /* painted on the next pass */ }   // its backup warning with it
+      return { say: (why) => { if (el._deposit === wait) wait.say(why); } };
     }
     // THE DEPOSIT WINDOW (kanban #564: drawn by React, window.ArenaDeposit - DepositModal): the page keeps where it stands, the note for a
     // reload, which offer's window this is, and the rules it hands over - the whole notes a deposit is (ARENACLIENT.ceilNote), the QR, why a

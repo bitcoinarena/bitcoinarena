@@ -33,10 +33,10 @@ function page(status, extra = {}) {
   const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
   const did = [];
   const ARENACLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
-  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
+  const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'depositWait', 'donationBps', 'vault'],
     [PAINT, OPEN], 'return { paint: window.ARENA_PAINT_FEDERATION, openMoney };');
   const api = fn(document, window, ARENACLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),
-    () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
+    () => did.push('withdraw'), () => did.push('modal'), () => null, () => 0, () => ({}));
   return { ...api, els, classes, did, window };
 }
 
