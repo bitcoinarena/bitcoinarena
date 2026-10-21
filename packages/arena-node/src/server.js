@@ -5073,6 +5073,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // services"): what `arenanode status` shows - each service of the installed node (Bitcoin Core / the chain bridge, Tor, LND, the
         // gateway, the guardian, the seat, its tunnel, ...) running or not, and what it answers. Signed by the owner: it names processes
         // and local ports. A seat not started from an installer's arena.conf (src/run.js sets ARENA_HOME) has none to show.
+        // THE NODE'S ADDRESS (kanban #563 / #562 2C, the owner 2026-10-21: "1 default", "Fix 1 and 2"): how the world reaches this node - a
+        // stable address is the default - read, and switched by the installer's own reach and service steps (bin/reach-switch.mjs),
+        // started detached since they restart this seat. args.mode: quick | workers | direct | tailscale | permanent; workers takes
+        // cfToken (and cfSubdomain), permanent a hostname and the Cloudflare login whose link the progress names.
+        if (url.pathname === '/owner/reach') {
+          const a = owner.authorize(body, 'reach');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not installed by the Arena installer: its address is its operator\'s own (ARENA_WSS_<port>)' });
+          const { readFileSync: rf, writeFileSync: wf, existsSync: ex } = await import('node:fs');
+          const { join: jn } = await import('node:path');
+          let st = {}; try { st = JSON.parse(rf(jn(home, 'state.json'), 'utf8')); } catch { st = {}; }
+          let progress = null; try { progress = JSON.parse(rf(jn(home, 'reach-switch.json'), 'utf8')); } catch { progress = null; }
+          const r = st.reach || {};
+          const now = { ok: true, mode: r.mode || null, url: r.url || null, stable: !!r.mode && r.mode !== 'quick', serving: publicEndpoint || null, progress,
+            modes: { direct: 'your own address: the port open to the internet (checked from outside)', permanent: 'a named Cloudflare tunnel on your own domain (log in to Cloudflare)',
+              workers: 'a free workers.dev address on your Cloudflare account (an API token)', tailscale: 'Tailscale Funnel (Tailscale installed and logged in)',
+              quick: 'an anonymous tunnel: no account, but a new address at every restart' } };
+          const args = body.args || {};
+          if (!args.mode) return answer(200, now);
+          if (!Object.keys(now.modes).includes(args.mode)) return answer(400, { ok: false, why: `no mode ${args.mode}` });
+          if (progress && (progress.state === 'running' || progress.state === 'login') && Date.now() - progress.atMs < 15 * 60000) return answer(409, { ok: false, why: 'a switch is already running', progress });
+          const release = new URL('../../..', import.meta.url).pathname;
+          const bin = jn(release, 'packages', 'arena-installer', 'bin', 'reach-switch.mjs');
+          if (!ex(bin)) return answer(501, { ok: false, why: 'this release has no reach switch' });
+          wf(jn(home, 'reach-switch.req'), JSON.stringify({ mode: args.mode, cfToken: args.cfToken || null, cfSubdomain: args.cfSubdomain || null, hostname: args.hostname || null }), { mode: 0o600 });
+          wf(jn(home, 'reach-switch.json'), JSON.stringify({ state: 'running', mode: args.mode, atMs: Date.now() }) + '\n', { mode: 0o600 });
+          const { spawn: sp } = await import('node:child_process');
+          const { openSync: op } = await import('node:fs');
+          const out = op(jn(home, 'reach-switch.log'), 'a');
+          sp(process.execPath, [bin, '--home', home], { detached: true, stdio: ['ignore', out, out], env: process.env }).unref();
+          console.log(`[owner] the address switch to ${args.mode} started`);
+          return answer(200, { ...now, started: args.mode, progress: { state: 'running', mode: args.mode } });
+        }
         if (url.pathname === '/owner/services') {
           const a = owner.authorize(body, 'services');
           if (!a.ok) return answer(a.status || 401, a);
