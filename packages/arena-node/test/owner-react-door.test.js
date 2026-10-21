@@ -33,7 +33,8 @@ test('owner.html: the React bundle loaded once and unconditionally; every screen
   const main = readFileSync(new URL('../../arena-web/src/owner/main.jsx', import.meta.url), 'utf8');
   const offered = new Set(/window\.ArenaOwner = \{([^}]*)\}/.exec(main)[1].split(',').map((x) => x.trim()));
   const used = [...script.matchAll(/mount\('[\w-]+', '(\w+)'/g)].map((m) => m[1]);
-  assert.deepEqual(new Set(used), new Set(['mountRoles', 'mountCustody', 'mountLiquidity', 'mountServices', 'mountAddress', 'mountRelease', 'mountBond',
+  // the way in and its one-card messages too (kanban #564: OwnerStart, OwnerMessage)
+  assert.deepEqual(new Set(used), new Set(['mountStart', 'mountMessage', 'mountRoles', 'mountCustody', 'mountLiquidity', 'mountServices', 'mountAddress', 'mountRelease', 'mountBond',
     'mountStanding', 'mountApps', 'mountNetworkApps', 'mountNetwork']));
   for (const u of [...used, 'needsInto']) assert.ok(offered.has(u), `${u} is offered by the bundle`);
   assert.match(script, /O\.needsInto\(el, list\)/);
