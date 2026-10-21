@@ -12,6 +12,7 @@ import { GameTiles } from './GameTiles.jsx';
 import { SeasonRows } from './SeasonRows.jsx';
 import { ZapCard } from './ZapCard.jsx';
 import { ChipList } from './ChipList.jsx';
+import { BalanceSplit } from './BalanceSplit.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -40,3 +41,9 @@ export function drawChips(body, props) {
   flushSync(() => body._root.render(<ChipList {...props} />));
 }
 if (typeof window !== 'undefined') window.ArenaChips = { draw: drawChips };
+// "YOUR BALANCE" BY FEDERATION (the page's paintSplit hands it the rows)
+export function drawSplit(host, props) {
+  if (!host._root) host._root = createRoot(host);
+  flushSync(() => host._root.render(<BalanceSplit {...props} />));
+}
+if (typeof window !== 'undefined') window.ArenaBalance = { drawSplit };
