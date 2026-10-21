@@ -13,6 +13,7 @@ import { StandingPanel } from './StandingPanel.jsx';
 import { ReleasePanel } from './ReleasePanel.jsx';
 import { AppsPanel } from './AppsPanel.jsx';
 import { NetworkAppsPanel } from './NetworkAppsPanel.jsx';
+import { NetworkPanel } from './NetworkPanel.jsx';
 
 export function mountRoles(element, { api, node, initial } = {}) {
   const root = createRoot(element);
@@ -40,4 +41,5 @@ export function mountStanding(element, { api, initial, onMissed } = {}) { const 
 export function mountRelease(element, { api, initial, onNewer } = {}) { const root = createRoot(element); root.render(<ReleasePanel api={api} initial={initial} onNewer={onNewer} />); return root; }
 export function mountApps(element, { api, initial } = {}) { const root = createRoot(element); root.render(<AppsPanel api={api} initial={initial} />); return root; }
 export function mountNetworkApps(element, { api, client, onChanged } = {}) { const root = createRoot(element); root.render(<NetworkAppsPanel api={api} client={client} onChanged={onChanged} />); return root; }
-if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps };
+export function mountNetwork(element, { api, client } = {}) { const root = createRoot(element); root.render(<NetworkPanel api={api} client={client} />); return root; }
+if (typeof window !== 'undefined') window.ArenaOwner = { mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork };
