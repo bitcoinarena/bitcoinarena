@@ -87,3 +87,22 @@ test('POST /owner/apps/split: signed by the owner, the new version hosted at onc
     assert.equal(toHex(donationSetId(pkg.donationSet.map((x) => ({ recipientPk: Buffer.from(x.recipientPk, 'hex'), shareBps: x.shareBps, label: x.label })))), toHex(donationSetId(splitAsSet(SPLIT).set)));
   } finally { await b.close(); }
 });
+
+test('only an app\'s newest version takes a new split: an older built-in version is refused and not offered (measured on node 2)', async () => {
+  const { registration: v1 } = testAttestedGame({ name: 'split-market', outcomes: ['UP', 'DOWN'] });
+  const { registration: v2 } = testAttestedGame({ name: 'split-market', outcomes: ['UP', 'DOWN'], version: 2, parentManifestId: v1.gameId });
+  const seed = new Uint8Array(32).fill(7), secret = ownerSecretFromSeed(seed);
+  const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
+  const b = await serve(openStore(), { plugins: [v1, v2], port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')), appKeysDir: keysDir('split-market'),
+    owner: { store: { read: () => rec, write: () => {}, writeCode: () => {} } } });
+  try {
+    const B = `http://127.0.0.1:${b.port}`;
+    const node = (await (await fetch(`${B}/owner`)).json()).node;
+    const listed = (await (await fetch(`${B}/owner/plugins`)).json()).hosted;
+    assert.deepEqual(listed.map((x) => [x.version, x.canSplit]).sort(), [[1, false], [2, true]]);
+    const body = signOwnerRequest({ node, action: 'apps/split', args: { game: toHex(v1.gameId), recipients: SPLIT }, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+    const r = await fetch(`${B}/owner/apps/split`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal(r.status, 409);
+    assert.match((await r.json()).why, /a newer version of this app runs here/);
+  } finally { await b.close(); }
+});
