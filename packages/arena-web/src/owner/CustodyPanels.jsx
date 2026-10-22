@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER DASHBOARD'S CUSTODY AND LIQUIDITY, IN REACT (kanban #564). Custody: whether this node is a guardian (GET /guardian) and where
-// its guardian is reached, else how to add custody. Liquidity: what a provider holds free for new channels against the deposit minimum
+// its guardian is reached, else custody added here (POST /owner/custody/add, kanban #563), not with the installer. Liquidity: what a provider holds free for new channels against the deposit minimum
 // (free + the channels it gave, 2026-10-18), the channels it gave, its top-up address and a new one (POST /owner/liquidity/new-address);
 // a node that is none becomes one here (POST /owner/liquidity/become, kanban #567), not with the installer.
 import React from 'react';
@@ -12,12 +12,80 @@ export const LIQUIDITY_DEPOSIT = Object.freeze({ testnet4: 500000, mainnet: 2500
 const n = (x) => Number(x).toLocaleString('en-US');
 const WAIT_MS = 10000;
 
+// ADD CUSTODY HERE (kanban #563, the owner-page rule: never "run this command"): the plan first (POST /owner/custody/add without post) -
+// Lightning, the bond against the guardian floor, what the wallet must hold - then the bond's rules typed I UNDERSTAND, and the node runs
+// the custody steps itself; its progress asked every 10 s
+const STEP_WORDS = { running: 'Working', lightning: 'Lightning (LND)', gateway: 'The gateway', funds: 'Waiting for the wallet', done: 'Done', failed: 'Stopped' };
 export class CustodyPanel extends React.Component {
-  constructor(props) { super(props); this.state = { loaded: false, guardian: null, ...(props.initial || {}) }; }
+  constructor(props) {
+    super(props);
+    this.state = { loaded: false, guardian: null, plan: null, progress: null, understood: '', busy: false, message: null, ...(props.initial || {}) };
+    this.review = this.review.bind(this); this.start = this.start.bind(this); this.poll = this.poll.bind(this);
+  }
   async componentDidMount() {
     if (this.state.loaded || !this.props.api) return;
     let g = null; try { g = await this.props.api.get('/guardian'); } catch { g = null; }
     this.setState({ loaded: true, guardian: g });
+  }
+  componentWillUnmount() { clearTimeout(this.timer); }
+  async call(args) {
+    try { return await this.props.api.post('/owner/custody/add', await this.props.api.signed('custody/add', args)); } catch (x) { return { ok: false, why: x.message }; }
+  }
+  async review() {
+    this.setState({ busy: true, message: 'Checking Lightning, the bond and the wallet…' });
+    const r = await this.call({ post: false });
+    if (r && r.ok && r.done) return this.setState({ busy: false, message: 'This node holds custody already: its guardian starts with the node.' });
+    const running = r && r.ok && r.plan && r.plan.progress && !['done', 'failed'].includes(r.plan.progress.state);
+    this.setState({ busy: false, plan: r && r.ok ? r.plan : null, progress: running ? r.plan.progress : null, message: r && r.ok ? null : (r && r.why) || 'no answer' });
+    if (running) this.poll();
+  }
+  async start() {
+    this.setState({ busy: true, message: 'Starting…' });
+    const r = await this.call({ post: true, understood: this.state.understood });
+    if (!r || !r.ok) return this.setState({ busy: false, message: (r && r.why) || 'no answer', progress: (r && r.progress) || this.state.progress });
+    this.setState({ busy: false, message: null, progress: r.progress });
+    await this.poll();
+  }
+  async poll() {
+    clearTimeout(this.timer);
+    const r = await this.call({ progress: true });
+    const p = r && r.ok ? r.progress : null;
+    if (p) this.setState({ progress: p });
+    if (!p || !['done', 'failed'].includes(p.state)) this.timer = setTimeout(this.poll, WAIT_MS);
+  }
+  progressView(p) {
+    return (
+      <div className={p.state === 'failed' ? 'err' : p.state === 'done' ? 'ok' : ''}>
+        <div className="row"><span>{STEP_WORDS[p.state] || p.state}</span><b>{p.step || ''}</b></div>
+        {p.state === 'funds' ? <p className="warn">Send <b>{n(p.needSats - p.haveSats)} sat</b> to <code>{p.address}</code>: custody goes on by itself once the wallet holds {n(p.needSats)} sat.</p> : null}
+        {p.why && p.state !== 'funds' ? <p className="sub">{p.why}</p> : null}
+        {p.state === 'done' ? <p><b>This node holds custody now ✓</b> Its bond names custody; the next founding can draw it as a guardian.</p> : null}
+      </div>);
+  }
+  offer() {
+    const { plan: p, progress, understood, busy, message } = this.state;
+    if (progress) return <div>{this.progressView(progress)}{progress.state === 'failed' ? <p><Button disabled={busy} onClick={this.review}>Try again</Button> <span className="sub">{message}</span></p> : null}</div>;
+    return (
+      <div>
+        <p><b>This node holds no custody.</b> A custody node is one of a federation's 10 guardians, may run one of its 2 Lightning gateways, and earns a share of every round of its federation (the guardians' third of the 4 % node fee).</p>
+        {p ? (
+          <div>
+            <div className="stats">
+              <div className="stat"><span>Lightning (LND)</span><b>{p.lightning === 'install' ? 'Installed now' : p.lightning === 'starting' ? 'Starting' : 'Running'}</b><small>gateway: {p.gateway}</small></div>
+              <div className="stat"><span>Bond</span><b>{n(p.bondSats)} sat</b><small>a guardian needs at least {n(p.bondFloorSats)} sat</small></div>
+              <div className="stat"><span>The wallet must hold</span><b>{n(p.needSats)} sat</b><small>it holds {n(p.walletSats)} sat</small></div>
+            </div>
+            <div className="row"><span>Two bond advertisement updates (custody now, its federation later)</span><b>{n(p.parts.custodyUpdate + p.parts.advertUpdate)} sat</b></div>
+            <div className="row"><span>Peg-in for the gateway's e-cash</span><b>{n(p.parts.pegIn)} sat</b></div>
+            <div className="row"><span>Lightning channels (to the next guardian and outside)</span><b>{n(p.parts.ring + p.parts.outside)} sat</b></div>
+            {p.bondBelowFloor ? <p className="err">The bond is below the guardian floor: add {n(p.bondFloorSats - p.bondSats)} sat to it first (Bond, above).</p> : null}
+            {p.shortSats ? <p className="warn">The wallet is <b>{n(p.shortSats)} sat short</b>: you can start now - custody goes on by itself once <code>{p.address}</code> holds it.</p> : null}
+            <p><b>The bond's rules.</b> As a guardian this node holds players' money with the others. Leave only with LEAVE on this page: a guardian that just goes away is slashed - its bond goes to the players. Type <b>I UNDERSTAND</b>:</p>
+            <p><input value={understood} onChange={(e) => this.setState({ understood: e.target.value })} placeholder="I UNDERSTAND" /> <Button primary disabled={busy || p.bondBelowFloor || understood.trim().toUpperCase() !== 'I UNDERSTAND'} onClick={this.start}>Add custody</Button> <span className="sub">{message}</span></p>
+          </div>)
+          : <p><Button primary disabled={busy} onClick={this.review}>Add custody</Button> <span className="sub">{message}</span></p>}
+        <p className="sub">Custody needs your own Bitcoin Core (not Electrum). The node installs Lightning and its gateway itself and restarts once with its guardian.</p>
+      </div>);
   }
   render() {
     const { loaded, guardian: g } = this.state;
@@ -25,12 +93,7 @@ export class CustodyPanel extends React.Component {
     if (g && g.guardian) return (
       <div><div className="row"><span>Custody</span><b>on - this node is a guardian</b></div>
         <div className="row"><span>Guardian endpoint</span><b><code>{g.endpoint || ''}</code></b></div></div>);
-    return (
-      <div>
-        <p><b>This node holds no custody.</b> A custody node is one of a federation's 10 guardians, may run one of its 2 Lightning gateways, and earns a share of every round of its federation (the guardians' third of the 4 % node fee).</p>
-        <p>To add it, on the machine the node runs on open <b>Add custody</b> (Start menu &gt; Arena Node, or the Arena Node scripts) or run <code>arena-install --add-custody</code>. The installer shows the custody screens - what custody is, Lightning and the gateway, the federation, the bond's rules - and updates your bond; no second bond.</p>
-        <p className="sub">Custody needs your own Bitcoin Core (not Electrum) and Lightning (LND, set up there).</p>
-      </div>);
+    return this.offer();
   }
 }
 
