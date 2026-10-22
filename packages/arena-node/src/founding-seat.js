@@ -211,9 +211,11 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     const row = await capableAt(h, held); if (row) remember(capable, row);
     return held;
   }
+  let lastEntries = null;                    // the census of the newest row read (its members are asked, members())
   async function capableAt(h, held) {
     let entries = null; try { entries = await entriesAt(h); } catch { entries = null; }
     if (entries) {
+      lastEntries = entries;
       const ops = new Set(), bonds = new Map(), named = new Set();
       for (const e of entries) {
         for (const g of (e && e.advert && e.advert.guardianOf) || []) named.add(toHex(g.federationId));
@@ -343,6 +345,31 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     ready = { atMs: nowMs, value };
     return value;
   }
-  return { tick: async () => (lastTick = await tick()), readiness, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
+  // THE NODES THAT CAN BE DRAWN, EACH ASKED (kanban #585, the owner 2026-10-22: "Tu das Dashboard so umbauen dass es solchen
+  // Diskrepanzen nicht geben kann"): the newest row's free nodes, each at its announced address - ready (its guardian waits in setup),
+  // running, none, founding off, an older release, or no answer - so a page shows one list and counts its own rows. Every 60 s at most.
+  let membersCache = null;
+  async function members(nowMs = Date.now()) {
+    if (membersCache && nowMs - membersCache.atMs < 60000) return membersCache.value;
+    const c = capable.length ? capable[capable.length - 1] : null;
+    if (!c || !Array.isArray(c.freeNodes) || !lastEntries) return null;
+    const want = new Set(c.freeNodes), me = toHex(ownKey);
+    const es = lastEntries.filter((e) => e && want.has(toHex(e.pubkey)));
+    const one = async (e) => {
+      const k = toHex(e.pubkey), root = String(endpointOf(e) || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+      if (k === me) return { node: k, endpoint: root, state: (await readiness(nowMs)).guardian };
+      if (!fetchJson || !root) return { node: k, endpoint: root, state: 'no answer' };
+      try {
+        const b = await fetchJson(`${root}/founding`);
+        return { node: k, endpoint: root, state: b && b.ready ? b.ready.guardian : b && b.off ? 'off' : b ? 'older release' : 'no answer' };
+      } catch { return { node: k, endpoint: root, state: 'no answer' }; }
+    };
+    const out = [];
+    for (let i = 0; i < es.length; i += 8) out.push(...await Promise.all(es.slice(i, i + 8).map(one)));
+    const value = { height: c.height, free: c.free, needed: COHORT_NOMINAL, nodes: out };
+    membersCache = { atMs: nowMs, value };
+    return value;
+  }
+  return { tick: async () => (lastTick = await tick()), readiness, members, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
     state: () => (current ? { trigger: current.trigger, via: current.via, ...current.founding.state() } : null) };
 }

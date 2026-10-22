@@ -91,42 +91,34 @@ test('the Capacity card: each federation\'s band, who is below B* and by how muc
   assert.equal(drawn.length, 2);
 });
 
-test('Waiting for a founding: the guardian-capable nodes free of an OPEN federation, ready first, with the founding that runs (kanban #585)', () => {
-  const at = script.indexOf('  function paintFounding(nodes, feds) {');
+test('Waiting for a founding: one list from one seat, and every number counted from its rows (kanban #585, the owner: "Wenn 8 von 10 ready sind müssen auch 8 da stehen")', () => {
+  const at = script.indexOf('  function paintFounding(nodes, feds, mem) {');
   const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
   const drawn = [];
   const H = { draw: (el, kind, props) => drawn.push([el, kind, props]) };
   const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
   const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
   const drawTable = (id, head, rows, empty, foot) => drawn.push([id, 'table', { head, rows, empty, foot }]);
-  const fedNoOf = (f) => ({ ['bb'.repeat(32)]: 2 })[f] || null;
-  const paint = new Function('$', 'H', 'sat', 'cut', 'drawTable', 'fedNoOf', src + '\nreturn paintFounding;')((id) => '#' + id, H, sat, cut, drawTable, fedNoOf);
-  const ok = { ok: true };
-  const run = { id: 'f0'.repeat(32), windowEnd: 157302, seated: [{ node: 'a1'.repeat(32), position: 0 }, { node: 'a2'.repeat(32), position: 1 }],
-    codes: [{ node: 'a1'.repeat(32) }], alternates: [], noShows: ['a4'.repeat(32)], federation: false, void: false };
-  const nodes = [
-    { node: 'a1'.repeat(32), base: 'https://a1', guardianCapable: true, guardianOf: [], bondSats: '200000', version: ok,
-      found: { ok: true, body: { ...run, ready: { guardian: 'setup', cohort: { height: 157298, free: 13, needed: 10, nodes: ['a1'.repeat(32)] }, why: null } } } },
-    { node: 'a2'.repeat(32), base: 'https://a2', guardianCapable: true, guardianOf: [], bondSats: '200000', version: ok,
-      found: { ok: true, body: { ...run, codes: [], ready: { guardian: 'none', cohort: { height: 157297, free: 13, needed: 10, self: { inCensus: true, operator: 'op-mac', operatorNodes: 3, free: false, guarding: [{ node: 'a3'.repeat(32), federation: 'bb'.repeat(32), status: 'OPEN' }] } }, why: null } } } },
-    { node: 'a3'.repeat(32), base: 'https://a3', guardianCapable: true, guardianOf: ['bb'.repeat(32)], bondSats: '200000', version: ok },   // guards an OPEN one
-    { node: 'a4'.repeat(32), base: 'https://a4', guardianCapable: true, guardianOf: ['cc'.repeat(32)], bondSats: '90000', version: { ok: false } },   // CLOSED: free
-    { node: 'a5'.repeat(32), base: 'https://a5', guardianCapable: false, guardianOf: [], version: ok },
-  ];
-  // a third node still names an older draw that holds more codes: the card shows the one most nodes name
-  const stale = { node: 'a6'.repeat(32), base: 'https://a6', guardianCapable: false, guardianOf: [], version: ok,
-    found: { ok: true, body: { id: 'e0'.repeat(32), windowEnd: 157302, seated: run.seated, codes: [1, 2, 3].map((i) => ({ node: String(i) })), alternates: [], noShows: [] } } };
-  paint([...nodes, stale], [{ federation: 'bb'.repeat(32), status: 'OPEN' }, { federation: 'cc'.repeat(32), status: 'CLOSED' }]);
-  const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items;
-  assert.deepEqual(facts.map((f) => f[1]), ['13 of 10 needed', '1 of 1', 'f0f0f0f0 · 1 of 2 codes · window to 157,302']);
+  const paint = new Function('$', 'H', 'sat', 'cut', 'drawTable', src + '\nreturn paintFounding;')((id) => '#' + id, H, sat, cut, drawTable);
+  const K = (i) => String(i).padStart(2, '0').repeat(32);
+  // ten drawn, eight with their code; two more that can be drawn; the seat asked all twelve
+  const run = { id: 'f0'.repeat(32), windowEnd: 157308, trigger: { height: 157302 }, seated: Array.from({ length: 10 }, (_, i) => ({ node: K(i), position: i })),
+    codes: Array.from({ length: 8 }, (_, i) => ({ node: K(i) })), alternates: [K(10)], noShows: [], federation: false, void: false };
+  const mem = { height: 157307, free: 20, needed: 10, nodes: Array.from({ length: 12 }, (_, i) => ({ node: K(i), endpoint: `https://n${i}`, state: i < 8 ? 'setup' : i === 8 ? 'off' : i === 9 ? 'no answer' : 'setup' })) };
+  // an older draw on a node not restarted yet, with more codes: not the one shown
+  const nodes = [{ found: { ok: true, body: run } }, { found: { ok: true, body: run } }, { found: { ok: true, body: { ...run, id: 'e0'.repeat(32), codes: Array.from({ length: 9 }, (_, i) => ({ node: K(i) })) } } }];
+  paint(nodes, [], mem);
+  const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items.map((f) => f[1]);
   const t = drawn.find((d) => d[0] === 'founding')[2];
-  // only the nodes online now and free by the seats' count (the owner 2026-10-22): a2 answers but its operator guards Federation 2, a4 is offline
-  assert.deepEqual(t.head, ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding']);
-  assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, r.cells[4].t]), [['a1a1a1a1a1a1', 'ready', 'seated 1 · code ✓']]);
-  assert.equal(t.foot, "the seats' count at 157,298: 13 free operators (an operator may run several nodes) · not shown: 1 not reachable from this page (offline, or on a private address), 1 guarding an OPEN federation (or one no seat holds a record of)");
-  // no seat named its cohort: nothing is guessed
+  assert.deepEqual(facts, ['12 nodes (20 operators, 10 needed)', '10 of 12', 'f0f0f0f0: 10 drawn, 8 posted their code · until block 157,308']);
+  assert.equal(t.rows.length, 12, 'as many rows as "can be drawn" says');
+  assert.equal(t.rows.filter((r) => r.cells[2].t === 'ready').length, 10, 'as many "ready" rows as the count says');
+  assert.equal(t.rows.filter((r) => /code ✓/.test(r.cells[3].t || '')).length, 8, 'as many "code ✓" rows as "posted their code"');
+  assert.deepEqual(t.rows.slice(0, 10).map((r) => r.cells[3].t), [...Array(8).fill(0).map((_, i) => `drawn #${i + 1} · code ✓`), 'drawn #9 · no code yet', 'drawn #10 · no code yet'], 'the drawn first, in order');
+  assert.deepEqual([t.rows[8].cells[2].t, t.rows[9].cells[2].t], ['founding is off on this node', 'no answer'], 'and why the two have no code');
+  // no seat answered its list: nothing is guessed
   drawn.length = 0;
-  paint(nodes.map((n) => ({ ...n, found: n.found && { ok: true, body: { ...n.found.body, ready: { ...n.found.body.ready, cohort: null } } } })), [{ federation: 'bb'.repeat(32), status: 'OPEN' }]);
-  assert.equal(drawn.find((d) => d[0] === '#founding-facts')[2].items[0][1], 'no seat has counted yet');
+  paint([], [], null);
+  assert.equal(drawn.find((d) => d[0] === '#founding-facts')[2].items[0][1], 'no seat answered its list yet');
   assert.deepEqual(drawn.find((d) => d[0] === 'founding')[2].rows, []);
 });
