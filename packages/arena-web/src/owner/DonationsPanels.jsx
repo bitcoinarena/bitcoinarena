@@ -73,7 +73,7 @@ function Earnings({ split: S }) {
  * protocol's or the app's part, a search over player, round, entry and item, 10 to 100 rows a page; a row opens its full record.
  */
 export class DonationsTable extends React.Component {
-  constructor(props) { super(props); this.state = { slug: (props.clients[0] || {}).slug || '', app: '', part: 'all', q: '', limit: 25, offset: 0, r: null, why: null, open: null }; }
+  constructor(props) { super(props); this.state = { slug: (props.clients[0] || {}).slug || '', app: '', part: 'all', q: '', limit: 10, offset: 0, r: null, why: null, open: null }; }
   componentDidMount() { this.load(); }
   componentDidUpdate(prev) { if (prev.stamp !== this.props.stamp) this.load(); }
   set(change) { this.setState({ ...change, ...('offset' in change ? {} : { offset: 0 }), open: null }, () => this.load()); }
