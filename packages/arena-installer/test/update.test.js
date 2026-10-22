@@ -11,7 +11,8 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode } from '../src/update.js';
+import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode, staleLnd } from '../src/update.js';
+import { LND_FILES } from '../src/lnd.js';
 import { unitDir, UNIT, waitHealthy } from '../src/service.js';
 
 const REPO = resolve(fileURLToPath(import.meta.url), '../../../..');
@@ -456,6 +457,37 @@ test('the new release\'s apps are fetched first: one that cannot be fetched leav
     fetchApps: async (o) => { asked.push(o.release); return { ok: false, why: 'plugin/x.js answered 404 (from github.com/a tester/arena-app-up-or-down)' }; } });
   assert.deepEqual(r, { ok: false, why: 'the new release\'s apps: plugin/x.js answered 404 (from github.com/a tester/arena-app-up-or-down)' });
   assert.deepEqual(asked, [v2], 'the new release\'s apps, into the new release');
+  assert.ok(!calls.some((c) => / stop /.test(c)), 'nothing stopped');
+});
+
+// LND FOLLOWS ITS PIN (kanban #584, 2026-10-22: LND rebuilt with Go 1.27.3): LND lives in <home>/lnd-bin, beside the releases, so an
+// update that moved only release paths left every installed node on the LND it was set up with (mactest12/16b/16c ran 0.21.4)
+test('an LND older than the pin is named, its service moved to the pinned one; a pinned LND that cannot be fetched leaves the node running', async (t) => {
+  const old = '/h/lnd-bin/lnd-darwin-arm64-v0.21.4-beta/lnd';
+  const plist = `<string>${old}</string><string>--lnddir=/h/lnd</string>`;
+  const s = staleLnd(['<string>seat</string>', plist], { platform: 'darwin', arch: 'arm64' });
+  assert.deepEqual([s.index, s.from, s.to], [1, 'lnd-darwin-arm64-v0.21.4-beta', LND_FILES['darwin-arm64'].file.replace('.tar.gz', '')]);
+  assert.equal(s.swap(plist), `<string>/h/lnd-bin/${s.to}/lnd</string><string>--lnddir=/h/lnd</string>`);
+  assert.equal(staleLnd([s.swap(plist)], { platform: 'darwin', arch: 'arm64' }), null, 'the pinned one is not moved again');
+  const win = staleLnd(['"C:\\h\\lnd-bin\\lnd-windows-amd64-v0.21.4-beta\\lnd.exe" --lnddir=C:\\h\\lnd'], { platform: 'win32', arch: 'x64' });
+  assert.equal(win.swap('C:\\h\\lnd-bin\\lnd-windows-amd64-v0.21.4-beta\\lnd.exe'), `C:\\h\\lnd-bin\\${LND_FILES['win32-x64'].file.replace('.zip', '')}\\lnd.exe`);
+  assert.equal(staleLnd(['ExecStart=/usr/bin/lnd --lnddir=/x'], { platform: 'linux', arch: 'x64' }), null, 'an LND the owner connected is not ours to move');
+
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-lnd-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const env = { XDG_CONFIG_HOME: join(root, 'config'), USER: 'test' };
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const v1 = join(root, 'releases/arena-node-2026.1.7-linux-x64'), v2 = join(root, 'releases/arena-node-2026.1.8-linux-x64');
+  writeFileSync(join(home, 'node.env'), 'ARENA_BIND=127.0.0.1\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4' }));
+  mkdirSync(unitDir(env), { recursive: true });
+  writeFileSync(join(unitDir(env), UNIT), legacySeatUnit({ node: process.execPath, release: v1, home, port: 1 }));
+  writeFileSync(join(unitDir(env), 'arena-lnd.service'), `[Service]\nExecStart=${join(home, 'lnd-bin/lnd-linux-amd64-v0.21.4-beta/lnd')} --lnddir=${join(home, 'lnd')}\n`);
+  const calls = [];
+  const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
+  const r = await updateNode({ home, newRelease: v2, port: 1, env, sh, nowMs: () => 0, platform: 'linux', arch: 'x64', fetchApps: async () => ({ ok: true }),
+    lndKit: { installLnd: async () => ({ ok: false, why: 'github.com answered 503' }) } });
+  assert.deepEqual(r, { ok: false, why: `the pinned LND (${LND_FILES['linux-x64'].file.replace('.tar.gz', '')}): github.com answered 503` });
   assert.ok(!calls.some((c) => / stop /.test(c)), 'nothing stopped');
 });
 
