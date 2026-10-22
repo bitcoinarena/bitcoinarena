@@ -39,7 +39,7 @@ export class WaitingDonations extends React.Component {
             <div key={s.setId}><h4>{s.title} · {s.kind === 'protocol' ? 'protocol set ' + s.serial : 'game set'}</h4>
               {s.recipients.map((x, k) => (
                 <React.Fragment key={k}>
-                  <Row k={`${x.label || 'recipient'} · ${x.donations} donation${x.donations === 1 ? '' : 's'}`} v={sat(x.totalMsat)} />
+                  <Row k={`${x.label || (x.key ? x.key.slice(0, 12) + '…' : x.lnurl || 'a Lightning address')} · ${x.donations} donation${x.donations === 1 ? '' : 's'}`} v={sat(x.totalMsat)} />
                   {x.byDay.filter((d) => BigInt(d.msat || 0) > 0n).slice(0, 7).map((d) => <Row key={d.day} sub k={d.day} v={sat(d.msat)} />)}
                 </React.Fragment>))}
             </div>))}</details> : null}
@@ -65,6 +65,68 @@ function Earnings({ split: S }) {
       {S.shares ? <><Row k="Your share of the protocol developers' half" v={pct(S.shares.protocolBps)} />
         {S.shares.games.map((g) => <Row key={g.title} k={`Your share of ${g.title}'s developers' half`} v={pct(g.bps)} />)}</> : null}
     </>);
+}
+
+/**
+ * EVERY DONATION, FILTERED AND PAGED (kanban #578, the owner 2026-10-22: "Da schaut hässlich aus. Füge Filter hinzu, App, Protocol, Paging,
+ * Rows displayed etc"): one client's donations from GET /owner/dev/donations - by app (or items only), the whole amount or only the
+ * protocol's or the app's part, a search over player, round, entry and item, 10 to 100 rows a page; a row opens its full record.
+ */
+export class DonationsTable extends React.Component {
+  constructor(props) { super(props); this.state = { slug: (props.clients[0] || {}).slug || '', app: '', part: 'all', q: '', limit: 25, offset: 0, r: null, why: null, open: null }; }
+  componentDidMount() { this.load(); }
+  componentDidUpdate(prev) { if (prev.stamp !== this.props.stamp) this.load(); }
+  set(change) { this.setState({ ...change, ...('offset' in change ? {} : { offset: 0 }), open: null }, () => this.load()); }
+  async load() {
+    const s = this.state, n = (this.n = (this.n || 0) + 1);
+    if (!s.slug) return;
+    try {
+      const r = await this.props.query({ slug: s.slug, app: s.app, q: s.q.trim(), limit: s.limit, offset: s.offset });
+      if (n === this.n) this.setState({ r, why: r.ok === false ? r.why : null });
+    } catch (e) { if (n === this.n) this.setState({ why: e.message }); }
+  }
+  render() {
+    const { clients, cur } = this.props, s = this.state, r = s.r;
+    const msatOf = (d) => (s.part === 'protocol' ? d.protocolMsat : s.part === 'app' ? d.appMsat : d.amountMsat);
+    const curOf = (f) => (cur !== 'sat' && f && f[s.part] && f[s.part][cur] !== undefined ? money(f[s.part][cur], cur) : null);
+    const short = (x) => (x ? x.slice(0, 8) + '…' + x.slice(-4) : '–');
+    const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '?');
+    const pages = r ? Math.max(1, Math.ceil(r.total / s.limit)) : 1, page = Math.floor(s.offset / s.limit) + 1;
+    return (
+      <div className="card dtable">
+        <div className="dt-head"><h3>Donations</h3>
+          {r ? <div className="dt-sum"><b>{Number(r.total).toLocaleString('en-US')}</b> {r.total === 1 ? 'donation' : 'donations'} · <b>{curOf(r.sums && r.sums.fiat) || whole(s.part === 'protocol' ? r.sums.protocolMsat : s.part === 'app' ? r.sums.appMsat : r.sums.msat)}</b>
+            {curOf(r.sums && r.sums.fiat) ? <small> {whole(s.part === 'protocol' ? r.sums.protocolMsat : s.part === 'app' ? r.sums.appMsat : r.sums.msat)}</small> : null}</div> : null}</div>
+        <div className="dt-bar">
+          {clients.length > 1 ? <label>Client<select value={s.slug} onChange={(e) => this.set({ slug: e.target.value, app: '' })}>{clients.map((c) => <option key={c.slug} value={c.slug}>{c.label || c.slug}</option>)}</select></label> : null}
+          <label>App<select id="dt-app" value={s.app} onChange={(e) => this.set({ app: e.target.value })}><option value="">All apps</option>
+            {((r && r.apps) || []).map((a) => <option key={a.app} value={a.app}>{a.title}{a.market ? ' (market)' : ''} · {a.count}</option>)}</select></label>
+          <label>Part<div className="seg">{[['all', 'Whole'], ['protocol', 'Protocol'], ['app', 'App']].map(([k, t]) => <button type="button" key={k} className={s.part === k ? 'on' : undefined} onClick={() => this.setState({ part: k })}>{t}</button>)}</div></label>
+          <label className="grow">Search<input {...field} id="dt-q" type="search" placeholder="player, round, entry or item" value={s.q} onChange={(e) => { const q = e.target.value; clearTimeout(this.t); this.setState({ q }); this.t = setTimeout(() => this.set({ q }), 300); }} /></label>
+          <label>Rows<select id="dt-rows" value={s.limit} onChange={(e) => this.set({ limit: Number(e.target.value) })}>{[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+        </div>
+        {s.why ? <p className="err">{s.why}</p> : null}
+        {r && r.rows.length ? <div className="scroll"><table className="tbl dt"><thead><tr><th>When (UTC)</th><th>App</th><th>Round or item</th><th>Player</th><th className="n">{s.part === 'protocol' ? 'Protocol part' : s.part === 'app' ? 'App part' : 'Amount'}</th></tr></thead><tbody>
+          {r.rows.map((d, i) => <React.Fragment key={d.outpoint + d.entry + i}>
+            <tr className={'dt-row' + (s.open === i ? ' on' : '')} onClick={() => this.setState({ open: s.open === i ? null : i })}>
+              <td className="dim">{when(d.atMs)}</td>
+              <td>{d.app ? <span className="tag">{d.title || d.app}</span> : <span className="tag dim">older round</span>}{d.item ? <span className="tag item">item</span> : d.market ? <span className="tag mk">market</span> : null}</td>
+              <td className="mono">{d.item ? d.item : short(d.round)}</td>
+              <td className="mono">{short(d.player)}</td>
+              <td className="n"><b>{curOf(d.fiat) || sat(msatOf(d))}</b>{curOf(d.fiat) ? <small>{sat(msatOf(d))}</small> : null}</td></tr>
+            {s.open === i ? <tr className="dt-more"><td colSpan="5"><div className="dt-rec">
+              {[['Round', d.round], ['Entry', d.entry], ['Player key', d.player], ['Outpoint', d.outpoint]].filter(([, v]) => v).map(([k, v]) => <div key={k}><span>{k}</span><code>{v}</code></div>)}
+              <div><span>Parts</span><code>protocol {sat(d.protocolMsat)} · app {sat(d.appMsat)} · whole {sat(d.amountMsat)}</code></div>
+              {cur !== 'sat' && d.fiat.all[cur] !== undefined ? <div><span>{cur.toUpperCase()} then</span><code>{money(d.fiat.all[cur], cur)}</code></div> : null}</div></td></tr> : null}
+          </React.Fragment>)}</tbody></table></div>
+          : <p className="sub">{r ? 'No donation matches.' : 'Loading…'}</p>}
+        {r && r.total > 0 ? <div className="dt-pager">
+          <button type="button" disabled={page <= 1} onClick={() => this.set({ offset: Math.max(0, s.offset - s.limit) })}>‹ Prev</button>
+          <span>{(s.offset + 1).toLocaleString('en-US')}–{Math.min(r.total, s.offset + s.limit).toLocaleString('en-US')} of {Number(r.total).toLocaleString('en-US')} · page {page} of {pages}</span>
+          <button type="button" disabled={page >= pages} onClick={() => this.set({ offset: s.offset + s.limit })}>Next ›</button></div> : null}
+        <p className="sub">A row opens its full record.{cur !== 'sat' ? ` ${cur.toUpperCase()} at each donation's own rate (CoinGecko).` : ''}</p>
+      </div>);
+  }
 }
 
 export class DevClients extends React.Component {
@@ -137,7 +199,6 @@ export class DevClients extends React.Component {
     const period = (V, k) => (V.split && V.split.earnings && V.split.earnings.periods[k] ? V.split.earnings.periods[k].totalMsat : '0');
     const holds = (V) => (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
     const ago = (ms) => { if (!ms) return ''; const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
-    const recent = all.flatMap((V) => (V.recent || []).map((d) => ({ ...d, who: V.label || V.slug }))).sort((a, b) => b.atMs - a.atMs).slice(0, 10);
     const COLORS = ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'];
     // THE SHARE AT THE TOP (the owner 2026-10-22: "Display the current share of this dev client in % at the top"): one number when the
     // protocol set and every game set give it the same share, else each
@@ -198,11 +259,7 @@ export class DevClients extends React.Component {
                   <i style={{ background: p.color }} /><span>{p.label}</span><b>{partCur(p.msat) || whole(p.msat)}</b><small>{[partCur(p.msat) ? whole(p.msat) : null, p.note].filter(Boolean).join(' · ')}</small></div>)}</div></> : null}
             </div>);
         })}
-        {recent.length ? <div className="card"><h3>Newest donations</h3>
-          <div className="scroll"><table className="tbl"><thead><tr><th>When (UTC)</th><th>To</th><th className="n">Amount</th>{cur !== 'sat' ? <th className="n">{cur.toUpperCase()} then</th> : null}<th>Round or item</th><th>Player</th></tr></thead><tbody>
-            {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td className="n">{Number(d.amountMsat).toLocaleString('en-US')} msat</td>{cur !== 'sat' ? <td className="n">{(() => { const V = all.find((x) => (x.label || x.slug) === d.who); const v = V && V.fiat && V.fiat.recent && V.fiat.recent[d.outpoint]; return v && v[cur] !== undefined ? money(v[cur], cur) : '–'; })()}</td> : null}
-              <td title={d.item || d.round}>{d.item ? d.item : d.round.slice(0, 10) + '…'}</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
-          </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.{cur !== 'sat' ? ` ${cur.toUpperCase()} at each donation's own rate (CoinGecko).` : ''}</p></div> : null}
+        {this.props.query && all.some((V) => V.managed) ? <DonationsTable clients={all.filter((V) => V.managed)} cur={cur} query={this.props.query} stamp={this.props.dev} /> : null}
         {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
         {r.managed ? <details><summary className="sub">Add a dev client</summary><div className="card">
           <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out
