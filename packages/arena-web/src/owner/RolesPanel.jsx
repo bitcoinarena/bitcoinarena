@@ -24,13 +24,24 @@ export const askOf = (now) => ({ roles: ROLE_SWITCHES.filter(([k]) => now[k]).fl
 export class RolesPanel extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { loaded: false, mine: null, guardian: null, gateway: null, liquidity: null, was: {}, now: {}, step: 'idle', plan: null, message: null, ...(props.initial || {}) };
-    this.undo = this.undo.bind(this); this.review = this.review.bind(this); this.confirm = this.confirm.bind(this);
+    this.state = { loaded: false, unread: false, mine: null, guardian: null, gateway: null, liquidity: null, was: {}, now: {}, step: 'idle', plan: null, message: null, ...(props.initial || {}) };
+    this.undo = this.undo.bind(this); this.review = this.review.bind(this); this.confirm = this.confirm.bind(this); this.retry = this.retry.bind(this);
   }
   async componentDidMount() {
     if (this.state.loaded || !this.props.api) return;
+    await this.load();
+  }
+  retry() { this.setState({ loaded: false, unread: false }); return this.load(); }
+  async load() {
     const get = async (p) => { try { return await this.props.api.get(p); } catch { return null; } };
-    const [pub, guardian, gateway, liquidity] = await Promise.all([get('/roles'), get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
+    // THE ROLES READ AGAIN BEFORE ANYTHING IS SAID (the owner 2026-10-22, guardian-6's owner page during a seat restart: every role "Off" and
+    // "not in the census yet" for a node in the census, serving three roles): an unanswered /roles is no census row - asked up to three
+    // times, then said as unread, with Try again
+    const pause = this.props.pause || ((ms) => new Promise((ok) => setTimeout(ok, ms)));
+    let pub = null;
+    for (let i = 0; i < 3 && !pub; i++) { if (i) await pause(2000); pub = await get('/roles'); }
+    if (!pub) { this.setState({ loaded: true, unread: true }); return; }
+    const [guardian, gateway, liquidity] = await Promise.all([get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
     const mine = pub && (pub.nodes || []).find((x) => x.node === this.props.node) || null;
     const was = switchesOf(mine);
     // A GATEWAY THAT RUNS BUT HOLDS NO SEAT YET (kanban #563, measured on installer C 2026-10-21: its tile said "Off" and "Set up" while its
@@ -39,7 +50,7 @@ export class RolesPanel extends React.Component {
     if (!(gateway && gateway.gatewayUrl) && this.props.api.post && this.props.api.signed) {
       try { const sv = await this.props.api.post('/owner/services', await this.props.api.signed('services')); gatewayRuns = !!(sv && sv.ok && (sv.services || []).some((x) => x.id === 'gateway' && x.running)); } catch { gatewayRuns = false; }
     }
-    this.setState({ loaded: true, mine, guardian, gateway, gatewayRuns, liquidity, was, now: { ...was } });
+    this.setState({ loaded: true, unread: false, mine, guardian, gateway, gatewayRuns, liquidity, was, now: { ...was } });
   }
   toggle(k, on) { this.setState((s) => ({ now: { ...s.now, [k]: on }, step: 'idle', plan: null, message: null })); }
   undo() { this.setState((s) => ({ now: { ...s.was }, step: 'idle', plan: null, message: null })); }
@@ -73,8 +84,9 @@ export class RolesPanel extends React.Component {
     ].map(([k, icon, name, highlight, does, label, onOther, section]) => ({ k, icon, name, highlight, does, label, onOther, section, mine }));
   }
   render() {
-    const { loaded, mine, was, now, step, plan, message } = this.state;
+    const { loaded, unread, mine, was, now, step, plan, message } = this.state;
     if (!loaded) return <p className="sub">reading this node's roles…</p>;
+    if (unread) return <div><p className="warn">This node did not answer just now, so its roles are not shown. It may be restarting.</p><Button primary onClick={this.retry}>Try again</Button></div>;
     const changed = changedOf(was, now);
     const sent = step === 'sent';
     return (
