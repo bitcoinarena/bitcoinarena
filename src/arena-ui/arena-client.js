@@ -2532,7 +2532,8 @@ function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER;
+  // the bot mark ends an entry too (kanban #581: a bot's entry with no donation outputs, or a pick and no order, read the mark as a list)
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER || b === BOT_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -14636,7 +14637,8 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null, items = null } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null, items = null,
+  bot = false } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -14751,6 +14753,8 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
     ...(order ? { limitPrice, orderExpiryMs } : {}),
+    // A BOT'S ENTRY (kanban #581: a market maker script, never a player): marked, so the leaderboard and its payouts leave it out
+    ...(bot === true ? { bot: true } : {}),
     stakeMsat: stakeOf(round),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
