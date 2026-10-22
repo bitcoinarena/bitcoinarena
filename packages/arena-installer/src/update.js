@@ -117,9 +117,20 @@ export async function restoreNode(home, backup, { tries = 30, pause = (ms) => ne
 
 /** The release a launchd agent runs: its WorkingDirectory less packages/arena-node. */
 export function releaseOfPlist(text) {
-  const m = /<key>WorkingDirectory<\/key><string>(.+?)\/packages\/arena-node<\/string>/.exec(String(text || ''));
+  // whitespace between key and value allowed: an agent saved again by plutil or PlistBuddy puts each on its own line (kanban #574,
+  // 2026-10-22: the three test installers' agents, re-saved when a variable was added by hand, read as "no service names a release")
+  const m = /<key>WorkingDirectory<\/key>\s*<string>(.+?)\/packages\/arena-node<\/string>/.exec(String(text || ''));
   return m ? m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : null;
 }
+
+/** The variables a launchd agent sets: its EnvironmentVariables dict, { name: value } ({} when it has none). */
+export function envOfPlist(text) {
+  const d = /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/.exec(String(text || ''));
+  const out = {};
+  if (d) for (const m of d[1].matchAll(/<key>([^<]*)<\/key>\s*<string>([^<]*)<\/string>/g)) out[unxml(m[1])] = unxml(m[2]);
+  return out;
+}
+const unxml = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
 /** The release a Windows launcher runs: its `cd /d "<release>\packages\arena-node"`. */
 export function releaseOfLauncher(text) {
@@ -143,7 +154,7 @@ function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid
     const label = (f) => f.split('/').pop().replace(/\.plist$/, '');
     return {
       where: seatFile, seatText: () => (existsSync(seatFile) ? readFileSync(seatFile, 'utf8') : null), releaseOf: releaseOfPlist, files,
-      seatFor: (release, old) => launchdPlist({ node, release, home, port, boot: !/<key>RunAtLoad<\/key><false\/>/.test(old) }), seatFile,
+      seatFor: (release, old) => launchdPlist({ node, release, home, port, boot: !/<key>RunAtLoad<\/key>\s*<false\/>/.test(old), env: envOfPlist(old) }), seatFile,
       stop: async (fs) => { for (const f of fs) await sh('launchctl', ['bootout', `gui/${uid}/${label(f)}`]); return { ok: true }; },
       // every agent, each tried up to 5 times a second apart: launchd refuses a bootstrap while the agent it just booted out is
       // still unloading (measured on the test host, rc.12 -> rc.13: tor's bootstrap failed, the loop stopped, and the tunnel was never
