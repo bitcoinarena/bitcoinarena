@@ -129,6 +129,7 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
   const port = {
     fees: async () => FEES,
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
+      if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
       const message = msgOf({ k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce });
       if (!signature) return { message: toHex(message) };
       if (!schnorr.verify(signature, message, claimPk.subarray(1))) return { accepted: false, error: 'the signature does not verify' };
