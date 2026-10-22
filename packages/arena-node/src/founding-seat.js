@@ -93,6 +93,24 @@ export function emergencyTriggers({ held = [], requests = [] }) {
 /** A federation at or above this load (its exposure cap) is overloaded: its guardians may found another. */
 export const OVERLOADED = 1;
 
+/**
+ * WHY AN OPERATOR IS NOT FREE (kanban #585): its nodes' adverts that name a federation guardingOpenOf counts as OPEN - one held OPEN
+ * (and not overloaded), or one this seat holds no record of. [{ node, federation, status }], status 'OPEN' or 'not held'.
+ */
+export function guardingWhy({ entries = [], held = [], op, except = null }) {
+  const full = new Set((held || []).filter((r) => r && typeof r.load === 'number' && r.load >= OVERLOADED).map((r) => lower(r.federation)));
+  const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), full.has(lower(r.federation)) ? 'OVERLOADED' : r.status]));
+  const out = [];
+  for (const e of entries || []) {
+    if (!e || opOf(e) !== op) continue;
+    for (const g of (e.advert && e.advert.guardianOf) || []) {
+      const f = toHex(g.federationId);
+      if (f !== lower(except) && (!status.has(f) || status.get(f) === 'OPEN')) out.push({ node: toHex(e.pubkey), federation: f, status: status.has(f) ? 'OPEN' : 'not held' });
+    }
+  }
+  return out;
+}
+
 export function guardingOpenOf({ entries = [], held = [], except = null }) {
   // AN OVERLOADED FEDERATION HOLDS NOBODY BACK (the owner 2026-10-22: "Also when federation is over loaded? That is causing the current
   // conflict"): an OPEN federation at load >= 1 - deposits refused (load ruling A) - frees its guardians for a founding, which they
@@ -169,7 +187,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
   const capable = [], loads = [];
   // (only the newest row keeps the free nodes' keys - the readiness answers them; thousands of rows each holding forty keys would not)
-  const remember = (rows, row) => { if (!rows.length || rows[rows.length - 1].height < row.height) { if (rows.length) delete rows[rows.length - 1].freeNodes; rows.push(row); } if (rows.length > keep) rows.shift(); };
+  const remember = (rows, row) => { if (!rows.length || rows[rows.length - 1].height < row.height) { if (rows.length) { delete rows[rows.length - 1].freeNodes; delete rows[rows.length - 1].self; } rows.push(row); } if (rows.length > keep) rows.shift(); };
   async function history(h) {
     const held = records() || [];
     remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
@@ -202,7 +220,12 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // and WHICH nodes those free operators run (kanban #585: the health page names the nodes the cohort counts, not only how many)
       const freeNodes = entries.filter((e) => e && e.advert && e.advert.guardianCapable === true && e.advert.guardianEndpoint
         && freeOps.has(String(e.advert.operatorId || toHex(e.pubkey)))).map((e) => toHex(e.pubkey));
-      return { height: h, operators: ops.size, free: freeOps.size, freeNodes, federations: named.size };
+      // THIS NODE: its operator, free or not, and if not, which of its operator's nodes guard what
+      const own = entries.find((e) => e && toHex(e.pubkey) === toHex(ownKey));
+      const ownOp = own && own.advert ? String(own.advert.operatorId || toHex(own.pubkey)) : null;
+      const self = ownOp === null ? { inCensus: false } : { inCensus: true, operator: ownOp, operatorNodes: entries.filter((e) => e && e.advert && opOf(e) === ownOp).length,
+        free: freeOps.has(ownOp), bondSats: String(bonds.get(ownOp) || 0n), ...(freeOps.has(ownOp) ? {} : { guarding: guardingWhy({ entries, held, op: ownOp }) }) };
+      return { height: h, operators: ops.size, free: freeOps.size, freeNodes, self, federations: named.size };
     }
     return null;
   }
@@ -309,7 +332,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     let guardian = 'none';
     try { if (await guardianInSetup()) guardian = 'setup'; else if (setup && typeof setup.done === 'function' && await setup.done()) guardian = 'running'; } catch { guardian = 'none'; }
     const c = capable.length ? capable[capable.length - 1] : null;
-    const value = { guardian, cohort: c && typeof c.free === 'number' ? { height: c.height, free: c.free, needed: COHORT_NOMINAL, operators: c.operators, nodes: c.freeNodes || [] } : null,
+    const value = { guardian, cohort: c && typeof c.free === 'number' ? { height: c.height, free: c.free, needed: COHORT_NOMINAL, operators: c.operators, nodes: c.freeNodes || [], self: c.self || null } : null,
       why: lastTick && !lastTick.ok ? lastTick.why : null };
     ready = { atMs: nowMs, value };
     return value;
