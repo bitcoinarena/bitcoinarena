@@ -5030,7 +5030,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // into the protocol developers' part and each game's part - its wallets, and what the owner's withdrawals answered
         // THE DONATIONS TABLE (kanban #578, the owner 2026-10-22: "Füge Filter hinzu, App, Protocol, Paging, Rows displayed"): one client's
         // donations, newest first, each with its app (or item), its protocol and app parts and its value in EUR / USD / CHF / GBP at its own
-        // rate; filtered by app ('items' for items only), searched in player, round, entry and item; paged; the filtered set's sums
+        // rate; filtered by app (its items with it; 'items' for all items), searched in player, round, entry and item; paged; the sums
         if (req.method === 'GET' && url.pathname === '/owner/dev/donations') {
           if (!devClients || !devClients.clientOf) return answer(404, { ok: false, why: 'this node runs no dev clients' });
           const slug = String(url.searchParams.get('slug') || '');
@@ -5038,6 +5038,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!got) return answer(404, { ok: false, why: 'no such dev client' });
           const { fillFiatRates, rowsOf } = await import('./fiat-rates.js');
           got.rows = rowsOf(got.dir);
+          try { await learnRoundApps(got.rows, devClients.rowsAndSeats().seats); } catch (e) { console.log(`[dev] round games not looked up: ${e.message}`); }   // as /owner/dev does
           let rates = {};
           try { rates = await Promise.race([fillFiatRates(got.dir, got.rows), new Promise((ok) => setTimeout(() => ok({}), 12000))]); } catch { rates = {}; }
           return answer(200, { ok: true, slug, ...donationsPage(devAttribute(got.rows, got.pk, { perRow: true }), rates,
