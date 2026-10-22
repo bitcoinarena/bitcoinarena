@@ -15,26 +15,26 @@ const Row = ({ k, v, sub }) => <div className={'row' + (sub ? ' sub' : '')}><spa
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
 export class WaitingDonations extends React.Component {
+  // AT ONE PEEK (the owner 2026-10-22: "lots of entries with 0 ... make it more modern and easy to see at one peek"): one line - what waits at
+  // this seat for the dev clients to collect - and the sets only where something waits, folded; a set or recipient at 0 is not drawn
   render() {
     const { donations: r, why } = this.props;
     if (why) return <div className="card"><p className="err">{why}</p></div>;
-    if (!r.sets || !r.sets.length) return <div className="card"><p>This node collects no donations yet.</p></div>;
+    const sets = (r.sets || []).map((s) => ({ ...s, recipients: s.recipients.filter((x) => BigInt(x.totalMsat || 0) > 0n) })).filter((s) => s.recipients.length);
+    const total = BigInt(r.totalMsat || 0);
     return (
-      <>
-        <div className="card"><p className="sub">Donations this node checked that the developers' clients have not collected yet: a client deletes them here once it has them. What each dev received is under Dev clients.</p>
-          <Row k="Waiting at this seat" v={sat(r.totalMsat)} /></div>
-        {r.sets.map((s) => (
-          <div className="card" key={s.setId}>
-            <h3>{s.title}</h3><Row k={`${s.kind === 'protocol' ? 'Protocol set, serial ' + s.serial : 'Game developer set'} · per day (UTC)`} v={s.setId.slice(0, 16) + '…'} />
-            {s.recipients.map((x, i) => (
-              <React.Fragment key={i}>
-                <Row k={`${x.label || 'recipient'} · ${x.key ? x.key.slice(0, 12) + '…' : x.lnurl || 'a Lightning address'}`} v={`${sat(x.totalMsat)} · ${x.donations} donation${x.donations === 1 ? '' : 's'}`} />
-                {x.byDay.slice(0, 7).map((d) => <Row key={d.day} sub k={d.day} v={sat(d.msat)} />)}
-                {x.byRound.length ? <details><summary className="sub">{x.byRound.length} round{x.byRound.length === 1 ? '' : 's'}</summary>
-                  {x.byRound.slice(0, 50).map((d) => <Row key={d.roundId} sub k={`round ${d.roundId.slice(0, 16)}…`} v={sat(d.msat)} />)}</details> : null}
-              </React.Fragment>))}
-          </div>))}
-      </>);
+      <div className="card">
+        <div className="row"><span>Waiting at this seat for the dev clients</span><b>{total > 0n ? sat(r.totalMsat) : <span className="ok">nothing · all collected</span>}</b></div>
+        {sets.length ? <details><summary className="sub">By set and day</summary>
+          {sets.map((s) => (
+            <div key={s.setId}><h4>{s.title} · {s.kind === 'protocol' ? 'protocol set ' + s.serial : 'game set'}</h4>
+              {s.recipients.map((x, k) => (
+                <React.Fragment key={k}>
+                  <Row k={`${x.label || 'recipient'} · ${x.donations} donation${x.donations === 1 ? '' : 's'}`} v={sat(x.totalMsat)} />
+                  {x.byDay.filter((d) => BigInt(d.msat || 0) > 0n).slice(0, 7).map((d) => <Row key={d.day} sub k={d.day} v={sat(d.msat)} />)}
+                </React.Fragment>))}
+            </div>))}</details> : null}
+      </div>);
   }
 }
 
@@ -97,7 +97,7 @@ export class DevClients extends React.Component {
           {(S.games || []).map((g) => <Row key={g.game} k={'For ' + (g.title || g.game)} v={`${sat(g.msat)} · ${g.donations} donation${g.donations === 1 ? '' : 's'}`} />)}
           {S.unknownMsat && S.unknownMsat !== '0' ? <Row k="Rounds this node no longer holds" v={sat(S.unknownMsat)} /> : null}</> : null}
         <Earnings split={S} />
-        {(V.balances || []).map((b) => <Row key={b.federation} k={'Holds in ' + b.federation.slice(0, 12)} v={sat(b.msat)} />)}
+        {(V.balances || []).filter((b) => BigInt(b.msat || 0) > 0n).map((b) => <Row key={b.federation} k={'Holds in ' + b.federation.slice(0, 12)} v={sat(b.msat)} />)}
         <Row k="Withdrawn over Lightning" v={sat(V.withdrawnMsat)} />
         <Row k="Last pass" v={V.lastPass ? `${String(V.lastPass.at).slice(0, 16).replace('T', ' ')} · asked ${V.lastPass.seats} nodes` : 'not yet'} />
         {last ? <Row k="Last withdrawal you asked for" v={`${last.state || '?'}${last.msat ? ' · ' + sat(last.msat) : ''}${last.why ? ' · ' + last.why : ''}`} /> : null}
@@ -113,14 +113,39 @@ export class DevClients extends React.Component {
             <button type="button" onClick={() => this.remove(V.slug)}>Remove</button>{s.removeWhy ? <p className="err">{s.removeWhy}</p> : null}</details></> : null}
       </div>);
   }
+  // AT ONE PEEK: a tile per client - what it holds now, received today / this week / all time, its newest donation and Withdraw -
+  // then the newest donations of all clients (who played, which round, how much), then everything else folded per client
   render() {
     const { dev: r, why } = this.props, s = this.state;
     if (why) return <div className="card"><p className="err">{why}</p></div>;
+    const all = [...(r.beside ? [{ ...r.beside, managed: false }] : []), ...(r.clients || []).map((c) => ({ ...c, managed: true }))].filter((c) => !c.error);
+    const period = (V, k) => (V.split && V.split.earnings && V.split.earnings.periods[k] ? V.split.earnings.periods[k].totalMsat : null);
+    const holds = (V) => (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
+    const ago = (ms) => { if (!ms) return ''; const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+    const recent = all.flatMap((V) => (V.recent || []).map((d) => ({ ...d, who: V.label || V.slug }))).sort((a, b) => b.atMs - a.atMs).slice(0, 10);
     return (
       <>
-        {r.beside ? this.card(r.beside, false) : null}
-        {(r.clients || []).map((c) => this.card(c, true))}
-        {r.managed ? <div className="card"><h3>Set up a dev client</h3>
+        {all.length ? <div className="stats">
+          {all.map((V) => {
+            const newest = (V.recent || [])[0];
+            return (
+              <div className="stat" key={V.slug || 'beside'}>
+                <span>{V.label || V.slug} {V.managed ? <span className={'pill ' + (V.running ? 'on' : 'bad')}>{V.running ? 'running' : 'stopped'}</span> : <span className="pill">beside</span>}</span>
+                <b>{sat(holds(V))}</b><small>to withdraw now</small>
+                <small>today {sat(period(V, 'day') || '0')} · this week {sat(period(V, 'week') || '0')}</small>
+                <small>all time {sat(V.receivedMsat)} · {V.donations} donation{V.donations === 1 ? '' : 's'}</small>
+                <small>{newest ? `newest ${ago(newest.atMs)}` : 'no donation yet'}</small>
+                {V.managed ? <button type="button" className={holds(V) > 0n ? 'primary' : undefined} onClick={() => this.setState({ open: { ...(s.open || {}), [V.slug]: true } })}>Withdraw</button> : null}
+              </div>);
+          })}
+        </div> : null}
+        {recent.length ? <div className="card"><h3>Newest donations</h3>
+          <div className="tablewrap"><table className="earn"><thead><tr><th>When (UTC)</th><th>To</th><th>Amount</th><th>Round</th><th>Player</th></tr></thead><tbody>
+            {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td>{sat(d.amountMsat)}</td>
+              <td title={d.round}>{d.round.slice(0, 10)}…</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
+          </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.</p></div> : null}
+        {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details, withdraw{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
+        {r.managed ? <details><summary className="sub">Add a dev client</summary><div className="card">
           <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out
             over Lightning when you ask. Use a <b>new key</b> (put its public key in your game's donation set), or a <b>dev key you already have</b>:
             its wallets are recovered from the federation. Only one client may run per key.</p>
@@ -129,8 +154,8 @@ export class DevClients extends React.Component {
           <input {...field} id="dsecret" type="password" placeholder="empty = a new key" value={s.secret} onChange={(e) => this.setState({ secret: e.target.value })} />
           <p className="sub">The secret travels in your signed request: only do this over https or on the node's own machine.</p>
           <button type="button" className="primary" id="dsetup" onClick={() => this.setup()}>Set up</button>
-          <div className="err" id="derr">{s.setupSaid ? (s.setupSaid.ok ? <span className="ok">{s.setupSaid.text}</span> : s.setupSaid.text) : ''}</div></div>
-          : <div className="card"><p>This node runs no dev clients of its own: its operator starts it with ARENA_DEV_WASM_PKG to set them up here.</p></div>}
+          <div className="err" id="derr">{s.setupSaid ? (s.setupSaid.ok ? <span className="ok">{s.setupSaid.text}</span> : s.setupSaid.text) : ''}</div></div></details>
+          : (all.length ? null : <div className="card"><p>This node runs no dev clients of its own: its operator starts it with ARENA_DEV_WASM_PKG to set them up here.</p></div>)}
       </>);
   }
 }

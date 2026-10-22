@@ -69,8 +69,8 @@ export class OwnerArea extends React.Component {
           {sec('release', <><h2>Updates</h2><p className="lead">The version this node runs and whether a newer one is out.</p><Place id="release" /></>)}
           {sec('money', <><h2>Donations</h2>
             <p className="lead">Money this node collects for the developers, and the developers' split.</p>
-            <h3 className="sh">Waiting to be collected</h3><Place id="dons" className={null} />
-            <h3 className="sh">Dev clients</h3><Place id="devs" className={null} />
+            <Place id="devs" className={null} />
+            <Place id="dons" className={null} />
             <h3 className="sh">Developer split</h3><Place id="ballots" className={null} /></>)}
           {sec('emergency', <><h2>Emergency code</h2><div className="card" id="emergency">
             <p>If this node will be offline for a while - more than about two days on mainnet, 12 blocks on testnet4 - take it out of the
