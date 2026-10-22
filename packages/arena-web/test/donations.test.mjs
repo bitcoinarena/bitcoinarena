@@ -109,12 +109,13 @@ test('the donations table: filters for app, part, search and rows; paging; a row
   await t.load();
   const html = () => renderToStaticMarkup(t.render());
   let h = html();
-  assert.deepEqual(asked[0], { slug: 'deva', app: '', q: '', limit: 25, offset: 0 });
+  assert.deepEqual(asked[0], { slug: 'deva', app: '', q: '', limit: 10, offset: 0 }, 'ten rows by default (the owner 2026-10-22)');
+  t.set({ limit: 25 }); await t.load();
   assert.match(h, /<div class="dt-sum"><b>60<\/b> donations · <b>180 sat<\/b><\/div>/);
   assert.match(h, /<option value="" selected="">All apps<\/option><option value="nextblock">Tick Tock, Next Block · 50<\/option><option value="items">Items · 10<\/option>/);
   assert.match(h, /<td class="dim">2026-10-22 15:08<\/td><td><span class="tag">Tick Tock, Next Block<\/span><\/td><td class="mono">80b976dc…0000<\/td><td class="mono">c8a6af20…1111<\/td><td class="n"><b>3 sat<\/b><\/td>/);
   assert.match(h, /<span class="tag item">item<\/span><\/td><td class="mono">turbo<\/td>/, 'an item donation names its item');
-  assert.match(h, /<button type="button" disabled="">‹ Prev<\/button><span>1–25 of 60 · page 1 of 3<\/span><button type="button">Next ›<\/button>/);
+  assert.match(h, /<button type="button" disabled="">‹ Prev<\/button><span>1–10 of 60 · page 1 of 6<\/span><button type="button">Next ›<\/button>/);
   t.set({ offset: 25 }); await t.load();
   assert.deepEqual(asked.at(-1), { slug: 'deva', app: '', q: '', limit: 25, offset: 25 });
   assert.match(html(), /<span>26–50 of 60 · page 2 of 3<\/span>/);
