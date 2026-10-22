@@ -181,7 +181,7 @@
       fedList.sort((a, b) => (fedNoOf(a.federation) || 99) - (fedNoOf(b.federation) || 99));   // the tables in number order (kanban #557)
       paintCapacity(await capP, fedList);
       paintFeds(fedList);
-      paintFounding(nodes, fedList);
+      paintFounding(nodes, fedList, await membersOf(nodes));
       await paintGateways(fedList, seats, nodes);
       await paintPending(seats);
       await paintLiquidity(fedList, nodes, tip);
@@ -247,67 +247,47 @@
   }
 
   // WAITING FOR A FOUNDING (kanban #585, the owner 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in the future if
-  // they're ready to be founded"): the census nodes that may guard and guard no OPEN federation - the cohort the next founding draws ten
-  // of - each with its own GET /founding: ready when its guardian waits in setup; and the founding that runs, as the nodes report it
-  function paintFounding(nodes, feds) {
-    const open = new Set(feds.filter((f) => f.status === 'OPEN').map((f) => String(f.federation).toLowerCase()));
+  // they're ready to be founded" - and "Tu das Dashboard so umbauen dass es solchen Diskrepanzen nicht geben kann ... Wenn 8 von 10 ready
+  // sind müssen auch 8 da stehen"): ONE LIST, from one seat - every node the cohort can draw, each asked by that seat (GET /founding?members=1:
+  // the page cannot reach nodes on private addresses) - and every number on the card is counted from those rows
+  async function membersOf(nodes) {
     const fb = (n) => (n.found && n.found.ok ? n.found.body : null);
-    const cand = nodes.filter((n) => n.guardianCapable && !(n.guardianOf || []).some((f) => open.has(String(f).toLowerCase())));
-    const ready = (n) => { const r = fb(n) && fb(n).ready; return r ? r.guardian : null; };
-    // the founding that runs: the one most nodes name, its seated nodes and codes from the node that holds the most codes
+    const seats = nodes.filter((n) => fb(n) && fb(n).ready && fb(n).ready.cohort).sort((a, b) => fb(b).ready.cohort.height - fb(a).ready.cohort.height);
+    for (const n of seats.slice(0, 3)) { const a = await ask(n.base, '/founding?members=1'); if (a.ok && a.body && a.body.members) return a.body.members; }
+    return null;
+  }
+  function paintFounding(nodes, feds, mem) {
+    const fb = (n) => (n.found && n.found.ok ? n.found.body : null);
+    // the founding most nodes name (an old draw on nodes not restarted yet may hold more codes), then the newest trigger
     const runs = nodes.map(fb).filter((b) => b && b.id);
     const byId = new Map(); for (const b of runs) { const w = byId.get(b.id); if (!w || (b.codes || []).length > (w.codes || []).length) byId.set(b.id, b); }
-    // THE ONE MOST NODES NAME (the owner 2026-10-22, a screenshot: a27706f2 "7 of 10 codes" while the seats ran 87eff0d0 - nodes not restarted
-    // yet still named the old draw, which held more codes); among those, the newest trigger
     const named = new Map(); for (const b of runs) named.set(b.id, (named.get(b.id) || 0) + 1);
     const th = (b) => Number((b.trigger && b.trigger.height) || 0);
     const run = [...byId.values()].sort((x, y) => (named.get(y.id) - named.get(x.id)) || (th(y) - th(x)) || ((y.codes || []).length - (x.codes || []).length))[0] || null;
-    const seated = new Map((run ? run.seated || [] : []).map((x) => [String(x.node || x).toLowerCase(), x]));
-    const coded = new Set((run ? run.codes || [] : []).map((c) => String(c.node).toLowerCase()));
-    const cohorts = nodes.map(fb).filter((b) => b && b.ready && b.ready.cohort).map((b) => b.ready.cohort).sort((x, y) => y.height - x.height);
-    const cohort = cohorts[0] || null;
-    // THE NODES THE SEATS COUNT (their cohort's free operators' nodes): an operator with one node guarding an OPEN federation is not free
-    const counted = new Set(cohort && Array.isArray(cohort.nodes) ? cohort.nodes.map((k) => String(k).toLowerCase()) : []);
-    const isCounted = (n) => counted.has(String(n.node || '').toLowerCase());
-    // ONLY THE NODES THAT WAIT (the owner 2026-10-22: "Zeige nur nodes die wirklich online sind, und keine Open Federation bewachen"): online
-    // now, and free by the seats' own count (their cohort's nodes); while no seat names its cohort, free by this page's reading
-    const online = (n) => !!(n.version && n.version.ok);
-    // no estimate of the page's own (the owner 2026-10-22: "Warum haben wir 25 free operators"): until a seat names its cohort, nobody is shown
-    const free = (n) => !!(cohort && Array.isArray(cohort.nodes)) && isCounted(n);
-    const shown = cand.filter((n) => online(n) && free(n));
-    const offline = cand.filter((n) => !online(n)).length, guarding = cand.filter((n) => online(n) && !free(n)).length;
-    // WHY A NODE IS NOT COUNTED, in its own words (ready.cohort.self.guarding): its operator's node that guards a federation held OPEN, or
-    // one no seat holds a record of
-    const whyNot = (n) => { const c = fb(n) && fb(n).ready && fb(n).ready.cohort; const me = c && c.self;
-      if (!me) return '-';
-      if (me.free) return '';
-      const g = (me.guarding || [])[0];
-      const fed = (f) => (fedNoOf(f) ? `Federation ${fedNoOf(f)}` : cut(f, 8));
-      return g ? `operator ${cut(me.operator, 12)}${me.operatorNodes > 1 ? ` (${me.operatorNodes} nodes)` : ''}: ${String(g.node).toLowerCase() === String(n.node).toLowerCase() ? 'this node' : 'its node ' + cut(g.node, 8)} guards ${fed(g.federation)}, ${g.status === 'OPEN' ? 'OPEN' : 'no record held - counts as OPEN'}` + ((me.guarding || []).length > 1 ? ` (+${me.guarding.length - 1})` : '')
-        : `bond ${sat(me.bondSats)} sat below the guardian minimum`; };
-    const whys = new Map(); for (const b of nodes.map(fb)) if (b && b.ready && b.ready.why) whys.set(b.ready.why, (whys.get(b.ready.why) || 0) + 1);
-    const why = [...whys].sort((x, y) => y[1] - x[1])[0];
+    const live = run && !run.void && run.federation !== true ? run : null;
+    const seated = new Map((live ? live.seated || [] : []).map((x) => [String(x.node || x).toLowerCase(), x]));
+    const coded = new Set((live ? live.codes || [] : []).map((c) => String(c.node).toLowerCase()));
+    // the rows: the seat's list, and any drawn node it does not list
+    const byKey = new Map(((mem && mem.nodes) || []).map((m) => [String(m.node).toLowerCase(), m]));
+    for (const k of seated.keys()) if (!byKey.has(k)) byKey.set(k, { node: k, endpoint: '', state: 'not listed' });
+    const WORD = { setup: ['ready', 'ok'], running: ['its guardian runs a federation', 'warn'], none: ['no guardian in setup', 'bad'], off: ['founding is off on this node', 'bad'],
+      'older release': ['an older release (says nothing)', 'warn'], 'no answer': ['no answer', 'bad'], 'not listed': ['not in the seat\'s list', 'warn'] };
+    const rows = [...byKey.values()].map((m) => {
+      const k = String(m.node).toLowerCase(), s = seated.get(k), w = WORD[m.state] || [String(m.state), 'warn'];
+      const part = !live ? '' : s ? (coded.has(k) ? { t: `drawn #${s.position + 1} · code ✓`, c: 'ok' } : { t: `drawn #${s.position + 1} · no code yet`, c: 'bad' })
+        : (live.alternates || []).map((x) => String(x).toLowerCase()).includes(k) ? 'alternate' : '';
+      return { key: k, dot: w[1] === 'ok' ? 'ok' : w[1], ready: m.state === 'setup', drawn: s ? s.position : 99, cells: [{ t: cut(k, 12), c: 'mono' }, String(m.endpoint || '').replace(/^https?:\/\//, ''), { t: w[0], c: w[1] }, part] };
+    }).sort((x, y) => (x.drawn - y.drawn) || (Number(y.ready) - Number(x.ready)));
+    const nReady = rows.filter((r) => r.ready).length;
+    const drawnCoded = [...seated.keys()].filter((k) => coded.has(k)).length;
     H.draw($('founding-facts'), 'facts', { items: [
-      ['Free operators (cohort)', cohort ? `${cohort.free} of ${cohort.needed} needed` : 'no seat has counted yet', cohort ? (cohort.free >= cohort.needed ? 'ok' : 'warn') : ''],
-      ['Online, free and ready (guardian in setup)', `${shown.filter((n) => ready(n) === 'setup').length} of ${shown.length}`, shown.filter((n) => ready(n) === 'setup').length >= 10 ? 'ok' : shown.length ? 'warn' : 'bad'],
-      ['Founding', run ? `${cut(run.id, 8)} · ${coded.size} of ${seated.size} codes` + (run.federation ? ' · federation runs' : run.void ? ' · void' : ` · window to ${sat(run.windowEnd)}`) : (why ? why[0] : 'none running'),
-        run ? (run.federation ? 'ok' : run.void ? 'bad' : 'warn') : 'muted'],
+      ['Can be drawn', mem ? `${rows.length} nodes (${mem.free} operators, ${mem.needed} needed)` : 'no seat answered its list yet', mem ? (mem.free >= mem.needed ? 'ok' : 'warn') : 'muted'],
+      ['Ready (guardian waits in setup)', `${nReady} of ${rows.length}`, rows.length && nReady >= 10 ? 'ok' : nReady ? 'warn' : 'bad'],
+      ['Founding', live ? `${cut(live.id, 8)}: ${seated.size} drawn, ${drawnCoded} posted their code · until block ${sat(live.windowEnd)}` : run && run.federation ? `${cut(run.id, 8)}: the federation runs` : 'none running',
+        live ? (drawnCoded >= seated.size ? 'ok' : 'warn') : run && run.federation ? 'ok' : 'muted'],
     ] });
-    const RANK = { setup: 0, running: 1, none: 2 };
-    const rows = shown.map((n) => {
-      const r = ready(n), b = fb(n), k = String(n.node || '').toLowerCase(), s = seated.get(k);
-      const state = !n.version || !n.version.ok ? { t: 'not answering', c: 'bad' } : !b ? { t: 'no /founding', c: 'bad' }
-        : r === 'setup' ? { t: 'ready', c: 'ok' } : r === 'running' ? { t: 'guardian runs a federation', c: 'warn' } : r === 'none' ? { t: 'no guardian in setup', c: 'bad' } : b.off ? { t: 'founding off', c: 'bad' } : { t: 'an older release: says no readiness', c: 'warn' };
-      const part = !run ? '-' : s ? (coded.has(k) ? { t: `seated ${s.position + 1} · code ✓`, c: 'ok' } : { t: `seated ${s.position + 1} · no code`, c: 'bad' })
-        : (run.alternates || []).map((x) => String(x).toLowerCase()).includes(k) ? 'alternate' : (run.noShows || []).map((x) => String(x).toLowerCase()).includes(k) ? { t: 'no-show', c: 'bad' } : 'not drawn';
-      return { key: n.node || n.base, dot: state.c === 'ok' ? 'ok' : state.c === 'warn' ? 'warn' : 'bad', rank: RANK[r] ?? 3,
-        cells: [{ t: cut(n.node, 12), c: 'mono' }, (n.base || '').replace(/^https?:\/\//, ''), sat(n.bondSats), state, !cohort || !Array.isArray(cohort.nodes) ? '-' : counted.has(k) ? { t: 'counted ✓', c: 'ok' } : { t: 'not counted', c: 'muted' }, counted.has(k) ? '' : { t: whyNot(n), c: 'muted' }, part],
-        counted: counted.has(k) ? 0 : 1 };
-    }).sort((x, y) => (x.counted - y.counted) || (x.rank - y.rank));
-    const hidden = [offline ? `${offline} not reachable from this page (offline, or on a private address)` : '', guarding ? `${guarding} guarding an OPEN federation (or one no seat holds a record of)` : ''].filter(Boolean).join(', ');
-    drawTable('founding', ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding'], rows.map((r) => ({ ...r, cells: [r.cells[0], r.cells[1], r.cells[2], r.cells[3], r.cells[6]] })),
-      cohort ? 'no node online is free of an OPEN federation' : 'no seat this page reaches has counted its cohort yet',
-      (cohort ? `the seats' count at ${sat(cohort.height)}: ${cohort.free} free operators (an operator may run several nodes)` : '') + (hidden ? `${cohort ? ' · ' : ''}not shown: ${hidden}` : ''));
+    drawTable('founding', ['Node key', 'Address', 'State', 'This founding'], rows, 'no seat answered the list of nodes that can be drawn yet',
+      mem ? `as seat-counted at block ${sat(mem.height)} - each node asked by that seat` : null);
   }
 
   // WHAT THE NETWORK WAITS FOR (kanban #560, the owner 2026-10-20: "Make sure that /health is also showing this table by asking the nodes"):
