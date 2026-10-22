@@ -115,11 +115,13 @@ export class DonationsTable extends React.Component {
               <td className="dim">{when(d.atMs)}</td>
               <td>{d.app ? <span className="tag">{d.title || d.app}</span> : <span className="tag dim">older round</span>}{d.item ? <span className="tag item">item</span> : d.market ? <span className="tag mk">market</span> : null}</td>
               <td className={d.window ? 'win' : 'mono'} title={d.window ? `round ${d.round}` : undefined}>{d.item ? d.item : d.window ? span(d.window) : short(d.round)}</td>
-              <td className="mono">{short(d.player)}</td>
+              <td className="mono">{d.parts && d.parts.length > 1 ? <span title={d.parts.map((x) => x.player).join('\n')}>{d.parts.length} players</span> : short(d.player || (d.parts && d.parts[0] && d.parts[0].player))}</td>
               <td className="n"><b>{curOf(d.fiat) || sat(msatOf(d))}</b>{curOf(d.fiat) ? <small>{sat(msatOf(d))}</small> : null}</td></tr>
             {s.open === i ? <tr className="dt-more"><td colSpan="5"><div className="dt-rec">
               {[['Market', d.window ? `${new Date(d.window.fromMs).toISOString().slice(0, 10)} ${span(d.window)} UTC` : null], ['Round', d.round], ['Entry', d.entry], ['Player key', d.player], ['Outpoint', d.outpoint]].filter(([, v]) => v).map(([k, v]) => <div key={k}><span>{k}</span><code>{v}</code></div>)}
               <div><span>Parts</span><code>protocol {sat(d.protocolMsat)} · app {sat(d.appMsat)} · whole {sat(d.amountMsat)}</code></div>
+              {/* EACH ORDER'S PART OF A MARKET'S DONATION (kanban #580): its player and its share */}
+              {(d.parts || []).map((x) => <div key={x.entry}><span>Order</span><code>{x.player} · {sat(x.msat)}</code></div>)}
               {cur !== 'sat' && d.fiat.all[cur] !== undefined ? <div><span>{cur.toUpperCase()} then</span><code>{money(d.fiat.all[cur], cur)}</code></div> : null}</div></td></tr> : null}
           </React.Fragment>)}</tbody></table></div>
           : <p className="sub">{r ? 'No donation matches.' : 'Loading…'}</p>}
