@@ -27,7 +27,7 @@ function panel(over = {}) {
 test('the set in force, a proposal with its votes and vesting, Accept / Deny only for a client that has not voted, a fee proposal', async () => {
   const p = panel();
   const h = p.html();
-  assert.match(h, /<h3>In force: serial 4<\/h3><div class="row"><span>dev a <span class="sub">02aaaaaaaaaa…<\/span><\/span><b>60 %<\/b>/);
+  assert.match(h, /<h3>In force: serial 4<\/h3><div class="split-bar">.*?<\/div><div class="row"><span>dev a <span class="sub">02aaaaaaaaaa…<\/span><\/span><b>60 %<\/b>/);
   assert.match(h, /<h3>Proposal · serial 5 <span class="sub">p1p1p1p1p1p1<\/span><\/h3><div class="row"><span>State<\/span><b>open · 40 % accepted, more than 50 % needed<\/b>/);
   assert.match(h, /<b>50 % → 60 % over 30 days from block 158000<\/b>/);
   assert.match(h, /<span>dev b \(40 %\)<\/span><b><span class="ok">accepted<\/span> · block 157230<\/b>/);
@@ -57,4 +57,23 @@ test('propose: starts from the set in force; the shares must make 100 % and ever
   assert.match(panel({ dev: { clients: [] } }).html(), /^<div class="card"><h3>In force/);
   assert.doesNotMatch(panel({ dev: { clients: [] } }).html(), /Propose a new split/, 'no recipient client here, no form');
   assert.equal(renderToStaticMarkup(React.createElement(BallotsPanel, { why: 'no answer' })), '<div class="card"><p class="err">no answer</p></div>');
+});
+
+test('the split form, pretty: a row per developer with a select of the known developers, the share in %, vesting optional, the total live as a bar (kanban #578)', () => {
+  const p = panel();
+  let h = p.html();
+  assert.match(h, /<div class="card split"><h3>Propose a new split<\/h3>/);
+  assert.match(h, /<div class="split-total ok">Total 100 % ✓<\/div>/);
+  assert.match(h, /<select><option value="02a{64}" selected="">dev a<\/option><option value="03b{64}">dev b<\/option><option value="">Another key…<\/option><\/select><small title="02a{64}">02aaaaaaaaaaaaaa…<\/small>/);
+  assert.doesNotMatch(h, /placeholder="02… or 03… \(66 hex\)"/, 'a known developer needs no key typed');
+  assert.match(h, /<button type="button" class="primary" id="pgo">Propose<\/button>/);
+  p.m.state.rows[1].share = '30';
+  h = p.html();
+  assert.match(h, /<div class="split-total warn">Total 90 % · 10 % left to give<\/div>/);
+  assert.match(h, /<button type="button" class="primary" id="pgo" disabled="">Propose<\/button>/, 'Propose waits for 100 %');
+  p.m.state.rows.push({ key: '', label: '', share: '10', vest: '', days: '', other: true });
+  h = p.html();
+  assert.match(h, /<option value="" selected="">Another key…<\/option><\/select><input[^>]*placeholder="02… or 03… \(66 hex\)"/, 'another key: typed, with its label');
+  assert.match(h, /<div class="split-total ok">Total 100 % ✓<\/div>/);
+  assert.match(h, /<h3>In force: serial 4<\/h3><div class="split-bar"><i title="dev a: 60 %" style="width:60%;background:var\(--st\)"><\/i>/);
 });
