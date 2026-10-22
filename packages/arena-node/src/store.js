@@ -1177,6 +1177,10 @@ export function openStore(path = ':memory:') {
   // AND WHAT IT PAID FOR WHEN IT IS NO ROUND'S ENTRY: an item purchase's reserve output, "game · item id"
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'item'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN item TEXT');
+  // AND A MARKET DONATION'S PARTS (kanban #580): each filled order's entry, player key and fee, as JSON - a market pays its donation once per
+  // round out of every order's fee, so the row itself names no one player
+  if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'parts'))
+    db.exec('ALTER TABLE donation_outputs ADD COLUMN parts TEXT');
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))

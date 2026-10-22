@@ -115,3 +115,13 @@ test('a round in any federation: each federation\'s part of the reserve goes to 
   const miss = splitByFederation(plan, { roundId: b32(1), federationOf: fedOf, feesOf: () => NO_FEES, reserveKeyOf: (f) => (f === A ? keys[A] : null) });
   assert.match(miss.why, /names no reserve key/);
 });
+
+test('a market\'s donation names each filled order\'s part: its entry, its player key and the fee it paid (kanban #580); the payouts unchanged', () => {
+  const s = settle({ nodeBps: 40, donationBps: 60, reserveBps: 20, reserveKey: key33(0x77) });
+  assert.equal(s.ok, true, s.why);
+  const gifts = s.payouts.filter((p) => p.kind === 'donation key');
+  assert.ok(gifts.length >= 1);
+  for (const g of gifts) assert.deepEqual(g.donation.parts, [{ entryId: id('a'), playerPubkey: toHex(player.a), feeMsat }, { entryId: id('b'), playerPubkey: toHex(player.b), feeMsat }]);
+  assert.equal(sum(s, 'donation key'), 80000n, 'what is paid is as before');
+  assert.equal(s.payouts.filter((p) => p.kind !== 'donation key').some((p) => p.donation), false, 'only the donation names parts');
+});

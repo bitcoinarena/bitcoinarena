@@ -97,7 +97,8 @@ export async function gatherDonations({ recipientPkHex, seats, fetcher = fetch, 
       const j = await r.json();
       for (const d of j.donations || []) {
         const was = byOutpoint.get(d.outpoint);
-        if (was) { was.seats++; continue; }
+        // a seat that names a market donation's parts (kanban #580) completes the row another seat gave without them
+        if (was) { was.seats++; if (!was.parts && Array.isArray(d.parts) && d.parts.length) was.parts = d.parts; continue; }
         byOutpoint.set(d.outpoint, { ...d, seats: 1 });
       }
     } catch (e) { unanswered.push(`${seat}: ${e.message}`); }
@@ -332,20 +333,22 @@ export const RATE_PROVIDER = 'coingecko api/v3 coins/bitcoin/market_chart/range'
 export async function rateAt({ atMs, fetcher = fetch }) {
   const from = Math.floor((Number(atMs) - 3600000) / 1000), to = Math.ceil((Number(atMs) + 3600000) / 1000);
   const out = { ok: true, provider: RATE_PROVIDER, priceAtMs: {} };
-  // CHF AND GBP TOO (kanban #578): every donation keeps its value in the four currencies the owner page offers
+  // CHF AND GBP TOO (kanban #578), BEST EFFORT: USD and EUR are the record's as before - a failure there answers why - while a CHF or GBP
+  // price the provider does not give (a rate limit on the extra calls) is left out; the owner page fills it later (fiat-rates.js)
   for (const cur of ['usd', 'eur', 'chf', 'gbp']) {
+    const must = cur === 'usd' || cur === 'eur';
     let prices;
     try {
       const r = await fetcher(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=${cur}&from=${from}&to=${to}`);
-      if (!r.ok) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER} answered ${r.status} for ${cur}` };
+      if (!r.ok) { if (must) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER} answered ${r.status} for ${cur}` }; continue; }
       prices = (await r.json()).prices;
-    } catch (e) { return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER}: ${e.message}` }; }
-    if (!Array.isArray(prices) || !prices.length) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER} has no ${cur} price around ${new Date(Number(atMs)).toISOString()}` };
+    } catch (e) { if (must) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER}: ${e.message}` }; continue; }
+    if (!Array.isArray(prices) || !prices.length) { if (must) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER} has no ${cur} price around ${new Date(Number(atMs)).toISOString()}` }; continue; }
     const [ms, price] = prices.reduce((best, p) => (Math.abs(p[0] - atMs) < Math.abs(best[0] - atMs) ? p : best));
     out[cur] = price;
     out.priceAtMs[cur] = ms;
   }
-  return { ok: true, usd: out.usd, eur: out.eur, chf: out.chf, gbp: out.gbp, priceAtMs: out.priceAtMs, provider: RATE_PROVIDER };
+  return { ok: true, usd: out.usd, eur: out.eur, ...(out.chf ? { chf: out.chf } : {}), ...(out.gbp ? { gbp: out.gbp } : {}), priceAtMs: out.priceAtMs, provider: RATE_PROVIDER };
 }
 
 /** One donation as the dev keeps it for good: who sent it, in which round, how much, when, and what it was worth then. */
@@ -355,7 +358,17 @@ export const donationRecord = (d, rate, { recordedAt = Date.now() } = {}) => ({
   usdPerBtc: rate.usd, eurPerBtc: rate.eur, ...(rate.chf ? { chfPerBtc: rate.chf } : {}), ...(rate.gbp ? { gbpPerBtc: rate.gbp } : {}), ratesAtMs: rate.priceAtMs, rateProvider: rate.provider, recordedAt,
   // AN ITEM'S DONATION names what was bought (kanban #578): the seat's "<game> · <item id>", and both parts on their own to group by
   ...(d.item ? itemFields(d.item) : {}),
+  // A MARKET'S DONATION, ORDER BY ORDER (kanban #580): each filled order's entry, player key and its share of this output in msat (the
+  // output times its fee over all the parts' fees, the rest of a msat to the first); one order alone is the row's player
+  ...(Array.isArray(d.parts) && d.parts.length ? marketParts(d) : {}),
 });
+export function marketParts(d) {
+  const amount = BigInt(d.amountMsat || 0), weights = d.parts.map((x) => BigInt(x.feeMsat || 0)), total = weights.reduce((t, w) => t + w, 0n);
+  const shares = weights.map((w) => (total > 0n ? (amount * w) / total : 0n));
+  if (shares.length) shares[0] += amount - shares.reduce((t, x) => t + x, 0n);
+  const parts = d.parts.map((x, i) => ({ entryId: String(x.entryId), playerKey: String(x.playerPubkey), msat: String(shares[i]) }));
+  return { parts, ...(!d.playerKey && parts.length === 1 ? { playerKey: parts[0].playerKey } : {}) };
+}
 const itemFields = (label) => { const s = String(label); const at = s.lastIndexOf(' · ');
   return at > 0 ? { item: s, itemGame: s.slice(0, at), itemId: s.slice(at + 3) } : { item: s }; };
 

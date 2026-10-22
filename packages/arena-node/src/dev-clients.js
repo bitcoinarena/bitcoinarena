@@ -128,7 +128,9 @@ export function donationParts(rows, { protocolBps = 0, gameOf = () => null, item
       item: isItemRow(r) ? String(r.itemId || (r.item ? String(r.item).split(' · ').pop() : '') || 'an item') : null,
       protocolMsat: toProtocol, appMsat: g && p + q > 0n ? amount - toProtocol : 0n,
       // a market round's window and the player of the entry (kanban #580) - a market's donation row names no player key itself
-      window: !isItemRow(r) && g && g.market ? windowOf(String(r.roundId || '')) : null, player: playerOf(r) };
+      window: !isItemRow(r) && g && g.market ? windowOf(String(r.roundId || '')) : null, player: playerOf(r),
+      // a market's donation, order by order (kanban #580): each filled order's entry, player key and share
+      parts: Array.isArray(r.parts) ? r.parts.map((x) => ({ entry: String(x.entryId || ''), player: String(x.playerKey || ''), msat: String(x.msat || '0') })) : null };
   });
 }
 
@@ -145,7 +147,7 @@ export function donationsPage(info, rates = {}, { app = '', q = '', limit = 25, 
   for (const x of info) { count(x.game || 'unknown', x.game ? x.title : 'Older rounds', !!x.market); if (x.item) count('items', 'Items (all apps)', false); }
   app = String(app || ''); q = String(q || '').toLowerCase().trim();
   const rows = info.filter((x) => (!app || (app === 'items' ? x.item : app === 'unknown' ? !x.game : x.game === app))
-    && (!q || [x.player || x.r.playerKey, x.r.roundId, x.r.entryId, x.r.item, x.r.outpoint].some((v) => String(v || '').toLowerCase().includes(q)))).sort((a, b) => at(b.r) - at(a.r));
+    && (!q || [x.player || x.r.playerKey, x.r.roundId, x.r.entryId, x.r.item, x.r.outpoint, ...(x.parts || []).flatMap((y) => [y.player, y.entry])].some((v) => String(v || '').toLowerCase().includes(q)))).sort((a, b) => at(b.r) - at(a.r));
   limit = Math.max(5, Math.min(200, Number(limit) || 25)); offset = Math.max(0, Number(offset) || 0);
   const msatOf = (x, part) => (part === 'protocol' ? x.protocolMsat : part === 'app' ? x.appMsat : BigInt(x.r.amountMsat || 0));
   const fiat = (x, part) => Object.fromEntries(Object.entries(rates[x.r.outpoint] || {}).map(([c, perBtc]) => [c, Math.round((Number(msatOf(x, part)) / 1e11) * perBtc * 10000) / 10000]));
@@ -156,7 +158,7 @@ export function donationsPage(info, rates = {}, { app = '', q = '', limit = 25, 
   return { total: rows.length, offset, limit, apps: [...apps.values()], sums,
     rows: rows.slice(offset, offset + limit).map((x) => ({ atMs: at(x.r), amountMsat: String(x.r.amountMsat || '0'), protocolMsat: String(x.protocolMsat), appMsat: String(x.appMsat),
       app: x.game, title: x.title, market: !!x.market, item: x.item, round: x.item ? null : String(x.r.roundId || ''),
-      entry: String(x.r.entryId || ''), player: x.player !== undefined ? x.player : (x.r.playerKey ? String(x.r.playerKey) : null), window: x.window || null, outpoint: String(x.r.outpoint || ''),
+      entry: String(x.r.entryId || ''), player: x.player !== undefined ? x.player : (x.r.playerKey ? String(x.r.playerKey) : null), window: x.window || null, parts: x.parts || null, outpoint: String(x.r.outpoint || ''),
       fiat: Object.fromEntries(parts.map((p) => [p, fiat(x, p)])) })) };
 }
 

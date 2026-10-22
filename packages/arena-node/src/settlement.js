@@ -1385,7 +1385,9 @@ export class LockSettlement {
     // row under the reserve key too, its entry id zeros (it is the round's, no one entry's)
     const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p, i }) => SETTLEMENT_ROW_KINDS.has(p.kind) && (!only || only.has(i))).map(({ p, i }) => ({
       outpoint: { txid: fromHex(String(txid)), outIdx: BigInt(i) }, entryId: p.donation ? p.donation.id : new Uint8Array(32), roundId: roundIdBytes, federationId,
-      recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}` }));
+      recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}`,
+      // a market's donation names each filled order's part (kanban #580): its entry, its player key, the fee it paid (the weight)
+      ...(p.donation && Array.isArray(p.donation.parts) && p.donation.parts.length ? { parts: p.donation.parts.map((x) => ({ entryId: String(x.entryId), playerPubkey: String(x.playerPubkey), feeMsat: String(x.feeMsat) })) } : {}) }));
     if (rows.length) this.round.putDonationOutputs(rows);
     return rows.length;
   }
