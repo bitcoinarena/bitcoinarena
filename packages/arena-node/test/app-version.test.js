@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN APP'S DONATION SPLIT, CHANGED FROM THE OWNER PAGE (kanban #578, ruling A): the node signs the app's next version - version + 1, the
+// AN APP'S DONATION SPLIT, SIGNED BY ITS DEVELOPER (kanban #582, the owner 2026-10-22: only when the game dev is logged in): the browser signs the next version - version + 1, the
 // version it replaces as its parent, the new set - with the app's developer key from its app-keys folder, and hosts it at once; it
 // stands as an update. Only the newest version, only with the app's own key, only a set that stands and is new.
 import test from 'node:test';
@@ -12,14 +12,15 @@ import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { appKeysIn, splitAsSet, nextVersionWithSplit } from '../src/app-split.js';
+import { devKeyFromText, splitAsSet, nextVersionWithSplit } from '../src/app-version.js';
 import { checkUpdate } from '../src/plugin-check.js';
 import { verifyEd25519 } from '../src/ed25519.js';
 import { ownerSecretFromSeed, signOwnerRequest } from '../src/owner.js';
 import { testAttestedGame, testDevKey } from './plugins/sign.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
-import { gameIdOf, manifestStands } from '../../arena-protocol/src/manifest.js';
+import { gameIdOf, manifestStands, manifestBodyId, encodeManifest } from '../../arena-protocol/src/manifest.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { gameInfoStands } from '../../arena-protocol/src/game-info.js';
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -28,11 +29,13 @@ const keysDir = (...words) => { const d = mkdtempSync(join(tmpdir(), 'app-keys-'
 const K = (n) => '02' + String(n).repeat(64).slice(0, 64);
 const SPLIT = [{ key: K(1), label: 'dev a', shareBps: 5000 }, { key: K(2), label: 'dev b', shareBps: 3000 }, { key: K(3), label: 'dev c', shareBps: 2000 }];
 
-test('the keys in the folder: each PKCS#8 Ed25519 file by its public key, anything else skipped', () => {
-  const keys = appKeysIn(keysDir('split-market', 'other-app'));
-  assert.deepEqual([...keys.keys()].sort(), [toHex(testDevKey('split-market').pubkey), toHex(testDevKey('other-app').pubkey)].sort());
-  assert.equal(appKeysIn(null).size, 0);
-  assert.equal(appKeysIn('/nonexistent/app-keys').size, 0);
+test('the developer\'s key as the developer has it: PKCS#8 PEM, its DER in base64 or hex, or the seed in hex - anything else refused', () => {
+  const seed = seedOf('split-market'), der = Buffer.concat([PKCS8_ED25519, seed]);
+  const want = toHex(testDevKey('split-market').pubkey);
+  for (const text of [der.toString('base64'), `-----BEGIN PRIVATE KEY-----\n${der.toString('base64')}\n-----END PRIVATE KEY-----`, der.toString('hex'), seed.toString('hex')])
+    assert.equal(devKeyFromText(text).pubkey, want);
+  assert.equal(devKeyFromText('not a key').ok, false);
+  assert.equal(devKeyFromText(Buffer.alloc(48, 1).toString('base64')).ok, false, 'not an Ed25519 PKCS#8');
 });
 
 test('the next version: version + 1, its parent the one it replaces, the new set named, signed by the same developer, its description signed again', () => {
@@ -52,12 +55,12 @@ test('the next version: version + 1, its parent the one it replaces, the new set
   assert.match(splitAsSet([{ key: 'zz', label: 'a', shareBps: 10000 }]).why, /33-byte key|key/);
 });
 
-test('POST /owner/apps/split: signed by the owner, the new version hosted at once and shown with its split; the old one is no longer changed', async () => {
+test('POST /owner/apps/split: the version its developer signed in the browser, hosted on the owner\'s request; another key\'s refused; the old one no longer changed', async () => {
   const { registration: g } = testAttestedGame({ name: 'split-market', outcomes: ['UP', 'DOWN'] });
   const { registration: other } = testAttestedGame({ name: 'not-ours', outcomes: ['A', 'B'] });
   const seed = new Uint8Array(32).fill(7), secret = ownerSecretFromSeed(seed);
   const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
-  const b = await serve(openStore(), { plugins: [g, other], port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')), appKeysDir: keysDir('split-market'),
+  const b = await serve(openStore(), { plugins: [g, other], port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')),
     owner: { store: { read: () => rec, write: () => {}, writeCode: () => {} } } });
   try {
     const B = `http://127.0.0.1:${b.port}`;
@@ -65,22 +68,29 @@ test('POST /owner/apps/split: signed by the owner, the new version hosted at onc
     const req = (args, s = secret) => signOwnerRequest({ node, action: 'apps/split', args, secret: s, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
     const post = async (body) => { const r = await fetch(`${B}/owner/apps/split`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
     const old = toHex(g.gameId);
+    // what the developer's browser sends: the next version, signed with the developer's key there
+    const signedBy = (word, game, recipients) => { const set = splitAsSet(recipients); if (!set.ok) return { game, why: set.why };
+      const n = nextVersionWithSplit(game === old ? g : other, set.set, seedOf(word)); return { game, manifest: n.hex, donationSet: n.donationSet, info: n.info }; };
     let listed = (await (await fetch(`${B}/owner/plugins`)).json()).hosted;
-    assert.deepEqual(listed.map((x) => [x.name, x.canSplit]).sort(), [['not-ours', false], ['split-market', true]]);
-    assert.deepEqual(listed.find((x) => x.name === 'split-market').split.map((x) => x.shareBps), [10000]);
-    assert.equal((await post(req({ game: old, recipients: SPLIT }, ownerSecretFromSeed(new Uint8Array(32).fill(9))))).status, 403, 'not the owner');
-    assert.equal((await post(req({ game: toHex(other.gameId), recipients: SPLIT }))).status, 403, 'no key for that app here');
-    const same = listed.find((x) => x.name === 'split-market').split;
-    assert.match((await post(req({ game: old, recipients: same }))).body.why, /the split it already has/);
-    assert.match((await post(req({ game: old, recipients: SPLIT.slice(0, 2) }))).body.why, /sum to 8000/);
-    const r = await post(req({ game: old, recipients: SPLIT }));
+    assert.deepEqual(listed.map((x) => [x.name, x.newest, x.split.map((y) => y.shareBps)]).sort(), [['not-ours', true, [10000]], ['split-market', true, [10000]]]);
+    assert.equal((await post(req(signedBy('split-market', old, SPLIT), ownerSecretFromSeed(new Uint8Array(32).fill(9))))).status, 403, 'not the owner');
+    assert.throws(() => signedBy('split-market', toHex(other.gameId), SPLIT), /not this app's developer key/, 'the browser signs only with that app\'s own key');
+    // a version signed by another key: refused by the node, as any update by another developer
+    const forged = (() => { const set = splitAsSet(SPLIT).set; const { signature: _x, ...body0 } = g.manifest;
+      const body = { ...body0, version: 2, parentManifestId: g.gameId, gameDevPubkey: testDevKey('mallory').pubkey, gameDonationSetId: donationSetId(set) };
+      const m = { ...body, signature: ed25519.sign(manifestBodyId(body), seedOf('mallory')) };
+      return { game: old, manifest: toHex(encodeManifest(m)), donationSet: set.map((r) => ({ recipientPk: toHex(r.recipientPk), shareBps: r.shareBps, label: r.label })) }; })();
+    const f = await post(req(forged));
+    assert.equal(f.body.ok, false);
+    assert.match(f.body.why, /another developer/, f.body.why);
+    const r = await post(req(signedBy('split-market', old, SPLIT)));
     assert.equal(r.status, 200, r.body.why);
     assert.deepEqual([r.body.version, r.body.parent, r.body.replaces, r.body.running], [2, old, old, true]);
     listed = (await (await fetch(`${B}/owner/plugins`)).json()).hosted;
     const v2 = listed.find((x) => x.name === 'split-market' && x.version === 2);
     assert.deepEqual(v2.split.map((x) => [x.label, x.shareBps]), [['dev a', 5000], ['dev b', 3000], ['dev c', 2000]]);
-    assert.equal(listed.find((x) => x.id === old).supersededBy, v2.id);
-    assert.match((await post(req({ game: old, recipients: SPLIT.map((x, i) => ({ ...x, shareBps: [4000, 4000, 2000][i] })) }))).body.why, /a newer version of this app runs here/);
+    assert.deepEqual([listed.find((x) => x.id === old).supersededBy, listed.find((x) => x.id === old).newest, v2.newest], [v2.id, false, true]);
+    assert.match((await post(req(signedBy('split-market', old, SPLIT.map((x, i) => ({ ...x, shareBps: [4000, 4000, 2000][i] })))))).body.why, /a newer version of this app runs here/);
     // other nodes take it from here as an update: the package this node hands out stands, on its parent
     const pkg = await (await fetch(`${B}/plugin?game=${v2.id}`)).json();
     assert.equal(pkg.ancestors.length, 1);
@@ -93,14 +103,15 @@ test('only an app\'s newest version takes a new split: an older built-in version
   const { registration: v2 } = testAttestedGame({ name: 'split-market', outcomes: ['UP', 'DOWN'], version: 2, parentManifestId: v1.gameId });
   const seed = new Uint8Array(32).fill(7), secret = ownerSecretFromSeed(seed);
   const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
-  const b = await serve(openStore(), { plugins: [v1, v2], port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')), appKeysDir: keysDir('split-market'),
+  const b = await serve(openStore(), { plugins: [v1, v2], port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')),
     owner: { store: { read: () => rec, write: () => {}, writeCode: () => {} } } });
   try {
     const B = `http://127.0.0.1:${b.port}`;
     const node = (await (await fetch(`${B}/owner`)).json()).node;
     const listed = (await (await fetch(`${B}/owner/plugins`)).json()).hosted;
-    assert.deepEqual(listed.map((x) => [x.version, x.canSplit]).sort(), [[1, false], [2, true]]);
-    const body = signOwnerRequest({ node, action: 'apps/split', args: { game: toHex(v1.gameId), recipients: SPLIT }, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+    assert.deepEqual(listed.map((x) => [x.version, x.newest]).sort(), [[1, false], [2, true]]);
+    const n = nextVersionWithSplit(v1, splitAsSet(SPLIT).set, seedOf('split-market'));
+    const body = signOwnerRequest({ node, action: 'apps/split', args: { game: toHex(v1.gameId), manifest: n.hex, donationSet: n.donationSet }, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
     const r = await fetch(`${B}/owner/apps/split`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal(r.status, 409);
     assert.match((await r.json()).why, /a newer version of this app runs here/);

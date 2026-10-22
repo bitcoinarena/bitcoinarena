@@ -117,7 +117,6 @@ import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
 import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
-import { appKeysIn, splitAsSet, nextVersionWithSplit } from './app-split.js';
 import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
@@ -400,7 +399,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHERE THE PLUGIN STORE KEEPS INSTALLED GAMES (main.js: <db>.plugins), loaded at start; installed
   // networks are kept in its networks/ directory
   pluginsDir = null,
-  appKeysDir = null,                           //: the app developer keys this node may sign an app's new split with (app-split.js, kanban #578)
   // THE CHAIN THIS SEAT READS, as its genesis names it ('bitcoin-regtest', 'bitcoin-testnet4'; main.js from ARENA_DONATION_NETWORK):
   // a network package for another chain is refused (network-check.js). Null: this seat takes no network package.
   chain = null,
@@ -898,7 +896,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return adoptPackage(pkg, { game, from, replaces });
   }
   // A PACKAGE TAKEN IN: checked (plugin-check.js and the trial run), an update checked against the version it replaces, kept on disk and
-  // running at once - one fetched from another seat, or a version this node signed itself (an app's new split, app-split.js)
+  // running at once - one fetched from another seat, or a version its developer signed in the owner page (an app's new split, app-version.js)
   async function adoptPackage(pkg, { game, from, replaces = null }) {
     const v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent });
     if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return { ...v, status: 422 }; }
@@ -917,32 +915,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
     return { ...v, ok: true, game, from, installedAt: at, running: true, replaces };
   }
-  // AN APP'S NEW SPLIT (kanban #578, ruling A): its next version, signed here with its developer key (app-split.js), hosted at once; other
-  // nodes take it as an update. Only the newest version of an app, and only with a key this node holds for that app's developer.
-  const appKeys = () => appKeysIn(appKeysDir);
+  // AN APP'S NEW SPLIT, SIGNED BY ITS DEVELOPER (kanban #582, the owner 2026-10-22: "die Game dev splits darf nur dann gelten, wenn der game
+  // dev eingeloggt ist"): the developer's browser signs the app's next version (app-version.js) - the key never reaches a node - and this
+  // node, on its owner's signed request, takes it as any update is taken (adoptPackage: the developer's signature, its parent, a higher
+  // version, the set its manifest names). Only the newest version of an app.
   const newerHosted = (g) => [...hosted.values()].some((x) => x.name === g.name && toHex(x.manifest.gameDevPubkey) === toHex(g.manifest.gameDevPubkey) && x.manifest.version > g.manifest.version);
-  async function splitApp({ game, recipients }) {
+  async function hostSplit({ game, manifest, donationSet, info = null }) {
     const g = hosted.get(game);
     if (!g) return { ok: false, status: 404, why: 'this node hosts no such app' };
-    // ONLY ITS NEWEST VERSION (measured 2026-10-22 on node 2: the built-in versions are never marked superseded, and Tick Tock v1 offered a
-    // new split - a second "version 2" beside the one there is): an update of it, or a newer one by the same developer, runs here
     if (superseded.has(game) || newerHosted(g)) return { ok: false, status: 409, why: 'a newer version of this app runs here: change that one' };
     if (!pluginsDir) return { ok: false, status: 409, why: 'this node keeps no installed apps (no plugins directory), so it cannot keep a new version' };
-    const seed = appKeys().get(toHex(g.manifest.gameDevPubkey));
-    if (!seed) return { ok: false, status: 403, why: 'this node does not hold this app\'s developer key' };
-    const a = splitAsSet(recipients);
-    if (!a.ok) return { ok: false, status: 400, why: a.why };
-    if (toHex(donationSetId(a.set)) === toHex(g.manifest.gameDonationSetId)) return { ok: false, status: 409, why: 'that is the split it already has' };
-    let next, pkg;
-    try {
-      next = nextVersionWithSplit(g, a.set, seed);
-      pkg = packageOf(g, { ancestors: [...chainOf(g), g.manifest] });
-    } catch (e) { return { ok: false, status: 500, why: e.message }; }
+    let next;
+    try { next = decodeManifest(fromHex(String(manifest || ''))); } catch (e) { return { ok: false, status: 400, why: `that is no manifest: ${e.message}` }; }
+    if (toHex(next.parentManifestId) !== game) return { ok: false, status: 400, why: 'that version does not replace this app\'s version' };
+    let pkg;
+    try { pkg = packageOf(g, { ancestors: [...chainOf(g), g.manifest] }); } catch (e) { return { ok: false, status: 500, why: e.message }; }
     if (!pkg) return { ok: false, status: 409, why: 'this node cannot package that app (its cores are not files it can hand out)' };
     const { info: _old, ...rest } = pkg;
-    pkg = { ...rest, manifest: toHex(encodeManifest(next.manifest)), donationSet: next.donationSet, ...(next.info ? { info: next.info } : {}) };
-    const r = await adoptPackage(pkg, { game: next.gameId, from: 'this node', replaces: game });
-    if (r.ok) console.log(`[apps] new split for ${g.name} v${next.manifest.version} (${next.gameId.slice(0, 16)}): ${next.donationSet.map((x) => `${x.label || x.recipientPk.slice(0, 8)} ${x.shareBps}`).join(', ')}`);
+    pkg = { ...rest, manifest: toHex(encodeManifest(next)), donationSet: Array.isArray(donationSet) ? donationSet : [], ...(info ? { info } : {}) };
+    const r = await adoptPackage(pkg, { game: toHex(gameIdOf(next)), from: 'its developer', replaces: game });
+    if (r.ok) console.log(`[apps] new split for ${g.name} v${next.version} (${toHex(gameIdOf(next)).slice(0, 16)}), signed by its developer ${toHex(next.gameDevPubkey).slice(0, 16)}`);
     return r;
   }
   // A GAME OFF THIS SEAT: only an installed one, and not while a round of it is unfinished here (its players are owed it)
@@ -5078,7 +5070,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
-          const keysHeld = appKeys();
           const installed = [];
           if (pluginsDir && existsSync(pluginsDir)) for (const id of readdirSync(pluginsDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
             try { const p = JSON.parse(readFileSync(joinPath(pluginsDir, id, 'package.json'), 'utf8')); installed.push({ id, name: p.name, title: p.title, running: hosted.has(id) }); } catch { /* not a package */ }
@@ -5086,9 +5077,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return answer(200, { hosted: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title, version: g.manifest.version,
             devKey: toHex(g.manifest.gameDevPubkey), installed: !!(pluginsDir && existsSync(joinPath(pluginsDir, toHex(g.gameId)))), supersededBy: superseded.get(toHex(g.gameId)) || null,
             type: gameTypeOf(g.manifest), info: g.info || null,
-            // its developers' split, and whether this node can sign a new one (kanban #578)
+            // its developers' split, and whether it is the newest version - only that one takes a new split, signed by its developer (kanban #582)
             split: (g.donationSet || []).map((r) => ({ key: toHex(r.recipientPk), label: r.label || '', shareBps: Number(r.shareBps) })),
-            canSplit: !!keysHeld.get(toHex(g.manifest.gameDevPubkey)) && !superseded.has(toHex(g.gameId)) && !newerHosted(g) })),
+            newest: !superseded.has(toHex(g.gameId)) && !newerHosted(g) })),
             installed, settings: owner.storeSettings() });
         }
         // THE NETWORK STORE'S VIEW OF THIS SEAT: the chain it reads, its own network's four settings, and the
@@ -5224,7 +5215,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'apps/split');
           if (!a.ok) return answer(a.status, a);
           const args = body.args || {};
-          const r = await splitApp({ game: String(args.game || '').toLowerCase(), recipients: args.recipients });
+          const r = await hostSplit({ game: String(args.game || '').toLowerCase(), manifest: args.manifest, donationSet: args.donationSet, info: args.info || null });
           return answer(r.status || (r.ok ? 200 : 409), r);
         }
         if (url.pathname === '/owner/plugins/remove') {
