@@ -72,7 +72,8 @@ export class OwnerArea extends React.Component {
             <Place id="ballots-open" className={null} />
             <Place id="devs" className={null} />
             <Place id="dons" className={null} />
-            <h3 className="sh">Developer split</h3><Place id="ballots" className={null} /></>)}
+            <h3 className="sh">Developer split</h3><Place id="ballots" className={null} />
+            <Place id="gamedevs" className={null} /></>)}
           {sec('emergency', <><h2>Emergency code</h2><div className="card" id="emergency">
             <p>If this node will be offline for a while - more than about two days on mainnet, 12 blocks on testnet4 - take it out of the
               network with your emergency code so you keep your bond. Open <a href="https://testnet.bitcoin-arena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoin-arena.io/offline</b></a> on any device and type the code.</p>

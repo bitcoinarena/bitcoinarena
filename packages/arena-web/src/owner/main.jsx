@@ -21,6 +21,7 @@ import { BondAnswer, CapacityPlea } from './BondOffer.jsx';
 import { LeavePanel } from './LeavePanel.jsx';
 import { WaitingDonations, DevClients } from './DonationsPanels.jsx';
 import { BallotsPanel } from './BallotsPanel.jsx';
+import { GameDevsPanel } from './GameDevsPanel.jsx';
 import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
@@ -73,7 +74,7 @@ export function mountBondAnswer(element, props) { const root = createRoot(elemen
 export function mountPlea(element, props) { const root = createRoot(element); root.render(<CapacityPlea {...props} />); return root; }
 export function mountLeave(element, props) { const root = createRoot(element); root.render(<LeavePanel {...props} />); return root; }
 // A PANEL DRAWN AGAIN IN THE SAME ROOT (its state kept: a form being typed keeps its words): by its kind's name
-const KINDS = { WaitingDonations, DevClients, BallotsPanel };
+const KINDS = { WaitingDonations, DevClients, BallotsPanel, GameDevsPanel };
 export function drawInto(element, kind, props) {
   const C = KINDS[kind];
   if (!element._react || element._react._kind !== kind) {
