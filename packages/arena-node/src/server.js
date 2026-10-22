@@ -562,6 +562,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const seatGenesis = () => { if (givenGenesis) return givenGenesis; if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
   let ownGuardianSeat = () => null;
   const guardianWiring = { founding: false, absences: false, spentSet: false };   // which guardian wirings this seat started
+  let fedRecordsSettled = false, foundingPassNow = () => {};   // the founding's first pass waits for the restored federation records (kanban #585)
   let foundingSeat = null;                     // founding-seat.js, with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME, by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
@@ -3975,8 +3976,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A PASS AT ONCE, THEN EVERY MINUTE (kanban #495, founding 53be35a3 went void at 21:04Z 2026-10-21: an installer node restarted at 20:54Z
     // made its first pass only after ARENA_FOUNDING_MS, 10 min by default - it never saw the founding it was seated in and counted as a
     // no-show; the manual n495 nodes ran at 60 s and posted within minutes)
-    const foundingPass = () => foundingSeat.tick().then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
-      .catch((e) => console.log(`[founding] tick: ${e.message}`));
+    // NOT BEFORE THE FEDERATION RECORDS ARE BACK (kanban #585, measured 2026-10-22 at 157,300: every restarted seat counted 7 free
+    // operators instead of 20 - its first pass ran at 5 s, the records are restored at 20 s, and with none held every federation an
+    // advert names counts as OPEN, so the guardians of the CLOSED 89ce310e were not free; that row stood until the next block)
+    const foundingPass = () => (!fedRecordsSettled ? Promise.resolve() : foundingSeat.tick().then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
+      .catch((e) => console.log(`[founding] tick: ${e.message}`)));
+    foundingPassNow = foundingPass;
     const ft0 = setTimeout(foundingPass, 5000);
     if (ft0.unref) ft0.unref();
     const ft = setInterval(foundingPass, Number(process.env.ARENA_FOUNDING_MS || 60000));
@@ -4381,7 +4386,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (recordTimer.unref) recordTimer.unref();
   // THE RECORDS ONCE 45 s AFTER START (kanban #552, measured 2026-10-20 ~10:42Z: a restarted seat held no federation record for its first
   // 10 min - the timer's first run - so its gateway probes read no seated guardian and every health page said "0 of 2")
-  const restoreSoon = setTimeout(() => { fedRecords.restore(inviteFedId).then((r) => { if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records restored`); }, () => {}); }, 20000);
+  // the founding waits for this (fedRecordsSettled, above): restored, failed, or at the latest 2 min after start
+  const settle = () => { if (!fedRecordsSettled) { fedRecordsSettled = true; if (foundingSeat) setTimeout(() => foundingPassNow(), 0); } };
+  const restoreSoon = setTimeout(() => { fedRecords.restore(inviteFedId).then((r) => { if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records restored`); settle(); }, settle); }, 20000);
+  const settleAtLatest = setTimeout(settle, 120000);
+  if (settleAtLatest.unref) settleAtLatest.unref();
   if (restoreSoon.unref) restoreSoon.unref();
   const recordSoon = setTimeout(() => { fedRecords.gatherAll(inviteFedId).catch(() => {}); }, 45000);
   if (recordSoon.unref) recordSoon.unref();
