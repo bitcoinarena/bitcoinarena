@@ -42,11 +42,11 @@ function dev(props = {}) {
 
 test('the dev clients at one peek: a wide card - ready to withdraw in whole sats with Withdraw, four chips, the split as a bar with counts; the newest donations; the rest folded (the owner 2026-10-22)', () => {
   const h = dev().html();
-  assert.match(h, /<div class="devhero"><div class="dh-top"><div class="dh-who"><b>dev a<\/b> <span class="pill on">running<\/span><small>newest donation [0-9]+ (min|h|d) ago<\/small><\/div><div class="dh-cash"><span>Ready to withdraw<\/span><b>2,000 sat<\/b><button type="button" class="primary">Withdraw<\/button>/);
+  assert.match(h, /<div class="devhero"><div class="dh-top"><div class="dh-who"><b>dev a<\/b> <span class="pill on">running<\/span><span class="dh-share"><span><b>50 %<\/b> protocol<\/span><span><b>100 %<\/b> Rock Paper Scissors<\/span><\/span><small>newest donation [0-9]+ (min|h|d) ago<\/small><\/div><div class="dh-cash"><span>Ready to withdraw<\/span><b>2,000 sat<\/b><button type="button" class="primary">Withdraw<\/button>/);
   assert.match(h, /<div class="dh-chips"><div><span>Today<\/span><b>2,000 sat<\/b><\/div><div><span>This week<\/span><b>2,000 sat<\/b><\/div><div><span>All time<\/span><b>2,000 sat<\/b><\/div><div><span>Donations<\/span><b>3<\/b><\/div><\/div>/);
   assert.match(h, /<div class="dh-bar"><i title="Protocol: 1,500 sat" style="width:75%;background:var\(--st\)"><\/i><i title="Rock Paper Scissors: 500 sat" style="width:25%;background:var\(--gv\)"><\/i><\/div>/);
   assert.match(h, /<h3>Newest donations<\/h3>.*<td>10-22 15:08<\/td><td>dev a<\/td><td class="n">2,668 msat<\/td><td title="80b976dc[0-9a-f]+">80b976dc18…<\/td><td title="c8a6af[0-9a-f]+">c8a6af2023…<\/td>/);
-  assert.match(h, /<details><summary>dev a: details, withdraw, remove<\/summary><div class="card"><h3>dev a<span class="ok"> · running<\/span><\/h3>/);
+  assert.match(h, /<details><summary>dev a: details, remove<\/summary><div class="card"><h3>dev a<span class="ok"> · running<\/span><\/h3>/);
   assert.match(h, /<span>Holds in 333333333333<\/span><b>2,000 sat<\/b>/);
   assert.doesNotMatch(h, /Holds in 444444444444/, 'a federation holding 0 is not drawn');
   assert.match(h, /<summary class="sub">Add a dev client<\/summary>/);
@@ -55,6 +55,8 @@ test('the dev clients at one peek: a wide card - ready to withdraw in whole sats
 
 test('withdraw: an invoice as it is, an address with an amount in msat; a refusal said; setup and remove hand their requests over', async () => {
   const d = dev();
+  d.m.state.wd = { deva: true };   // the card's Withdraw opens the form in the card
+  assert.match(d.html(), /<div class="dh-withdraw"><label>A Lightning invoice/);
   d.m.state.to.deva = 'lntb1ok'; await d.m.withdraw('deva');
   d.m.state.to.deva = 'devb@getalby.com'; d.m.state.amount.deva = '700'; await d.m.withdraw('deva');
   assert.deepEqual(d.calls.withdraw, [{ slug: 'deva', invoice: 'lntb1ok' }, { slug: 'deva', lnAddress: 'devb@getalby.com', msat: '700000' }]);
@@ -75,9 +77,9 @@ test('each part counted: the protocol line its donations, a game its rounds or m
       itemsBy: [{ item: 'turbo', donations: 7, msat: '9000000' }, { item: 'shield', donations: 4, msat: '3000000' }] },
       { game: 'btc-updown', title: 'Bitcoin Up or Down', msat: '1263000', donations: 8, rounds: 6, items: 0, market: true, itemsBy: [] }] };
   const h = dev({ dev: { managed: true, clients: [{ ...client, split: { ...client.split, ...split }, recent: [{ round: '0'.repeat(64), item: 'Tick Tock, Next Block · turbo', amountMsat: '600', atMs: 0, player: '' }] }] } }).html();
-  assert.match(h, /<span>For the protocol developers<\/span><b>157,125 sat · 69 donations<\/b>/);
-  assert.match(h, /<span>For Tick Tock, Next Block<\/span><b>141,987 sat · 51 donations · 40 rounds · 11 items<\/b>/);
-  assert.match(h, /<div class="row sub"><span>turbo<\/span><b>9,000 sat · 7 times<\/b><\/div><div class="row sub"><span>shield<\/span><b>3,000 sat · 4 times<\/b>/);
-  assert.match(h, /<span>For Bitcoin Up or Down<\/span><b>1,263 sat · 8 donations · 6 market rounds<\/b>/);
+  assert.match(h, /<span>Protocol<\/span><b>157,125 sat<\/b><small>69 donations<\/small>/);
+  assert.match(h, /<span>Tick Tock, Next Block<\/span><b>141,987 sat<\/b><small>51 donations · 40 rounds · 11 items<\/small>/);
+  assert.match(h, /<h4>Items · Tick Tock, Next Block<\/h4><div class="row sub"><span>turbo<\/span><b>9,000 sat · 7 times<\/b><\/div><div class="row sub"><span>shield<\/span><b>3,000 sat · 4 times<\/b>/);
+  assert.match(h, /<span>Bitcoin Up or Down<\/span><b>1,263 sat<\/b><small>8 donations · 6 market rounds<\/small>/);
   assert.match(h, /<td title="Tick Tock, Next Block · turbo">Tick Tock, Next Block · turbo<\/td>/, 'an item donation names its item, not a round');
 });

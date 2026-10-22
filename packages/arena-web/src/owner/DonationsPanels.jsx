@@ -86,6 +86,20 @@ export class DevClients extends React.Component {
   async remove(slug) {
     try { await this.props.remove(slug); this.props.reread(); } catch (e) { this.setState({ removeWhy: e.message }); }
   }
+  // WITHDRAW, RIGHT IN THE CARD (the owner 2026-10-22: the card's button did nothing visible - it opened a folded panel far below)
+  withdrawForm(V) {
+    const s = this.state, said = s.said[V.slug];
+    return (
+      <div className="dh-withdraw">
+        <label>A Lightning invoice (it names the amount) or a Lightning address</label>
+        <input {...field} id={'wd-' + V.slug} placeholder="lntb… or name@domain" value={s.to[V.slug] || ''} onChange={(e) => this.setState({ to: { ...s.to, [V.slug]: e.target.value } })} />
+        <label>Amount in sat, for an address (empty = everything it can send)</label>
+        <input id={'wa-' + V.slug} inputMode="numeric" placeholder="all" value={s.amount[V.slug] || ''} onChange={(e) => this.setState({ amount: { ...s.amount, [V.slug]: e.target.value } })} />
+        <button type="button" className="primary" onClick={() => this.withdraw(V.slug)}>Send</button>
+        <button type="button" onClick={() => this.setState({ wd: { ...(s.wd || {}), [V.slug]: false } })}>Cancel</button>
+        <div className="err" id={'we-' + V.slug}>{said ? (said.ok ? <span className="ok">{said.text}</span> : said.text) : ''}</div>
+      </div>);
+  }
   card(V, managed) {
     if (V.error) return <div className="card" key={V.slug || 'beside'}><h3>{V.label || V.slug || 'Dev client'}</h3><p className="err">{V.error}</p></div>;
     const holds = (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
@@ -95,27 +109,14 @@ export class DevClients extends React.Component {
       <div className="card" key={V.slug || 'beside'}>
         <h3>{V.label || V.slug}{managed ? (V.running ? <span className="ok"> · running</span> : <span className="err"> · stopped</span>) : ' · beside this node'}</h3>
         <Row k="Recipient key" v={<span title={V.recipientPk}>{V.recipientPk.slice(0, 16)}…</span>} />
-        <Row k="Received" v={`${sat(V.receivedMsat)} · ${V.donations} donation${V.donations === 1 ? '' : 's'}`} />
-        {S ? <><Row k="For the protocol developers" v={[sat(S.protocolMsat), S.protocolDonations !== undefined ? count(S.protocolDonations, 'donation') : null].filter(Boolean).join(' · ')} />
-          {(S.games || []).map((g) => <React.Fragment key={g.game}>
-            <Row k={'For ' + (g.title || g.game)} v={[sat(g.msat), count(g.donations, 'donation'), g.rounds ? count(g.rounds, g.market ? 'market round' : 'round') : null,
-              g.items ? count(g.items, 'item') : null].filter(Boolean).join(' · ')} />
-            {(g.itemsBy || []).map((i) => <Row key={i.item} sub k={i.item} v={`${sat(i.msat)} · ${count(i.donations, 'time')}`} />)}
-          </React.Fragment>)}
-          {S.unknownMsat && S.unknownMsat !== '0' ? <Row k="Rounds this node no longer holds" v={sat(S.unknownMsat)} /> : null}</> : null}
-        <Earnings split={S} />
+        {S ? (S.games || []).filter((g) => (g.itemsBy || []).length).map((g) => <React.Fragment key={g.game}><h4>Items · {g.title || g.game}</h4>
+          {g.itemsBy.map((i) => <Row key={i.item} sub k={i.item} v={`${sat(i.msat)} · ${count(i.donations, 'time')}`} />)}</React.Fragment>) : null}
+        <Earnings split={S ? { ...S, shares: null } : S} />
         {(V.balances || []).filter((b) => BigInt(b.msat || 0) > 0n).map((b) => <Row key={b.federation} k={'Holds in ' + b.federation.slice(0, 12)} v={sat(b.msat)} />)}
         <Row k="Withdrawn over Lightning" v={sat(V.withdrawnMsat)} />
         <Row k="Last pass" v={V.lastPass ? `${String(V.lastPass.at).slice(0, 16).replace('T', ' ')} · asked ${V.lastPass.seats} nodes` : 'not yet'} />
         {last ? <Row k="Last withdrawal you asked for" v={`${last.state || '?'}${last.msat ? ' · ' + sat(last.msat) : ''}${last.why ? ' · ' + last.why : ''}`} /> : null}
         {managed ? <>
-          <details open={holds > 0n}><summary>Withdraw over Lightning</summary>
-            <label>A Lightning invoice (it names the amount) or a Lightning address</label>
-            <input {...field} id={'wd-' + V.slug} placeholder="lntb… or name@domain" value={s.to[V.slug] || ''} onChange={(e) => this.setState({ to: { ...s.to, [V.slug]: e.target.value } })} />
-            <label>Amount in sat, for an address (empty = everything it can send)</label>
-            <input id={'wa-' + V.slug} inputMode="numeric" placeholder="all" value={s.amount[V.slug] || ''} onChange={(e) => this.setState({ amount: { ...s.amount, [V.slug]: e.target.value } })} />
-            <button type="button" className="primary" onClick={() => this.withdraw(V.slug)}>Withdraw</button>
-            <div className="err" id={'we-' + V.slug}>{said ? (said.ok ? <span className="ok">{said.text}</span> : said.text) : ''}</div></details>
           <details><summary className="sub">Remove this client</summary><p>The client stops; its directory and key stay on the node.</p>
             <button type="button" onClick={() => this.remove(V.slug)}>Remove</button>{s.removeWhy ? <p className="err">{s.removeWhy}</p> : null}</details></> : null}
       </div>);
@@ -131,11 +132,18 @@ export class DevClients extends React.Component {
     const ago = (ms) => { if (!ms) return ''; const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
     const recent = all.flatMap((V) => (V.recent || []).map((d) => ({ ...d, who: V.label || V.slug }))).sort((a, b) => b.atMs - a.atMs).slice(0, 10);
     const COLORS = ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'];
+    // THE SHARE AT THE TOP (the owner 2026-10-22: "Display the current share of this dev client in % at the top"): one number when the
+    // protocol set and every game set give it the same share, else each
+    const shareOf = (V) => { const sh = V.split && V.split.shares; if (!sh) return null;
+      const all = [{ t: 'protocol', bps: sh.protocolBps }, ...(sh.games || []).map((g) => ({ t: g.title, bps: g.bps }))];
+      const same = all.every((x) => Number(x.bps) === Number(all[0].bps));
+      return <span className="dh-share">{same ? <><b>{pct(all[0].bps)}</b> share</> : all.map((x) => <span key={x.t}><b>{pct(x.bps)}</b> {x.t}</span>)}</span>; };
     const parts = (V) => {
       const S = V.split; if (!S) return [];
       const out = [{ label: 'Protocol', msat: BigInt(S.protocolMsat || 0), note: S.protocolDonations !== undefined ? count(S.protocolDonations, 'donation') : '' }];
       for (const g of S.games || []) out.push({ label: g.title || g.game, msat: BigInt(g.msat || 0),
         note: [count(g.donations, 'donation'), g.rounds ? count(g.rounds, g.market ? 'market round' : 'round') : null, g.items ? count(g.items, 'item') : null].filter(Boolean).join(' · ') });
+      if (S.unknownMsat && S.unknownMsat !== '0') out.push({ label: 'Older rounds', msat: BigInt(S.unknownMsat), note: 'rounds this node no longer holds' });
       return out.filter((p) => p.msat > 0n).map((p, i) => ({ ...p, color: COLORS[i % COLORS.length] }));
     };
     return (
@@ -146,10 +154,12 @@ export class DevClients extends React.Component {
             <div className="devhero" key={V.slug || 'beside'}>
               <div className="dh-top">
                 <div className="dh-who"><b>{V.label || V.slug}</b> {V.managed ? <span className={'pill ' + (V.running ? 'on' : 'bad')}>{V.running ? 'running' : 'stopped'}</span> : <span className="pill">beside this node</span>}
+                  {shareOf(V)}
                   <small>{newest ? `newest donation ${ago(newest.atMs)}` : 'no donation yet'}</small></div>
                 <div className="dh-cash"><span>Ready to withdraw</span><b>{whole(holds(V))}</b>
-                  {V.managed ? <button type="button" className={holds(V) > 0n ? 'primary' : undefined} onClick={() => this.setState({ open: { ...(s.open || {}), [V.slug]: true } })}>Withdraw</button> : null}</div>
+                  {V.managed ? <button type="button" className={holds(V) > 0n ? 'primary' : undefined} onClick={() => this.setState({ wd: { ...(s.wd || {}), [V.slug]: !(s.wd || {})[V.slug] } })}>Withdraw</button> : null}</div>
               </div>
+              {V.managed && (s.wd || {})[V.slug] ? this.withdrawForm(V) : null}
               <div className="dh-chips">
                 <div><span>Today</span><b>{whole(period(V, 'day'))}</b></div>
                 <div><span>This week</span><b>{whole(period(V, 'week'))}</b></div>
@@ -166,7 +176,7 @@ export class DevClients extends React.Component {
             {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td className="n">{Number(d.amountMsat).toLocaleString('en-US')} msat</td>
               <td title={d.item || d.round}>{d.item ? d.item : d.round.slice(0, 10) + '…'}</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
           </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.</p></div> : null}
-        {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details, withdraw{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
+        {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
         {r.managed ? <details><summary className="sub">Add a dev client</summary><div className="card">
           <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out
             over Lightning when you ask. Use a <b>new key</b> (put its public key in your game's donation set), or a <b>dev key you already have</b>:
