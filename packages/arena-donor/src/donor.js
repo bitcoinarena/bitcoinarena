@@ -50,6 +50,23 @@ export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 
   return out;
 }
 
+/**
+ * EVERY DONATION'S DETAILS FOLLOW ITS MONEY (kanban #578, the owner 2026-10-22: "make sure that the donation comments (having the player
+ * key hash and round id etc) is also being transferred, we still need to know the details of every single donation"): a move out of
+ * a draining federation writes one line to moves.jsonl - when, from and to, how much, and the outpoints of the donations recorded in
+ * that federation (donations.jsonl keeps each one's player key, round, entry, contract, amount, time and rate) - so each donation's
+ * money can be followed from the federation it was paid in to the one it is held in. Answers the line written.
+ */
+export function recordMove(movesPath, donationsPath, { from, to, movedMsat, chunks, atMs = Date.now() }) {
+  let rows = [];
+  try { rows = readFileSync(donationsPath, 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { rows = []; }
+  const inFrom = rows.filter((r) => String(r.federationId || '').toLowerCase() === String(from).toLowerCase());
+  const line = { at: new Date(atMs).toISOString(), from: String(from).toLowerCase(), to: String(to).toLowerCase(), movedMsat: String(movedMsat), chunks,
+    donations: inFrom.map((r) => r.outpoint), donationsMsat: String(inFrom.reduce((t, r) => t + BigInt(r.amountMsat || 0), 0n)) };
+  const fd = openSync(movesPath, 'a'); try { writeSync(fd, JSON.stringify(line) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
+  return line;
+}
+
 /** The key from its secret (32 bytes): the compressed public key, derived by node's own secp256k1. */
 export function keyFromSecret(secret) {
   const d = Buffer.from(secret);

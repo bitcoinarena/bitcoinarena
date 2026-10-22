@@ -183,3 +183,22 @@ test('the seats\' records also tell each federation\'s status and successor: a d
   await invitesFromSeats({ seats: ['http://s'], fetcher, decode, states });
   assert.deepEqual(states, { ['b1'.repeat(32)]: { status: 'DRAINING', successor: '4d'.repeat(32) }, ['4d'.repeat(32)]: { status: 'OPEN', successor: null } });
 });
+
+test('a move out of a draining federation keeps every donation\'s details: the moved money names the donations it came from (kanban #578)', async () => {
+  const { recordMove } = await import('../src/donor.js');
+  const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(tmpdir() + '/moves-');
+  const B = 'b1'.repeat(32), A = 'a1'.repeat(32), S = '4d'.repeat(32);
+  writeFileSync(dir + '/donations.jsonl', [
+    { outpoint: 'x:2', federationId: B, amountMsat: '6000', playerKey: 'p1', roundId: 'r1', entryId: 'e1' },
+    { outpoint: 'y:3', federationId: A, amountMsat: '1332', playerKey: 'p2', roundId: 'r2', entryId: 'e2' },
+    { outpoint: 'z:2', federationId: B.toUpperCase(), amountMsat: '4000', playerKey: 'p3', roundId: 'r3', entryId: 'e3' },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const line = recordMove(dir + '/moves.jsonl', dir + '/donations.jsonl', { from: B, to: S, movedMsat: 9500n, chunks: 1, atMs: 0 });
+  assert.deepEqual(line.donations, ['x:2', 'z:2'], 'the donations recorded in the federation the money left');
+  assert.equal(line.donationsMsat, '10000');
+  assert.deepEqual(JSON.parse(readFileSync(dir + '/moves.jsonl', 'utf8')), { at: '1970-01-01T00:00:00.000Z', from: B, to: S, movedMsat: '9500', chunks: 1, donations: ['x:2', 'z:2'], donationsMsat: '10000' });
+  // the donations themselves are untouched: player key, round and entry stay with each
+  assert.equal(readFileSync(dir + '/donations.jsonl', 'utf8').split('\n').filter(Boolean).length, 3);
+});
