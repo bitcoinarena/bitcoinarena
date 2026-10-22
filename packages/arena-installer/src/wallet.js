@@ -39,11 +39,18 @@ export const scriptHash = (spk) => Buffer.from(createHash('sha256').update(spk).
  * The coins at the wallet's address: [{ txid, vout, sats, height (0 = unconfirmed) }] and the tip, from the chain the node uses
  * (state.chain: { kind: 'core', ... } or { kind: 'electrum', ... }).
  */
-export async function coinsOf(chain, spk, { session = electrumSession, fetcher = fetch } = {}) {
+export async function coinsOf(chain, spk, { session = electrumSession, fetcher = fetch, scanPauseMs = 2000, scanTries = 30 } = {}) {
   if (chain.kind === 'core') {
     const rpc = coreRpc({ ...chain, fetcher, timeoutMs: 120000 });
     const tip = await rpc('getblockcount');
-    const r = await rpc('scantxoutset', ['start', [`raw(${toHex(spk)})`]]);
+    // ONE SCAN AT A TIME PER BITCOIN CORE (kanban #577, measured 2026-10-22 on the second machine: nodes sharing one Bitcoin Core - an
+    // install's bond check and the custody agents' coin reads - met "Scan already in progress" at every check for 25 minutes, each
+    // scan taking 5-10 s): a busy scan is waited for, every scanPauseMs, up to scanTries times, before it counts as a failure
+    let r;
+    for (let i = 0; ; i++) {
+      try { r = await rpc('scantxoutset', ['start', [`raw(${toHex(spk)})`]]); break; }
+      catch (e) { if (!/scan already in progress/i.test(String(e && e.message)) || i + 1 >= scanTries) throw e; await new Promise((ok) => setTimeout(ok, scanPauseMs)); }
+    }
     const found = (r.unspents || []).map((u) => ({ txid: u.txid, vout: u.vout, sats: Math.round(u.amount * 1e8), height: u.height }));
     // scantxoutset reads the UTXO set only: a deposit still in the mempool is found by the address's mempool entries
     // A COIN THE MEMPOOL ALREADY SPENDS IS NO COIN (kanban #577, measured 2026-10-22 on the three installers after founding

@@ -21,3 +21,20 @@ test('coinsOf on bitcoind leaves out a confirmed coin an unconfirmed transaction
   assert.equal(r.coins[0].sats, 200000);
   assert.ok(asked.filter((m) => m === 'gettxout').length === 2, 'each coin asked with the mempool');
 });
+
+test('a scan another reader of the same Bitcoin Core is running is waited for, not failed (kanban #577)', async () => {
+  let scans = 0;
+  const fetcher = async (url, { body }) => {
+    const { method } = JSON.parse(body);
+    if (method === 'scantxoutset' && ++scans < 3) return { status: 500, json: async () => ({ result: null, error: { code: -8, message: 'Scan already in progress, use action "abort" or "status"' } }) };
+    const result = method === 'getblockcount' ? 157279 : method === 'scantxoutset' ? { unspents: [{ txid: 'cc'.repeat(32), vout: 0, amount: 0.00523, height: 157279 }] }
+      : method === 'gettxout' ? { value: 0.00523 } : null;
+    return { status: 200, json: async () => ({ result, error: null }) };
+  };
+  const chain = { kind: 'core', url: 'http://127.0.0.1:1', user: 'u', password: 'p' };
+  const r = await coinsOf(chain, new Uint8Array([0x51]), { fetcher, scanPauseMs: 1 });
+  assert.equal(scans, 3, 'asked again until the other scan was done');
+  assert.equal(r.coins[0].sats, 523000);
+  scans = -100;   // busy for good: still a failure after its tries, with bitcoind's words
+  await assert.rejects(coinsOf(chain, new Uint8Array([0x51]), { fetcher, scanPauseMs: 1, scanTries: 4 }), /Scan already in progress/);
+});
