@@ -407,7 +407,16 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     // and on Windows the updater running again - after the arenanode command names the new release, which its loop CALLs (kanban #546)
     let updaterBack = null;
     if (svc.updater) { try { updaterBack = await svc.updater(); } catch (e) { updaterBack = { ok: false, why: e.message }; } }
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local, updater,
+    // THE OLDER RELEASES REMOVED (kanban #576, measured 2026-10-22: an installed node kept every release it ever ran - 12 folders, 5 GB
+    // on one): once the new release answers as the same node, only it and the release it updated from (the way back) stay
+    const fromFolder = String(from).split(/[\\/]/).filter(Boolean).pop();
+    const pruned = [];
+    for (const d of besides) {
+      const name = d.split(/[\\/]/).filter(Boolean).pop();
+      if (name === fromFolder || name === newFolder) continue;
+      try { rmSync(d, { recursive: true, force: true }); pruned.push(name); } catch { /* a file still open (Windows): kept, the next update tries again */ }
+    }
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local, updater, pruned,
       ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}), ...(updaterBack ? { updaterBack } : {}),
       ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
