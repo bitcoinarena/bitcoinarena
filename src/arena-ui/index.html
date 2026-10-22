@@ -2944,7 +2944,7 @@
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
             const plan = ARENACLIENT.joinFundingPlan({ parts: (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [], roundFederation: here, needMsat });
-            if (plan.coveredBy !== 'here' && plan.mergeFirst.length && window.ARENA_MERGE_NOW) {
+            if (plan.coveredBy === 'merge' && plan.mergeFirst.length && window.ARENA_MERGE_NOW) {
               const m = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0);
               onStep(`merging ${m.toLocaleString('en-US')} sat in from your other wallets in this browser first`);
               await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
@@ -2982,10 +2982,11 @@
           {
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
-            // this phrase's wallet in the round's federation as it is now (after the merge and the swap), and what is still merging
-            if (window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* the last read */ } }
+            // this phrase's wallet in the round's federation as it is now (after the merge and the swap); only a wallet short of the round
+            // reads every balance again (the same playtest: that read on every order was part of the 10+ seconds)
             const c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(here);
             let have = 0n; try { have = c ? BigInt(await c.balanceMsat()) : 0n; } catch { have = 0n; }
+            if (have < needMsat && window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* the last read */ } }
             const merging = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0;
             if (ARENACLIENT.notSpendableYet({ haveMsat: have, mergingSat: merging, needMsat }) && !(earlyDeposit && await earlyDeposit)) {
               const why = Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.state === 'stuck').map(([f, v]) => `federation ${f.slice(0, 8)}: ${v.why}`).join('; ');

@@ -37,9 +37,9 @@ for (const app of APPS) {
         // held in another federation: swapped in
         const s = joinFundingPlan({ parts: [{ federation: other, sats: 2201 }], roundFederation: round, needMsat: STAKE });
         assert.deepEqual([s.coveredBy, s.swapFrom, s.askEarly], ['swap', [other.slice(0, 16)], false], where);
-        // merging in another federation, by its 16-hex key as the page keeps it: merged there, then swapped
+        // only merging in another federation, by its 16-hex key as the page keeps it: merged there (waited for), then swapped
         const sm = joinFundingPlan({ parts: [{ federation: other.slice(0, 16), sats: 2201, merging: 2201 }], roundFederation: round, needMsat: STAKE });
-        assert.deepEqual([sm.coveredBy, sm.mergeFirst, sm.askEarly], ['swap', [other.slice(0, 16)], false], where);
+        assert.deepEqual([sm.coveredBy, sm.mergeFirst, sm.askEarly], ['merge', [other.slice(0, 16)], false], where);
         // too little anywhere: the deposit is asked at the press
         assert.equal(joinFundingPlan({ parts: [{ federation: round, sats: 40 }, { federation: other, sats: 50, merging: 50 }], roundFederation: round, needMsat: STAKE }).askEarly, true, where);
       }
@@ -50,7 +50,8 @@ for (const app of APPS) {
 test('the playtest itself: 2,201 sat in 4dc88be7, 700 in 337ae01a with ⇄, a 100 sat Up/Down order in 337ae01a', () => {
   const [A, B2] = ['337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98'];
   const plan = joinFundingPlan({ parts: [{ federation: B2, sats: 2201 }, { federation: A.slice(0, 16), sats: 700, merging: 700 }, { federation: 'b18947f085d40df3', sats: 0 }], roundFederation: A, needMsat: 101000n });
-  assert.deepEqual(plan, { ownHere: 0, coveredBy: 'merge', mergeFirst: [A.slice(0, 16)], swapFrom: [B2.slice(0, 16)], askEarly: false });
+  assert.deepEqual(plan, { ownHere: 0, coveredBy: 'swap', mergeFirst: [], swapFrom: [B2.slice(0, 16)], askEarly: false },
+    'his own 2,201 sat in 4dc88be7 pay by a swap at once - the 700 still merging are not waited for ("Placing a market order takes 10+ seconds")');
   assert.equal(notSpendableYet({ haveMsat: 0n, mergingSat: 700, needMsat: 101000n }), true);
   assert.equal(notSpendableYet({ haveMsat: 101000n, mergingSat: 700, needMsat: 101000n }), false, 'the merge landed: it pays');
   assert.equal(notSpendableYet({ haveMsat: 0n, mergingSat: 50, needMsat: 101000n }), false, 'merging too little: a deposit is the right ask');
@@ -80,4 +81,16 @@ test('only a phrase this browser keeps counts as merging: a remembered balance o
   assert.deepEqual(exec({ 'arena.seeds': JSON.stringify(['cd'.repeat(32)]), [`arena.wallet.known.${F}.${'cd'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [[F, '700000']], 'kept as a plain string');
   assert.deepEqual(exec({ 'arena.seeds': '[]', [`arena.wallet.known.${F}.${'ab'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [], 'not kept: not merging');
   assert.deepEqual(exec({ [`arena.wallet.known.${F}.${'aa'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [], 'this tab\'s own phrase is never counted twice');
+});
+
+test('spendable money first: no order waits for a merge while the round wallet or a swap from the player\'s own notes pays it (the owner 2026-10-22: "Placing a market order takes 10+ seconds")', () => {
+  const [A, B2] = ['337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98'];
+  const plan = (parts) => joinFundingPlan({ parts, roundFederation: A, needMsat: 101000n });
+  assert.deepEqual(plan([{ federation: A, sats: 900, merging: 700 }]).mergeFirst, [], '200 sat of its own here pay it: nothing merged first');
+  assert.equal(plan([{ federation: A, sats: 900, merging: 700 }]).coveredBy, 'here');
+  assert.deepEqual([plan([{ federation: A, sats: 700, merging: 700 }, { federation: B2, sats: 500 }]).coveredBy, plan([{ federation: A, sats: 700, merging: 700 }, { federation: B2, sats: 500 }]).mergeFirst], ['swap', []]);
+  assert.deepEqual([plan([{ federation: A, sats: 700, merging: 700 }, { federation: B2, sats: 50 }]).coveredBy, plan([{ federation: A, sats: 700, merging: 700 }, { federation: B2, sats: 50 }]).mergeFirst], ['merge', [A.slice(0, 16)]], 'only the merging money covers it: merged first');
+  const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(html, /if \(plan\.coveredBy === 'merge' && plan\.mergeFirst\.length && window\.ARENA_MERGE_NOW\)/, 'the page waits for a merge only then');
+  assert.match(html, /if \(have < needMsat && window\.ARENA_SUM_BALANCES\)/, 'and reads every balance again only for a wallet short of the round');
 });
