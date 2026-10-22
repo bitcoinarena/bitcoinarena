@@ -90,8 +90,15 @@ export function emergencyTriggers({ held = [], requests = [] }) {
  * seven guardians and B's successor's one advertised federations no seat held a record of, so they counted as free and would have
  * been drawn into a cohort - as no-shows, since each runs its own federation's guardian).
  */
+/** A federation at or above this load (its exposure cap) is overloaded: its guardians may found another. */
+export const OVERLOADED = 1;
+
 export function guardingOpenOf({ entries = [], held = [], except = null }) {
-  const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), r.status]));
+  // AN OVERLOADED FEDERATION HOLDS NOBODY BACK (the owner 2026-10-22: "Also when federation is over loaded? That is causing the current
+  // conflict"): an OPEN federation at load >= 1 - deposits refused (load ruling A) - frees its guardians for a founding, which they
+  // serve through their guardian-next; measured 3d30afd4: A at load 4.33 kept 4 of the 14 test nodes out, 10 eligible, no alternates
+  const full = new Set((held || []).filter((r) => r && typeof r.load === 'number' && r.load >= OVERLOADED).map((r) => lower(r.federation)));
+  const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), full.has(lower(r.federation)) ? 'OVERLOADED' : r.status]));
   const ops = new Set();
   for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) {
     const f = toHex(g.federationId);
