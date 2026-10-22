@@ -67,6 +67,7 @@
   <div class="card"><h2>Nodes</h2><div class="scroll" id="nodes"></div></div>
   <div class="card"><h2>Capacity</h2><div id="capacity"></div></div>
   <div class="card"><h2>Federations</h2><div class="scroll" id="feds"></div></div>
+  <div class="card"><h2>Waiting for a founding</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">guardian-capable nodes that guard no OPEN federation - ten of them found the next one. Ready = its guardian waits in setup</div><div id="founding-facts"></div><div class="scroll" id="founding"></div></div>
   <div class="card"><h2>Gateway seats</h2><div class="scroll" id="gateways"></div></div>
   <div class="card"><h2>Pending gateways</h2><div class="scroll" id="gw-pending"></div></div>
   <div class="card"><h2>What the network waits for</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll" id="pending"></div></div>
@@ -169,8 +170,8 @@
       paintNodes(nodes, tip);
       say('reading each node … (' + nodes.filter((n) => n.version.ok).length + ' of ' + nodes.length + ' answered)');
       await Promise.all(nodes.filter((n) => n.version.ok).map(async (n) => {
-        const [b, d, lc, gc] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim')]);
-        Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc });
+        const [b, d, lc, gc, fd] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim'), ask(n.base, '/founding')]);
+        Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc, found: fd });
       }));
       [feds, reserves, funding] = await Promise.all([fedsP, reservesP, fundingP]);
       paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
@@ -180,6 +181,7 @@
       fedList.sort((a, b) => (fedNoOf(a.federation) || 99) - (fedNoOf(b.federation) || 99));   // the tables in number order (kanban #557)
       paintCapacity(await capP, fedList);
       paintFeds(fedList);
+      paintFounding(nodes, fedList);
       await paintGateways(fedList, seats, nodes);
       await paintPending(seats);
       await paintLiquidity(fedList, nodes, tip);
@@ -242,6 +244,45 @@
         load == null ? '-' : { t: `${(load * 100).toFixed(0)} %`, c: load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok' }] };
     });
     drawTable('feds', ['Federation', 'Status', 'Record height', 'Signers', 'Reserve (sat)', 'Cap (sat)', 'Load'], rows, 'no federation record read');
+  }
+
+  // WAITING FOR A FOUNDING (kanban #585, the owner 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in the future if
+  // they're ready to be founded"): the census nodes that may guard and guard no OPEN federation - the cohort the next founding draws ten
+  // of - each with its own GET /founding: ready when its guardian waits in setup; and the founding that runs, as the nodes report it
+  function paintFounding(nodes, feds) {
+    const open = new Set(feds.filter((f) => f.status === 'OPEN').map((f) => String(f.federation).toLowerCase()));
+    const fb = (n) => (n.found && n.found.ok ? n.found.body : null);
+    const cand = nodes.filter((n) => n.guardianCapable && !(n.guardianOf || []).some((f) => open.has(String(f).toLowerCase())));
+    const ready = (n) => { const r = fb(n) && fb(n).ready; return r ? r.guardian : null; };
+    // the founding that runs: the one most nodes name, its seated nodes and codes from the node that holds the most codes
+    const runs = nodes.map(fb).filter((b) => b && b.id);
+    const byId = new Map(); for (const b of runs) { const w = byId.get(b.id); if (!w || (b.codes || []).length > (w.codes || []).length) byId.set(b.id, b); }
+    const run = [...byId.values()].sort((x, y) => (y.codes || []).length - (x.codes || []).length)[0] || null;
+    const seated = new Map((run ? run.seated || [] : []).map((x) => [String(x.node || x).toLowerCase(), x]));
+    const coded = new Set((run ? run.codes || [] : []).map((c) => String(c.node).toLowerCase()));
+    const cohorts = nodes.map(fb).filter((b) => b && b.ready && b.ready.cohort).map((b) => b.ready.cohort).sort((x, y) => y.height - x.height);
+    const cohort = cohorts[0] || null;
+    const nReady = cand.filter((n) => ready(n) === 'setup').length;
+    const whys = new Map(); for (const b of nodes.map(fb)) if (b && b.ready && b.ready.why) whys.set(b.ready.why, (whys.get(b.ready.why) || 0) + 1);
+    const why = [...whys].sort((x, y) => y[1] - x[1])[0];
+    H.draw($('founding-facts'), 'facts', { items: [
+      ['Free operators (cohort)', cohort ? `${cohort.free} of ${cohort.needed} needed` : `${cand.length} nodes`, cohort ? (cohort.free >= cohort.needed ? 'ok' : 'warn') : ''],
+      ['Ready now (guardian in setup)', `${nReady} of ${cand.length}`, nReady >= 10 ? 'ok' : nReady ? 'warn' : 'bad'],
+      ['Founding', run ? `${cut(run.id, 8)} · ${coded.size} of ${seated.size} codes` + (run.federation ? ' · federation runs' : run.void ? ' · void' : ` · window to ${sat(run.windowEnd)}`) : (why ? why[0] : 'none running'),
+        run ? (run.federation ? 'ok' : run.void ? 'bad' : 'warn') : 'muted'],
+    ] });
+    const RANK = { setup: 0, running: 1, none: 2 };
+    const rows = cand.map((n) => {
+      const r = ready(n), b = fb(n), k = String(n.node || '').toLowerCase(), s = seated.get(k);
+      const state = !n.version || !n.version.ok ? { t: 'not answering', c: 'bad' } : !b ? { t: 'no /founding', c: 'bad' }
+        : r === 'setup' ? { t: 'ready', c: 'ok' } : r === 'running' ? { t: 'guardian runs a federation', c: 'warn' } : r === 'none' ? { t: 'no guardian in setup', c: 'bad' } : { t: b.off ? 'founding off' : '-', c: 'bad' };
+      const part = !run ? '-' : s ? (coded.has(k) ? { t: `seated ${s.position + 1} · code ✓`, c: 'ok' } : { t: `seated ${s.position + 1} · no code`, c: 'bad' })
+        : (run.alternates || []).map((x) => String(x).toLowerCase()).includes(k) ? 'alternate' : (run.noShows || []).map((x) => String(x).toLowerCase()).includes(k) ? { t: 'no-show', c: 'bad' } : 'not drawn';
+      return { key: n.node || n.base, dot: state.c === 'ok' ? 'ok' : state.c === 'warn' ? 'warn' : 'bad', rank: RANK[r] ?? 3,
+        cells: [{ t: cut(n.node, 12), c: 'mono' }, (n.base || '').replace(/^https?:\/\//, ''), sat(n.bondSats), state, part] };
+    }).sort((x, y) => x.rank - y.rank);
+    drawTable('founding', ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding'], rows, 'no guardian-capable node is free of an OPEN federation',
+      cohort ? `the newest count at ${sat(cohort.height)}: ${cohort.free} free operators (an operator may run several nodes)` : null);
   }
 
   // WHAT THE NETWORK WAITS FOR (kanban #560, the owner 2026-10-20: "Make sure that /health is also showing this table by asking the nodes"):
