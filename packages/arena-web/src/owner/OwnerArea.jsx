@@ -69,6 +69,7 @@ export class OwnerArea extends React.Component {
           {sec('release', <><h2>Updates</h2><p className="lead">The version this node runs and whether a newer one is out.</p><Place id="release" /></>)}
           {sec('money', <><h2>Donations</h2>
             <p className="lead">Money this node collects for the developers, and the developers' split.</p>
+            <Place id="ballots-open" className={null} />
             <Place id="devs" className={null} />
             <Place id="dons" className={null} />
             <h3 className="sh">Developer split</h3><Place id="ballots" className={null} /></>)}

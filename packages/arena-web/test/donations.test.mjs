@@ -44,7 +44,7 @@ test('the dev clients at one peek: a wide card - ready to withdraw in whole sats
   const h = dev().html();
   assert.match(h, /<div class="devhero"><div class="dh-top"><div class="dh-who"><b>dev a<\/b> <span class="pill on">running<\/span><div class="dh-share"><span class="sub">Your share<\/span><span><b>50 %<\/b> Protocol<\/span><span class="own"><b>100 %<\/b> Rock Paper Scissors<\/span><\/div><small>newest donation [0-9]+ (min|h|d) ago<\/small><\/div><div class="dh-cash"><span>Ready to withdraw<\/span><b>2,000 sat<\/b><button type="button" class="primary">Withdraw<\/button>/);
   assert.match(h, /<div class="dh-chips"><div><span>Today<\/span><b>2,000 sat<\/b><\/div><div><span>This week<\/span><b>2,000 sat<\/b><\/div><div><span>All time<\/span><b>2,000 sat<\/b><\/div><div><span>Donations<\/span><b>3<\/b><\/div><\/div>/);
-  assert.match(h, /<div class="dh-bar"><i title="Protocol: 1,500 sat" style="width:75%;background:var\(--st\)"><\/i><i title="Rock Paper Scissors: 500 sat" style="width:25%;background:var\(--gv\)"><\/i><\/div>/);
+  assert.match(h, /<div class="dh-bar"><i style="width:75%;background:var\(--st\)"><\/i><i style="width:25%;background:var\(--gv\)"><\/i><\/div><div class="dh-tip"><span class="sub">Point at the bar to see each part<\/span><\/div>/);
   assert.match(h, /<h3>Newest donations<\/h3>.*<td>10-22 15:08<\/td><td>dev a<\/td><td class="n">2,668 msat<\/td><td title="80b976dc[0-9a-f]+">80b976dc18…<\/td><td title="c8a6af[0-9a-f]+">c8a6af2023…<\/td>/);
   assert.match(h, /<details><summary>dev a: details, remove<\/summary><div class="card"><h3>dev a<span class="ok"> · running<\/span><\/h3>/);
   assert.match(h, /<span>Holds in 333333333333<\/span><b>2,000 sat<\/b>/);
