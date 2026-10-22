@@ -101,6 +101,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
     const had = kept.get(fid);
     if (had && had.height > v.record.height) return;
+    // A CLOSED RECORD IS FINAL (kanban #577, measured 2026-10-22 on federation 89ce310e: n495-1 held it CLOSED with 7 of 10 signatures, set its
+    // guardian aside, and every other seat kept the OPEN record of the same height - one guardian fewer, they could never sign the closed
+    // body again): at the same height a record that is not CLOSED never replaces one that is
+    if (had && had.height === v.record.height && had.status === 'CLOSED' && v.status !== 'CLOSED') return;
     kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
     if (store) { try { store.save(fid, toHex(bytes)); } catch { /* kept in memory */ } }
     if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
@@ -409,7 +413,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
             }
           }
           if (!v.ok) { why = v.why; continue; }
-          if (!best || v.record.height > best.v.record.height) best = { v, bytes: fromHex(String(x.record)) };
+          // the newest; at the same height a CLOSED one (final - see keep)
+          if (!best || v.record.height > best.v.record.height || (v.record.height === best.v.record.height && v.status === 'CLOSED' && best.v.status !== 'CLOSED')) best = { v, bytes: fromHex(String(x.record)) };
         }
       } catch { /* the next guardian */ }
     }));
