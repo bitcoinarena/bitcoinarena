@@ -24,7 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { gameDevKey, signManifest } from '../src/manifest-sign.js';
 import { manifestStands, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
-import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed,
+import { invitesFromSeats, newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed,
   payInvoice, lightningAddressInvoice, invoiceMsat } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
@@ -127,6 +127,13 @@ async function invites() {
       }
     } catch (e) { say({ step: 'invites', from: url, why: e.message }); }
   }
+  // AND EVERY FEDERATION THE SEATS HOLD A RECORD OF (kanban #578): a donation in any federation is redeemed, not only in the
+  // ones donor.json and daily.json name; an invite named above wins
+  try {
+    const { splitSignedRecord } = await import('../../arena-protocol/src/federation-record.js');
+    const fromSeats = await invitesFromSeats({ seats: cfg.seats || [], decode: (h) => splitSignedRecord(Buffer.from(h, 'hex')).record });
+    for (const [fid, inv] of Object.entries(fromSeats)) if (!out[fid]) out[fid] = inv;
+  } catch (e) { say({ step: 'invites', from: 'seats', why: e.message }); }
   delete routes['127.0.0.1:18777'];
   if (!routed && routeWebSockets(routes)) { routed = true; say({ step: 'routes', guardians: Object.keys(routes).length }); }
   return out;

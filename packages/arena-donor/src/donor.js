@@ -17,6 +17,30 @@ export function newKey() {
   return keyFromSecret(Buffer.from(privateKey.export({ format: 'jwk' }).d, 'base64url'));
 }
 
+/**
+ * EVERY FEDERATION'S INVITE FROM THE SEATS' SIGNED RECORDS (kanban #578, the owner 2026-10-22: "dass dev a und dev b donations
+ * überall bekommen"): a client knew only the invites of its donor.json and the one federation a daily.json names, so donations
+ * paid in any other federation (4dc88be7, B's successor; every new founding) were seen at the seats and never redeemed. Each
+ * seat's GET /federations lists the records it holds; a record names its federation's invite. Answers { federation id hex: invite }
+ * from the first `want` seats that answer; a CLOSED record is skipped (nothing is paid into it any more).
+ */
+export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000 }) {
+  const out = {};
+  let answered = 0;
+  for (const seat of seats || []) {
+    if (answered >= want) break;
+    let d;
+    try { d = await (await fetcher(`${String(seat).replace(/\/+$/, '')}/federations`, { signal: AbortSignal.timeout(timeoutMs) })).json(); } catch { continue; }
+    if (!d || !Array.isArray(d.federations)) continue;
+    answered++;
+    for (const f of d.federations) {
+      if (!f || f.status === 'CLOSED' || typeof f.record !== 'string') continue;
+      try { const r = decode(f.record); if (r && r.invite) out[String(f.federation).toLowerCase()] = r.invite; } catch { /* a record that does not read */ }
+    }
+  }
+  return out;
+}
+
 /** The key from its secret (32 bytes): the compressed public key, derived by node's own secp256k1. */
 export function keyFromSecret(secret) {
   const d = Buffer.from(secret);
