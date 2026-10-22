@@ -12,6 +12,8 @@ import React from 'react';
 export const sat = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n; return (f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w) + ' sat'; };
 const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
 const count = (n, word) => `${Number(n).toLocaleString('en-US')} ${word}${Number(n) === 1 ? '' : 's'}`;
+/** msat as WHOLE sat, for the glance (\"369.572 sat\" read as thousands); the exact msat stay in the details */
+export const whole = (msat) => `${(BigInt(msat || 0) / 1000n).toLocaleString('en-US')} sat`;
 const Row = ({ k, v, sub }) => <div className={'row' + (sub ? ' sub' : '')}><span>{k}</span><b>{v}</b></div>;
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
@@ -118,35 +120,50 @@ export class DevClients extends React.Component {
             <button type="button" onClick={() => this.remove(V.slug)}>Remove</button>{s.removeWhy ? <p className="err">{s.removeWhy}</p> : null}</details></> : null}
       </div>);
   }
-  // AT ONE PEEK: a tile per client - what it holds now, received today / this week / all time, its newest donation and Withdraw -
-  // then the newest donations of all clients (who played, which round, how much), then everything else folded per client
+  // AT ONE PEEK (the owner 2026-10-22: "modern and pretty looking, and visible at a glance"): one wide card per client - what it can
+  // withdraw now in whole sats, Withdraw beside it, four stat chips, and the split as one bar (protocol, each game, items) with counts
   render() {
     const { dev: r, why } = this.props, s = this.state;
     if (why) return <div className="card"><p className="err">{why}</p></div>;
     const all = [...(r.beside ? [{ ...r.beside, managed: false }] : []), ...(r.clients || []).map((c) => ({ ...c, managed: true }))].filter((c) => !c.error);
-    const period = (V, k) => (V.split && V.split.earnings && V.split.earnings.periods[k] ? V.split.earnings.periods[k].totalMsat : null);
+    const period = (V, k) => (V.split && V.split.earnings && V.split.earnings.periods[k] ? V.split.earnings.periods[k].totalMsat : '0');
     const holds = (V) => (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
     const ago = (ms) => { if (!ms) return ''; const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
     const recent = all.flatMap((V) => (V.recent || []).map((d) => ({ ...d, who: V.label || V.slug }))).sort((a, b) => b.atMs - a.atMs).slice(0, 10);
+    const COLORS = ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'];
+    const parts = (V) => {
+      const S = V.split; if (!S) return [];
+      const out = [{ label: 'Protocol', msat: BigInt(S.protocolMsat || 0), note: S.protocolDonations !== undefined ? count(S.protocolDonations, 'donation') : '' }];
+      for (const g of S.games || []) out.push({ label: g.title || g.game, msat: BigInt(g.msat || 0),
+        note: [count(g.donations, 'donation'), g.rounds ? count(g.rounds, g.market ? 'market round' : 'round') : null, g.items ? count(g.items, 'item') : null].filter(Boolean).join(' · ') });
+      return out.filter((p) => p.msat > 0n).map((p, i) => ({ ...p, color: COLORS[i % COLORS.length] }));
+    };
     return (
       <>
-        {all.length ? <div className="stats">
-          {all.map((V) => {
-            const newest = (V.recent || [])[0];
-            return (
-              <div className="stat" key={V.slug || 'beside'}>
-                <span>{V.label || V.slug} {V.managed ? <span className={'pill ' + (V.running ? 'on' : 'bad')}>{V.running ? 'running' : 'stopped'}</span> : <span className="pill">beside</span>}</span>
-                <b>{sat(holds(V))}</b><small>to withdraw now</small>
-                <small>today {sat(period(V, 'day') || '0')} · this week {sat(period(V, 'week') || '0')}</small>
-                <small>all time {sat(V.receivedMsat)} · {V.donations} donation{V.donations === 1 ? '' : 's'}</small>
-                <small>{newest ? `newest ${ago(newest.atMs)}` : 'no donation yet'}</small>
-                {V.managed ? <button type="button" className={holds(V) > 0n ? 'primary' : undefined} onClick={() => this.setState({ open: { ...(s.open || {}), [V.slug]: true } })}>Withdraw</button> : null}
-              </div>);
-          })}
-        </div> : null}
+        {all.map((V) => {
+          const P = parts(V), total = P.reduce((t, p) => t + p.msat, 0n), newest = (V.recent || [])[0];
+          return (
+            <div className="devhero" key={V.slug || 'beside'}>
+              <div className="dh-top">
+                <div className="dh-who"><b>{V.label || V.slug}</b> {V.managed ? <span className={'pill ' + (V.running ? 'on' : 'bad')}>{V.running ? 'running' : 'stopped'}</span> : <span className="pill">beside this node</span>}
+                  <small>{newest ? `newest donation ${ago(newest.atMs)}` : 'no donation yet'}</small></div>
+                <div className="dh-cash"><span>Ready to withdraw</span><b>{whole(holds(V))}</b>
+                  {V.managed ? <button type="button" className={holds(V) > 0n ? 'primary' : undefined} onClick={() => this.setState({ open: { ...(s.open || {}), [V.slug]: true } })}>Withdraw</button> : null}</div>
+              </div>
+              <div className="dh-chips">
+                <div><span>Today</span><b>{whole(period(V, 'day'))}</b></div>
+                <div><span>This week</span><b>{whole(period(V, 'week'))}</b></div>
+                <div><span>All time</span><b>{whole(V.receivedMsat)}</b></div>
+                <div><span>Donations</span><b>{Number(V.donations).toLocaleString('en-US')}</b></div>
+              </div>
+              {total > 0n ? <>
+                <div className="dh-bar">{P.map((p) => <i key={p.label} title={`${p.label}: ${whole(p.msat)}`} style={{ width: `${Number((p.msat * 10000n) / total) / 100}%`, background: p.color }} />)}</div>
+                <div className="dh-legend">{P.map((p) => <div key={p.label}><i style={{ background: p.color }} /><span>{p.label}</span><b>{whole(p.msat)}</b><small>{p.note}</small></div>)}</div></> : null}
+            </div>);
+        })}
         {recent.length ? <div className="card"><h3>Newest donations</h3>
-          <div className="tablewrap"><table className="earn"><thead><tr><th>When (UTC)</th><th>To</th><th>Amount</th><th>Round or item</th><th>Player</th></tr></thead><tbody>
-            {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td>{sat(d.amountMsat)}</td>
+          <div className="scroll"><table className="tbl"><thead><tr><th>When (UTC)</th><th>To</th><th className="n">Amount</th><th>Round or item</th><th>Player</th></tr></thead><tbody>
+            {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td className="n">{Number(d.amountMsat).toLocaleString('en-US')} msat</td>
               <td title={d.item || d.round}>{d.item ? d.item : d.round.slice(0, 10) + '…'}</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
           </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.</p></div> : null}
         {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details, withdraw{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
