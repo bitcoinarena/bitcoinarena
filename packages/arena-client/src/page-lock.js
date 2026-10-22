@@ -601,8 +601,9 @@ export function roundsDepositMsat(n, locks, LockClient) {
  * this phrase's own wallets in other federations. `parts` = the page's [{ federation (64 or 16 hex), sats, merging? }], `roundFederation`
  * 64 hex, `needMsat` what the round takes. Answers:
  *   ownHere    sat this phrase's wallet in the round's federation holds (spendable now)
- *   coveredBy  'here' | 'merge' | 'swap' | null - what pays it without a deposit: the wallet as it is, once the merge has landed, or a swap
- *   mergeFirst the federations (16 hex, the round's first) whose merging money is merged before the round is funded
+ *   coveredBy  'here' | 'swap' | 'merge' | null - what pays it without a deposit, in that order: the wallet as it is, a swap from the
+ *              player's own notes in other federations, or money still merging in (waited for only then)
+ *   mergeFirst the federations (16 hex, the round's first) merged before the round is funded - only when coveredBy is 'merge'
  *   swapFrom   the other federations (16 hex), the fullest first, a shortfall is swapped in from
  *   askEarly   whether the deposit is asked at the press - only when nothing the player holds anywhere covers the round
  */
@@ -622,9 +623,13 @@ export function joinFundingPlan({ parts = [], roundFederation, needMsat }) {
   const at = by.get(here) || { own: 0n, merging: 0n };
   const others = [...by.entries()].filter(([f]) => f !== here);
   const elsewhere = others.reduce((t, [, a]) => t + a.own + a.merging, 0n);
-  const mergeFirst = [...(at.merging > 0n ? [here] : []), ...others.filter(([, a]) => a.merging > 0n).map(([f]) => f)];
+  const ownElsewhere = others.reduce((t, [, a]) => t + a.own, 0n);
   const swapFrom = others.filter(([, a]) => a.own + a.merging > 0n).sort((x, y) => (y[1].own + y[1].merging > x[1].own + x[1].merging ? 1 : -1)).map(([f]) => f);
-  const coveredBy = at.own >= need ? 'here' : at.own + at.merging >= need ? 'merge' : at.own + at.merging + elsewhere >= need ? 'swap' : null;
+  // SPENDABLE MONEY FIRST, THE MERGE ONLY WHEN NOTHING ELSE PAYS (the owner 2026-10-22: "Placing a market order takes 10+ seconds" - every order
+  // waited for the merge whenever anything was merging): the round's wallet, else a swap from the player's own notes elsewhere, and only
+  // then the money still merging in - the federations to merge named only in that case
+  const coveredBy = at.own >= need ? 'here' : at.own + ownElsewhere >= need ? 'swap' : at.own + ownElsewhere + at.merging + elsewhere - ownElsewhere >= need ? 'merge' : null;
+  const mergeFirst = coveredBy !== 'merge' ? [] : [...(at.merging > 0n ? [here] : []), ...others.filter(([, a]) => a.merging > 0n).map(([f]) => f)];
   return { ownHere: Number(at.own / 1000n), coveredBy, mergeFirst, swapFrom, askEarly: coveredBy === null };
 }
 
