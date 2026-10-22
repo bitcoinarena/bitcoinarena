@@ -15,6 +15,25 @@ const feeVal = (k, x) => (/Bps$/.test(k) ? (Number(x) / 100).toLocaleString('en-
 const Row = ({ k, v }) => <div className="row"><span>{k}</span><b>{v}</b></div>;
 const field = { autoComplete: 'off', spellCheck: false };
 
+/**
+ * THE SHARES TO SIGN FROM THE SPLIT AS PICTURED (the owner 2026-10-22: 50 / 30 / 10 growing to 20 "should be a valid proposal"): the
+ * owner enters each developer's share at full vesting - a vesting row its start and its target - and those add up to 100 %. The
+ * protocol wants the shares at the start to add up to 100 % and scales the rows that do not vest into what the vesting rows leave
+ * (donation.js vestedShares), so the rows that do not vest are signed scaled into what the vesting rows hold at the start, in the
+ * same ratio: at full vesting they pay exactly what was entered. Rows of { shareBps, vestBps?, vestDays? } in basis points.
+ */
+export function startShares(rows) {
+  const vests = (r) => r.vestDays !== undefined;
+  const start = rows.filter(vests).reduce((t, r) => t + r.shareBps, 0);
+  const others = rows.filter((r) => !vests(r)).reduce((t, r) => t + r.shareBps, 0);
+  if (!rows.some(vests) || others === 0) return rows;
+  const out = rows.map((r) => (vests(r) ? r : { ...r, shareBps: Math.floor((r.shareBps * (10000 - start)) / others) }));
+  const short = 10000 - out.reduce((t, r) => t + r.shareBps, 0);
+  const first = out.findIndex((r) => !vests(r));
+  out[first] = { ...out[first], shareBps: out[first].shareBps + short };
+  return out;
+}
+
 export class BallotsPanel extends React.Component {
   constructor(props) {
     super(props);
@@ -33,11 +52,14 @@ export class BallotsPanel extends React.Component {
   async propose() {
     this.setState({ proposeWhy: '' });
     const rows = this.state.rows.map((r) => ({ key: r.key.trim().toLowerCase(), label: r.label.trim(), shareBps: Math.round(Number(String(r.share || 0).replace(',', '.')) * 100),
-      ...(r.days.trim() ? { vestBps: Math.round(Number(String(r.vest).replace(',', '.')) * 100), vestDays: Number(r.days.trim()) } : {}) })).filter((r) => r.key);
-    const sum = rows.reduce((t, r) => t + r.shareBps, 0);
-    if (sum !== 10000) return this.setState({ proposeWhy: `the shares add up to ${sum / 100} %, not 100 %` });
+      ...(r.days.trim() && String(r.vest).trim() ? { vestBps: Math.round(Number(String(r.vest).replace(',', '.')) * 100), vestDays: Number(r.days.trim()) } : {}) })).filter((r) => r.key);
+    // the split at full vesting adds up to 100 % (a vesting row counts with its target); a vesting row grows from its start
+    const sum = rows.reduce((t, r) => t + (r.vestDays !== undefined ? r.vestBps : r.shareBps), 0);
+    if (sum !== 10000) return this.setState({ proposeWhy: `the shares${rows.some((r) => r.vestDays !== undefined) ? ' at full vesting' : ''} add up to ${sum / 100} %, not 100 %` });
+    if (rows.some((r) => r.vestDays !== undefined && !(r.vestDays >= 1))) return this.setState({ proposeWhy: 'a vesting share reaches its target over at least one day' });
+    if (rows.some((r) => r.vestDays !== undefined) && rows.every((r) => r.vestDays !== undefined) && sum !== rows.reduce((t, r) => t + r.shareBps, 0)) return this.setState({ proposeWhy: 'when every developer vests, someone must hold the part not yet vested: leave one without vesting' });
     if (rows.some((r) => !/^0[23][0-9a-f]{64}$/.test(r.key))) return this.setState({ proposeWhy: 'every key is 66 hex characters starting 02 or 03' });
-    try { await this.props.propose(this.state.by, rows); this.props.reread(); } catch (e) { this.setState({ proposeWhy: e.message }); }
+    try { await this.props.propose(this.state.by, startShares(rows)); this.props.reread(); } catch (e) { this.setState({ proposeWhy: e.message }); }
   }
   editRow(i, k, v) { const rows = this.state.rows.slice(); rows[i] = { ...rows[i], [k]: v }; this.setState({ rows }); }
   render() {
@@ -94,14 +116,24 @@ export class BallotsPanel extends React.Component {
       const known = [...new Map([...set.recipients.map((r) => [r.key, r.label || r.key.slice(0, 12) + '…']), ...mine.map((m) => [m.key, m.label])]).entries()].map(([key, label]) => ({ key, label }));
       const COLORS = ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'];
       const num = (v) => { const x = Number(String(v || 0).replace(',', '.')); return Number.isFinite(x) ? x : 0; };
-      const total = Math.round(s.rows.reduce((t, r) => t + num(r.share), 0) * 100) / 100;
+      const vests = (r) => String(r.days || '').trim() !== '' && String(r.vest || '').trim() !== '';
+      const final = (r) => (vests(r) ? num(r.vest) : num(r.share));
+      const total = Math.round(s.rows.reduce((t, r) => t + final(r), 0) * 100) / 100;
+      // what each developer holds on the first day, when someone vests: the vesting rows their start, the others scaled into the rest
+      const vRows = s.rows.filter(vests), vStart = vRows.reduce((t, r) => t + num(r.share), 0), oFinal = s.rows.filter((r) => !vests(r)).reduce((t, r) => t + num(r.share), 0);
+      const firstDay = vRows.length && oFinal > 0 ? s.rows.map((r) => (vests(r) ? num(r.share) : (num(r.share) * (100 - vStart)) / oFinal)) : null;
+      const p2 = (x) => Math.round(x * 100) / 100;
       const pick = (i, v) => { if (v === '') return this.editRow(i, 'other', true);
         const k = known.find((x) => x.key === v); const rows = s.rows.slice(); rows[i] = { ...rows[i], key: v, label: k ? k.label : rows[i].label, other: false }; this.setState({ rows }); };
       return (
         <div className="card split"><h3>Propose a new split</h3>
-          <p className="sub">Pick each developer and their share; the shares add up to 100 %. A share can grow day by day to a target (vesting): until it is reached, the part not yet vested stays with the others.</p>
-          <div className="split-bar">{s.rows.map((r, i) => num(r.share) > 0 ? <i key={i} title={`${r.label || 'developer'}: ${num(r.share)} %`} style={{ width: `${Math.min(100, num(r.share))}%`, background: COLORS[i % COLORS.length] }} /> : null)}</div>
-          <div className={'split-total' + (total === 100 ? ' ok' : ' warn')}>{total === 100 ? 'Total 100 % ✓' : total < 100 ? `Total ${total} % · ${Math.round((100 - total) * 100) / 100} % left to give` : `Total ${total} % · ${Math.round((total - 100) * 100) / 100} % too much`}</div>
+          <p className="sub">Pick each developer and their share; the shares add up to 100 %. A share can grow day by day to a target (vesting): it counts with its target, and until it is reached the part not yet vested stays with the others.</p>
+          {/* the bar shows the split at full vesting; a vesting row's part still to grow is drawn faint */}
+          <div className="split-bar">{s.rows.map((r, i) => final(r) > 0 ? <React.Fragment key={i}>
+            <i title={`${r.label || 'developer'}: ${vests(r) ? `${num(r.share)} % now` : `${final(r)} %`}`} style={{ width: `${Math.min(100, vests(r) ? num(r.share) : final(r))}%`, background: COLORS[i % COLORS.length] }} />
+            {vests(r) && final(r) > num(r.share) ? <i className="grow" title={`${r.label || 'developer'}: grows to ${final(r)} %`} style={{ width: `${Math.min(100, final(r) - num(r.share))}%`, background: COLORS[i % COLORS.length] }} /> : null}</React.Fragment> : null)}</div>
+          <div className={'split-total' + (total === 100 ? ' ok' : ' warn')}>{total === 100 ? (vRows.length ? 'Total 100 % at full vesting ✓' : 'Total 100 % ✓') : total < 100 ? `Total ${total} % · ${p2(100 - total)} % left to give` : `Total ${total} % · ${p2(total - 100)} % too much`}
+            {firstDay && total === 100 ? <small>On the first day: {s.rows.map((r, i) => `${r.label || 'developer'} ${p2(firstDay[i])} %`).join(' · ')}</small> : null}</div>
           <div id="prow">{s.rows.map((r, i) => {
             const isKnown = !r.other && known.some((x) => x.key === r.key);
             return (
