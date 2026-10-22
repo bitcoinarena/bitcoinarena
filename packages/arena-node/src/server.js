@@ -125,6 +125,7 @@ import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departure
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup, execCli } from './founding-seat.js';
+import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
@@ -3844,7 +3845,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       setup: foundingSetup,
       // guardingOpen: by default the census adverts' guardian_of[] naming a federation held OPEN, other than the one succeeded
       nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
-      clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
+      // a founding every 6 blocks on every network (guardian-founding.js FOUNDING_WINDOW); the genesis clock stays in the network id
+      clocks: { ...fedClocks, foundingWindow: FOUNDING_WINDOW }, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
       peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
       endpointOf: (e) => addressBook.endpointOf(e),

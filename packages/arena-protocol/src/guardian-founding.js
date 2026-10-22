@@ -112,6 +112,12 @@ export const LOAD_TRIGGER = 0.8;
  * the run ends, and the next cohort is a later height). Before any federation exists the genesis trigger stands as it was.
  */
 export const COHORT_NOMINAL = 10;
+/**
+ * A FOUNDING EVERY 6 BLOCKS (the owner 2026-10-22: "do the re foundation every 6 blocks on all instead of 19"): the window a drawn set
+ * has for its codes and DKG, on every network - a void cohort is drawn again founding_window + 1 = 6 blocks later. The genesis
+ * founding_window stays as it is: it is hashed into each network's id (testnet4 1060078b would become another network).
+ */
+export const FOUNDING_WINDOW = 5;
 /** A trigger's identity: what a seat remembers of a founding that went void. */
 export const triggerKey = (t) => `${t.kind}:${t.federation || ''}:${t.height}`;
 /**
