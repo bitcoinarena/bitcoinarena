@@ -117,6 +117,19 @@ function planSummary(txid, p) {
   };
 }
 
+// HOW OFTEN A SEAT PULLS THE OTHER SEATS' CANCELS (kanban #576): only for a round it holds an entry of - a cancel is kept only for an
+// entry this seat holds - and at most once per CANCEL_CARRY_MS for each round. Pulled from every peer on every plan, the attested rounds
+// cost each test host seat ~100 GET /cancels a second (measured 2026-10-22 10:5xZ on seat 1: 2,985 in 30 s).
+export const CANCEL_CARRY_MS = 30000;
+export function cancelCarryDue(carried, key, nowMs, entries, everyMs = CANCEL_CARRY_MS) {
+  if (!entries) return false;
+  const last = carried.get(key);
+  if (last !== undefined && nowMs - last < everyMs) return false;
+  carried.set(key, nowMs);
+  if (carried.size > 4096) for (const [k, t] of carried) if (nowMs - t >= everyMs) carried.delete(k);
+  return true;
+}
+
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -463,6 +476,7 @@ export class LockSettlement {
   // THE CANCELS THE OTHER SEATS HOLD, pulled before a market is settled so every seat builds its table from
   // the same entries: each kept only if its player's session key signed it - a seat cannot forge one for anybody
   async #carryCancels(roundIdBytes) {
+    if (!cancelCarryDue(this.#cancelsCarried, toHex(roundIdBytes), this.now(), this.round.entriesOf(roundIdBytes).length)) return;
     for (const peer of this.peersFor(roundIdBytes)) {
       let body;
       try {
@@ -1163,6 +1177,7 @@ export class LockSettlement {
     return p;
   }
   #settling = new Map();
+  #cancelsCarried = new Map();   // round id hex -> when its cancels were last pulled (cancelCarryDue)
 
   async #settleOnce(roundIdBytes) {
     { const row = this.round.get(roundIdBytes);
