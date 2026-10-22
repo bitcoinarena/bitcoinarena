@@ -15,7 +15,11 @@ import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
 
+// `endpointOf(entry)`: where that node answers now - its newest signed address announcement before its advert's endpoint (kanban
+// #577, measured 2026-10-22: the three installer guardians of 89ce310e restarted on an update, their quick tunnels took new names,
+// the seats held the announcements, and still read every claim at the advert's dead address - "0 of 2 gateway seats filled")
 export function createGatewayWatch({ federationId, seated, entries, tip, beaconAt, verify, fetcher = fetch, network = 'testnet4', bondMinGuardian = 50000n,
+  endpointOf = (e) => (e && e.advert ? e.advert.endpoint : null),
   epochBlocks = GATEWAY_EPOCH_BLOCKS, timeoutMs = 10000, incoming = null, keep = null,
   // THE SIGNED SEATING OF AN EPOCH (gateway-seating.js), where one stands: async (fid, epoch) -> [node hex] | null
   seatingFor = async () => null,
@@ -82,12 +86,13 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const said = { atMs: Date.now(), epoch, seated: seatedList.length, census: all.length, withEndpoint: 0, claims: 0 };
     for (const node of seatedList) {
       const e = all.find((x) => toHex(x.pubkey) === node);
-      if (!e || !e.advert || !e.advert.endpoint) continue;
+      const ep = e ? endpointOf(e) : null;
+      if (!ep) continue;
       said.withEndpoint++;
       let claim = null;
       try {
         // its claim FOR THIS FEDERATION (kanban #552: a seat may stand for a gateway in each federation it guards; an older seat answers its one)
-        const r = await fetcher(`${baseOf(e.advert.endpoint)}/gateway-claim?federation=${fid}`, { signal: AbortSignal.timeout(timeoutMs) });
+        const r = await fetcher(`${baseOf(ep)}/gateway-claim?federation=${fid}`, { signal: AbortSignal.timeout(timeoutMs) });
         if (r.status === 200) { const c = await r.json(); if (checkGatewayClaim(c, verify).ok && c.node === node && c.federationId === fid) claim = c; }
       } catch { claim = null; }
       if (!claim) continue;                 // no claim: this node does not stand

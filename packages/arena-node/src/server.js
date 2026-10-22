@@ -3917,6 +3917,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) (r.kind === 'own' ? ownSeatings : gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
   } catch { /* none kept */ }
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
+      endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
       pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats } : null; },
       // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
