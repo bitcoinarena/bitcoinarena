@@ -154,6 +154,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const markInputs = (pid, plan) => { for (const x of plan.refunds) db.prepare('INSERT OR IGNORE INTO reserve_payout_inputs (outpoint, proposal) VALUES (?, ?)').run(x.outpoint, pid); };
   const unspent = (fed, alsoBy = null) => (reserveRows(fed) || []).filter((r) => { const s = spentBy(r.outpoint); return !s || (alsoBy && s === alsoBy); })
     .sort((a, b) => (a.verifiedMs - b.verifiedMs) || (a.outpoint < b.outpoint ? -1 : 1));
+  const recordResent = new Set();
   const recordOf = (r) => ({ proposal: r.proposal, planId: r.plan_id, federation: r.federation, state: r.state, plan: planOfRow(r), txid: r.txid,
     preimage: r.preimage, refundTxid: r.refund_txid, why: r.why, claimTxid: r.claim_txid || null, claimMsat: r.claim_msat || null });
   // THE MOVE'S NEW RESERVE OUTPUT in the destination: its claim transaction's output 0, under the destination's reserve key
@@ -583,6 +584,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       const i = g.members.indexOf(me);
       const from = Number(plan.decidableAt) || 0;   // the drain's height, as the plan names it (X's signers checked it)
       if (i < 0 || !(Number.isInteger(height) && height >= from + TAKEOVER_BLOCKS * (i + 1))) continue;
+      // THE RECORD HANDED ON FIRST, once a process (kanban #326, measured 2026-10-22: four of A's seats restarted after the PAID
+      // record went round and kept no such move - the claim stopped at "3 of 5 guardian seats committed")
+      if (!recordResent.has(r.proposal)) { recordResent.add(r.proposal); broadcast(recordOf(r)); }
       out.push({ id: r.proposal, ...(await claimMove(r.proposal, plan)) });
     }
     // the moves the records call for, and those under way here (planned or sent: no longer listed once their inputs are spent)
