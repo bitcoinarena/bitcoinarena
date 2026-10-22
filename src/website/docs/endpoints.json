@@ -10598,5 +10598,48 @@
   "changesState": true,
   "needsAuth": "owner",
   "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/federation/retire",
+  "params": "body JSON signed request, action \"federation/retire\"; args {federation?} for the plan, {post: true, understood: \"RETIRE\"} to consent",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, plan} (the federation this node guards, its record status and reserve, the guardian's audit by module, holdsNothing, consented); 200 {ok, consented} once kept; 200 {retired: true} when the record is already CLOSED; 400 with why (no guardian, another federation, \"type RETIRE\"); 409 when it still holds something; 401/403 when not the owner",
+  "purpose": "Retires a federation that holds nothing (kanban #577): the owner of one of its guardians consents. A seat builds that federation's record CLOSED, with no successor, only when its own owner consented, so the record stands once a threshold of the guardians' owners did; every seat then reads it CLOSED and its guardians are free for the next founding. Once it stands, the node sets its guardian of that federation aside (kept) and starts a guardian in setup.",
+  "audience": "operator/monitoring",
+  "line": 5364,
+  "summary": "Retire an empty federation this node guards: plan, consent",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"liquidity/new-address\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, address:\"tb1p…\"}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no liquidity provider service."
+   },
+   {
+    "status": "502",
+    "contentType": "application/json",
+    "description": "The provider service did not answer or failed."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
  }
 ]

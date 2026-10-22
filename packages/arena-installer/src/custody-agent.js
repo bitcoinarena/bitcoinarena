@@ -169,7 +169,8 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       return { ok: true, did: 'join' };
     }
     // 3. the peg-in set aside for the gateway's e-cash
-    if (s.gateway && c.pegInSats && !c.pegIn) {
+    // per federation (kanban #577): a node whose federation was retired founds the next, whose gateway needs its own peg-in
+    if (s.gateway && c.pegInSats && (!c.pegIn || c.pegIn.federationId !== g.federationId)) {
       const a = await gw.depositAddress({ ...s.gateway, federationId: g.federationId });
       if (!a.ok) return { ok: false, why: a.why };
       const { coins } = await chainKit.coinsOf(s.chain, w.spk);

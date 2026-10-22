@@ -61,7 +61,7 @@ export function guardiansToStart(storePath, env = process.env) {
 export async function startNode({ db, path }, options = {}, chain = {}) {
   const none = { running: false, stop: async () => {} };
   let guardian = none, next = none;
-  const plan = guardiansToStart(path, chain.env || process.env);
+  let plan = guardiansToStart(path, chain.env || process.env);
   // the node's key names its guardians' P2P port, the one every node carries to it (p2p-tunnel.js, kanban #562)
   let nodeKey = null; try { nodeKey = nodeIdentity(db).pubkey; } catch { nodeKey = null; }
   // a guardian waiting in setup is kept across a restart of its node (guardian.js pidfileUnits, kanban #495): its local params live in its memory
@@ -100,6 +100,18 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
         // params in the voided founding e8741283 and refused the next founding's - "Local parameters have already been set" - so its
         // code never came): only a guardian in setup mode (no federation key yet: nothing is lost), stopped, its setup database set
         // aside beside it (database.void-<time>, kept), and started again in a fresh setup. The founding asks it once (founding.js).
+        retire: async () => {
+          const dir = guardian.dataDir || `${path}.guardian`;
+          if (!existsSync(dir)) return { ok: false, why: 'this node holds no guardian directory' };
+          if (guardian.running) await (guardian.halt || guardian.stop)();
+          guardian = none;
+          const kept = `${dir}.retired-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+          renameSync(dir, kept);
+          plan = guardiansToStart(path, chain.env || process.env);
+          if (plan.own !== 'setup') return { ok: true, kept, setup: false, why: 'the guardian was set aside; this node waits in no setup (ARENA_FOUNDING is not 1)' };
+          guardian = await start('guardian');
+          return guardian.running ? { ok: true, kept, setup: true } : { ok: false, kept, why: guardian.why || 'the guardian in setup did not start' };
+        },
         freshSetup: async () => {
           if (plan.own !== 'setup') return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
           // also a guardian that already exited (kanban #495, 2026-10-22: after a key generation's checksum failure the guardians stopped)
@@ -115,6 +127,10 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
       },
       serviceSettings: settings });
   } catch (e) { await stopBoth(); throw e; }
+  // A RETIRED FEDERATION'S GUARDIAN SET ASIDE (kanban #577, federation-retire.js): once its record stands CLOSED with no successor, the
+  // guardian's directory - its federation key - is kept beside the store (<store>.guardian.retired-<time>), and the node starts a guardian
+  // in setup on an empty directory, so the next founding can draw it
+
   const closeNode = node.close;
   node.close = async () => { try { await closeNode(); } finally { await stopBoth(); } };
   node.guardianRunning = guardian.running;
