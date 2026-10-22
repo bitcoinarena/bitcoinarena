@@ -260,7 +260,11 @@ async function placeOrder(c, rid, rung, orderIndex, signers) {
 // back by forfeit or by the order's key after expiry) into this bot's wallet - until the federation holds nothing more of that order ----
 const roundOf = new Map();
 async function collectPass() {
-  const due = orders.filter((o) => !o.final && Date.now() > Number(o.windowEndMs) + 60000);
+  // AT MOST COLLECT_PER_PASS ORDERS A PASS, each looked at again only after LOOK_AGAIN_S (measured 23:34Z: ten bots looking at every
+  // open order every pass - each look asks the seats the settlement, the lock and the forfeit - put the test host at load 59)
+  const now = Date.now(), per = Number(env.COLLECT_PER_PASS || 4), again = Number(env.LOOK_AGAIN_S || 600) * 1000;
+  const due = orders.filter((o) => !o.final && now > Number(o.windowEndMs) + 60000 && now >= Number(o.nextLookMs || 0))
+    .sort((a, b) => Number(a.nextLookMs || 0) - Number(b.nextLookMs || 0)).slice(0, per);
   if (!due.length) return;
   const w = await wallet();
   const seed = Uint8Array.from(Buffer.from(readFileSync(join(DIR, 'seed.hex'), 'utf8').trim(), 'hex'));
@@ -276,8 +280,10 @@ async function collectPass() {
         const after = BigInt(await w.balanceMsat());
         say({ step: 'collected', round: o.round.slice(0, 16), order: o.order, payoutMsat: look.payoutMsat, stakeMsat: look.stakeMsat, refundMsat: look.refundMsat, creditedMsat: after - before });
       }
-      if (look.final) { o.final = true; o.payout = look.payout && look.payout.state; o.stake = look.stake && look.stake.state; keepOrders(); }
-    } catch (e) { say({ step: 'collect failed', round: o.round.slice(0, 16), order: o.order, why: String(e.message).slice(0, 200) }); }
+      if (look.final) { o.final = true; o.payout = look.payout && look.payout.state; o.stake = look.stake && look.stake.state; }
+      else o.nextLookMs = Date.now() + again;
+      keepOrders();
+    } catch (e) { o.nextLookMs = Date.now() + again; keepOrders(); say({ step: 'collect failed', round: o.round.slice(0, 16), order: o.order, why: String(e.message).slice(0, 200) }); }
   }
 }
 
