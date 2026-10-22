@@ -187,7 +187,13 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
   const capable = [], loads = [];
   // (only the newest row keeps the free nodes' keys - the readiness answers them; thousands of rows each holding forty keys would not)
-  const remember = (rows, row) => { if (!rows.length || rows[rows.length - 1].height < row.height) { if (rows.length) { delete rows[rows.length - 1].freeNodes; delete rows[rows.length - 1].self; } rows.push(row); } if (rows.length > keep) rows.shift(); };
+  // a row of the same height read again replaces it (kanban #585: a record that arrives within a block counts at once, not a block later)
+  const remember = (rows, row) => {
+    const last = rows.length ? rows[rows.length - 1] : null;
+    if (last && last.height === row.height) rows[rows.length - 1] = row;
+    else if (!last || last.height < row.height) { if (last) { delete last.freeNodes; delete last.self; } rows.push(row); }
+    if (rows.length > keep) rows.shift();
+  };
   async function history(h) {
     const held = records() || [];
     remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
