@@ -8439,7 +8439,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
       }
       if (req.method === 'GET' && url.pathname === '/founding') {
-        return json(res, 200, { node: toHex(round.pubkey), ...(foundingSeat ? foundingSeat.state() || { none: true } : { off: true }) });
+        // and whether this node is ready to be founded (kanban #585): the health page's "Waiting for a founding"
+        const ready = foundingSeat && typeof foundingSeat.readiness === 'function' ? await foundingSeat.readiness().catch(() => null) : null;
+        return json(res, 200, { node: toHex(round.pubkey), ...(foundingSeat ? foundingSeat.state() || { none: true } : { off: true }), ...(ready ? { ready } : {}) });
       }
       if (req.method === 'POST' && url.pathname === '/absence') {
         let a; try { a = readAbsenceHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `an absence attestation, its encoding and signature in hex: ${e.message}`); }

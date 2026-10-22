@@ -436,3 +436,24 @@ test('a refusal fedimint-cli prints on stdout is in the error the founding reads
   chmodSync(ok, 0o755);
   assert.equal(await cliSetup({ run: (a) => execCli(execFile, ok, a), apiPort: 1, password: 'p', guardianName: 'g' }).localParams({ leader: false }), 'code123');
 });
+
+test('readiness: the guardian in setup, running or none, the newest count of free operators against ten, and why no founding started (kanban #585)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`h${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/htx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `hop${i}`, guardianCapable: true, guardianEndpoint: `wss://h${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
+  const w = { tip: 300 }, g = { inSetup: true, running: false };
+  const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => g.inSetup, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => g.running },
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[0].pub, sign: (h) => schnorr.sign(h, all[0].secret), verify });
+  await s.tick();
+  const r = await s.readiness(1000);
+  assert.deepEqual(r, { guardian: 'setup', cohort: { height: 300, free: 12, needed: 10 }, why: r.why });
+  assert.match(r.why, /beacon after 300/, 'why its last tick started none');
+  g.inSetup = false; g.running = true;
+  assert.equal((await s.readiness(2000)).guardian, 'setup', 'asked at most every 30 s');
+  assert.equal((await s.readiness(40000)).guardian, 'running');
+  g.running = false;
+  assert.equal((await s.readiness(80000)).guardian, 'none');
+});

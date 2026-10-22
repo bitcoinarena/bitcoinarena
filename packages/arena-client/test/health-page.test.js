@@ -90,3 +90,33 @@ test('the Capacity card: each federation\'s band, who is below B* and by how muc
   assert.deepEqual([made[1][0], made[1][1]], [null, []]);
   assert.equal(drawn.length, 2);
 });
+
+test('Waiting for a founding: the guardian-capable nodes free of an OPEN federation, ready first, with the founding that runs (kanban #585)', () => {
+  const at = script.indexOf('  function paintFounding(nodes, feds) {');
+  const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
+  const drawn = [];
+  const H = { draw: (el, kind, props) => drawn.push([el, kind, props]) };
+  const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
+  const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
+  const drawTable = (id, head, rows, empty, foot) => drawn.push([id, 'table', { head, rows, empty, foot }]);
+  const paint = new Function('$', 'H', 'sat', 'cut', 'drawTable', src + '\nreturn paintFounding;')((id) => '#' + id, H, sat, cut, drawTable);
+  const ok = { ok: true };
+  const run = { id: 'f0'.repeat(32), windowEnd: 157302, seated: [{ node: 'a1'.repeat(32), position: 0 }, { node: 'a2'.repeat(32), position: 1 }],
+    codes: [{ node: 'a1'.repeat(32) }], alternates: [], noShows: ['a4'.repeat(32)], federation: false, void: false };
+  const nodes = [
+    { node: 'a1'.repeat(32), base: 'https://a1', guardianCapable: true, guardianOf: [], bondSats: '200000', version: ok,
+      found: { ok: true, body: { ...run, ready: { guardian: 'setup', cohort: { height: 157298, free: 13, needed: 10 }, why: null } } } },
+    { node: 'a2'.repeat(32), base: 'https://a2', guardianCapable: true, guardianOf: [], bondSats: '200000', version: ok,
+      found: { ok: true, body: { ...run, codes: [], ready: { guardian: 'none', cohort: { height: 157297, free: 13, needed: 10 }, why: null } } } },
+    { node: 'a3'.repeat(32), base: 'https://a3', guardianCapable: true, guardianOf: ['bb'.repeat(32)], bondSats: '200000', version: ok },   // guards an OPEN one
+    { node: 'a4'.repeat(32), base: 'https://a4', guardianCapable: true, guardianOf: ['cc'.repeat(32)], bondSats: '90000', version: { ok: false } },   // CLOSED: free
+    { node: 'a5'.repeat(32), base: 'https://a5', guardianCapable: false, guardianOf: [], version: ok },
+  ];
+  paint(nodes, [{ federation: 'bb'.repeat(32), status: 'OPEN' }, { federation: 'cc'.repeat(32), status: 'CLOSED' }]);
+  const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items;
+  assert.deepEqual(facts.map((f) => f[1]), ['13 of 10 needed', '1 of 3', 'f0f0f0f0 · 1 of 2 codes · window to 157,302']);
+  const t = drawn.find((d) => d[0] === 'founding')[2];
+  assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, typeof r.cells[4] === 'string' ? r.cells[4] : r.cells[4].t]),
+    [['a1a1a1a1a1a1', 'ready', 'seated 1 · code ✓'], ['a2a2a2a2a2a2', 'no guardian in setup', 'seated 2 · no code'], ['a4a4a4a4a4a4', 'not answering', 'no-show']]);
+  assert.match(t.foot, /157,298: 13 free operators/);
+});
