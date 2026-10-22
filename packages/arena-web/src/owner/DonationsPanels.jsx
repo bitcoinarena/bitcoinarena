@@ -136,8 +136,8 @@ export class DevClients extends React.Component {
     // protocol set and every game set give it the same share, else each
     const shareOf = (V) => { const sh = V.split && V.split.shares; if (!sh) return null;
       const all = [{ t: 'protocol', bps: sh.protocolBps }, ...(sh.games || []).map((g) => ({ t: g.title, bps: g.bps }))];
-      const same = all.every((x) => Number(x.bps) === Number(all[0].bps));
-      return <span className="dh-share">{same ? <><b>{pct(all[0].bps)}</b> share</> : all.map((x) => <span key={x.t}><b>{pct(x.bps)}</b> {x.t}</span>)}</span>; };
+      // every set by name, always (the owner 2026-10-22: "what is this 33%, is it just the protocol?" - one number for all hid that)
+      return <div className="dh-share"><span className="sub">Your share</span>{all.map((x) => <span key={x.t} className={Number(x.bps) >= 10000 ? 'own' : undefined}><b>{pct(x.bps)}</b> {x.t === 'protocol' ? 'Protocol' : x.t}</span>)}</div>; };
     const parts = (V) => {
       const S = V.split; if (!S) return [];
       const out = [{ label: 'Protocol', msat: BigInt(S.protocolMsat || 0), note: S.protocolDonations !== undefined ? count(S.protocolDonations, 'donation') : '' }];
