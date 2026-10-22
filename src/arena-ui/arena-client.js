@@ -27395,7 +27395,9 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
   const matures = maturityStands(advert, height, network);
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
-  if (bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
+  // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
+  // Asked per output here, a node's 32,000 top-up was refused where every seat counted it, and no paid round could be joined (#543).
+  if (!sumsBonds(contract) && bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
   // ROLES AND VERSION OFF THE NEWEST ADVERTISEMENT (2026.0.2): a bond whose update announces this round's
   // version counts - asked of its first advertisement, every node that announced version 2 by update was refused (the seats'
   // census had the same order, fixed in e8f039d8). The update, when there is one, is asked below.
@@ -27413,12 +27415,16 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
     if (!read.ok) return { ok: false, why: read.why };
     const uHeight = provenAt(headers, firstHeight, read.txid, u);
     if (uHeight === null || uHeight < height || uHeight > contract.censusHeight) return { ok: false, why: 'its update is not between the bond and the census height' };
-    if (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout) return { ok: false, why: 'its update names another bond' };
+    // FROM PROTOCOL 19 THE NODE'S NEWEST UPDATE DECIDES FOR EACH OF ITS OUTPUTS (kanban #544, census.js newestPerNode): a seat hands
+    // an output the update of another output of the same node - signed by this bond's key, so it is this node's (kanban #543)
+    if (!sumsBonds(contract) && (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout)) return { ok: false, why: 'its update names another bond' };
     if (!sameCC(read.nodePubkey, entry.pubkey) || !sig(read.signature, read.advertId, entry.pubkey)) return { ok: false, why: 'its update is not signed by the bond\'s key' };
     const roles = read.advert.roles || [];
     if (!roles.length || !(read.advert.protocolVersions || []).includes(contract.protocolVersion))
       return { ok: false, why: 'its newest update declares no role or not this round\'s version' };
-    entry = { ...entry, advert: read.advert, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
+    // each output keeps its own maturity and template (census.js ownMaturity)
+    const advertNow = sumsBonds(contract) ? { ...read.advert, bondMaturityHeight: entry.advert.bondMaturityHeight, bondScriptTemplateVersion: entry.advert.bondScriptTemplateVersion } : read.advert;
+    entry = { ...entry, advert: advertNow, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
   }
   return { ok: true, entry };
 }
@@ -27434,6 +27440,11 @@ function censusFromEvidence(evidence, { contract, headers, firstHeight, bond, ve
     const got = entryFromEvidence(item, { contract, headers, firstHeight, bond, verify });
     if (got.ok) entries.push(got.entry); else refused.push({ i, why: got.why });
   });
+  if (sumsBonds(contract)) {
+    const f = floorOnSums(entries, contract);
+    entries.splice(0, entries.length, ...f.kept);
+    refused.push(...f.out.map((e) => ({ i: -1, why: e.why })));
+  }
   let census;
   try { census = censusRootOf(entries, { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations }); }
   catch (e) { return { ok: false, why: `that census cannot be committed: ${e.message}`, refused }; }
