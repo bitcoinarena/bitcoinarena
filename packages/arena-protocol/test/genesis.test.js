@@ -53,7 +53,7 @@ import { REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../../nextblock/src/r
 import { LEGACY_CARGO } from '../../nextblock/src/sim.js';
 import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 test('the current core plays a config of its own, beside the founding one the network id commits to', () => {
   assert.equal(toHex(foundingHash()), toHex(GENESIS_CONFIG_HASH), 'the founding config moved');
@@ -70,7 +70,7 @@ test('the current core plays a config of its own, beside the founding one the ne
   assert.equal(v2[end - 4 - 4 - 1], CARGO_RULE_BED_FILL);
   assert.equal(dv.getUint32(end - 4 - 4), LEGACY_CARGO);
   // and the client lists the current core with the config it plays
-  assert.ok((KNOWN_GOOD_GAMES[toHex(NEXTBLOCK_GAME_ID)].cores[coreHashHex()] || []).includes(toHex(computeCurrentConfigHash())),
+  assert.ok((KNOWN_GOOD_GAMES[toHex(NEXTBLOCK_GAME_ID)].cores[TRUCK_68E2_HASH] || []).includes(toHex(computeCurrentConfigHash())),
     'the current core is not listed with its config: sign a new nextblock manifest and run node packages/arena-protocol/tools/known-games.js');
 });
 

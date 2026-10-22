@@ -13,12 +13,12 @@ import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js'
 import { stakeFor, entryFor, playerFor } from '../src/join.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
-const CORE = fromHex(coreHashHex());
+const CORE = fromHex(TRUCK_68E2_HASH);
 const UNKNOWN = b32(1);            // what every launcher used to write
 const seed = b32(0x5e);
 // SINCE KANBAN A ROUND NAMES ITS GAME, and a core is known only as a core its game lists (known-game.js)

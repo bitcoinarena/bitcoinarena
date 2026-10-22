@@ -16,10 +16,10 @@ import { lockAmountMsat } from '../src/page-lock.js';
 import { donationChoice, chooseDonation, DONATION_CONFIRM_BPS } from '../src/donation-choice.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { feeMatchesEntry, entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -27,7 +27,7 @@ const STAKE = 100000n;
 // THE NET OF A STAKE WITH NO DONATION: the stake less the node fee (5%, §0A.8) - every net below is this, less
 // the donation
 const NET0 = STAKE - entryFeeMsat(STAKE);
-const paying = { id: b32(0x21), stakeMsat: STAKE, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+const paying = { id: b32(0x21), stakeMsat: STAKE, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(TRUCK_68E2_HASH), federationId: TEST_FEDERATION_ID };
 const free = { id: b32(0x22), stakeMsat: 0n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1) };
 // A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses

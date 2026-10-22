@@ -38,7 +38,6 @@ import { serve } from '../../arena-node/src/server.js';
 import { bech32Encode, convertBits, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -49,6 +48,7 @@ import { pageFunction } from './page-script.js';
 import { HOSTED } from '../../arena-node/test/plugins/hosted.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React lines (kanban #564)
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -64,7 +64,7 @@ const lockedFor = (stakePoint = Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c
   claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
   stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
 });
-const paying = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+const paying = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(TRUCK_68E2_HASH), federationId: TEST_FEDERATION_ID };
 const seed = b32(0x5e);
 const entryOf = (donationMsat) => ({ ...entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat, ...lockedFor() }), roundId: b32(0x21) });
 const verifyEd25519 = async (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };

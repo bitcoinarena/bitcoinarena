@@ -50,7 +50,9 @@ for (const [name, path] of Object.entries(SOURCES)) {
 }
 const games = {};
 for (const [game, sources] of Object.entries(GAME_SOURCES)) {
-  games[game] = { pinned: {} };
+  // a game's other lists (Next Block's pinnedV5, kanban #523: the bundles manifest version 5 names) are kept as they were
+  const { pinned: _, ...rest } = (prior.games && prior.games[game]) || {};
+  games[game] = { pinned: {}, ...rest };
   for (const [name, path] of Object.entries(sources)) {
     const now = sha(path);
     const was = (prior.games && prior.games[game] && prior.games[game].pinned[name]) || [];

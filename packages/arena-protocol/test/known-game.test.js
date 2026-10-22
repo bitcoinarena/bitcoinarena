@@ -12,15 +12,21 @@ import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
 import { gameIsKnownGood } from '../src/known-game.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { GAME_ID_V5 } from '../../nextblock/plugin/nextblock-v5.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';
 import { computeCurrentConfigHash, computeGenesisConfigHash, computeDe2fConfigHash } from '../../nextblock/config/game-config.js';
 
 test('nextblock is on the known-good list with the core this tree builds under its current config, and is accepted', () => {
+  // kanban #523: the tree builds a5c5766a (68e2b3d6 with its comments cleaned), which only version 5 names; version 1 keeps 68e2b3d6
   const now = coreHashHex();
   const game = KNOWN_GOOD_GAMES[toHex(NEXTBLOCK_GAME_ID)];
   assert.ok(game, 'nextblock\'s manifest is not listed: run node packages/arena-protocol/tools/known-games.js');
   assert.equal(game.name, 'nextblock');
-  assert.ok(game.cores[now], `core ${now} is not listed for nextblock: sign a new manifest and regenerate the list`);
-  assert.deepEqual(gameIsKnownGood(NEXTBLOCK_GAME_ID, fromHex(now), computeCurrentConfigHash()), { ok: true, game: 'nextblock' });
+  assert.ok(game.cores[TRUCK_68E2_HASH], 'version 1 lists 68e2b3d6, the truck it was signed with');
+  assert.deepEqual(gameIsKnownGood(NEXTBLOCK_GAME_ID, fromHex(TRUCK_68E2_HASH), computeCurrentConfigHash()), { ok: true, game: 'nextblock' });
+  const v5 = KNOWN_GOOD_GAMES[toHex(GAME_ID_V5)];
+  assert.ok(v5 && v5.cores[now], `core ${now} is not listed for nextblock version 5: sign a new manifest and regenerate the list`);
+  assert.deepEqual(gameIsKnownGood(GAME_ID_V5, fromHex(now), computeCurrentConfigHash(), { protocolVersion: 11 }), { ok: true, game: 'nextblock' });
   assert.ok(Object.isFrozen(KNOWN_GOOD_GAMES));
 });
 

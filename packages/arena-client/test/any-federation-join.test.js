@@ -9,12 +9,12 @@ import { entryFor, inFederation, roundLocks } from '../src/join.js';
 import { lockFederation } from '../src/federations.js';
 import { decodeEntryContract, encodeEntryContract, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32), C = 'cc'.repeat(32);
-const ANY = { id: new Uint8Array(32).fill(7), protocolVersion: 3, stakeMsat: 1000000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()),
+const ANY = { id: new Uint8Array(32).fill(7), protocolVersion: 3, stakeMsat: 1000000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(TRUCK_68E2_HASH),
   federationId: new Uint8Array(32) };
 const lockedFor = () => ({ claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
   stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c)) } } } });

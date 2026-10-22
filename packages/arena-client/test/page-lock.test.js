@@ -42,6 +42,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { CORE_HASH } from '../../arena-node/tools/core-hash.mjs';
 import { joinedWithLock, CLAIM } from '../../arena-node/test/lock-fixture.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 // The shape of a real invite (bech32m, prefix `fed1`, separator `1`): the first
@@ -1780,7 +1781,7 @@ test('a committed lock is reused before the start, and resumed until the close, 
   const { TEST_FEDERATION_ID } = await import('../../arena-protocol/src/test-federation.js');
   const { coreHashHex } = await import('../../nextblock/tools/hash-core.js');
   const { randomBytes } = await import('node:crypto');
-  const round = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+  const round = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(TRUCK_68E2_HASH), federationId: TEST_FEDERATION_ID };
   const entry = Object.assign(entryFor(round, { seed: b32(0x5e), curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)),
     claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
     stakeLock: { outpoint: { txid: b32(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: Uint8Array.of(2, ...b32(0x6c)) } } } }),
