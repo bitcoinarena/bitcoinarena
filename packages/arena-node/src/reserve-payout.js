@@ -27,7 +27,7 @@ import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/has
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
-import { moveSeedOf } from './reserve-move.js';
+import { moveSeedOf, moveSeedFor } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
 
 /**
@@ -75,7 +75,7 @@ export const RESERVE_PAYOUT_SQL = `CREATE TABLE IF NOT EXISTS reserve_payouts (p
 const refuse = (why, status = 422) => ({ ok: false, status, why });
 const utf8 = (s) => new TextEncoder().encode(s);
 const PLAN_KEYS = ['proposal', 'federation', 'reserveKey', 'lnurl', 'amountSats', 'invoiceMsat', 'contractMsat', 'changeMsat', 'refunds', 'invoice',
-  'paymentHash', 'gatewayUrl', 'gatewayPk', 'expiration', 'nonce', 'kind', 'to', 'toKey', 'contractHex', 'decidableAt'];
+  'paymentHash', 'gatewayUrl', 'gatewayPk', 'expiration', 'nonce', 'kind', 'to', 'toKey', 'contractHex', 'decidableAt', 'seedTag'];
 /** A plan's id: the tagged hash of its fields in one order - what a second plan for the same proposal is told apart by. */
 export const planIdOf = (plan) => toHex(taggedHash('ARENA/v1/ReservePayoutPlan', utf8(JSON.stringify(PLAN_KEYS.map((k) => plan[k])))));
 /** The transaction nonce, the proposal's own: every signer rebuilds the same transaction. 8 bytes, a federation transaction's
@@ -186,7 +186,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (kind === 'claim') {
       const to = await portOf(plan.to);
       if (!to) return null;
-      const c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedOf(plan.proposal), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(plan.proposal, 'claim'), waitS: 30 });
+      const c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedFor(plan), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(plan.proposal, 'claim'), waitS: 30 });
       if (!c || !c.funded || !c.commitment || String(c.commitment.claim_pk).toLowerCase() !== String(plan.toKey).toLowerCase()) return null;
       return c.message ? fromHex(c.message) : null;
     }
@@ -281,7 +281,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (d.amountMsat !== invoiceMsat || toHex(d.paymentHash) !== String(plan.paymentHash).toLowerCase()) return refuse('the invoice is not for that amount and payment hash');
       const to = await portOf(plan.to);
       if (!to) return refuse('this seat reaches no port into the destination', 503);
-      let c; try { c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedOf(plan.proposal), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(plan.proposal, 'claim'), waitS: 0 }); }
+      let c; try { c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedFor(plan), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(plan.proposal, 'claim'), waitS: 0 }); }
       catch (e) { return refuse(`the destination's contract does not stand: ${e.message}`); }
       if (!c || !c.commitment || String(c.commitment.claim_pk).toLowerCase() !== String(plan.toKey).toLowerCase()) return refuse('the destination\'s contract is claimed by another key than its reserve key');
       if (String(c.commitment.payment_hash).toLowerCase() !== String(plan.paymentHash).toLowerCase()) return refuse('the destination\'s contract is for another payment hash than the invoice');
@@ -617,12 +617,13 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         // the destination's invoice, through the lowest live gateway of the destination
         const tg = lowestLiveGateway(((await to.gateways()) || {}).gateways || []);
         if (!tg) { out.push({ id: m.id, ok: false, why: 'the destination has no live gateway' }); continue; }
-        let inv; try { inv = await to.receiveToKey({ claimPk: fromHex(m.toKey), amountMsat: invoiceMsat, seed: moveSeedOf(m.id), gateway: tg.url }); }
+        const seedTag = toHex(random(8));   // this attempt's own payment hash (moveSeedFor)
+        let inv; try { inv = await to.receiveToKey({ claimPk: fromHex(m.toKey), amountMsat: invoiceMsat, seed: moveSeedFor({ proposal: m.id, seedTag }), gateway: tg.url }); }
         catch (e) { out.push({ id: m.id, ok: false, why: `no invoice from the destination yet: ${e.message}` }); continue; }   // asked again next pass
         plan = { proposal: m.id, kind: 'move', decidableAt: String(m.decidableAt), federation: m.from, to: m.to, toKey: m.toKey, reserveKey: toHex(g.key), lnurl: `move:${m.to}`, amountSats: String(amountSats),
           invoiceMsat: String(invoiceMsat), contractMsat: String(contractMsat), changeMsat: '0', refunds: inputs,
           invoice: inv.invoice, paymentHash: String(inv.paymentHash).toLowerCase(), contractHex: inv.contractHex, gatewayUrl: gw.url,
-          gatewayPk: String(gw.modulePublicKey).toLowerCase(), expiration: String(proposedExpiration(gws.height, gw)), nonce: toHex(payoutNonce(m.id)) };
+          gatewayPk: String(gw.modulePublicKey).toLowerCase(), expiration: String(proposedExpiration(gws.height, gw)), nonce: toHex(payoutNonce(m.id)), seedTag };
         const st = await planStands(plan);
         if (!st.ok) { log(`[move] ${m.id.slice(0, 16)}: own plan refused - ${st.why}`); out.push({ id: m.id, ...st }); continue; }
         write(m.id, { plan_id: st.planId, federation: m.from, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(m.id, plan);
@@ -637,7 +638,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const s = await sign(plan, 'claim');
     if (!s.ok) return s;
     const to = await portOf(plan.to);
-    const c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedOf(pid), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(pid, 'claim'), signature: s.signature });
+    const c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedFor(plan), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(pid, 'claim'), signature: s.signature });
     if (!c || !c.accepted) return refuse(`the destination's guardians refused the claim: ${c ? c.error : '?'}`);
     const msat = String(c.payout && c.payout.msat);
     write(pid, { state: PAYOUT.CLAIMED, claim_txid: c.txid, claim_msat: msat, why: `claimed into ${msat} msat under the destination's reserve key` });
