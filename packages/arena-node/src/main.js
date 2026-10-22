@@ -201,6 +201,8 @@ options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-ser
 // WHAT THIS NODE HOSTS (2026-10-03 22:50): node 1 gateway A + LND 1, node 2 gateway B + LND 2 - read for its /dashboard
 // A DEV CLIENT BESIDE THIS NODE: its directory, read for the dashboard (never its key)
 if (process.env.ARENA_DEV_CLIENT_DIR) options.devClientDir = process.env.ARENA_DEV_CLIENT_DIR;
+// THE APP DEVELOPER KEYS THIS NODE SIGNS AN APP'S NEW SPLIT WITH (kanban #578): Ed25519 PKCS#8 files, used only for apps whose manifest names them
+options.appKeysDir = process.env.ARENA_APP_KEYS_DIR || `${path}.app-keys`;
 // THE DEV CLIENTS THE OWNER SETS UP ON THE OWNER PAGE: run by this node, one directory each beside its database. A new
 // client takes the seats, invites and gateways this node knows - from a template donor.json (ARENA_DEV_TEMPLATE, else the client
 // beside it), else from ARENA_DEV_SEATS
