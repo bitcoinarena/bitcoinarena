@@ -3895,8 +3895,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     foundingPassNow = foundingPass;
     const ft0 = setTimeout(foundingPass, 5000);
     if (ft0.unref) ft0.unref();
-    const ft = setInterval(foundingPass, Number(process.env.ARENA_FOUNDING_MS || 60000));
-    if (ft.unref) ft.unref();
+    // EVERY 10 S WHILE A FOUNDING RUNS (kanban #577, measured 2026-10-22 ~22:00Z: blocks 157,311-157,315 came within minutes - testnet4's
+    // easy blocks after 20 quiet minutes - and draw ebdf1543's window of 5 blocks passed before its replacement could post its code, the
+    // seats passing once a minute); every ARENA_FOUNDING_MS (60 s) otherwise
+    const everyMs = Number(process.env.ARENA_FOUNDING_MS || 60000), runningEveryMs = Math.min(everyMs, Number(process.env.ARENA_FOUNDING_RUNNING_MS || 10000));
+    const running = () => { const st = foundingSeat.state(); return !!(st && st.id && !st.void && st.federation !== true); };
+    const loop = () => { const t = setTimeout(() => { foundingPass().finally(loop); }, running() ? runningEveryMs : everyMs); if (t.unref) t.unref(); };
+    loop();
   }
   // THE FEDERATION'S GATEWAY SEATS (spec §23A.9gateway-watch.js): a guardian probes, every 10 min, the gateways its
   // federation's seated guardians claim, and ranks them per epoch; GET /gateway-seats says its ranking
