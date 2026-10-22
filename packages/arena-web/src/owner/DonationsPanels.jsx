@@ -195,11 +195,26 @@ export class DevClients extends React.Component {
             <button type="button" onClick={() => this.remove(V.slug)}>Remove</button>{s.removeWhy ? <p className="err">{s.removeWhy}</p> : null}</details></> : null}
       </div>);
   }
+  addForm() {
+    const s = this.state;
+    return (<details><summary className="sub">Add a dev client</summary><div className="card">
+          <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out
+            over Lightning when you ask. Use a <b>new key</b> (put its public key in your game's donation set), or a <b>dev key you already have</b>:
+            its wallets are recovered from the federation. Only one client may run per key.</p>
+          <label>Label</label><input id="dlabel" autoComplete="off" placeholder="dev a" value={s.label} onChange={(e) => this.setState({ label: e.target.value })} />
+          <label>Your dev key's secret (64 hex), or empty for a new key</label>
+          <input {...field} id="dsecret" type="password" placeholder="empty = a new key" value={s.secret} onChange={(e) => this.setState({ secret: e.target.value })} />
+          <p className="sub">The secret travels in your signed request: only do this over https or on the node's own machine.</p>
+          <button type="button" className="primary" id="dsetup" onClick={() => this.setup()}>Set up</button>
+          <div className="err" id="derr">{s.setupSaid ? (s.setupSaid.ok ? <span className="ok">{s.setupSaid.text}</span> : s.setupSaid.text) : ''}</div></div></details>);
+  }
   // AT ONE PEEK (the owner 2026-10-22: "modern and pretty looking, and visible at a glance"): one wide card per client - what it can
   // withdraw now in whole sats, Withdraw beside it, four stat chips, and the split as one bar (protocol, each game, items) with counts
   render() {
     const { dev: r, why } = this.props, s = this.state;
     if (why) return <div className="card"><p className="err">{why}</p></div>;
+    // THE SETUP FORM ALONE (part 'add', in Developer) or everything else (part 'main', in Donations - kanban #582)
+    if (this.props.part === 'add') return r && r.managed ? this.addForm() : null;
     const all = [...(r.beside ? [{ ...r.beside, managed: false }] : []), ...(r.clients || []).map((c) => ({ ...c, managed: true }))].filter((c) => !c.error);
     const period = (V, k) => (V.split && V.split.earnings && V.split.earnings.periods[k] ? V.split.earnings.periods[k].totalMsat : '0');
     const holds = (V) => (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
@@ -266,17 +281,7 @@ export class DevClients extends React.Component {
         })}
         {this.props.query && all.some((V) => V.managed) ? <DonationsTable clients={all.filter((V) => V.managed)} cur={cur} query={this.props.query} stamp={this.props.dev} /> : null}
         {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
-        {r.managed ? <details><summary className="sub">Add a dev client</summary><div className="card">
-          <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out
-            over Lightning when you ask. Use a <b>new key</b> (put its public key in your game's donation set), or a <b>dev key you already have</b>:
-            its wallets are recovered from the federation. Only one client may run per key.</p>
-          <label>Label</label><input id="dlabel" autoComplete="off" placeholder="dev a" value={s.label} onChange={(e) => this.setState({ label: e.target.value })} />
-          <label>Your dev key's secret (64 hex), or empty for a new key</label>
-          <input {...field} id="dsecret" type="password" placeholder="empty = a new key" value={s.secret} onChange={(e) => this.setState({ secret: e.target.value })} />
-          <p className="sub">The secret travels in your signed request: only do this over https or on the node's own machine.</p>
-          <button type="button" className="primary" id="dsetup" onClick={() => this.setup()}>Set up</button>
-          <div className="err" id="derr">{s.setupSaid ? (s.setupSaid.ok ? <span className="ok">{s.setupSaid.text}</span> : s.setupSaid.text) : ''}</div></div></details>
-          : (all.length ? null : <div className="card"><p>This node runs no dev clients of its own: its operator starts it with ARENA_DEV_WASM_PKG to set them up here.</p></div>)}
+        {this.props.part === 'main' ? null : r.managed ? this.addForm() : (all.length ? null : <div className="card"><p>This node runs no dev clients of its own: its operator starts it with ARENA_DEV_WASM_PKG to set them up here.</p></div>)}
       </>);
   }
 }

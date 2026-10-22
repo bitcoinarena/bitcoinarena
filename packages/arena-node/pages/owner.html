@@ -388,13 +388,20 @@ async function ballotsPanel() {
     feeAnswer: (slug, proposalId, approve) => post('/owner/dev/fee-answer', signed('dev/fee-answer', { slug, proposalId, approve })),
     propose: (slug, recipients) => post('/owner/dev/propose', signed('dev/propose', { slug, recipients })) });
 }
+// DONATIONS ONLY WITH A DEVELOPER HERE (the owner 2026-10-22: "donations soll nur angezeigt werden wenn game devs oder protocol devs installiert sind"):
+// a dev client (GET /owner/dev) or a game developer's key (GET /owner/app-devs) - the area drawn again when that changes
+const devsHere = { clients: false, keys: false };
+const showDonations = () => { const on = devsHere.clients || devsHere.keys; if (areaProps && areaProps.hasDevs !== on) { areaProps.hasDevs = on; drawArea(); } };
 // THE GAME DEVELOPERS (kanban #582): shown only when a game developer's key is installed here (GameDevsPanel, GET /owner/app-devs); installing
 // one, removing it and a new split each the owner's signed request
 async function gameDevs() {
   let r = null, why = null;
   try { r = await (await fetch(at('/owner/app-devs'), { cache: 'no-store' })).json(); } catch (e) { why = e.message; }
+  devsHere.keys = !!(r && (r.devs || []).length); showDonations();
+  const addKey = (key) => post('/owner/apps/dev-key', signed('apps/dev-key', { key }));
+  if ($('gamedev-add')) O.drawInto($('gamedev-add'), 'GameDevsPanel', { devs: [], part: 'add', reread: gameDevs, addKey });
   if (!$('gamedevs')) return;
-  O.drawInto($('gamedevs'), 'GameDevsPanel', { devs: r ? r.devs : [], why, reread: gameDevs,
+  O.drawInto($('gamedevs'), 'GameDevsPanel', { devs: r ? r.devs : [], why, part: 'main', reread: gameDevs,
     addKey: (key) => post('/owner/apps/dev-key', signed('apps/dev-key', { key })),
     removeKey: (pubkey) => post('/owner/apps/dev-key', signed('apps/dev-key', { remove: pubkey })),
     changeSplit: (game, recipients) => post('/owner/apps/split', signed('apps/split', { game, recipients })) });
@@ -404,7 +411,9 @@ async function gameDevs() {
 async function devClients() {
   let r = null, why = null;
   try { r = await (await fetch(at('/owner/dev'), { cache: 'no-store' })).json(); } catch (e) { why = e.message; }
-  O.drawInto($('devs'), 'DevClients', { dev: r, why, reread: devClients,
+  devsHere.clients = !!(r && ((r.clients || []).length || r.beside)); showDonations();
+  if ($('dev-add')) O.drawInto($('dev-add'), 'DevClients', { dev: r, why, part: 'add', reread: devClients, setup: (args) => post('/owner/dev/setup', signed('dev/setup', args)) });
+  O.drawInto($('devs'), 'DevClients', { dev: r, why, part: 'main', reread: devClients,
     setup: (args) => post('/owner/dev/setup', signed('dev/setup', args)),
     withdraw: (args) => post('/owner/dev/withdraw', signed('dev/withdraw', args)),
     remove: (slug) => post('/owner/dev/remove', signed('dev/remove', { slug })),
