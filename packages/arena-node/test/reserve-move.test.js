@@ -182,6 +182,21 @@ test('a move whose first plan fell through asks for another invoice (kanban #326
   assert.ok(seats.every((s) => s.api.stateOf(MOVE) && s.api.stateOf(MOVE).state === PAYOUT.CLAIMED));
 });
 
+test('a seat that missed the PAID record still commits to the claim: the claimer hands the record on first (kanban #326)', async () => {
+  const { w, seats, deliver, xCoord, yCoord } = world();
+  const [a] = await xCoord.api.round({ height: 500 });
+  assert.deepEqual([a.ok, a.state], [true, PAYOUT.PAID], a.why);
+  const missed = seats.filter((s) => s.fed === Y && s !== yCoord).slice(0, 4);
+  for (const s of missed) s.inbox.length = 0;   // restarted while the records went round
+  await deliver();
+  assert.ok(missed.every((s) => !s.api.stateOf(MOVE)), 'four of Y\'s seven keep no such move');
+  const [b] = await yCoord.api.round({ height: 502 });
+  await deliver();
+  const c = b.ok ? b : (await yCoord.api.round({ height: 502 }))[0];
+  assert.deepEqual([c.ok, c.state], [true, PAYOUT.CLAIMED], c.why);
+  assert.equal(w.claims.length, 1);
+});
+
 test('an open or a halted federation does not move', async () => {
   for (const status of ['OPEN', 'HALTED']) {
     const { w, seats } = world({ statusX: status });
