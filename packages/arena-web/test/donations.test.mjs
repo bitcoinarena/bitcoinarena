@@ -40,18 +40,15 @@ function dev(props = {}) {
   return { m, calls, html: () => renderToStaticMarkup(React.createElement(React.Fragment, null, m.render())) };
 }
 
-test('the dev clients at one peek: a tile per client (to withdraw now, today, this week, all time, newest), the newest donations with round and player, the rest folded (the owner 2026-10-22)', () => {
+test('the dev clients at one peek: a wide card - ready to withdraw in whole sats with Withdraw, four chips, the split as a bar with counts; the newest donations; the rest folded (the owner 2026-10-22)', () => {
   const h = dev().html();
-  assert.match(h, /<div class="stats"><div class="stat"><span>dev a <span class="pill on">running<\/span><\/span><b>2,000 sat<\/b><small>to withdraw now<\/small><small>today 2,000 sat · this week 2,000 sat<\/small><small>all time 2,000 sat · 3 donations<\/small>/);
-  assert.match(h, /<button type="button" class="primary">Withdraw<\/button>/, 'a client holding sats offers Withdraw on its tile');
-  assert.match(h, /<h3>Newest donations<\/h3>.*<td>10-22 15:08<\/td><td>dev a<\/td><td>2\.668 sat<\/td><td title="80b976dc[0-9a-f]+">80b976dc18…<\/td><td title="c8a6af[0-9a-f]+">c8a6af2023…<\/td>/);
-  // the details, folded: the split, earnings by period, holdings only where not 0, withdraw open while it holds sats
+  assert.match(h, /<div class="devhero"><div class="dh-top"><div class="dh-who"><b>dev a<\/b> <span class="pill on">running<\/span><small>newest donation [0-9]+ (min|h|d) ago<\/small><\/div><div class="dh-cash"><span>Ready to withdraw<\/span><b>2,000 sat<\/b><button type="button" class="primary">Withdraw<\/button>/);
+  assert.match(h, /<div class="dh-chips"><div><span>Today<\/span><b>2,000 sat<\/b><\/div><div><span>This week<\/span><b>2,000 sat<\/b><\/div><div><span>All time<\/span><b>2,000 sat<\/b><\/div><div><span>Donations<\/span><b>3<\/b><\/div><\/div>/);
+  assert.match(h, /<div class="dh-bar"><i title="Protocol: 1,500 sat" style="width:75%;background:var\(--st\)"><\/i><i title="Rock Paper Scissors: 500 sat" style="width:25%;background:var\(--gv\)"><\/i><\/div>/);
+  assert.match(h, /<h3>Newest donations<\/h3>.*<td>10-22 15:08<\/td><td>dev a<\/td><td class="n">2,668 msat<\/td><td title="80b976dc[0-9a-f]+">80b976dc18…<\/td><td title="c8a6af[0-9a-f]+">c8a6af2023…<\/td>/);
   assert.match(h, /<details><summary>dev a: details, withdraw, remove<\/summary><div class="card"><h3>dev a<span class="ok"> · running<\/span><\/h3>/);
-  assert.match(h, /<span>For Rock Paper Scissors<\/span><b>500 sat · 1 donation<\/b>/);
-  assert.match(h, /<table class="earn"><thead><tr><th><\/th><th>Today<\/th><th>This week<\/th>.*<tr><th><b>Total<\/b><\/th><td>2,000 sat<\/td>/);
   assert.match(h, /<span>Holds in 333333333333<\/span><b>2,000 sat<\/b>/);
   assert.doesNotMatch(h, /Holds in 444444444444/, 'a federation holding 0 is not drawn');
-  assert.match(h, /<details open=""><summary>Withdraw over Lightning<\/summary>/);
   assert.match(h, /<summary class="sub">Add a dev client<\/summary>/);
   assert.match(dev({ dev: { managed: false, clients: [] } }).html(), /runs no dev clients of its own/);
 });
