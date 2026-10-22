@@ -265,8 +265,12 @@
     // THE NODES THE SEATS COUNT (their cohort's free operators' nodes): an operator with one node guarding an OPEN federation is not free
     const counted = new Set(cohort && Array.isArray(cohort.nodes) ? cohort.nodes.map((k) => String(k).toLowerCase()) : []);
     const isCounted = (n) => counted.has(String(n.node || '').toLowerCase());
-    const nReady = cohort && Array.isArray(cohort.nodes) ? cand.filter((n) => isCounted(n) && ready(n) === 'setup').length : cand.filter((n) => ready(n) === 'setup').length;
-    const ofReady = cohort && Array.isArray(cohort.nodes) ? cand.filter(isCounted).length : cand.length;
+    // ONLY THE NODES THAT WAIT (the owner 2026-10-22: "Zeige nur nodes die wirklich online sind, und keine Open Federation bewachen"): online
+    // now, and free by the seats' own count (their cohort's nodes); while no seat names its cohort, free by this page's reading
+    const online = (n) => !!(n.version && n.version.ok);
+    const free = (n) => (cohort && Array.isArray(cohort.nodes) ? isCounted(n) : true);
+    const shown = cand.filter((n) => online(n) && free(n));
+    const offline = cand.filter((n) => !online(n)).length, guarding = cand.filter((n) => online(n) && !free(n)).length;
     // WHY A NODE IS NOT COUNTED, in its own words (ready.cohort.self.guarding): its operator's node that guards a federation held OPEN, or
     // one no seat holds a record of
     const whyNot = (n) => { const c = fb(n) && fb(n).ready && fb(n).ready.cohort; const me = c && c.self;
@@ -280,12 +284,12 @@
     const why = [...whys].sort((x, y) => y[1] - x[1])[0];
     H.draw($('founding-facts'), 'facts', { items: [
       ['Free operators (cohort)', cohort ? `${cohort.free} of ${cohort.needed} needed` : `${cand.length} nodes`, cohort ? (cohort.free >= cohort.needed ? 'ok' : 'warn') : ''],
-      ['Counted and ready (guardian in setup)', `${nReady} of ${ofReady}`, nReady >= 10 ? 'ok' : nReady ? 'warn' : 'bad'],
+      ['Online, free and ready (guardian in setup)', `${shown.filter((n) => ready(n) === 'setup').length} of ${shown.length}`, shown.filter((n) => ready(n) === 'setup').length >= 10 ? 'ok' : shown.length ? 'warn' : 'bad'],
       ['Founding', run ? `${cut(run.id, 8)} · ${coded.size} of ${seated.size} codes` + (run.federation ? ' · federation runs' : run.void ? ' · void' : ` · window to ${sat(run.windowEnd)}`) : (why ? why[0] : 'none running'),
         run ? (run.federation ? 'ok' : run.void ? 'bad' : 'warn') : 'muted'],
     ] });
     const RANK = { setup: 0, running: 1, none: 2 };
-    const rows = cand.map((n) => {
+    const rows = shown.map((n) => {
       const r = ready(n), b = fb(n), k = String(n.node || '').toLowerCase(), s = seated.get(k);
       const state = !n.version || !n.version.ok ? { t: 'not answering', c: 'bad' } : !b ? { t: 'no /founding', c: 'bad' }
         : r === 'setup' ? { t: 'ready', c: 'ok' } : r === 'running' ? { t: 'guardian runs a federation', c: 'warn' } : r === 'none' ? { t: 'no guardian in setup', c: 'bad' } : b.off ? { t: 'founding off', c: 'bad' } : { t: 'an older release: says no readiness', c: 'warn' };
@@ -295,8 +299,10 @@
         cells: [{ t: cut(n.node, 12), c: 'mono' }, (n.base || '').replace(/^https?:\/\//, ''), sat(n.bondSats), state, !cohort || !Array.isArray(cohort.nodes) ? '-' : counted.has(k) ? { t: 'counted ✓', c: 'ok' } : { t: 'not counted', c: 'muted' }, counted.has(k) ? '' : { t: whyNot(n), c: 'muted' }, part],
         counted: counted.has(k) ? 0 : 1 };
     }).sort((x, y) => (x.counted - y.counted) || (x.rank - y.rank));
-    drawTable('founding', ['Node key', 'Address', 'Bond (sat)', 'Ready', 'In the cohort', 'Why not', 'This founding'], rows, 'no guardian-capable node is free of an OPEN federation',
-      cohort ? `the newest count at ${sat(cohort.height)}: ${cohort.free} free operators (an operator may run several nodes)` : null);
+    const hidden = [offline ? `${offline} offline` : '', guarding ? `${guarding} guarding an OPEN federation (or one no seat holds a record of)` : ''].filter(Boolean).join(', ');
+    drawTable('founding', ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding'], rows.map((r) => ({ ...r, cells: [r.cells[0], r.cells[1], r.cells[2], r.cells[3], r.cells[6]] })),
+      'no node online is free of an OPEN federation',
+      (cohort ? `the seats' count at ${sat(cohort.height)}: ${cohort.free} free operators (an operator may run several nodes)` : '') + (hidden ? `${cohort ? ' · ' : ''}not shown: ${hidden}` : ''));
   }
 
   // WHAT THE NETWORK WAITS FOR (kanban #560, the owner 2026-10-20: "Make sure that /health is also showing this table by asking the nodes"):
