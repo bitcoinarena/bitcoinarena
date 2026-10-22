@@ -24,7 +24,10 @@ export function newKey() {
  * seat's GET /federations lists the records it holds; a record names its federation's invite. Answers { federation id hex: invite }
  * from the first `want` seats that answer; a CLOSED record is skipped (nothing is paid into it any more).
  */
-export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000 }) {
+// `states` (optional, filled): { federation id hex: { status, successor } } - successor the record's successor_id hex, null for none;
+// what moves a dev's money out of a DRAINING federation into its successor (kanban #578, the owner: "federations that are draining
+// and are re-created keep their dev settings")
+export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 3, timeoutMs = 15000, states = null }) {
   const out = {};
   let answered = 0;
   for (const seat of seats || []) {
@@ -35,7 +38,13 @@ export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 
     answered++;
     for (const f of d.federations) {
       if (!f || f.status === 'CLOSED' || typeof f.record !== 'string') continue;
-      try { const r = decode(f.record); if (r && r.invite) out[String(f.federation).toLowerCase()] = r.invite; } catch { /* a record that does not read */ }
+      try {
+        const r = decode(f.record);
+        const fid = String(f.federation).toLowerCase();
+        if (r && r.invite) out[fid] = r.invite;
+        const succ = r && r.successorId ? Buffer.from(r.successorId).toString('hex') : '';
+        if (states && !states[fid]) states[fid] = { status: String(f.status || ''), successor: /^0*$/.test(succ) ? null : succ };
+      } catch { /* a record that does not read */ }
     }
   }
   return out;
