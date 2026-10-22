@@ -113,7 +113,10 @@ test('Waiting for a founding: the guardian-capable nodes free of an OPEN federat
     { node: 'a4'.repeat(32), base: 'https://a4', guardianCapable: true, guardianOf: ['cc'.repeat(32)], bondSats: '90000', version: { ok: false } },   // CLOSED: free
     { node: 'a5'.repeat(32), base: 'https://a5', guardianCapable: false, guardianOf: [], version: ok },
   ];
-  paint(nodes, [{ federation: 'bb'.repeat(32), status: 'OPEN' }, { federation: 'cc'.repeat(32), status: 'CLOSED' }]);
+  // a third node still names an older draw that holds more codes: the card shows the one most nodes name
+  const stale = { node: 'a6'.repeat(32), base: 'https://a6', guardianCapable: false, guardianOf: [], version: ok,
+    found: { ok: true, body: { id: 'e0'.repeat(32), windowEnd: 157302, seated: run.seated, codes: [1, 2, 3].map((i) => ({ node: String(i) })), alternates: [], noShows: [] } } };
+  paint([...nodes, stale], [{ federation: 'bb'.repeat(32), status: 'OPEN' }, { federation: 'cc'.repeat(32), status: 'CLOSED' }]);
   const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items;
   assert.deepEqual(facts.map((f) => f[1]), ['13 of 10 needed', '1 of 1', 'f0f0f0f0 · 1 of 2 codes · window to 157,302']);
   const t = drawn.find((d) => d[0] === 'founding')[2];
