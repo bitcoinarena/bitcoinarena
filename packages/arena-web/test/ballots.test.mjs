@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { BallotsPanel } from '../dist/test/ballots.mjs';
+import { BallotsPanel, startShares } from '../dist/test/ballots.mjs';
 
 const KA = '02' + 'aa'.repeat(32), KB = '03' + 'bb'.repeat(32);
 const donations = { sets: [{ kind: 'protocol', serial: 4, recipients: [{ key: KA, label: 'dev a', shareBps: 6000 }, { key: KB, label: 'dev b', shareBps: 4000 }] }] };
@@ -50,10 +50,10 @@ test('propose: starts from the set in force; the shares must make 100 % and ever
   p.m.state.rows.push({ key: 'nothex', label: 'dev c', share: '10', vest: '', days: '' });
   await p.m.propose();
   assert.equal(p.m.state.proposeWhy, 'every key is 66 hex characters starting 02 or 03');
-  p.m.state.rows[2] = { key: '02' + 'cc'.repeat(32), label: 'dev c', share: '10', vest: '20', days: '30' };
+  p.m.state.rows[2] = { key: '02' + 'cc'.repeat(32), label: 'dev c', share: '10', vest: '', days: '' };
   await p.m.propose();
   assert.deepEqual(p.calls.propose, [['deva', [{ key: KA, label: 'dev a', shareBps: 5000 }, { key: KB, label: 'dev b', shareBps: 4000 },
-    { key: '02' + 'cc'.repeat(32), label: 'dev c', shareBps: 1000, vestBps: 2000, vestDays: 30 }]]]);
+    { key: '02' + 'cc'.repeat(32), label: 'dev c', shareBps: 1000 }]]]);
   assert.match(panel({ dev: { clients: [] } }).html(), /^<div class="card"><h3>In force/);
   assert.doesNotMatch(panel({ dev: { clients: [] } }).html(), /Propose a new split/, 'no recipient client here, no form');
   assert.equal(renderToStaticMarkup(React.createElement(BallotsPanel, { why: 'no answer' })), '<div class="card"><p class="err">no answer</p></div>');
@@ -98,4 +98,21 @@ test('past proposals folded: refused, withdrawn or approved ones under one close
   assert.match(rest, /<h3>Fee proposal <span class="sub">f2f2f2f2f2f2<\/span><\/h3>.*<\/details>$/);
   assert.doesNotMatch(rest, /<details class="past-props" open/);
   assert.doesNotMatch(panel({ part: 'rest' }).html(), /Past proposals/, 'no past proposals, no fold');
+});
+
+test('vesting counts with its target: 50 / 30 / 10 growing to 20 is 100 % and is signed so it pays 50 / 30 / 20 at full vesting (the owner 2026-10-22)', async () => {
+  const p = panel();
+  p.m.state.rows[0].share = '50'; p.m.state.rows[1].share = '30';
+  p.m.state.rows.push({ key: '02' + 'cc'.repeat(32), label: 'dev c', share: '10', vest: '20', days: '365', other: true });
+  const h = p.html();
+  assert.match(h, /<div class="split-total ok">Total 100 % at full vesting ✓<small>On the first day: dev a 56.25 % · dev b 33.75 % · dev c 10 %<\/small><\/div>/);
+  assert.match(h, /<i title="dev c: 10 % now" style="width:10%;background:var\(--ok\)"><\/i><i class="grow" title="dev c: grows to 20 %" style="width:10%;background:var\(--ok\)"><\/i>/);
+  assert.match(h, /<button type="button" class="primary" id="pgo">Propose<\/button>/);
+  await p.m.propose();
+  assert.equal(p.m.state.proposeWhy, '');
+  assert.deepEqual(p.calls.propose[0][1].map((r) => [r.label, r.shareBps, r.vestBps, r.vestDays]), [['dev a', 5625, undefined, undefined], ['dev b', 3375, undefined, undefined], ['dev c', 1000, 2000, 365]],
+    'the start adds up to 100 %; scaled into the 80 % the vesting leaves, dev a and dev b hold 50 % and 30 %');
+  assert.deepEqual(startShares([{ shareBps: 3333 }, { shareBps: 3333 }, { shareBps: 1000, vestBps: 3334, vestDays: 10 }]).map((r) => r.shareBps), [4500, 4500, 1000], 'rounding: the start is exactly 100 %');
+  p.m.state.rows[2].vest = '30';
+  assert.match(p.html(), /<div class="split-total warn">Total 110 % · 10 % too much/);
 });
