@@ -42,11 +42,20 @@ const UPDOWN_PLUGIN = process.env.DUTY_UPDOWN_PLUGIN || '';
 if (UPDOWN_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_PLUGIN)) throw new Error(`DUTY_UPDOWN_PLUGIN names a btc-updown plugin file, not ${UPDOWN_PLUGIN}`);
 const UPDOWN_CHOSEN = UPDOWN_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_PLUGIN}`)).GAME : null;
 if (UPDOWN_CHOSEN) console.log(`[duty] Up/Down rounds of ${UPDOWN_PLUGIN}: game ${Buffer.from(UPDOWN_CHOSEN.gameId).toString('hex').slice(0, 16)}`);
+// THE TICK TOCK VERSION THE RUNNER POSTS (kanban #523): DUTY_NEXTBLOCK_PLUGIN names a nextblock plugin file (nextblock-v5.js) and
+// DUTY_NEXTBLOCK_CORE the core its rounds run on (0847c99f, version 5's larger truck); unset, DUTY_NEXTBLOCK_V3=1 as before (tools/duty-nextblock.mjs)
+const NB_PLUGIN_FIELDS = process.env.DUTY_NEXTBLOCK_PLUGIN ? await (async () => {
+  const r = nextblockDutyFields(await loadNextblockPlugin(process.env.DUTY_NEXTBLOCK_PLUGIN), process.env.DUTY_NEXTBLOCK_CORE || '');
+  if (!r.ok) throw new Error(`DUTY_NEXTBLOCK_PLUGIN ${process.env.DUTY_NEXTBLOCK_PLUGIN}: ${r.why}`);
+  console.log(`[duty] Tick Tock rounds of ${process.env.DUTY_NEXTBLOCK_PLUGIN}: game ${Buffer.from(r.fields.gameId).toString('hex').slice(0, 16)}, core ${Buffer.from(r.fields.simCoreHash).toString('hex').slice(0, 16)}`);
+  return r.fields;
+})() : null;
 // PAID_MARKET=1: the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { GAME as NEXTBLOCK_V3 } from '../../nextblock/plugin/nextblock-v3.js';
 import { TRUCK_F0CC_HASH } from '../../nextblock/plugin/truck-cores.js';
+import { nextblockDutyFields, loadNextblockPlugin } from './duty-nextblock.mjs';
 import { MARKET } from '../test/plugins/market/index.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
@@ -369,7 +378,7 @@ if (env.PAID_DUTY_DAILY === '1') {
     const per = (extra) => postFeds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
     // DUTY_NEXTBLOCK_V3=1: Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
     // need protocol 10 (ARENA_PROTOCOL_VERSION=10) and seats whose census advertisements name its game id
-    const NB_FIELDS = env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
+    const NB_FIELDS = NB_PLUGIN_FIELDS || (env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {});
     const got = game === 'nextblock'
       ? await round.openGrid({ ...CREATOR, fields: NB_FIELDS, tableFields: per({}), stakeMsat },
         { ...common, slots: (endMs - startMs) / 90000, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(startMs + 45000) })
