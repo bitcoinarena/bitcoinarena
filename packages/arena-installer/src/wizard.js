@@ -666,5 +666,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     } catch (e) { return json(res, 400, { ok: false, why: e.message }); }
   }
 
-  return { get token() { return token; }, handle, allowHost, close: () => { finished = true; sessions.clear(); saveSessions(true); } };
+  // ITS STEPS, CALLABLE BY NAME (kanban #563): the runners that do a step again on an installed node - bin/reach-switch.mjs (the address
+  // switch) and bin/custody-add.mjs (custody from the owner page) - call wizard['POST /api/...'] without the HTTP door; before this the
+  // object held only the door, and every such call was undefined (the address switch could not have run)
+  return { ...api, get token() { return token; }, handle, allowHost, close: () => { finished = true; sessions.clear(); saveSessions(true); } };
 }
