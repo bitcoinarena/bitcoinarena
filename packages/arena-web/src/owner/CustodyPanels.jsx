@@ -92,8 +92,53 @@ export class CustodyPanel extends React.Component {
     if (!loaded) return <p className="sub">reading whether this node holds custody…</p>;
     if (g && g.guardian) return (
       <div><div className="row"><span>Custody</span><b>on - this node is a guardian</b></div>
-        <div className="row"><span>Guardian endpoint</span><b><code>{g.endpoint || ''}</code></b></div></div>);
+        <div className="row"><span>Guardian endpoint</span><b><code>{g.endpoint || ''}</code></b></div>
+        <RetirePanel api={this.props.api} /></div>);
     return this.offer();
+  }
+}
+
+// RETIRE THE FEDERATION THIS NODE GUARDS (kanban #577, the owner-page rule: never "run this command"): only one that holds nothing -
+// its guardian's audit shows no e-cash issued and no coins held. Each guardian's owner consents here (typed RETIRE); once a threshold
+// of them did, its record stands CLOSED, and the node starts a fresh guardian for the next founding.
+export class RetirePanel extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { plan: null, typed: '', busy: false, message: null, ...(props.initial || {}) };
+    this.check = this.check.bind(this); this.consent = this.consent.bind(this);
+  }
+  async call(args) {
+    try { return await this.props.api.post('/owner/federation/retire', await this.props.api.signed('federation/retire', args)); } catch (x) { return { ok: false, why: x.message }; }
+  }
+  async check() {
+    this.setState({ busy: true, message: 'Reading the guardian\'s audit…' });
+    const r = await this.call({});
+    if (r && r.ok && r.retired) return this.setState({ busy: false, plan: null, message: 'This federation is retired: its record stands CLOSED.' });
+    this.setState({ busy: false, plan: r && r.ok ? r.plan : null, message: r && r.ok ? null : (r && r.why) || 'no answer' });
+  }
+  async consent() {
+    this.setState({ busy: true, message: 'Sending your consent…' });
+    const r = await this.call({ post: true, understood: this.state.typed });
+    this.setState({ busy: false, plan: (r && r.plan) || this.state.plan, message: r && r.ok ? null : (r && r.why) || 'no answer' });
+  }
+  render() {
+    const { plan: p, typed, busy, message } = this.state;
+    return (
+      <div className="retire">
+        <div className="row"><span>Retire its federation</span><b>only one that holds nothing</b></div>
+        {p ? (
+          <div>
+            <div className="row"><span>Federation</span><b><code>{String(p.federation).slice(0, 16)}…</code> {p.status || ''}</b></div>
+            {(p.audit || []).map((m) => <div key={m.kind} className="row"><span>{m.kind}</span><b>{n(m.netAssetsMsat / 1000)} sat</b></div>)}
+            {p.consented ? <p className="ok"><b>Your consent is kept ✓</b> The federation is retired once enough of its guardians' owners consented; then this node starts a fresh guardian for the next founding.</p>
+              : p.holdsNothing ? (
+                <div><p>It holds nothing. Retiring it closes it for good. Type <b>RETIRE</b>:</p>
+                  <p><input value={typed} onChange={(e) => this.setState({ typed: e.target.value })} placeholder="RETIRE" /> <Button primary disabled={busy || typed.trim() !== 'RETIRE'} onClick={this.consent}>Retire</Button></p></div>)
+                : <p className="warn">It cannot be retired: {p.why}</p>}
+          </div>)
+          : <p><Button disabled={busy} onClick={this.check}>Check</Button></p>}
+        {message ? <p className="sub">{message}</p> : null}
+      </div>);
   }
 }
 

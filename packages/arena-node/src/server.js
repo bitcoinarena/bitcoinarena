@@ -120,6 +120,7 @@ import { packageOf, verifyPackage, installPackage, registrationFromPackage } fro
 import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
+import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
 import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
@@ -3748,6 +3749,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     saveAt: (fid, height, hex) => { round.db.prepare('INSERT OR IGNORE INTO federation_record_history (federation, height, record) VALUES (?, ?, ?)').run(String(fid), Number(height), hex); },
     loadAt: (fid) => round.db.prepare('SELECT height, record FROM federation_record_history WHERE federation = ? ORDER BY height').all(String(fid)),
   };
+  // THE OWNERS' CONSENTS TO RETIRE A FEDERATION (kanban #577), kept beside the store
+  const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
@@ -3761,7 +3764,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
-    closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
+    closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); },
+    // A FEDERATION ITS OWNER CONSENTED TO RETIRE (kanban #577, federation-retire.js): this seat builds its record CLOSED, no successor
+    retiringOf: (fidHex) => retireBook.has(fidHex) });
+  // THE GUARDIAN OF A RETIRED FEDERATION SET ASIDE, once its record stands CLOSED with no successor (kanban #577, federation-retire.js):
+  // the node's guardian directory kept beside the store, a guardian in setup started - the next founding can draw this node
+  if (guardianControl && guardianControl.retire && guardian && guardian.dataDir) {
+    const rt = setInterval(async () => {
+      try {
+        const fid = guardedFederationOf(guardian.dataDir, readInvite);
+        if (!fid || !retireBook.has(fid)) return;
+        const held = fedRecords.recordOf(fid);
+        if (!held || held.status !== 'CLOSED' || (held.record && held.record.successorId && held.record.successorId.some((x) => x))) return;
+        const r = await guardianControl.retire();
+        retireBook.done(fid);
+        console.log(`[retire] ${fid.slice(0, 16)} stands CLOSED: ${r.ok ? `its guardian set aside (${r.kept}), ${r.setup ? 'a guardian in setup started' : r.why}` : r.why}`);
+      } catch (e) { console.log(`[retire] ${e.message}`); }
+    }, Number(process.env.ARENA_RETIRE_CHECK_MS || 60000));
+    if (rt.unref) rt.unref();
+  }
   // EVERY NODE SERVES EVERY FEDERATION (RULED 2026-10-13): another federation's port is joined with the
   // invite its signed record carries - the records this seat mirrors for every federation its census names
   if (stakeLocks && 'inviteOf' in stakeLocks) stakeLocks.inviteOf = (fid) => fedRecords.inviteOf(fid);
@@ -5337,6 +5358,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // add-custody.js + bin/custody-add.mjs) - never "run arena-install --add-custody". Without `post` the plan (Lightning, the bond
         // against the guardian floor, what the wallet must hold); `progress` only the runner's progress; `post` with the owner's typed
         // I UNDERSTAND starts it
+        // RETIRE A FEDERATION THAT HOLDS NOTHING (kanban #577, federation-retire.js): on a guardian of it. Without `post`: the plan - the
+        // federation this node guards, its record's status and reserve, the guardian's own audit. `post` with the typed RETIRE: the owner's
+        // consent, kept; the record goes CLOSED once a threshold of its guardians' owners consented, and the guardian is then set aside.
+        if (url.pathname === '/owner/federation/retire') {
+          const a = owner.authorize(body, 'federation/retire');
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!guardian || !guardian.dataDir) return answer(400, { ok: false, why: 'this node runs no guardian' });
+          const fid = guardedFederationOf(guardian.dataDir, readInvite);
+          if (!fid) return answer(400, { ok: false, why: 'this node\'s guardian guards no federation yet' });
+          const args = body.args || {};
+          if (args.federation && String(args.federation).toLowerCase() !== fid) return answer(400, { ok: false, why: `this node guards ${fid.slice(0, 16)}, not that federation` });
+          const held = fedRecords ? fedRecords.recordOf(fid) : null;
+          const status = held ? held.status : null;
+          if (status === 'CLOSED') return answer(200, { ok: true, federation: fid, status, retired: true, consented: retireBook.has(fid) });
+          const reserveSats = held && held.record ? String(held.record.reserveSats) : null;
+          let audit = null, empty;
+          try { audit = await auditGuardian({ run: (x) => execCli(execFileCb, process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', x), dataDir: guardian.dataDir }); empty = holdsNothing(audit); }
+          catch (e) { empty = { ok: false, why: `the guardian's audit did not answer: ${e.message}` }; }
+          if (empty.ok && reserveSats !== null && BigInt(reserveSats) !== 0n) empty = { ok: false, why: `its protocol reserve holds ${reserveSats} sat` };
+          const plan = { federation: fid, status, reserveSats, audit: audit && audit.module_summaries ? Object.values(audit.module_summaries).map((m) => ({ kind: m.kind, netAssetsMsat: m.net_assets })) : null,
+            holdsNothing: empty.ok, why: empty.ok ? null : empty.why, consented: retireBook.has(fid) };
+          if (args.post !== true) return answer(200, { ok: true, plan });
+          if (String(args.understood || '').trim() !== 'RETIRE') return answer(400, { ok: false, why: 'type RETIRE to retire this federation' });
+          if (!empty.ok) return answer(409, { ok: false, why: empty.why, plan });
+          retireBook.add(fid);
+          console.log(`[retire] the owner consented to retire ${fid.slice(0, 16)}`);
+          return answer(200, { ok: true, consented: true, plan: { ...plan, consented: true } });
+        }
         if (url.pathname === '/owner/custody/add') {
           const a = owner.authorize(body, 'custody/add');
           if (!a.ok) return answer(a.status || 401, a);

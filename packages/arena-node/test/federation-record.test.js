@@ -31,7 +31,7 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [], successor = null, closed = false, reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {} } = {}) {
+function seven({ leaving = [], successor = null, closed = false, retiring = [], reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {} } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
@@ -40,7 +40,7 @@ function seven({ leaving = [], successor = null, closed = false, reserves = null
   const seats = nodes.map((n, i) => federationRecords({
     round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
-    successorOf: () => successor, closedOf: () => closed,
+    successorOf: () => successor, closedOf: () => closed, retiringOf: () => retiring.includes(i),
     ...(absencesOf ? { absences: absencesOf(i), abandonBlocks, departureNotice } : {}),
     ...(reserves ? { reserveOf: async () => (reserves[i] === null ? { ok: false, why: 'no answer' } : { ok: true, reserveSats: BigInt(reserves[i]) }) } : {}),
     fetcher: async (url) => {
@@ -152,6 +152,25 @@ test('a successor named: the seven sign DRAINING with successor_id, and the succ
 // a round posted ahead whose census it could not read yet - seats 2-7 answered "no chain view for that round" and no record
 // ever had more than 1 of its 5 signatures. Now a seat's own basis is the newest round whose census it reads, and a peer
 // signs at the height the gatherer names, from a round it holds at that height.
+test('a federation that holds nothing is retired (kanban #577): its guardians\' owners consent, the seven sign it CLOSED with no successor', async () => {
+  const all = seven({ retiring: [0, 1, 2, 3, 4, 5, 6] });
+  const got = await all.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers], [true, 'CLOSED', 7], got.why);
+  const v = verifyFederationRecord(fromHex(all.seats[0].list()[0].record), { census: all.census.entries, verify, inviteFederationId });
+  assert.equal(v.ok, true, v.why);
+  assert.equal(v.status, 'CLOSED');
+  assert.ok(v.record.successorId.every((x) => x === 0), 'no successor: a retirement, not a succession');
+  // five of seven is the threshold: four consents make no record, and a gatherer that did not consent still builds it OPEN
+  const four = seven({ retiring: [0, 1, 2, 3] });
+  const g4 = await four.seats[0].gather(FED, inviteFederationId);
+  assert.equal(g4.ok, false, 'four of seven do not retire it');
+  const five = seven({ retiring: [0, 1, 2, 3, 4] });
+  assert.deepEqual([(await five.seats[0].gather(FED, inviteFederationId)).status], ['CLOSED']);
+  const other = seven({ retiring: [1, 2, 3, 4, 5] });
+  const go = await other.seats[0].gather(FED, inviteFederationId);
+  assert.notEqual(go.status, 'CLOSED', 'the gatherer whose owner did not consent signs no retirement');
+});
+
 test('seats holding rounds at different census heights sign one record: the newest readable for the gatherer, its height for the peers', async () => {
   const base = decodeRoundContract(fromHex(readFileSync(new URL('../../arena-client/test/page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1]));
   const s0 = seven();
