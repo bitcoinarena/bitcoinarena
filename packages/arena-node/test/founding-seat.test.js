@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
-import { createFoundingSeat, cliSetup, execCli } from '../src/founding-seat.js';
+import { createFoundingSeat, guardingWhy, cliSetup, execCli } from '../src/founding-seat.js';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -449,11 +449,22 @@ test('readiness: the guardian in setup, running or none, the newest count of fre
     nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[0].pub, sign: (h) => schnorr.sign(h, all[0].secret), verify });
   await s.tick();
   const r = await s.readiness(1000);
-  assert.deepEqual(r, { guardian: 'setup', cohort: { height: 300, free: 12, needed: 10, operators: 12, nodes: all.map((k) => toHex(k.pub)) }, why: r.why });
+  assert.deepEqual(r, { guardian: 'setup', cohort: { height: 300, free: 12, needed: 10, operators: 12, nodes: all.map((k) => toHex(k.pub)),
+    self: { inCensus: true, operator: 'hop0', operatorNodes: 1, free: true, bondSats: '1000000' } }, why: r.why });
   assert.match(r.why, /beacon after 300/, 'why its last tick started none');
   g.inSetup = false; g.running = true;
   assert.equal((await s.readiness(2000)).guardian, 'setup', 'asked at most every 30 s');
   assert.equal((await s.readiness(40000)).guardian, 'running');
   g.running = false;
   assert.equal((await s.readiness(80000)).guardian, 'none');
+});
+
+test('guardingWhy: the nodes of an operator that name a federation held OPEN or not held at all; a CLOSED or overloaded one frees them (kanban #585)', () => {
+  const a = key('w0'), b = key('w1');
+  const fid = (x) => Uint8Array.from(Buffer.from(x.repeat(32), 'hex'));
+  const entries = [{ pubkey: a.pub, advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('aa') }, { federationId: fid('cc') }] } },
+    { pubkey: b.pub, advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('bb') }, { federationId: fid('dd') }] } }];
+  const held = [{ federation: 'aa'.repeat(32), status: 'CLOSED' }, { federation: 'bb'.repeat(32), status: 'OPEN', load: 0.3 }, { federation: 'dd'.repeat(32), status: 'OPEN', load: 4.3 }];
+  assert.deepEqual(guardingWhy({ entries, held, op: 'opX' }), [{ node: toHex(a.pub), federation: 'cc'.repeat(32), status: 'not held' }, { node: toHex(b.pub), federation: 'bb'.repeat(32), status: 'OPEN' }]);
+  assert.deepEqual(guardingWhy({ entries, held, op: 'other' }), []);
 });
