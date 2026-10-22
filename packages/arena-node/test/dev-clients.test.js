@@ -183,3 +183,17 @@ test('the donations table: each row split as the earnings are; filtered by app (
   assert.deepEqual([p2.total, p2.limit, p2.offset, p2.rows.map((r) => r.outpoint)], [12, 5, 5, ['m6', 'm5', 'm4', 'm3', 'm2']]);
   assert.equal(donationsPage(many, {}, { limit: 1000 }).limit, 200);
 });
+
+test('a market donation names its window and its player (kanban #580): the window from the round, the player from its entry when the row names none', () => {
+  const games = { m1: { name: 'btc-updown-15m', title: 'Bitcoin Up or Down', bps: 5000, market: true }, g1: { name: 'nextblock', title: 'Tick Tock, Next Block', bps: 5000 } };
+  const W = { fromMs: Date.parse('2026-10-22T18:45:00Z'), toMs: Date.parse('2026-10-22T19:00:00Z') };
+  const rows = [
+    { roundId: 'm1', entryId: 'e1', amountMsat: '221', outpoint: 'o1', verifiedMs: 2 },
+    { roundId: 'g1', entryId: 'e2', amountMsat: '1332', outpoint: 'o2', playerKey: 'aa11', verifiedMs: 1 }];
+  const info = donationParts(rows, { protocolBps: 5000, gameOf: (id) => games[id] || null, windowOf: (rid) => (rid === 'm1' ? W : { fromMs: 0, toMs: 1 }),
+    playerOf: (r) => r.playerKey || ({ e1: 'bb22' })[r.entryId] || null });
+  assert.deepEqual(info.map((x) => [x.game, x.window, x.player]), [['btc-updown-15m', W, 'bb22'], ['nextblock', null, 'aa11']], 'only a market round names a window');
+  const page = donationsPage(info, {});
+  assert.deepEqual(page.rows.map((r) => [r.app, r.window, r.player]), [['btc-updown-15m', W, 'bb22'], ['nextblock', null, 'aa11']]);
+  assert.deepEqual(donationsPage(info, {}, { q: 'BB22' }).rows.map((r) => r.outpoint), ['o1'], 'searched by the player found from the entry');
+});

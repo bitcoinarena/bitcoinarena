@@ -91,6 +91,9 @@ export class DonationsTable extends React.Component {
     const curOf = (f) => (cur !== 'sat' && f && f[s.part] && f[s.part][cur] !== undefined ? money(f[s.part][cur], cur) : null);
     const short = (x) => (x ? x.slice(0, 8) + '…' + x.slice(-4) : '–');
     const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '?');
+    // A MARKET'S WINDOW BY NAME (kanban #580, the owner 2026-10-22: "on markets, it should show the market name e.g 18:45 - 19:00"), UTC
+    const hm = (ms) => new Date(ms).toISOString().slice(11, 16);
+    const span = (w) => `${hm(w.fromMs)} – ${hm(w.toMs)}`;
     const pages = r ? Math.max(1, Math.ceil(r.total / s.limit)) : 1, page = Math.floor(s.offset / s.limit) + 1;
     return (
       <div className="card dtable">
@@ -111,11 +114,11 @@ export class DonationsTable extends React.Component {
             <tr className={'dt-row' + (s.open === i ? ' on' : '')} onClick={() => this.setState({ open: s.open === i ? null : i })}>
               <td className="dim">{when(d.atMs)}</td>
               <td>{d.app ? <span className="tag">{d.title || d.app}</span> : <span className="tag dim">older round</span>}{d.item ? <span className="tag item">item</span> : d.market ? <span className="tag mk">market</span> : null}</td>
-              <td className="mono">{d.item ? d.item : short(d.round)}</td>
+              <td className={d.window ? 'win' : 'mono'} title={d.window ? `round ${d.round}` : undefined}>{d.item ? d.item : d.window ? span(d.window) : short(d.round)}</td>
               <td className="mono">{short(d.player)}</td>
               <td className="n"><b>{curOf(d.fiat) || sat(msatOf(d))}</b>{curOf(d.fiat) ? <small>{sat(msatOf(d))}</small> : null}</td></tr>
             {s.open === i ? <tr className="dt-more"><td colSpan="5"><div className="dt-rec">
-              {[['Round', d.round], ['Entry', d.entry], ['Player key', d.player], ['Outpoint', d.outpoint]].filter(([, v]) => v).map(([k, v]) => <div key={k}><span>{k}</span><code>{v}</code></div>)}
+              {[['Market', d.window ? `${new Date(d.window.fromMs).toISOString().slice(0, 10)} ${span(d.window)} UTC` : null], ['Round', d.round], ['Entry', d.entry], ['Player key', d.player], ['Outpoint', d.outpoint]].filter(([, v]) => v).map(([k, v]) => <div key={k}><span>{k}</span><code>{v}</code></div>)}
               <div><span>Parts</span><code>protocol {sat(d.protocolMsat)} · app {sat(d.appMsat)} · whole {sat(d.amountMsat)}</code></div>
               {cur !== 'sat' && d.fiat.all[cur] !== undefined ? <div><span>{cur.toUpperCase()} then</span><code>{money(d.fiat.all[cur], cur)}</code></div> : null}</div></td></tr> : null}
           </React.Fragment>)}</tbody></table></div>

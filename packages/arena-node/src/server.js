@@ -754,6 +754,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // At most LEARN_MAX rounds and LEARN_MS per call, one seat at a time per round.
   const roundApps = new Map();
   const roundTried = new Set();
+  const roundTimes = new Map(), entryPlayers = new Map(), entryTried = new Set();   // kanban #580: a round's times, an entry's player
   const LEARN_MAX = 60, LEARN_MS = 6000;
   const learnRoundApps = async (rows, seats) => {
     const t0 = Date.now();
@@ -770,11 +771,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const r = await fetch(`${b}/round?id=${rid}`, { signal: AbortSignal.timeout(2500) });
           if (!r.ok) continue;
           const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-          if (c.gameId instanceof Uint8Array) { roundApps.set(rid, toHex(c.gameId)); break; }
+          if (c.gameId instanceof Uint8Array) { roundApps.set(rid, toHex(c.gameId)); roundTimes.set(rid, timesOf(c)); break; }
+        } catch { /* the next seat */ }
+      }
+    }
+    // AND THE PLAYER OF A DONATION THAT DOES NOT NAME ONE (kanban #580, the owner 2026-10-22: "on markets ... also the player hash"): a market's
+    // donation comes out of its fee lock at the resolution, so its row names no player key - the entry it was for does (its EntryContract),
+    // read here or asked of the same seats (GET /entry), kept once found
+    for (const r of rows || []) {
+      const eid = String(r.entryId || '');
+      if (r.playerKey || !/^[0-9a-f]{64}$/.test(eid) || entryPlayers.has(eid) || entryTried.has(eid)) continue;
+      if (asked >= LEARN_MAX * 2 || Date.now() - t0 > LEARN_MS) break;
+      entryTried.add(eid);
+      try { const e = round.entry(Buffer.from(eid, 'hex')); if (e) { entryPlayers.set(eid, toHex(decodeEntryContract(new Uint8Array(e)).playerPubkey)); continue; } } catch { /* asked below */ }
+      asked++;
+      for (const b of bases) {
+        if (Date.now() - t0 > LEARN_MS) break;
+        try {
+          const x = await fetch(`${b}/entry?id=${eid}`, { signal: AbortSignal.timeout(2500) });
+          if (!x.ok) continue;
+          entryPlayers.set(eid, toHex(decodeEntryContract(new Uint8Array(await x.arrayBuffer())).playerPubkey)); break;
         } catch { /* the next seat */ }
       }
     }
     return { asked, known: roundApps.size };
+  };
+  // A ROUND'S TIMES (kanban #580): its start, its entry close and its end - a market's window is the period before its entry close
+  const timesOf = (c) => { let end = null; try { end = Number(roundEndMs(c)); } catch { end = null; } return { startMs: Number(c.startTimeMs || 0), closeMs: Number(c.entryCloseMs || 0), endMs: end }; };
+  const roundTimesOf = (rid) => {
+    if (roundTimes.has(rid)) return roundTimes.get(rid);
+    let t = null;
+    try { const row = /^[0-9a-f]{64}$/.test(rid) ? round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex')) : null; if (row) t = timesOf(decodeRoundContract(new Uint8Array(row.contract))); } catch { t = null; }
+    if (t) roundTimes.set(rid, t);
+    return t;
   };
   // A DEV KEY'S DONATIONS, BY WHOM THEY WERE FOR: its share in the newest protocol set this seat holds, and per round the
   // round's game (from the contract this seat keeps) and its share in that game's set - attributeDonations splits each donation p : g
@@ -816,7 +845,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // hosted game's half (games whose set does not name it are left out), and devEarnings over the same split
     const games = [];
     for (const g of hosted.values()) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); if (r && !games.some((x) => x.game === g.name)) games.push({ game: g.name, title: g.title || g.name, bps: Number(r.shareBps || 0) }); }
-    if (perRow) return donationParts(rows, { protocolBps, gameOf, itemOf, gameByName });   // each row on its own, for the donations table (kanban #578)
+    // A MARKET ROUND'S WINDOW (kanban #580: "it should show the market name e.g 18:45 - 19:00"): the app's period before the round's entry
+    // close (the window the market client shows), else the round's start to its end
+    const windowOf = (rid) => { const t = roundTimesOf(rid); if (!t) return null; const gid = (() => { try { const row = round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex')); return row ? toHex(decodeRoundContract(new Uint8Array(row.contract)).gameId) : roundApps.get(rid); } catch { return roundApps.get(rid); } })();
+      const g = gid ? hosted.get(gid) : null, period = g && g.manifest ? Number(g.manifest.roundPeriodMs || 0) : 0;
+      return period > 0 && t.closeMs ? { fromMs: t.closeMs - period, toMs: t.closeMs } : { fromMs: t.startMs, toMs: t.endMs || t.closeMs }; };
+    const playerOf = (r) => (r.playerKey ? String(r.playerKey) : entryPlayers.get(String(r.entryId || '')) || null);
+    if (perRow) return donationParts(rows, { protocolBps, gameOf, itemOf, gameByName, windowOf, playerOf });   // each row on its own, for the donations table (kanban #578, #580)
     return { ...attributeDonations(rows, { protocolBps, gameOf, itemOf, gameByName }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, itemOf, gameByName, nowMs: Date.now() }) };
   };
   const devSplitOfDir = (dir) => {
