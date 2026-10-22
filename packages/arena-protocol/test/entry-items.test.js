@@ -44,7 +44,7 @@ test('items that are not a list of ids with purchases, sorted and each once, are
   const bytes = encodeEntryContract(ENTRY);
   // an unknown byte after the website's key is no item list
   const afterSite = new Uint8Array([...encodeEntryContract({ ...ENTRY, frontendPk: site(5) }), 0x99]);
-  assert.throws(() => decodeEntryContract(afterSite), /neither its federation, its operator, its website, its items nor its reserve lock/);
+  assert.throws(() => decodeEntryContract(afterSite), /neither its federation, its operator, its website, its items, its reserve lock nor the bot mark/);
   const empty = new Uint8Array([...bytes, ITEMS_ENTRY_MARKER, 0, 0]);
   assert.throws(() => decodeEntryContract(empty), /empty list of items is not written/);
 });

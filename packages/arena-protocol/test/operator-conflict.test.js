@@ -45,7 +45,7 @@ test('an entry declares its operator last, after its marker; "none" is no bytes,
   assert.deepEqual(decodeEntryContract(encodeEntryContract({ ...entry, federationId: fed })).federationId, fed);
   assert.throws(() => encodeEntryContract({ ...entry, operatorId: new Uint8Array(32) }), /not zero/);
   assert.throws(() => decodeEntryContract(Uint8Array.from([...plain, 0xab, ...new Uint8Array(32)])), /not zero/);
-  assert.throws(() => decodeEntryContract(Uint8Array.from([...plain, FEDERATION_MARKER, ...fed, 0x01])), /neither its federation, its operator, its website, its items nor its reserve lock/);
+  assert.throws(() => decodeEntryContract(Uint8Array.from([...plain, FEDERATION_MARKER, ...fed, 0x01])), /neither its federation, its operator, its website, its items, its reserve lock nor the bot mark/);
 });
 
 test('a node is conflicted when its advertised operator is a player key or a declared operator of the round; none declared conflicts with nobody', () => {

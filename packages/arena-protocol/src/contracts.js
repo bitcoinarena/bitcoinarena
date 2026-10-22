@@ -726,6 +726,14 @@ export function encodeEntryContract(e) {
     w.u8(RESERVE_ENTRY_MARKER);
     writeOutpoint(w, e.reserveOutpoint, 'reserveOutpoint');
   }
+  // A BOT'S ENTRY (kanban #581, the owner 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is
+  // a flag in the API and protocol to mark them as bots"): the market maker bots sign it in their own entry, so no seat can add or take it
+  // away; the leaderboard leaves such entries out. WRITTEN ONLY FOR A BOT, last of all, its marker alone: every other entry keeps exactly
+  // its bytes and its id.
+  if (e.bot !== undefined && e.bot !== null && e.bot !== false) {
+    if (e.bot !== true) throw new Error('an entry is a bot\'s (true) or not');
+    w.u8(BOT_MARKER);
+  }
   return w.finish();
 }
 
@@ -744,6 +752,8 @@ export function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
 export const ITEMS_ENTRY_MARKER = 0xad;
 /** An entry's reserve lock outpoint follows (protocol 11). */
 export const RESERVE_ENTRY_MARKER = 0xae;
+/** The byte that says the entry is a bot's (kanban #581), last of all - no payload. */
+export const BOT_MARKER = 0xaf;
 export const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
@@ -829,9 +839,13 @@ export function decodeEntryContract(bytes) {
     e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32(), ownerSig: rr.bytes(64) }));
     if (!e.items.length) throw new Error('an empty list of items is not written: these bytes are not an entry\'s one encoding');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== RESERVE_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items nor its reserve lock');
+  if (r.at < bytes.length && bytes[r.at] === RESERVE_ENTRY_MARKER) {
+    r.u8();
     e.reserveOutpoint = readOutpoint(r);
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== BOT_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items, its reserve lock nor the bot mark');
+    e.bot = true;
   }
   r.end();
   return e;
