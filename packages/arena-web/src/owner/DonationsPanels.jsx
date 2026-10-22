@@ -167,8 +167,15 @@ export class DevClients extends React.Component {
                 <div><span>Donations</span><b>{Number(V.donations).toLocaleString('en-US')}</b></div>
               </div>
               {total > 0n ? <>
-                <div className="dh-bar">{P.map((p) => <i key={p.label} title={`${p.label}: ${whole(p.msat)}`} style={{ width: `${Number((p.msat * 10000n) / total) / 100}%`, background: p.color }} />)}</div>
-                <div className="dh-legend">{P.map((p) => <div key={p.label}><i style={{ background: p.color }} /><span>{p.label}</span><b>{whole(p.msat)}</b><small>{p.note}</small></div>)}</div></> : null}
+                {/* HOVER, A REAL READOUT (the owner 2026-10-22: "Hover is not working" - a title tooltip on a 10 px bar barely shows) */}
+                <div className="dh-bar" onMouseLeave={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: null } })}>{P.map((p, i) => <i key={p.label}
+                  className={(s.hov || {})[V.slug] === i ? 'on' : undefined} onMouseEnter={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: i } })}
+                  style={{ width: `${Number((p.msat * 10000n) / total) / 100}%`, background: p.color }} />)}</div>
+                <div className="dh-tip">{(() => { const i = (s.hov || {})[V.slug]; const p = i === null || i === undefined ? null : P[i];
+                  return p ? <><i style={{ background: p.color }} /><b>{p.label}</b> · {whole(p.msat)} · {(Number((p.msat * 10000n) / total) / 100).toLocaleString('en-US')} % of all{p.note ? ' · ' + p.note : ''}</> : <span className="sub">Point at the bar to see each part</span>; })()}</div>
+                <div className="dh-legend">{P.map((p, i) => <div key={p.label} className={(s.hov || {})[V.slug] === i ? 'on' : undefined}
+                  onMouseEnter={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: i } })} onMouseLeave={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: null } })}>
+                  <i style={{ background: p.color }} /><span>{p.label}</span><b>{whole(p.msat)}</b><small>{p.note}</small></div>)}</div></> : null}
             </div>);
         })}
         {recent.length ? <div className="card"><h3>Newest donations</h3>

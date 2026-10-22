@@ -41,22 +41,24 @@ export class BallotsPanel extends React.Component {
   }
   editRow(i, k, v) { const rows = this.state.rows.slice(); rows[i] = { ...rows[i], [k]: v }; this.setState({ rows }); }
   render() {
-    const { ballots: b, fees: fz, why, vote, feeAnswer } = this.props;
+    const { ballots: b, fees: fz, why, vote, feeAnswer, part } = this.props;
     if (why) return <div className="card"><p className="err">{why}</p></div>;
     const set = this.set(), mine = this.mine(), proposers = this.proposers(), s = this.state;
     const stateOf = (p) => (p.state === 'approved' ? <span className="ok">approved · in force from block {String(p.validFrom)}</span>
       : p.state === 'refused' ? <span className="err">refused{p.why ? ' · ' + p.why : ''}</span> : `open · ${pct(p.acceptBps)} accepted, more than 50 % needed`);
     return (
       <>
-        {set ? <div className="card"><h3>In force: serial {String(set.serial)}</h3>
+        {part === 'open' ? ((b.ballots || []).some((p) => p.state === 'open') || (fz.proposals || []).some((p) => p.needsDevs && !p.decision)
+          ? <h3 className="sh open-head">Open proposals · your vote counts</h3> : null) : null}
+        {part === 'open' ? null : set ? <div className="card"><h3>In force: serial {String(set.serial)}</h3>
           <div className="split-bar">{set.recipients.map((r, i) => <i key={r.key} title={`${r.label || r.key.slice(0, 12)}: ${pct(r.shareBps)}`} style={{ width: `${Number(r.shareBps) / 100}%`, background: ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'][i % 6] }} />)}</div>
           {set.recipients.map((r) => <Row key={r.key} k={<>{r.label || r.key.slice(0, 12)} <span className="sub">{r.key.slice(0, 12)}…</span></>} v={pct(r.shareBps)} />)}
           <p className="sub">Any developer here can propose a new split. It is in force for new rounds once developers holding more than half of this set accept it; rounds already published keep theirs.</p></div>
-          : <div className="card"><p>No protocol developers' set is in force on this node.</p></div>}
-        {(b.ballots || []).slice().sort((x, y) => Number(y.serial) - Number(x.serial)).map((p) => {
+          : part === 'open' ? null : <div className="card"><p>No protocol developers' set is in force on this node.</p></div>}
+        {(b.ballots || []).slice().sort((x, y) => Number(y.serial) - Number(x.serial)).filter((p) => (part === 'open' ? p.state === 'open' : part === 'rest' ? p.state !== 'open' : true)).map((p) => {
           const voters = mine.filter((m) => set && set.recipients.some((r) => r.key === m.key) && !p.votes.some((x) => x.key === m.key));
           return (
-            <div className="card" key={p.id}><h3>Proposal · serial {String(p.serial)} <span className="sub">{p.id.slice(0, 12)}</span></h3>
+            <div className={'card' + (p.state === 'open' ? ' open-prop' : '')} key={p.id}><h3>Proposal · serial {String(p.serial)} <span className="sub">{p.id.slice(0, 12)}</span></h3>
               <Row k="State" v={stateOf(p)} />
               <Row k="Proposed by" v={this.nameOf(p.proposer)} />
               {p.recipients.map((r) => <Row key={r.key} k={<>{r.label || r.key.slice(0, 12)} <span className="sub">{r.key.slice(0, 12)}…</span></>}
@@ -67,7 +69,7 @@ export class BallotsPanel extends React.Component {
                 <button type="button" onClick={() => this.act(p.id, () => vote(m.slug, p.id, false))}>Deny as {m.label}</button></React.Fragment>) : null}
               <div className="err">{s.said[p.id] || ''}</div></div>);
         })}
-        {proposers.length && set ? (() => {
+        {part !== 'open' && proposers.length && set ? (() => {
           // PROPOSE A NEW SPLIT, PRETTY (the owner 2026-10-22: "Make the UI more pretty including selects for existing devs"): a row per developer -
           // pick a known developer (the set in force and this node's dev clients) or another key, the share in %, an optional vesting - and
           // the total live as a bar, one colour per developer, saying what is left until 100 %
@@ -108,11 +110,11 @@ export class BallotsPanel extends React.Component {
               <div className="err" id="perr2">{s.proposeWhy}</div>
             </div>);
         })() : null}
-        {(fz.proposals || []).filter((p) => p.needsDevs).map((p) => {
+        {(fz.proposals || []).filter((p) => p.needsDevs).filter((p) => (part === 'open' ? !p.decision : part === 'rest' ? !!p.decision : true)).map((p) => {
           const answered = new Set((p.devs || []).map((x) => x.dev));
           const voters = mine.filter((m) => m.key && !answered.has(String(m.key).slice(2)));
           return (
-            <div className="card" key={p.id}><h3>Fee proposal <span className="sub">{p.id.slice(0, 12)}</span></h3>
+            <div className={'card' + (!p.decision ? ' open-prop' : '')} key={p.id}><h3>Fee proposal <span className="sub">{p.id.slice(0, 12)}</span></h3>
               {p.changes.map((c) => <Row key={c.fee} k={<>{feeName(c.fee)}{c.donation ? <> <span className="sub">donation</span></> : null}</>} v={`${feeVal(c.fee, c.from)} → ${feeVal(c.fee, c.to)}`} />)}
               <Row k="In force from" v={`block ${p.activationHeight}`} />
               <Row k="State" v={p.decision ? (p.decision.accepted ? <span className="ok">accepted</span> : <span className="err">refused · {p.decision.why || ''}</span>) : (p.vote ? 'vote ' + p.vote.state : 'signal ' + ((p.signal || {}).state || '…'))} />
