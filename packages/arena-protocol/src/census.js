@@ -1216,7 +1216,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
 // ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, the owner 2026-10-19: "this is also the default way. E.g increase your
 // bond by 32000 sats"): a node raises its bond by posting a second bond output beside the first, each valid on its own; from
 // protocol 19 the census counts them as their sum.
-const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;
+export const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;
 const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x) : '');
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;
@@ -1257,7 +1257,7 @@ export function nodeBondOf(entries, pubkey) {
 }
 
 /** Protocol 19's floor: every output of a node whose outputs sum below the round's bond_min is excluded, by that sum. */
-function floorOnSums(eligible, contract) {
+export function floorOnSums(eligible, contract) {
   const sums = new Map(nodeBonds(eligible).map((g) => [`${g.pubkey}|${g.operatorId}`, g]));
   const kept = [], out = [];
   for (const e of eligible) {
