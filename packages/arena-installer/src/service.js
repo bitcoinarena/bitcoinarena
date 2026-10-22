@@ -156,6 +156,18 @@ export async function windowsAutostart({ name, file, sh, env = process.env }) {
 /** The schtasks arguments that create the task (onlogon: no password is kept; /rl limited: no administrator). */
 export const windowsTaskArgs = ({ launcher }) => ['/create', '/f', '/tn', WINDOWS_TASK, '/sc', 'onlogon', '/rl', 'limited', '/tr', `"${launcher}"`];
 
+/**
+ * A LAUNCH AGENT BOOTSTRAPPED RIGHT AFTER ITS BOOTOUT, tried up to 5 times a second apart (as update.js and node-services.js do):
+ * launchd refuses a bootstrap while the agent it just booted out still unloads - measured 2026-10-22 on the second machine (kanban
+ * #577): the install's finish step reloaded the updater, `Bootstrap failed: 5: Input/output error`, and the node was left with none.
+ * `pauseMs` is for tests.
+ */
+export async function bootstrapAgent(sh, uid, file, { tries = 5, pauseMs = 1000 } = {}) {
+  let r = { ok: false, out: '', err: '' };
+  for (let i = 0; i < tries && !r.ok; i++) { if (i) await new Promise((ok) => setTimeout(ok, pauseMs)); r = await sh('launchctl', ['bootstrap', `gui/${uid}`, file]); }
+  return r;
+}
+
 /** macOS: the agents written to ~/Library/LaunchAgents and loaded (bootout first: an update or a second run replaces them). */
 async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs }) {
   const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
@@ -170,7 +182,7 @@ async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env
     const file = join(dir, `${a.label}.plist`);
     writeFileSync(file, a.text);
     await sh('launchctl', ['bootout', `gui/${uid}/${a.label}`]);
-    const r = await sh('launchctl', ['bootstrap', `gui/${uid}`, file]);
+    const r = await bootstrapAgent(sh, uid, file);
     if (!r.ok) return { ok: false, why: `launchctl bootstrap ${a.label} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
   }
   const health = await waitHealthy({ port, fetcher, waitMs });
@@ -227,7 +239,7 @@ export async function installProgram({ id, description, args, home, boot = true,
     chmodSync(file, 0o600);
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
     await sh('launchctl', ['bootout', `gui/${uid}/${label}`]);
-    const r = await sh('launchctl', ['bootstrap', `gui/${uid}`, file]);
+    const r = await bootstrapAgent(sh, uid, file);
     return r.ok ? { ok: true } : { ok: false, why: `launchctl bootstrap ${label} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
   }
   if (platform === 'win32') {
