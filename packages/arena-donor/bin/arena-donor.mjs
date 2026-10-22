@@ -111,6 +111,7 @@ function fileStore(path) {
   return { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); save(); }, remove: (k) => { held.delete(k); save(); } };
 }
 
+const fedStates = {};                 // federation id hex -> { status, successor } from the seats' records (invites)
 async function invites() {
   const LC = await lockClient();
   const out = { ...(cfg.invites || {}) };
@@ -131,7 +132,7 @@ async function invites() {
   // ones donor.json and daily.json name; an invite named above wins
   try {
     const { splitSignedRecord } = await import('../../arena-protocol/src/federation-record.js');
-    const fromSeats = await invitesFromSeats({ seats: cfg.seats || [], decode: (h) => splitSignedRecord(Buffer.from(h, 'hex')).record });
+    const fromSeats = await invitesFromSeats({ seats: cfg.seats || [], decode: (h) => splitSignedRecord(Buffer.from(h, 'hex')).record, states: fedStates });
     for (const [fid, inv] of Object.entries(fromSeats)) if (!out[fid]) out[fid] = inv;
   } catch (e) { say({ step: 'invites', from: 'seats', why: e.message }); }
   delete routes['127.0.0.1:18777'];
@@ -207,6 +208,22 @@ async function pass() {
         writeJson(statePath, state);
         if (r.step !== 'none') say({ step: `unclaimed: ${r.step}`, federation: f16, ...r });
       } catch (e) { say({ step: 'unclaimed: check failed', federation: f16, why: e.message }); }
+    }
+    // A DRAINING FEDERATION'S MONEY FOLLOWS ITS SUCCESSOR (kanban #578, the owner 2026-10-22: "federations that are draining and are
+    // re-created keep their dev settings, it seems that was not the case" - dev b held 9,285 msat in draining B, which would have
+    // been stuck once B is CLOSED): the page's own migrateFromDraining (§23A.6 step 3) - a send from this wallet paying an invoice
+    // of this dev's wallet in the successor the signed record names, in chunks, each waited for until claimed
+    {
+      const st = fedStates[fed.toLowerCase()];
+      if (st && ['DRAINING', 'CRITICAL'].includes(st.status) && st.successor && known[st.successor]) {
+        try {
+          const to = await clientFor(known[st.successor], st.successor, walletSecretFor(key.secretHex, st.successor), fileStore(join(dir, `wallet-${st.successor.slice(0, 16)}.json`)));
+          const { migrateFromDraining } = await import('../../arena-client/src/page-lock.js');
+          const m = await migrateFromDraining({ from: client, to, record: { status: st.status, successorId: st.successor }, toFederationId: st.successor,
+            gateways: [...(cfg.gateways || []), ...namedGateways] });
+          if (m.chunks || m.state !== 'moved') say({ step: 'moved to the successor', from: fed.slice(0, 16), to: st.successor.slice(0, 16), status: st.status, movedMsat: String(m.moved), chunks: m.chunks, state: m.state, why: m.why || null });
+        } catch (e) { say({ step: 'moved to the successor', from: fed.slice(0, 16), to: st.successor.slice(0, 16), state: 'failed', why: e.message }); }
+      } else if (st && ['DRAINING', 'CRITICAL'].includes(st.status)) say({ step: 'moved to the successor', from: fed.slice(0, 16), status: st.status, state: 'waiting', why: st.successor ? 'no invite to its successor is known yet' : 'its record names no successor yet' });
     }
     // NO LND, NO AUTOMATIC WITHDRAWAL: a client set up from the owner page keeps its e-cash until the owner withdraws it
     if (!cfg.lnd || cfg.autoWithdraw === false) {

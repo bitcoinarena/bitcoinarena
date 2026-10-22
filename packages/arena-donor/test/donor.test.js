@@ -172,3 +172,14 @@ test('every federation the seats hold a record of gives its invite; a closed one
   assert.deepEqual(got, { ['aa'.repeat(32)]: 'fed11r1', ['cc'.repeat(32)]: 'fed11r3' });
   assert.deepEqual(asked, ['http://a', 'http://b', 'http://c'], 'stops once two seats answered');
 });
+
+test('the seats\' records also tell each federation\'s status and successor: a draining one names where its money goes (kanban #578)', async () => {
+  const { invitesFromSeats } = await import('../src/donor.js');
+  const succ = new Uint8Array(32).fill(0x4d), none = new Uint8Array(32);
+  const answers = { 'http://s': { federations: [{ federation: 'B1'.repeat(32), status: 'DRAINING', record: 'b' }, { federation: '4d'.repeat(32), status: 'OPEN', record: 'n' }] } };
+  const fetcher = async (url) => ({ json: async () => answers[url.replace('/federations', '')] });
+  const decode = (h) => ({ invite: `fed11${h}`, successorId: h === 'b' ? succ : none });
+  const states = {};
+  await invitesFromSeats({ seats: ['http://s'], fetcher, decode, states });
+  assert.deepEqual(states, { ['b1'.repeat(32)]: { status: 'DRAINING', successor: '4d'.repeat(32) }, ['4d'.repeat(32)]: { status: 'OPEN', successor: null } });
+});
