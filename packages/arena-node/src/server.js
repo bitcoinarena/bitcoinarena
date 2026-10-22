@@ -117,6 +117,8 @@ import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
 import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
+import { createAppDevKeys } from './app-dev-keys.js';
+import { splitAsSet, nextVersionWithSplit } from './app-version.js';
 import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
@@ -399,6 +401,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHERE THE PLUGIN STORE KEEPS INSTALLED GAMES (main.js: <db>.plugins), loaded at start; installed
   // networks are kept in its networks/ directory
   pluginsDir = null,
+  appDevKeysDir = null,                        //: the game developers' keys its owner installed (app-dev-keys.js, kanban #582) - it signs their apps' new splits
   // THE CHAIN THIS SEAT READS, as its genesis names it ('bitcoin-regtest', 'bitcoin-testnet4'; main.js from ARENA_DONATION_NETWORK):
   // a network package for another chain is refused (network-check.js). Null: this seat takes no network package.
   chain = null,
@@ -920,6 +923,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // node, on its owner's signed request, takes it as any update is taken (adoptPackage: the developer's signature, its parent, a higher
   // version, the set its manifest names). Only the newest version of an app.
   const newerHosted = (g) => [...hosted.values()].some((x) => x.name === g.name && toHex(x.manifest.gameDevPubkey) === toHex(g.manifest.gameDevPubkey) && x.manifest.version > g.manifest.version);
+  const appDevKeys = createAppDevKeys(appDevKeysDir);
+  // A NEW SPLIT SIGNED HERE, with a developer key the owner installed (kanban #582: "wenn ein private key eines game devs auf dem Node
+  // installiert ist und neue Apps signieren kann. Nur dann"): the app's next version, then taken as any update (hostSplit)
+  async function signSplit({ game, recipients }) {
+    const g = hosted.get(game);
+    if (!g) return { ok: false, status: 404, why: 'this node hosts no such app' };
+    const seed = appDevKeys.seedOf(toHex(g.manifest.gameDevPubkey));
+    if (!seed) return { ok: false, status: 403, why: 'no key of this app\'s developer is installed on this node' };
+    const a = splitAsSet(recipients);
+    if (!a.ok) return { ok: false, status: 400, why: a.why };
+    if (toHex(donationSetId(a.set)) === toHex(g.manifest.gameDonationSetId)) return { ok: false, status: 409, why: 'that is the split it already has' };
+    let next; try { next = nextVersionWithSplit(g, a.set, seed); } catch (e) { return { ok: false, status: 500, why: e.message }; }
+    return hostSplit({ game, manifest: next.hex, donationSet: next.donationSet, info: next.info });
+  }
   async function hostSplit({ game, manifest, donationSet, info = null }) {
     const g = hosted.get(game);
     if (!g) return { ok: false, status: 404, why: 'this node hosts no such app' };
@@ -5069,6 +5086,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               ...(() => { if (address.announced && !endpointWarning({ advertised: address.announced, serving: address.serving })) return []; const w = endpointWarning(address); return w ? [w] : []; })()], address });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
+        // THE GAME DEVELOPERS' OVERVIEW (kanban #582, the owner 2026-10-22: "Dann gibt es eine Übersicht ähnlich des protocol devs mit allen
+        // donations und proposals"): for each developer key installed here, the apps it signs - the split in force, every version with its
+        // split (the past proposals), and the donations this node's dev clients received for the app (count, the app's part)
+        if (req.method === 'GET' && url.pathname === '/owner/app-devs') {
+          const keys = appDevKeys.list();
+          const perApp = new Map();
+          if (keys.length && devClients && devClients.list) {
+            for (const c of devClients.list()) {
+              const got = devClients.clientOf ? devClients.clientOf(c.slug) : null; if (!got) continue;
+              const { rowsOf } = await import('./fiat-rates.js');
+              for (const x of devAttribute(rowsOf(got.dir), got.pk, { perRow: true })) {
+                if (!x.game) continue;
+                const t = perApp.get(x.game) || { count: 0, appMsat: 0n, byClient: new Map() };
+                t.count++; t.appMsat += x.appMsat;
+                const b = t.byClient.get(c.slug) || { slug: c.slug, label: c.label || c.slug, count: 0, appMsat: 0n }; b.count++; b.appMsat += x.appMsat; t.byClient.set(c.slug, b);
+                perApp.set(x.game, t);
+              }
+            }
+          }
+          const splitOf = (g) => (g.donationSet || []).map((r) => ({ key: toHex(r.recipientPk), label: r.label || '', shareBps: Number(r.shareBps) }));
+          const devs = keys.map((devKey) => {
+            const mine = [...hosted.values()].filter((g) => toHex(g.manifest.gameDevPubkey) === devKey);
+            const names = [...new Set(mine.map((g) => g.name))];
+            return { devKey, apps: names.map((name) => {
+              const versions = mine.filter((g) => g.name === name).sort((x, y) => y.manifest.version - x.manifest.version);
+              const top = versions[0], d = perApp.get(name);
+              return { name, title: top.title || name, id: toHex(top.gameId), version: top.manifest.version, split: splitOf(top),
+                versions: versions.map((g) => ({ version: g.manifest.version, id: toHex(g.gameId), split: splitOf(g) })),
+                donations: d ? { count: d.count, appMsat: String(d.appMsat), byClient: [...d.byClient.values()].map((b) => ({ ...b, appMsat: String(b.appMsat) })) } : { count: 0, appMsat: '0', byClient: [] } };
+            }) };
+          });
+          return answer(200, { devs });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
           const installed = [];
           if (pluginsDir && existsSync(pluginsDir)) for (const id of readdirSync(pluginsDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
@@ -5215,8 +5265,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'apps/split');
           if (!a.ok) return answer(a.status, a);
           const args = body.args || {};
-          const r = await hostSplit({ game: String(args.game || '').toLowerCase(), manifest: args.manifest, donationSet: args.donationSet, info: args.info || null });
+          // signed by its developer elsewhere (the manifest), or here with the developer key installed on this node (the split)
+          const game = String(args.game || '').toLowerCase();
+          const r = args.manifest ? await hostSplit({ game, manifest: args.manifest, donationSet: args.donationSet, info: args.info || null })
+            : await signSplit({ game, recipients: args.recipients });
           return answer(r.status || (r.ok ? 200 : 409), r);
+        }
+        // A GAME DEVELOPER'S KEY, INSTALLED OR REMOVED BY THE OWNER (kanban #582): the key travels in the owner's signed request - only over https
+        // or on the node's own machine; the answer names its public key and the apps it signs, never the key
+        if (url.pathname === '/owner/apps/dev-key') {
+          const a = owner.authorize(body, 'apps/dev-key');
+          if (!a.ok) return answer(a.status, a);
+          const args = body.args || {};
+          const r = args.remove ? appDevKeys.remove(args.remove) : appDevKeys.add(args.key);
+          if (!r.ok) return answer(400, r);
+          const apps = [...new Set([...hosted.values()].filter((g) => toHex(g.manifest.gameDevPubkey) === r.pubkey).map((g) => g.title || g.name))];
+          console.log(`[apps] developer key ${r.pubkey.slice(0, 16)} ${r.removed ? 'removed' : 'installed'} (${apps.join(', ') || 'no app here names it'})`);
+          return answer(200, { ...r, apps });
         }
         if (url.pathname === '/owner/plugins/remove') {
           const a = owner.authorize(body, 'remove');

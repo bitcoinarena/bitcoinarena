@@ -117,3 +117,34 @@ test('only an app\'s newest version takes a new split: an older built-in version
     assert.match((await r.json()).why, /a newer version of this app runs here/);
   } finally { await b.close(); }
 });
+
+test('a game developer key the owner installs on the node: only then the overview lists its apps and the node signs their new split (kanban #582)', async () => {
+  const { registration: g } = testAttestedGame({ name: 'split-market', outcomes: ['UP', 'DOWN'] });
+  const seed = new Uint8Array(32).fill(7), secret = ownerSecretFromSeed(seed);
+  const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
+  const keys = mkdtempSync(join(tmpdir(), 'app-keys-'));
+  const b = await serve(openStore(), { plugins: [g], port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')), appDevKeysDir: join(keys, 'node.db.app-keys'),
+    owner: { store: { read: () => rec, write: () => {}, writeCode: () => {} } } });
+  try {
+    const B = `http://127.0.0.1:${b.port}`;
+    const node = (await (await fetch(`${B}/owner`)).json()).node;
+    const req = (action, args) => signOwnerRequest({ node, action, args, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+    const post = async (path, action, args) => { const r = await fetch(`${B}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req(action, args)) }); return { status: r.status, body: await r.json() }; };
+    const devs = async () => (await (await fetch(`${B}/owner/app-devs`)).json()).devs;
+    assert.deepEqual(await devs(), [], 'no key installed: no game developer here');
+    assert.match((await post('/owner/apps/split', 'apps/split', { game: toHex(g.gameId), recipients: SPLIT })).body.why, /no key of this app's developer is installed/);
+    assert.equal((await post('/owner/apps/dev-key', 'apps/dev-key', { key: 'not a key' })).status, 400);
+    const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.concat([PKCS8_ED25519, seedOf('split-market')]).toString('base64')}\n-----END PRIVATE KEY-----`;
+    const added = (await post('/owner/apps/dev-key', 'apps/dev-key', { key: pem })).body;
+    assert.deepEqual([added.ok, added.pubkey, added.apps], [true, toHex(testDevKey('split-market').pubkey), ['split-market']]);
+    assert.equal(JSON.stringify(added).includes(seedOf('split-market').toString('hex')), false, 'never the key itself');
+    let d = await devs();
+    assert.deepEqual(d.map((x) => [x.devKey, x.apps.map((a) => [a.name, a.version, a.split.map((s) => s.shareBps)])]), [[added.pubkey, [['split-market', 1, [10000]]]]]);
+    const r = await post('/owner/apps/split', 'apps/split', { game: toHex(g.gameId), recipients: SPLIT });
+    assert.equal(r.status, 200, r.body.why);
+    d = await devs();
+    assert.deepEqual(d[0].apps[0].versions.map((v) => [v.version, v.split.map((s) => s.shareBps)]), [[2, [5000, 3000, 2000]], [1, [10000]]], 'the new split in force, the old one in its history');
+    assert.equal((await post('/owner/apps/dev-key', 'apps/dev-key', { remove: added.pubkey })).body.removed, true);
+    assert.deepEqual(await devs(), [], 'removed: no game developer here again');
+  } finally { await b.close(); }
+});
