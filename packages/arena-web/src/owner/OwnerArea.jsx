@@ -32,13 +32,15 @@ export class OwnerArea extends React.Component {
   }
   copy() { navigator.clipboard.writeText(this.state.signed.hex).then(() => this.setState({ copied: true }), () => { if (this.hex) this.hex.select(); }); }
   render() {
-    const p = this.props, s = this.state, on = s.section;
+    // DONATIONS ONLY WITH A DEVELOPER ON THIS NODE (the owner 2026-10-22: "donations soll nur angezeigt werden wenn game devs oder protocol devs
+    // installiert sind"): the section and its menu entry need a dev client or a game developer's key here (hasDevs); installing one is in Developer
+    const p = this.props, s = this.state, on = s.section === 'money' && !p.hasDevs ? 'overview' : s.section;
     const dots = new Map(); for (const n of ordered(p.needs || [])) if (!dots.has(n.section)) dots.set(n.section, n.level);
     const sec = (id, children) => <section id={'s-' + id} hidden={on !== id}>{children}</section>;
     const games = p.games || [];
     return (
       <div className="layout">
-        <nav className="side" id="side">{SECTIONS.map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}</nav>
+        <nav className="side" id="side">{SECTIONS.filter(([id]) => id !== 'money' || p.hasDevs).map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}</nav>
         <main>
           {sec('overview', <><h2>Overview</h2>
             <div className="card" id="needs">{p.needs ? <NeedsPanel items={p.needs} /> : <p className="sub">checking this node…</p>}</div>
@@ -88,7 +90,10 @@ export class OwnerArea extends React.Component {
             <p className="sub">The code can only take this node out - no money, no settings. Never type your 24 words on another node.</p>
             <p className="sub">If the Arena site cannot be reached: the same page is on every node, at <a href={p.emergencyLink}>/Dashboard/emergency</a>.</p></div></>)}
           {sec('leave', <><h2>Leave</h2><Place id="leave" /></>)}
-          {sec('developer', <><h2>Developer</h2><div className="card">
+          {sec('developer', <><h2>Developer</h2>
+            {/* A DEVELOPER ON THIS NODE (kanban #582): a dev client (a protocol or app recipient) or a game developer's key - then Donations shows */}
+            <Place id="dev-add" className={null} /><Place id="gamedev-add" className={null} />
+            <div className="card">
             <p>Sign your own game or market. Your developer key comes from the same 24 words: <b id="devkey" className="mono">{p.devKey || 'none with a Nostr signer - sign games with your 24 words or your nsec'}</b></p>
             <label>The manifest (JSON; 32-byte values in hex, large numbers as strings; leave out gameDevPubkey - it is yours)</label>
             <textarea id="body" rows={8} {...field} placeholder='{ "gameName": "my-game", "version": 1, "resultType": "HEAD_TO_HEAD", ... }' value={s.manifest} onChange={(e) => this.setState({ manifest: e.target.value })} />

@@ -11,7 +11,7 @@ import { OwnerArea, SECTIONS } from '../dist/test/owner-area.mjs';
 
 const base = { node: 'ab'.repeat(32), owner: 'cd'.repeat(32), claimedAtMs: Date.UTC(2026, 9, 21), guardian: true, how: 'words',
   games: [{ name: 'nextblock', version: 5 }, { name: 'rock-paper-scissors', version: 4 }], emergencyCode: 'EMER-GENC-YCOD', emergencyLink: '/Dashboard/emergency',
-  devKey: 'ef'.repeat(32), onShowWords: () => ['w1', 'w2'], onForget() {}, signManifest: () => ({ gameId: '12'.repeat(32), hex: 'beef' }) };
+  devKey: 'ef'.repeat(32), hasDevs: true, onShowWords: () => ['w1', 'w2'], onForget() {}, signManifest: () => ({ gameId: '12'.repeat(32), hex: 'beef' }) };
 function area(props = {}) {
   const m = new OwnerArea({ ...base, ...props });
   m.setState = (u) => Object.assign(m.state, typeof u === 'function' ? u(m.state) : u);
@@ -67,4 +67,12 @@ test('the login: the words shown on a press and forgotten; a Nostr login signs o
   assert.match(a.html(), /<div id="shown"><div class="words"><span>w1<\/span><span>w2<\/span><\/div><\/div>/);
   const n = area({ how: 'nsec', onForget: () => forgot++ });
   assert.match(n.html(), /<p>This browser keeps your login and your nsec\. Your key stays with your nsec - keep it written down\.<\/p><button type="button" id="forget">Sign out on this browser<\/button>/);
+});
+
+test('Donations only with a developer on this node - a dev client or a game developer\'s key; installing one is in Developer (the owner 2026-10-22)', () => {
+  const without = area({ hasDevs: false }).html();
+  assert.doesNotMatch(without, /href="#money"/, 'no Donations in the menu');
+  assert.match(without, /<section id="s-money" hidden="">/, 'its section kept (the panels draw into it), hidden');
+  assert.match(without, /<section id="s-developer"[^>]*><h2>Developer<\/h2><div id="dev-add"><\/div><div id="gamedev-add"><\/div>/, 'where a dev client or a key is added');
+  assert.match(area({ hasDevs: true }).html(), /href="#money"[^>]*>Donations/);
 });
