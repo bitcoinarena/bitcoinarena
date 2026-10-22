@@ -126,6 +126,8 @@ export async function tallyDonationProposal({ proposal, approvals = [], parent, 
     const bps = shareOf.get(a.key);
     counted.push({ key: a.key, accept: a.accept, atHeight: a.atHeight, bps });
     if (a.accept) acceptBps += bps; else denyBps += bps;
+    // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (the owner 2026-10-22, on a proposal its proposer had denied: "This is no longer open")
+    if (!a.accept && a.key === toHex(p.proposer)) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'withdrawn by its proposer' });
     if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
     if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
   }

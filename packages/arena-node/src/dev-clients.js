@@ -117,6 +117,47 @@ export function devEarnings(rows, { protocolBps = 0, gameOf = () => null, itemOf
  * takes - { seats, invites, invitesFrom, wasmPkg, gateways } (the node's own knowledge, so the owner types none of it).
  * `keys`: { newKey(), keyFromSecret(Buffer) } (arena-donor's). `spawn` and `restartMs` for tests.
  */
+/** EACH DONATION ON ITS OWN, split as attributeDonations splits them: { r, game, title, market, item, protocolMsat, appMsat } - a row of a
+ *  round this node no longer holds has no game and no parts (counted apart, as `unknownMsat` there) */
+export function donationParts(rows, { protocolBps = 0, gameOf = () => null, itemOf = null, gameByName = null } = {}) {
+  return (rows || []).map((r) => {
+    const g = gameOfRow(r, { gameOf, itemOf, gameByName }), amount = BigInt(r.amountMsat || 0);
+    const p = BigInt(protocolBps), q = BigInt((g && g.bps) || 0);
+    const toProtocol = g && p + q > 0n ? (amount * p) / (p + q) : 0n;
+    return { r, game: g ? g.name : null, title: g ? (g.title || g.name) : null, market: !!(g && g.market),
+      item: isItemRow(r) ? String(r.itemId || (r.item ? String(r.item).split(' · ').pop() : '') || 'an item') : null,
+      protocolMsat: toProtocol, appMsat: g && p + q > 0n ? amount - toProtocol : 0n };
+  });
+}
+
+/**
+ * A PAGE OF THE DONATIONS TABLE (kanban #578): `info` = the donations each with its app or item and its protocol and app parts (the
+ * server's devAttribute perRow), `rates` = { outpoint: { eur, usd, chf, gbp } } (fiat-rates.js). The apps with their counts; then the rows
+ * of one app, its items with it ('items' for the items of all apps, 'unknown' for rounds no longer held) matching `q` in player, round, entry, item or outpoint, newest
+ * first, `offset` .. `offset + limit` (5 .. 200); the sums of all matching rows, in msat and in each currency at each donation's own rate.
+ */
+export function donationsPage(info, rates = {}, { app = '', q = '', limit = 25, offset = 0 } = {}) {
+  const at = (r) => Number(r.verifiedMs || r.recordedAt || 0);
+  const apps = new Map();
+  const count = (k, title, market) => { const a = apps.get(k) || { app: k, title, market, count: 0 }; a.count++; apps.set(k, a); };
+  for (const x of info) { count(x.game || 'unknown', x.game ? x.title : 'Older rounds', !!x.market); if (x.item) count('items', 'Items (all apps)', false); }
+  app = String(app || ''); q = String(q || '').toLowerCase().trim();
+  const rows = info.filter((x) => (!app || (app === 'items' ? x.item : app === 'unknown' ? !x.game : x.game === app))
+    && (!q || [x.r.playerKey, x.r.roundId, x.r.entryId, x.r.item, x.r.outpoint].some((v) => String(v || '').toLowerCase().includes(q)))).sort((a, b) => at(b.r) - at(a.r));
+  limit = Math.max(5, Math.min(200, Number(limit) || 25)); offset = Math.max(0, Number(offset) || 0);
+  const msatOf = (x, part) => (part === 'protocol' ? x.protocolMsat : part === 'app' ? x.appMsat : BigInt(x.r.amountMsat || 0));
+  const fiat = (x, part) => Object.fromEntries(Object.entries(rates[x.r.outpoint] || {}).map(([c, perBtc]) => [c, Math.round((Number(msatOf(x, part)) / 1e11) * perBtc * 10000) / 10000]));
+  const parts = ['all', 'protocol', 'app'];
+  const sums = { msat: '0', protocolMsat: '0', appMsat: '0', fiat: Object.fromEntries(parts.map((p) => [p, {}])) };
+  for (const [k, p] of [['msat', 'all'], ['protocolMsat', 'protocol'], ['appMsat', 'app']]) sums[k] = String(rows.reduce((t, x) => t + msatOf(x, p), 0n));
+  for (const p of parts) { const t = sums.fiat[p]; for (const x of rows) for (const [c, v] of Object.entries(fiat(x, p))) t[c] = (t[c] || 0) + v; for (const c of Object.keys(t)) t[c] = Math.round(t[c] * 10000) / 10000; }
+  return { total: rows.length, offset, limit, apps: [...apps.values()], sums,
+    rows: rows.slice(offset, offset + limit).map((x) => ({ atMs: at(x.r), amountMsat: String(x.r.amountMsat || '0'), protocolMsat: String(x.protocolMsat), appMsat: String(x.appMsat),
+      app: x.game, title: x.title, market: !!x.market, item: x.item, round: x.item ? null : String(x.r.roundId || ''),
+      entry: String(x.r.entryId || ''), player: x.r.playerKey ? String(x.r.playerKey) : null, outpoint: String(x.r.outpoint || ''),
+      fiat: Object.fromEntries(parts.map((p) => [p, fiat(x, p)])) })) };
+}
+
 export function createDevClients({ root, donorBin, nodeBin = process.execPath, defaults = {}, keys, spawn = spawnChild, restartMs = 30000, log = () => {} }) {
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const running = new Map();       // slug -> { child, stopping }
@@ -224,6 +265,11 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
     },
 
     /** Every client: its snapshot, whether it runs, what the owner's withdrawals answered; `attribute(rows, recipientPk)` adds the split. */
+    /** WHERE A CLIENT KEEPS ITS RECORD, for the donations table: { dir, pk } (kanban #578) - never its key.json */
+    clientOf(slug) {
+      if (!isClient(slug)) return null;
+      return { dir: dirOf(slug), pk: (readJson(join(dirOf(slug), 'donor.json'), {}) || {}).recipientPkHex };
+    },
     /** THE CLIENT'S DONATIONS IN A CURRENCY (fiat-rates.js, kanban #578): each at its own historic rate, the sums per period, the price now */
     async fiatFor(slug, { fetcher = fetch } = {}) {
       if (!isClient(slug)) return null;
