@@ -920,10 +920,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AN APP'S NEW SPLIT (kanban #578, ruling A): its next version, signed here with its developer key (app-split.js), hosted at once; other
   // nodes take it as an update. Only the newest version of an app, and only with a key this node holds for that app's developer.
   const appKeys = () => appKeysIn(appKeysDir);
+  const newerHosted = (g) => [...hosted.values()].some((x) => x.name === g.name && toHex(x.manifest.gameDevPubkey) === toHex(g.manifest.gameDevPubkey) && x.manifest.version > g.manifest.version);
   async function splitApp({ game, recipients }) {
     const g = hosted.get(game);
     if (!g) return { ok: false, status: 404, why: 'this node hosts no such app' };
-    if (superseded.has(game)) return { ok: false, status: 409, why: 'a newer version of this app runs here: change that one' };
+    // ONLY ITS NEWEST VERSION (measured 2026-10-22 on node 2: the built-in versions are never marked superseded, and Tick Tock v1 offered a
+    // new split - a second "version 2" beside the one there is): an update of it, or a newer one by the same developer, runs here
+    if (superseded.has(game) || newerHosted(g)) return { ok: false, status: 409, why: 'a newer version of this app runs here: change that one' };
     if (!pluginsDir) return { ok: false, status: 409, why: 'this node keeps no installed apps (no plugins directory), so it cannot keep a new version' };
     const seed = appKeys().get(toHex(g.manifest.gameDevPubkey));
     if (!seed) return { ok: false, status: 403, why: 'this node does not hold this app\'s developer key' };
@@ -5085,7 +5088,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             type: gameTypeOf(g.manifest), info: g.info || null,
             // its developers' split, and whether this node can sign a new one (kanban #578)
             split: (g.donationSet || []).map((r) => ({ key: toHex(r.recipientPk), label: r.label || '', shareBps: Number(r.shareBps) })),
-            canSplit: !!keysHeld.get(toHex(g.manifest.gameDevPubkey)) })),
+            canSplit: !!keysHeld.get(toHex(g.manifest.gameDevPubkey)) && !superseded.has(toHex(g.gameId)) && !newerHosted(g) })),
             installed, settings: owner.storeSettings() });
         }
         // THE NETWORK STORE'S VIEW OF THIS SEAT: the chain it reads, its own network's four settings, and the
