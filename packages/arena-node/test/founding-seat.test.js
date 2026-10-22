@@ -468,3 +468,21 @@ test('guardingWhy: the nodes of an operator that name a federation held OPEN or 
   assert.deepEqual(guardingWhy({ entries, held, op: 'opX' }), [{ node: toHex(a.pub), federation: 'cc'.repeat(32), status: 'not held' }, { node: toHex(b.pub), federation: 'bb'.repeat(32), status: 'OPEN' }]);
   assert.deepEqual(guardingWhy({ entries, held, op: 'other' }), []);
 });
+
+test('records that arrive within a block count on the next tick of that block: a CLOSED federation frees its guardians at once (kanban #585, 7 instead of 20 at 157,300)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`k${i}`));
+  const closed = Uint8Array.from(Buffer.from('89'.repeat(32), 'hex'));
+  // eight of the twelve guarded a federation now CLOSED; the others guard none
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ktx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `kop${i}`, guardianCapable: true, guardianEndpoint: `wss://k${i}`, guardianOf: i < 8 ? [{ federationId: closed }] : [] } }));
+  const held = [];
+  const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
+    beaconAt: async () => null, tip: async () => 300, guardianInSetup: async () => true,
+    setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => false },
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[0].pub, sign: (h) => schnorr.sign(h, all[0].secret), verify });
+  await s.tick();
+  assert.equal((await s.readiness(0)).cohort.free, 4, 'no record held yet: the federation the adverts name counts as OPEN');
+  held.push({ federation: '89'.repeat(32), status: 'CLOSED', height: 290 }, { federation: 'aa'.repeat(32), status: 'OPEN', height: 290 });
+  await s.tick();
+  assert.equal((await s.readiness(60000)).cohort.free, 12, 'the CLOSED record arrived within block 300: its guardians are free at once');
+});
