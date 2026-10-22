@@ -232,7 +232,11 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     if (!t.ok) return { ok: false, why: t.why };
     const key = triggerKey(t);
     const h = await tip();
-    if (!current || current.key !== key) {
+    // A FOUNDING THIS SEAT JOINED WITHOUT ITS GUARDIAN is joined again once the guardian waits in setup (kanban #577, measured
+    // 2026-10-22 on founding a27706f2: n495-1/2's guardians were started again in a fresh setup, asked at once - before fedimintd's
+    // setup API answered - and the founding was kept with no guardian; both seated, both no-shows while their guardians waited in
+    // setup). The codes taken so far are read again from the drawn seats on this tick.
+    if (!current || current.key !== key || (!current.via && await guardianInSetup())) {
       const seed = await beaconAt(t.height + 1);
       if (!seed) return { ok: false, why: `the beacon after ${t.height} is not in this seat's chain yet (tip ${h})` };
       const entries = await entriesAt(t.height);

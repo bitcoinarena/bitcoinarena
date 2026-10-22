@@ -282,6 +282,32 @@ test('a drawn node whose guardian is not in setup (left in a failed key generati
   assert.equal(busy.fresh, 0);
 });
 
+test('a guardian that waits in setup only after the tick that started it takes part on the next tick (kanban #577: n495-1/2 at a27706f2, asked before fedimintd answered)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`g${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/gtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `gop${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
+  const w = { tip: 300 };
+  const make = (i, flags) => createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => flags.inSetup,
+    setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => false,
+      freshSetup: async () => { flags.fresh++; return { ok: true, kept: 'database.void-x' }; } },
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
+  const probe = make(0, { inSetup: true, fresh: 0 }); await probe.tick(); w.tip = 301; await probe.tick();
+  const i = all.findIndex((k) => toHex(k.pub) === probe.state().seated[0].node);
+  w.tip = 300;
+  const flags = { inSetup: false, fresh: 0 };
+  const s = make(i, flags);
+  await s.tick(); w.tip = 301; await s.tick();
+  assert.deepEqual([flags.fresh, s.state().via], [1, null], 'started again, not yet in setup when asked');
+  flags.inSetup = true;   // fedimintd's setup API answers now
+  await s.tick();
+  assert.equal(s.state().via, 'guardian', 'the next tick joins the founding with the guardian');
+  assert.ok(s.state().codes.some((c) => c.node === toHex(all[i].pub)), 'and posts its own code');
+  assert.equal(flags.fresh, 1, 'not started again');
+});
+
 test('a seat that holds no record (no round) sees the federation the census names: the cohort triggers there, not a genesis (the seven new second-host seats drew genesis at 156970)', async () => {
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`r${i}`));
