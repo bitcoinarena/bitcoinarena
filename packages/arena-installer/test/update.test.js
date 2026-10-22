@@ -458,3 +458,31 @@ test('the new release\'s apps are fetched first: one that cannot be fetched leav
   assert.deepEqual(asked, [v2], 'the new release\'s apps, into the new release');
   assert.ok(!calls.some((c) => / stop /.test(c)), 'nothing stopped');
 });
+
+// THE OLDER RELEASES ARE REMOVED (kanban #576, measured 2026-10-22: an installed node kept every release it ever ran, 12 folders and
+// 5 GB on one): after a healthy update only the new release and the one it came from stay; a refused update removes nothing
+test('a healthy update removes the releases older than the one it came from', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-prune-'));
+  const env = { XDG_CONFIG_HOME: join(root, 'config'), USER: 'test' };
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const port = await freePort();
+  const sys = fakeSystemd(env);
+  t.after(() => { sys.stopAll(); rmSync(root, { recursive: true, force: true }); });
+  const rel = join(root, 'releases');
+  const v0 = releaseFrom(join(rel, 'arena-node-0.1.0-linux-x64'));
+  const v1 = releaseFrom(join(rel, 'arena-node-0.1.1-linux-x64'));
+  const v2 = releaseFrom(join(rel, 'arena-node-0.1.2-linux-x64'));
+  mkdirSync(join(rel, 'downloads'), { recursive: true });
+  writeFileSync(join(home, 'node.env'), 'ARENA_BIND=127.0.0.1\nARENA_DONATION_NETWORK=testnet4\nARENA_ROLES=verify\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+  mkdirSync(unitDir(env), { recursive: true });
+  writeFileSync(join(unitDir(env), UNIT), legacySeatUnit({ node: process.execPath, release: v1, home, port }));
+  await sys.sh('systemctl', ['--user', 'start', UNIT]);
+  assert.equal((await waitHealthy({ port, waitMs: 60000, everyMs: 300 })).ok, true);
+  const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0 });
+  assert.equal(up.ok, true, up.why);
+  assert.deepEqual(up.pruned, ['arena-node-0.1.0-linux-x64']);
+  assert.ok(!existsSync(v0), 'the release before the one it came from is gone');
+  assert.ok(existsSync(v1) && existsSync(v2), 'the release it came from (the way back) and the new one stay');
+  assert.ok(existsSync(join(rel, 'downloads')), 'a folder that is no release is left alone');
+});
