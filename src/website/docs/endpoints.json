@@ -10555,5 +10555,48 @@
   "changesState": false,
   "needsAuth": "none",
   "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/custody/add",
+  "params": "body JSON signed request, action \"custody/add\"; args {} for the plan, {progress: true} for the progress, {post: true, understood: \"I UNDERSTAND\", pegInSats?} to start",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, plan} (Lightning, gateway, bond against the guardian floor, what the wallet must hold, part by part, its address) or {ok, progress}; 200 {ok} once started; 400 with why (e.g. \"type I UNDERSTAND\", a short wallet); 401/403 when not the owner; 501 on a node the installer did not set up; 500 with why",
+  "purpose": "Makes an installed node a custody node from the owner page (kanban #563): the installer's own custody steps - Lightning, the gateway, the guardian, the advertisement update - run by the node itself, never \"run arena-install --add-custody\". Without post: the plan; progress: the runner's progress; post with the typed I UNDERSTAND: started.",
+  "audience": "operator/monitoring",
+  "line": 5340,
+  "summary": "Become custody from the owner page: plan, start, progress",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"liquidity/new-address\", args {}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, address:\"tb1p…\"}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no liquidity provider service."
+   },
+   {
+    "status": "502",
+    "contentType": "application/json",
+    "description": "The provider service did not answer or failed."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
  }
 ]
