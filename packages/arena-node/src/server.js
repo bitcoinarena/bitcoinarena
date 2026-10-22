@@ -1545,7 +1545,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); const got = await reservePayouts.round({ height: fundingTipSeen });
       // WHAT A PAYOUT OR MOVE STOPPED ON, said once per reason (kanban #326: the round's answers were dropped, so a move that never
       // started said nothing)
-      for (const x of got || []) if (x && x.ok === false && x.why && !payoutWhySaid.has(`${x.id}:${x.why}`)) { payoutWhySaid.add(`${x.id}:${x.why}`); console.log(`[payout] ${String(x.id).slice(0, 16)}: ${x.why}`); } } }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
+      for (const x of got || []) if (x && x.ok === false && x.why && !payoutWhySaid.has(`${x.id}:${x.why}`)) { payoutWhySaid.add(`${x.id}:${x.why}`); console.log(`[payout] ${String(x.id).slice(0, 16)}: ${x.why}`); } } })
+    // A STOPPED ROUND IS SAID, once per reason (kanban #326, 2026-10-22: a paid move went unclaimed on A's seats with nothing in their
+    // logs - a throw anywhere in the chain skipped every payout, move and claim without a word)
+    .catch((e) => { const w = `[funding] the round stopped: ${e && e.message ? e.message : e}`; if (!payoutWhySaid.has(w)) { payoutWhySaid.add(w); console.log(w); } }); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
