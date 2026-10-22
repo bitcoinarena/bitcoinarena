@@ -34,8 +34,9 @@ import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
-import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lockEntry } from './entry-locks.mjs';
+import { saveLock, lookOwed, collectOwed } from '../../arena-client/src/page-lock.js';
 
 const env = process.env;
 for (const k of ['NODES', 'BOOK_BOT', 'BOT_DIR', ...(env.DRY ? [] : ['INVITE_FILE', 'WASM_PKG'])]) if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
@@ -68,6 +69,16 @@ const { fairUp, quoteLadder } = await importApp(env.BOOK_BOT);
 const placedFile = join(DIR, 'placed.json');
 const placed = existsSync(placedFile) ? JSON.parse(readFileSync(placedFile, 'utf8')) : {};
 const keepPlaced = () => { const t = `${placedFile}.tmp`; writeFileSync(t, JSON.stringify(placed)); renameSync(t, placedFile); };
+// ---- WHAT THE BOT KEEPS PER ORDER (slice 5, collecting): the page's own lock record (page-lock.js saveLock, in a file-backed
+// storage - the refund of a lock no seat took reads it) and the order itself (round, order number, when its window ends) ----
+const kvFile = join(DIR, 'storage.json');
+const kv = existsSync(kvFile) ? JSON.parse(readFileSync(kvFile, 'utf8')) : {};
+const writeKv = () => { const t = `${kvFile}.tmp`; writeFileSync(t, JSON.stringify(kv), { mode: 0o600 }); renameSync(t, kvFile); };
+const storage = { getItem: (k) => (Object.prototype.hasOwnProperty.call(kv, k) ? kv[k] : null), setItem: (k, v) => { kv[k] = String(v); writeKv(); },
+  removeItem: (k) => { delete kv[k]; writeKv(); } };
+const ordersFile = join(DIR, 'orders.json');
+const orders = existsSync(ordersFile) ? JSON.parse(readFileSync(ordersFile, 'utf8')) : [];
+const keepOrders = () => { const t = `${ordersFile}.tmp`; writeFileSync(t, JSON.stringify(orders)); renameSync(t, ordersFile); };
 
 // ---- PRICES: the bot's own source; the price to beat is the 1-minute close before the window opened (Coinbase's candles) ----
 const SOURCES = {
@@ -104,7 +115,7 @@ async function openWindows() {
 }
 
 // ---- THE WALLET: one lock client, its notes in BOT_DIR/wallet.json (written whole on every change, never half) ----
-let lc = null;
+let lc = null, LockClientCls = null, inviteText = null;
 async function wallet() {
   if (lc) return lc;
   if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
@@ -113,6 +124,7 @@ async function wallet() {
   const wasmMod = await import(esm);
   await wasmMod.default({ module_or_path: readFileSync(`${env.WASM_PKG}/blwp_lock_client_bg.wasm`) });
   const { LockClient } = wasmMod;
+  LockClientCls = LockClient;
   const file = join(DIR, 'wallet.json');
   const held = new Map(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : []);
   const write = () => { const t = `${file}.tmp`; writeFileSync(t, JSON.stringify([...held]), { mode: 0o600 }); renameSync(t, file); };
@@ -120,6 +132,7 @@ async function wallet() {
   const seedFile = join(DIR, 'seed.hex');
   if (!existsSync(seedFile)) writeFileSync(seedFile, toHex(rand(32)), { mode: 0o600 });
   const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
+  inviteText = invite;
   walletFed = String(LockClient.federationIdOf(invite)).toLowerCase();
   lc = await LockClient.join(invite, walletFed, readFileSync(seedFile, 'utf8').trim(), store);
   return lc;
@@ -212,6 +225,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers) {
   const needed = receiptsNeeded(signers.length), e = rand(32);
   const dealt = await dealHandout({ preimage: p, signerNodes: signers, roundId: rid, playerPubkey: player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
+  // THE PAGE'S OWN LOCK RECORD for this order (saveLock): what a refund of a lock no seat took reads, and lookOwed's last resort
+  saveLock(storage, { roundId: rid, playerPubkey: player, stake: { preimage: p, body: encodeHandout(dealt.handout) }, lock: { outpoint: locks.stake.outpoint,
+    fields: locks.stake.fields, feeLock: locks.fee ? { preimage: locks.fee.preimage, outpoint: locks.fee.outpoint, fields: locks.fee.fields } : null } });
   const session = ed25519.utils.randomSecretKey();
   // the entry as tn4-rps-paid.mjs builds a paid one, with the order's pick, limit price (until the market closes) and the bot mark
   const entry = { roundId: rid, playerPubkey: player, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(p), stakeMsat: rung.stakeMsat,
@@ -237,6 +253,32 @@ async function placeOrder(c, rid, rung, orderIndex, signers) {
   if (env.DEBUG) for (const x of said) say({ step: 'seat answer', ...x });
   if (took < needed) throw new Error(`the seats did not take the order: ${took} of ${needed} needed took its lock; ${said.find((x) => x.handoutWhy)?.handoutWhy ? `handout: ${said.find((x) => x.handoutWhy).handoutWhy}; ` : ''}${said.find((x) => x.why)?.why || 'no reason given'}`);
   return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' ') };
+}
+
+// ---- WHAT THE BOT WINS, COLLECTED (slice 5): for every order whose window ended more than a minute ago, the page's own look
+// (page-lock.js lookOwed: the settlement, where the order's lock is, its forfeit) and collect (collectOwed: the payout redeemed, the stake
+// back by forfeit or by the order's key after expiry) into this bot's wallet - until the federation holds nothing more of that order ----
+const roundOf = new Map();
+async function collectPass() {
+  const due = orders.filter((o) => !o.final && Date.now() > Number(o.windowEndMs) + 60000);
+  if (!due.length) return;
+  const w = await wallet();
+  const seed = Uint8Array.from(Buffer.from(readFileSync(join(DIR, 'seed.hex'), 'utf8').trim(), 'hex'));
+  for (const o of due) {
+    try {
+      if (!roundOf.has(o.round)) roundOf.set(o.round, decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${o.round}`)).arrayBuffer())));
+      const c = roundOf.get(o.round), rid = fromHex(o.round);
+      const ask = { round: c, roundId: rid, invite: inviteText, seed, curve: feldmanGroup, LockClient: LockClientCls, storage, nodes, order: o.order };
+      const look = await lookOwed({ ...ask, client: w });
+      if (look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n) {
+        const before = BigInt(await w.balanceMsat());
+        await collectOwed({ look, client: w, ...ask });
+        const after = BigInt(await w.balanceMsat());
+        say({ step: 'collected', round: o.round.slice(0, 16), order: o.order, payoutMsat: look.payoutMsat, stakeMsat: look.stakeMsat, refundMsat: look.refundMsat, creditedMsat: after - before });
+      }
+      if (look.final) { o.final = true; o.payout = look.payout && look.payout.state; o.stake = look.stake && look.stake.state; keepOrders(); }
+    } catch (e) { say({ step: 'collect failed', round: o.round.slice(0, 16), order: o.order, why: String(e.message).slice(0, 200) }); }
+  }
 }
 
 // ---- THE LOOP ----
@@ -266,6 +308,7 @@ async function pass() {
       try {
         const o = await placeOrder(c, rid, q, index, seated.signerNodes);
         done.add(`${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
+        orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now() }); keepOrders();
         say({ step: 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...o });
       } catch (e) { say({ step: 'order failed', round: row.id.slice(0, 16), priceCents: q.priceCents, why: String(e.message).slice(0, 300) }); break; }
     }
@@ -274,6 +317,7 @@ async function pass() {
 
 for (;;) {
   try { await pass(); } catch (e) { say({ step: 'pass failed', why: String(e.stack || e.message).slice(0, 400) }); }
+  if (!DRY) { try { await collectPass(); } catch (e) { say({ step: 'collect pass failed', why: String(e.message).slice(0, 200) }); } }
   if (!DRY) { try { await giveToSpool(); } catch (e) { say({ step: 'spool out failed', why: String(e.message).slice(0, 200) }); } }
   if (env.ONCE) break;
   await new Promise((r) => setTimeout(r, LOOP_MS));
