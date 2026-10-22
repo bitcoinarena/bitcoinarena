@@ -24,7 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { gameDevKey, signManifest } from '../src/manifest-sign.js';
 import { manifestStands, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
-import { invitesFromSeats, newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed,
+import { invitesFromSeats, recordMove, newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed,
   payInvoice, lightningAddressInvoice, invoiceMsat } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
@@ -221,6 +221,7 @@ async function pass() {
           const { migrateFromDraining } = await import('../../arena-client/src/page-lock.js');
           const m = await migrateFromDraining({ from: client, to, record: { status: st.status, successorId: st.successor }, toFederationId: st.successor,
             gateways: [...(cfg.gateways || []), ...namedGateways] });
+          if (m.moved > 0n) recordMove(join(dir, 'moves.jsonl'), join(dir, 'donations.jsonl'), { from: fed, to: st.successor, movedMsat: m.moved, chunks: m.chunks });
           if (m.chunks || m.state !== 'moved') say({ step: 'moved to the successor', from: fed.slice(0, 16), to: st.successor.slice(0, 16), status: st.status, movedMsat: String(m.moved), chunks: m.chunks, state: m.state, why: m.why || null });
         } catch (e) { say({ step: 'moved to the successor', from: fed.slice(0, 16), to: st.successor.slice(0, 16), state: 'failed', why: e.message }); }
       } else if (st && ['DRAINING', 'CRITICAL'].includes(st.status)) say({ step: 'moved to the successor', from: fed.slice(0, 16), status: st.status, state: 'waiting', why: st.successor ? 'no invite to its successor is known yet' : 'its record names no successor yet' });
