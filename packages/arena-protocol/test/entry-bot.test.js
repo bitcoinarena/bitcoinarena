@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeEntryContract, decodeEntryContract, entryId, BOT_MARKER, ORDER_MARKER } from '../src/contracts.js';
+import { toHex } from '../src/hash.js';
 
 const z = (n, f = 0) => new Uint8Array(n).fill(f);
 const order = () => ({ roundId: z(32, 1), playerPubkey: z(32, 2), sessionPubkey: z(32, 3), stakeCommitment: z(32, 4), stakeMsat: 99000n, feeMsat: 1000n,
@@ -32,4 +33,17 @@ test('a bot\'s market order carries the bot mark, last of all; it round-trips; w
   assert.throws(() => encodeEntryContract({ ...plain, bot: 'yes' }), /a bot's \(true\) or not/);
   assert.throws(() => decodeEntryContract(Uint8Array.from([...bytes, 0x01])), /trailing|after the entry/);
   assert.throws(() => decodeEntryContract(Uint8Array.from([...before, 0x99])), /neither its federation, its operator, its website, its items, its reserve lock nor the bot mark/);
+});
+
+test('the bot mark ends any entry: none of donation outputs, a pick without an order, a move commitment - each round-trips (kanban #581: the decoder read the mark as a list)', () => {
+  const plain = order();
+  delete plain.donationOutpoints; delete plain.pick; delete plain.limitPrice; delete plain.orderExpiryMs;
+  for (const [name, e] of [['no donation outputs, no pick', plain], ['a pick, no order', { ...plain, pick: 1 }], ['a move commitment', { ...plain, commit: new Uint8Array(32).fill(0x5e) }],
+    ['donation outputs and a pick, no order', { ...plain, donationOutpoints: [{ txid: z(32, 7), outIdx: 2n }], pick: 0 }]]) {
+    const back = decodeEntryContract(encodeEntryContract({ ...e, bot: true }));
+    assert.equal(back.bot, true, name);
+    assert.equal(back.pick, e.pick, name);
+    assert.equal(back.limitPrice, undefined, name);
+    assert.equal(toHex(encodeEntryContract(back)), toHex(encodeEntryContract({ ...e, bot: true })), `${name}: the same bytes back`);
+  }
 });
