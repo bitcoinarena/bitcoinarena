@@ -254,6 +254,34 @@ test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a 
   for (let i = 4; i < 14; i++) assert.ok(drawn.has(toHex(all[i].pub)), `new node ${i} is drawn`);
 });
 
+test('a drawn node whose guardian is not in setup (left in a failed key generation) starts it again in a fresh setup, once, and takes part (kanban #495, the installers 2026-10-22)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`f${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ftx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `fop${i}`, guardianCapable: true, guardianEndpoint: `wss://f${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
+  const w = { tip: 300 };
+  const make = (i, flags) => createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => flags.inSetup,
+    setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => flags.running,
+      freshSetup: async () => { flags.fresh++; flags.inSetup = true; return { ok: true, kept: 'database.void-x' }; } },
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
+  // find a node the draw seats
+  const probe = make(0, { inSetup: true, running: false, fresh: 0 }); await probe.tick(); w.tip = 301; await probe.tick();
+  const seatedKey = probe.state().seated[0].node, i = all.findIndex((k) => toHex(k.pub) === seatedKey);
+  w.tip = 300;
+  const flags = { inSetup: false, running: false, fresh: 0 };
+  const s = make(i, flags);
+  await s.tick(); w.tip = 301; await s.tick(); await s.tick();
+  assert.equal(flags.fresh, 1, 'started again once for this founding');
+  assert.equal(s.state().via, 'guardian', 'and it takes part');
+  // a guardian running a federation is never started again
+  w.tip = 300;
+  const busy = { inSetup: false, running: true, fresh: 0 };
+  const b = make(i, busy); await b.tick(); w.tip = 301; await b.tick();
+  assert.equal(busy.fresh, 0);
+});
+
 test('a seat that holds no record (no round) sees the federation the census names: the cohort triggers there, not a genesis (the seven new second-host seats drew genesis at 156970)', async () => {
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`r${i}`));
