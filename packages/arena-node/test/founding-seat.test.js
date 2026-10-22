@@ -499,7 +499,7 @@ test('members: every node that can be drawn, asked at its address - ready, found
     endpointOf: (e) => e.advert.endpoint,
     fetchJson: async (u) => { asked.push(u); const root = u.replace(/\/founding$/, ''); if (root === 'https://m3') throw new Error('timeout'); return answers[root]; } });
   await s.tick();
-  const m = await s.members(1000);
+  const m = await s.members(1000, { wait: true });
   assert.deepEqual(m.nodes.map((x) => x.state), ['setup', 'setup', 'off', 'no answer'], 'itself, ready, founding off, no answer');
   assert.deepEqual([m.free, m.needed, m.nodes.length], [4, 10, 4]);
   assert.deepEqual(asked, ['https://m1/founding', 'https://m2/founding', 'https://m3/founding'], 'each other node at its own address, http(s) for ws(s)');
