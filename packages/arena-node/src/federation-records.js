@@ -548,6 +548,27 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height } : null; },
+    /**
+     * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to
+     * hold the CLOSED record set its guardian aside at once, and the others, one guardian short, could never close it): each guardian's
+     * node asked (GET /federations) - { closed, of }. A retiring guardian is set aside only once a threshold of them hold it closed.
+     */
+    async closedAtGuardians(fidHex) {
+      const fid = String(fidHex).toLowerCase();
+      const b = basisFor(fid);
+      if (!b || !b.ok) return { closed: 0, of: 0, why: (b && b.why) || 'no census' };
+      const guardians = guardiansOf(b.census, fromHex(fid));
+      const answers = await Promise.all(guardians.map(async (g) => {
+        const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+        if (toHex(g.nodePubkey) === toHex(round.pubkey)) { const k = kept.get(fid); return !!k && k.status === 'CLOSED'; }
+        try {
+          const r = await fetcher(`${base}/federations`, { signal: AbortSignal.timeout(8000) });
+          if (!r.ok) return false;
+          return ((await r.json()).federations || []).some((x) => String(x.federation).toLowerCase() === fid && x.status === 'CLOSED');
+        } catch { return false; }
+      }));
+      return { closed: answers.filter(Boolean).length, of: guardians.length };
+    },
     haltOf: (fidHex) => halted.get(String(fidHex).toLowerCase()) || null,
     haltedFederations: () => [...halted.keys()],
     // THE DRAIN IS PAID (§23A.6 step 5): the seated guardians of every federation whose verified record says

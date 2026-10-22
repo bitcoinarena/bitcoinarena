@@ -657,3 +657,17 @@ test('a CLOSED record of the same height wins the mirror and stays: an OPEN one 
   await o.gatherAll(inviteFederationId);
   assert.equal(o.list()[0].status, 'CLOSED', 'an OPEN record of the same height does not replace it');
 });
+
+test('how many of a federation\'s guardian seats hold it CLOSED: a retiring guardian waits for a threshold of them (kanban #577)', async () => {
+  const closed = seven({ retiring: [0, 1, 2, 3, 4, 5, 6] });
+  for (const seat of closed.seats) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
+  // the seats answer GET /federations from their own lists
+  const ask = (s, list) => federationRecords({ round: { pubkey: s.nodes[0].pubkey, identity: { secret: s.nodes[0].secret } },
+    newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }), roster: { censusFor: () => s.census }, inviteFor: () => INVITE, networkId: NET,
+    fetcher: async (url) => { const i = s.nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:'))); return new Response(JSON.stringify({ federations: list(i) }), { status: 200 }); } });
+  assert.deepEqual(await ask(closed, (i) => closed.seats[i].list()).closedAtGuardians(toHex(FED)), { closed: 6, of: 7 }, 'this seat itself holds no record yet: 6 of 7');
+  const open = seven();
+  for (const seat of open.seats) await seat.gather(FED, inviteFederationId);
+  assert.deepEqual(await ask(open, (i) => (i < 4 ? closed.seats[i].list() : open.seats[i].list())).closedAtGuardians(toHex(FED)), { closed: 3, of: 7 },
+    'seats 1-3 closed (seat 0 is this one, holding none): below the threshold of 5');
+});

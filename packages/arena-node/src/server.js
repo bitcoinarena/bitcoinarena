@@ -3856,6 +3856,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!fid || !retireBook.has(fid)) return;
         const held = fedRecords.recordOf(fid);
         if (!held || held.status !== 'CLOSED' || (held.record && held.record.successorId && held.record.successorId.some((x) => x))) return;
+        // NOT BEFORE A THRESHOLD OF ITS GUARDIANS' SEATS HOLD IT CLOSED (kanban #577, measured 2026-10-22 on 89ce310e): set aside at once, the
+        // first guardian took its signature and its reserve answer away, and the others could never close the record themselves
+        const at = await fedRecords.closedAtGuardians(fid);
+        if (at.of && at.closed < thresholdOfFederation(at.of)) { console.log(`[retire] ${fid.slice(0, 16)} CLOSED here, at ${at.closed} of ${at.of} guardian seats: the guardian keeps serving until ${thresholdOfFederation(at.of)} do`); return; }
         const r = await guardianControl.retire();
         retireBook.done(fid);
         console.log(`[retire] ${fid.slice(0, 16)} stands CLOSED: ${r.ok ? `its guardian set aside (${r.kept}), ${r.setup ? 'a guardian in setup started' : r.why}` : r.why}`);
