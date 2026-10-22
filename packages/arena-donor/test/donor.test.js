@@ -156,3 +156,19 @@ test('a recovered store that never reaches old + unclaimed, or keeps outputs pen
     assert.deepEqual(state.unclaimed.A.nonces, ['n1'], 'still noted: the next pass tries again');
   }
 });
+
+test('every federation the seats hold a record of gives its invite; a closed one none; the first seats that answer (kanban #578)', async () => {
+  const { invitesFromSeats } = await import('../src/donor.js');
+  const asked = [];
+  const answers = {
+    'http://a': null,
+    'http://b': { federations: [{ federation: 'AA'.repeat(32), status: 'OPEN', record: 'r1' }, { federation: 'bb'.repeat(32), status: 'CLOSED', record: 'r2' }] },
+    'http://c': { federations: [{ federation: 'cc'.repeat(32), status: 'DRAINING', record: 'r3' }, { federation: 'dd'.repeat(32), status: 'OPEN', record: 'bad' }] },
+    'http://d': { federations: [{ federation: 'ee'.repeat(32), status: 'OPEN', record: 'r5' }] },
+  };
+  const fetcher = async (url) => { const s = url.replace('/federations', ''); asked.push(s); if (!answers[s]) throw new Error('down'); return { json: async () => answers[s] }; };
+  const decode = (h) => { if (h === 'bad') throw new Error('no'); return { invite: `fed11${h}` }; };
+  const got = await invitesFromSeats({ seats: Object.keys(answers), fetcher, decode, want: 2 });
+  assert.deepEqual(got, { ['aa'.repeat(32)]: 'fed11r1', ['cc'.repeat(32)]: 'fed11r3' });
+  assert.deepEqual(asked, ['http://a', 'http://b', 'http://c'], 'stops once two seats answered');
+});
