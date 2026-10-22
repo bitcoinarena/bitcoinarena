@@ -332,7 +332,8 @@ export const RATE_PROVIDER = 'coingecko api/v3 coins/bitcoin/market_chart/range'
 export async function rateAt({ atMs, fetcher = fetch }) {
   const from = Math.floor((Number(atMs) - 3600000) / 1000), to = Math.ceil((Number(atMs) + 3600000) / 1000);
   const out = { ok: true, provider: RATE_PROVIDER, priceAtMs: {} };
-  for (const cur of ['usd', 'eur']) {
+  // CHF AND GBP TOO (kanban #578): every donation keeps its value in the four currencies the owner page offers
+  for (const cur of ['usd', 'eur', 'chf', 'gbp']) {
     let prices;
     try {
       const r = await fetcher(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=${cur}&from=${from}&to=${to}`);
@@ -344,14 +345,14 @@ export async function rateAt({ atMs, fetcher = fetch }) {
     out[cur] = price;
     out.priceAtMs[cur] = ms;
   }
-  return { ok: true, usd: out.usd, eur: out.eur, priceAtMs: out.priceAtMs, provider: RATE_PROVIDER };
+  return { ok: true, usd: out.usd, eur: out.eur, chf: out.chf, gbp: out.gbp, priceAtMs: out.priceAtMs, provider: RATE_PROVIDER };
 }
 
 /** One donation as the dev keeps it for good: who sent it, in which round, how much, when, and what it was worth then. */
 export const donationRecord = (d, rate, { recordedAt = Date.now() } = {}) => ({
   outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), contractId: d.contractId,
   playerKey: d.playerKey || null, senderOnContract: !!d.senderOnContract, roundId: d.roundId, entryId: d.entryId, verifiedMs: Number(d.verifiedMs),
-  usdPerBtc: rate.usd, eurPerBtc: rate.eur, ratesAtMs: rate.priceAtMs, rateProvider: rate.provider, recordedAt,
+  usdPerBtc: rate.usd, eurPerBtc: rate.eur, ...(rate.chf ? { chfPerBtc: rate.chf } : {}), ...(rate.gbp ? { gbpPerBtc: rate.gbp } : {}), ratesAtMs: rate.priceAtMs, rateProvider: rate.provider, recordedAt,
   // AN ITEM'S DONATION names what was bought (kanban #578): the seat's "<game> · <item id>", and both parts on their own to group by
   ...(d.item ? itemFields(d.item) : {}),
 });

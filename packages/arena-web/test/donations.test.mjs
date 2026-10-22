@@ -83,3 +83,18 @@ test('each part counted: the protocol line its donations, a game its rounds or m
   assert.match(h, /<span>Bitcoin Up or Down<\/span><b>1,263 sat<\/b><small>8 donations · 6 market rounds<\/small>/);
   assert.match(h, /<td title="Tick Tock, Next Block · turbo">Tick Tock, Next Block · turbo<\/td>/, 'an item donation names its item, not a round');
 });
+
+test('amounts in a currency: the switch, each chip at the donations own rates, what is held at the price now, a column per donation (kanban #578)', () => {
+  const fiat = { now: { eur: 70000, usd: 80000, chf: 66000, gbp: 60000 }, unrated: { eur: 0, usd: 0, chf: 0, gbp: 0 },
+    totals: { day: { eur: 1.4, usd: 1.6, chf: 1.32, gbp: 1.2 }, week: { eur: 1.4, usd: 1.6, chf: 1.32, gbp: 1.2 }, all: { eur: 1.4, usd: 1.6, chf: 1.32, gbp: 1.2 } },
+    recent: { 'o:1': { eur: 0.0019, usd: 0.0021, chf: 0.0018, gbp: 0.0016 } } };
+  const d = dev({ dev: { managed: true, clients: [{ ...client, fiat, recent: [{ ...client.recent[0], outpoint: 'o:1' }] }] } });
+  let h = d.html();
+  assert.match(h, /<div class="cur-pick"><span>Show amounts in<\/span><button type="button" class="on">sat<\/button><button type="button">EUR<\/button>/);
+  d.m.state.cur = 'chf';
+  h = d.html();
+  assert.match(h, /<span>Ready to withdraw<\/span><b>CHF 1.32<\/b><small>2,000 sat at today&#x27;s price<\/small>/);
+  assert.match(h, /<div><span>All time<\/span><b>CHF 1.32<\/b><small>2,000 sat<\/small><\/div>/);
+  assert.match(h, /<th class="n">CHF then<\/th>/);
+  assert.match(h, /<td class="n">2,668 msat<\/td><td class="n">CHF 0.0018<\/td>/);
+});
