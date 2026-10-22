@@ -262,6 +262,8 @@
     const coded = new Set((run ? run.codes || [] : []).map((c) => String(c.node).toLowerCase()));
     const cohorts = nodes.map(fb).filter((b) => b && b.ready && b.ready.cohort).map((b) => b.ready.cohort).sort((x, y) => y.height - x.height);
     const cohort = cohorts[0] || null;
+    // THE NODES THE SEATS COUNT (their cohort's free operators' nodes): an operator with one node guarding an OPEN federation is not free
+    const counted = new Set(cohort && Array.isArray(cohort.nodes) ? cohort.nodes.map((k) => String(k).toLowerCase()) : []);
     const nReady = cand.filter((n) => ready(n) === 'setup').length;
     const whys = new Map(); for (const b of nodes.map(fb)) if (b && b.ready && b.ready.why) whys.set(b.ready.why, (whys.get(b.ready.why) || 0) + 1);
     const why = [...whys].sort((x, y) => y[1] - x[1])[0];
@@ -279,9 +281,9 @@
       const part = !run ? '-' : s ? (coded.has(k) ? { t: `seated ${s.position + 1} · code ✓`, c: 'ok' } : { t: `seated ${s.position + 1} · no code`, c: 'bad' })
         : (run.alternates || []).map((x) => String(x).toLowerCase()).includes(k) ? 'alternate' : (run.noShows || []).map((x) => String(x).toLowerCase()).includes(k) ? { t: 'no-show', c: 'bad' } : 'not drawn';
       return { key: n.node || n.base, dot: state.c === 'ok' ? 'ok' : state.c === 'warn' ? 'warn' : 'bad', rank: RANK[r] ?? 3,
-        cells: [{ t: cut(n.node, 12), c: 'mono' }, (n.base || '').replace(/^https?:\/\//, ''), sat(n.bondSats), state, part] };
+        cells: [{ t: cut(n.node, 12), c: 'mono' }, (n.base || '').replace(/^https?:\/\//, ''), sat(n.bondSats), state, !cohort || !Array.isArray(cohort.nodes) ? '-' : counted.has(k) ? { t: 'counted ✓', c: 'ok' } : { t: 'not counted', c: 'muted' }, part] };
     }).sort((x, y) => x.rank - y.rank);
-    drawTable('founding', ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding'], rows, 'no guardian-capable node is free of an OPEN federation',
+    drawTable('founding', ['Node key', 'Address', 'Bond (sat)', 'Ready', 'In the cohort', 'This founding'], rows, 'no guardian-capable node is free of an OPEN federation',
       cohort ? `the newest count at ${sat(cohort.height)}: ${cohort.free} free operators (an operator may run several nodes)` : null);
   }
 

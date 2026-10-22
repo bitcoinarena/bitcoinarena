@@ -449,7 +449,7 @@ test('readiness: the guardian in setup, running or none, the newest count of fre
     nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[0].pub, sign: (h) => schnorr.sign(h, all[0].secret), verify });
   await s.tick();
   const r = await s.readiness(1000);
-  assert.deepEqual(r, { guardian: 'setup', cohort: { height: 300, free: 12, needed: 10 }, why: r.why });
+  assert.deepEqual(r, { guardian: 'setup', cohort: { height: 300, free: 12, needed: 10, operators: 12, nodes: all.map((k) => toHex(k.pub)) }, why: r.why });
   assert.match(r.why, /beacon after 300/, 'why its last tick started none');
   g.inSetup = false; g.running = true;
   assert.equal((await s.readiness(2000)).guardian, 'setup', 'asked at most every 30 s');

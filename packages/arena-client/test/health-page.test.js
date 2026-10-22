@@ -105,7 +105,7 @@ test('Waiting for a founding: the guardian-capable nodes free of an OPEN federat
     codes: [{ node: 'a1'.repeat(32) }], alternates: [], noShows: ['a4'.repeat(32)], federation: false, void: false };
   const nodes = [
     { node: 'a1'.repeat(32), base: 'https://a1', guardianCapable: true, guardianOf: [], bondSats: '200000', version: ok,
-      found: { ok: true, body: { ...run, ready: { guardian: 'setup', cohort: { height: 157298, free: 13, needed: 10 }, why: null } } } },
+      found: { ok: true, body: { ...run, ready: { guardian: 'setup', cohort: { height: 157298, free: 13, needed: 10, nodes: ['a1'.repeat(32)] }, why: null } } } },
     { node: 'a2'.repeat(32), base: 'https://a2', guardianCapable: true, guardianOf: [], bondSats: '200000', version: ok,
       found: { ok: true, body: { ...run, codes: [], ready: { guardian: 'none', cohort: { height: 157297, free: 13, needed: 10 }, why: null } } } },
     { node: 'a3'.repeat(32), base: 'https://a3', guardianCapable: true, guardianOf: ['bb'.repeat(32)], bondSats: '200000', version: ok },   // guards an OPEN one
@@ -116,7 +116,8 @@ test('Waiting for a founding: the guardian-capable nodes free of an OPEN federat
   const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items;
   assert.deepEqual(facts.map((f) => f[1]), ['13 of 10 needed', '1 of 3', 'f0f0f0f0 · 1 of 2 codes · window to 157,302']);
   const t = drawn.find((d) => d[0] === 'founding')[2];
-  assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, typeof r.cells[4] === 'string' ? r.cells[4] : r.cells[4].t]),
+  assert.deepEqual(t.rows.map((r) => r.cells[4].t), ['counted ✓', 'not counted', 'not counted'], 'the newest cohort names a1 only');
+  assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, typeof r.cells[5] === 'string' ? r.cells[5] : r.cells[5].t]),
     [['a1a1a1a1a1a1', 'ready', 'seated 1 · code ✓'], ['a2a2a2a2a2a2', 'no guardian in setup', 'seated 2 · no code'], ['a4a4a4a4a4a4', 'not answering', 'no-show']]);
   assert.match(t.foot, /157,298: 13 free operators/);
 });
