@@ -44,8 +44,13 @@ export async function coinsOf(chain, spk, { session = electrumSession, fetcher =
     const rpc = coreRpc({ ...chain, fetcher, timeoutMs: 120000 });
     const tip = await rpc('getblockcount');
     const r = await rpc('scantxoutset', ['start', [`raw(${toHex(spk)})`]]);
-    const coins = (r.unspents || []).map((u) => ({ txid: u.txid, vout: u.vout, sats: Math.round(u.amount * 1e8), height: u.height }));
+    const found = (r.unspents || []).map((u) => ({ txid: u.txid, vout: u.vout, sats: Math.round(u.amount * 1e8), height: u.height }));
     // scantxoutset reads the UTXO set only: a deposit still in the mempool is found by the address's mempool entries
+    // A COIN THE MEMPOOL ALREADY SPENDS IS NO COIN (kanban #577, measured 2026-10-22 on the three installers after founding
+    // a997abf1: the custody agent's peg-in picked the coins its own unconfirmed guardian_of update had just spent, and bitcoind
+    // refused it every minute - "insufficient fee, rejecting replacement"): gettxout with the mempool says null for it
+    const coins = [];
+    for (const c of found) { let out = null; try { out = await rpc('gettxout', [c.txid, c.vout, true]); } catch { out = {}; } if (out) coins.push(c); }
     return { tip, coins };
   }
   const s = await session({ ...chain, timeoutMs: 20000 });
