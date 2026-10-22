@@ -40,13 +40,13 @@ function invoiceOf(msat, paymentHash) {
 }
 const json = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
 
-function world({ statusX = 'DRAINING', gatewayFails = false, downY = [] } = {}) {
+function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatewayX = false } = {}) {
   const w = { height: 1000, gatewayFails, contracts: new Map(), incoming: new Map(), submits: [], payments: [], claims: [], invoices: 0, status: { [X]: statusX, [Y]: 'OPEN' }, kept: [] };
   const rows = [60000000n, 40000000n, 50000000n].map((m, i) => ({ outpoint: `${String(i + 1).padStart(2, '0').repeat(32)}:0`, amountMsat: String(m), verifiedMs: i + 1, fed: X }));
   for (const r of rows) w.contracts.set(r.outpoint, { fed: X, key: toHex(DX.groupPublicKey), msat: BigInt(r.amountMsat), expiration: 0, spent: false });
   const port = (fed) => ({
     fees: async () => FEES,
-    gateways: async () => ({ gateways: [GW], height: w.height }),
+    gateways: async () => ({ gateways: noGatewayX && fed === X ? [] : [GW], height: w.height }),
     status: async (at) => { const c = w.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: w.height, stored: c && !c.spent ? { contractId: 'c', blocksLeft: c.expiration - w.height } : null }; },
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
       const message = sha256(new TextEncoder().encode(json({ fed, k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce })));
@@ -170,6 +170,12 @@ test('an open or a halted federation does not move', async () => {
     for (const s of seats) assert.deepEqual(await s.api.round({ height: 900 }), [], status);
     assert.deepEqual([w.invoices, w.submits.length, w.payments.length], [0, 0, 0]);
   }
+});
+
+test('a move that cannot start says why (kanban #326: it was skipped without a word): the drained federation has no live gateway', async () => {
+  const { w, xCoord } = world({ noGatewayX: true });
+  assert.deepEqual(await xCoord.api.round({ height: 1000 }), [{ id: MOVE, ok: false, why: 'the drained federation has no live gateway to pay through' }]);
+  assert.deepEqual([w.invoices, w.submits.length, w.payments.length], [0, 0, 0], 'nothing invoiced, nothing paid');
 });
 
 test('a second move plan is refused by every signer; 4 of Y\'s shares cannot claim, 5 do', async () => {
