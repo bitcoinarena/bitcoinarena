@@ -630,3 +630,30 @@ test('the records outlive a restart: a seat with a store keeps what it gathered,
   assert.equal((await blind({ load: async () => [...bad].map(([federation, record]) => ({ federation, record })), save: () => {} }).restore(inviteFederationId)).restored, 0,
     'an altered record is refused here too: its signatures do not check');
 });
+
+// A CLOSED RECORD IS FINAL (kanban #577, measured 2026-10-22 on federation 89ce310e): one guardian's node held the CLOSED record (7 of 10
+// signed it), set its guardian aside - and every other seat kept the OPEN record of the same height, one guardian short of ever signing
+// the closed body. At the same height a CLOSED record wins a mirror pass and is never replaced by one that is not.
+test('a CLOSED record of the same height wins the mirror and stays: an OPEN one of that height never replaces it (kanban #577)', async () => {
+  const open = seven(), closed = seven({ retiring: [0, 1, 2, 3, 4, 5, 6] });
+  for (const seat of [...open.seats, ...closed.seats]) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
+  assert.deepEqual([open.seats[0].list()[0].status, closed.seats[0].list()[0].status, open.seats[0].list()[0].height], ['OPEN', 'CLOSED', closed.seats[0].list()[0].height]);
+  let lists = open.seats.map((x) => x.list());
+  const me = { secret: new Uint8Array(32).fill(0x57) }; me.pubkey = schnorr.getPublicKey(me.secret);
+  const o = federationRecords({
+    round: { pubkey: me.pubkey, identity: { secret: me.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => open.census }, inviteFor: () => null, networkId: NET,
+    fetcher: async (url) => {
+      const i = open.nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')));
+      if (!url.endsWith('/federations') || i < 0) return new Response('no', { status: 404 });
+      return new Response(JSON.stringify({ federations: lists[i] }), { status: 200 });
+    },
+  });
+  assert.equal((await o.gatherAll(inviteFederationId))[0].status, 'OPEN', 'every guardian holds it OPEN: OPEN');
+  lists = open.seats.map((x, i) => (i === 3 ? closed.seats[3].list() : x.list()));
+  assert.equal((await o.gatherAll(inviteFederationId))[0].status, 'CLOSED', 'one guardian holds it CLOSED at the same height: CLOSED');
+  assert.equal(o.list()[0].status, 'CLOSED');
+  lists = open.seats.map((x) => x.list());
+  await o.gatherAll(inviteFederationId);
+  assert.equal(o.list()[0].status, 'CLOSED', 'an OPEN record of the same height does not replace it');
+});
