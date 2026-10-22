@@ -40,8 +40,8 @@ function invoiceOf(msat, paymentHash) {
 }
 const json = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
 
-function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatewayX = false } = {}) {
-  const w = { height: 1000, gatewayFails, contracts: new Map(), incoming: new Map(), submits: [], payments: [], claims: [], invoices: 0, status: { [X]: statusX, [Y]: 'OPEN' }, kept: [] };
+function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatewayX = false, refuseFirstCheck = false } = {}) {
+  const w = { height: 1000, gatewayFails, refuseFirstCheck, contracts: new Map(), incoming: new Map(), submits: [], payments: [], claims: [], invoices: 0, status: { [X]: statusX, [Y]: 'OPEN' }, kept: [] };
   const rows = [60000000n, 40000000n, 50000000n].map((m, i) => ({ outpoint: `${String(i + 1).padStart(2, '0').repeat(32)}:0`, amountMsat: String(m), verifiedMs: i + 1, fed: X }));
   for (const r of rows) w.contracts.set(r.outpoint, { fed: X, key: toHex(DX.groupPublicKey), msat: BigInt(r.amountMsat), expiration: 0, spent: false });
   const port = (fed) => ({
@@ -76,6 +76,7 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
     receiveToKey: async ({ claimPk, amountMsat, seed }) => {
       w.invoices++;
       const preimage = sha256(seed), hash = sha256(preimage);
+      if (w.incoming.has(toHex(hash))) throw new Error('the gateway made no invoice: PaymentHash is already registered');   // as gatewayd
       const contract = { fed, claimPk: toHex(claimPk), hash: toHex(hash), amountMsat: String(amountMsat - RECEIVE_FEE) };
       w.incoming.set(toHex(hash), { ...contract, preimage, funded: false, claimed: false });
       return { invoice: invoiceOf(amountMsat, hash), paymentHash: toHex(hash), amountMsat, contractAmountMsat: amountMsat - RECEIVE_FEE, contractId: toHex(hash),
@@ -87,6 +88,7 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
       if (toHex(sha256(sha256(seed))) !== contract.hash) throw new Error('that seed is not the one this contract was made with');
       const commitment = { claim_pk: contract.claimPk, payment_hash: contract.hash, amount_msat: contract.amountMsat };
       const inc = w.incoming.get(contract.hash);
+      if (w.refuseFirstCheck && !signature) { w.refuseFirstCheck = false; throw new Error('the destination did not answer'); }   // a first plan falls through
       if (!inc || !inc.funded) return { funded: false, commitment };
       const amount = BigInt(contract.amountMsat);
       const msat = largestPayoutMsat(FEES, amount - lnv2FeeMsat(FEES, amount));
@@ -164,6 +166,20 @@ test('a draining federation moves exactly once: X\'s 5-of-7 pays the invoice onl
   assert.ok(moved > before - 600000n, `only fees were lost: ${before - moved} msat`);
   for (const s of seats) await s.api.round({ height: 900 });
   assert.deepEqual([w.invoices, w.submits.length, w.payments.length, w.claims.length], [1, 1, 1, 1], 'run again on all 14: nothing new');
+});
+
+test('a move whose first plan fell through asks for another invoice (kanban #326: one seed per move made one payment hash, refused by the gateway ever after)', async () => {
+  const { w, seats, deliver, xCoord, yCoord } = world({ refuseFirstCheck: true });
+  const [a] = await xCoord.api.round({ height: 500 });
+  assert.equal(a.ok, false, 'the first plan falls through');
+  const [b] = await xCoord.api.round({ height: 500 });
+  assert.deepEqual([b.ok, b.state], [true, PAYOUT.PAID], b.why);
+  await deliver();
+  const [c] = await yCoord.api.round({ height: 502 });
+  assert.deepEqual([c.ok, c.state], [true, PAYOUT.CLAIMED], c.why);
+  await deliver();
+  assert.deepEqual([w.invoices, w.payments.length, w.claims.length], [2, 1, 1], 'two invoices (two payment hashes), one payment, one claim');
+  assert.ok(seats.every((s) => s.api.stateOf(MOVE) && s.api.stateOf(MOVE).state === PAYOUT.CLAIMED));
 });
 
 test('an open or a halted federation does not move', async () => {
