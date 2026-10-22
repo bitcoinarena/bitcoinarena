@@ -224,6 +224,16 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
     },
 
     /** Every client: its snapshot, whether it runs, what the owner's withdrawals answered; `attribute(rows, recipientPk)` adds the split. */
+    /** THE CLIENT'S DONATIONS IN A CURRENCY (fiat-rates.js, kanban #578): each at its own historic rate, the sums per period, the price now */
+    async fiatFor(slug, { fetcher = fetch } = {}) {
+      if (!isClient(slug)) return null;
+      const { fillFiatRates, fiatSummary, ratesNow, rowsOf } = await import('./fiat-rates.js');
+      const dir = dirOf(slug), rows = rowsOf(dir);
+      const rates = await fillFiatRates(dir, rows, { fetcher });
+      const sum = fiatSummary(rows, rates);
+      const recent = rows.slice(-20).reverse().map((r) => r.outpoint);
+      return { now: await ratesNow({ fetcher }), totals: sum.totals, unrated: sum.unrated, recent: Object.fromEntries(recent.map((o) => [o, sum.values[o] || {}])) };
+    },
     list({ attribute = null } = {}) {
       return readdirSync(root).filter(isClient).sort().map((slug) => {
         const dir = dirOf(slug);

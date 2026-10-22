@@ -5035,7 +5035,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               all.rows.push(...readFileSync(joinPath(devClientDir, 'donations.jsonl'), 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return {}; } })); } catch { /* none beside */ } }
             await learnRoundApps(all.rows, all.seats);
           } catch (e) { console.log(`[dev] round games not looked up: ${e.message}`); }
-          return answer(200, { managed: !!devClients, clients: devClients ? devClients.list({ attribute: devAttribute }) : [],
+          // AND EACH CLIENT'S DONATIONS IN EUR / USD / CHF / GBP at their historic rates (kanban #578; fiat-rates.js) - 12 s at most, then without
+          const clients = devClients ? devClients.list({ attribute: devAttribute }) : [];
+          if (devClients && devClients.fiatFor) await Promise.race([Promise.all(clients.map(async (c) => { try { c.fiat = await devClients.fiatFor(c.slug); } catch { c.fiat = null; } })),
+            new Promise((ok) => setTimeout(ok, 12000))]);
+          return answer(200, { managed: !!devClients, clients,
             beside: devClientDir ? { ...devClientSnapshot(devClientDir), split: devSplitOfDir(devClientDir) } : null });
         }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
