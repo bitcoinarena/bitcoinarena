@@ -486,3 +486,23 @@ test('records that arrive within a block count on the next tick of that block: a
   await s.tick();
   assert.equal((await s.readiness(60000)).cohort.free, 12, 'the CLOSED record arrived within block 300: its guardians are free at once');
 });
+
+test('members: every node that can be drawn, asked at its address - ready, founding off, an older release, no answer (kanban #585)', async () => {
+  const all = Array.from({ length: 4 }, (_, i) => key(`m${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/mtx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `mop${i}`, guardianCapable: true, guardianEndpoint: `wss://m${i}/guardian`, endpoint: `wss://m${i}` } }));
+  const answers = { 'https://m1': { ready: { guardian: 'setup' } }, 'https://m2': { off: true }, 'https://m3': null };
+  const asked = [];
+  const s = createFoundingSeat({ records: () => [], entriesAt: async (h) => (h >= 300 ? cEntries : []), beaconAt: async () => null, tip: async () => 300,
+    guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => false },
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[0].pub, sign: (h) => schnorr.sign(h, all[0].secret), verify,
+    endpointOf: (e) => e.advert.endpoint,
+    fetchJson: async (u) => { asked.push(u); const root = u.replace(/\/founding$/, ''); if (root === 'https://m3') throw new Error('timeout'); return answers[root]; } });
+  await s.tick();
+  const m = await s.members(1000);
+  assert.deepEqual(m.nodes.map((x) => x.state), ['setup', 'setup', 'off', 'no answer'], 'itself, ready, founding off, no answer');
+  assert.deepEqual([m.free, m.needed, m.nodes.length], [4, 10, 4]);
+  assert.deepEqual(asked, ['https://m1/founding', 'https://m2/founding', 'https://m3/founding'], 'each other node at its own address, http(s) for ws(s)');
+  await s.members(30000);
+  assert.equal(asked.length, 3, 'asked at most every 60 s');
+});
