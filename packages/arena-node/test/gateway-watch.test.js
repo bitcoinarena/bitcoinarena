@@ -218,3 +218,27 @@ test('proved peg-ins: claimed outpoints among the federation\'s coins count, an 
   const none = make(undefined); await none.probe();
   assert.equal((await none.view()).gateways[keys[0].hex].provedPegInSats, null, 'no coins read: nothing is proved');
 });
+
+test('a guardian whose quick tunnel took a new name is read at its announced address, not its advert\'s dead one (kanban #577)', async () => {
+  // measured 2026-10-22 on federation 89ce310e: its three installer guardians updated, their tunnels took new names, the seats held
+  // the announcements, and the watch still asked the advert's address - "0 of 2 gateway seats filled from 0 eligible operators"
+  const asked = [];
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://old${i}.example`, operatorId: `op${i}` } }));
+  const announced = new Map([[keys[0].hex, 'https://new0.example'], [keys[1].hex, 'https://new1.example']]);
+  const fetcher = async (url) => {
+    asked.push(url);
+    if (/^https:\/\/old\d/.test(url)) throw new TypeError('fetch failed: the tunnel is gone');
+    const seat = /^https:\/\/new(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return { status: 200, json: async () => claimOf(Number(seat[1])) };
+    if (/^https:\/\/n\d\.example\/gateway\/routing_info$/.test(url)) return { status: 200, text: async () => '{"lightning_public_key":"02.."}' };
+    throw new Error(`unexpected ${url}`);
+  };
+  const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries,
+    tip: async () => 144 * 10 + 5, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher,
+    endpointOf: (e) => announced.get(Buffer.from(e.pubkey).toString('hex')) || e.advert.endpoint });
+  await w.probe();
+  assert.ok(!asked.some((u) => u.startsWith('https://old')), asked.join(' '));
+  const v = await w.view();
+  assert.deepEqual(Object.keys(v.gateways).sort(), [keys[0].hex, keys[1].hex].sort(), 'both claims read at the announced addresses');
+  assert.equal(v.seated.length, 2);
+});
