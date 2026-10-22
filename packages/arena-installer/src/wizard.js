@@ -24,6 +24,7 @@ import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CO
 import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf } from './state.js';
 import { appsIn, appsView, chosenApps } from './apps.js';
 import { installService, installProgram } from './service.js';
+import { control } from './node-services.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
@@ -95,13 +96,17 @@ export function depositParts(s, pegInSats) {
   return parts;
 }
 
+/** A SEAT RESTARTS when its settings file changed after it started (kanban #577): the text written at its start against the one now. */
+export const seatNeedsRestart = (before, after) => String(before || '') !== String(after || '');
+
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   // tailscale: the test host app's own CLI when it is installed, else the one in PATH
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
   tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
-  gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
+  gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
+  restartSeat = (home) => control('restart', 'node', { home }) }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
@@ -363,7 +368,15 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       let reachTest = null;
       if (s.reach.mode === 'quick') {
         const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
-        if (url) { s = state.save({ reach: { ...s.reach, url } }); state.writeSecret('arena.conf', seatConf({ ...s, port, bridgePort }, { home: state.home, release })); }
+        if (url) {
+          s = state.save({ reach: { ...s.reach, url } });
+          const before = seatConf(conf, { home: state.home, release }), after = seatConf({ ...s, port, bridgePort }, { home: state.home, release });
+          state.writeSecret('arena.conf', after);
+          // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
+          // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
+          // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
+          if (seatNeedsRestart(before, after)) { const rs = await restartSeat(state.home); log(`[service] the seat restarted on its new settings: ${rs && rs.ok === false ? rs.why : 'ok'}`); }
+        }
       }
       // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
       if (s.reach.mode === 'workers') {
