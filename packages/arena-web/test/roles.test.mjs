@@ -58,6 +58,21 @@ test('a node not in the census yet: no switches, the reason said; the seat refus
   assert.deepEqual(askOf({ play: false, settlement: true, relay: false, custody: false }), { roles: ['settlement'], custody: false });
 });
 
+test('an unanswered /roles is not "not in the census": asked three times, then said, and Try again reads it (the owner 2026-10-22, guardian-6)', async () => {
+  let calls = 0, down = true;
+  const api = { get: async (p) => { if (p === '/roles') { calls++; if (down) throw new Error('502'); } return answers[p]; } };
+  const c = new RolesPanel({ api, node: 'me', pause: async () => {} });
+  c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  await c.componentDidMount();
+  assert.deepEqual([calls, c.state.loaded, c.state.unread], [3, true, true]);
+  const html = renderToStaticMarkup(c.render());
+  assert.doesNotMatch(html, /not in the census/); assert.doesNotMatch(html, /class="tile/); assert.match(html, /did not answer just now/); assert.match(html, />Try again</);
+  down = false;
+  await c.retry();
+  assert.deepEqual([c.state.unread, c.state.was], [false, { play: true, settlement: true, relay: false, custody: true }]);
+  assert.match(renderToStaticMarkup(c.render()), /class="tile on" id="tile-play"/);
+});
+
 test('a gateway that runs but holds no seat yet says Waiting, not Off (kanban #563, installer C 2026-10-21)', async () => {
   const api = { get: async (p) => ({ ...answers, '/gateway-claim': null })[p], signed: async (action) => ({ action }),
     post: async (path) => (path === '/owner/services' ? { ok: true, services: [{ id: 'gateway', running: true }] } : { ok: true }) };
