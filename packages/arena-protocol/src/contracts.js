@@ -803,7 +803,8 @@ export function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER;
+  // the bot mark ends an entry too (kanban #581: a bot's entry with no donation outputs, or a pick and no order, read the mark as a list)
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER || b === BOT_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');

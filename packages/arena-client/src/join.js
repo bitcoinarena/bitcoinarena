@@ -923,7 +923,8 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null, items = null } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null, items = null,
+  bot = false } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -1038,6 +1039,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
     ...(order ? { limitPrice, orderExpiryMs } : {}),
+    // A BOT'S ENTRY (kanban #581: a market maker script, never a player): marked, so the leaderboard and its payouts leave it out
+    ...(bot === true ? { bot: true } : {}),
     stakeMsat: stakeOf(round),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
