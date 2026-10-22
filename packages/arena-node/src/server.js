@@ -783,7 +783,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
     let protocolBps = 0;
     for (const s of newest.values()) for (const r of s.recipients) if (kh(r.recipientPk) === key) protocolBps = Math.max(protocolBps, Number(r.shareBps || 0));
+    // a hosted game as the split names it: its share for this key, and whether it is a market (its result attested, kanban #578)
+    const gameEntry = (g) => { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key);
+      return { name: g.name, title: g.title || g.name, bps: r ? Number(r.shareBps || 0) : 0, market: !!(g.manifest && g.manifest.resultType === RESULT_TYPE.ATTESTED) }; };
+    const gameByName = (n) => { const g = [...hosted.values()].find((x) => x.name === n || (x.manifest && x.manifest.gameName === n)); return g ? gameEntry(g) : null; };
     const seen = new Map();
+    // AN ITEM'S DONATION OF AN OLDER ROW (no itemGame): the purchase this seat kept under its id names the game
+    const itemOf = (id) => {
+      if (seen.has('item:' + id)) return seen.get('item:' + id);
+      let out = null;
+      try { const row = /^[0-9a-f]{64}$/.test(id) ? round.db.prepare('SELECT game_name FROM item_purchases WHERE id = ?').get(id) : null; out = row ? gameByName(row.game_name) : null; } catch { out = null; }
+      seen.set('item:' + id, out);
+      return out;
+    };
     const gameOf = (rid) => {
       if (seen.has(rid)) return seen.get(rid);
       let out = null;
@@ -793,7 +805,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (row) { const c = decodeRoundContract(new Uint8Array(row.contract)); gid = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null; }
         else gid = roundApps.get(rid) || null;   // a round another seat holds, looked up once (learnRoundApps)
         const g = gid ? hosted.get(gid) : null;
-        if (g) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); out = { name: g.name, title: g.title || g.name, bps: r ? Number(r.shareBps || 0) : 0 }; }
+        if (g) out = gameEntry(g);
       } catch { out = null; }
       seen.set(rid, out);
       return out;
@@ -802,7 +814,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // hosted game's half (games whose set does not name it are left out), and devEarnings over the same split
     const games = [];
     for (const g of hosted.values()) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); if (r && !games.some((x) => x.game === g.name)) games.push({ game: g.name, title: g.title || g.name, bps: Number(r.shareBps || 0) }); }
-    return { ...attributeDonations(rows, { protocolBps, gameOf }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, nowMs: Date.now() }) };
+    return { ...attributeDonations(rows, { protocolBps, gameOf, itemOf, gameByName }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, itemOf, gameByName, nowMs: Date.now() }) };
   };
   const devSplitOfDir = (dir) => {
     try {
@@ -6284,7 +6296,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const merged = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
-          verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), fees: feesAtHeight(height) });
+          verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height) });
         if (!got.ok) return text(res, got.status || 422, got.why);
         // KEPT HERE THE FIRST TIME: handed on to every other seat, each of which checks it for itself and hands it on only when it
         // too keeps it for the first time - so an entry naming the item finds its purchase on whichever seats it is sent to

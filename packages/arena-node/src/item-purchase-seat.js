@@ -19,7 +19,7 @@ export const ITEM_PURCHASES_SQL = `CREATE TABLE IF NOT EXISTS item_purchases (
  * Answers { ok, id, kept: 'new' | 'held' } or { ok: false, status, why }.
  */
 // `fees`: the fee set in force: an item's parts on the reserves' terms; unset, today's
-export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null, fees = null }) {
+export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null, keepDonations = null, fees = null }) {
   const no = (status, why) => ({ ok: false, status, why });
   const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey, fees });
   if (!st.ok) return no(422, st.why);
@@ -44,7 +44,12 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
   // under the federation's reserve key - what GET /reserves counts - with the purchase's id in the entry's place
   const reserve = reserveRowOf(p, id, (outIdx) => heldIds.get(outIdx));
   if (reserve && keepReserve) keepReserve(reserve);
-  return { ok: true, id, kept: 'new', reserve };
+  // AND EVERY OTHER OUTPUT - the protocol developers', the game developers' - indexed for its recipient, naming the game and the item
+  // (kanban #578, the owner 2026-10-22: "add the item that is being purchased so we can group by it later. Group it by game and item
+  // name"): before, only the reserve's output was indexed, so no dev client ever saw an item's donation or which item it was for
+  const donations = donationRowsOf(p, id, (outIdx) => heldIds.get(outIdx)).filter((r) => !reserve || toHex(r.recipientPk) !== toHex(reserve.recipientPk));
+  if (donations.length && keepDonations) keepDonations(donations);
+  return { ok: true, id, kept: 'new', reserve, donations: donations.length };
 }
 
 /**
@@ -57,7 +62,24 @@ export function reserveRowOf(p, idHex, contractIdAt = () => null) {
   if (!o) return null;
   return { outpoint: { txid: p.txid, outIdx: BigInt(o.outIdx) }, entryId: fromHex(idHex), roundId: new Uint8Array(32), federationId: p.federationId,
     recipientPk: p.reserveKey, amountMsat: o.msat, contractId: contractIdAt(o.outIdx) || `item:${idHex}`, senderOnContract: true, image: toHex(p.playerPubkey),
-    item: `${p.gameName} · ${p.itemId}` };
+    item: itemLabel(p.gameName, p.itemId) };
+}
+
+/** AN ITEM'S NAME ON A DONATION ROW: "<game> · <item id>", as the reserve row has named it; itemOfRow splits it back. */
+export const itemLabel = (gameName, itemId) => `${gameName} · ${itemId}`;
+export function itemOfRow(label) {
+  const s = String(label || ''); const at = s.lastIndexOf(' · ');
+  return at > 0 ? { game: s.slice(0, at), item: s.slice(at + 3) } : null;
+}
+
+/**
+ * EVERY OUTPUT OF A PURCHASE AS A DONATION ROW, in the shape putDonationOutputs keeps: round id zeros (it is no round's), the purchase's
+ * id in the entry's place, the buyer's key as the image, and the item it paid for (kanban #578).
+ */
+export function donationRowsOf(p, idHex, contractIdAt = () => null) {
+  return (p.outputs || []).map((o) => ({ outpoint: { txid: p.txid, outIdx: BigInt(o.outIdx) }, entryId: fromHex(idHex), roundId: new Uint8Array(32),
+    federationId: p.federationId, recipientPk: o.pk, amountMsat: o.msat, contractId: contractIdAt(o.outIdx) || `item:${idHex}`, senderOnContract: true,
+    image: toHex(p.playerPubkey), item: itemLabel(p.gameName, p.itemId) }));
 }
 
 /** THE ITEMS A PLAYER OWNS here (optionally of one game): [{ id, gameDev, gameName, itemId, txid, purchase (hex), signature (hex) }]. */

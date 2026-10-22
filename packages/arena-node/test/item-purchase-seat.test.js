@@ -82,3 +82,15 @@ test('a purchase at 0 % - the nodes alone, 250 sat - is kept as the buyer\'s, re
   assert.deepEqual([a.ok, a.kept], [true, 'new'], a.why);
   assert.deepEqual(itemsOwned(db, { player: toHex(BUYER) }).map((o) => o.itemId), ['large-truck']);
 });
+
+test('every output of a purchase is a donation row naming its game and item, grouped later by both (kanban #578)', async () => {
+  const { donationRowsOf, itemOfRow, itemLabel } = await import('../src/item-purchase-seat.js');
+  const pk = (n) => new Uint8Array(33).fill(n);
+  const p = { txid: new Uint8Array(32).fill(7), federationId: new Uint8Array(32).fill(3), playerPubkey: new Uint8Array(32).fill(9), gameName: 'Tick Tock, Next Block', itemId: 'turbo',
+    outputs: [{ outIdx: 0, pk: pk(2), msat: 4000n }, { outIdx: 1, pk: pk(4), msat: 6000n }] };
+  const rows = donationRowsOf(p, 'ab'.repeat(32), (i) => `c${i}`);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => [r.item, r.contractId, r.amountMsat, r.roundId.every((x) => x === 0)]), [['Tick Tock, Next Block · turbo', 'c0', 4000n, true], ['Tick Tock, Next Block · turbo', 'c1', 6000n, true]]);
+  assert.deepEqual(itemOfRow(itemLabel('Tick Tock, Next Block', 'turbo')), { game: 'Tick Tock, Next Block', item: 'turbo' });
+  assert.equal(itemOfRow('no separator'), null);
+});

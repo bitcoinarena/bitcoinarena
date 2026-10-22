@@ -352,7 +352,11 @@ export const donationRecord = (d, rate, { recordedAt = Date.now() } = {}) => ({
   outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), contractId: d.contractId,
   playerKey: d.playerKey || null, senderOnContract: !!d.senderOnContract, roundId: d.roundId, entryId: d.entryId, verifiedMs: Number(d.verifiedMs),
   usdPerBtc: rate.usd, eurPerBtc: rate.eur, ratesAtMs: rate.priceAtMs, rateProvider: rate.provider, recordedAt,
+  // AN ITEM'S DONATION names what was bought (kanban #578): the seat's "<game> · <item id>", and both parts on their own to group by
+  ...(d.item ? itemFields(d.item) : {}),
 });
+const itemFields = (label) => { const s = String(label); const at = s.lastIndexOf(' · ');
+  return at > 0 ? { item: s, itemGame: s.slice(0, at), itemId: s.slice(at + 3) } : { item: s }; };
 
 /** The dev's permanent record: one JSON line per donation, appended and synced to disk before this returns. Never rewritten. */
 export function recordDonations(path, records) {

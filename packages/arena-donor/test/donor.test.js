@@ -202,3 +202,11 @@ test('a move out of a draining federation keeps every donation\'s details: the m
   // the donations themselves are untouched: player key, round and entry stay with each
   assert.equal(readFileSync(dir + '/donations.jsonl', 'utf8').split('\n').filter(Boolean).length, 3);
 });
+
+test('an item\'s donation is recorded with its item, and the game and item on their own to group by (kanban #578)', async () => {
+  const { donationRecord } = await import('../src/donor.js');
+  const rate = { usd: 1, eur: 1, priceAtMs: 0, provider: 'x' };
+  const r = donationRecord({ outpoint: 'o:1', federationId: 'f', amountMsat: 600, contractId: 'c', playerKey: 'p', roundId: '0'.repeat(64), entryId: 'e', verifiedMs: 1, item: 'Tick Tock, Next Block · turbo' }, rate, { recordedAt: 2 });
+  assert.deepEqual([r.item, r.itemGame, r.itemId, r.playerKey, r.entryId], ['Tick Tock, Next Block · turbo', 'Tick Tock, Next Block', 'turbo', 'p', 'e']);
+  assert.equal(donationRecord({ outpoint: 'o:2', amountMsat: 1 }, rate).item, undefined, 'a round\'s donation names no item');
+});
