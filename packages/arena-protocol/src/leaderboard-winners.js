@@ -25,6 +25,7 @@ export function leaderboardWinners({ rounds, games, fromMs, toMs, top, amountMsa
   for (const r of rounds) {
     if (!gameSet.has(String(r.game || r.gameId || '').toLowerCase())) continue;
     for (const e of r.entries || []) {
+      if (e.bot === true) continue;   // a bot's entry is no player's (kanban #581)
       const p = String(e.player || '').toLowerCase();
       if (!keysOf.has(p)) keysOf.set(p, []);
       keysOf.get(p).push(String(e.roundKey || '').toLowerCase());

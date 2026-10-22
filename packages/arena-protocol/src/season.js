@@ -90,10 +90,10 @@ function readRound(r, { keys = false } = {}) {
     if (score !== null && !Number.isSafeInteger(score)) return { id, why: 'an entry\'s score is an integer, or null for a market pick' };
     const outcome = e.outcome === null || e.outcome === undefined ? null : String(e.outcome);
     const name = typeof e.name === 'string' && e.name !== '' ? e.name : null;
-    if (!keys) { entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name }); continue; }
+    if (!keys) { entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, ...(e.bot === true ? { bot: true } : {}) }); continue; }
     const roundKey = e.roundKey === null || e.roundKey === undefined ? null : String(e.roundKey).toLowerCase();
     if (roundKey !== null && !HEX64.test(roundKey)) return { id, why: 'an entry\'s round key is a 32-byte key in hex, or null' };
-    entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, roundKey });
+    entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, roundKey, ...(e.bot === true ? { bot: true } : {}) });
   }
   // THE ENTRIES IN ONE ORDER, so two copies of a round that differ only in the order they were listed are one round
   const key = (e) => [e.player, e.outcome ?? '', e.score ?? '', e.stakeMsat, e.payoutMsat ?? '', e.name ?? '',
@@ -150,6 +150,9 @@ export function season(rounds, { games, fromMs, toMs } = {}) {
     // signed amount is not settled here yet - left out, never guessed at.
     const per = new Map();
     for (const e of r.entries) {
+      // A BOT'S ENTRY IS NO PLAYER'S (kanban #581, the owner 2026-10-22: the market maker bots "are excluded from the leaderboard"): its entry
+      // carries the bot mark (contracts.js BOT_MARKER), so no board and no leaderboard payout counts it
+      if (e.bot === true) { excluded.push({ round: r.id, player: e.player, why: 'a bot\'s entry: no player of the leaderboard' }); continue; }
       if (e.outcome !== null && REFUNDS.has(e.outcome)) {
         excluded.push({ round: r.id, player: e.player, why: `a ${e.outcome} entry is refunded: it is no round played` });
         continue;
@@ -331,7 +334,7 @@ export function seasonRoundsToJson(rounds) {
   const s = (v) => (v === null || v === undefined ? null : String(v));
   return (rounds || []).map((r) => ({ roundId: r.roundId, gameId: r.gameId, startMs: s(r.startMs), void: !!r.void,
     entries: (r.entries || []).map((e) => ({ player: e.player, name: e.name ?? null, stakeMsat: s(e.stakeMsat),
-      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null, roundKey: e.roundKey ?? null })) }));
+      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null, roundKey: e.roundKey ?? null, ...(e.bot === true ? { bot: true } : {}) })) }));
 }
 
 export function seasonRoundsFromJson(list) {
@@ -340,5 +343,5 @@ export function seasonRoundsFromJson(list) {
   return list.map((r) => (!r || typeof r !== 'object' ? r : { roundId: r.roundId, gameId: r.gameId, startMs: big(r.startMs), void: r.void === true,
     entries: Array.isArray(r.entries) ? r.entries.map((e) => (!e || typeof e !== 'object' ? e : { player: e.player, name: e.name ?? null,
       stakeMsat: big(e.stakeMsat), payoutMsat: big(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null,
-      roundKey: e.roundKey ?? null })) : r.entries }));
+      roundKey: e.roundKey ?? null, ...(e.bot === true ? { bot: true } : {}) })) : r.entries }));
 }

@@ -92,7 +92,8 @@ function entriesOf(round, rid, contract, { paid, market }) {
     // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
     // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds sends it, for the
     // weekly board badge, which merges the seats' accounts on it (mergeSeasonAccounts `keys`).
-    const base = { player, roundKey: key, name: record ? record.name : null, stakeMsat: entry.stakeMsat, outcome: null, score: null, payoutMsat: null };
+    const base = { player, roundKey: key, name: record ? record.name : null, stakeMsat: entry.stakeMsat, outcome: null, score: null, payoutMsat: null,
+      ...(entry.bot === true ? { bot: true } : {}) };   // the bot mark its entry carries (kanban #581): no player of the leaderboard
 
     // THE RESULT (not for a market pick, whose round has an attested outcome and no run)
     if (!market) {
