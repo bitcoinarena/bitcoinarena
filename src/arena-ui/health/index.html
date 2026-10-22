@@ -257,7 +257,11 @@
     // the founding that runs: the one most nodes name, its seated nodes and codes from the node that holds the most codes
     const runs = nodes.map(fb).filter((b) => b && b.id);
     const byId = new Map(); for (const b of runs) { const w = byId.get(b.id); if (!w || (b.codes || []).length > (w.codes || []).length) byId.set(b.id, b); }
-    const run = [...byId.values()].sort((x, y) => (y.codes || []).length - (x.codes || []).length)[0] || null;
+    // THE ONE MOST NODES NAME (the owner 2026-10-22, a screenshot: a27706f2 "7 of 10 codes" while the seats ran 87eff0d0 - nodes not restarted
+    // yet still named the old draw, which held more codes); among those, the newest trigger
+    const named = new Map(); for (const b of runs) named.set(b.id, (named.get(b.id) || 0) + 1);
+    const th = (b) => Number((b.trigger && b.trigger.height) || 0);
+    const run = [...byId.values()].sort((x, y) => (named.get(y.id) - named.get(x.id)) || (th(y) - th(x)) || ((y.codes || []).length - (x.codes || []).length))[0] || null;
     const seated = new Map((run ? run.seated || [] : []).map((x) => [String(x.node || x).toLowerCase(), x]));
     const coded = new Set((run ? run.codes || [] : []).map((c) => String(c.node).toLowerCase()));
     const cohorts = nodes.map(fb).filter((b) => b && b.ready && b.ready.cohort).map((b) => b.ready.cohort).sort((x, y) => y.height - x.height);
