@@ -14,11 +14,11 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { sharesNeededFor, stakeFor, postHandout, stakeSeenNeeded } from '../src/join.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const CORE = fromHex(coreHashHex());
+const CORE = fromHex(TRUCK_68E2_HASH);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const signerNodesOf = (n) => Array.from({ length: n }, () => schnorr.getPublicKey(rand(32)));
 const deal = (round, signerNodes, extra = {}) =>

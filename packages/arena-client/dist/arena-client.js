@@ -11699,6 +11699,18 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 11,
   }),
+  //: manifest version 5, parent 76f50510 (kanban #523) - version 4 in every term but its cores and clients: the two cores with their
+  // comments cleaned of names, ticket numbers and blwp (a5c5766a the truck, 0847c99f the truck that knows the larger truck), their bundles
+  '09bfe97a6a2b640b69ee9f4a175d25e091ee7229e536f1f3e1adc431f60afb1b': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
 });
 
 // ---- arena-protocol/src/known-game.js

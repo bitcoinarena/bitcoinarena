@@ -100,7 +100,7 @@ test('a result names the core that replayed the run, and one whose replay ran an
 // core d15c39bb rides on it too: 2069b4c2 is the core that ran those rounds hash for hash at 10800 ticks.
 import { TRUCK_2069, TRUCK_2069_HASH } from '../../nextblock/plugin/nextblock.js';
 import { CORE as FROZEN_2069 } from '../../nextblock/frozen/2069b4c2/adapter.js';
-import { CORE as NOW } from '../../nextblock/src/adapter.js';
+import { CORE as NOW } from '../../nextblock/frozen/68e2b3d6/adapter.js';   // the truck (kanban #523: nextblock/src is version 5's a5c5766a)
 
 test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork core by it held to 10800, the rest by the truck', () => {
   const at = (hex) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(hex, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 4920 });

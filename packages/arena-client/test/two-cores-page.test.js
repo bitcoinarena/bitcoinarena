@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { coreHashHex } from '../../nextblock/tools/hash-core.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const T = new URL('../../../src/arena-ui/', import.meta.url);
 const html = readFileSync(new URL('index.html', T), 'utf8');
@@ -16,7 +17,7 @@ const OLD = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const DE2F = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
 // 7e2123d1, the core before 68e2b3d6: §4.11's objectives from the relief; kept beside it for its rounds
 const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
-const NEW = coreHashHex();
+const NEW = TRUCK_68E2_HASH;
 const FROZEN = new URL('../../nextblock/frozen/2069b4c2', import.meta.url).pathname;
 
 function page() {
