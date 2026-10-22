@@ -179,7 +179,10 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
-  const LOOKBACK = 288;                      // how far back a seat's first tick reads the run of free operators
+  // HOW FAR BACK A SEAT'S FIRST TICK READS THE RUN OF FREE OPERATORS: a cohort draws at the newest multiple of founding_window + 1 below
+  // the tip once its run began at or before it, so two steps and one block decide the same height on every seat (kanban #577, measured
+  // 2026-10-22 21:30Z: reading back 288 heights - each a census from the chain - held a restarted installer out of the draw for 15 min+)
+  const LOOKBACK = clocks && Number.isInteger(clocks.foundingWindow) && clocks.foundingWindow > 0 ? 2 * (clocks.foundingWindow + 1) + 1 : 288;
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
   const freshTried = new Set();              // keys of foundings for which this node's guardian was started again in a fresh setup
   // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2), one row per chain height this seat ticked at:
