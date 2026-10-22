@@ -126,6 +126,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 .past-props{margin:10px 0}.past-props>summary{cursor:pointer;color:var(--dim);font-size:13.5px;padding:8px 0}.past-props[open]>summary{margin-bottom:6px}
 .split-bar i.grow{opacity:.35;background-image:repeating-linear-gradient(45deg,transparent 0 4px,rgba(0,0,0,.35) 4px 6px)}.split-total small{display:block;margin-top:4px;font-weight:400;color:var(--dim)}
 .app-split{margin:10px 0 4px}.app-split .split-bar{margin:6px 0}.app-split-who{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--dim);margin-bottom:6px}.app-split-who i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.app-split-who b{color:var(--text);font-weight:600}.app-split.editing{border-top:1px solid var(--line);padding-top:10px}.app-split.editing .split-row{grid-template-columns:12px minmax(0,1fr) 110px 36px}.app-card:has(.app-split.editing){grid-column:1/-1}
+.gamedev .gd-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}.gamedev .gd-head b{font-size:16px}.gamedev h4{margin:14px 0 6px}.gd-by{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0}.gd-key{margin:14px 0 6px}
 .scroll{overflow-x:auto}.tbl{width:100%;border-collapse:collapse;font-size:13.5px}.tbl th{color:var(--dim);font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;text-align:left}
 .tbl th,.tbl td{padding:8px 10px;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}.tbl .n{text-align:right;font-variant-numeric:tabular-nums}
 .withdraw{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:14px 16px}.withdraw.off{opacity:.65}.withdraw .sub{margin:0 0 10px}
@@ -268,6 +269,7 @@ async function area() {
   donations();
   devClients();
   ballotsPanel();
+  gameDevs();
   standingPanel();
   capacityPlea();
   bondAnswer();
@@ -385,6 +387,17 @@ async function ballotsPanel() {
     vote: (slug, proposalId, accept) => post('/owner/dev/vote', signed('dev/vote', { slug, proposalId, accept })),
     feeAnswer: (slug, proposalId, approve) => post('/owner/dev/fee-answer', signed('dev/fee-answer', { slug, proposalId, approve })),
     propose: (slug, recipients) => post('/owner/dev/propose', signed('dev/propose', { slug, recipients })) });
+}
+// THE GAME DEVELOPERS (kanban #582): shown only when a game developer's key is installed here (GameDevsPanel, GET /owner/app-devs); installing
+// one, removing it and a new split each the owner's signed request
+async function gameDevs() {
+  let r = null, why = null;
+  try { r = await (await fetch(at('/owner/app-devs'), { cache: 'no-store' })).json(); } catch (e) { why = e.message; }
+  if (!$('gamedevs')) return;
+  O.drawInto($('gamedevs'), 'GameDevsPanel', { devs: r ? r.devs : [], why, reread: gameDevs,
+    addKey: (key) => post('/owner/apps/dev-key', signed('apps/dev-key', { key })),
+    removeKey: (pubkey) => post('/owner/apps/dev-key', signed('apps/dev-key', { remove: pubkey })),
+    changeSplit: (game, recipients) => post('/owner/apps/split', signed('apps/split', { game, recipients })) });
 }
 // drawn by React (kanban #564, DevClients) from GET /owner/dev, again in the same root after a change (a form being typed keeps its words);
 // a withdrawal asked is followed every 3 s until it is no longer paying (40 looks at most)
