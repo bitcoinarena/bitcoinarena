@@ -163,6 +163,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   let current = null;                        // { key, founding }
   const LOOKBACK = 288;                      // how far back a seat's first tick reads the run of free operators
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
+  const freshTried = new Set();              // keys of foundings for which this node's guardian was started again in a fresh setup
   // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2), one row per chain height this seat ticked at:
   //   capable  { height, operators }: the distinct operators of guardian-capable census nodes with an endpoint (the draw's own rule)
   //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
@@ -244,6 +245,23 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       let use = null, via = null;
       if (await guardianInSetup()) { use = setup; via = 'guardian'; }
       else if (next && next.setup && typeof next.inSetup === 'function' && await next.inSetup()) { use = next.setup; via = 'guardian-next'; }
+      // A GUARDIAN LEFT IN A FAILED KEY GENERATION (kanban #495, measured 2026-10-22: the three installers' guardians still waited on
+      // founding 53be35a3's peers, and after 5716ac58's checksum failure the guardians had exited - neither in setup, so these nodes,
+      // seated, posted no code): named in this draw, seated or an alternate, with no guardian in setup and none running a federation, the
+      // node starts its guardian again in a fresh setup (its old setup kept beside it), once per founding
+      if (!use && setup && typeof setup.freshSetup === 'function' && !freshTried.has(key)) {
+        const probe = createFounding({ seed, triggerHeight: t.height, entries, nominal: Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal, bondMinGuardian,
+          guardingOpen: out, seatedFirst, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null });
+        const ps = probe.state(), me = toHex(ownKey);
+        const named = (ps.seated || []).some((x) => String(x.node || x).toLowerCase() === me) || (ps.alternates || []).some((x) => String(x).toLowerCase() === me);
+        let running = false; try { running = typeof setup.done === 'function' && await setup.done(); } catch { running = false; }
+        if (named && !running) {
+          freshTried.add(key);
+          let r; try { r = await setup.freshSetup(); } catch (e) { r = { ok: false, why: e.message }; }
+          say({ founding: probe.id.slice(0, 16), freshSetup: r.ok ? 'the guardian was not in setup: started again in a fresh setup (its old setup kept)' : r.why });
+          if (r.ok && await guardianInSetup()) { use = setup; via = 'guardian'; }
+        }
+      }
       // A SUCCESSOR HAS ITS PREDECESSOR'S SIZE: the held record's nominal (federation B: 7) - genesis's federation_nominal
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
