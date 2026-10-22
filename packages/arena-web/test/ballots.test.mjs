@@ -77,3 +77,13 @@ test('the split form, pretty: a row per developer with a select of the known dev
   assert.match(h, /<div class="split-total ok">Total 100 % ✓<\/div>/);
   assert.match(h, /<h3>In force: serial 4<\/h3><div class="split-bar"><i title="dev a: 60 %" style="width:60%;background:var\(--st\)"><\/i>/);
 });
+
+test('open proposals on top: the open part has only the open ones under its heading, the rest everything else (kanban #578)', () => {
+  const open = panel({ part: 'open' }).html(), rest = panel({ part: 'rest' }).html();
+  assert.match(open, /^<h3 class="sh open-head">Open proposals · your vote counts<\/h3><div class="card open-prop"><h3>Proposal · serial 5/);
+  assert.match(open, /Fee proposal/, 'an undecided fee proposal is open too');
+  assert.doesNotMatch(open, /In force: serial|Propose a new split/);
+  assert.doesNotMatch(rest, /Proposal · serial 5|Fee proposal/);
+  assert.match(rest, /^<div class="card"><h3>In force: serial 4/);
+  assert.equal(panel({ part: 'open', ballots: { ballots: [] }, fees: { proposals: [] } }).html(), '', 'nothing open, nothing drawn');
+});
