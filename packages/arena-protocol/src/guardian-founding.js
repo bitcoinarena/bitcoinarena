@@ -144,8 +144,12 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
     let start = null;
     for (const x of capable) { if (typeof x.free !== 'number' || x.height <= cohortAfter) continue; if (x.free >= cohort) { if (start === null) start = x; } else start = null; }
     const step = foundingWindow + 1;
-    const at = start && scheduled && tip - 1 > start.height ? start.height + Math.floor((tip - 1 - start.height) / step) * step : start && start.height;
-    if (start) found.push({ kind: 'cohort', height: at, nominal: cohort,
+    // ON THE MULTIPLES OF founding_window + 1 (kanban #495, measured 2026-10-22 after the 6-block roll: installer a's memory of the run
+    // began at 157,236, the other nodes' at 157,173, so they drew at 157,254 and 157,251 - two foundings): a draw is the newest
+    // multiple of the step below the tip, at or after the run's start - every seat names the same height from the chain alone
+    const first = start ? Math.ceil(start.height / step) * step : null;
+    const at = start && scheduled ? (tip - 1 >= first ? Math.floor((tip - 1) / step) * step : (tip >= first ? first : null)) : start && start.height;
+    if (start && at !== null) found.push({ kind: 'cohort', height: at, nominal: cohort,
       why: `${start.free} guardian-capable operators guarding no OPEN federation from ${start.height}, at least ${cohort}: they found a federation of their own`
         + (at !== start.height ? ` (drawn again at ${at}, every founding_window + 1)` : '') });
   }
