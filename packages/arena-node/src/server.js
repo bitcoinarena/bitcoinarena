@@ -3979,8 +3979,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NOT BEFORE THE FEDERATION RECORDS ARE BACK (kanban #585, measured 2026-10-22 at 157,300: every restarted seat counted 7 free
     // operators instead of 20 - its first pass ran at 5 s, the records are restored at 20 s, and with none held every federation an
     // advert names counts as OPEN, so the guardians of the CLOSED 89ce310e were not free; that row stood until the next block)
-    const foundingPass = () => (!fedRecordsSettled ? Promise.resolve() : foundingSeat.tick().then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
-      .catch((e) => console.log(`[founding] tick: ${e.message}`)));
+    // ONE PASS AT A TIME (kanban #585, measured 2026-10-22 20:55Z: with the records held, a restarted installer's first pass read the
+    // run of free operators back to 157,154 - longer than the minute between passes - and the passes piled up, none finishing)
+    let foundingBusy = false;
+    const foundingPass = () => (!fedRecordsSettled || foundingBusy ? Promise.resolve() : (foundingBusy = true, foundingSeat.tick()).then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
+      .catch((e) => console.log(`[founding] tick: ${e.message}`)).finally(() => { foundingBusy = false; }));
     foundingPassNow = foundingPass;
     const ft0 = setTimeout(foundingPass, 5000);
     if (ft0.unref) ft0.unref();
