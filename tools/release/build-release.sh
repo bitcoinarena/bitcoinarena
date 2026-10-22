@@ -101,24 +101,24 @@ fi
 ( cd "$STAGE/packages/arena-node" && npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts \
     @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3 >/dev/null )   # bcryptjs: the gateway's admin password hash (gateway.js)
 
-# 3b. THE CUSTODY BINARIES: gatewayd, fedimintd and fedimint-cli of the patched fork 76012ad9119, built on the test host by
+# 3b. THE CUSTODY BINARIES: gatewayd, fedimintd and fedimint-cli of the patched fork (76012ad9119; fedimintd 7e8caa9fd3a), built on the test host by
 # tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
 # custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
 # wizard says so (gateway.js findGatewayd).
-CUSTODY_TAG=custody-76012ad9
+CUSTODY_TAG=custody-7e8caa9f   # kanban #576 (the owner 2026-10-22): fedimintd of fork 7e8caa9fd3a - a new guardian starts at 50 ms; gatewayd and fedimint-cli unchanged
 # the pinned binaries, "<bin>:<os>-<arch>" -> SHA-256 (out/SHA256SUMS.custody of tools/release/custody-build.sh)
 declare -A CUSTODY_SHA=(
   [gatewayd:windows-x64]=6864274731883823e520e3472ceccdfbdd7e46cb5578ec2da541fc0da0ddf75b
-  [fedimintd:windows-x64]=7e82772ddb18c27948c9f2acf2f6723452c76c0f1aa014ec2c8b4cb715736faf
+  [fedimintd:windows-x64]=e9caa8251a4fd0f919f660dc34b73f77542402584134f32d9dbd551786ea5bd1
   [fedimint-cli:windows-x64]=55ff1133c2aa8d80873234c1b7310d22403b7d590be1376b0b8181d24c7dbbb0
   [gatewayd:darwin-arm64]=28d146a553f7fe0a23b30732aac5d2dab2a7f8eafb0c5d4af0437e3f064912ee
   [gatewayd:darwin-x64]=59c2807c4843e8421b1adf192ac69b114008d2f62c95841eac6db713fc47cfbe
   [gatewayd:linux-arm64]=47d6f6c6fabbc8a64509f67cfe7369a8764149cf82f1f571bbb03e8f944e1085
   [gatewayd:linux-x64]=bed6863fb0949feab628d7339052857717e48b964ec731c28e5e601fda2aba28
-  [fedimintd:darwin-arm64]=99f3b9bd3dd329666c6358a030e50d1ae3ce72a27f625971142a2e09ec6b7a6e
-  [fedimintd:darwin-x64]=94f23b2aac3ae8889f0af529656d2616aecb9cc2165616b7347be462654cf23b
-  [fedimintd:linux-arm64]=f3a7ad326f32966d1fc9c530859a75b4bba694403cc816785a6557e5a63efa0e
-  [fedimintd:linux-x64]=a6c1b82b10bbd41b8194a8f0b2c4b7b1eeb9f1483428932b252bf75bb7bad6e4
+  [fedimintd:darwin-arm64]=936f4017a49330a6d39e9827f751c58f8149205628ed8635e37e8a971b0e3ea1
+  [fedimintd:darwin-x64]=23620e431f0d8b00457e3115e1ae63d4c750636a69f59c33a31b0d49fcc0f31d
+  [fedimintd:linux-arm64]=82a25f61184060c689add1ee7d3830d98815ae4c2cd5cfad76095b57d9015c56
+  [fedimintd:linux-x64]=6e07886965399e6a3af7efa5ce26cbf88d7a8de5167f1910defb6601ea1ceae7
   [fedimint-cli:darwin-arm64]=e37785fc5bb33161acd26a2c10739e8e365ea3ad25211efb200c6c5fecf313e5
   [fedimint-cli:darwin-x64]=81784aa91d8b907613313cc5cac94717f4b89ba38f9a7cef2db42b538d1ff561
   [fedimint-cli:linux-arm64]=eafa49dc918b5b17d8d68fc5c23c99f0642e559575d3352f76cc33c00ca900dc
