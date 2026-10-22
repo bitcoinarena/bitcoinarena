@@ -107,3 +107,24 @@ test('custody: the plan, the bond\'s rules typed, the start; the progress throug
   assert.match(lowShown, /below the guardian floor: add 10,000 sat/);
   assert.match(lowShown, /<button[^>]*disabled=""[^>]*>Add custody<\/button>/, 'a bond below the floor cannot add custody');
 });
+
+test('a guardian can retire its federation only when it holds nothing: Check, the audit, RETIRE typed (kanban #577)', async () => {
+  const { RetirePanel } = await import('../dist/test/custody.mjs');
+  const posts = [];
+  const plan = (holds) => ({ federation: '89ce310e'.padEnd(64, '0'), status: 'OPEN', holdsNothing: !holds, why: holds ? 'the federation still holds something: mintv2 -5000 msat' : null,
+    audit: [{ kind: 'mintv2', netAssetsMsat: holds ? -5000 : 0 }, { kind: 'wallet', netAssetsMsat: 0 }], consented: false });
+  const api = (holds) => ({ signed: async (action, args) => ({ action, args }), post: async (path, body) => { posts.push([path, body.action, body.args]);
+    return body.args.post ? { ok: true, consented: true, plan: { ...plan(holds), consented: true } } : { ok: true, plan: plan(holds) }; } });
+  const drive = (c) => { c.setState = (x) => Object.assign(c.state, typeof x === 'function' ? x(c.state) : x); return c; };
+  const full = drive(new RetirePanel({ api: api(true) }));
+  await full.check();
+  const html = renderToStaticMarkup(full.render());
+  assert.match(html, /cannot be retired/); assert.doesNotMatch(html, /placeholder="RETIRE"/);
+  const empty = drive(new RetirePanel({ api: api(false) }));
+  await empty.check();
+  assert.match(renderToStaticMarkup(empty.render()), /placeholder="RETIRE"/);
+  empty.setState({ typed: 'RETIRE' });
+  await empty.consent();
+  assert.match(renderToStaticMarkup(empty.render()), /Your consent is kept/);
+  assert.deepEqual(posts.at(-1), ['/owner/federation/retire', 'federation/retire', { post: true, understood: 'RETIRE' }]);
+});

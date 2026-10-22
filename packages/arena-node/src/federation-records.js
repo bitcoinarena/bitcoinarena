@@ -64,7 +64,7 @@ const leaveMessage = (id, leaving) => Uint8Array.from([...id, leaving ? 1 : 0]);
 // `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
 // (§23A.6 steps 2 and 4) - both read into the body every guardian seat builds the same way
 export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
-  successorOf = () => null, closedOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null,
+  successorOf = () => null, closedOf = () => false, retiringOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null,
   // THE GUARDIANS' ADDRESSES FROM THE FEDERATION'S OWN CONFIGURATION (federation-endpoints.js): async (fidHex) -> Map(peer key
   // hex -> API URL) | null; a guardian it names takes that endpoint into the body, one it does not keeps its advert's
   endpointsOf = null,
@@ -244,7 +244,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const succ = successorOf(fid);
     const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height, reserveSats,
-      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : {}) });
+      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
     return { ok: true, record: r, guardians };
   }
 
