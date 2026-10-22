@@ -132,3 +132,17 @@ test('the donations table: filters for app, part, search and rows; paging; a row
   assert.match(h, /<b>CHF 0.08<\/b><small> 120 sat<\/small>/);
   assert.match(h, /<td class="n"><b>CHF 0.0014<\/b><small>2 sat<\/small><\/td>/);
 });
+
+test('a market row shows its window by name, 18:45 – 19:00 UTC, and its player (kanban #580)', async () => {
+  const W = { fromMs: Date.parse('2026-10-20T18:45:00Z'), toMs: Date.parse('2026-10-20T19:00:00Z') };
+  const row = { atMs: Date.parse('2026-10-20T21:10:00Z'), amountMsat: '221', protocolMsat: '110', appMsat: '111', app: 'btc-updown-15m', title: 'Bitcoin Up or Down',
+    market: true, item: null, round: '6c68396b'.padEnd(64, '0') + '', entry: 'e1', player: 'bb22'.padEnd(64, '3'), window: W, outpoint: 'o:1', fiat: { all: {}, protocol: {}, app: {} } };
+  const t = new DonationsTable({ clients: [{ slug: 'devb', label: 'dev b' }], cur: 'sat', query: async () => ({ ok: true, total: 1, apps: [], sums: { msat: '221', protocolMsat: '110', appMsat: '111', fiat: {} }, rows: [row] }) });
+  t.setState = function (c, then) { this.state = { ...this.state, ...c }; if (then) then(); };
+  await t.load();
+  let h = renderToStaticMarkup(t.render());
+  assert.match(h, /<span class="tag">Bitcoin Up or Down<\/span><span class="tag mk">market<\/span><\/td><td class="win" title="round 6c68396b0+">18:45 – 19:00<\/td><td class="mono">bb223333…3333<\/td>/);
+  t.state.open = 0;
+  h = renderToStaticMarkup(t.render());
+  assert.match(h, /<div><span>Market<\/span><code>2026-10-20 18:45 – 19:00 UTC<\/code><\/div><div><span>Round<\/span>/);
+});
