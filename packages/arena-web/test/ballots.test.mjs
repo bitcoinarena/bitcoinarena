@@ -87,3 +87,15 @@ test('open proposals on top: the open part has only the open ones under its head
   assert.match(rest, /^<div class="card"><h3>In force: serial 4/);
   assert.equal(panel({ part: 'open', ballots: { ballots: [] }, fees: { proposals: [] } }).html(), '', 'nothing open, nothing drawn');
 });
+
+test('past proposals folded: refused, withdrawn or approved ones under one closed "Past proposals" (the owner 2026-10-22: "past proposals should be hidden by default")', () => {
+  const past = { ballots: [...ballots.ballots, { id: 'p2'.repeat(16), serial: 4, state: 'refused', why: 'withdrawn by its proposer', acceptBps: 0, proposer: KB,
+    recipients: [{ key: KA, label: 'dev a', shareBps: 5000 }, { key: KB, label: 'dev b', shareBps: 5000 }], votes: [{ key: KB, bps: 4000, accept: false, atHeight: 157289 }] }] };
+  const decided = { proposals: [...fees.proposals, { ...fees.proposals[0], id: 'f2'.repeat(16), decision: { accepted: true } }] };
+  const open = panel({ part: 'open', ballots: past, fees: decided }).html(), rest = panel({ part: 'rest', ballots: past, fees: decided }).html();
+  assert.doesNotMatch(open, /withdrawn|p2p2p2|f2f2f2/, 'nothing past among the open ones');
+  assert.match(rest, /<details class="past-props"><summary>Past proposals · 2<\/summary><div class="card"><h3>Proposal · serial 4 <span class="sub">p2p2p2p2p2p2<\/span><\/h3><div class="row"><span>State<\/span><b><span class="err">refused · withdrawn by its proposer<\/span><\/b><\/div>/);
+  assert.match(rest, /<h3>Fee proposal <span class="sub">f2f2f2f2f2f2<\/span><\/h3>.*<\/details>$/);
+  assert.doesNotMatch(rest, /<details class="past-props" open/);
+  assert.doesNotMatch(panel({ part: 'rest' }).html(), /Past proposals/, 'no past proposals, no fold');
+});

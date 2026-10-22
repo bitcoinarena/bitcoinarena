@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { WaitingDonations, DevClients, sat } from '../dist/test/donations.mjs';
+import { WaitingDonations, DevClients, DonationsTable, sat } from '../dist/test/donations.mjs';
 
 test('waiting at this seat at one peek: the total in one line; only sets and recipients with something waiting, folded by day (the owner 2026-10-22)', () => {
   const r = { totalMsat: '1500500', sets: [{ setId: 'ab'.repeat(32), title: 'Protocol developers', kind: 'protocol', serial: 3, recipients: [
@@ -45,7 +45,7 @@ test('the dev clients at one peek: a wide card - ready to withdraw in whole sats
   assert.match(h, /<div class="devhero"><div class="dh-top"><div class="dh-who"><b>dev a<\/b> <span class="pill on">running<\/span><div class="dh-share"><span class="sub">Your share<\/span><span><b>50 %<\/b> Protocol<\/span><span class="own"><b>100 %<\/b> Rock Paper Scissors<\/span><\/div><small>newest donation [0-9]+ (min|h|d) ago<\/small><\/div><div class="dh-cash"><span>Ready to withdraw<\/span><b>2,000 sat<\/b><button type="button" class="primary">Withdraw<\/button>/);
   assert.match(h, /<div class="dh-chips"><div><span>Today<\/span><b>2,000 sat<\/b><\/div><div><span>This week<\/span><b>2,000 sat<\/b><\/div><div><span>All time<\/span><b>2,000 sat<\/b><\/div><div><span>Donations<\/span><b>3<\/b><\/div><\/div>/);
   assert.match(h, /<div class="dh-bar"><i style="width:75%;background:var\(--st\)"><\/i><i style="width:25%;background:var\(--gv\)"><\/i><\/div><div class="dh-tip"><span class="sub">Point at the bar to see each part<\/span><\/div>/);
-  assert.match(h, /<h3>Newest donations<\/h3>.*<td>10-22 15:08<\/td><td>dev a<\/td><td class="n">2,668 msat<\/td><td title="80b976dc[0-9a-f]+">80b976dc18…<\/td><td title="c8a6af[0-9a-f]+">c8a6af2023…<\/td>/);
+  assert.doesNotMatch(h, /Newest donations/, 'the ten-row list gave way to the donations table');
   assert.match(h, /<details><summary>dev a: details, remove<\/summary><div class="card"><h3>dev a<span class="ok"> · running<\/span><\/h3>/);
   assert.match(h, /<span>Holds in 333333333333<\/span><b>2,000 sat<\/b>/);
   assert.doesNotMatch(h, /Holds in 444444444444/, 'a federation holding 0 is not drawn');
@@ -81,7 +81,6 @@ test('each part counted: the protocol line its donations, a game its rounds or m
   assert.match(h, /<span>Tick Tock, Next Block<\/span><b>141,987 sat<\/b><small>51 donations · 40 rounds · 11 items<\/small>/);
   assert.match(h, /<h4>Items · Tick Tock, Next Block<\/h4><div class="row sub"><span>turbo<\/span><b>9,000 sat · 7 times<\/b><\/div><div class="row sub"><span>shield<\/span><b>3,000 sat · 4 times<\/b>/);
   assert.match(h, /<span>Bitcoin Up or Down<\/span><b>1,263 sat<\/b><small>8 donations · 6 market rounds<\/small>/);
-  assert.match(h, /<td title="Tick Tock, Next Block · turbo">Tick Tock, Next Block · turbo<\/td>/, 'an item donation names its item, not a round');
 });
 
 test('amounts in a currency: the switch, each chip at the donations own rates, what is held at the price now, a column per donation (kanban #578)', () => {
@@ -95,6 +94,40 @@ test('amounts in a currency: the switch, each chip at the donations own rates, w
   h = d.html();
   assert.match(h, /<span>Ready to withdraw<\/span><b>CHF 1.32<\/b><small>2,000 sat at today&#x27;s price<\/small>/);
   assert.match(h, /<div><span>All time<\/span><b>CHF 1.32<\/b><small>2,000 sat<\/small><\/div>/);
-  assert.match(h, /<th class="n">CHF then<\/th>/);
-  assert.match(h, /<td class="n">2,668 msat<\/td><td class="n">CHF 0.0018<\/td>/);
+});
+
+test('the donations table: filters for app, part, search and rows; paging; a row opens its full record; amounts in the currency (the owner 2026-10-22)', async () => {
+  const asked = [];
+  const row = (i, extra = {}) => ({ atMs: Date.parse('2026-10-22T15:08:00Z') - i * 60000, amountMsat: '3000', protocolMsat: '2000', appMsat: '1000', app: 'nextblock', title: 'Tick Tock, Next Block',
+    market: false, item: null, round: '80b976dc184e5e9a'.padEnd(64, '0'), entry: 'e' + i, player: 'c8a6af2023b9194c'.padEnd(64, '1'), outpoint: 'o:' + i,
+    fiat: { all: { chf: 0.0021 }, protocol: { chf: 0.0014 }, app: { chf: 0.0007 } }, ...extra });
+  const answer = (q) => ({ ok: true, total: 60, offset: q.offset, limit: q.limit, apps: [{ app: 'nextblock', title: 'Tick Tock, Next Block', count: 50 }, { app: 'items', title: 'Items', count: 10 }],
+    sums: { msat: '180000', protocolMsat: '120000', appMsat: '60000', fiat: { all: { chf: 0.13 }, protocol: { chf: 0.08 }, app: { chf: 0.05 } } },
+    rows: [row(0), row(1, { item: 'turbo', round: null, app: 'nextblock' })] });
+  const t = new DonationsTable({ clients: [{ slug: 'deva', label: 'dev a' }], cur: 'sat', query: async (q) => { asked.push(q); return answer(q); } });
+  t.setState = function (c, then) { this.state = { ...this.state, ...(typeof c === 'function' ? c(this.state) : c) }; if (then) then(); };
+  await t.load();
+  const html = () => renderToStaticMarkup(t.render());
+  let h = html();
+  assert.deepEqual(asked[0], { slug: 'deva', app: '', q: '', limit: 25, offset: 0 });
+  assert.match(h, /<div class="dt-sum"><b>60<\/b> donations · <b>180 sat<\/b><\/div>/);
+  assert.match(h, /<option value="" selected="">All apps<\/option><option value="nextblock">Tick Tock, Next Block · 50<\/option><option value="items">Items · 10<\/option>/);
+  assert.match(h, /<td class="dim">2026-10-22 15:08<\/td><td><span class="tag">Tick Tock, Next Block<\/span><\/td><td class="mono">80b976dc…0000<\/td><td class="mono">c8a6af20…1111<\/td><td class="n"><b>3 sat<\/b><\/td>/);
+  assert.match(h, /<span class="tag item">item<\/span><\/td><td class="mono">turbo<\/td>/, 'an item donation names its item');
+  assert.match(h, /<button type="button" disabled="">‹ Prev<\/button><span>1–25 of 60 · page 1 of 3<\/span><button type="button">Next ›<\/button>/);
+  t.set({ offset: 25 }); await t.load();
+  assert.deepEqual(asked.at(-1), { slug: 'deva', app: '', q: '', limit: 25, offset: 25 });
+  assert.match(html(), /<span>26–50 of 60 · page 2 of 3<\/span>/);
+  t.set({ app: 'items', limit: 50 }); await t.load();
+  assert.deepEqual(asked.at(-1), { slug: 'deva', app: 'items', q: '', limit: 50, offset: 0 }, 'a new filter starts at the first page');
+  t.state.part = 'protocol'; t.state.open = 0;
+  h = html();
+  assert.match(h, /<th class="n">Protocol part<\/th>/);
+  assert.match(h, /<td class="n"><b>2 sat<\/b><\/td>/);
+  assert.match(h, /<b>120 sat<\/b>/);
+  assert.match(h, /<tr class="dt-more"><td colSpan="5"><div class="dt-rec"><div><span>Round<\/span><code>80b976dc184e5e9a0+<\/code><\/div><div><span>Entry<\/span><code>e0<\/code><\/div><div><span>Player key<\/span><code>c8a6af2023b9194c1+<\/code><\/div><div><span>Outpoint<\/span><code>o:0<\/code><\/div>/);
+  t.props = { ...t.props, cur: 'chf' };
+  h = html();
+  assert.match(h, /<b>CHF 0.08<\/b><small> 120 sat<\/small>/);
+  assert.match(h, /<td class="n"><b>CHF 0.0014<\/b><small>2 sat<\/small><\/td>/);
 });

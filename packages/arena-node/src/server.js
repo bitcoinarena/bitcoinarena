@@ -49,7 +49,7 @@ import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.j
 import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { devClientSnapshot } from './dev-client.js';
-import { attributeDonations, devEarnings } from './dev-clients.js';
+import { attributeDonations, devEarnings, donationParts, donationsPage } from './dev-clients.js';
 import { nodeStanding, endpointWarning } from './node-standing.js';
 import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
 import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
@@ -776,7 +776,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // A DEV KEY'S DONATIONS, BY WHOM THEY WERE FOR: its share in the newest protocol set this seat holds, and per round the
   // round's game (from the contract this seat keeps) and its share in that game's set - attributeDonations splits each donation p : g
-  const devAttribute = (rows, pk) => {
+  const devAttribute = (rows, pk, { perRow = false } = {}) => {
     const key = String(pk || '').toLowerCase();
     const kh = (k) => (k instanceof Uint8Array ? toHex(k) : String(k)).toLowerCase();
     const newest = new Map();
@@ -814,6 +814,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // hosted game's half (games whose set does not name it are left out), and devEarnings over the same split
     const games = [];
     for (const g of hosted.values()) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); if (r && !games.some((x) => x.game === g.name)) games.push({ game: g.name, title: g.title || g.name, bps: Number(r.shareBps || 0) }); }
+    if (perRow) return donationParts(rows, { protocolBps, gameOf, itemOf, gameByName });   // each row on its own, for the donations table (kanban #578)
     return { ...attributeDonations(rows, { protocolBps, gameOf, itemOf, gameByName }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, itemOf, gameByName, nowMs: Date.now() }) };
   };
   const devSplitOfDir = (dir) => {
@@ -5027,6 +5028,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // THE OWNER'S DEV CLIENTS (dev-clients.js): each one's stats from its own record - what it was given, split
         // into the protocol developers' part and each game's part - its wallets, and what the owner's withdrawals answered
+        // THE DONATIONS TABLE (kanban #578, the owner 2026-10-22: "Füge Filter hinzu, App, Protocol, Paging, Rows displayed"): one client's
+        // donations, newest first, each with its app (or item), its protocol and app parts and its value in EUR / USD / CHF / GBP at its own
+        // rate; filtered by app ('items' for items only), searched in player, round, entry and item; paged; the filtered set's sums
+        if (req.method === 'GET' && url.pathname === '/owner/dev/donations') {
+          if (!devClients || !devClients.clientOf) return answer(404, { ok: false, why: 'this node runs no dev clients' });
+          const slug = String(url.searchParams.get('slug') || '');
+          const got = devClients.clientOf(slug);
+          if (!got) return answer(404, { ok: false, why: 'no such dev client' });
+          const { fillFiatRates, rowsOf } = await import('./fiat-rates.js');
+          got.rows = rowsOf(got.dir);
+          let rates = {};
+          try { rates = await Promise.race([fillFiatRates(got.dir, got.rows), new Promise((ok) => setTimeout(() => ok({}), 12000))]); } catch { rates = {}; }
+          return answer(200, { ok: true, slug, ...donationsPage(devAttribute(got.rows, got.pk, { perRow: true }), rates,
+            { app: url.searchParams.get('app'), q: url.searchParams.get('q'), limit: url.searchParams.get('limit'), offset: url.searchParams.get('offset') }) });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/dev') {
           // the games of the rounds other seats hold, looked up first
           try {

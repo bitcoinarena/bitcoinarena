@@ -73,3 +73,15 @@ test('in force for new rounds only: before validFrom the parent, from it the app
   assert.equal(now.ok, true); assert.equal(now.serial, 4n); assert.deepEqual(now.recipients.map((r) => r.shareBps), [6000, 3000, 1000]);
   assert.ok(now.approvedBy);
 });
+
+test('a proposer who denies their own proposal withdraws it: refused, whoever has not voted yet (the owner 2026-10-22: "This is no longer open")', async () => {
+  const p = proposal(2);
+  const t = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 2, 157289, false)], parent: PARENT, verifySecp256k1 });
+  assert.deepEqual([t.state, t.why, t.denyBps], ['refused', 'withdrawn by its proposer', 3333]);
+  const late = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 2, 157289, false), approval(p, 1, 157290)], parent: PARENT, verifySecp256k1 });
+  assert.equal(late.state, 'refused', 'an acceptance after the withdrawal changes nothing');
+  const other = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 157289, false)], parent: PARENT, verifySecp256k1 });
+  assert.equal(other.state, 'refused', 'dev a (66.67 %) denying refuses it as before');
+  const before = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 157288), approval(p, 2, 157289, false)], parent: PARENT, verifySecp256k1 });
+  assert.equal(before.state, 'approved', 'approved before the proposer turned on it stays approved');
+});

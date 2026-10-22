@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, statSync, existsSync, readdirSync, writeFile
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
-import { createDevClients, attributeDonations, devEarnings, slugOf } from '../src/dev-clients.js';
+import { createDevClients, attributeDonations, devEarnings, donationParts, donationsPage, slugOf } from '../src/dev-clients.js';
 import { newKey, keyFromSecret } from '../../arena-donor/src/donor.js';
 
 const fakeSpawn = () => {
@@ -152,4 +152,34 @@ test('the counts at one peek: protocol donations, rounds or market rounds per ga
   assert.deepEqual(g.nextblock.itemsBy, [{ item: 'shield', donations: 1, msat: '450' }, { item: 'turbo', donations: 2, msat: '600' }, { item: 'an item', donations: 1, msat: '150' }]
     .sort((a, b) => Number(b.msat) - Number(a.msat)));
   assert.equal(r.unknownMsat, '50');
+});
+
+test('the donations table: each row split as the earnings are; filtered by app (its items with it) or items, searched, paged, summed in msat and at each row\'s own rate (kanban #578)', () => {
+  const games = { r1: { name: 'nextblock', title: 'Tick Tock, Next Block', bps: 5000 }, r2: { name: 'btc-updown', title: 'Bitcoin Up or Down', bps: 5000, market: true } };
+  const rows = [
+    { roundId: 'r1', entryId: 'e1', amountMsat: '3000', outpoint: 'o1', playerKey: 'aa11', verifiedMs: 1000 },
+    { roundId: 'r2', entryId: 'e2', amountMsat: '2000', outpoint: 'o2', playerKey: 'bb22', verifiedMs: 3000 },
+    { roundId: '0'.repeat(64), entryId: 'p1', amountMsat: '1000', outpoint: 'o3', playerKey: 'aa11', verifiedMs: 2000, item: 'Tick Tock, Next Block · turbo', itemGame: 'nextblock', itemId: 'turbo' },
+    { roundId: 'gone', entryId: 'e4', amountMsat: '4000', outpoint: 'o4', verifiedMs: 500 }];
+  const info = donationParts(rows, { protocolBps: 5000, gameOf: (id) => games[id] || null, gameByName: (n) => Object.values(games).find((g) => g.name === n) || null });
+  assert.deepEqual(info.map((x) => [x.game, x.item, String(x.protocolMsat), String(x.appMsat)]),
+    [['nextblock', null, '1500', '1500'], ['btc-updown', null, '1000', '1000'], ['nextblock', 'turbo', '500', '500'], [null, null, '0', '0']]);
+  const rates = { o1: { eur: 100000 }, o3: { eur: 50000 } };
+  const all = donationsPage(info, rates);
+  assert.deepEqual(all.apps, [{ app: 'nextblock', title: 'Tick Tock, Next Block', market: false, count: 2 }, { app: 'btc-updown', title: 'Bitcoin Up or Down', market: true, count: 1 },
+    { app: 'items', title: 'Items (all apps)', market: false, count: 1 }, { app: 'unknown', title: 'Older rounds', market: false, count: 1 }]);
+  assert.deepEqual(all.rows.map((r) => r.outpoint), ['o2', 'o3', 'o1', 'o4'], 'newest first');
+  assert.deepEqual([all.total, all.sums.msat, all.sums.protocolMsat, all.sums.appMsat], [4, '10000', '3000', '3000']);
+  assert.deepEqual(all.sums.fiat.all, { eur: 0.0035 }, 'a testnet sum is a fraction of a cent: 4 decimals kept');
+  const nb = donationsPage(info, rates, { app: 'nextblock' });
+  assert.deepEqual(nb.rows.map((r) => [r.outpoint, r.item, r.round]), [['o3', 'turbo', null], ['o1', null, 'r1']], 'an app with its items');
+  assert.deepEqual(nb.rows[1].fiat, { all: { eur: 0.003 }, protocol: { eur: 0.0015 }, app: { eur: 0.0015 } });
+  assert.deepEqual(donationsPage(info, rates, { app: 'items' }).rows.map((r) => r.outpoint), ['o3']);
+  assert.deepEqual(donationsPage(info, rates, { app: 'unknown' }).rows.map((r) => r.outpoint), ['o4']);
+  assert.deepEqual(donationsPage(info, rates, { q: 'AA11' }).rows.map((r) => r.outpoint), ['o3', 'o1'], 'the search ignores case');
+  assert.deepEqual(donationsPage(info, rates, { q: 'turbo' }).rows.map((r) => r.outpoint), ['o3']);
+  const many = donationParts(Array.from({ length: 12 }, (_, i) => ({ roundId: 'r1', entryId: 'x' + i, amountMsat: '1000', outpoint: 'm' + i, verifiedMs: i })), { protocolBps: 5000, gameOf: (id) => games[id] });
+  const p2 = donationsPage(many, {}, { limit: 5, offset: 5 });
+  assert.deepEqual([p2.total, p2.limit, p2.offset, p2.rows.map((r) => r.outpoint)], [12, 5, 5, ['m6', 'm5', 'm4', 'm3', 'm2']]);
+  assert.equal(donationsPage(many, {}, { limit: 1000 }).limit, 200);
 });
