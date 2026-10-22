@@ -275,7 +275,7 @@
     const rows = cand.map((n) => {
       const r = ready(n), b = fb(n), k = String(n.node || '').toLowerCase(), s = seated.get(k);
       const state = !n.version || !n.version.ok ? { t: 'not answering', c: 'bad' } : !b ? { t: 'no /founding', c: 'bad' }
-        : r === 'setup' ? { t: 'ready', c: 'ok' } : r === 'running' ? { t: 'guardian runs a federation', c: 'warn' } : r === 'none' ? { t: 'no guardian in setup', c: 'bad' } : { t: b.off ? 'founding off' : '-', c: 'bad' };
+        : r === 'setup' ? { t: 'ready', c: 'ok' } : r === 'running' ? { t: 'guardian runs a federation', c: 'warn' } : r === 'none' ? { t: 'no guardian in setup', c: 'bad' } : b.off ? { t: 'founding off', c: 'bad' } : { t: 'an older release: says no readiness', c: 'warn' };
       const part = !run ? '-' : s ? (coded.has(k) ? { t: `seated ${s.position + 1} · code ✓`, c: 'ok' } : { t: `seated ${s.position + 1} · no code`, c: 'bad' })
         : (run.alternates || []).map((x) => String(x).toLowerCase()).includes(k) ? 'alternate' : (run.noShows || []).map((x) => String(x).toLowerCase()).includes(k) ? { t: 'no-show', c: 'bad' } : 'not drawn';
       return { key: n.node || n.base, dot: state.c === 'ok' ? 'ok' : state.c === 'warn' ? 'warn' : 'bad', rank: RANK[r] ?? 3,
