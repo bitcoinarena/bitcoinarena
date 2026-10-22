@@ -1465,6 +1465,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return t / 1000n; };
   let fundingTipSeen = null;
+  const payoutWhySaid = new Set();
   const capLogged = new Set();
   const movesWaitLogged = new Set();
   // THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED, and their winners as THIS seat reads the network season: the scope's games
@@ -1541,7 +1542,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const feesAtHeight = (h) => (fundingBook && Number.isInteger(h) ? fundingBook.feesAt(h) : FEES_TODAY);
   const feesFor = (contract) => feesAtHeight(Number(contract && contract.censusHeight));
   if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).then(() => fundingBook.decideFees())
-    .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); await reservePayouts.round({ height: fundingTipSeen }); } }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
+    .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); const got = await reservePayouts.round({ height: fundingTipSeen });
+      // WHAT A PAYOUT OR MOVE STOPPED ON, said once per reason (kanban #326: the round's answers were dropped, so a move that never
+      // started said nothing)
+      for (const x of got || []) if (x && x.ok === false && x.why && !payoutWhySaid.has(`${x.id}:${x.why}`)) { payoutWhySaid.add(`${x.id}:${x.why}`); console.log(`[payout] ${String(x.id).slice(0, 16)}: ${x.why}`); } } }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
