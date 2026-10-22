@@ -9,23 +9,25 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { WaitingDonations, DevClients, sat } from '../dist/test/donations.mjs';
 
-test('waiting at this seat: the total, each set, each recipient by key or Lightning address, by day and by round', () => {
+test('waiting at this seat at one peek: the total in one line; only sets and recipients with something waiting, folded by day (the owner 2026-10-22)', () => {
   const r = { totalMsat: '1500500', sets: [{ setId: 'ab'.repeat(32), title: 'Protocol developers', kind: 'protocol', serial: 3, recipients: [
-    { label: 'dev a', key: '02' + 'cd'.repeat(32), totalMsat: '1000000', donations: 2, byDay: [{ day: '2026-10-21', msat: '1000000' }], byRound: [{ roundId: 'ef'.repeat(32), msat: '500000' }] },
-    { label: 'dev b', key: null, lnurl: 'devb@getalby.com', totalMsat: '500500', donations: 1, byDay: [], byRound: [] }] }] };
+    { label: 'dev a', key: '02' + 'cd'.repeat(32), totalMsat: '1000000', donations: 2, byDay: [{ day: '2026-10-21', msat: '1000000' }, { day: '2026-10-20', msat: '0' }], byRound: [] },
+    { label: 'dev b', key: null, lnurl: 'devb@getalby.com', totalMsat: '0', donations: 0, byDay: [], byRound: [] }] },
+    { setId: 'cd'.repeat(32), title: 'Protocol developers', kind: 'protocol', serial: 1, recipients: [{ label: 'recipient', lnurl: 'lnurl1x', totalMsat: '0', donations: 0, byDay: [], byRound: [] }] }] };
   const h = renderToStaticMarkup(React.createElement(WaitingDonations, { donations: r }));
-  assert.match(h, /<div class="row"><span>Waiting at this seat<\/span><b>1,500\.5 sat<\/b><\/div>/);
-  assert.match(h, /<h3>Protocol developers<\/h3><div class="row"><span>Protocol set, serial 3 · per day \(UTC\)<\/span><b>abababababababab…<\/b>/);
-  assert.match(h, /<span>dev a · 02cdcdcdcdcd…<\/span><b>1,000 sat · 2 donations<\/b>/);
-  assert.match(h, /<span>dev b · devb@getalby\.com<\/span><b>500\.5 sat · 1 donation<\/b>/, 'the Lightning address when there is no key');
-  assert.match(h, /<summary class="sub">1 round<\/summary><div class="row sub"><span>round efefefefefefefef…<\/span><b>500 sat<\/b>/);
-  assert.equal(renderToStaticMarkup(React.createElement(WaitingDonations, { donations: { sets: [] } })), '<div class="card"><p>This node collects no donations yet.</p></div>');
+  assert.match(h, /<div class="row"><span>Waiting at this seat for the dev clients<\/span><b>1,500\.5 sat<\/b><\/div>/);
+  assert.match(h, /<summary class="sub">By set and day<\/summary><div><h4>Protocol developers · protocol set 3<\/h4><div class="row"><span>dev a · 2 donations<\/span><b>1,000 sat<\/b><\/div><div class="row sub"><span>2026-10-21<\/span><b>1,000 sat<\/b><\/div><\/div><\/details>/);
+  assert.doesNotMatch(h, /dev b|protocol set 1|2026-10-20/, 'nothing at 0 is drawn');
+  const none = renderToStaticMarkup(React.createElement(WaitingDonations, { donations: { totalMsat: '0', sets: [] } }));
+  assert.match(none, /<b><span class="ok">nothing · all collected<\/span><\/b>/);
+  assert.doesNotMatch(none, /<details/);
   assert.equal(renderToStaticMarkup(React.createElement(WaitingDonations, { why: 'no answer' })), '<div class="card"><p class="err">no answer</p></div>');
   assert.deepEqual([sat('1'), sat('2500000')], ['0.001 sat', '2,500 sat']);
 });
 
 const client = { slug: 'deva', label: 'dev a', running: true, recipientPk: '02' + 'cd'.repeat(32), receivedMsat: '2000000', donations: 3, withdrawnMsat: '0',
-  balances: [{ federation: '33'.repeat(32), msat: '2000000' }], lastPass: { at: '2026-10-21T20:00:00Z', seats: 14 }, requests: [],
+  balances: [{ federation: '33'.repeat(32), msat: '2000000' }, { federation: '44'.repeat(32), msat: '0' }], lastPass: { at: '2026-10-21T20:00:00Z', seats: 14 }, requests: [],
+  recent: [{ round: '80b976dc184e5e9a'.padEnd(64, '0'), entry: 'e1', federation: '33'.repeat(32), amountMsat: '2668', contract: 'c1', atMs: Date.parse('2026-10-22T15:08:00Z'), player: 'c8a6af2023b9194c'.padEnd(64, '1') }],
   split: { protocolMsat: '1500000', games: [{ game: 'rps', title: 'Rock Paper Scissors', msat: '500000', donations: 1 }], unknownMsat: '0',
     earnings: { periods: Object.fromEntries(['day', 'week', 'month', 'year', 'all'].map((k) => [k, { protocolMsat: '1500000', games: [{ game: 'rps', title: 'Rock Paper Scissors', msat: '500000' }], unknownMsat: '0', totalMsat: '2000000' }])) },
     shares: { protocolBps: 5000, games: [{ title: 'Rock Paper Scissors', bps: 10000 }] } } };
@@ -38,15 +40,19 @@ function dev(props = {}) {
   return { m, calls, html: () => renderToStaticMarkup(React.createElement(React.Fragment, null, m.render())) };
 }
 
-test('a dev client: received, its split, earnings by period, holdings, withdraw open while it holds sats, setup', () => {
+test('the dev clients at one peek: a tile per client (to withdraw now, today, this week, all time, newest), the newest donations with round and player, the rest folded (the owner 2026-10-22)', () => {
   const h = dev().html();
-  assert.match(h, /<h3>dev a<span class="ok"> · running<\/span><\/h3>/);
+  assert.match(h, /<div class="stats"><div class="stat"><span>dev a <span class="pill on">running<\/span><\/span><b>2,000 sat<\/b><small>to withdraw now<\/small><small>today 2,000 sat · this week 2,000 sat<\/small><small>all time 2,000 sat · 3 donations<\/small>/);
+  assert.match(h, /<button type="button" class="primary">Withdraw<\/button>/, 'a client holding sats offers Withdraw on its tile');
+  assert.match(h, /<h3>Newest donations<\/h3>.*<td>10-22 15:08<\/td><td>dev a<\/td><td>2\.668 sat<\/td><td title="80b976dc[0-9a-f]+">80b976dc18…<\/td><td title="c8a6af[0-9a-f]+">c8a6af2023…<\/td>/);
+  // the details, folded: the split, earnings by period, holdings only where not 0, withdraw open while it holds sats
+  assert.match(h, /<details><summary>dev a: details, withdraw, remove<\/summary><div class="card"><h3>dev a<span class="ok"> · running<\/span><\/h3>/);
   assert.match(h, /<span>For Rock Paper Scissors<\/span><b>500 sat · 1 donation<\/b>/);
   assert.match(h, /<table class="earn"><thead><tr><th><\/th><th>Today<\/th><th>This week<\/th>.*<tr><th><b>Total<\/b><\/th><td>2,000 sat<\/td>/);
-  assert.match(h, /<span>Your share of the protocol developers&#x27; half<\/span><b>50 %<\/b>/);
   assert.match(h, /<span>Holds in 333333333333<\/span><b>2,000 sat<\/b>/);
+  assert.doesNotMatch(h, /Holds in 444444444444/, 'a federation holding 0 is not drawn');
   assert.match(h, /<details open=""><summary>Withdraw over Lightning<\/summary>/);
-  assert.match(h, /<h3>Set up a dev client<\/h3>/);
+  assert.match(h, /<summary class="sub">Add a dev client<\/summary>/);
   assert.match(dev({ dev: { managed: false, clients: [] } }).html(), /runs no dev clients of its own/);
 });
 
