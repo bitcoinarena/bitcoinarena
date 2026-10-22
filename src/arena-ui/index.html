@@ -6099,7 +6099,15 @@
             ...phrases.filter((x) => x.hex !== cur && wanted(x, false)).map((x) => ({ hex: x.hex, ancestor: false })),
             ...phrases.filter((x) => wanted(x, true)).map((x) => ({ hex: x.hex, ancestor: true })),
           ];
-          if (!others.length) return;
+          // A REMEMBERED BALANCE THE MERGE WILL NEVER TAKE IN IS DROPPED (the owner 2026-10-22 playtest, "it's been like this for minutes"; measured in
+          // Chrome on UI 306: a kept phrase with no wallet of its own in this federation in this browser, or one noted empty, kept its remembered 700 sat
+          // "merging" for good): only a wallet this merge opens is counted as merging in
+          for (const x of phrases.filter((y) => y.hex !== cur)) for (const anc of [false, true]) {
+            if (wanted(x, anc)) continue;
+            const kk = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (anc ? '.blwp' : '');
+            if (L.getItem(kk) !== null) { console.log('[arena] wallet ' + x.hex.slice(0, 8) + (anc ? ' (BLWP)' : '') + ' holds nothing to merge in federation ' + fedHex.slice(0, 8) + ' in this browser: its remembered balance dropped'); L.removeItem(kk); }
+          }
+          if (!others.length) { if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return; }
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
           for (const x of others) {
             const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
@@ -6234,10 +6242,13 @@
           // copy kept between a send and its receive (arena.ecash.pending.*), per federation; this tab's own phrase is never counted twice
           let merging = 0n;
           { const L2 = vault(); const curHex = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16);
+            // ONLY A PHRASE THIS BROWSER KEEPS CAN MERGE IN (the owner 2026-10-22 playtest, "it's been like this for minutes"; measured in Chrome on
+            // UI 306: a remembered balance of a phrase no longer kept was counted as merging for good - no merge can ever take it in)
+            let keptHex = new Set([curHex]); try { for (const x of JSON.parse(L2.getItem('arena.seeds') || '[]')) { const h = typeof x === 'string' ? x : x && x.hex; if (h) keptHex.add(String(h).slice(0, 16).toLowerCase()); } } catch { /* none kept */ }
             const by = new Map();
             for (const k of Object.keys(L2)) {
               let f = null, m = 0n;
-              if (k.startsWith('arena.wallet.known.')) { const seg = k.split('.'); if (!seg[5] && seg[4] === curHex) continue; f = seg[3]; try { m = BigInt(L2.getItem(k) || 0); } catch { m = 0n; } }
+              if (k.startsWith('arena.wallet.known.')) { const seg = k.split('.'); if (!seg[5] && seg[4] === curHex) continue; if (!keptHex.has(seg[4])) continue; f = seg[3]; try { m = BigInt(L2.getItem(k) || 0); } catch { m = 0n; } }
               else if (k.startsWith('arena.ecash.pending.')) { try { const r = JSON.parse(L2.getItem(k)); f = String(r.fed || '').slice(0, 16) || null; m = BigInt(r.msat || 0); } catch { f = null; } }
               if (f && m > 0n) by.set(f, (by.get(f) || 0n) + m);
             }

@@ -66,3 +66,18 @@ test('the page runs this rule: at the press, before the swap (the merge), and be
   assert.ok(merge > 0 && swap > merge && said > swap && fund > said, 'merge, then swap, then the not-spendable check, then the funding');
   assert.match(html, /window\.ARENA_SHOW_NOTICE\('Not spendable yet', text\)/);
 });
+
+test('only a phrase this browser keeps counts as merging: a remembered balance of a phrase it no longer keeps is not money it can merge (measured in Chrome, UI 306)', () => {
+  const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const a = html.indexOf("let keptHex = new Set([curHex]);"), b = html.indexOf("if (f && m > 0n) by.set(f, (by.get(f) || 0n) + m);", a);
+  assert.ok(a > 0 && b > a);
+  const src = html.slice(a, b);
+  // Object.keys(L2) is what the page walks: a plain object stands in for localStorage
+  const make = (o) => Object.assign(Object.create({ getItem(k) { return Object.prototype.hasOwnProperty.call(this, k) ? this[k] : null; } }), o);
+  const exec = (o, cur) => new Function('L2', 'curHex', src + 'if (f && m > 0n) by.set(f, (by.get(f) || 0n) + m); }\n; return [...by.entries()].map(([f, m]) => [f, String(m)]);')(make(o), cur);
+  const F = '337ae01ad1e9bb35';
+  assert.deepEqual(exec({ 'arena.seeds': JSON.stringify([{ hex: 'cd'.repeat(32) }]), [`arena.wallet.known.${F}.${'cd'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [[F, '700000']], 'a kept phrase: merging');
+  assert.deepEqual(exec({ 'arena.seeds': JSON.stringify(['cd'.repeat(32)]), [`arena.wallet.known.${F}.${'cd'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [[F, '700000']], 'kept as a plain string');
+  assert.deepEqual(exec({ 'arena.seeds': '[]', [`arena.wallet.known.${F}.${'ab'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [], 'not kept: not merging');
+  assert.deepEqual(exec({ [`arena.wallet.known.${F}.${'aa'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [], 'this tab\'s own phrase is never counted twice');
+});
