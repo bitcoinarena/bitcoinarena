@@ -71,3 +71,16 @@ test('withdraw: an invoice as it is, an address with an amount in msat; a refusa
   await d.m.remove('deva');
   assert.deepEqual([d.calls.remove, d.calls.reread], [['deva'], 1]);
 });
+
+test('each part counted: the protocol line its donations, a game its rounds or market rounds and its items, each item on its own row (kanban #578)', () => {
+  const split = { protocolMsat: '157125000', protocolDonations: 69, unknownMsat: '0',
+    games: [{ game: 'nextblock', title: 'Tick Tock, Next Block', msat: '141987000', donations: 51, rounds: 40, items: 11, market: false,
+      itemsBy: [{ item: 'turbo', donations: 7, msat: '9000000' }, { item: 'shield', donations: 4, msat: '3000000' }] },
+      { game: 'btc-updown', title: 'Bitcoin Up or Down', msat: '1263000', donations: 8, rounds: 6, items: 0, market: true, itemsBy: [] }] };
+  const h = dev({ dev: { managed: true, clients: [{ ...client, split: { ...client.split, ...split }, recent: [{ round: '0'.repeat(64), item: 'Tick Tock, Next Block · turbo', amountMsat: '600', atMs: 0, player: '' }] }] } }).html();
+  assert.match(h, /<span>For the protocol developers<\/span><b>157,125 sat · 69 donations<\/b>/);
+  assert.match(h, /<span>For Tick Tock, Next Block<\/span><b>141,987 sat · 51 donations · 40 rounds · 11 items<\/b>/);
+  assert.match(h, /<div class="row sub"><span>turbo<\/span><b>9,000 sat · 7 times<\/b><\/div><div class="row sub"><span>shield<\/span><b>3,000 sat · 4 times<\/b>/);
+  assert.match(h, /<span>For Bitcoin Up or Down<\/span><b>1,263 sat · 8 donations · 6 market rounds<\/b>/);
+  assert.match(h, /<td title="Tick Tock, Next Block · turbo">Tick Tock, Next Block · turbo<\/td>/, 'an item donation names its item, not a round');
+});
