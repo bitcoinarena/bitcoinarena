@@ -168,7 +168,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   //   capable  { height, operators }: the distinct operators of guardian-capable census nodes with an endpoint (the draw's own rule)
   //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
   const capable = [], loads = [];
-  const remember = (rows, row) => { if (!rows.length || rows[rows.length - 1].height < row.height) rows.push(row); if (rows.length > keep) rows.shift(); };
+  // (only the newest row keeps the free nodes' keys - the readiness answers them; thousands of rows each holding forty keys would not)
+  const remember = (rows, row) => { if (!rows.length || rows[rows.length - 1].height < row.height) { if (rows.length) delete rows[rows.length - 1].freeNodes; rows.push(row); } if (rows.length > keep) rows.shift(); };
   async function history(h) {
     const held = records() || [];
     remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
@@ -197,8 +198,11 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       }
       // THE COHORT (protocol 2026.0.14): the same operators, held to bond_min_guardian, minus those guarding an OPEN federation
       const guarding = guardingOpen ? guardingOpen({ entries, records: held, except: null }) : guardingOpenOf({ entries, held });
-      const free = [...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).length;
-      return { height: h, operators: ops.size, free, federations: named.size };
+      const freeOps = new Set([...bonds].filter(([op, sats]) => sats >= bondMinGuardian && !guarding.has(op)).map(([op]) => op));
+      // and WHICH nodes those free operators run (kanban #585: the health page names the nodes the cohort counts, not only how many)
+      const freeNodes = entries.filter((e) => e && e.advert && e.advert.guardianCapable === true && e.advert.guardianEndpoint
+        && freeOps.has(String(e.advert.operatorId || toHex(e.pubkey)))).map((e) => toHex(e.pubkey));
+      return { height: h, operators: ops.size, free: freeOps.size, freeNodes, federations: named.size };
     }
     return null;
   }
@@ -305,7 +309,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     let guardian = 'none';
     try { if (await guardianInSetup()) guardian = 'setup'; else if (setup && typeof setup.done === 'function' && await setup.done()) guardian = 'running'; } catch { guardian = 'none'; }
     const c = capable.length ? capable[capable.length - 1] : null;
-    const value = { guardian, cohort: c && typeof c.free === 'number' ? { height: c.height, free: c.free, needed: COHORT_NOMINAL } : null,
+    const value = { guardian, cohort: c && typeof c.free === 'number' ? { height: c.height, free: c.free, needed: COHORT_NOMINAL, operators: c.operators, nodes: c.freeNodes || [] } : null,
       why: lastTick && !lastTick.ok ? lastTick.why : null };
     ready = { atMs: nowMs, value };
     return value;
