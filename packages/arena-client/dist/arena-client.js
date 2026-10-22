@@ -2455,6 +2455,14 @@ function encodeEntryContract(e) {
     w.u8(RESERVE_ENTRY_MARKER);
     writeOutpoint(w, e.reserveOutpoint, 'reserveOutpoint');
   }
+  // A BOT'S ENTRY (kanban #581, the owner 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is
+  // a flag in the API and protocol to mark them as bots"): the market maker bots sign it in their own entry, so no seat can add or take it
+  // away; the leaderboard leaves such entries out. WRITTEN ONLY FOR A BOT, last of all, its marker alone: every other entry keeps exactly
+  // its bytes and its id.
+  if (e.bot !== undefined && e.bot !== null && e.bot !== false) {
+    if (e.bot !== true) throw new Error('an entry is a bot\'s (true) or not');
+    w.u8(BOT_MARKER);
+  }
   return w.finish();
 }
 
@@ -2473,6 +2481,8 @@ function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
 const ITEMS_ENTRY_MARKER = 0xad;
 /** An entry's reserve lock outpoint follows (protocol 11). */
 const RESERVE_ENTRY_MARKER = 0xae;
+/** The byte that says the entry is a bot's (kanban #581), last of all - no payload. */
+const BOT_MARKER = 0xaf;
 const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
@@ -2558,9 +2568,13 @@ function decodeEntryContract(bytes) {
     e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32(), ownerSig: rr.bytes(64) }));
     if (!e.items.length) throw new Error('an empty list of items is not written: these bytes are not an entry\'s one encoding');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== RESERVE_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items nor its reserve lock');
+  if (r.at < bytes.length && bytes[r.at] === RESERVE_ENTRY_MARKER) {
+    r.u8();
     e.reserveOutpoint = readOutpoint(r);
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== BOT_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items, its reserve lock nor the bot mark');
+    e.bot = true;
   }
   r.end();
   return e;
@@ -16214,11 +16228,16 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
     const split = splitDonation({ donationMsat: giftMsat, recipients: donation.recipients });
     if (!split.owed) return refuse(`the market's donation set does not stand: ${split.why}`);
     const rid = roundId;
+    // EACH ORDER'S PART OF THE DONATION (kanban #580, the owner 2026-10-22: "change the protocol so we can get the player hash for each market
+    // order"): a market pays its donation once per recipient, out of every filled order's fee together - so the payout names its parts,
+    // each filled order's entry, its player key and the fee it paid (its weight: an order's share of any donation output of this round is
+    // that output times its fee over the fees due). Kept beside the payout and in the seats' donation index; the transaction is unchanged
+    const parts = table.claimed.filter((r) => r.feeMsat > 0n).map((r) => ({ entryId: r.entry, playerPubkey: toHex(byId.get(r.entry).pubkey), feeMsat: r.feeMsat }));
     split.shares.forEach((x, i) => {
       if (x.amountMsat <= 0n) return;
       if (!(x.recipientPk instanceof Uint8Array)) throw new Error('a market\'s donation is paid to keys');
       const sid = donationSendId(rid, i);
-      owed.push({ kind: 'donation key', pubkey: sid, payoutPk: x.recipientPk, owedMsat: x.amountMsat, donation: { id: sid, index: i, recipientPk: x.recipientPk, label: x.label } });
+      owed.push({ kind: 'donation key', pubkey: sid, payoutPk: x.recipientPk, owedMsat: x.amountMsat, donation: { id: sid, index: i, recipientPk: x.recipientPk, label: x.label, parts } });
     });
   }
   if (reserveMsat > 0n) owed.push({ kind: 'reserve', reserve: true, pubkey: reserveKey.subarray(1), payoutPk: reserveKey, owedMsat: reserveMsat });

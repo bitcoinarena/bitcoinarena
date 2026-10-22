@@ -285,3 +285,13 @@ test('merge with keys (the weekly board badge): each entry\'s round key is part 
   // season() reads no round key: the keyed copy and the bare one are one round handed in twice
   assert.deepEqual(season(back, win).rows, season([r1], win).rows);
 });
+
+test('a bot\'s entry is no player of the season: left out of every row, said why, and it travels as JSON (kanban #581)', () => {
+  const bot = { ...e(h(0xb0), DELIVERED, 900, 3n * S), bot: true };
+  const r = season([round(1, [e(h(0xa1), DELIVERED, 500, 2n * S), bot])], win);
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual(r.rows.map((x) => x.player), [h(0xa1)], 'the bot is nobody\'s rank, though it won more');
+  assert.ok(r.excluded.some((x) => x.player === h(0xb0) && /bot/.test(x.why)));
+  const back = seasonRoundsFromJson(JSON.parse(JSON.stringify(seasonRoundsToJson([round(1, [bot])]))));
+  assert.equal(back[0].entries[0].bot, true, 'the mark crosses GET /season-rounds');
+});
