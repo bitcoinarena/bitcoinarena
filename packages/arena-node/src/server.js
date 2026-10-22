@@ -5325,6 +5325,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return answer(200, r);
           } catch (e) { return answer(500, { ok: false, why: `the liquidity provider could not be set up: ${e.message}` }); }
         }
+        // ADD CUSTODY (kanban #563): on an installed node, the wizard's own custody steps run by the node itself (arena-installer
+        // add-custody.js + bin/custody-add.mjs) - never "run arena-install --add-custody". Without `post` the plan (Lightning, the bond
+        // against the guardian floor, what the wallet must hold); `progress` only the runner's progress; `post` with the owner's typed
+        // I UNDERSTAND starts it
+        if (url.pathname === '/owner/custody/add') {
+          const a = owner.authorize(body, 'custody/add');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not set up by the installer: its custody is set up where it runs' });
+          try {
+            const { custodyPlan, custodyProgress, startCustodyAdd } = await import('../../arena-installer/src/add-custody.js');
+            const release = fileURLToPath(new URL('../../../', import.meta.url));
+            const args = body.args || {};
+            if (args.progress === true) return answer(200, { ok: true, progress: custodyProgress(home) });
+            if (args.post !== true) { const r = await custodyPlan({ home, release, pegInSats: args.pegInSats ?? null }); return answer(r.ok ? 200 : 400, r); }
+            const r = startCustodyAdd({ home, release, understood: args.understood, pegInSats: args.pegInSats ?? null });
+            if (r.ok) console.log('[custody] the owner started adding custody to this node');
+            return answer(r.ok ? 200 : (r.status || 400), r);
+          } catch (e) { return answer(500, { ok: false, why: `custody could not be added: ${e.message}` }); }
+        }
         if (url.pathname === '/owner/liquidity/new-address') {
           const a = owner.authorize(body, 'liquidity/new-address');
           if (!a.ok) return answer(a.status || 401, a);
