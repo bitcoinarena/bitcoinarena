@@ -197,3 +197,12 @@ test('a market donation names its window and its player (kanban #580): the windo
   assert.deepEqual(page.rows.map((r) => [r.app, r.window, r.player]), [['btc-updown-15m', W, 'bb22'], ['nextblock', null, 'aa11']]);
   assert.deepEqual(donationsPage(info, {}, { q: 'BB22' }).rows.map((r) => r.outpoint), ['o1'], 'searched by the player found from the entry');
 });
+
+test('a market donation\'s parts reach the table: each order\'s entry, player and share, and the search finds every order\'s player (kanban #580)', () => {
+  const rows = [{ roundId: 'm1', entryId: 'x', amountMsat: '4000', outpoint: 'o1', verifiedMs: 1,
+    parts: [{ entryId: 'e1', playerKey: 'p1', msat: '1000' }, { entryId: 'e2', playerKey: 'p2', msat: '3000' }] }];
+  const info = donationParts(rows, { protocolBps: 5000, gameOf: () => ({ name: 'btc-updown-15m', title: 'Bitcoin Up or Down', bps: 5000, market: true }) });
+  const page = donationsPage(info, {});
+  assert.deepEqual(page.rows[0].parts, [{ entry: 'e1', player: 'p1', msat: '1000' }, { entry: 'e2', player: 'p2', msat: '3000' }]);
+  assert.deepEqual(donationsPage(info, {}, { q: 'p2' }).rows.map((r) => r.outpoint), ['o1']);
+});
