@@ -227,6 +227,9 @@ test('federation B: a notice from B7 founds a successor of SEVEN (the record\'s 
   assert.deepEqual(st.alternates, []);
 });
 
+// the cohort draws fall on the multiples of founding_window + 1 (guardian-founding.js): a 9-block window draws at 290, 300, 310
+const cClocks = { abandonBlocks: 10, foundingWindow: 9 };
+
 test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a federation of ten while federation B is OPEN; B\'s four guardians are not drawn', async () => {
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`c${i}`));
@@ -238,7 +241,7 @@ test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a 
   const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
-    nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[5].pub, sign: (h) => schnorr.sign(h, all[5].secret), verify });
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[5].pub, sign: (h) => schnorr.sign(h, all[5].secret), verify });
   const first = await s.tick();
   assert.match(first.why, /beacon after 300/, 'triggered at 300, drawn on block 301');
   w.tip = 301;
@@ -261,7 +264,7 @@ test('a seat that holds no record (no round) sees the federation the census name
   const s = createFoundingSeat({ records: () => [], entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
-    nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[7].pub, sign: (h) => schnorr.sign(h, all[7].secret), verify });
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[7].pub, sign: (h) => schnorr.sign(h, all[7].secret), verify });
   await s.tick();
   w.tip = 301;
   const r = await s.tick();
@@ -284,7 +287,7 @@ test('seats that hold no round and name no peers read the drawn nodes\' codes at
     const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
       beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
       guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
-      nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
+      nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
       post: async () => {},                                  // every post lost, and no configured peers: as on the seven second-host seats
       peers: () => [],
       fetchJson: async (u) => { const s2 = byRoot.get(u.replace(/\/founding$/, '')); if (!s2) throw new Error('no such seat'); return s2.state(); } });
@@ -313,7 +316,7 @@ test('seats started at different heights draw the same cohort, and a void one is
   const seat = (i) => createFoundingSeat({ records: () => held, entriesAt: async (h) => { reads.push(h); return h >= 290 ? cEntries : cEntries.slice(0, 3); },
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
-    nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
+    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
   const early = seat(0);
   await early.tick();                                     // started at 293: the run began at 290, read back from the chain
   assert.equal(early.state().trigger.height, 290);
@@ -323,11 +326,11 @@ test('seats started at different heights draw the same cohort, and a void one is
   assert.equal(late.state().id, early.state().id, 'a seat started later names the same founding');
   assert.equal(late.state().trigger.height, 290);
   assert.ok(reads.includes(289) && !reads.includes(288), 'the first tick reads back to the run\'s start and one height before, no further');
-  w.tip = 302 + clocks.foundingWindow;                    // the window of 290 (beacon 291, foundingWindow 10) has passed: 290 + 11 = 301
+  w.tip = 311;                                            // the window of 290 (beacon 291, foundingWindow 9) has passed; draws on the multiples of 10
   const fresh = seat(2);
   await fresh.tick(); await late.tick();
-  assert.equal(fresh.state().trigger.height, 301, 'drawn again one founding_window + 1 after the run began');
-  assert.equal(late.state().trigger.height, 301, 'the seat that held 290 moves to the same next draw');
+  assert.equal(fresh.state().trigger.height, 310, 'drawn again on the next multiple of founding_window + 1');
+  assert.equal(late.state().trigger.height, 310, 'the seat that held 290 moves to the same next draw');
   assert.equal(fresh.state().id, late.state().id);
 });
 
@@ -344,7 +347,7 @@ test('a node whose advert names a dead endpoint still seats its code: each seat 
     const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : []),
       beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
       guardianInSetup: async () => true, setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
-      nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
+      nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify,
       post: async () => {}, peers: () => [],
       fetchJson: async (u) => { const s2 = byRoot.get(u.replace(/\/founding$/, '')); if (!s2) throw new Error('no such seat'); return s2.state(); },
       postTo: async (root, m) => { const s2 = byRoot.get(root); if (!s2) throw new Error('no such seat'); s2.take(m); } });
