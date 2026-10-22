@@ -102,7 +102,10 @@ export async function installService({ node = process.execPath, release, home, p
 // its settings file (src/run.js <home>/arena.conf), kept alive, logged beside the node's home.
 export const LAUNCHD_LABEL = named('io.bitcoin-arena.node');
 const xml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-export function launchdPlist({ node, release, home, port, boot = true }) {
+export function launchdPlist({ node, release, home, port, boot = true, env = {} }) {
+  // AN AGENT'S OWN ENVIRONMENT KEPT (kanban #574, 2026-10-22: the three test installers' agents carried FM_BLWP_FINALITY_DELAY=12, added
+  // by hand; an update rewrote them from this template and dropped it): the variables an older agent set are written again
+  const envXml = Object.keys(env).length ? `\n  <key>EnvironmentVariables</key><dict>${Object.entries(env).map(([k, v]) => `<key>${xml(k)}</key><string>${xml(v)}</string>`).join('')}</dict>` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- The Arena node, written by the installer. An update rewrites this file; the settings live in ${xml(home)}/arena.conf (arenanode config). -->
@@ -115,7 +118,7 @@ export function launchdPlist({ node, release, home, port, boot = true }) {
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>StandardOutPath</key><string>${xml(home)}/node.log</string>
-  <key>StandardErrorPath</key><string>${xml(home)}/node.log</string>
+  <key>StandardErrorPath</key><string>${xml(home)}/node.log</string>${envXml}
 </dict>
 </plist>
 `;
