@@ -601,9 +601,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       let plan = planOfRow(r);
       if (!plan) {
         const port = await portOf(m.from), to = await portOf(m.to);
-        if (!port || !to) continue;
+        // SAID, NOT SKIPPED (kanban #326, 2026-10-22: B's move to A stayed unplanned with every input right and nothing said)
+        if (!port || !to) { out.push({ id: m.id, ok: false, why: `no federation port for ${!port ? 'the drained federation' : 'the destination'}` }); continue; }
         const [fees, gws] = await Promise.all([port.fees(), port.gateways()]);
-        const gw = lowestLiveGateway(gws.gateways || []); if (!gw) continue;
+        const gw = lowestLiveGateway(gws.gateways || []);
+        if (!gw) { out.push({ id: m.id, ok: false, why: 'the drained federation has no live gateway to pay through' }); continue; }
         const have = unspent(m.from);
         const amountSats = moveAmountSats(have, gw.sendFeeDefault, fees);
         if (amountSats <= 0n) { out.push({ id: m.id, ok: false, why: 'the reserves there do not cover the fees of a move' }); continue; }
