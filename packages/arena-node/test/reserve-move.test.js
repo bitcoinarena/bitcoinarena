@@ -49,6 +49,7 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
     gateways: async () => ({ gateways: noGatewayX && fed === X ? [] : [GW], height: w.height }),
     status: async (at) => { const c = w.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: w.height, stored: c && !c.spent ? { contractId: 'c', blocksLeft: c.expiration - w.height } : null }; },
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
+      if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
       const message = sha256(new TextEncoder().encode(json({ fed, k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce })));
       if (!signature) return { message: toHex(message) };
       if (!schnorr.verify(signature, message, claimPk.subarray(1))) return { accepted: false, error: 'the signature does not verify' };
@@ -81,6 +82,7 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
         contractHex: toHex(new TextEncoder().encode(JSON.stringify(contract))), claimPk: toHex(claimPk) };
     },
     claimIncoming: async ({ contractHex, seed, payoutPk, nonce, signature = null }) => {
+      if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
       const contract = JSON.parse(new TextDecoder().decode(fromHex(contractHex)));
       if (toHex(sha256(sha256(seed))) !== contract.hash) throw new Error('that seed is not the one this contract was made with');
       const commitment = { claim_pk: contract.claimPk, payment_hash: contract.hash, amount_msat: contract.amountMsat };
