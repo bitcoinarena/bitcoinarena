@@ -78,8 +78,9 @@ const PLAN_KEYS = ['proposal', 'federation', 'reserveKey', 'lnurl', 'amountSats'
   'paymentHash', 'gatewayUrl', 'gatewayPk', 'expiration', 'nonce', 'kind', 'to', 'toKey', 'contractHex', 'decidableAt'];
 /** A plan's id: the tagged hash of its fields in one order - what a second plan for the same proposal is told apart by. */
 export const planIdOf = (plan) => toHex(taggedHash('ARENA/v1/ReservePayoutPlan', utf8(JSON.stringify(PLAN_KEYS.map((k) => plan[k])))));
-/** The transaction nonce, the proposal's own: every signer rebuilds the same transaction. */
-export const payoutNonce = (proposalHex, kind = 'pay') => taggedHash('ARENA/v1/ReservePayoutNonce', utf8(`${kind}:${proposalHex}`));
+/** The transaction nonce, the proposal's own: every signer rebuilds the same transaction. 8 bytes, a federation transaction's
+ *  nonce (kanban #326, measured 2026-10-22 on second-host seat 4: the 32-byte hash was refused, "--nonce is 8 bytes", so no move could start). */
+export const payoutNonce = (proposalHex, kind = 'pay') => taggedHash('ARENA/v1/ReservePayoutNonce', utf8(`${kind}:${proposalHex}`)).subarray(0, 8);
 const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { txid: fromHex(txid), outIdx: BigInt(idx) }; };
 
 /**
