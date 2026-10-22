@@ -296,6 +296,20 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     if (st && st.void) voided.add(current.key);   // the next tick draws on the next trigger
     return { ok: true, trigger: current.trigger, state: st };
   }
-  return { tick, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
+  // IS THIS NODE READY TO BE FOUNDED? (kanban #585, the owner 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in
+  // the future if they're ready to be founded"): its guardian waiting in setup (ready), running a federation, or none; the seat's newest
+  // count of free operators against the cohort's ten; and why its last tick started no founding. Asked of the guardian at most every 30 s.
+  let lastTick = null, ready = null;
+  async function readiness(nowMs = Date.now()) {
+    if (ready && nowMs - ready.atMs < 30000) return ready.value;
+    let guardian = 'none';
+    try { if (await guardianInSetup()) guardian = 'setup'; else if (setup && typeof setup.done === 'function' && await setup.done()) guardian = 'running'; } catch { guardian = 'none'; }
+    const c = capable.length ? capable[capable.length - 1] : null;
+    const value = { guardian, cohort: c && typeof c.free === 'number' ? { height: c.height, free: c.free, needed: COHORT_NOMINAL } : null,
+      why: lastTick && !lastTick.ok ? lastTick.why : null };
+    ready = { atMs: nowMs, value };
+    return value;
+  }
+  return { tick: async () => (lastTick = await tick()), readiness, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
     state: () => (current ? { trigger: current.trigger, via: current.via, ...current.founding.state() } : null) };
 }
