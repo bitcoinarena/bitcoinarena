@@ -594,6 +594,47 @@ export function oneRoundDepositMsat(locks, LockClient) {
 export function roundsDepositMsat(n, locks, LockClient) {
   return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
 }
+/**
+ * WHERE A ROUND'S STAKE COMES FROM, BEFORE ANY DEPOSIT IS ASKED (the owner 2026-10-22 playtest: 2,901 sat shown with ⇄, a 100 sat Up/Down order
+ * in a 337ae01a round asked "Not enough sats ... Deposit with Lightning?"; "Deposits from different federations must work"). The balance the
+ * page shows counts money still merging in from this browser's other wallets (other phrases, e-cash between a send and its receive), and
+ * this phrase's own wallets in other federations. `parts` = the page's [{ federation (64 or 16 hex), sats, merging? }], `roundFederation`
+ * 64 hex, `needMsat` what the round takes. Answers:
+ *   ownHere    sat this phrase's wallet in the round's federation holds (spendable now)
+ *   coveredBy  'here' | 'merge' | 'swap' | null - what pays it without a deposit: the wallet as it is, once the merge has landed, or a swap
+ *   mergeFirst the federations (16 hex, the round's first) whose merging money is merged before the round is funded
+ *   swapFrom   the other federations (16 hex), the fullest first, a shortfall is swapped in from
+ *   askEarly   whether the deposit is asked at the press - only when nothing the player holds anywhere covers the round
+ */
+export function joinFundingPlan({ parts = [], roundFederation, needMsat }) {
+  const p16 = (f) => String(f || '').toLowerCase().slice(0, 16);
+  const here = p16(roundFederation);
+  const need = BigInt(needMsat || 0);
+  const sat = (x) => BigInt(Math.max(0, Math.floor(Number(x || 0)))) * 1000n;
+  const by = new Map();
+  for (const x of parts || []) {
+    if (!x || !x.federation) continue;
+    const f = p16(x.federation), a = by.get(f) || { own: 0n, merging: 0n };
+    const merging = sat(x.merging), all = sat(x.sats);
+    a.merging += merging; a.own += all > merging ? all - merging : 0n;
+    by.set(f, a);
+  }
+  const at = by.get(here) || { own: 0n, merging: 0n };
+  const others = [...by.entries()].filter(([f]) => f !== here);
+  const elsewhere = others.reduce((t, [, a]) => t + a.own + a.merging, 0n);
+  const mergeFirst = [...(at.merging > 0n ? [here] : []), ...others.filter(([, a]) => a.merging > 0n).map(([f]) => f)];
+  const swapFrom = others.filter(([, a]) => a.own + a.merging > 0n).sort((x, y) => (y[1].own + y[1].merging > x[1].own + x[1].merging ? 1 : -1)).map(([f]) => f);
+  const coveredBy = at.own >= need ? 'here' : at.own + at.merging >= need ? 'merge' : at.own + at.merging + elsewhere >= need ? 'swap' : null;
+  return { ownHere: Number(at.own / 1000n), coveredBy, mergeFirst, swapFrom, askEarly: coveredBy === null };
+}
+
+/** NOT SPENDABLE YET (the same playtest): this phrase's wallet in the round's federation short of the round, and what is still merging in would
+ *  fill the gap - said by name instead of a deposit request. `mergingSat` the page's merging total in sat. */
+export function notSpendableYet({ haveMsat, mergingSat, needMsat }) {
+  const have = BigInt(haveMsat || 0), need = BigInt(needMsat || 0), merging = BigInt(Math.max(0, Math.floor(Number(mergingSat || 0)))) * 1000n;
+  return have < need && merging > 0n && have + merging >= need;
+}
+
 export const DEPOSIT_INSUFFICIENT = 'Not enough sats in your player wallet to play this round. Deposit with Lightning?';
 /** The deposit tabs for a round of `stakeMsat`: n rounds at n x the stake, then Custom (an amount the player names). */
 export function depositChoices(stakeMsat, sizeOf = null) {

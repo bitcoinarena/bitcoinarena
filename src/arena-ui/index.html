@@ -260,6 +260,7 @@
     /* THE DEPOSIT WINDOW ON THE OVERLAY LEVEL (the owner 2026-10-20 17:3xZ: "the deposit modal is not clickable"; measured in Chrome at UI 262: a press
        on its buttons landed on #arena-ov-scrim): the scrim lies at 41, under the overlays (44); the window stood at 38, under the scrim */
     body > #arena-deposit.deposit-modal:not(:empty) { z-index: 44; }
+    #arena-deposit .dep-notice h3 { margin: 4px 0 8px; color: #f7a83b; font-size: 18px; } #arena-deposit .dep-notice p { margin: 0 0 14px; line-height: 1.45; color: #d6dbe3; }
     /* WITHDRAW IN ITS OWN OVERLAY, AS DEPOSIT (2026-10-17: "make withdrawals an overlay like deposits. withdrawals and
        gear opening the same settings overlay is confusing and redundant. do not touch deposit or withdrawal in the settings overlay"):
        the wallet bar's Withdraw and a game's own client open this box, centred like the deposit modal, with Settings' own withdraw
@@ -2744,10 +2745,12 @@
       // NOT WHEN ANOTHER FEDERATION OF THE PLAYER'S HOLDS THE STAKE (the owner 2026-10-20 17:3xZ: 200 sat in 4dc88be7, a 100 sat Up/Down order in
       // 337ae01a asked "Not enough sats ... Deposit with Lightning?" at the press): the swap below moves the shortfall in first; only when
       // it does not, the deposit is asked (fundPlayerWallet's askDeposit)
+      // NOR WHEN MONEY STILL MERGING IN FROM THIS BROWSER'S OTHER WALLETS DOES (the owner 2026-10-22: 2,901 sat with ⇄, the same deposit window): the
+      // whole balance the page shows is weighed (page-lock.js joinFundingPlan), and the deposit is asked at the press only when none of it covers
       const roundFedHex = Array.from(named.round.federationId || [], (b) => b.toString(16).padStart(2, '0')).join('');
-      const elsewhereSats = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((x) => x && x.federation !== roundFedHex).reduce((a, x) => a + Number(x.sats || 0), 0);
-      const coveredElsewhere = elsewhereSats * 1000 >= Number(named.round.stakeMsat || 0);
-      if (coveredElsewhere) console.log('[arena] join step: ' + elsewhereSats + ' sat in other federations cover the stake - swapped in before any deposit is asked');
+      const pressPlan = ARENACLIENT.joinFundingPlan({ parts: (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [], roundFederation: roundFedHex, needMsat: named.round.stakeMsat || 0 });
+      const coveredElsewhere = !pressPlan.askEarly;
+      if (coveredElsewhere) console.log('[arena] join step: the balance covers the stake (' + pressPlan.coveredBy + ') - no deposit asked at the press');
       if (pays && !coveredElsewhere && ARENACLIENT.roundLocks(named.round) && ARENACLIENT.earlyDepositOffer
           && !ARENACLIENT.savedLock(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })) {
         earlyDeposit = (async () => {
@@ -2934,6 +2937,19 @@
               console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
             }
           } catch (e) { console.warn('[arena] succession move: ' + e.message); }
+          // MONEY STILL MERGING IS MERGED FIRST (the owner 2026-10-22: "If it's not spendable it should say so in the window instead of a deposit
+          // request. But it's been like this for minutes"): this phrase's wallets in the round's federation and in the ones a swap may draw on take
+          // in what this browser's other wallets hold, before the swap and the funding read them - a minute at most
+          try {
+            const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
+            const plan = ARENACLIENT.joinFundingPlan({ parts: (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [], roundFederation: here, needMsat });
+            if (plan.coveredBy !== 'here' && plan.mergeFirst.length && window.ARENA_MERGE_NOW) {
+              const m = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0);
+              onStep(`merging ${m.toLocaleString('en-US')} sat in from your other wallets in this browser first`);
+              await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
+            }
+          } catch (e) { console.warn('[arena] merge before the join: ' + e.message); }
           // A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3): before a top-up, the player's notes
           // in another OPEN federation this page verified move the shortfall here through a gateway that serves both - the
           // fee shown and the press the player's (ARENA_SWAP_CONFIRM); declined, the deposit offer follows as before
@@ -2961,6 +2977,24 @@
               if (r.state === 'swapped' || r.state === 'enough' || r.state === 'declined') break;
             }
           } catch (e) { console.warn('[arena] swap: ' + e.message); }
+          // NOT SPENDABLE YET IS SAID, NOT ASKED AS A DEPOSIT: when what the player holds would cover the round only with money still merging,
+          // the order stops here by name - nothing taken, the reason the merge's own
+          {
+            const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
+            // this phrase's wallet in the round's federation as it is now (after the merge and the swap), and what is still merging
+            if (window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* the last read */ } }
+            const c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(here);
+            let have = 0n; try { have = c ? BigInt(await c.balanceMsat()) : 0n; } catch { have = 0n; }
+            const merging = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0;
+            if (ARENACLIENT.notSpendableYet({ haveMsat: have, mergingSat: merging, needMsat }) && !(earlyDeposit && await earlyDeposit)) {
+              const why = Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.state === 'stuck').map(([f, v]) => `federation ${f.slice(0, 8)}: ${v.why}`).join('; ');
+              const text = `${merging.toLocaleString('en-US')} sat of your balance are still merging in from your other wallets in this browser and cannot be spent yet`
+                + (why ? ` (${why})` : '') + '. Nothing was taken - try again in a minute.';
+              if (window.ARENA_SHOW_NOTICE) window.ARENA_SHOW_NOTICE('Not spendable yet', text);
+              throw new Error(text);
+            }
+          }
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           const early = earlyDeposit ? await earlyDeposit : null;
           await ARENACLIENT.fundPlayerWallet(Object.assign({}, wallet, { early,
@@ -4253,6 +4287,20 @@
         } });
     }
     window.ARENA_SHOW_DEPOSIT = showDepositOffer;
+    // A WINDOW THAT ONLY SAYS SOMETHING (kanban #578 playtest 2026-10-22: money still merging is said, not asked as a deposit): a title, the
+    // text, Close - in the deposit window's place, so one window shows at a time
+    window.ARENA_SHOW_NOTICE = (title, text) => {
+      const el = document.getElementById('arena-deposit');
+      if (!el) return;
+      if (el._deposit) { try { el._deposit.unmount(); } catch { /* cleared */ } el._deposit = null; }
+      el.textContent = ''; el.className = 'deposit-modal';
+      const box = document.createElement('div'); box.className = 'dep-notice';
+      const h = document.createElement('h3'); h.textContent = title;
+      const p = document.createElement('p'); p.textContent = text;
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'primary'; b.textContent = 'Close';
+      b.onclick = () => { el.textContent = ''; el.className = ''; };
+      box.append(h, p, b); el.appendChild(box);
+    };
     // WHAT SETTINGS' DEPOSIT AND WITHDRAW WORK ON: the lobby's paying round (its stake sets the tabs), the invite of the
     // federation that holds the funds, its funded gateway, and this tab's seed.
     // THE PAYING ROUND THE WALLET IS COUNTED IN, listed or not (2026-10-01: no paid row until 90 s rounds can be
@@ -5986,9 +6034,33 @@
       const combiningBy = new Map();
       function combineWallets(main, named, round) { return combineIn(main, ARENACLIENT.toHex(round.federationId), named.federation, { legacy: true }); }
       window.ARENA_COMBINE_IN = (main, fedHex, invite) => combineIn(main, fedHex, invite, { legacy: false });
+      // MERGE NOW, FOR A JOIN (kanban #578 playtest 2026-10-22): the federations named (16 or 64 hex) merged into this phrase's wallets, `ms` at
+      // most; each wallet opened if it is not yet, its invite the verified record's or the one it was opened with. Answers when done or timed out.
+      window.ARENA_MERGE_NOW = async (feds, ms = 60000, { seed, LockClient, extra = {} } = {}) => {
+        const full = (f) => { f = String(f).toLowerCase(); if (f.length === 64) return f;
+          return [...(window.ARENA_WALLETS || new Map()).keys(), ...(ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(vault()) : []), ...Object.keys(extra)].find((x) => x.startsWith(f)) || null; };
+        const one = async (f) => {
+          const fid = full(f); if (!fid) { mergeSaid(f, 'stuck', 'no wallet of this phrase in that federation to merge into'); return; }
+          const inv = extra[fid] || (window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(fid) && window.ARENA_FED_LOADS.get(fid).invite) || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), fid) : null);
+          if (!inv) { mergeSaid(fid, 'stuck', 'no invite for federation ' + fid.slice(0, 8)); return; }
+          let c = window.ARENA_WALLETS.get(fid);
+          if (!c && seed && LockClient) c = await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inv, seed, LockClient, storage: vault() });
+          if (!c) { mergeSaid(fid, 'stuck', 'its wallet is not open'); return; }
+          await combineIn(c, fid, inv, { legacy: false });
+        };
+        await Promise.race([Promise.all(feds.map((f) => one(f).catch((e) => mergeSaid(f, 'stuck', e && e.message ? e.message : String(e))))), new Promise((r) => setTimeout(r, ms))]);
+        if (window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* read again later */ } }
+      };
+      // WHAT EACH FEDERATION'S MERGE LAST DID, BY ITS FIRST 16 HEX (the owner 2026-10-22: "If it's not spendable it should say so in the window
+      // instead of a deposit request. But it's been like this for minutes"): { state: 'merging' | 'merged' | 'stuck', why, atMs } - the join
+      // names the reason when money still merging is all that would pay a round
+      window.ARENA_MERGE_STATE = window.ARENA_MERGE_STATE || {};
+      const mergeSaid = (fedHex, state, why = '') => { window.ARENA_MERGE_STATE[String(fedHex).slice(0, 16)] = { state, why, atMs: Date.now() };
+        if (state === 'stuck') console.log('[arena] merge in federation ' + String(fedHex).slice(0, 8) + ' stuck: ' + why); };
       function combineIn(main, fedHex, invite, { legacy }) {
         fedHex = String(fedHex).toLowerCase();
         if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
+        mergeSaid(fedHex, 'merging');
         const run = (async () => {
           const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
           const receiveKept = async () => {
@@ -5997,7 +6069,11 @@
               if (!rec || !rec.ecash) { L.removeItem(k); continue; }
               if (rec.fed ? rec.fed !== fedHex : !legacy) continue;   // never into another federation's wallet
               let before = null; try { before = BigInt(await main.balanceMsat()); } catch { before = null; }
-              const said = JSON.parse(await main.receiveEcash(rec.ecash));
+              // EACH KEPT COPY ON ITS OWN: one the federation does not take (or a receive that throws) no longer stops the others, and is named
+              let said;
+              try { said = JSON.parse(await Promise.race([main.receiveEcash(rec.ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in 45 s')), 45000))])); }
+              catch (e) { mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (e && e.message ? e.message : e)); continue; }
+              if (!['Success', 'AlreadyReceived', 'Rejected'].includes(said.state)) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': the federation said ' + said.state);
               console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
               // THE KEPT COPY STAYS COUNTED UNTIL THE BALANCE SHOWS IT (measured on UI 268, 19:29:09Z: one sum read 0 sat between "combined ... Success"
               // and the reissued notes landing ~3 s later): after a Success, dropped once this wallet's balance rose, or after 30 s at the latest
@@ -6051,10 +6127,15 @@
               if (x.hex !== cur && navigator.locks && navigator.locks.request) {
                 await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
               } else await take();
-            } catch (e) { console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e)); }
+            } catch (e) { console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e));
+              mergeSaid(fedHex, 'stuck', 'wallet ' + from + ': ' + (e && e.message ? e.message : e)); }
           }
           if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
-        })().finally(() => { combiningBy.delete(fedHex); });
+        })().then(() => { const m = window.ARENA_MERGE_STATE[fedHex.slice(0, 16)]; if (!m || m.state === 'merging') mergeSaid(fedHex, 'merged'); },
+          (e) => { mergeSaid(fedHex, 'stuck', e && e.message ? e.message : String(e)); throw e; });
+        // A RUN THAT HANGS NO LONGER HOLDS THE FEDERATION FOR GOOD: after two minutes the next ask starts a new one
+        const guard = setTimeout(() => { if (combiningBy.get(fedHex) === run) { combiningBy.delete(fedHex); mergeSaid(fedHex, 'stuck', 'the merge did not finish in 2 minutes'); } }, 120000);
+        run.finally(() => { clearTimeout(guard); if (combiningBy.get(fedHex) === run) combiningBy.delete(fedHex); }).catch(() => {});
         combiningBy.set(fedHex, run);
         return run;
       }
