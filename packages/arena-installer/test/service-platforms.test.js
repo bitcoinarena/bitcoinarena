@@ -129,3 +129,16 @@ test('after a restart only a name logged since the install counts (measured in t
   assert.equal(await quickTunnelUrl({ platform: 'linux', sh: async () => ({ ok: true, out: journal }), sinceMs: since, waitMs: 1 }), null, 'the old name alone is no answer');
   assert.equal(await quickTunnelUrl({ platform: 'darwin', home: '/h', readLog: () => later, sinceMs: since, waitMs: 1 }), 'https://size-erp-modular-durham.trycloudflare.com');
 });
+
+test('a launch agent bootstrapped while its bootout still unloads is tried again (kanban #577: the updater was left unloaded)', async () => {
+  const { bootstrapAgent } = await import('../src/service.js');
+  const calls = [];
+  let n = 0;
+  const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); n++; return n < 3 ? { ok: false, out: '', err: 'Bootstrap failed: 5: Input/output error' } : { ok: true, out: '', err: '' }; };
+  const r = await bootstrapAgent(sh, 501, '/x/a.plist', { pauseMs: 1 });
+  assert.equal(r.ok, true);
+  assert.equal(calls.length, 3);
+  const never = await bootstrapAgent(async () => ({ ok: false, out: '', err: 'Bootstrap failed: 5' }), 501, '/x/a.plist', { pauseMs: 1 });
+  assert.equal(never.ok, false, 'five refusals stay a refusal, with its words');
+  assert.match(never.err, /Bootstrap failed/);
+});
