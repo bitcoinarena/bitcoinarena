@@ -17,6 +17,10 @@ const utf8 = (s) => new TextEncoder().encode(s);
 export const moveIdOf = (from, to) => toHex(taggedHash('ARENA/v1/ReserveMove', Uint8Array.from([...fromHex(from), ...fromHex(to)])));
 /** The encryption seed of the destination's incoming contract: the move's own, so every seat rebuilds the same contract. */
 export const moveSeedOf = (moveIdHex) => taggedHash('ARENA/v1/ReserveMoveSeed', utf8(String(moveIdHex)));
+/** The seed of a plan's own invoice: each attempt draws a `seedTag` the plan names, so a second attempt asks for another payment hash
+ *  (kanban #326, measured 2026-10-22: one seed per move made one hash, and after a first plan fell through the gateway refused every
+ *  later invoice, "PaymentHash is already registered"). A plan without a tag is the first form. */
+export const moveSeedFor = (plan) => moveSeedOf(plan && plan.seedTag ? `${plan.proposal}:${plan.seedTag}` : plan.proposal);
 
 /**
  * THE MOVES THESE RECORDS CALL FOR. `feds` [{ id (hex), status ('OPEN' | 'DRAINING' | 'CRITICAL' | 'HALTED' | 'CLOSED'), height (of the
