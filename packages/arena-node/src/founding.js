@@ -22,6 +22,11 @@
 //               the order given (`seatedFirst`, census entries), and draws only the missing seats (drawGuardians). A seated-first
 //               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
 //               takes its position.
+//   TEN ARE ENOUGH (the owner 2026-10-22: "we need 10 nodes not 14", "On mainnet we also want 10": as soon as 10 nodes want to found a
+//               federation it is allowed): a late seated node that no alternate can replace keeps its seat and may post its code
+//               until the window's end - only the no-shows an alternate takes over are dropped, and the founding is void only when
+//               the window passes. Measured 3d30afd4: 10 eligible, 0 alternates, and three installers that saw the draw only after a
+//               burst of blocks voided it at once.
 //   DKG         once every seated node's code is held, each seated node adds the others' codes to its guardian and starts the
 //               key generation; its guardian then names the federation (invite) like any other.
 //
@@ -134,7 +139,9 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     await postOwn();
     // NO-SHOWS: a seated node with no code a fifth of the window after it was seated - only while the DKG has not started
     if (!started) {
-      const missing = seated.filter((e) => !codes.has(toHex(e.pubkey)) && tip >= seatedSince.get(toHex(e.pubkey)) + fifth).map((e) => toHex(e.pubkey));
+      let missing = seated.filter((e) => !codes.has(toHex(e.pubkey)) && tip >= seatedSince.get(toHex(e.pubkey)) + fifth).map((e) => toHex(e.pubkey));
+      // TEN ARE ENOUGH: only as many no-shows as the alternates can replace; the others keep their seats until the window's end
+      while (missing.length && !replaceNoShows({ drawn: draw.drawn, alternates: draw.alternates, noShows: [...noShows, ...missing] }).ok) missing = missing.slice(0, -1);
       if (missing.length) {
         for (const k of missing) noShows.add(k);
         const r = replaceNoShows({ drawn: draw.drawn, alternates: draw.alternates, noShows: [...noShows] });

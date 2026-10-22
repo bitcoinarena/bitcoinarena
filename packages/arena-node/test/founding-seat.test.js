@@ -146,6 +146,15 @@ test('the notice trigger: a standing notice that leaves F CRITICAL (four) or DRA
   assert.equal(statusFor({ nominal: 10, seated: 9 }).status, 'OPEN');
 });
 
+test('guardingOpenOf: an OPEN federation at load >= 1 holds nobody back (the owner 2026-10-22: "Also when federation is over loaded?")', () => {
+  const both = (lf, lg) => [...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'OPEN', load: lf }, { federation: toHex(G), status: 'OPEN', load: lg }], except: null })].sort();
+  const all = both(0.5, 0.5);
+  assert.ok(all.length >= 1, 'under load: its guardians guard it');
+  assert.deepEqual(both(4.33, 4.33), [], 'both overloaded (A measured at 4.33): every guardian is free for a founding');
+  assert.deepEqual(both(0.99, 0.99), all, 'just under 1 is not overloaded');
+  assert.deepEqual(both(1, 0.5).length < all.length || all.length === both(1, 0.5).length, true);
+});
+
 test('guardingOpenOf: operators whose adverts name a federation held OPEN, other than the one succeeded', () => {
   const held = [{ federation: toHex(F), status: 'OPEN' }, { federation: toHex(G), status: 'OPEN' }];
   assert.deepEqual([...guardingOpenOf({ entries: sEntries, held, except: toHex(F) })], ['decoy']);
