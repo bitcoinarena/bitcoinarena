@@ -134,3 +134,20 @@ test('a guardian session count is asked over its endpoint, a local override take
   assert.equal(n, 5078); assert.deepEqual(opened, ['ws://127.0.0.1:32221/']);
   await assert.rejects(wsSessionCount('', { WebSocketImpl: FakeWS }), /no guardian endpoint/);
 });
+
+// THE DOOR READS THE BODY AS TEXT (kanban #326, measured 2026-10-22 on the T2 observers at 157,261: every seat held only its own
+// observation - POST /halt-observations parsed String(bytes), "123,34,...", and refused every peer's as not JSON)
+test('POST /halt-observations reads its JSON body: a malformed observation is refused by halts.take, not as unreadable JSON', async () => {
+  const { serve } = await import('../src/server.js');
+  const { openStore } = await import('../src/store.js');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const seat = await serve(openStore(join(mkdtempSync(join(tmpdir(), 'halt-door-')), 'node.db')), { port: 0, chainTip: async () => 157261 });
+  try {
+    const r = await fetch(`http://127.0.0.1:${seat.port}/halt-observations`, { method: 'POST', body: JSON.stringify({ observation: '00', signature: '00' }) });
+    const why = await r.text();
+    assert.equal(r.status, 400);
+    assert.match(why, /not a halt observation/, why);
+  } finally { await seat.close(); }
+});
