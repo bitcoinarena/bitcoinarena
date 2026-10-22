@@ -12,6 +12,12 @@ import React from 'react';
 export const sat = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n; return (f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w) + ' sat'; };
 const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
 const count = (n, word) => `${Number(n).toLocaleString('en-US')} ${word}${Number(n) === 1 ? '' : 's'}`;
+/** A CURRENCY AMOUNT (kanban #578): 2 decimals from 1 up, else up to 4 - a testnet donation is a fraction of a cent */
+const SYM = { eur: '€', usd: '$', chf: 'CHF ', gbp: '£' };
+export const money = (x, cur) => { const v = Number(x) || 0; const d = v >= 1 || v === 0 ? 2 : 4;
+  return `${SYM[cur] || ''}${v.toLocaleString('en-US', { minimumFractionDigits: d === 2 ? 2 : 0, maximumFractionDigits: d })}`; };
+export const CURS = ['sat', 'eur', 'usd', 'chf', 'gbp'];
+const curKept = () => { try { const c = localStorage.getItem('arena-owner-currency'); return CURS.includes(c) ? c : 'sat'; } catch { return 'sat'; } };
 /** msat as WHOLE sat, for the glance (\"369.572 sat\" read as thousands); the exact msat stay in the details */
 export const whole = (msat) => `${(BigInt(msat || 0) / 1000n).toLocaleString('en-US')} sat`;
 const Row = ({ k, v, sub }) => <div className={'row' + (sub ? ' sub' : '')}><span>{k}</span><b>{v}</b></div>;
@@ -62,7 +68,8 @@ function Earnings({ split: S }) {
 }
 
 export class DevClients extends React.Component {
-  constructor(props) { super(props); this.state = { label: '', secret: '', setupSaid: null, to: {}, amount: {}, said: {}, removeWhy: '' }; }
+  constructor(props) { super(props); this.state = { label: '', secret: '', setupSaid: null, to: {}, amount: {}, said: {}, removeWhy: '', cur: curKept() }; }
+  pickCur(c) { this.setState({ cur: c }); try { localStorage.setItem('arena-owner-currency', c); } catch { /* this visit only */ } }
   async setup() {
     this.setState({ setupSaid: null });
     try {
@@ -146,24 +153,37 @@ export class DevClients extends React.Component {
       if (S.unknownMsat && S.unknownMsat !== '0') out.push({ label: 'Older rounds', msat: BigInt(S.unknownMsat), note: 'rounds this node no longer holds' });
       return out.filter((p) => p.msat > 0n).map((p, i) => ({ ...p, color: COLORS[i % COLORS.length] }));
     };
+    // THE CURRENCY (kanban #578, the owner: "a filter where the sats can be changed to your favorite currency"): sat, or each donation at its
+    // own historic rate (the node's fiat-rates.js), what is held at the price now; the choice kept in this browser
+    const cur = s.cur || 'sat';
+    const inCur = (V, msatOrSum, kind) => {
+      if (cur === 'sat' || !V.fiat) return null;
+      if (kind === 'now') return V.fiat.now ? money((Number(msatOrSum) / 1e11) * V.fiat.now[cur], cur) : null;
+      return money(msatOrSum, cur);
+    };
     return (
       <>
+        <div className="cur-pick"><span>Show amounts in</span>{CURS.map((c) => <button type="button" key={c} className={c === cur ? 'on' : undefined} onClick={() => this.pickCur(c)}>{c === 'sat' ? 'sat' : c.toUpperCase()}</button>)}</div>
         {all.map((V) => {
           const P = parts(V), total = P.reduce((t, p) => t + p.msat, 0n), newest = (V.recent || [])[0];
+          const T = V.fiat && V.fiat.totals;
+          const chip = (k, msat) => (cur !== 'sat' && T && T[k] ? <><b>{money(T[k][cur], cur)}</b><small>{whole(msat)}</small></> : <b>{whole(msat)}</b>);
+          // a part of the split in the currency: its share of all the client's donations at their rates (≈, the parts are not rated one by one)
+          const partCur = (msat) => (cur !== 'sat' && T && total > 0n ? '≈ ' + money((Number(msat) / Number(total)) * T.all[cur], cur) : null);
           return (
             <div className="devhero" key={V.slug || 'beside'}>
               <div className="dh-top">
                 <div className="dh-who"><b>{V.label || V.slug}</b> {V.managed ? <span className={'pill ' + (V.running ? 'on' : 'bad')}>{V.running ? 'running' : 'stopped'}</span> : <span className="pill">beside this node</span>}
                   {shareOf(V)}
                   <small>{newest ? `newest donation ${ago(newest.atMs)}` : 'no donation yet'}</small></div>
-                <div className="dh-cash"><span>Ready to withdraw</span><b>{whole(holds(V))}</b>
+                <div className="dh-cash"><span>Ready to withdraw</span><b>{inCur(V, holds(V), 'now') || whole(holds(V))}</b>{inCur(V, holds(V), 'now') ? <small>{whole(holds(V))} at today's price</small> : null}
                   {V.managed ? <button type="button" className={holds(V) > 0n ? 'primary' : undefined} onClick={() => this.setState({ wd: { ...(s.wd || {}), [V.slug]: !(s.wd || {})[V.slug] } })}>Withdraw</button> : null}</div>
               </div>
               {V.managed && (s.wd || {})[V.slug] ? this.withdrawForm(V) : null}
               <div className="dh-chips">
-                <div><span>Today</span><b>{whole(period(V, 'day'))}</b></div>
-                <div><span>This week</span><b>{whole(period(V, 'week'))}</b></div>
-                <div><span>All time</span><b>{whole(V.receivedMsat)}</b></div>
+                <div><span>Today</span>{chip('day', period(V, 'day'))}</div>
+                <div><span>This week</span>{chip('week', period(V, 'week'))}</div>
+                <div><span>All time</span>{chip('all', V.receivedMsat)}</div>
                 <div><span>Donations</span><b>{Number(V.donations).toLocaleString('en-US')}</b></div>
               </div>
               {total > 0n ? <>
@@ -175,14 +195,14 @@ export class DevClients extends React.Component {
                   return p ? <><i style={{ background: p.color }} /><b>{p.label}</b> · {whole(p.msat)} · {(Number((p.msat * 10000n) / total) / 100).toLocaleString('en-US')} % of all{p.note ? ' · ' + p.note : ''}</> : <span className="sub">Point at the bar to see each part</span>; })()}</div>
                 <div className="dh-legend">{P.map((p, i) => <div key={p.label} className={(s.hov || {})[V.slug] === i ? 'on' : undefined}
                   onMouseEnter={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: i } })} onMouseLeave={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: null } })}>
-                  <i style={{ background: p.color }} /><span>{p.label}</span><b>{whole(p.msat)}</b><small>{p.note}</small></div>)}</div></> : null}
+                  <i style={{ background: p.color }} /><span>{p.label}</span><b>{partCur(p.msat) || whole(p.msat)}</b><small>{[partCur(p.msat) ? whole(p.msat) : null, p.note].filter(Boolean).join(' · ')}</small></div>)}</div></> : null}
             </div>);
         })}
         {recent.length ? <div className="card"><h3>Newest donations</h3>
-          <div className="scroll"><table className="tbl"><thead><tr><th>When (UTC)</th><th>To</th><th className="n">Amount</th><th>Round or item</th><th>Player</th></tr></thead><tbody>
-            {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td className="n">{Number(d.amountMsat).toLocaleString('en-US')} msat</td>
+          <div className="scroll"><table className="tbl"><thead><tr><th>When (UTC)</th><th>To</th><th className="n">Amount</th>{cur !== 'sat' ? <th className="n">{cur.toUpperCase()} then</th> : null}<th>Round or item</th><th>Player</th></tr></thead><tbody>
+            {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td className="n">{Number(d.amountMsat).toLocaleString('en-US')} msat</td>{cur !== 'sat' ? <td className="n">{(() => { const V = all.find((x) => (x.label || x.slug) === d.who); const v = V && V.fiat && V.fiat.recent && V.fiat.recent[d.outpoint]; return v && v[cur] !== undefined ? money(v[cur], cur) : '–'; })()}</td> : null}
               <td title={d.item || d.round}>{d.item ? d.item : d.round.slice(0, 10) + '…'}</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
-          </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.</p></div> : null}
+          </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.{cur !== 'sat' ? ` ${cur.toUpperCase()} at each donation's own rate (CoinGecko).` : ''}</p></div> : null}
         {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
         {r.managed ? <details><summary className="sub">Add a dev client</summary><div className="card">
           <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out

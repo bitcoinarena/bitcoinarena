@@ -38,7 +38,7 @@ export function devClientSnapshot(dir, { recent = 12 } = {}) {
         balanceMsat: state.balances && state.balances[x.federation] ? String(state.balances[x.federation].msat) : null })),
       balances: Object.entries(state.balances || {}).map(([federation, b]) => ({ federation, msat: String(b.msat), at: b.at })),
       recent: rows.slice(-recent).reverse().map((r) => ({ round: String(r.roundId || ''), entry: String(r.entryId || ''), federation: String(r.federationId || ''),
-        amountMsat: String(r.amountMsat || '0'), contract: String(r.contractId || ''), atMs: Number(r.verifiedMs || r.recordedAt || 0), player: String(r.playerKey || ''), item: r.item ? String(r.item) : null, player: String(r.playerKey || ''),
+        amountMsat: String(r.amountMsat || '0'), contract: String(r.contractId || ''), atMs: Number(r.verifiedMs || r.recordedAt || 0), player: String(r.playerKey || ''), item: r.item ? String(r.item) : null, outpoint: String(r.outpoint || ''), player: String(r.playerKey || ''),
         usdPerBtc: r.usdPerBtc ? Number(r.usdPerBtc) : null })),
       withdrawals: withdrawals.map((w) => ({ at: w.at, federation: String(w.federation || ''), msat: String(w.msat || '0'), state: w.state || null, paid: !!w.preimage })),
       withdrawnMsat: String((state.withdrawals || []).filter((w) => w.preimage).reduce((t, w) => t + BigInt(w.msat || 0), 0n)),
