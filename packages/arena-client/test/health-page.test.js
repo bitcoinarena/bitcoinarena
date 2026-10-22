@@ -117,9 +117,8 @@ test('Waiting for a founding: the guardian-capable nodes free of an OPEN federat
   const facts = drawn.find((d) => d[0] === '#founding-facts')[2].items;
   assert.deepEqual(facts.map((f) => f[1]), ['13 of 10 needed', '1 of 1', 'f0f0f0f0 · 1 of 2 codes · window to 157,302']);
   const t = drawn.find((d) => d[0] === 'founding')[2];
-  assert.deepEqual(t.rows.map((r) => r.cells[4].t), ['counted ✓', 'not counted', 'not counted'], 'the newest cohort names a1 only');
-  assert.equal(t.rows[1].cells[5].t, 'operator op-mac (3 nodes): its node a3a3a3a3 guards Federation 2, OPEN', 'why a2 is not counted, in its own words');
-  assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, typeof r.cells[6] === 'string' ? r.cells[6] : r.cells[6].t]),
-    [['a1a1a1a1a1a1', 'ready', 'seated 1 · code ✓'], ['a2a2a2a2a2a2', 'no guardian in setup', 'seated 2 · no code'], ['a4a4a4a4a4a4', 'not answering', 'no-show']]);
-  assert.match(t.foot, /157,298: 13 free operators/);
+  // only the nodes online now and free by the seats' count (the owner 2026-10-22): a2 answers but its operator guards Federation 2, a4 is offline
+  assert.deepEqual(t.head, ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding']);
+  assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, r.cells[4].t]), [['a1a1a1a1a1a1', 'ready', 'seated 1 · code ✓']]);
+  assert.equal(t.foot, "the seats' count at 157,298: 13 free operators (an operator may run several nodes) · not shown: 1 offline, 1 guarding an OPEN federation (or one no seat holds a record of)");
 });
