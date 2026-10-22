@@ -90,10 +90,21 @@ export class GameDevsPanel extends React.Component {
             <b>{v.split.map((r) => `${r.label || r.key.slice(0, 8)} ${pct(r.shareBps)}`).join(' · ')}</b></div>)}</details> : null}
       </div>);
   }
+  addForm() {
+    const s = this.state;
+    return (<details><summary className="sub">Add a game developer key</summary><div className="card">
+          <p>A game developer's key on this node lets it sign that developer's apps' new versions - a new split of their donations. Paste the key file
+            (game-dev.pkcs8) or its seed. It is kept beside this node's store, readable by the node only.</p>
+          <textarea {...field} id="gdkey" rows="3" placeholder="-----BEGIN PRIVATE KEY----- … or 64 hex" value={s.key} onChange={(e) => this.setState({ key: e.target.value })} />
+          <p className="sub">The key travels in your signed request: only do this over https or on the node's own machine.</p>
+          <button type="button" className="primary" disabled={!s.key.trim()} onClick={() => this.install()}>Install</button>
+          <div className="err">{s.keySaid ? (s.keySaid.ok ? <span className="ok">{s.keySaid.text}</span> : s.keySaid.text) : ''}</div></div></details>);
+  }
   render() {
     const { devs, why } = this.props, s = this.state;
     if (why) return <div className="card"><p className="err">{why}</p></div>;
     const list = devs || [];
+    if (this.props.part === 'add') return this.addForm();
     const known = [...new Map(list.flatMap((d) => d.apps.flatMap((a) => a.versions.flatMap((v) => v.split.map((r) => [r.key, r.label]))))).entries()].map(([key, label]) => ({ key, label }));
     return (
       <>
@@ -104,13 +115,7 @@ export class GameDevsPanel extends React.Component {
               {' '}<button type="button" className="mini" onClick={() => { if (confirm('Remove this developer key from this node?')) this.props.removeKey(d.devKey).then(() => this.props.reread(), () => {}); }}>Remove key</button></p>
             {d.apps.map((a) => this.app(a, known))}
           </React.Fragment>)}</> : null}
-        <details><summary className="sub">Add a game developer key</summary><div className="card">
-          <p>A game developer's key on this node lets it sign that developer's apps' new versions - a new split of their donations. Paste the key file
-            (game-dev.pkcs8) or its seed. It is kept beside this node's store, readable by the node only.</p>
-          <textarea {...field} id="gdkey" rows="3" placeholder="-----BEGIN PRIVATE KEY----- … or 64 hex" value={s.key} onChange={(e) => this.setState({ key: e.target.value })} />
-          <p className="sub">The key travels in your signed request: only do this over https or on the node's own machine.</p>
-          <button type="button" className="primary" disabled={!s.key.trim()} onClick={() => this.install()}>Install</button>
-          <div className="err">{s.keySaid ? (s.keySaid.ok ? <span className="ok">{s.keySaid.text}</span> : s.keySaid.text) : ''}</div></div></details>
+        {this.props.part === 'main' ? null : this.addForm()}
       </>);
   }
 }
