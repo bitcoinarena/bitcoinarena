@@ -253,7 +253,7 @@
   async function membersOf(nodes) {
     const fb = (n) => (n.found && n.found.ok ? n.found.body : null);
     const seats = nodes.filter((n) => fb(n) && fb(n).ready && fb(n).ready.cohort).sort((a, b) => fb(b).ready.cohort.height - fb(a).ready.cohort.height);
-    for (const n of seats.slice(0, 3)) { const a = await ask(n.base, '/founding?members=1'); if (a.ok && a.body && a.body.members) return a.body.members; }
+    for (const n of seats) { const a = await ask(n.base, '/founding?members=1'); if (a.ok && a.body && a.body.members) return a.body.members; }
     return null;
   }
   function paintFounding(nodes, feds, mem) {

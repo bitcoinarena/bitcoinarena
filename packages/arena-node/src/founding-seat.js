@@ -348,9 +348,16 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   // THE NODES THAT CAN BE DRAWN, EACH ASKED (kanban #585, the owner 2026-10-22: "Tu das Dashboard so umbauen dass es solchen
   // Diskrepanzen nicht geben kann"): the newest row's free nodes, each at its announced address - ready (its guardian waits in setup),
   // running, none, founding off, an older release, or no answer - so a page shows one list and counts its own rows. Every 60 s at most.
-  let membersCache = null;
-  async function members(nowMs = Date.now()) {
+  // answered at once from the last list, read again in the background when it is older than 60 s (asking thirty nodes takes longer
+  // than a page waits for one answer); `wait` reads it now (tests)
+  let membersCache = null, membersRun = null;
+  async function members(nowMs = Date.now(), { wait = false } = {}) {
     if (membersCache && nowMs - membersCache.atMs < 60000) return membersCache.value;
+    if (!membersRun) membersRun = readMembers(nowMs).finally(() => { membersRun = null; });
+    if (wait || !membersCache) { const v = await Promise.race([membersRun, ...(wait ? [] : [new Promise((r) => setTimeout(() => r(undefined), 5000))])]); if (v !== undefined) return v; }
+    return membersCache ? membersCache.value : null;
+  }
+  async function readMembers(nowMs) {
     const c = capable.length ? capable[capable.length - 1] : null;
     if (!c || !Array.isArray(c.freeNodes) || !lastEntries) return null;
     const want = new Set(c.freeNodes), me = toHex(ownKey);
