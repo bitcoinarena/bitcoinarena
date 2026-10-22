@@ -50,6 +50,7 @@ function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 70000n, 
     gateways: async () => ({ gateways: [GW], height: fed.height }),
     status: async (at) => { const c = fed.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: fed.height, stored: c && !c.spent ? { contractId: 'c', blocksLeft: c.expiration - fed.height } : null }; },
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
+      if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
       const message = msgOf({ k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce });
       if (!signature) return { message: toHex(message) };
       if (!schnorr.verify(signature, message, claimPk.subarray(1))) return { accepted: false, error: 'the signature does not verify' };
