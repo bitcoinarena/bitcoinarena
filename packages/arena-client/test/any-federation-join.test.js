@@ -78,3 +78,15 @@ test('the page\'s website key rides on an entry only into a round of 2026.0.9 or
   assert.equal(make(9, { frontendPk: site }).stakeMsat, make(9, {}).stakeMsat, 'the stake is the same');
   assert.equal(make(9, { frontendPk: site }).feeMsat, make(9, {}).feeMsat, 'the fee is the same');
 });
+
+test('a bot\'s entry (kanban #581) carries the bot mark; any other entry keeps its bytes as they were', () => {
+  const r = { ...ANY, protocolVersion: 2, federationId: fromHex(A) };
+  const made = (more) => entryFor(r, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor(), ...more });
+  const bytes = (e) => encodeEntryContract({ sessionPubkey: new Uint8Array(32).fill(3), ...e, roundId: ANY.id });
+  const plain = made({}), human = made({ bot: false }), bot = made({ bot: true });
+  assert.equal(plain.bot, undefined);
+  assert.equal(toHex(bytes(human)), toHex(bytes(plain)), 'bot: false writes nothing');
+  assert.equal(bot.bot, true);
+  assert.equal(decodeEntryContract(bytes(bot)).bot, true, 'the seats read the mark back');
+  assert.equal(toHex(bytes(bot)).slice(0, toHex(bytes(plain)).length), toHex(bytes(plain)), 'the mark is the entry\'s last byte, the rest unchanged');
+});
