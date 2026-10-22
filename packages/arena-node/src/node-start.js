@@ -101,9 +101,11 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
         // code never came): only a guardian in setup mode (no federation key yet: nothing is lost), stopped, its setup database set
         // aside beside it (database.void-<time>, kept), and started again in a fresh setup. The founding asks it once (founding.js).
         freshSetup: async () => {
-          if (plan.own !== 'setup' || !guardian.running) return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
-          const dir = guardian.dataDir;
-          await (guardian.halt || guardian.stop)(); guardian = none;   // a kept guardian really stops here (its stop leaves it running)
+          if (plan.own !== 'setup') return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
+          // also a guardian that already exited (kanban #495, 2026-10-22: after a key generation's checksum failure the guardians stopped)
+          const dir = guardian.dataDir || `${path}.guardian`;
+          if (guardian.running) await (guardian.halt || guardian.stop)();
+          guardian = none;   // a kept guardian really stops here (its stop leaves it running)
           const db = join(dir, 'database');
           let kept = null;
           if (existsSync(db)) { kept = `${db}.void-${new Date().toISOString().replace(/[:.]/g, '-')}`; renameSync(db, kept); }
