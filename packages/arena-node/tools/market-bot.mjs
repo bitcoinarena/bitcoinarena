@@ -13,7 +13,7 @@
  *
  *   NODES=<seat urls> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> BOOK_BOT=<book-bot.js of the Up/Down
  *   app> BOT_DIR=<this bot's folder> [BOT_NAME=m1] [PRICE=coinbase|kraken] [LEVELS=2] [STEP_CENTS=2] [EDGE_CENTS=1] [SHARES=100]
- *   [MAX_ORDERS=4 per window] [LOOP_S=60] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [DRY=1]
+ *   [MAX_ORDERS=4 per window] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [DRY=1]
  *   node tools/market-bot.mjs
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync } from 'node:fs';
@@ -42,7 +42,7 @@ for (const k of ['NODES', 'BOOK_BOT', 'BOT_DIR', ...(env.DRY ? [] : ['INVITE_FIL
 const NAME = env.BOT_NAME || 'bot', DIR = env.BOT_DIR, DRY = !!env.DRY;
 const nodes = env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
 const LEVELS = Number(env.LEVELS || 2), STEP = Number(env.STEP_CENTS || 2), EDGE = Number(env.EDGE_CENTS || 1), SHARES = Number(env.SHARES || 100);
-const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 60) * 1000, AHEAD_MS = Number(env.AHEAD_S || 120) * 1000;
+const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 120) * 1000, AHEAD_MS = Number(env.AHEAD_S || 120) * 1000;
 const WINDOW_MS = 900000, GAME = env.GAME || 'btc-updown-15m';
 mkdirSync(DIR, { recursive: true, mode: 0o700 });
 const J = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v));
@@ -92,7 +92,9 @@ async function openWindows() {
   if (!DRY) await wallet();
   for (const n of nodes) {
     try {
-      const rows = ((await getJson(`${n}/rounds?ahead=${WINDOW_MS * 2}`, 15000)).rounds || [])
+      // `next=2`: at most two upcoming rounds of each series - not every round the seat holds (measured 2026-10-22 23:00Z: ten bots
+      // asking the whole listing, ~1,500 rounds, every minute put the test host at load 26); the same query from every bot is cached at the seat
+      const rows = ((await getJson(`${n}/rounds?next=2&ahead=${WINDOW_MS * 2}`, 15000)).rounds || [])
         .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs && Number(r.entryCloseMs) - now > AHEAD_MS)
         .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)));
       return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
@@ -156,7 +158,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers) {
   const feeBps = feeBpsForRound(r);
   const feeMsat = entryFeeMsat(rung.stakeMsat, feeBps);
   const split = { feeMsat, donationMsat: 0n, netMsat: netStakeMsat({ stakeMsat: rung.stakeMsat, feeMsat, donationMsat: 0n }), shares: [], reserveKey: null };
-  const gate = feeLockPays({ contract: oc, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) }, feeBps });
+  // WHETHER THE ROUND MINTS FEE LOCKS is the seats' decision on the ROUND's stake, not this order's (measured 22:58Z: a 49 c order's
+  // own stake said no fee lock, the seats said "this round mints fee locks ... an entry that brings no fee lock is not taken")
+  const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) }, feeBps });
   await topUp(rung.stakeMsat + 200000n);
   const seed = Uint8Array.from(Buffer.from(readFileSync(join(DIR, 'seed.hex'), 'utf8').trim(), 'hex'));
   // the order's own key (join.js playerFor with its order number): the payout and refund key the bot finds again from its seed
@@ -198,6 +202,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers) {
 }
 
 // ---- THE LOOP ----
+const seatedOf = new Map();   // round id -> its seating certificate's signer nodes
 async function pass() {
   const windows = await openWindows();
   if (!windows.length) { say({ step: 'no open window' }); return; }
@@ -215,7 +220,9 @@ async function pass() {
     const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${row.id}`)).arrayBuffer()));
     const rid = roundId(c);
     if (toHex(rid) !== row.id) throw new Error('the seat answered another round');
-    const seated = await clientSettlementSignerNodes(row.id, c, nodes, { curve: pageCurve });   // seated before anything is paid (§5A.7)
+    // seated before anything is paid (§5A.7) - read once per round: a round's seated signers do not change
+    const seated = seatedOf.get(row.id) || await clientSettlementSignerNodes(row.id, c, nodes, { curve: pageCurve });
+    seatedOf.set(row.id, seated);
     for (const q of todo) {
       const index = done.size;
       try {
