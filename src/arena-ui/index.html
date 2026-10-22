@@ -1808,7 +1808,14 @@
     // known-good-clients.json lists it), runs it in a function of its own so its `var BLWP` is not this page's, and keeps it here
     // by its core hash for ARENA_USE_CORE. Answers { ok } or { ok: false, why }.
     window.ARENA_CORE_FILES = { 'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8':
-      { file: 'blwp-core-f0cc7b7b.js', sha256: '319763d01161c46becd18219f6134864338db9bf9f30205b73e6eb13f643333a' } };
+      { file: 'blwp-core-f0cc7b7b.js', sha256: '319763d01161c46becd18219f6134864338db9bf9f30205b73e6eb13f643333a' },
+      // AND MANIFEST VERSION 5'S TWO (kanban #523): the cores with their comments cleaned of names, ticket numbers and blwp - a5c5766a
+      // the truck, 0847c99f the truck that knows the larger truck - each fetched only when a round names it, like f0cc7b7b; their
+      // bundles' global is NEXTBLOCK_CORE, and the core is handed to the jslib as every core is (window.BLWP, ARENA_USE_CORE)
+      'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a':
+      { file: 'core-a5c5766a.js', sha256: '85a94c656db4bdb78a325704df4e2047bfa4d9c28816d48d104f1af4f57ae31c' },
+      '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1':
+      { file: 'core-0847c99f.js', sha256: '41535dc6159d18464c7911e66984f2dc04ac5f5a593d1f759711f6ea07b1124d' } };
     window.ARENA_LOAD_CORE = function (hash) {
       var hex = String(hash || '').toLowerCase();
       if (window.ARENA_CORES[hex]) return Promise.resolve({ ok: true, hex: hex });
@@ -1821,7 +1828,8 @@
           return crypto.subtle.digest('SHA-256', buf).then(function (d) {
             var got = Array.prototype.map.call(new Uint8Array(d), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
             if (got !== f.sha256) throw new Error(f.file + ' hashes to ' + got.slice(0, 16) + ', not the pinned ' + f.sha256.slice(0, 16));
-            var core = (new Function('var module;\n' + new TextDecoder().decode(buf) + '\nreturn BLWP;'))();
+            var core = (new Function('var module;\n' + new TextDecoder().decode(buf)
+              + '\nreturn typeof NEXTBLOCK_CORE !== "undefined" ? NEXTBLOCK_CORE : BLWP;'))();
             if (!core || typeof core.init !== 'function') throw new Error(f.file + ' defines no core');
             window.ARENA_CORES[hex] = core;
             console.log('[arena] core ' + hex.slice(0, 8) + ' loaded for this round (' + buf.byteLength + ' bytes, pinned hash checked)');

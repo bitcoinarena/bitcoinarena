@@ -29,7 +29,6 @@ import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
 import { joinQuery, joinFromQuery, fetchRound, forgetRounds, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSignerNodes, roundPays } from '../src/join.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
-import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { NO_SHARES } from '../../arena-protocol/src/handout.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
@@ -39,9 +38,10 @@ import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { HOSTED } from '../../arena-node/test/plugins/hosted.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const CORE = fromHex(coreHashHex());
+const CORE = fromHex(TRUCK_68E2_HASH);
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -534,7 +534,7 @@ test('feeLockOf through entryFor: no F, not H(F), the wrong amount refused by na
   const { toHex: hx, fromHex: fh, sha256 } = await import('../../arena-protocol/src/hash.js');
   const { coreHashHex } = await import('../../nextblock/tools/hash-core.js');
   const { feldmanGroup } = await import('../../arena-node/src/curve.js');
-  const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fh(coreHashHex()), federationId: TEST_FEDERATION_ID };
+  const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fh(TRUCK_68E2_HASH), federationId: TEST_FEDERATION_ID };
   const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
   const fetcher = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ paymentHash: 'aa'.repeat(32), amountMsat: String(NET), request: 'lnbcrt-fed' }) });
   const stake = await federationStakeFor(round, { nodes: ['http://a'], fetcher });
