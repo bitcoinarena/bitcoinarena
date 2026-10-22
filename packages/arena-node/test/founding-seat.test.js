@@ -506,3 +506,23 @@ test('members: every node that can be drawn, asked at its address - ready, found
   await s.members(30000);
   assert.equal(asked.length, 3, 'asked at most every 60 s');
 });
+
+test('a seat that first ticks long after the run of free operators began reads back only two steps, and draws the same height as a seat that saw the run (kanban #577: 15 min+ after a restart)', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => key(`l${i}`));
+  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ltx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `lop${i}`, guardianCapable: true, guardianEndpoint: `wss://l${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 100 }];
+  const make = (w, reads) => createFoundingSeat({ records: () => held, entriesAt: async (h) => { reads.push(h); return h >= 150 ? cEntries : []; },
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => false },
+    nominal: 4, bondMinGuardian: 500000n, clocks: { abandonBlocks: 10, foundingWindow: 5 }, ownKey: all[0].pub, sign: (h) => schnorr.sign(h, all[0].secret), verify });
+  // A ticks at every height from 150, B first at 301
+  const wa = { tip: 150 }, ra = [], a = make(wa, ra);
+  for (; wa.tip <= 301; wa.tip++) await a.tick();
+  wa.tip = 301;
+  const wb = { tip: 301 }, rb = [], b = make(wb, rb);
+  await b.tick();
+  assert.equal(b.state().trigger.height, a.state().trigger.height, 'the same draw height');
+  assert.equal(b.state().id, a.state().id, 'and the same founding');
+  assert.ok(rb.length <= 2 * 6 + 3, `B read ${rb.length} heights, not 288`);
+});
