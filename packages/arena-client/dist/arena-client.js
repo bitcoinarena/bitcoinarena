@@ -17013,6 +17013,47 @@ function oneRoundDepositMsat(locks, LockClient) {
 function roundsDepositMsat(n, locks, LockClient) {
   return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
 }
+/**
+ * WHERE A ROUND'S STAKE COMES FROM, BEFORE ANY DEPOSIT IS ASKED (the owner 2026-10-22 playtest: 2,901 sat shown with ⇄, a 100 sat Up/Down order
+ * in a 337ae01a round asked "Not enough sats ... Deposit with Lightning?"; "Deposits from different federations must work"). The balance the
+ * page shows counts money still merging in from this browser's other wallets (other phrases, e-cash between a send and its receive), and
+ * this phrase's own wallets in other federations. `parts` = the page's [{ federation (64 or 16 hex), sats, merging? }], `roundFederation`
+ * 64 hex, `needMsat` what the round takes. Answers:
+ *   ownHere    sat this phrase's wallet in the round's federation holds (spendable now)
+ *   coveredBy  'here' | 'merge' | 'swap' | null - what pays it without a deposit: the wallet as it is, once the merge has landed, or a swap
+ *   mergeFirst the federations (16 hex, the round's first) whose merging money is merged before the round is funded
+ *   swapFrom   the other federations (16 hex), the fullest first, a shortfall is swapped in from
+ *   askEarly   whether the deposit is asked at the press - only when nothing the player holds anywhere covers the round
+ */
+function joinFundingPlan({ parts = [], roundFederation, needMsat }) {
+  const p16 = (f) => String(f || '').toLowerCase().slice(0, 16);
+  const here = p16(roundFederation);
+  const need = BigInt(needMsat || 0);
+  const sat = (x) => BigInt(Math.max(0, Math.floor(Number(x || 0)))) * 1000n;
+  const by = new Map();
+  for (const x of parts || []) {
+    if (!x || !x.federation) continue;
+    const f = p16(x.federation), a = by.get(f) || { own: 0n, merging: 0n };
+    const merging = sat(x.merging), all = sat(x.sats);
+    a.merging += merging; a.own += all > merging ? all - merging : 0n;
+    by.set(f, a);
+  }
+  const at = by.get(here) || { own: 0n, merging: 0n };
+  const others = [...by.entries()].filter(([f]) => f !== here);
+  const elsewhere = others.reduce((t, [, a]) => t + a.own + a.merging, 0n);
+  const mergeFirst = [...(at.merging > 0n ? [here] : []), ...others.filter(([, a]) => a.merging > 0n).map(([f]) => f)];
+  const swapFrom = others.filter(([, a]) => a.own + a.merging > 0n).sort((x, y) => (y[1].own + y[1].merging > x[1].own + x[1].merging ? 1 : -1)).map(([f]) => f);
+  const coveredBy = at.own >= need ? 'here' : at.own + at.merging >= need ? 'merge' : at.own + at.merging + elsewhere >= need ? 'swap' : null;
+  return { ownHere: Number(at.own / 1000n), coveredBy, mergeFirst, swapFrom, askEarly: coveredBy === null };
+}
+
+/** NOT SPENDABLE YET (the same playtest): this phrase's wallet in the round's federation short of the round, and what is still merging in would
+ *  fill the gap - said by name instead of a deposit request. `mergingSat` the page's merging total in sat. */
+function notSpendableYet({ haveMsat, mergingSat, needMsat }) {
+  const have = BigInt(haveMsat || 0), need = BigInt(needMsat || 0), merging = BigInt(Math.max(0, Math.floor(Number(mergingSat || 0)))) * 1000n;
+  return have < need && merging > 0n && have + merging >= need;
+}
+
 const DEPOSIT_INSUFFICIENT = 'Not enough sats in your player wallet to play this round. Deposit with Lightning?';
 /** The deposit tabs for a round of `stakeMsat`: n rounds at n x the stake, then Custom (an amount the player names). */
 function depositChoices(stakeMsat, sizeOf = null) {
@@ -22597,6 +22638,8 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
     const bps = shareOf.get(a.key);
     counted.push({ key: a.key, accept: a.accept, atHeight: a.atHeight, bps });
     if (a.accept) acceptBps += bps; else denyBps += bps;
+    // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (the owner 2026-10-22, on a proposal its proposer had denied: "This is no longer open")
+    if (!a.accept && a.key === toHex(p.proposer)) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'withdrawn by its proposer' });
     if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
     if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
   }
@@ -27395,7 +27438,9 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
   const matures = maturityStands(advert, height, network);
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
-  if (bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
+  // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
+  // Asked per output here, a node's 32,000 top-up was refused where every seat counted it, and no paid round could be joined (#543).
+  if (!sumsBonds(contract) && bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
   // ROLES AND VERSION OFF THE NEWEST ADVERTISEMENT (2026.0.2): a bond whose update announces this round's
   // version counts - asked of its first advertisement, every node that announced version 2 by update was refused (the seats'
   // census had the same order, fixed in e8f039d8). The update, when there is one, is asked below.
@@ -27413,12 +27458,16 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
     if (!read.ok) return { ok: false, why: read.why };
     const uHeight = provenAt(headers, firstHeight, read.txid, u);
     if (uHeight === null || uHeight < height || uHeight > contract.censusHeight) return { ok: false, why: 'its update is not between the bond and the census height' };
-    if (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout) return { ok: false, why: 'its update names another bond' };
+    // FROM PROTOCOL 19 THE NODE'S NEWEST UPDATE DECIDES FOR EACH OF ITS OUTPUTS (kanban #544, census.js newestPerNode): a seat hands
+    // an output the update of another output of the same node - signed by this bond's key, so it is this node's (kanban #543)
+    if (!sumsBonds(contract) && (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout)) return { ok: false, why: 'its update names another bond' };
     if (!sameCC(read.nodePubkey, entry.pubkey) || !sig(read.signature, read.advertId, entry.pubkey)) return { ok: false, why: 'its update is not signed by the bond\'s key' };
     const roles = read.advert.roles || [];
     if (!roles.length || !(read.advert.protocolVersions || []).includes(contract.protocolVersion))
       return { ok: false, why: 'its newest update declares no role or not this round\'s version' };
-    entry = { ...entry, advert: read.advert, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
+    // each output keeps its own maturity and template (census.js ownMaturity)
+    const advertNow = sumsBonds(contract) ? { ...read.advert, bondMaturityHeight: entry.advert.bondMaturityHeight, bondScriptTemplateVersion: entry.advert.bondScriptTemplateVersion } : read.advert;
+    entry = { ...entry, advert: advertNow, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
   }
   return { ok: true, entry };
 }
@@ -27434,6 +27483,11 @@ function censusFromEvidence(evidence, { contract, headers, firstHeight, bond, ve
     const got = entryFromEvidence(item, { contract, headers, firstHeight, bond, verify });
     if (got.ok) entries.push(got.entry); else refused.push({ i, why: got.why });
   });
+  if (sumsBonds(contract)) {
+    const f = floorOnSums(entries, contract);
+    entries.splice(0, entries.length, ...f.kept);
+    refused.push(...f.out.map((e) => ({ i: -1, why: e.why })));
+  }
   let census;
   try { census = censusRootOf(entries, { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations }); }
   catch (e) { return { ok: false, why: `that census cannot be committed: ${e.message}`, refused }; }
@@ -34227,7 +34281,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,

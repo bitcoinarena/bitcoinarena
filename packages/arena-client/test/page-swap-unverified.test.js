@@ -12,13 +12,14 @@ const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 const cut = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, from); const b = HTML.indexOf(to, a); assert.ok(b > a, to); return HTML.slice(a, b + to.length); };
 const R = '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', S = '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98';
 
-test('no deposit asked at the press when another federation of the player holds the stake', () => {
-  const src = cut('      const roundFedHex = ', 'const coveredElsewhere = elsewhereSats * 1000 >= Number(named.round.stakeMsat || 0);');
-  const run = (parts, stakeMsat) => new Function('window', 'named', 'console', src + '; return coveredElsewhere;')(
-    { ARENA_WALLET_BALANCE: { parts } }, { round: { federationId: Buffer.from(R, 'hex'), stakeMsat } }, { log: () => {} });
+test('no deposit asked at the press when another federation of the player holds the stake', async () => {
+  const { joinFundingPlan } = await import('../src/page-lock.js');
+  const src = cut('      const roundFedHex = ', 'const coveredElsewhere = !pressPlan.askEarly;');
+  const run = (parts, stakeMsat) => new Function('window', 'named', 'console', 'ARENACLIENT', src + '; return coveredElsewhere;')(
+    { ARENA_WALLET_BALANCE: { parts } }, { round: { federationId: Buffer.from(R, 'hex'), stakeMsat } }, { log: () => {} }, { joinFundingPlan });
   assert.equal(run([{ federation: R, sats: 0 }, { federation: S, sats: 200 }], 100000n), true, '200 sat in 4dc88be7 cover a 100 sat stake');
   assert.equal(run([{ federation: R, sats: 0 }, { federation: S, sats: 50 }], 100000n), false, '50 sat do not: the deposit is asked');
-  assert.equal(run([{ federation: R, sats: 500 }], 100000n), false, 'the round\'s own wallet is not "elsewhere"');
+  assert.equal(run([{ federation: R, sats: 500 }], 100000n), true, 'the round\'s own wallet pays it: no deposit either (2026-10-22)');
   assert.equal(run([], 100000n), false);
 });
 
