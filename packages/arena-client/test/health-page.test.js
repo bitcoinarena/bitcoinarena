@@ -120,5 +120,10 @@ test('Waiting for a founding: the guardian-capable nodes free of an OPEN federat
   // only the nodes online now and free by the seats' count (the owner 2026-10-22): a2 answers but its operator guards Federation 2, a4 is offline
   assert.deepEqual(t.head, ['Node key', 'Address', 'Bond (sat)', 'Ready', 'This founding']);
   assert.deepEqual(t.rows.map((r) => [r.cells[0].t, r.cells[3].t, r.cells[4].t]), [['a1a1a1a1a1a1', 'ready', 'seated 1 · code ✓']]);
-  assert.equal(t.foot, "the seats' count at 157,298: 13 free operators (an operator may run several nodes) · not shown: 1 offline, 1 guarding an OPEN federation (or one no seat holds a record of)");
+  assert.equal(t.foot, "the seats' count at 157,298: 13 free operators (an operator may run several nodes) · not shown: 1 not reachable from this page (offline, or on a private address), 1 guarding an OPEN federation (or one no seat holds a record of)");
+  // no seat named its cohort: nothing is guessed
+  drawn.length = 0;
+  paint(nodes.map((n) => ({ ...n, found: n.found && { ok: true, body: { ...n.found.body, ready: { ...n.found.body.ready, cohort: null } } } })), [{ federation: 'bb'.repeat(32), status: 'OPEN' }]);
+  assert.equal(drawn.find((d) => d[0] === '#founding-facts')[2].items[0][1], 'no seat has counted yet');
+  assert.deepEqual(drawn.find((d) => d[0] === 'founding')[2].rows, []);
 });
