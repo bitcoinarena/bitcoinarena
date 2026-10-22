@@ -111,3 +111,20 @@ test('the newest advertisement over all a node\'s outputs decides: an update bea
   const old = { ...u, height: 110 };
   assert.equal(newestPerNode([e1, e2], new Map([[key(e1), old]])).values().next().value.own, e2);
 });
+
+test('the client counts a node by its sum too: 50,000 + 32,000 is in its census as in the seats\' (kanban #543)', async () => {
+  const { floorOnSums: f, sumsBonds: s } = await import('../src/census.js');
+  const k = 'ab'.repeat(32);
+  const e = (sats, vout) => ({ pubkey: k, txid: 'cd'.repeat(32), vout, bondSats: BigInt(sats), advert: { nodePubkey: k, operatorId: 'op' } });
+  assert.equal(s({ protocolVersion: 19 }), true);
+  assert.equal(s({ protocolVersion: 18 }), false);
+  const both = f([e(50000, 0), e(32000, 1)], { bondMinSats: 50000n });
+  assert.deepEqual([both.kept.length, both.out.length], [2, 0]);
+  const low = f([e(32000, 1)], { bondMinSats: 50000n });
+  assert.deepEqual([low.kept.length, low.out.length], [0, 1]);
+  assert.match(low.out[0].why, /sum to 32000/);
+  const src = (await import('node:fs')).readFileSync(new URL('../src/client-committee.js', import.meta.url), 'utf8');
+  assert.match(src, /!sumsBonds\(contract\) && bondSats < contract\.bondMinSats/);
+  assert.match(src, /floorOnSums\(entries, contract\)/);
+  assert.match(src, /!sumsBonds\(contract\) && \(!sameCC\(read\.bondTxid, tx\.txid\)/, 'from protocol 19 another output\'s update of the same node counts');
+});
