@@ -129,6 +129,7 @@ import { createEndpointsOf, federationOfDir, configInvite } from './federation-e
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
+import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
@@ -1299,10 +1300,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reserveGuardians = () => {
     const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
     if (!now.ok) return {};
-    const out = {};
-    for (const e of now.entries || []) for (const g of (e.advert && e.advert.guardianOf) || []) {
-      const f = toHex(g.federationId); (out[f] = out[f] || []).push(e);
-    }
+    // one seat per node key: a node with two bonds is two census entries (reserve-members.js, kanban #397)
+    const out = reserveMembersOf(now.entries);
     return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: endpointsOf(es, round.pubkey) }]));
   };
   // A threshold for this many guardian seats, or null: the committee rule's sizes only (7 -> 5, 2 -> 2); a federation of six (a
@@ -7891,7 +7890,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // from here, or two seats' /reserves would ask each other); ?all=1 lists every payment in
         const all = url.searchParams.get('all') === '1';
         const keyOf = new Map(feds.map((f) => [f, reserveKeys.get(f) || null]));
-        const federations = feds.map((fedHex) => {
+        // ONE FEDERATION'S FAULT STAYS ITS OWN (kanban #397, 2026-10-22: a committee refused by its reserve epoch answered 400 for every
+        // federation on all 14 seats): it is listed with why, the others as before
+        const federations = feds.map((fedHex) => { try { return reserveRow(fedHex); } catch (e) { return { federationId: fedHex, key: null, heldMsat: '0', paidIn: [], why: e.message }; } });
+        function reserveRow(fedHex) {
           const nodes = g[fedHex] ? sortedKeys(g[fedHex].members) : (reserveState.get(fedHex) ? reserveState.get(fedHex).members.map(fromHex) : []);
           const needed = reserveNeeded(nodes.length);
           const held = nodes.length && needed !== null ? reserveDkgOf(fedHex).signerNodeFor(nodes) : { ok: false };
@@ -7913,7 +7915,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             epoch: nodes.length ? toHex(reserveEpochId(fromHex(fedHex), nodes)) : null,
             last: st ? { at: new Date(st.at).toISOString(), ok: st.ok, why: st.why, told: st.told, got: st.got } : null,
             reserveKey: keyOf.get(fedHex) ? toHex(keyOf.get(fedHex)) : null, ...reserveFiguresOf(fedHex, keyOf.get(fedHex), all ? Infinity : RESERVES_LAST) };
-        });
+        }
         const totalMsat = String(federations.reduce((t, f) => t + BigInt(f.heldMsat), 0n));
         const paidIn = federations.flatMap((f) => f.paidIn.map((p) => ({ ...p, federationId: f.federationId }))).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, RESERVES_LAST);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
