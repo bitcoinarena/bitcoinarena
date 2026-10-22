@@ -29,22 +29,44 @@ const writeJson = (p, v, mode) => { writeFileSync(`${p}.tmp`, JSON.stringify(v, 
  * protocol set, 0 when not named), `gameOf(roundId)` -> { name, bps } | null (the round's game and this key's share in its set).
  * A donation to a key in both sets is split p : g; a round whose game this seat does not know is counted as unknown.
  */
-export function attributeDonations(rows, { protocolBps = 0, gameOf = () => null } = {}) {
-  let protocol = 0n, unknown = 0n;
+// AN ITEM'S DONATION (item-purchase-seat.js): its round id is 32 zero bytes. Its game: the row's own itemGame (kanban #578), else
+// `itemOf(entryId)` - the purchase this seat kept under that id; without either it counts as unknown, as before
+export const isItemRow = (r) => /^0{64}$/.test(String((r && r.roundId) || ''));
+export function gameOfRow(r, { gameOf = () => null, itemOf = null, gameByName = null } = {}) {
+  if (!isItemRow(r)) return gameOf(String((r && r.roundId) || ''));
+  if (r.itemGame && gameByName) { const g = gameByName(String(r.itemGame)); if (g) return g; }
+  return itemOf ? itemOf(String(r.entryId || '')) : null;
+}
+// THE COUNTS AT ONE PEEK (kanban #578, the owner 2026-10-22: "also display the number of donations for protocol devs and number of ingame
+// items, number of market rounds"; "add the item that is being purchased ... group it by game and item name"): `protocolDonations`, and
+// per game its donations, its distinct rounds (`rounds`; a market's are market rounds, `market: true`), its items bought (`items`) and
+// those items grouped by item (`itemsBy`: [{ item, donations, msat }], the most given first)
+export function attributeDonations(rows, { protocolBps = 0, gameOf = () => null, itemOf = null, gameByName = null } = {}) {
+  let protocol = 0n, unknown = 0n, protocolDonations = 0;
   const games = new Map();
   for (const r of rows || []) {
     const amount = BigInt(r.amountMsat || 0);
-    const g = gameOf(String(r.roundId || ''));
+    const g = gameOfRow(r, { gameOf, itemOf, gameByName });
     if (!g) { unknown += amount; continue; }
     const p = BigInt(protocolBps), q = BigInt(g.bps || 0);
     const toProtocol = p + q > 0n ? (amount * p) / (p + q) : 0n;
     const toGame = p + q > 0n ? amount - toProtocol : 0n;
     protocol += toProtocol;
-    const x = games.get(g.name) || { game: g.name, title: g.title || g.name, msat: 0n, donations: 0 };
-    x.msat += toGame; x.donations += 1; games.set(g.name, x);
+    if (toProtocol > 0n) protocolDonations += 1;
+    const x = games.get(g.name) || { game: g.name, title: g.title || g.name, msat: 0n, donations: 0, market: !!g.market, roundIds: new Set(), items: 0, itemsBy: new Map() };
+    x.msat += toGame; x.donations += 1;
+    if (isItemRow(r)) {
+      x.items += 1;
+      const id = String(r.itemId || (r.item ? String(r.item).split(' · ').pop() : '') || 'an item');
+      const i = x.itemsBy.get(id) || { item: id, donations: 0, msat: 0n }; i.donations += 1; i.msat += toGame; x.itemsBy.set(id, i);
+    } else x.roundIds.add(String(r.roundId || ''));
+    games.set(g.name, x);
     if (p + q === 0n) unknown += amount;
   }
-  return { protocolMsat: String(protocol), games: [...games.values()].map((x) => ({ ...x, msat: String(x.msat) })), unknownMsat: String(unknown) };
+  return { protocolMsat: String(protocol), protocolDonations,
+    games: [...games.values()].map(({ roundIds, itemsBy, ...x }) => ({ ...x, msat: String(x.msat), rounds: roundIds.size,
+      itemsBy: [...itemsBy.values()].sort((a, b) => (b.msat > a.msat ? 1 : b.msat < a.msat ? -1 : b.donations - a.donations)).map((i) => ({ ...i, msat: String(i.msat) })) })),
+    unknownMsat: String(unknown) };
 }
 
 /**
@@ -54,7 +76,7 @@ export function attributeDonations(rows, { protocolBps = 0, gameOf = () => null 
  * verified in, measured from `nowMs`; `days` the last N UTC days one by one. Amounts are msat strings; unknown rounds are kept apart.
  */
 export const PERIODS = Object.freeze(['day', 'week', 'month', 'year', 'all']);
-export function devEarnings(rows, { protocolBps = 0, gameOf = () => null, nowMs = Date.now(), days = 30 } = {}) {
+export function devEarnings(rows, { protocolBps = 0, gameOf = () => null, itemOf = null, gameByName = null, nowMs = Date.now(), days = 30 } = {}) {
   const now = new Date(nowMs);
   const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const starts = { day: dayStart, week: dayStart - ((now.getUTCDay() + 6) % 7) * 86400000,
@@ -71,7 +93,7 @@ export function devEarnings(rows, { protocolBps = 0, gameOf = () => null, nowMs 
   for (const r of rows || []) {
     const amount = BigInt(r.amountMsat || 0);
     const at = Number(r.verifiedMs || r.recordedAt || 0);
-    const g = gameOf(String(r.roundId || ''));
+    const g = gameOfRow(r, { gameOf, itemOf, gameByName });
     const parts = [];
     if (!g) parts.push([null, null, amount]);
     else {

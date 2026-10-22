@@ -11,6 +11,7 @@ import React from 'react';
 /** msat as sat, exact to the msat */
 export const sat = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n; return (f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w) + ' sat'; };
 const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
+const count = (n, word) => `${Number(n).toLocaleString('en-US')} ${word}${Number(n) === 1 ? '' : 's'}`;
 const Row = ({ k, v, sub }) => <div className={'row' + (sub ? ' sub' : '')}><span>{k}</span><b>{v}</b></div>;
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
@@ -93,8 +94,12 @@ export class DevClients extends React.Component {
         <h3>{V.label || V.slug}{managed ? (V.running ? <span className="ok"> · running</span> : <span className="err"> · stopped</span>) : ' · beside this node'}</h3>
         <Row k="Recipient key" v={<span title={V.recipientPk}>{V.recipientPk.slice(0, 16)}…</span>} />
         <Row k="Received" v={`${sat(V.receivedMsat)} · ${V.donations} donation${V.donations === 1 ? '' : 's'}`} />
-        {S ? <><Row k="For the protocol developers" v={sat(S.protocolMsat)} />
-          {(S.games || []).map((g) => <Row key={g.game} k={'For ' + (g.title || g.game)} v={`${sat(g.msat)} · ${g.donations} donation${g.donations === 1 ? '' : 's'}`} />)}
+        {S ? <><Row k="For the protocol developers" v={[sat(S.protocolMsat), S.protocolDonations !== undefined ? count(S.protocolDonations, 'donation') : null].filter(Boolean).join(' · ')} />
+          {(S.games || []).map((g) => <React.Fragment key={g.game}>
+            <Row k={'For ' + (g.title || g.game)} v={[sat(g.msat), count(g.donations, 'donation'), g.rounds ? count(g.rounds, g.market ? 'market round' : 'round') : null,
+              g.items ? count(g.items, 'item') : null].filter(Boolean).join(' · ')} />
+            {(g.itemsBy || []).map((i) => <Row key={i.item} sub k={i.item} v={`${sat(i.msat)} · ${count(i.donations, 'time')}`} />)}
+          </React.Fragment>)}
           {S.unknownMsat && S.unknownMsat !== '0' ? <Row k="Rounds this node no longer holds" v={sat(S.unknownMsat)} /> : null}</> : null}
         <Earnings split={S} />
         {(V.balances || []).filter((b) => BigInt(b.msat || 0) > 0n).map((b) => <Row key={b.federation} k={'Holds in ' + b.federation.slice(0, 12)} v={sat(b.msat)} />)}
@@ -140,9 +145,9 @@ export class DevClients extends React.Component {
           })}
         </div> : null}
         {recent.length ? <div className="card"><h3>Newest donations</h3>
-          <div className="tablewrap"><table className="earn"><thead><tr><th>When (UTC)</th><th>To</th><th>Amount</th><th>Round</th><th>Player</th></tr></thead><tbody>
+          <div className="tablewrap"><table className="earn"><thead><tr><th>When (UTC)</th><th>To</th><th>Amount</th><th>Round or item</th><th>Player</th></tr></thead><tbody>
             {recent.map((d, i) => <tr key={i}><td>{d.atMs ? new Date(d.atMs).toISOString().slice(5, 16).replace('T', ' ') : '?'}</td><td>{d.who}</td><td>{sat(d.amountMsat)}</td>
-              <td title={d.round}>{d.round.slice(0, 10)}…</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
+              <td title={d.item || d.round}>{d.item ? d.item : d.round.slice(0, 10) + '…'}</td><td title={d.player || ''}>{d.player ? d.player.slice(0, 10) + '…' : '–'}</td></tr>)}
           </tbody></table></div><p className="sub">Each donation's full record (player key, round, entry, contract, rate) is kept by its client.</p></div> : null}
         {all.map((V) => <details key={'d-' + (V.slug || 'beside')} open={!!(s.open || {})[V.slug]}><summary>{V.label || V.slug}: details, withdraw{V.managed ? ', remove' : ''}</summary>{this.card(V, V.managed)}</details>)}
         {r.managed ? <details><summary className="sub">Add a dev client</summary><div className="card">

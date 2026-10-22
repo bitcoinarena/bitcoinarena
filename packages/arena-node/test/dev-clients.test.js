@@ -128,3 +128,28 @@ test('a dev key\'s earnings by period: today, this week from Monday, this month,
   assert.deepEqual(e.days.map((d) => d.day), ['2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']);
   assert.deepEqual(e.days.map((d) => d.totalMsat), ['0', '0', '1000', '3000', '0', '0', '3500']);
 });
+
+test('the counts at one peek: protocol donations, rounds or market rounds per game, items grouped by game and item (kanban #578)', async () => {
+  const { attributeDonations } = await import('../src/dev-clients.js');
+  const Z = '0'.repeat(64);
+  const rows = [
+    { roundId: 'a1'.repeat(32), amountMsat: '1000' }, { roundId: 'a1'.repeat(32), amountMsat: '1000' }, { roundId: 'a2'.repeat(32), amountMsat: '1000' },
+    { roundId: 'b1'.repeat(32), amountMsat: '2000' },
+    { roundId: Z, entryId: 'p1', amountMsat: '600', item: 'Tick Tock, Next Block · turbo', itemGame: 'Tick Tock, Next Block', itemId: 'turbo' },
+    { roundId: Z, entryId: 'p2', amountMsat: '600', item: 'Tick Tock, Next Block · turbo', itemGame: 'Tick Tock, Next Block', itemId: 'turbo' },
+    { roundId: Z, entryId: 'p3', amountMsat: '900', item: 'Tick Tock, Next Block · shield', itemGame: 'Tick Tock, Next Block', itemId: 'shield' },
+    { roundId: Z, entryId: 'old', amountMsat: '300' },                     // an older item row without itemGame: found by its purchase
+    { roundId: 'ff'.repeat(32), amountMsat: '50' },                        // a round no game here holds
+  ];
+  const nb = { name: 'nextblock', title: 'Tick Tock, Next Block', bps: 5000, market: false };
+  const ud = { name: 'btc-updown', title: 'Bitcoin Up or Down', bps: 5000, market: true };
+  const gameOf = (rid) => (rid.startsWith('a') ? nb : rid.startsWith('b') ? ud : null);
+  const r = attributeDonations(rows, { protocolBps: 5000, gameOf, gameByName: (n) => (n === 'Tick Tock, Next Block' ? nb : null), itemOf: (id) => (id === 'old' ? nb : null) });
+  assert.equal(r.protocolDonations, 8, 'every donation that paid the protocol part');
+  const g = Object.fromEntries(r.games.map((x) => [x.game, x]));
+  assert.deepEqual([g.nextblock.donations, g.nextblock.rounds, g.nextblock.items, g.nextblock.market], [7, 2, 4, false]);
+  assert.deepEqual([g['btc-updown'].rounds, g['btc-updown'].market, g['btc-updown'].items], [1, true, 0], 'a market counts its market rounds');
+  assert.deepEqual(g.nextblock.itemsBy, [{ item: 'shield', donations: 1, msat: '450' }, { item: 'turbo', donations: 2, msat: '600' }, { item: 'an item', donations: 1, msat: '150' }]
+    .sort((a, b) => Number(b.msat) - Number(a.msat)));
+  assert.equal(r.unknownMsat, '50');
+});
