@@ -4,7 +4,7 @@
 // OPEN federation left out, bond_min_guardian held; nominal drawn and three alternates in order; a no-show replaced by the next.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { drawGuardians, replaceNoShows } from '../src/guardian-founding.js';
+import { drawGuardians, replaceNoShows, FOUNDING_WINDOW, foundingTrigger } from '../src/guardian-founding.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -144,4 +144,11 @@ test('a founding that went void is passed over: the next trigger draws again; a 
   assert.deepEqual([again.kind, again.height], ['cohort', 156960], 'the cohort went void too: it draws again from a later height of its run');
   const none = foundingTrigger({ notices: [notice], capable: capable.slice(0, 2), federationExists: true, voided: [triggerKey(first), 'cohort::156950'] });
   assert.equal(none.ok, false); assert.match(none.why, /went void/);
+});
+
+test('a cohort is drawn again every 6 blocks (the owner 2026-10-22: "every 6 blocks on all instead of 19")', () => {
+  assert.equal(FOUNDING_WINDOW, 5);
+  const capable = Array.from({ length: 30 }, (_, i) => ({ height: 100 + i, operators: 14, free: 12, federations: 2 }));
+  const at = (tip) => foundingTrigger({ capable, federationExists: true, nominal: 10, abandonBlocks: 12, tip, foundingWindow: FOUNDING_WINDOW }).height;
+  assert.deepEqual([at(101), at(106), at(107), at(112), at(113), at(119)], [100, 100, 106, 106, 112, 118]);
 });

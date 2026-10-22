@@ -19,7 +19,8 @@ const entries = keys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/tx',
   advert: { operatorId: `op${i}`, guardianCapable: true, guardianEndpoint: `wss://g${i}` } }));
 const seed = taggedHash('TEST/beacon', Uint8Array.of(1));
 
-function network({ offline = new Set(), done = () => true, stale = new Set(), staleError = 'Local parameters have already been set', freshFails = false } = {}) {
+function network({ offline = new Set(), done = () => true, stale = new Set(), staleError = 'Local parameters have already been set', freshFails = false,
+  count = keys.length } = {}) {
   const log = [];
   const seats = [];
   const fake = (i) => ({
@@ -33,12 +34,12 @@ function network({ offline = new Set(), done = () => true, stale = new Set(), st
     invite: async () => 'fed11invite',
     done: async () => log.some((l) => l[0] === 'dkg' && l[1] === i) && done(i),     // consensus once its DKG ran (unless told otherwise)
   });
-  for (let i = 0; i < keys.length; i++) {
-    seats.push(createFounding({ seed, triggerHeight: 100, entries, nominal: 4, bondMinGuardian: 500000n, foundingWindow: 10,
+  for (let i = 0; i < count; i++) {
+    seats.push(createFounding({ seed, triggerHeight: 100, entries: entries.slice(0, count), nominal: 4, bondMinGuardian: 500000n, foundingWindow: 10,
       ownKey: keys[i].pub, sign: (h) => schnorr.sign(h, keys[i].secret), verify, setup: fake(i),
       post: async (m) => { for (const s of seats) s.take(m); } }));
   }
-  const round = async (tip) => { for (let i = 0; i < seats.length; i++) if (!offline.has(i)) await seats[i].advance(tip); };
+  const round = async (tip) => { const off = typeof offline === 'function' ? offline(tip) : offline; for (let i = 0; i < seats.length; i++) if (!off.has(i)) await seats[i].advance(tip); };
   return { seats, log, round };
 }
 const idx = (hex) => keys.findIndex((k) => toHex(k.pub) === hex);
@@ -115,16 +116,32 @@ test('a replacement that is silent too is replaced a fifth after IT was seated, 
   assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === alt2), 'the DKG runs with the second alternate');
 });
 
-test('more no-shows than alternates: void, no federation from this trigger', async () => {
+test('more no-shows than alternates (the owner 2026-10-22: ten are enough): the late keep their seats to the window\'s end, then void', async () => {
   const probe = network().seats[0].state();
   const silent = new Set([...probe.seated.slice(0, 2).map((x) => x.node), ...probe.alternates].map(idx));
   const n = network({ offline: silent });
   for (const t of [101, 102, 103, 104, 105, 106, 107]) await n.round(t);
+  const mid = n.seats[[...Array(8).keys()].find((i) => !silent.has(i))].state();
+  assert.deepEqual([mid.void, mid.failed], [false, null], 'not void while the window runs');
+  for (const t of [108, 109, 110, 111]) await n.round(t);
   const st = n.seats[[...Array(8).keys()].find((i) => !silent.has(i))].state();
-  assert.match(String(st.failed), /more no-shows than alternates: the founding is drawn again at the next trigger: void/, JSON.stringify({ seated: st.seated.map((x) => [idx(x.node), x.code, x.since]), noShows: st.noShows.map(idx), silent: [...silent] }));
+  assert.match(String(st.failed), /founding window .* passed at 111 without a federation: void/);
   assert.equal(st.void, true);
-  assert.ok(st.noShows.length >= 4, 'two drawn, then the alternates that replaced them');
+  assert.ok(st.noShows.length >= 2 && st.noShows.length <= 5, `replaced only as far as the alternates go: ${st.noShows.length}`);
   assert.ok(!n.log.some((l) => l[0] === 'dkg'));
+});
+
+test('ten are enough (the owner 2026-10-22: "we need 10 nodes not 14"): as many eligible as seats, two late past the fifth - they keep their seats and the federation is founded inside the window', async () => {
+  // the measured 3d30afd4 in small: 4 eligible for 4 seats, no alternates; two seated nodes see the draw only after a burst of blocks
+  const late = new Set([2, 3]);
+  const n = network({ count: 4, offline: (t) => (t < 107 ? late : new Set()) });
+  assert.equal(n.seats[0].state().alternates.length, 0, 'no alternates');
+  for (const t of [101, 102, 103, 104, 105, 106, 107, 108]) await n.round(t);
+  const st = n.seats[0].state();
+  assert.deepEqual([st.void, st.failed, st.noShows.length], [false, null, 0], JSON.stringify(st.failed));
+  assert.equal(n.log.filter((l) => l[0] === 'dkg').length, 4, 'all four start the key generation');
+  await n.round(109);
+  assert.equal(n.seats[0].state().federation, true);
 });
 
 test('the window passes without a federation: void at beacon + founding_window, the next trigger draws again', async () => {
