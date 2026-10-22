@@ -150,5 +150,8 @@ test('a cohort is drawn again every 6 blocks (the owner 2026-10-22: "every 6 blo
   assert.equal(FOUNDING_WINDOW, 5);
   const capable = Array.from({ length: 30 }, (_, i) => ({ height: 100 + i, operators: 14, free: 12, federations: 2 }));
   const at = (tip) => foundingTrigger({ capable, federationExists: true, nominal: 10, abandonBlocks: 12, tip, foundingWindow: FOUNDING_WINDOW }).height;
-  assert.deepEqual([at(101), at(106), at(107), at(112), at(113), at(119)], [100, 100, 106, 106, 112, 118]);
+  assert.deepEqual([at(101), at(103), at(108), at(109), at(115), at(121)], [undefined, 102, 102, 108, 114, 120]);
+  // a seat whose memory of the run begins later names the same draw (installer a: 157,236 against 157,173)
+  const late = capable.slice(5);
+  assert.equal(foundingTrigger({ capable: late, federationExists: true, nominal: 10, abandonBlocks: 12, tip: 115, foundingWindow: FOUNDING_WINDOW }).height, 114);
 });
