@@ -3,8 +3,8 @@
 // LIGHTNING FOR CUSTODY: LND, SET UP BY THE WIZARD ("Custody help: set up LND (create or connect), its wallet and
 // the gateway, test it; or connect an existing LND"). Ruling 2: LND publishes a Windows build itself, so this part runs on all three.
 //
-//   install    LND v0.21.4-beta for this system from its GitHub release, checked against the SHA-256 its manifest names; the
-//              manifest's signature was checked against roasbeef's key from the LND repo (scripts/keys/roasbeef.asc) on 2026-10-18
+//   install    LND v0.21.5-beta.rc1 for this system from its GitHub release, checked against the SHA-256 its manifest names; the
+//              manifest's signature was checked against roasbeef's key from the LND repo (scripts/keys/roasbeef.asc) on 2026-10-22
 //   configure  <home>/lnd/lnd.conf: testnet4 on the node's own Bitcoin Core (RPC polling, its cookie - no ZMQ needed), RPC and REST on
 //              127.0.0.1 only (REST on 10080: 8080 is often taken), peers on 9735, the wallet unlocked from a password file at start
 //   wallet     created from the node's own 24 words (a BIP32 key under its own tag, so one written seed covers it), its password random
@@ -20,14 +20,15 @@ import { execFile } from 'node:child_process';
 import https from 'node:https';
 import { taggedHash } from '../../arena-protocol/src/hash.js';
 
-export const LND_VERSION = 'v0.21.4-beta';
-/** The release files and their SHA-256 (manifest-v0.21.4-beta.txt, signature by roasbeef checked 2026-10-18). */
+export const LND_VERSION = 'v0.21.5-beta.rc1';
+/** The release files and their SHA-256 (manifest-v0.21.5-beta.rc1.txt, signature by roasbeef checked 2026-10-22). kanban #584 (the owner
+ *  2026-10-22): the first LND release built with Go 1.27.3 (CVE-2026-111943, the eMudhra intermediates); 0.21.4 was built with Go 1.27.1. */
 export const LND_FILES = Object.freeze({
-  'linux-x64': { file: 'lnd-linux-amd64-v0.21.4-beta.tar.gz', sha256: 'beffe4949a5e46410d90c0e6d020a1b685468440b0004fc4d59740a6291178fb' },
-  'linux-arm64': { file: 'lnd-linux-arm64-v0.21.4-beta.tar.gz', sha256: 'bc5fc872bf12002e1a1ea42b16a13e2f836c2e2439817f336a323bddf680b708' },
-  'darwin-x64': { file: 'lnd-darwin-amd64-v0.21.4-beta.tar.gz', sha256: '9676ad611e904aa6c2a0d7752bd371e525d7d6b6307305b5423d721700dd9261' },
-  'darwin-arm64': { file: 'lnd-darwin-arm64-v0.21.4-beta.tar.gz', sha256: '68893592bbd1ecc18eaf4911a2206da3e1fcd1b716f575b087f9270cd3829e03' },
-  'win32-x64': { file: 'lnd-windows-amd64-v0.21.4-beta.zip', sha256: 'ddd334677f4eec19891f47b8277aa14a6c845852dcab351efe442fad35f176d2' },
+  'linux-x64': { file: 'lnd-linux-amd64-v0.21.5-beta.rc1.tar.gz', sha256: '258dcfa10342401bf6e443cc448c8846b64a783bff798ec2ddbb72e67f67713d' },
+  'linux-arm64': { file: 'lnd-linux-arm64-v0.21.5-beta.rc1.tar.gz', sha256: '4619dd4f00ecd47c5d001a755a077fdef291ebad94edac9e7089be00df455cee' },
+  'darwin-x64': { file: 'lnd-darwin-amd64-v0.21.5-beta.rc1.tar.gz', sha256: 'f0444e5c5d4ed39f0bb0e0b711f7109dca236ce4c8a793ba55e90d22ec8668f6' },
+  'darwin-arm64': { file: 'lnd-darwin-arm64-v0.21.5-beta.rc1.tar.gz', sha256: 'e40ecc179ae8b4c2407945ed211138962c510580a367db5e4bea67dc0c53c3ad' },
+  'win32-x64': { file: 'lnd-windows-amd64-v0.21.5-beta.rc1.zip', sha256: '46f4a3ff311ada65f11939d43609a2fbc8b59ff56eebfd5baab3c567a14049b3' },
 });
 /** LND's ports on this machine. */
 export const LND_PORTS = Object.freeze({ rpc: port(10009), rest: port(10080), p2p: port(9735) });   // + ARENA_PORT_OFFSET (instance.js)

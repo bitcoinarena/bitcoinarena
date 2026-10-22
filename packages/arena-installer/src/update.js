@@ -28,6 +28,7 @@ import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
 import { quickTunnelUrl } from './reach.js';
 import { gatewayMetricsOwn } from './gateway.js';
+import { installLnd, LND_FILES } from './lnd.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'arena.conf', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
@@ -35,6 +36,25 @@ export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm'
 
 /** Is it inside a market seating window now (minutes 11-14 of a quarter hour)? The update waits it out. */
 export const inSeatingWindow = (nowMs = Date.now()) => { const q = Math.floor(nowMs / 1000) % 900; return q >= 660 && q < 840; };
+
+/**
+ * THE NODE'S LND, WHEN IT IS NOT THE ONE THIS RELEASE PINS (kanban #584, the owner 2026-10-22: "tu die releases und unsere Implementierung
+ * updaten" - LND built with Go 1.27.3, CVE-2026-111943): LND lives beside the releases (<home>/lnd-bin/<its release file>), so moving a
+ * service's release paths never moved it. `texts` the service files' texts. Answers { index, from, to, swap(text) } or null.
+ */
+export function staleLnd(texts, { platform = process.platform, arch = process.arch } = {}) {
+  const pin = LND_FILES[`${platform}-${arch}`];
+  if (!pin) return null;
+  const want = pin.file.replace(/\.(tar\.gz|zip)$/, '');
+  const re = /lnd-bin([\\/])(lnd-[A-Za-z0-9.-]+?)[\\/]lnd(?:\.exe)?(?![A-Za-z0-9.-])/;
+  for (let i = 0; i < texts.length; i++) {
+    const m = re.exec(texts[i]);
+    if (!m || m[2] === want) continue;
+    const [from, to] = [`lnd-bin${m[1]}${m[2]}${m[1]}`, `lnd-bin${m[1]}${want}${m[1]}`];
+    return { index: i, from: m[2], to: want, swap: (t) => t.split(from).join(to) };
+  }
+  return null;
+}
 
 /** The release a unit file runs: its WorkingDirectory less packages/arena-node. */
 export function releaseOfUnit(text) {
@@ -289,7 +309,8 @@ export async function versionAnswers({ port, fetcher = fetch, want, waitMs = 900
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
-  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps }) {
+  quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps, arch = process.arch,
+  lndKit = { installLnd } }) {
   // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
   // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
   waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
@@ -307,6 +328,14 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // node running as it is
   const apps = await fetchApps({ release: newRelease, home, fetcher });
   if (!apps.ok) return { ok: false, why: `the new release's apps: ${apps.why}` };
+  // and the LND this release pins, fetched and checked before anything is stopped (staleLnd): its service then names it
+  const svcFiles = svc.files();
+  const lnd = staleLnd(svcFiles.map((f) => readFileSync(f, 'utf8')), { platform, arch });
+  const lndFile = lnd ? svcFiles[lnd.index] : null;
+  if (lnd) {
+    const got = await lndKit.installLnd({ home, platform, arch, fetcher });
+    if (!got.ok) return { ok: false, why: `the pinned LND (${lnd.to}): ${got.why}` };
+  }
   const before = await waitHealthy({ port, fetcher, waitMs: 10000, everyMs: 500 });
   // the node's services that run from the old release: the seat, and every other one naming it - or naming an OLDER release beside it
   // (measured 2026-10-19 in the Windows VM: arena-custody.cmd still named rc.25 after updates to 0.1.1, 2026.1.0 and 2026.1.1 - each update
@@ -314,7 +343,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const releasesDir = from.replace(/[\\/][^\\/]+[\\/]?$/, '');
   const olderRe = new RegExp(`${releasesDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]arena-node-[^\\\\/"'\\s]+`, 'g');
   const oldersIn = (t) => [...new Set(t.match(olderRe) || [])].filter((x) => x !== from && x !== newRelease && !String(newRelease).startsWith(x));
-  const moving = svc.files().filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || t.includes(from) || oldersIn(t).length > 0; });
+  const moving = svcFiles.filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || f === lndFile || t.includes(from) || oldersIn(t).length > 0; });
   const oldTexts = new Map(moving.map((f) => [f, readFileSync(f, 'utf8')]));
 
   while (inSeatingWindow(nowMs())) await sleep(5000);
@@ -352,9 +381,10 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
   }
   for (const f of moving) {
-    const text = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
+    const moved = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
         : oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease));
+    const text = f === lndFile ? lnd.swap(moved) : moved;
     // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
     writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
   }
@@ -427,7 +457,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       if (name === fromFolder || name === newFolder) continue;
       try { rmSync(d, { recursive: true, force: true }); pruned.push(name); } catch { /* a file still open (Windows): kept, the next update tries again */ }
     }
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), command, migrated: migrating, peerPortsLocal: local, updater, pruned,
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), lnd: lnd ? lnd.to : null, command, migrated: migrating, peerPortsLocal: local, updater, pruned,
       ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}), ...(updaterBack ? { updaterBack } : {}),
       ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
