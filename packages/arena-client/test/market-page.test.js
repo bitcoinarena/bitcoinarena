@@ -200,6 +200,21 @@ test('a pick is placed once the first seat holds its entry and locks; a slow sea
   for (const d of ['seat-slow/entry', 'seat-slow/lock', 'seat-slow/fee-lock']) assert.ok(done.includes(d), `${d} handed in the background`);
 });
 
+// NEVER "PLACING …" FOR GOOD (playtest 2026-10-23 ~21:00Z, "I placed an order that never finishes"): a lock the federation never decides on
+// ends the order refused by name after acceptWaitMs, and no lock is handed for it
+test('an order whose lock the federation never accepts is refused after acceptWaitMs, not waited on forever', async () => {
+  const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
+  const entry = { ...entryFor(round, { seed: b32(3), curve: (await import('../src/page-curve.js')).pageCurve, random: () => b32(5), pick: 0 }), roundId: ROUND_ID, sessionPubkey: b32(6) };
+  const done = [];
+  const fetcher = async (url) => { const u = new URL(url); done.push(u.pathname); return { status: 201, ok: true, text: async () => '' }; };
+  const lock = { fields: { paymentImage: { kind: 'point', bytes: new Uint8Array(33).fill(2) }, amountMsat: 900000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 },
+    accepted: new Promise(() => {}), acceptWaitMs: 50 };
+  const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-a', 'http://seat-b'], fetcher });
+  assert.equal(sent.ok, false);
+  assert.match(sent.why, /not accepted: the federation did not decide on it within/);
+  assert.deepEqual(done, ['/entry', '/entry'], 'no lock handed for it');
+});
+
 test('picked: the join of a pick ends \'picked\' before the session\'s globals - and Unity adopts only joining/joined', () => {
   const then = PAGE.indexOf("if (window.ARENA_PICKED && window.ARENA_PICKED.round === id) {");
   const entryBranch = PAGE.indexOf("if (window.ARENA_ENTRY && Number(window.ARENA_ENTRY.joinTick) > 0", then);

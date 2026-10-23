@@ -2375,7 +2375,7 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
   // the answers keep the nodes' order.
   const said = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body, signal: AbortSignal.timeout(30000) });   // a seat that never answers is a seat that refused
       return { node, status: r.status, why: (await r.text()).trim() };
     } catch (e) {
       return { node, status: 0, why: e.message };
