@@ -809,13 +809,23 @@
     /* ONE PLACE AND ONE LOOK FOR EVERY OVERLAY (2026-10-19: "the overlays (balance, deposit, withdraw, ...) should all open
        at the same starting position. they also should look alike. title (left aligned, amber), an 'x' to close (missing at balance), no extra
        close button (balance)"): under the header, centred, 420 px wide, scrolling within the window */
-    #arena-bal-split, #arena-withdraw, #arena-deposit.deposit-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); bottom: auto; right: auto;
+    #arena-move { display: none; z-index: 44; font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+    #arena-move.show { display: block; }
+    #arena-move .mv-row { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; color: #9aa4b1; font-size: 13px; }
+    #arena-move select, #arena-move input { padding: 9px 10px; border-radius: 6px; border: 1px solid #3a4250; background: #0d1014; color: #e8eaed; font: 14px system-ui, sans-serif; }
+    #arena-move .mv-amt { display: flex; gap: 6px; } #arena-move .mv-amt input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
+    #arena-move .mv-all { flex: none; padding: 0 12px; border-radius: 6px; border: 1px solid #3a4250; background: #1a2029; color: #e8eaed; cursor: pointer; }
+    #arena-move .muted { color: #9aa4b1; font-size: 13px; }
+    #arena-move #arena-mv-go { margin-top: 10px; width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #f7931a; background: #f7931a; color: #1a1000; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+    #arena-move #arena-mv-go:disabled { opacity: .45; cursor: default; }
+    #arena-move .mv-status { margin-top: 8px; font-size: 13px; } #arena-move .mv-status.ok { color: #3fb950; } #arena-move .mv-status.bad { color: #f0b72f; } #arena-move .mv-status.busy { color: #9aa4b1; }
+    #arena-bal-split, #arena-withdraw, #arena-move, #arena-deposit.deposit-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); bottom: auto; right: auto;
       transform: translateX(-50%); width: min(92vw, 420px); max-width: none; max-height: calc(100vh - 70px - env(safe-area-inset-top, 0px)); overflow-y: auto; box-sizing: border-box;
       background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
-    #arena-bal-split .ov-head, #arena-withdraw .wd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
-    #arena-bal-split h4, #arena-withdraw h3, #arena-deposit .dep-title { margin: 0; color: #f7931a; text-align: left; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; }
+    #arena-bal-split .ov-head, #arena-withdraw .wd-head, #arena-move .wd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+    #arena-bal-split h4, #arena-withdraw h3, #arena-move h3, #arena-deposit .dep-title { margin: 0; color: #f7931a; text-align: left; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; }
     #arena-deposit .dep-title { margin: 0 0 8px; padding-right: 28px; }
-    #arena-bal-split .ov-close, #arena-withdraw .wd-close, #arena-deposit .dep-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1;
+    #arena-bal-split .ov-close, #arena-withdraw .wd-close, #arena-move .wd-close, #arena-deposit .dep-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1;
       cursor: pointer; padding: 2px 6px; margin: 0; width: auto; }
     #arena-bal-split .ov-close:hover, #arena-withdraw .wd-close:hover, #arena-deposit .dep-close:hover { color: #f7931a; }
     /* THE GAME'S BAR AND THE HEADER OVER THE LEADERBOARD DRAW THEIR BUTTONS AT ONE PLACE ("when clicking on the leaderboard,
@@ -882,7 +892,7 @@
        overlay is open, selecting a game loads the game without closing the overlay first"): balance, deposit and withdraw lie on it */
     #arena-ov-scrim { display: none; position: fixed; left: 0; right: 0; top: calc(41px + env(safe-area-inset-top, 0px));
       bottom: calc(30px + env(safe-area-inset-bottom, 0px)); z-index: 41; background: rgba(170, 182, 200, .26); }   /* under the Wallet (42) and the overlays (44), over Settings (40); kanban #558 */
-    body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
+    body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-move.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
     body:has(#arena-bal-split:not([style*="none"]):not(:empty)) #arena-ov-scrim { display: block; }
     body:has(#arena-wallet-modal:not([style*="none"])) #arena-ov-scrim { display: block; }
     body.arena-clean #arena-ov-scrim { display: none !important; }
@@ -1312,6 +1322,8 @@
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
+  <!-- THE MOVE WINDOW (kanban #598): from one federation to another, an amount - all of it unless changed - drawn by React (MovePanel) -->
+  <div id="arena-move" role="dialog" aria-modal="true" aria-labelledby="arena-move-title"><div class="wd-head"><h3 id="arena-move-title">Move between federations</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="mv-body"></div></div>
   <div id="arena-ov-scrim" aria-hidden="true"></div>
   <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
   <!-- THE WALLET (kanban #558, the owner 2026-10-20: "Combine Wallet view in "Settings" and "Balance click" into one view when clicking the balance,
@@ -4323,8 +4335,36 @@
     for (const [id, which] of [['arena-deposit-go', 'deposit'], ['arena-move-go', 'move'],
       ['arena-withdraw-lobby', 'withdraw']]) {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('click', () => { which === 'deposit' ? openMoney(which) : openMoney(which, undefined, { overlay: true }); });
+      if (el) el.addEventListener('click', () => { which === 'deposit' ? openMoney(which) : which === 'move' ? openMove() : openMoney(which, undefined, { overlay: true }); });
     }
+    // MOVE OPENS ITS WINDOW (kanban #598, the owner 2026-10-23: "kein Bug! Move funktioniert nicht, da soll ein Fenster aufgehen: Move from Federation X
+    // to Federation Y mit einem amount, standardmässig alles von der Federation"): From - every federation holding this wallet's funds, with its
+    // sats -, To - every other OPEN one, from the records this page verified (their invites) -, the amount filled with all From can send
+    function openMove() {
+      const say = (t) => window.ArenaText.say(document.getElementById('arena-money-why'), t);
+      const box = document.getElementById('arena-move'); if (!box) return;
+      const seed = typeof walletSeed === 'function' ? walletSeed() : null;
+      if (!seed) { say('Create your wallet first: Settings \u2192 Wallet.'); return; }
+      const bal = window.ARENA_WALLET_BALANCE, parts = bal && Array.isArray(bal.parts) ? bal.parts : [];
+      const loads = window.ARENA_FED_LOADS || new Map();
+      const ids = [...new Set([...parts.map((p) => String(p.federation).toLowerCase()), ...[...loads.keys()].map((k) => String(k).toLowerCase())])];
+      const feds = ids.map((id) => {
+        const st = loads.get(id) || {}, p = parts.find((x) => String(x.federation).toLowerCase() === id), sats = p ? Number(p.sats) || 0 : 0;
+        return { id, sats, invite: st.invite || null, label: 'Federation ' + id.slice(0, 8) + (st.status && st.status !== 'OPEN' ? ' (' + st.status.toLowerCase() + ')' : ''),
+          from: sats > 0 && !!st.invite && st.status !== 'HALTED', to: !!st.invite && st.status === 'OPEN' && !(st.allows && st.allows.deposit === false) };
+      });
+      const inviteOf = (id) => (feds.find((f) => f.id === id) || {}).invite;
+      const lockClient = async () => { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); return wasm.LockClient; };
+      say('');
+      box.classList.add('show');
+      box.querySelector('.wd-close').onclick = () => { box.classList.remove('show'); };
+      window.ArenaMove.open(box.querySelector('.mv-body'), { feds,
+        canOf: async (id) => ARENACLIENT.moveCanMsat({ from: { federation: id, invite: inviteOf(id) }, seed, LockClient: await lockClient(), storage: vault() }),
+        move: async ({ from, to, amountMsat, onStep }) => ARENACLIENT.movePlayerWallet({ from: { federation: from, invite: inviteOf(from) }, to: { federation: to, invite: inviteOf(to) },
+          seed, LockClient: await lockClient(), storage: vault(), amountMsat, gateways: window.ARENA_LEDGER_GATEWAYS || [], onState: onStep }),
+        onMoved: () => { paintHistory(); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); else if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+    }
+    window.ARENA_OPEN_MOVE = openMove;
     // THE WALLET BAR OVER A GAME'S OWN CLIENT: the balance this wallet reads, and the page's one Deposit and
     // Withdraw - a client frame covers the lobby's strip and its gear, so without this a market or Rock Paper Scissors
     // player could only ever deposit by joining. Painted while the bar is up; why-not lines under it, for 8 s; a wait ("…")
@@ -4571,7 +4611,7 @@
           // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
           // entered -1,000 sat" in 337ae01a, where they had arrived)
           : r.kind === 'moved-in' ? `Moved in from federation ${String(r.from || '').slice(0, 8)}`
-          : r.kind === 'moved-out' ? `Moved to federation ${String(r.to || '').slice(0, 8)}`
+          : r.kind === 'moved-out' ? `Moved to federation ${String(r.to || '').slice(0, 8)}${r.feeMsat && r.feeMsat !== '0' ? ' (fee ' + sat(r.feeMsat) + ')' : ''}`
           : r.kind === 'swapped-in' ? `Swapped in from federation ${String(r.from || '').slice(0, 8)}`
           : r.kind === 'swapped-out' ? `Swapped to federation ${String(r.to || '').slice(0, 8)}${r.feeMsat && r.feeMsat !== '0' ? ' (fee ' + sat(r.feeMsat) + ')' : ''}`
           // ENTERED AS THE LOCK'S OWN RECORD SAYS (kanban #593: the row is written when the lock is made, entry null, and was never

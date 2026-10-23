@@ -5,7 +5,7 @@
 // fee measured off the paying balance and both sides in the history; declined, nothing moves.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { swapQuote, swapForRound, swapGatewayPairs, SWAP_PAIRS_MAX } from '../src/page-lock.js';
+import { swapQuote, swapForRound, swapGatewayPairs, SWAP_PAIRS_MAX, movePlayerWallet, moveCanMsat } from '../src/page-lock.js';
 
 // a wallet: balance in msat, a gateway fee rule, receive/awaitReceive/withdraw as the lock client answers them
 function wallet(balanceMsat, rule) {
@@ -155,4 +155,31 @@ test('a Refunded payment tries the next pair and the swap lands; a payment in an
   const r3 = await swapForRound({ from: from3, to: to3, amountMsat: 52000n });
   assert.deepEqual([r3.ok, r3.tried.length, from3.balance], [false, SWAP_PAIRS_MAX, 500000n]);
   assert.match(r3.why, /the money is back there \(6 gateway pairs tried\)/);
+});
+
+// THE PLAYER'S OWN MOVE (kanban #598, the owner 2026-10-23: "Move from Federation X to Federation Y mit einem amount, standardmässig alles von
+// der Federation"): both wallets of the seed opened by their invites; unnamed, all that X can send after the fees; rows moved-out / moved-in
+test('Move: all of federation X by default, or an amount; never more than X can send; two different federations', async () => {
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
+  const make = () => { const x = wallet(500000n, { base: 1000, ppm: 0 }), y = wallet(0n, { base: 0, ppm: 0 }); x.target = { payIn: () => {} }; return { x, y }; };
+  let w = make();
+  const joined = [];
+  const LockClient = { join: async (invite, fed) => { joined.push(invite); return invite === 'inviteA' ? w.x : w.y; }, lockAllowanceMsat: () => '0', federationIdOf: (i) => (i === 'inviteA' ? A : B) };
+  const ask = { from: { federation: A, invite: 'inviteA' }, to: { federation: B, invite: 'inviteB' }, seed: new Uint8Array(32).fill(7), LockClient };
+  assert.equal(await moveCanMsat({ ...ask, storage: ledger() }), 495000n, 'what X can send after the fees');
+  let storage = ledger();
+  const all = await movePlayerWallet({ ...ask, storage });
+  assert.deepEqual([all.ok, all.movedMsat, all.feeMsat, all.canMsat], [true, 495000n, 1000n, 495000n], 'all of it, unnamed');
+  assert.equal(w.y.balance, 495000n);
+  const rows = [...storage.m.values()].join(' ');
+  assert.match(rows, /"kind":"moved-out"[^}]*"to":"b{64}"/); assert.match(rows, /"kind":"moved-in"[^}]*"from":"a{64}"/);
+  w = make(); storage = ledger();
+  const part = await movePlayerWallet({ ...ask, storage, amountMsat: 100000n });
+  assert.deepEqual([part.ok, part.movedMsat, w.y.balance], [true, 100000n, 100000n], 'the amount chosen');
+  w = make();
+  const tooMuch = await movePlayerWallet({ ...ask, storage: ledger(), amountMsat: 600000n });
+  assert.equal(tooMuch.ok, false); assert.match(tooMuch.why, /can send 495 sat after the fees, less than the 600 sat asked/);
+  assert.equal(w.x.paid.length, 0, 'something was sent for a refused move');
+  const same = await movePlayerWallet({ ...ask, to: ask.from, storage: ledger() });
+  assert.deepEqual([same.ok, same.why], [false, 'choose two different federations']);
 });

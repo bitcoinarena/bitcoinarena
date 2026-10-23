@@ -20,6 +20,7 @@ import { SeedModal } from './SeedModal.jsx';
 import { WalletStart } from './WalletStart.jsx';
 import { DepositModal, DepositWait } from './DepositModal.jsx';
 import { WithdrawPanel } from './WithdrawPanel.jsx';
+import { MovePanel } from './MovePanel.jsx';
 import { ShopItems } from './ShopItems.jsx';
 import { DonateBox } from './DonateBox.jsx';
 import { OtherWallets } from './OtherWallets.jsx';
@@ -93,6 +94,9 @@ if (typeof window !== 'undefined') window.ArenaDeposit = { open: openDeposit, wa
 // THE WITHDRAW PANEL (the page's openWithdraw hands it the balance and its rules): a fresh one each time it is opened
 export function openWithdraw(host, props) { into(host, <WithdrawPanel key={Date.now()} {...props} />); }
 if (typeof window !== 'undefined') window.ArenaWithdraw = { open: openWithdraw };
+// THE MOVE WINDOW (kanban #598: the page's Move hands it the federations and its rules): a fresh one each time it is opened
+export function openMove(host, props) { into(host, <MovePanel key={Date.now()} {...props} />); }
+if (typeof window !== 'undefined') window.ArenaMove = { open: openMove };
 // THE SHOP'S ITEMS (the page's openShop hands them over with its rules), drawn at once into the sheet's list
 if (typeof window !== 'undefined') window.ArenaShop = { draw: (host, props) => into(host, <ShopItems {...props} />) };
 // THE DONATE BOX (the page's ARENA_DONATE_OPEN hands it to whom and its rules): a fresh one each time it opens
