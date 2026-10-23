@@ -103,3 +103,21 @@ test('the ledger names what stands, priced: each resting buy\'s outcome, limit a
   const L2 = bookLedger({ batches: [b1, { k: 2, cutoffMs: 2000n, orders: [o('d', NO, 70, 10)] }], feeBps: FEE });
   assert.ok(!L2.levels.buys.some((x) => x.outcome === 0 && x.price === 40000n && x.netMsat === 9900n), 'a filled buy still stands');
 });
+
+// A RESTING SELL IS CANCELLED WITH ITS ORDER (kanban #591): the entry's cancel takes its unfilled sells out of the book, as its
+// buy's rest; what filled - the shares it bought - stays its position, and nothing it sold before is undone
+test('a cancel takes the entry\'s resting sell out of the book; its filled shares stay; another entry\'s sell stands', () => {
+  const b1 = { k: 1, cutoffMs: 1000n, orders: [o('a', YES, 60, 10), o('b', NO, 45, 10)] };
+  const b2 = { k: 2, cutoffMs: 2000n, orders: [], sells: [{ id: id('s1'), entry: id('a'), outcome: YES, price: 90000n, sharesMsat: 5000n },
+    { id: id('s2'), entry: id('b'), outcome: NO, price: 95000n, sharesMsat: 5000n }] };
+  const before = bookLedger({ batches: [b1, b2], feeBps: FEE });
+  assert.deepEqual(before.resting.sells.sort(), [id('s1'), id('s2')].sort(), 'both sells rest: nobody bought at 90c or 95c');
+  const b3 = { k: 3, cutoffMs: 3000n, orders: [], cancels: [id('a')] };
+  const L = bookLedger({ batches: [b1, b2, b3], feeBps: FEE });
+  console.log('  CANCEL:', JSON.stringify({ resting: L.resting.sells.map((x) => x.slice(-2)), sells: L.levels.sells.map((x) => String(x.price)), aUp: String(L.positions.get(id('a')).shares[YES]) }));
+  assert.deepEqual(L.resting.sells, [id('s2')], 'a\'s sell left the book, b\'s stands');
+  assert.deepEqual(L.levels.sells.map((x) => String(x.price)), ['95000']);
+  assert.equal(L.positions.get(id('a')).shares[YES], before.positions.get(id('a')).shares[YES], 'a keeps the shares it bought');
+  assert.equal(L.positions.get(id('a')).cancelled, true);
+  assert.deepEqual(L.refused, []);
+});
