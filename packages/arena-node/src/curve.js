@@ -37,11 +37,19 @@ export const messageCurve = {
   taprootOutputKey: (key33) => { const x = key33.slice(1); return tweakPoint(x, tapTweak(x, new Uint8Array(0))).outputKey; },
 };
 
-/** BIP-327's sum: Q = sum a_i * P_i, each key lifted from its x-only form. */
+/**
+ * BIP-327's sum: Q = sum a_i * P_i, each key lifted from its x-only form.
+ *
+ * EVERY TERM IS PUBLIC - bond and arbitration keys, KeyAgg coefficients hashed from them - so the variable-time multiplyUnsafe
+ * is used, and a coefficient of 1 (BIP-327's second key) is no multiplication (kanban #587, measured 2026-10-23: aggregating bond
+ * keys for the census was 10.6 % of an idle seat's main thread; 2 keys 2.44 ms -> 0.57 ms, the same key on 300 of 300 inputs).
+ */
 export const combine = (terms) => {
   let sum = null;
   for (const { key, coefficient } of terms) {
-    const point = schnorr.utils.lift_x(big(key)).multiply(big(coefficient));
+    const k = big(coefficient);
+    const lifted = schnorr.utils.lift_x(big(key));
+    const point = k === 1n ? lifted : lifted.multiplyUnsafe(k);
     sum = sum === null ? point : sum.add(point);
   }
   return schnorr.utils.pointToBytes(sum);
