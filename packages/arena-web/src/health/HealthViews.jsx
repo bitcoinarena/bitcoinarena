@@ -152,7 +152,7 @@ export function machinesView(nodes) {
   for (const n of nodes) {
     const m = n.version && n.version.ok ? n.version.body.machine : null;
     if (!m || !m.id) { if (n.version && n.version.ok) unnamed++; continue; }
-    const g = by.get(m.id) || { id: m.id, name: m.name || null, load: m.load || [], cores: m.cores || null, nodes: [], total: 0, month: 0 };
+    const g = by.get(m.id) || { id: m.id, name: m.name || null, os: m.os || null, load: m.load || [], cores: m.cores || null, nodes: [], total: 0, month: 0 };
     if (!g.name && m.name) g.name = m.name;
     const e = nodeEarnings(n);
     if (e) { g.total += e.total; g.month += e.month; }
@@ -176,7 +176,7 @@ export class Machines extends React.Component {
         {view.machines.map((m) => (
           <div key={m.id} className="machine">
             <button type="button" className="fold mhead" onClick={() => this.setState({ open: { ...open, [m.id]: !open[m.id] } })}>
-              <span>{open[m.id] ? '▾' : '▸'}</span><Dot c={m.tone} /><b>{m.title}</b><span className="mono muted">{m.id.slice(0, 8)}</span>
+              <span>{open[m.id] ? '▾' : '▸'}</span><Dot c={m.tone} /><b>{m.title}</b>{m.os ? <span className="tag">{m.os}</span> : null}<span className="mono muted">{m.id.slice(0, 8)}</span>
               <span>{m.nodes.length} node{m.nodes.length === 1 ? '' : 's'}</span>
               <span>load {loadText(m.load)}{m.cores ? <span className="muted"> ({m.cores} cores)</span> : null}</span>
               <span>earned {sat(m.total)} sat</span><span>this month {sat(m.month)} sat</span>

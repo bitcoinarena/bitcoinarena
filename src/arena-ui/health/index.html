@@ -280,19 +280,23 @@
     for (const k of seated.keys()) if (!byKey.has(k)) byKey.set(k, { node: k, endpoint: '', state: 'not listed' });
     const WORD = { setup: ['ready', 'ok'], running: ['its guardian runs a federation', 'warn'], none: ['no guardian in setup', 'bad'], off: ['founding is off on this node', 'bad'],
       'older release': ['an older release (says nothing)', 'warn'], 'no answer': ['no answer', 'bad'], 'not listed': ['not in the seat\'s list', 'warn'] };
-    const rows = [...byKey.values()].map((m) => {
+    // ONLY THE NODES THAT CAN BE FOUNDED (kanban #599, the owner 2026-10-23: "founding is off on this node, an older release, its guardian runs a
+    // federation raus und auch in den zusammenfassungen nicht anzeigen damit es konsistent bleibt"): those three are left out of the rows, and
+    // every number on the card is counted from the rows shown
+    const CANNOT = new Set(['off', 'older release', 'running']);
+    const rows = [...byKey.values()].filter((m) => !CANNOT.has(m.state)).map((m) => {
       const k = String(m.node).toLowerCase(), s = seated.get(k), w = WORD[m.state] || [String(m.state), 'warn'];
       const part = !live ? '' : s ? (coded.has(k) ? { t: `drawn #${s.position + 1} · code ✓`, c: 'ok' } : { t: `drawn #${s.position + 1} · no code yet`, c: 'bad' })
         : (live.alternates || []).map((x) => String(x).toLowerCase()).includes(k) ? 'alternate' : '';
       return { key: k, dot: w[1] === 'ok' ? 'ok' : w[1], ready: m.state === 'setup', drawn: s ? s.position : 99, cells: [{ t: cut(k, 12), c: 'mono' }, String(m.endpoint || '').replace(/^https?:\/\//, ''), { t: w[0], c: w[1] }, part] };
     }).sort((x, y) => (x.drawn - y.drawn) || (Number(y.ready) - Number(x.ready)));
     const nReady = rows.filter((r) => r.ready).length;
-    const drawnCoded = [...seated.keys()].filter((k) => coded.has(k)).length;
+    const drawnRows = rows.filter((r) => seated.has(r.key)), drawnCoded = drawnRows.filter((r) => coded.has(r.key)).length;
     H.draw($('founding-facts'), 'facts', { items: [
-      ['Can be drawn', mem ? `${rows.length} nodes (${mem.free} operators, ${mem.needed} needed)` : 'no seat answered its list yet', mem ? (mem.free >= mem.needed ? 'ok' : 'warn') : 'muted'],
+      ['Can be drawn', mem ? `${rows.length} nodes (${mem.needed} operators needed)` : 'no seat answered its list yet', mem ? (rows.length >= mem.needed ? 'ok' : 'warn') : 'muted'],
       ['Ready (guardian waits in setup)', `${nReady} of ${rows.length}`, rows.length && nReady >= 10 ? 'ok' : nReady ? 'warn' : 'bad'],
-      ['Founding', live ? `${cut(live.id, 8)}: ${seated.size} drawn, ${drawnCoded} posted their code · until block ${sat(live.windowEnd)}` : run && run.federation ? `${cut(run.id, 8)}: the federation runs` : 'none running',
-        live ? (drawnCoded >= seated.size ? 'ok' : 'warn') : run && run.federation ? 'ok' : 'muted'],
+      ['Founding', live ? `${cut(live.id, 8)}: ${drawnRows.length} drawn, ${drawnCoded} posted their code · until block ${sat(live.windowEnd)}` : run && run.federation ? `${cut(run.id, 8)}: the federation runs` : 'none running',
+        live ? (drawnCoded >= drawnRows.length ? 'ok' : 'warn') : run && run.federation ? 'ok' : 'muted'],
     ] });
     drawTable('founding', ['Node key', 'Address', 'State', 'This founding'], rows, 'no seat answered the list of nodes that can be drawn yet',
       mem ? `as seat-counted at block ${sat(mem.height)} - each node asked by that seat` : null);

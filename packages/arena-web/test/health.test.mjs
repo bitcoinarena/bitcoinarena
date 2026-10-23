@@ -83,7 +83,7 @@ test('the reading state as one line: plain, or red with why', () => {
 // newest version and what the nodes earned from it, all versions under one name
 const dash = (totalMsat, monthMsat, byGame = []) => ({ ok: true, body: { totals: { total: { gameVerifyMsat: String(totalMsat), settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '7000' },
   month: { gameVerifyMsat: '0', settlementMsat: String(monthMsat), guardianMsat: '0', otherMsat: '0' } }, byGame } });
-const on = (id, extra = {}) => ({ ok: true, ms: 100, body: { version: '2026.1.7', protocols: [19], machine: { id, name: null, load: [6.28, 7.36, 7.94], cores: 16, ...extra } } });
+const on = (id, extra = {}) => ({ ok: true, ms: 100, body: { version: '2026.1.7', protocols: [19], machine: { id, name: null, load: [6.28, 7.36, 7.94], cores: 16, os: 'Linux', ...extra } } });
 
 test('machines: nodes grouped by machine, load and earnings in the title, folded until clicked; nodes that name none counted', () => {
   const nodes = [
@@ -98,7 +98,7 @@ test('machines: nodes grouped by machine, load and earnings in the title, folded
   assert.deepEqual(v.machines.map((m) => [m.title, m.nodes.length, m.total, m.month, m.tone]), [['test host', 2, 24, 10, 'ok'], ['Machine 2', 1, 0, 0, 'bad']]);
   assert.equal(v.machines[1].nodes[0].total, null, 'a node whose dashboard did not answer earns "-", not 0');
   const h = renderToStaticMarkup(React.createElement(Machines, { view: v }));
-  assert.match(h, /<b>test host<\/b>.*2 nodes.*load 6\.28 · 7\.36 · 7\.94.*16 cores.*earned 24 sat.*this month 10 sat/);
+  assert.match(h, /<b>test host<\/b><span class="tag">Linux<\/span>.*2 nodes.*load 6\.28 · 7\.36 · 7\.94.*16 cores.*earned 24 sat.*this month 10 sat/);
   assert.doesNotMatch(h, /<table>/, 'a machine opened before a click');
   assert.match(h, /1 answering node name no machine/);
   assert.match(renderToStaticMarkup(React.createElement(Machines, { view: machinesView([]) })), /no node names its machine yet/);
