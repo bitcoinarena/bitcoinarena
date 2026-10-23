@@ -173,3 +173,29 @@ export class DebugCard extends React.Component {
     </>);
   }
 }
+
+// RESCAN FOR MISSING MONEY (kanban #595, the owner 2026-10-23: "soetwas wie Rescanning... mit 1..100% was man in der UI aktivieren
+// kann wenn Geld fehlt"): every order and stake this browser made looked at again - the seats and the federation asked what is
+// owed - and what is owed brought back into the wallet, its progress 1..100 %; at the end what came back, and what still waits
+// and why. The page does the looking (window.ARENA_RESCAN, `onRescan(step)`); the card shows it.
+export class RescanCard extends React.Component {
+  constructor(props) { super(props); this.state = { busy: false, pct: 0, line: '', result: null }; }
+  async run() {
+    this.setState({ busy: true, pct: 1, line: 'Rescanning…', result: null });
+    let result;
+    try { result = await this.props.onRescan((p) => this.setState({ pct: Math.max(1, Math.min(100, p.pct | 0)), line: p.line })); }
+    catch (e) { result = { line: `The rescan stopped: ${e && e.message ? e.message : e}`, rows: [] }; }
+    this.setState({ busy: false, pct: 100, result });
+  }
+  render() {
+    const s = this.state, r = s.result;
+    return (<>
+      <h3>Missing money?</h3>
+      <div className="muted">Looks again at every order and stake this browser made, and brings back what is still waiting in a federation.</div>
+      <button id="arena-rescan" type="button" disabled={s.busy} onClick={() => this.run()}>{s.busy ? `Rescanning… ${s.pct}%` : 'Rescan'}</button>
+      {s.busy || r ? <div className="rescan-bar" role="progressbar" aria-valuenow={s.pct} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${s.pct}%` }} /></div> : null}
+      <div className="muted" id="arena-rescan-line">{r ? r.line : s.line}</div>
+      {r && r.rows && r.rows.length ? <ul className="rescan-rows" id="arena-rescan-rows">{r.rows.map((x) => <li key={x.key}>{x.text}</li>)}</ul> : null}
+    </>);
+  }
+}
