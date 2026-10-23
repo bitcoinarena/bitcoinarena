@@ -15,7 +15,7 @@
 // crates in would be a daemon in Rust.
 import { execFile, spawn } from 'node:child_process';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { existsSync } from 'node:fs';
+import { existsSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CLIENT_DIR'];
@@ -266,7 +266,18 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
  * `forFederation(idHex)`: the port of that federation - joined first if need be - or null with the reason in `whyNot`.
  */
 export function federationPorts({ home, bin, baseDir, inviteOf = () => null, makePort = (o) => stakeLockPort(o), joinTimeoutMs = 180000,
-  runJoin = (args) => run(bin, args, joinTimeoutMs), exists = (p) => existsSync(p), log = () => {} }) {
+  runJoin = (args) => run(bin, args, joinTimeoutMs), exists = (p) => existsSync(p), log = () => {},
+  copyDir = (from, to) => cpSync(from, to, { recursive: true, filter: (src) => !/client\.db\.lock$/.test(src) }) }) {
+  // A READ COPY OF ITS OWN FOR EVERY OTHER FEDERATION (kanban #586, measured 2026-10-23 15:53Z under 20 market bots: the test host seats'
+  // locks in federation 4dc88be7 were checked one run per question - `blwp-stake-lock --mode status` at 30-85 % CPU each, the
+  // test host at load 128): the joined directory is copied once beside it, `<dir>.read`, and its read-only questions (status,
+  // guardians, gateways, fees) go through one long-lived server there, as the home federation's do; send and settle stay on the
+  // joined directory. No copy (a full disk, a test): every question the old way, as before.
+  const readCopyOf = (dir) => {
+    const r = `${dir}.read`;
+    try { if (!exists(join(r, 'client.db'))) { copyDir(dir, r); log(`[federations] read copy ${r}`); } return r; }
+    catch (e) { log(`[federations] no read copy of ${dir}: ${e.message}`); return dir; }
+  };
   const ports = new Map();       // federation id hex -> port
   const joining = new Map();     // federation id hex -> Promise
   const whyNot = new Map();
@@ -294,7 +305,7 @@ export function federationPorts({ home, bin, baseDir, inviteOf = () => null, mak
       try { await joining.get(fid); } catch (e) { whyNot.set(fid, e.message); return null; }
     }
     if (ports.has(fid)) return ports.get(fid);           // a caller that waited on the same join
-    const port = makePort({ bin, dataDir: dir, readDataDir: dir });
+    const port = makePort({ bin, dataDir: dir, readDataDir: readCopyOf(dir) });
     ports.set(fid, port);
     return port;
   }
