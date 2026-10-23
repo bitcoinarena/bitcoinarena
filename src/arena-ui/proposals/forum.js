@@ -294,8 +294,10 @@
   }
   // THE RESERVES IN DETAIL (kanban #589): every payment in as the first node that answers lists it (GET /reserves?all=1), each with its
   // kind - an item when it names one, a market when its app is one (the Up/Down family), else a game - and the payouts made
+  // drawn right under the reserves box, the page's own view (the proposals) left as it is
+  var detail = function () { return document.getElementById('reserves-detail'); };
   function reservesView() {
-    R.draw(view, 'reserves', { rows: null });
+    R.draw(detail(), 'reserves', { rows: null });
     var nodes = (state.nodes || []).map(function (u) { return String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''); });
     var tryNode = function (i) {
       if (i >= nodes.length) return Promise.reject(new Error('no node answered'));
@@ -312,13 +314,14 @@
           entryId: /^0+$/.test(String(p.entryId || '')) ? null : p.entryId, federation: p.federationId,
           kind: p.image ? 'item' : /updown|market/.test(app) ? 'market' : 'game' };
       }).sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
-      R.draw(view, 'reserves', { rows: rows, payouts: x.d.payouts || [], status: 'Read from ' + x.from.replace(/^https?:\/\//, '') + ' (' + Number(x.d.totalMsat || 0) / 1000 + ' sat held).' });
-    }).catch(function (e) { if (location.hash === '#reserves') R.draw(view, 'reserves', { rows: null, error: e.message }); });
+      R.draw(detail(), 'reserves', { rows: rows, payouts: x.d.payouts || [], status: 'Read from ' + x.from.replace(/^https?:\/\//, '') + ' (' + Number(x.d.totalMsat || 0) / 1000 + ' sat held).' });
+    }).catch(function (e) { if (location.hash === '#reserves') R.draw(detail(), 'reserves', { rows: null, error: e.message }); });
   }
   function route() {
     var h = location.hash;
     showBalance();   // its Open / Close details button follows the view (kanban #589)
-    if (h === '#reserves') { reservesView(); showKey(); return; }
+    // OPEN: the details under the box, the proposals under them as before; CLOSED: nothing there
+    if (h === '#reserves') reservesView(); else if (detail()) R.draw(detail(), 'empty', { text: '' });
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();
