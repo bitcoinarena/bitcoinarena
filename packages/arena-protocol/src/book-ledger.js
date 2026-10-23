@@ -46,11 +46,13 @@ export function bookLedger({ batches, feeBps }) {
       const p = position(o);
       buys.set(o.id, { id: o.id, outcome: o.outcome, price: o.price, stakeMsat: o.stakeMsat, net: p.N, fullNet: p.N, fullFee: p.F, expiryMs: o.expiryMs || 0n });
     }
-    // 2. CANCELS: the order's rest leaves the book; what filled stays its position
+    // 2. CANCELS: the order's rest leaves the book - its buy's and its resting sells' (kanban #591, from the Polymarket comparison:
+    // a sell stood until it filled or the window closed; Polymarket cancels any open order) - what filled stays its position
     for (const e of [...(b.cancels || [])].sort(byIdOrder)) {
       const p = positions.get(e);
       if (!p) { refused.push({ id: e, why: 'a cancel of an order the book does not hold' }); continue; }
       buys.delete(e);
+      for (const [sid, x] of [...sells]) if (x.entry === e) sells.delete(sid);
       if (!p.cancelled) { p.cancelled = true; p.filledBeforeCancel = p.cost > 0n || p.sellDebt > 0n; }
     }
     // 3. EXPIRY
