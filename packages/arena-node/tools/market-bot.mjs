@@ -158,6 +158,7 @@ async function openWindows() {
 
 // ---- THE WALLET: one lock client, its notes in BOT_DIR/wallet.json (written whole on every change, never half) ----
 let lc = null, LockClientCls = null, inviteText = null;
+const io = { puts: 0, writes: 0, writeMs: 0 };   // the wallet file's puts and writes (kanban #601)
 async function wallet() {
   if (lc) return lc;
   if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
@@ -169,8 +170,14 @@ async function wallet() {
   LockClientCls = LockClient;
   const file = join(DIR, 'wallet.json');
   const held = new Map(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : []);
-  const write = () => { const t = `${file}.tmp`; writeFileSync(t, JSON.stringify([...held]), { mode: 0o600 }); renameSync(t, file); };
-  const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); write(); }, remove: (k) => { held.delete(k); write(); } };
+  // ONE WRITE PER TURN, NOT PER PUT (kanban #601, measured 2026-10-24: a bot's lock submit took 294-1,568 ms against ~45 ms in the browser;
+  // every put of the lock client rewrote the whole wallet - 7-8.5 MB of JSON - so one transaction's puts were that many full writes): the
+  // puts of one turn of the event loop are written once, before any network answer can be read. WALLET_WRITE=each: the old way, to compare.
+  const eachPut = env.WALLET_WRITE === 'each';
+  let due = false;
+  const write = () => { due = false; const t0 = Date.now(); const t = `${file}.tmp`; writeFileSync(t, JSON.stringify([...held]), { mode: 0o600 }); renameSync(t, file); io.writes++; io.writeMs += Date.now() - t0; };
+  const later = () => { io.puts++; if (eachPut) return write(); if (!due) { due = true; setImmediate(write); } };
+  const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); later(); }, remove: (k) => { held.delete(k); later(); } };
   const seedFile = join(DIR, 'seed.hex');
   if (!existsSync(seedFile)) writeFileSync(seedFile, toHex(rand(32)), { mode: 0o600 });
   const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
@@ -272,10 +279,17 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   const r = { ...c, orderStakeMsat: rung.stakeMsat };
   // THE SEATED SIGNER NODES (the seating certificate's settlement committee), not the contract's list: a seated round's shares are
   // dealt to them - measured 2026-10-22 22:50Z, shares dealt to c.nodes: "this node is not one of the signer nodes that handout was dealt to"
-  const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: signers, nodes, curve: pageCurve });
+  // KEPT AS THE PAGE KEEPS THEM (kanban #601: the first order of a pass waited 7.1 s and 24.6 s before its lock): the round's attested
+  // claim key once per round and its signer nodes (the page's ROUND_PREP), the federation's fee rule once a minute
+  const steps = {};
+  let ts = Date.now();
+  const att = await claimKeyOf(c, rid, signers);
+  steps.claimKeyMs = Date.now() - ts; ts = Date.now();
   if (!att.ok) throw new Error(`claim key: ${att.why}`);
   const w = await wallet();
-  const rule = JSON.parse(await w.feeRule());
+  steps.walletMs = Date.now() - ts; ts = Date.now();
+  const rule = await feeRuleOf(w);
+  steps.feeRuleMs = Date.now() - ts; ts = Date.now();
   const oc = { ...c, stakeMsat: rung.stakeMsat };
   // A MARKET ORDER PAYS THE MARKET'S OWN FEE (join.js feeBpsForRound: Up/Down's 1 %) out of its stake, and no reserve or developer
   // outputs (reserves.js: "a market's reserves are a later slice") - measured 2026-10-22 22:42Z: an entry built with a game's split
@@ -287,6 +301,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   // own stake said no fee lock, the seats said "this round mints fee locks ... an entry that brings no fee lock is not taken")
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) }, feeBps });
   await topUp(rung.stakeMsat + 200000n);
+  steps.balanceMs = Date.now() - ts;
   // A DEPOSIT CAN TAKE MINUTES (measured 2026-10-23 07:51-08:02Z: a payment in flight until its invoice expired, the order then
   // made two minutes past its window and refused): the window is asked again here, before any lock is paid
   if (closeMs - Date.now() < marginMs) throw new Error('its window closes before this order would stand: not placed');
@@ -298,10 +313,12 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   // the lock lasts the round's own stake expiry (a market's window and settlement, 1800+ blocks), not lockEntry's 150 for a short game -
   // measured 22:53Z: "that stake lock's lock height 155634 (its expiration 157469 less the round's 1835 blocks)"
   const tLock = Date.now();
+  const io0 = { ...io };
   // SUBMITTED BEFORE THE GUARDIANS AGREE (kanban #601, the owner 2026-10-23 "Sofort eingereicht"): the locks sent, the entry handed to the seats
   // while the federation accepts them, the locks to the seats once it did
   const locks = await lockEntry({ lc: w, c: oc, split, stakePoint: point, player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
   const lockMs = Date.now() - tLock;
+  steps.lockPuts = io.puts - io0.puts; steps.lockWrites = io.writes - io0.writes; steps.lockWriteMs = io.writeMs - io0.writeMs;
   if (env.DEBUG) say({ step: 'locks', gate: gate.pays, gateWhy: gate.why, fee: !!locks.fee, feeLock: locks.entryFields.feeLockOutpoint && toHex(locks.entryFields.feeLockOutpoint.txid).slice(0, 12), feeMsat: split.feeMsat, netMsat: split.netMsat });
   const needed = receiptsNeeded(signers.length), e = rand(32);
   const dealt = await dealHandout({ preimage: p, signerNodes: signers, roundId: rid, playerPubkey: player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
@@ -345,7 +362,26 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   if (env.DEBUG) for (const x of said) say({ step: 'seat answer', ...x });
   if (took < needed) throw new Error(`the seats did not take the order: ${took} of ${needed} needed took its lock; ${said.find((x) => x.handoutWhy)?.handoutWhy ? `handout: ${said.find((x) => x.handoutWhy).handoutWhy}; ` : ''}${said.find((x) => x.why)?.why || 'no reason given'}`);
   return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' '), session: toHex(session), limitCents: Number(rung.price / TICK), outcome: Number(rung.outcome),
-    ms: Date.now() - t0, lockMs, submittedMs, acceptedMs, seatsMs, firstSeatMs };
+    ms: Date.now() - t0, lockMs, submittedMs, acceptedMs, seatsMs, firstSeatMs, steps };
+}
+const CLAIM_KEYS = new Map();
+function claimKeyOf(c, rid, signers) {
+  const key = `${toHex(rid)}:${signers.map((x) => String(x)).join(',')}`;
+  let p = CLAIM_KEYS.get(key);
+  if (!p) {
+    p = attestedClaimKey({ round: { ...c, id: rid }, signerNodes: signers, nodes, curve: pageCurve });
+    CLAIM_KEYS.set(key, p);
+    p.then((a) => { if (!a.ok) CLAIM_KEYS.delete(key); }, () => CLAIM_KEYS.delete(key));
+    if (CLAIM_KEYS.size > 64) CLAIM_KEYS.delete(CLAIM_KEYS.keys().next().value);
+  }
+  return p;
+}
+let feeRuleKept = null;
+async function feeRuleOf(w) {
+  if (feeRuleKept && Date.now() - feeRuleKept.at < 60000) return feeRuleKept.rule;
+  const rule = JSON.parse(await w.feeRule());
+  feeRuleKept = { at: Date.now(), rule };
+  return rule;
 }
 
 // ---- WHAT THE BOT WINS, COLLECTED (slice 5): for every order whose window ended more than a minute ago, the page's own look
