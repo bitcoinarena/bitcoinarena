@@ -18529,13 +18529,23 @@ async function handRefusedLock({ roundId, lock, nodes, fetcher = fetch } = {}) {
  * refund key (measured live 07:26Z: 49a50535's stake came back and its 2000 msat fee lock stayed for its expiry) - or null
  * when no signer node keeps them as refused.
  */
-async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client }) {
+// once per stake and page: the looks repeat every few seconds, the handout needs handing only once
+const HANDOUT_HANDED = new Set();
+async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client, handoutBody = null }) {
   const still = [];
   for (const lock of (locks || []).filter((l) => l && l.outpoint)) {
     const st = JSON.parse(await client.lockStatus(toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
     if (st.stored) still.push(lock);
   }
   if (!still.length) return null;
+  // THE STAKE'S HANDOUT HANDED AGAIN FIRST (kanban #593): a seat keeps the lock only against a handout it holds for the round,
+  // and an order cut off mid-join (a seat restarting) may have reached a seat with its lock and without its handout. The tab
+  // kept the handout's bytes with the lock; a seat that holds it already answers so
+  const handKey = `${toHex(roundId)}:${toHex(playerPubkey)}`;
+  if (handoutBody && !HANDOUT_HANDED.has(handKey)) {
+    HANDOUT_HANDED.add(handKey);
+    await Promise.all([...new Set(nodes || [])].map((node) => fetcher(`${String(node).replace(/\/+$/, '')}/handout`, { method: 'POST', body: handoutBody }).catch(() => null)));
+  }
   let kept = 0;
   for (const lock of still) kept += (await handRefusedLock({ roundId, lock, nodes, fetcher })).kept > 0 ? 1 : 0;
   if (!kept) return null;
@@ -18576,7 +18586,11 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   const backNote = note(`${STAKE_NOTE}${rid}${orderTag(order)}`);
   if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
   else {
-    const locks = s.ok ? await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }) : [];
+    // ASKED WITH OR WITHOUT A SETTLEMENT (kanban #593, playtest 2026-10-23: round 8464c5fd never ran - no settlement - and its
+    // seats had already signed the forfeit of the player's unfilled order; the page asked them nothing and said the 100 sat came
+    // back only at the lock's expiry, 1834 blocks on, and showed it nowhere): the signer nodes name the lock and sign its
+    // forfeit whenever they owe it, settled or not
+    const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
     lockAnswers = locks.said ? { asked: locks.asked, answered: locks.answered, said: locks.said } : null;
     // NOBODY ANSWERED IS NOT "NO LOCK" (playtest 2026-10-04: a DELIVERED player's 96 sat stake was never
     // asked back - the page's record of the round ended as if nothing were owed): with no signer node answering where
@@ -18610,7 +18624,8 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
         // the fee lock from the tab's saved lock when the record handed in carries the stake alone (a collect record does)
         const saved = held.lock.feeLock ? null : savedLock(storage, { roundId, playerPubkey: player.pubkey });
         const feeLock = held.lock.feeLock || (saved && saved.lock && saved.lock.feeLock) || null;
-        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, locks: [held.lock, feeLock], nodes, fetcher, client });
+        const handoutBody = (held.stake && held.stake.body) || (saved && saved.stake && saved.stake.body) || null;
+        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, locks: [held.lock, feeLock], nodes, fetcher, client, handoutBody });
         if (back) stake = back;
         else {
           let owed = 0n; let gone = 0; let waiting = null;

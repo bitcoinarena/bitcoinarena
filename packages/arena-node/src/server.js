@@ -471,6 +471,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A TEST AID, as the finality option above is: one more reason this node refuses to offer a round - contract -> why or null.
   // Production names none; the live reasons are the series and the donation set in force.
   refusedFor = null,
+  // A LOCK THAT ENTERED NOTHING GOES BACK this long after its round's entries closed (kanban #593): the time an entry
+  // handed in at the close still takes to reach every seat
+  unenteredGraceMs = Number(process.env.ARENA_UNENTERED_GRACE_MS || 120000),
   // THE OPERATOR'S REFUSE-ROUNDS FILE (2026-10-06 path A): round ids, one per line, this node refuses at
   // every door from the moment the file changes - read again by its mtime, no restart. Empty in normal running.
   refuseRoundsFile = null,
@@ -1980,7 +1983,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     bookStanding: (rid, eid) => orderBook.standing(rid, eid),
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     // §23.2 REFUSED: asked at the forfeit - does this node still refuse that round? (null: it offers it)
-    refusedNow: (rid) => offerRefusalOfRound(rid),
+    refusedNow: (rid) => unenteredReturnOfRound(rid),
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -3576,6 +3579,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     return offerRefusal(c);
+  };
+  // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
+  // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
+  // a refused round's is, once the round takes no more entries. Each seat keeps it on its own record only - no entry of that
+  // player here, the lock no entry's stake here - and the forfeit takes the committee's threshold, more than half of it: a
+  // player whose entry enough seats hold to settle it can never also gather the forfeit of its lock.
+  const unenteredReturnOfRound = (rid, nowMs = round.now()) => {
+    const refused = offerRefusalOfRound(rid);
+    if (refused) return refused;
+    const row = round.get(rid);
+    if (!row) return null;
+    let c;
+    try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    if (nowMs < Number(c.entryCloseMs) + unenteredGraceMs) return null;
+    return `its entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: a lock that entered nothing here goes back`;
   };
   // ROUNDS POSTED AHEAD OF THEIR BEACON, assigned once it is on the chain: a pass every 5 s, a few a pass, each kept until
   // it is assigned or ten minutes past its committee time (then it is the 409 a late post gets). A restart forgets the set;
@@ -7705,8 +7723,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(rid);
         if (!row) return text(res, 404, 'this node holds no such round');
         const rc = decodeRoundContract(new Uint8Array(row.contract));
-        const refusedWhy = offerRefusal(rc);
-        if (!refusedWhy) return text(res, 409, 'this signer node offers that round: a stake in it is entered and settled with the round, never returned as refused');
+        const refusedWhy = unenteredReturnOfRound(rid);
+        if (!refusedWhy) return text(res, 409, 'this signer node offers that round and its entries are not closed long enough: a stake in it is entered and settled with the round, never returned as refused');
         if (rc.stakeMsat === 0n || (rc.federationId.every((b) => b === 0) && !takesAnyFederation(rc))) return text(res, 409, 'that round takes no stake lock');
         if (!stakeLocks) return text(res, 409, 'this signer node reaches no federation, so it cannot read the lock');
         let fields, outpoint, lockFed = null;
