@@ -673,6 +673,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // a round refused without a settlement state is asked again after a doubling wait, up to 60 s (kanban #576: 1,961 attested
   // rounds asked every 5 s were a third of a core per seat)
   const attestedWait = createSettleBackoff({ now: () => round.now() });
+  // AN ACCEPTED SETTLEMENT IS FINAL, so its round is not read again; and a waiting round's state is read only when it is due
+  // (kanban #576, measured 2026-10-23: every 5 s the sweep read the settlement state of all ~2,350 attested rounds a seat holds)
+  const attestedDone = new Set();
+  const NO_COUNTED_ENTRY_WAIT_MS = Number(process.env.ARENA_NO_ENTRY_SETTLE_WAIT_MS || 1800000);
   const settleAttestedSoon = () => {
     if (attestedSweep || !settlements) return;
     let sweeping = false;
@@ -685,22 +689,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // of it is settled, every stake comes back by the return door on the seat's own record
       const ids = round.db.prepare(`SELECT DISTINCT round_id FROM outcome_attestations UNION SELECT DISTINCT round_id FROM game_outcomes WHERE outcome <> ${GAME_MARKET_REFUND}`)
         .all().map((r) => new Uint8Array(r.round_id));
-      const waiting = ids.filter((rid) => stateOf(round, rid) !== 'ACCEPTED');
-      if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
-      attestedWait.keep(new Set(waiting.map((rid) => toHex(rid))));
-      for (const rid of waiting) {
-        const k = toHex(rid);
-        if (!attestedWait.due(k)) continue;
+      const open = ids.map((rid) => ({ rid, k: toHex(rid) })).filter(({ k }) => !attestedDone.has(k));
+      attestedWait.keep(new Set(open.map(({ k }) => k)));
+      let anyWaiting = false;
+      for (const { rid, k } of open) {
+        if (!attestedWait.due(k)) { anyWaiting = true; continue; }
+        if (stateOf(round, rid) === 'ACCEPTED') { attestedDone.add(k); attestedWait.clear(k); continue; }
+        anyWaiting = true;
         const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
         if (got && got.state && got.state !== 'HELD') console.log(`[outcome] ${k.slice(0, 16)} settlement: ${got.state} - ${got.why || ''}`);
         // WHY A FINAL ROUND IS NOT SETTLED, said once per reason (a paid market round final for minutes, its
         // settlement silent - the sweep logged only answers with a state, and a plan's refusal carries none)
         if (got && !got.ok && !got.state && got.why) {
-          attestedWait.refused(k);
+          // a closed, attested round with no counted entry has nothing to claim and will not get an entry: its long wait
+          attestedWait.refused(k, /^an attested round with no counted entry/.test(got.why) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
           const was = attestedWhy.get(k);
           if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
         } else attestedWait.clear(k);
       }
+      if (!anyWaiting) { clearInterval(attestedSweep); attestedSweep = null; }
       } finally { sweeping = false; }
     }, 5000);
     if (attestedSweep.unref) attestedSweep.unref();
