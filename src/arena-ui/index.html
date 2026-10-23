@@ -833,6 +833,12 @@
        909.8 -> 908.8, Withdraw 994.1 -> 993.1): the bar's balance kept 4 px of gap for its empty pending line, and its Leaderboard a 5 px gap
        where the header's has 6 */
     #arena-wallet-bar .wb-bal span:empty { display: none; }
+    /* A NARROW SCREEN STACKS IT (playtest 2026-10-23 23:39, "There is an issue with the pending balance, it is cut": "97 sat · 100 pe"):
+       the balance, and under it what is pending or arriving, smaller - never cut */
+    @media (max-width: 560px) {
+      #arena-wallet-bar .wb-bal { flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; line-height: 1.1; overflow: visible; }
+      #arena-wallet-bar .wb-bal span { font-size: 11px; white-space: nowrap; }
+    }
     body.arena-game-chosen #arena-wb-season { gap: 6px; }
     /* THE DEPOSIT BOX SPACED AS WITHDRAW AND THE BALANCE ("we need better spacing between the elements ... its to compressed. compare
        to withdrawal and balance layers"): their 14 px text, 12 px between the parts, and controls of their size */
@@ -4491,9 +4497,11 @@
       const noWallet = !!start && getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().height > 0;
       window.ArenaText.say(document.getElementById('arena-wb-sats'), bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
         : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat');
-      window.ArenaText.say(document.getElementById('arena-wb-pending'), (bal && bal.arriving ? ' · ' + Number(bal.arriving).toLocaleString('en-US') + ' arriving' : '')
-        + (bal && bal.merging ? ' \u21c4' : '')
-        + (bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : ''));
+      { const parts = [bal && bal.arriving ? Number(bal.arriving).toLocaleString('en-US') + ' arriving' + (bal.merging ? ' \u21c4' : '') : (bal && bal.merging ? '\u21c4' : ''),
+          bal && bal.pending ? Number(bal.pending).toLocaleString('en-US') + ' pending' : ''].filter(Boolean);
+        // one line: " · " before it; stacked (narrow): the line under the balance, no separator
+        const stacked = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
+        window.ArenaText.say(document.getElementById('arena-wb-pending'), parts.length ? (stacked ? '' : ' · ') + parts.join(' · ') : ''); }
       document.getElementById('arena-wb-pending').title = bal && bal.merging ? Number(bal.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
       // THE PAYING ROUND'S SETTLEMENT FACTS: the part of its lobby line from "signer nodes" / "selected nodes" on
       const ap = document.getElementById('arena-approval');
