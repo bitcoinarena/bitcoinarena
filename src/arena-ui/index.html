@@ -3863,8 +3863,19 @@
           onStep({ pct: Math.max(1, Math.floor((100 * i) / recs.length)), line: 'Rescanning… ' + (i + 1) + ' of ' + recs.length + ': ' + name });
           try {
             const res = await withRecordPhrase(r, async () => {
-              const { look, LockClient } = await lookRound(r);
-              if (!look) { rows.push({ key: backKey(r), text: name + ': open in another tab of this browser' }); return true; }
+              let { look, LockClient } = await lookRound(r);
+              // HELD BY ANOTHER TAB OF THIS BROWSER (kanban #593, the owner's rescan 15:27Z: all 11 orders "open in another tab",
+              // nothing looked at, 8464c5fd's 100 sat still in the federation): looked at without the round's own wallet - the
+              // signer nodes and the federation asked read-only through the player wallet - and what is owed collected into the
+              // player wallet, which needs no round wallet. The other tab's collect may redeem the same lock first; the federation
+              // spends it once, and this look then reads it gone.
+              if (!look) {
+                const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+                const player = window.ARENA_WALLET_WARM ? await window.ARENA_WALLET_WARM : null;
+                const same = player && typeof player.lockStatus === 'function' && window.ARENA_WALLET_FEDERATION === ARENACLIENT.toHex(r.round.federationId);
+                look = await ARENACLIENT.lookOwed(Object.assign(roundAsk(r, wasm.LockClient), same ? { client: { lockStatus: (t, i) => player.lockStatus(t, i) } } : {}));
+                LockClient = wasm.LockClient;
+              }
               collectNote(r.roundIdHex.slice(0, 8) + (r.order ? '.o' + r.order : ''), 'rescan: ' + lookSaid(look));
               noteStakeBack(r, look);
               if (look.owedMsat > 0n) {
