@@ -36,10 +36,11 @@ import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { marketOfRound } from '../../arena-protocol/src/manifest.js';
+import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
-const verifyEd = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
-const verifySchnorr = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
+const verifyEd = verifyEd25519Kept;   // kept per (sig, msg, key) - verified.js (kanban #576)
+const verifySchnorr = verifySchnorrKept;
 const isHex = (s, n) => typeof s === 'string' && s.length === 2 * n && /^[0-9a-f]+$/.test(s);
 const isOrder = (e) => e && e.limitPrice !== undefined && e.limitPrice !== null;
 
