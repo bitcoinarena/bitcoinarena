@@ -269,6 +269,11 @@ export function openStore(path = ':memory:') {
     CREATE INDEX IF NOT EXISTS rounds_by_state_opened ON rounds (state, opened_ms);
     CREATE INDEX IF NOT EXISTS rounds_by_state_closed ON rounds (state, closed_ms);
 
+    -- A ROUND'S ENTRIES, READ FROM AN INDEX (kanban #576, profiled 2026-10-23 01:2xZ on test host seat 1): entriesOf and the book's
+    -- proposal read entries by round at every batch of every open market round, and without this each read scanned every entry
+    -- the seat holds, contract blobs and all - SQLite's own time was the largest left in the seat.
+    CREATE INDEX IF NOT EXISTS entries_by_round ON entries (round_id);
+
     -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
     -- daemon with two identities would sign some receipts with each and a
     -- client checking them against the committee would be right to refuse
