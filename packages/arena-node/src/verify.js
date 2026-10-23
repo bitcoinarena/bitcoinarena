@@ -703,7 +703,11 @@ export class Verifier {
    */
   async carryReveals(roundIdBytes, entries, moveCount) {
     const byId = new Map(entries.map((e) => [hex(e.entryId), e.entry]));
+    // NO MORE PEERS ONCE EVERY ENTRY'S REVEAL IS HELD (kanban #576, measured 2026-10-23 02:39Z: /reveals was the largest fetch left on
+    // test host seat 1, 216 a minute): a reveal is bound to its entry's commitment, so another peer can add nothing
+    const allHeld = () => { const held = new Set(this.round.revealsOf(roundIdBytes).map((r) => hex(r.entryId))); return [...byId.keys()].every((k) => held.has(k)); };
     for (const peer of this.peersOf(roundIdBytes)) {
+      if (allHeld()) break;
       let body;
       try {
         const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
