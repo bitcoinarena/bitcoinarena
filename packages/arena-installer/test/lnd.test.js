@@ -32,7 +32,7 @@ test('lnd.conf: testnet4 on the node\'s Core by cookie, RPC/REST on 127.0.0.1 (R
   const cfg = configureLnd({ home, chain: { url: 'http://127.0.0.1:48342/', cookiePath: '/x/.cookie' } });
   const conf = readFileSync(cfg.conf, 'utf8');
   for (const line of ['bitcoin.testnet4=true', 'bitcoin.node=bitcoind', 'bitcoind.rpchost=127.0.0.1:48342', 'bitcoind.rpccookie=/x/.cookie', 'bitcoind.rpcpolling=true',
-    'rpclisten=127.0.0.1:10009', 'restlisten=127.0.0.1:10080', `wallet-unlock-password-file=${cfg.passwordFile}`]) assert.ok(conf.includes(line), line);
+    'rpclisten=127.0.0.1:10009', 'restlisten=127.0.0.1:10080', 'healthcheck.chainbackend.attempts=0', `wallet-unlock-password-file=${cfg.passwordFile}`]) assert.ok(conf.includes(line), line);
   assert.equal(statSync(cfg.passwordFile).mode & 0o777, 0o600);
   assert.equal(readFileSync(cfg.passwordFile, 'utf8'), readFileSync(configureLnd({ home, chain: { url: 'http://127.0.0.1:48342/', cookiePath: '/x/.cookie' } }).passwordFile, 'utf8'), 'kept');
   assert.deepEqual(lndArgs({ lnd: '/b/lnd', lnddir: cfg.lnddir }), ['/b/lnd', `--lnddir=${cfg.lnddir}`, `--configfile=${cfg.conf}`]);
