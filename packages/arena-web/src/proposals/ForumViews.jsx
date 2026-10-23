@@ -19,9 +19,62 @@ export function SignedIn({ name, npub }) {
 /** The reserves on top: { reserves: { sats, agreeing, asked } | null, why, capPct } - what the nodes agree on and the most one PIP may ask. */
 export function ReserveBalance({ reserves, why, capPct }) {
   return (
-    <><span className="lbl">Protocol reserves</span><b className="sats">{reserves ? `${n(reserves.sats)} sat` : '–'}</b>
+    <><a className="lbl balance-link" href="#reserves" title="Every payment into the reserves">Protocol reserves</a><b className="sats">{reserves ? `${n(reserves.sats)} sat` : '–'}</b>
       <span className="sub">{reserves ? `${reserves.agreeing} of ${reserves.asked} nodes agree · a PIP may ask up to ${n(Math.floor(reserves.sats * capPct / 100))} sat`
-        : why ? `could not be read: ${why}` : 'reading the nodes'}</span></>);
+        : why ? `could not be read: ${why}` : 'reading the nodes'} · <a href="#reserves">details</a></span></>);
+}
+
+// THE RESERVES IN DETAIL (kanban #589, the owner 2026-10-23: "in clicking on protocol reserves a page appears that shows details, again
+// with filters like on the owners page. with paging, filters to group by app, items, market/games and showing all necessary details like
+// amount, user, date"): every payment into the reserves as a seat lists it (GET /reserves?all=1) - its date, amount, app, kind (a market,
+// a game, an item), round, entry and federation - filtered by kind, app and federation, grouped with each group's count and sum, 25 a
+// page; under it every payout the reserves made to a proposal.
+const msatSat = (m) => { const v = Number(m) / 1000; return v.toLocaleString('en-US', { maximumFractionDigits: 3 }); };
+const short = (h) => (h ? String(h).slice(0, 8) : '–');
+export class ReservesView extends React.Component {
+  constructor(props) { super(props); this.state = { kind: 'all', app: 'all', fed: 'all', group: 'none', page: 0 }; }
+  set(k, v) { this.setState({ [k]: v, page: 0 }); }
+  render() {
+    const { rows, payouts, status, error } = this.props;
+    const s = this.state, PAGE = 25;
+    const back = <div className="bar"><a className="btn" href="#">← All proposals</a></div>;
+    if (error) return <div>{back}<h1>Protocol reserves</h1><div className="empty">The reserves could not be read: {error}</div></div>;
+    if (!rows) return <div>{back}<h1>Protocol reserves</h1><div className="empty">Reading the nodes…</div></div>;
+    const apps = [...new Set(rows.map((r) => r.app))].sort(), feds = [...new Set(rows.map((r) => r.federation))].sort();
+    const shown = rows.filter((r) => (s.kind === 'all' || r.kind === s.kind) && (s.app === 'all' || r.app === s.app) && (s.fed === 'all' || r.federation === s.fed));
+    const sum = shown.reduce((t, r) => t + Number(r.amountMsat), 0);
+    const groups = s.group === 'none' ? null : [...shown.reduce((m, r) => { const k = s.group === 'kind' ? r.kind : s.group === 'app' ? r.app : short(r.federation);
+      const g = m.get(k) || { key: k, count: 0, msat: 0 }; g.count++; g.msat += Number(r.amountMsat); m.set(k, g); return m; }, new Map()).values()].sort((a, b) => b.msat - a.msat);
+    const pages = Math.max(1, Math.ceil(shown.length / PAGE)), page = Math.min(s.page, pages - 1);
+    const sel = (k, opts) => <select id={`rs-${k}`} value={s[k]} onChange={(e) => this.set(k, e.target.value)}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>;
+    return (
+      <div>
+        {back}
+        <h1>Protocol reserves</h1>
+        <p className="lead">Every payment into the reserves: 2 % of each round and 20 % of each item, as the nodes record them. {status || ''}</p>
+        <div className="rs-filters">
+          <label>Kind {sel('kind', [['all', 'All'], ['market', 'Markets'], ['game', 'Games'], ['item', 'Items']])}</label>
+          <label>App {sel('app', [['all', 'All apps'], ...apps.map((a) => [a, a])])}</label>
+          <label>Federation {sel('fed', [['all', 'All'], ...feds.map((f) => [f, short(f)])])}</label>
+          <label>Group by {sel('group', [['none', 'Nothing'], ['app', 'App'], ['kind', 'Kind'], ['federation', 'Federation']])}</label>
+        </div>
+        <p className="rs-sum" id="rs-sum"><b>{msatSat(sum)} sat</b> in {n(shown.length)} payment{shown.length === 1 ? '' : 's'}{shown.length !== rows.length ? ` (of ${n(rows.length)})` : ''}</p>
+        {groups ? <div className="tbl rs"><table id="rs-groups"><thead><tr><th>{s.group === 'app' ? 'App' : s.group === 'kind' ? 'Kind' : 'Federation'}</th><th className="al-right">Payments</th><th className="al-right">Sats</th></tr></thead>
+          <tbody>{groups.map((g) => <tr key={g.key}><td>{g.key}</td><td className="al-right">{n(g.count)}</td><td className="al-right">{msatSat(g.msat)}</td></tr>)}</tbody></table></div> : null}
+        <div className="tbl rs"><table id="rs-rows"><thead><tr><th>Date (UTC)</th><th className="al-right">Sats</th><th>App</th><th>Kind</th><th>Round</th><th>Entry</th><th>Federation</th></tr></thead>
+          <tbody>{shown.slice(page * PAGE, page * PAGE + PAGE).map((r) => (
+            <tr key={r.outpoint}><td>{r.at.slice(0, 16).replace('T', ' ')}</td><td className="al-right">{msatSat(r.amountMsat)}</td><td>{r.app}</td><td>{r.kind}</td>
+              <td title={r.roundId}>{short(r.roundId)}</td><td title={r.entryId || ''}>{r.entryId ? short(r.entryId) : r.kind === 'market' ? 'market pool' : '–'}</td><td title={r.federation}>{short(r.federation)}</td></tr>))}</tbody></table></div>
+        <div className="bar rs-pager"><button type="button" className="btn" disabled={page === 0} onClick={() => this.setState({ page: page - 1 })}>← Newer</button>
+          <span className="say" id="rs-page">Page {page + 1} of {pages}</span>
+          <button type="button" className="btn" disabled={page >= pages - 1} onClick={() => this.setState({ page: page + 1 })}>Older →</button></div>
+        <h3>Paid out to proposals</h3>
+        {payouts && payouts.length ? <div className="tbl rs"><table id="rs-payouts"><thead><tr><th>Proposal</th><th className="al-right">Sats</th><th>To</th><th>State</th><th>Federation</th></tr></thead>
+          <tbody>{payouts.map((p) => <tr key={p.proposal + (p.txid || '')}><td title={p.proposal}>{short(p.proposal)}</td><td className="al-right">{p.amountSats ? n(Number(p.amountSats)) : '–'}</td>
+            <td>{String(p.lnurl || '–').slice(0, 40)}</td><td>{p.state}</td><td title={p.federation}>{short(p.federation)}</td></tr>)}</tbody></table></div>
+          : <div className="empty">No payout yet.</div>}
+      </div>);
+  }
 }
 
 /** One line in place of a view: { text } - the nodes could not be read, say why. */
