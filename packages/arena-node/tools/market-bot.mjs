@@ -205,7 +205,7 @@ async function topUp(needMsat) {
 }
 
 // ---- ONE ORDER: the page's join for a market order, with the bot mark ----
-async function placeOrder(c, rid, rung, orderIndex, signers) {
+async function placeOrder(c, rid, rung, orderIndex, signers, closeMs) {
   const r = { ...c, orderStakeMsat: rung.stakeMsat };
   // THE SEATED SIGNER NODES (the seating certificate's settlement committee), not the contract's list: a seated round's shares are
   // dealt to them - measured 2026-10-22 22:50Z, shares dealt to c.nodes: "this node is not one of the signer nodes that handout was dealt to"
@@ -224,6 +224,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers) {
   // own stake said no fee lock, the seats said "this round mints fee locks ... an entry that brings no fee lock is not taken")
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) }, feeBps });
   await topUp(rung.stakeMsat + 200000n);
+  // A DEPOSIT CAN TAKE MINUTES (measured 2026-10-23 07:51-08:02Z: a payment in flight until its invoice expired, the order then
+  // made two minutes past its window and refused): the window is asked again here, before any lock is paid
+  if (closeMs - Date.now() < AHEAD_MS) throw new Error('its window closes before this order would stand: not placed');
   const seed = Uint8Array.from(Buffer.from(readFileSync(join(DIR, 'seed.hex'), 'utf8').trim(), 'hex'));
   // the order's own key (join.js playerFor with its order number): the payout and refund key the bot finds again from its seed
   const player = playerFor({ ...r, id: rid }, { seed, curve: feldmanGroup, order: orderIndex }).pubkey;
@@ -338,7 +341,7 @@ async function pass() {
     for (const q of todo) {
       const index = done.size;
       try {
-        const o = await placeOrder(c, rid, q, index, seated.signerNodes);
+        const o = await placeOrder(c, rid, q, index, seated.signerNodes, Math.min(Number(row.entryCloseMs), end));
         done.add(q.key || `${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
         orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now() }); keepOrders();
         say({ step: q.key ? 'take' : 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...o });
