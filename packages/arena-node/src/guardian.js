@@ -28,6 +28,7 @@
 // Fedimint's stock `wallet` module, not walletv2 (RULED 2026-09-26). Base fees off (§23A.2). Founding - which four nodes are drawn and run that ceremony - is §23A.2's
 // sortition, not this file: a guardian started here waits in Fedimint's setup until it is drawn.
 import { spawn, execFile } from 'node:child_process';
+import { ramDirOf, ramSupported, ramRestore, ramLoop } from './guardian-ram.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, unlinkSync, constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -249,6 +250,19 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const endpoint = slot === 'next'
     ? env[`ARENA_GUARDIAN_NEXT_ENDPOINT_${nodePort}`] || (named ? named.replace(/\/guardian\/?$/, '') + S.path : guardianEndpoint(nodePort, { host, tailscale: ts, path: S.path }))
     : named || guardianEndpoint(nodePort, { host, tailscale: ts });
+  // FEDIMINT ON A RAM DISK (kanban #596, ARENA_FEDIMINT_RAM=1 - the installer's choice from more than 5 nodes): the database moved into
+  // RAM (or back from its newest snapshot) before fedimintd starts, never while it runs; a snapshot every minute at this node's own second
+  const ramOn = env.ARENA_FEDIMINT_RAM === '1' && storePath !== ':memory:';
+  const ram = ramDirOf({ instance: String(nodePort), slot });
+  const ramReady = () => {
+    if (!ramOn) return true;
+    if (!ramSupported()) { log('[guardian] ARENA_FEDIMINT_RAM=1, but this machine has no RAM disk the guardian can use (Linux /dev/shm): it runs on disk'); return true; }
+    const r = ramRestore(dataDir, ram, { log });
+    if (!r.ok) log(`[guardian] not started: ${r.why}`);
+    return r.ok;
+  };
+  const ramFollow = (pidOf) => (ramOn && ramSupported()
+    ? ramLoop({ dataDir, ram, pidOf, offsetMs: (Math.floor(nodePort / 10) % 12) * 5000 + (slot === 'next' ? 2500 : 0), log }) : null);
   const cookieSha = cookieFingerprint(cookiePath);
   const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
@@ -269,6 +283,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       log(`[guardian] ${unit} runs with an old bitcoind cookie (bitcoind was restarted): started again`);
       await units.stop(unit);
     }
+    if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
     keepFingerprint(dataDir, cookieSha);
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
@@ -278,8 +293,9 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   // has since finished its DKG runs the federation on these ports, and a second fedimintd would not start - and started kept when the
   // node asks (`keep`: it waits in setup). Closing the node leaves it running; `halt` stops it (a fresh setup, the owner page's stop).
   if (storePath !== ':memory:') {
-    const kept = (adopted, pid, sha) => ({ running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
-      cookieSha: sha, stop: async () => {}, halt: () => pids.stop(dataDir) });
+    const kept = (adopted, pid, sha) => { const follow = ramFollow(() => pids.pid(dataDir));
+      return { running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
+        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: () => pids.stop(dataDir) }; };
     if (await pids.active(dataDir)) {
       const had = keptFingerprint(dataDir);
       // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
@@ -290,6 +306,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie (bitcoind was restarted): started again`);
       await pids.stop(dataDir);
       if (!keep) {
+        if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
         const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
         keepFingerprint(dataDir, cookieSha);
         log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
@@ -297,19 +314,23 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       }
     }
     if (keep) {
+      if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
       const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
       keepFingerprint(dataDir, cookieSha);
       log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
       return kept(false, pid, cookieSha);
     }
   }
+  if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
+  const follow = ramFollow(() => (exited ? null : child.pid));
   keepFingerprint(dataDir, cookieSha);
   let exited = false;
   child.on('exit', (code, sig) => { exited = true; log(`[guardian] fedimintd exited (${sig || code})`); });
   log(`[guardian] fedimintd ${child.pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
   const stop = () => new Promise((r) => {
+    if (follow) follow.stop();
     if (exited) return r();
     child.once('exit', () => r());
     child.kill('SIGTERM');

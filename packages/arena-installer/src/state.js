@@ -125,6 +125,8 @@ export function seatEnv(s, { home, release }) {
   if ((s.roles || []).includes('custody')) lines.push(`ARENA_GATEWAY_PORT=${port(8476)}`, `ARENA_GATEWAY_CLAIM_FILE=${join(home, 'gateway-claim.json')}`);
   if ((s.roles || []).includes('liquidity')) lines.push(`ARENA_LIQUIDITY_CLAIM_FILE=${join(home, 'liquidity-claim.json')}`, `ARENA_LIQUIDITY_PROVIDER_URL=http://127.0.0.1:${LIQUIDITY_PROVIDER_PORT}`);   // its provider's claim (§23A.10)   // the gateway seat's claim (custody-agent.js)   // the seat carries <public>/gateway/ to the node's gateway (gateway.js GATEWAY_PORT)
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
+  // Fedimint on a RAM disk (kanban #596): chosen for more than 5 nodes on this machine (guardian-ram.js)
+  if (custody && s.instances && s.instances.ram) lines.push('ARENA_FEDIMINT_RAM=1');
   lines.push(`ARENA_ROLES=${(s.roles || []).join(',')}`);
   return lines.join('\n') + '\n';
 }

@@ -33,6 +33,10 @@ test('custody settings: founding, the release\'s fedimintd and fedimint-cli, the
   assert.equal(guardianSetupOf(s, { release, platform: 'win32' }).fedimintd, join(release, 'runtime', 'custody', 'fedimintd.exe'));
   assert.ok(!seatEnv({ ...s, roles: ['verify'] }, { home: '/h', release }).includes('ARENA_FOUNDING'), 'no custody');
   assert.ok(!seatEnv({ ...s, chain: { kind: 'electrum' }, bridgePort: 1 }, { home: '/h', release }).includes('ARENA_FOUNDING'), 'no Core');
+  // FEDIMINT ON A RAM DISK (kanban #596): only when chosen (more than 5 nodes), and only with custody
+  assert.ok(!env.includes('ARENA_FEDIMINT_RAM'), 'not chosen');
+  assert.ok(seatEnv({ ...s, instances: { count: 8, ram: true } }, { home: '/h', release }).split('\n').includes('ARENA_FEDIMINT_RAM=1'));
+  assert.ok(!seatEnv({ ...s, roles: ['verify'], instances: { count: 8, ram: true } }, { home: '/h', release }).includes('ARENA_FEDIMINT_RAM'), 'no custody, no guardian');
 });
 
 test('the bond advertises a custody node guardian-capable at its endpoint; any other node not', () => {
