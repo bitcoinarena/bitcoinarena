@@ -292,8 +292,30 @@
       window.ARENA_PAYOUT_VIEW = { tip: tip, federations: feds.length, requests: list.length };
     }).catch(function (e) { R.draw(view, 'payout', Object.assign({}, common, { data: null, error: e.message })); });
   }
+  // THE RESERVES IN DETAIL (kanban #589): every payment in as the first node that answers lists it (GET /reserves?all=1), each with its
+  // kind - an item when it names one, a market when its app is one (the Up/Down family), else a game - and the payouts made
+  function reservesView() {
+    R.draw(view, 'reserves', { rows: null });
+    var nodes = (state.nodes || []).map(function (u) { return String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''); });
+    var tryNode = function (i) {
+      if (i >= nodes.length) return Promise.reject(new Error('no node answered'));
+      return fetch(nodes[i] + '/reserves?all=1', { cache: 'no-store', signal: AbortSignal.timeout(10000) }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d) { return { d: d, from: nodes[i] }; }).catch(function () { return tryNode(i + 1); });
+    };
+    tryNode(0).then(function (x) {
+      if (location.hash !== '#reserves') return;
+      var rows = (x.d.paidIn || []).map(function (p) {
+        var app = p.game || '–';
+        return { outpoint: p.outpoint, at: String(p.at || ''), amountMsat: String(p.amountMsat || '0'), app: app, roundId: p.roundId,
+          entryId: /^0+$/.test(String(p.entryId || '')) ? null : p.entryId, federation: p.federationId,
+          kind: p.image ? 'item' : /updown|market/.test(app) ? 'market' : 'game' };
+      }).sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+      R.draw(view, 'reserves', { rows: rows, payouts: x.d.payouts || [], status: 'Read from ' + x.from.replace(/^https?:\/\//, '') + ' (' + Number(x.d.totalMsat || 0) / 1000 + ' sat held).' });
+    }).catch(function (e) { if (location.hash === '#reserves') R.draw(view, 'reserves', { rows: null, error: e.message }); });
+  }
   function route() {
     var h = location.hash;
+    if (h === '#reserves') { reservesView(); showKey(); return; }
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
     if (h === '#new-leaderboard') payoutView();
     else if (h === '#new-fees') feesView();

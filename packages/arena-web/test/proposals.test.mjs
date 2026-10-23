@@ -93,6 +93,33 @@ test('a table: "how?" shows the rule and an example, Insert puts it into what th
   assert.equal(f.state.preview, true);
 });
 
+test('the reserves in detail: every payment filtered by kind, app and federation, grouped with sums, 25 a page, and the payouts', async () => {
+  const { ReservesView, ReserveBalance } = await import('../dist/test/proposals.mjs');
+  assert.match(renderToStaticMarkup(React.createElement(ReserveBalance, { reserves: { sats: 233, agreeing: 13, asked: 14 }, capPct: 10 })), /<a class="lbl balance-link" href="#reserves"[^>]*>Protocol reserves<\/a>.*<a href="#reserves">details<\/a>/);
+  const F1 = 'aa'.repeat(32), F2 = 'bb'.repeat(32);
+  const rows = Array.from({ length: 30 }, (_, i) => ({ outpoint: 'o' + i, at: `2026-10-23T${String(10 + Math.floor(i / 3)).padStart(2, '0')}:00:00.000Z`, amountMsat: String(1000 * (i + 1)),
+    app: i % 3 === 0 ? 'nextblock' : 'btc-updown-15m', kind: i % 3 === 0 ? 'game' : 'market', roundId: 'cc'.repeat(32), entryId: i % 3 === 0 ? 'dd'.repeat(32) : null, federation: i < 20 ? F1 : F2 }));
+  const v = new ReservesView({ rows, payouts: [{ proposal: 'ee'.repeat(32), amountSats: '102', lnurl: 'you@wallet.example', state: 'CLAIMED', federation: F1 }] });
+  v.setState = (u) => Object.assign(v.state, typeof u === 'function' ? u(v.state) : u);
+  const html = () => renderToStaticMarkup(React.createElement(React.Fragment, null, v.render()));
+  let h = html();
+  assert.match(h, /<p class="rs-sum" id="rs-sum"><b>465 sat<\/b> in 30 payments<\/p>/);
+  assert.match(h, /Page 1 of 2/);
+  assert.equal((h.match(/<tr><td>2026-10-23/g) || []).length, 25, '25 rows a page');
+  assert.match(h, /<td>2026-10-23 10:00<\/td><td class="al-right">1<\/td><td>nextblock<\/td><td>game<\/td><td title="c{64}">cccccccc<\/td><td title="d{64}">dddddddd<\/td>/);
+  assert.match(h, /<td>btc-updown-15m<\/td><td>market<\/td><td title="c{64}">cccccccc<\/td><td title="">market pool<\/td>/);
+  assert.match(h, /<td title="e{64}">eeeeeeee<\/td><td class="al-right">102<\/td><td>you@wallet.example<\/td><td>CLAIMED<\/td>/);
+  v.state.page = 1; assert.equal((html().match(/<tr><td>2026-10-23/g) || []).length, 5);
+  v.set('kind', 'game'); h = html();
+  assert.match(h, /<b>145 sat<\/b> in 10 payments \(of 30\)/);
+  assert.match(h, /Page 1 of 1/);
+  v.set('kind', 'all'); v.set('fed', F2); assert.match(html(), /in 10 payments \(of 30\)/);
+  v.set('fed', 'all'); v.set('group', 'app'); h = html();
+  assert.match(h, /<table id="rs-groups"><thead><tr><th>App<\/th><th class="al-right">Payments<\/th><th class="al-right">Sats<\/th><\/tr><\/thead><tbody><tr><td>btc-updown-15m<\/td><td class="al-right">20<\/td><td class="al-right">320<\/td><\/tr><tr><td>nextblock<\/td><td class="al-right">10<\/td><td class="al-right">145<\/td>/);
+  assert.match(renderToStaticMarkup(React.createElement(ReservesView, { rows: null })), /Reading the nodes/);
+  assert.match(renderToStaticMarkup(React.createElement(ReservesView, { rows: null, error: 'no node answered' })), /could not be read: no node answered/);
+});
+
 test('change fees: the fees in force with their limits, only typed fees checked by the page\'s rule, a reason required, then published', async () => {
   const { FeesProposal } = await import('../dist/test/proposals.mjs');
   const feeVal = (k, v) => (k.endsWith('Bps') ? `${Number(v) / 100} %` : `${v} %`);
@@ -148,8 +175,8 @@ test('the forum\'s key line, its reserves on top and a line in place of the view
   assert.equal(r(SignedIn, { name: 'satoshi', npub: 'npub1x' }), 'Signed in as <b title="npub1x">satoshi</b> · your in-game key and name');
   assert.match(r(SignedIn, {}), /^Read freely\. To post, open the Arena once/);
   assert.equal(r(ReserveBalance, { reserves: { sats: 1234567, agreeing: 5, asked: 7 }, capPct: 10 }),
-    '<span class="lbl">Protocol reserves</span><b class="sats">1,234,567 sat</b><span class="sub">5 of 7 nodes agree · a PIP may ask up to 123,456 sat</span>');
-  assert.match(r(ReserveBalance, { reserves: null, why: 'no seat answered', capPct: 10 }), /<b class="sats">–<\/b><span class="sub">could not be read: no seat answered<\/span>/);
-  assert.match(r(ReserveBalance, { reserves: null, capPct: 10 }), /<span class="sub">reading the nodes<\/span>/);
+    '<a class="lbl balance-link" href="#reserves" title="Every payment into the reserves">Protocol reserves</a><b class="sats">1,234,567 sat</b><span class="sub">5 of 7 nodes agree · a PIP may ask up to 123,456 sat · <a href="#reserves">details</a></span>');
+  assert.match(r(ReserveBalance, { reserves: null, why: 'no seat answered', capPct: 10 }), /<b class="sats">–<\/b><span class="sub">could not be read: no seat answered · <a href="#reserves">details<\/a><\/span>/);
+  assert.match(r(ReserveBalance, { reserves: null, capPct: 10 }), /<span class="sub">reading the nodes · <a href="#reserves">details<\/a><\/span>/);
   assert.equal(r(Empty, { text: 'could not load x <b>' }), '<div class="empty">could not load x &lt;b&gt;</div>');
 });
