@@ -120,7 +120,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
   const entryPs = nodes.map(async (node, i) => {
     let x;
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
     } catch (e) { x = { node, status: 0, why: e.message }; }
     entriesNow[i] = x;
@@ -138,8 +138,16 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
   // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (measured on the regtest market
   // stack): handed once, at once, while the federation was still accepting the lock, every seat that looked first refused it
   // and none was asked again - so the order was tradable nowhere (a batch needs 5 seats holding its locks).
+  // NEVER WAITED ON FOREVER (playtest 2026-10-23 ~21:00Z, "I placed an order that never finishes": a federation that does not decide on the
+  // lock left the page at "placing …" for good): after `acceptWaitMs` the order is refused by name. A lock accepted later is the wallet's
+  // still - an expired lock no seat used comes back as a refund (page-lock expiredBack).
+  const acceptWaitMs = Number(stakeLock.acceptWaitMs) || ACCEPT_WAIT_MS;
   const accepted = (async () => {
-    if (stakeLock.accepted && typeof stakeLock.accepted.then === 'function') await stakeLock.accepted;
+    if (!(stakeLock.accepted && typeof stakeLock.accepted.then === 'function')) return;
+    let timer;
+    try {
+      await Promise.race([stakeLock.accepted, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not decide on it within ${Math.round(acceptWaitMs / 1000)} s`)), acceptWaitMs); })]);
+    } finally { clearTimeout(timer); }
   })();
   accepted.catch(() => {});
   const kinds = [{ door: 'lock', fields: stakeLock.fields }, ...(stakeLock.feeLock ? [{ door: 'fee-lock', fields: stakeLock.feeLock.fields }] : [])];
@@ -202,6 +210,8 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
   return { ok: true, entryId: toHex(eid), entries: entriesNow.slice(), first, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing, entriesAll };
 }
 const LOCK_HAND_MS_PICK = 120000;
+const ACCEPT_WAIT_MS = 60000;   // the federation's word on an order's lock (measured: 0.4-2.6 s; 15.5 s the slowest seen)
+const ENTRY_WAIT_MS = 20000;    // one seat's answer to the entry
 
 /**
  * THE TAB'S RECORD OF A PICK (what the lobby's market lines are made of): its round, entry and pick, its market's game, its
