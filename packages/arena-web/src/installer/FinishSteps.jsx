@@ -155,14 +155,17 @@ export class LightningStep extends React.Component {
 }
 
 // the total the wallet must receive, and its parts when there are more than the bond and its fees
-export const PART = Object.freeze({ bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)' });
+export const PART = Object.freeze({ bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)', otherNodes: 'the other nodes (handed on from this wallet)' });
 export const needText = (need, parts) => `${n(need)}${parts && Object.keys(parts).length > 2 ? ` (${Object.entries(parts).map(([k, v]) => `${PART[k] || k} ${n(v)}`).join(', ')})` : ''}`;
 export const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()} (testnet4 blocks come about every 10 minutes; the block height is the rule, the date an estimate). Until then it cannot be withdrawn; after that, the owner page withdraws it.`;
 /** What the deposit check found, in words; with the network's minimum for a new node when it is above the floor (§23A.3a, kanban #543). */
 export const foundText = (r) => (r.coins.length
   ? `Found ${n(r.totalSats)} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => (c.height ? `confirmed at ${c.height}` : 'unconfirmed')).join(', ')}).${r.enough ? '' : ` Needed: ${n(r.needSats)} sat in all (fees included).`}`
   : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).')
-  + (r.minimum && r.minimum.sats > 50000 ? ` The network asks a new node to bond at least ${n(r.minimum.sats)} sat now (its federations are filling up), so your node is useful from the start.` : '');
+  + (r.minimum && r.minimum.sats > 50000 ? ` The network asks a new node to bond at least ${n(r.minimum.sats)} sat now (its federations are filling up), so your node is useful from the start.` : '')
+  // A FURTHER NODE OF A COUNT (kanban #596): its part paid on from the first node's wallet
+  + (r.fundedFrom && r.fundedFrom.txid ? ` Paid from the first node's wallet: ${n(r.fundedFrom.sats)} sat (${String(r.fundedFrom.txid).slice(0, 12)}…); it shows here once your Bitcoin connection sees it.` : '')
+  + (r.fundWhy ? ` ${r.fundWhy}` : '');
 
 export class BondStep extends React.Component {
   constructor(props) {

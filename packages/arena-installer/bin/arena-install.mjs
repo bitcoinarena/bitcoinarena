@@ -176,7 +176,9 @@ if (args.includes('--add-custody')) {
 }
 
 let tunnel = null, server = null;
-const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l), onDone: () => {
+const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l),
+  fundFrom: fromHome ? nodeState(resolve(fromHome)) : null,   // kanban #596: a further node's deposit paid from node 1's wallet
+  onDone: () => {
   // the public address when the node has one (2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")
   const pub = (state.read().reach || {}).url;
   console.log(`\nDone. Your node runs as the user service arena-node.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/Dashboard/owner${pub ? '' : ' (this machine only)'}`);
