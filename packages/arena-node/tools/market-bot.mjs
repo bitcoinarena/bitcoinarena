@@ -56,6 +56,10 @@ const TAKE_BASE = Number(env.TAKE_BASE || 0.3);
 // SELL_CENTS against or for its buy - its side's fair value that far under (cut the loss) or over (take the profit) the limit it
 // bought at - with chance SELL_BASE a pass, all its unoffered shares of the entry at the fair value less 1¢: asks on the book from
 // held shares, as Polymarket's Sell. SELLS=0 (the default): the bot never sells.
+// AT MOST PER_PASS ORDERS A PASS (kanban #586, measured 2026-10-23 16:35Z: twenty bots placed 12 orders and 24 takes in one minute
+// as a window opened - ~72 locks at once, federation A's seven guardians at 100-155 % CPU each and the test host at load 23 for two
+// minutes): the rest of a pass's ladder waits for the next pass, so the orders spread over the window. Unset: no limit, as before.
+const PER_PASS = Number(env.PER_PASS || 0) || Infinity;
 const SELLS = Number(env.SELLS || 0), SELL_CENTS = Number(env.SELL_CENTS || 8), SELL_BASE = Number(env.SELL_BASE || 0.5);
 // TAKES OVER THE WHOLE WINDOW (kanban #586, the owner: "There must be always action"; measured 2026-10-23 10:00-11:00Z: every bot
 // spent its takes early - minutes 0-2, 13 and 14 and several in between had no take, and makers and takers alike stopped
@@ -438,11 +442,13 @@ async function pass() {
     // seated before anything is paid (§5A.7) - read once per round: a round's seated signers do not change
     const seated = seatedOf.get(row.id) || await clientSettlementSignerNodes(row.id, c, nodes, { curve: pageCurve });
     seatedOf.set(row.id, seated);
+    let placedThisPass = 0;
     for (const q of todo) {
+      if (placedThisPass >= PER_PASS) break;
       const index = done.size;
       try {
         const o = await placeOrder(c, rid, q, index, seated.signerNodes, closeAt, q.key ? TAKE_AHEAD_MS : AHEAD_MS);
-        done.add(q.key || `${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
+        done.add(q.key || `${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced(); placedThisPass++;
         orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now(), session: o.session, outcome: o.outcome, limitCents: o.limitCents }); keepOrders();
         const { session: _s, ...shown } = o;
         say({ step: q.key ? 'take' : 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...shown });
