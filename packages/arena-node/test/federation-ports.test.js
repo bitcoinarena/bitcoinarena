@@ -11,14 +11,18 @@ const portOf = (fid) => ({ id: fid, async guardians() { return { federationId: U
   async gateways() { return { federationId: Uint8Array.from(Buffer.from(fid, 'hex')), gateways: [] }; }, close() {} });
 
 test('the home federation is the home port; another is joined once with its record\'s invite, then served by its own port', async () => {
-  const joined = []; const dirs = new Set();
+  const joined = []; const dirs = new Set(); const copies = [];
   const r = federationPorts({ home: portOf(A), bin: 'lock', baseDir: '/x/federations', inviteOf: (f) => (f === B ? 'fed11-b' : null),
-    exists: (p) => dirs.has(p), makePort: ({ dataDir }) => ({ ...portOf(B), dataDir }),
+    exists: (p) => dirs.has(p), makePort: ({ dataDir, readDataDir }) => ({ ...portOf(B), dataDir, readDataDir }),
+    copyDir: (from, to) => { copies.push([from, to]); dirs.add(`${to}/client.db`); },
     runJoin: async (args) => { joined.push(args); dirs.add(`${args[3]}/client.db`); return { mode: 'join', federation_id: B }; } });
   assert.equal(typeof r.gateways, 'function', 'the router answers as the home port');
   assert.equal((await r.forFederation(A)).id, A);
   const [b1, b2] = await Promise.all([r.forFederation(B), r.forFederation(B)]);
   assert.equal(b1.dataDir, `/x/federations/${B}`);
+  // its read-only questions on a copy of its own, made once (kanban #586: one run per question on the shared directory before)
+  assert.equal(b1.readDataDir, `/x/federations/${B}.read`);
+  assert.deepEqual(copies, [[`/x/federations/${B}`, `/x/federations/${B}.read`]]);
   assert.equal(b1, b2);
   assert.equal(joined.length, 1, 'joined once');
   assert.deepEqual(joined[0], ['--mode', 'join', '--data-dir', `/x/federations/${B}`, '--invite', 'fed11-b']);
