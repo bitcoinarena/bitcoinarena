@@ -52,11 +52,13 @@ export async function entrySplit({ c, roundHex, nodes, needed = 5, fetcher = fet
  * `entryFields` are what the entry names of them (stakeLockOutpoint, feeLockOutpoint, feePreimage, and from 11 donationOutpoints and
  * reserveOutpoint). `gate` is feeLockPays' answer; `expiry` the lock's blocks.
  */
-export async function lockEntry({ lc, c, split, stakePoint, player, claimPk, gate, expiry = 150, rand }) {
+// `submitOnly` (kanban #601: an order submitted before the guardians agree): the locks sent in one transaction and answered at once, with
+// `accepted` the promise of the federation's acceptance - the caller hands the entry to the seats meanwhile, the locks after it
+export async function lockEntry({ lc, c, split, stakePoint, player, claimPk, gate, expiry = 150, rand, submitOnly = false }) {
   const refundPk = refundKeyOf(player);
   const zero = { txid: new Uint8Array(32), outIdx: 0n };
   const F = gate.pays ? rand(32) : null;
-  if (!split.shares.length) {
+  if (!split.shares.length && !(submitOnly && typeof lc.lockSubmit === 'function')) {
     // THE STAKE AND THE FEE IN ONE TRANSACTION when the client has `lockBoth` (as the page's join, page-lock.js): one transaction
     // for the guardians to agree on, not two - kanban #576, measured 2026-10-23 10:3xZ: with 20 market bots, federation A's 7
     // guardians at ~0.7 core each and ~4 threads waiting on disk at any time, the work scaling with the transactions agreed
@@ -86,12 +88,13 @@ export async function lockEntry({ lc, c, split, stakePoint, player, claimPk, gat
   const dons = outs.filter((o) => o.role === 'donation');
   if (!so || BigInt(so.amount_msat) !== split.netMsat) throw new Error(`the lock client built ${so ? so.amount_msat : 'no'} msat of stake, not ${split.netMsat}`);
   if (dons.length !== split.shares.length) throw new Error(`the lock client built ${dons.length} donation outputs for ${split.shares.length} shares`);
-  await lc.lockAccepted(JSON.stringify(sub));
+  const accepted = lc.lockAccepted(JSON.stringify(sub));
+  if (submitOnly) accepted.catch(() => {}); else await accepted;
   const stake = { outpoint: at(so), fields: { paymentImage: { kind: 'point', bytes: stakePoint }, amountMsat: BigInt(so.amount_msat), claimPk, refundPk, expiration: so.computed_expiration } };
   const fee = fo ? { outpoint: at(fo), fields: { paymentImage: { kind: 'hash', bytes: sha256(F) }, amountMsat: BigInt(fo.amount_msat), claimPk, refundPk, expiration: fo.computed_expiration }, preimage: F } : null;
   // the reserve share is the last (donationKeyShares puts it there, marked)
   const ri = split.shares.findIndex((d) => d.reserve);
-  return { stake, fee, txid: sub.txid, entryFields: { stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee ? fee.outpoint : zero, feePreimage: fee ? F : new Uint8Array(32),
+  return { stake, fee, txid: sub.txid, ...(submitOnly ? { accepted } : {}), entryFields: { stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee ? fee.outpoint : zero, feePreimage: fee ? F : new Uint8Array(32),
     ...(dons.filter((_, i) => i !== ri).length ? { donationOutpoints: dons.filter((_, i) => i !== ri).map(at) } : {}),
     ...(ri >= 0 ? { reserveOutpoint: at(dons[ri]) } : {}) } };
 }
