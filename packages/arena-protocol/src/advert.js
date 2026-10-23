@@ -47,10 +47,13 @@ const compareGuardian = (a, b) =>
 // this node is willing to hold custody as a guardian, and the fedimintd API endpoint the client and the seats use. Both
 // or neither: capable needs a ws:// or wss:// endpoint, not capable needs the empty string. An advert that says nothing
 // about it (the field left out) is a node that is not a guardian.
+// guardian_capable: 0 no, 1 yes, 2 yes WITH A FREE FOUNDING SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): its guardian-next
+// waits in setup, so a federation it guards being overloaded frees it for a founding (founding-seat.js guardingOpenOf). Every advertisement
+// before it keeps its bytes. A node before this refuses an advertisement saying 2, so no node advertises it before every node reads it.
 function guardianRole(capable, endpoint) {
-  if (capable !== 0 && capable !== 1) throw new Error(`guardian_capable is 0 or 1, not ${capable}`);
+  if (capable !== 0 && capable !== 1 && capable !== 2) throw new Error(`guardian_capable is 0, 1 or 2, not ${capable}`);
   if (typeof endpoint !== 'string') throw new Error('guardian_endpoint is a string');
-  if (capable === 1 && !/^wss?:\/\/\S+$/.test(endpoint))
+  if (capable >= 1 && !/^wss?:\/\/\S+$/.test(endpoint))
     throw new Error(`a guardian-capable node names a ws:// or wss:// guardian_endpoint, not "${endpoint}"`);
   if (capable === 0 && endpoint !== '') throw new Error('a node that is not guardian-capable names no guardian_endpoint');
 }
@@ -113,7 +116,7 @@ export function encodeAdvert(a) {
   w.vec(a.guardianOf, (g, ww) => { ww.bytes32(g.federationId); ww.bytes(g.guardianKey, GUARDIAN_KEY_BYTES); },
     { sortedBy: compareGuardian });
   // WHETHER THIS NODE IS A GUARDIAN, AND WHERE (§5A.1 v4.6.4), in the signed body - so under the node's signature.
-  const capable = a.guardianCapable === undefined ? 0 : a.guardianCapable === true ? 1 : a.guardianCapable === false ? 0 : a.guardianCapable;
+  const capable = a.guardianCapable === undefined ? 0 : a.guardianCapable === true ? (a.foundingSlot === true ? 2 : 1) : a.guardianCapable === false ? 0 : a.guardianCapable;
   const guardianEndpoint = a.guardianEndpoint === undefined ? '' : a.guardianEndpoint;
   guardianRole(capable, guardianEndpoint);
   w.u8(capable);
@@ -204,7 +207,8 @@ export function decodeAdvert(bytes) {
   const capable = r.u8();
   const guardianEndpoint = r.str();
   guardianRole(capable, guardianEndpoint);
-  a.guardianCapable = capable === 1;
+  a.guardianCapable = capable >= 1;
+  if (capable === 2) a.foundingSlot = true;
   a.guardianEndpoint = guardianEndpoint;
   a.hostedGames = r.vec((rr) => rr.bytes32());
   for (let i = 1; i < a.hostedGames.length; i++)

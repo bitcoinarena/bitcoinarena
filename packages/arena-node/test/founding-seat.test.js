@@ -150,9 +150,13 @@ test('guardingOpenOf: an OPEN federation at load >= 1 holds nobody back (the own
   const both = (lf, lg) => [...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'OPEN', load: lf }, { federation: toHex(G), status: 'OPEN', load: lg }], except: null })].sort();
   const all = both(0.5, 0.5);
   assert.ok(all.length >= 1, 'under load: its guardians guard it');
-  assert.deepEqual(both(4.33, 4.33), [], 'both overloaded (A measured at 4.33): every guardian is free for a founding');
+  assert.deepEqual(both(4.33, 4.33), all, 'overloaded, but no node advertises a free founding slot: nobody is freed (kanban #599)');
   assert.deepEqual(both(0.99, 0.99), all, 'just under 1 is not overloaded');
-  assert.deepEqual(both(1, 0.5).length < all.length || all.length === both(1, 0.5).length, true);
+  // WITH A FREE SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): every node advertising guardian_capable 2 is freed by an overloaded federation
+  const slotted = sEntries.map((e) => ({ ...e, advert: { ...e.advert, foundingSlot: true } }));
+  const bothSlot = (lf, lg) => [...guardingOpenOf({ entries: slotted, held: [{ federation: toHex(F), status: 'OPEN', load: lf }, { federation: toHex(G), status: 'OPEN', load: lg }], except: null })].sort();
+  assert.deepEqual(bothSlot(4.33, 4.33), [], 'both overloaded and every node has a free slot: every guardian is free for a founding');
+  assert.deepEqual(bothSlot(0.5, 0.5), all, 'a free slot frees nobody from a federation under load');
 });
 
 test('guardingOpenOf: operators whose adverts name a federation held OPEN, other than the one succeeded', () => {
@@ -465,7 +469,10 @@ test('guardingWhy: the nodes of an operator that name a federation held OPEN or 
   const entries = [{ pubkey: a.pub, advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('aa') }, { federationId: fid('cc') }] } },
     { pubkey: b.pub, advert: { operatorId: 'opX', guardianOf: [{ federationId: fid('bb') }, { federationId: fid('dd') }] } }];
   const held = [{ federation: 'aa'.repeat(32), status: 'CLOSED' }, { federation: 'bb'.repeat(32), status: 'OPEN', load: 0.3 }, { federation: 'dd'.repeat(32), status: 'OPEN', load: 4.3 }];
-  assert.deepEqual(guardingWhy({ entries, held, op: 'opX' }), [{ node: toHex(a.pub), federation: 'cc'.repeat(32), status: 'not held' }, { node: toHex(b.pub), federation: 'bb'.repeat(32), status: 'OPEN' }]);
+  assert.deepEqual(guardingWhy({ entries, held, op: 'opX' }), [{ node: toHex(a.pub), federation: 'cc'.repeat(32), status: 'not held' }, { node: toHex(b.pub), federation: 'bb'.repeat(32), status: 'OPEN' },
+    { node: toHex(b.pub), federation: 'dd'.repeat(32), status: 'overloaded, no free slot' }], 'an overloaded federation holds back a node with no free slot (kanban #599)');
+  const slot = entries.map((e) => ({ ...e, advert: { ...e.advert, foundingSlot: true } }));
+  assert.equal(guardingWhy({ entries: slot, held, op: 'opX' }).some((x) => x.federation === 'dd'.repeat(32)), false, 'with a free slot it is freed');
   assert.deepEqual(guardingWhy({ entries, held, op: 'other' }), []);
 });
 
