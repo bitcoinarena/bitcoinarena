@@ -268,6 +268,7 @@ async function topUp(needMsat) {
 
 // ---- ONE ORDER: the page's join for a market order, with the bot mark ----
 async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs = AHEAD_MS) {
+  const t0 = Date.now();
   const r = { ...c, orderStakeMsat: rung.stakeMsat };
   // THE SEATED SIGNER NODES (the seating certificate's settlement committee), not the contract's list: a seated round's shares are
   // dealt to them - measured 2026-10-22 22:50Z, shares dealt to c.nodes: "this node is not one of the signer nodes that handout was dealt to"
@@ -296,7 +297,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   const point = feldmanGroup.pointFromScalar(scalarFrom32(p) % FIELD);
   // the lock lasts the round's own stake expiry (a market's window and settlement, 1800+ blocks), not lockEntry's 150 for a short game -
   // measured 22:53Z: "that stake lock's lock height 155634 (its expiration 157469 less the round's 1835 blocks)"
+  const tLock = Date.now();
   const locks = await lockEntry({ lc: w, c: oc, split, stakePoint: point, player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks) });
+  const lockMs = Date.now() - tLock;
   if (env.DEBUG) say({ step: 'locks', gate: gate.pays, gateWhy: gate.why, fee: !!locks.fee, feeLock: locks.entryFields.feeLockOutpoint && toHex(locks.entryFields.feeLockOutpoint.txid).slice(0, 12), feeMsat: split.feeMsat, netMsat: split.netMsat });
   const needed = receiptsNeeded(signers.length), e = rand(32);
   const dealt = await dealHandout({ preimage: p, signerNodes: signers, roundId: rid, playerPubkey: player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
@@ -311,8 +314,14 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
     stakePoint: dealt.handout.commitments[0], ...locks.entryFields, claimKeyAttestationRef: att.ref,
     pick: Number(rung.outcome), limitPrice: Number(rung.price), orderExpiryMs: 0n, bot: true };
   const eid = entryId(entry);
+  // EVERY SEAT AT ONCE (the owner 2026-10-23 ~19:45Z: "Wie lange dauert nun eine btc up down Order über die api?"): the seats were handed the
+  // order one after another - handout, entry, fee lock, lock, each lock checked by that seat with the federation - so an order waited for
+  // seven seats in a row. Each seat's four posts stay in order; the seats run side by side. `ms`: the whole order, the locks at the
+  // federation (lockMs), and the seats (seatsMs, firstSeatMs when the first one held the lock)
+  const tSeats = Date.now();
+  let firstSeatMs = null;
   const said = [];
-  for (const n of nodes) {
+  await Promise.all(nodes.map(async (n) => {
     try {
       const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
       const hWhy = h.status >= 300 ? (await h.text()).trim().slice(0, 200) : null;
@@ -321,14 +330,17 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
       if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)) });
       const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) });
       const lWhy = l.status >= 300 ? (await l.text()).trim().slice(0, 200) : null;
+      if (l.status >= 200 && l.status < 300 && firstSeatMs === null) firstSeatMs = Date.now() - t0;
       said.push({ seat: n.replace(/^https?:\/\//, ''), entry: en.status, lock: l.status, ...(enWhy ? { why: enWhy } : {}), ...(hWhy ? { handout: h.status, handoutWhy: hWhy } : {}), ...(lWhy ? { lockWhy: lWhy } : {}) });
     } catch (x) { said.push({ seat: n, why: x.message.slice(0, 80) }); }
-  }
+  }));
+  const seatsMs = Date.now() - tSeats;
   // TAKEN only when enough seats took the entry and its lock (as tn4-rps-paid.mjs counts): else the rung is tried again next pass
   const took = said.filter((x) => x.lock >= 200 && x.lock < 300).length;
   if (env.DEBUG) for (const x of said) say({ step: 'seat answer', ...x });
   if (took < needed) throw new Error(`the seats did not take the order: ${took} of ${needed} needed took its lock; ${said.find((x) => x.handoutWhy)?.handoutWhy ? `handout: ${said.find((x) => x.handoutWhy).handoutWhy}; ` : ''}${said.find((x) => x.why)?.why || 'no reason given'}`);
-  return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' '), session: toHex(session), limitCents: Number(rung.price / TICK), outcome: Number(rung.outcome) };
+  return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' '), session: toHex(session), limitCents: Number(rung.price / TICK), outcome: Number(rung.outcome),
+    ms: Date.now() - t0, lockMs, seatsMs, firstSeatMs };
 }
 
 // ---- WHAT THE BOT WINS, COLLECTED (slice 5): for every order whose window ended more than a minute ago, the page's own look
