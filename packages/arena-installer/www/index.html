@@ -119,6 +119,14 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
       <li><span class="ic">🌐</span><b>Home internet</b>no open port needed: a tunnel or Tor is set up for you</li>
       <li><span class="ic">🔒</span><b>A bond of 50,000 sat</b>testnet4 coins, free from a faucet; locked for a while, then yours again</li>
     </ul>
+    <!-- HOW MANY NODES (kanban #596): 1 by default; from 10 they found their own federation; more than 5: Fedimint on a RAM disk -->
+    <div class="inst" id="intro-inst">
+      <label for="intro-count"><b>How many nodes on this computer?</b></label>
+      <input id="intro-count" type="number" min="1" max="20" value="1" inputmode="numeric">
+      <div class="sub" id="intro-count-note"></div>
+      <label class="choice" id="intro-ram-row" hidden><input id="intro-ram" type="checkbox" checked> <span><b>Put Fedimint on a RAM disk</b><br><span class="sub">faster, and much less writing to the disk with many nodes; a power cut loses at most the last minute</span></span></label>
+      <div class="sub bad" id="intro-inst-why"></div>
+    </div>
     <button id="intro-go">Set up my node</button>
   </section>
   <section id="s-chain"></section>
@@ -222,6 +230,7 @@ async function load() {
   R.bar($('steps'), { steps: STEPS, done: st.done, now: st.step });   // the current step scrolled into view
   // THE INTRO: before the first step is done, until "Set up my node" (remembered in this browser where it can be)
   const intro = st.step === 'chain' && !st.done.chain && !introSeen();
+  if (intro && st.instances) { $('intro-count').value = st.instances.count; $('intro-ram').checked = st.instances.count < 6 || st.instances.ram !== false; paintInst(); }
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
   // THE REACT STEPS (kanban #564): the current step draws its section, every other one is taken down (its timers stop); the roles
@@ -230,7 +239,16 @@ async function load() {
   if (st.step === 'roles') R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; } });
   R.show(st.step, (k) => $('s-' + k), ctx);
 }
-$('intro-go').onclick = () => { introSkipped = true; try { localStorage.setItem('arena-intro-seen', '1'); } catch { /* this visit only */ } load(); };
+// HOW MANY NODES (kanban #596): the note follows the count; the RAM disk checkbox from more than 5; kept when the intro is left
+const instNote = (n) => (n <= 1 ? '' : `${n} nodes: each its own seed, owner key and bond (${(n * 50000).toLocaleString('en-US')} sat in all).` + (n >= 10 ? ' 10 or more nodes found their own federation.' : ''));
+const paintInst = () => { const n = Number($('intro-count').value) || 1; $('intro-count-note').textContent = instNote(n); $('intro-ram-row').hidden = n < 6; $('intro-inst-why').textContent = ''; };
+$('intro-count').oninput = paintInst;
+$('intro-go').onclick = async () => {
+  const n = Number($('intro-count').value) || 1;
+  const r = await post('/api/instances', { count: n, ram: n >= 6 ? $('intro-ram').checked : false });
+  if (!r.ok) { $('intro-inst-why').textContent = r.why; return; }
+  introSkipped = true; try { localStorage.setItem('arena-intro-seen', '1'); } catch { /* this visit only */ } load();
+};
 load();
 </script>
 </body>
