@@ -5776,7 +5776,8 @@
             closeMs: () => { const id = opts.round ? opts.round() : null, row = (window.ARENA_LOBBY_ROWS || []).find((r) => r.id === id); return row ? Number(row.entryCloseMs) || 0 : 0; } }) : null),
           // an old order read back from the seats is left out while its result is read (marketViewLines)
           orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && x.gameId === game.id && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
-            limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled })); },
+            limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled,
+            canSell: !!x.order.sessionKeyPkcs8, sells: x.order.sells || [] })); },
           cancel: async (entryIdHex) => {
             const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
             if (!x) return { ok: false, why: 'this tab placed no such order' };
@@ -5789,6 +5790,30 @@
             const ok = seats.some((r) => r.status >= 200 && r.status < 300);
             if (ok) { x.order.cancelled = true; rememberPick(x); }
             return { ok, seats };
+          },
+          // SELL SHARES AN ORDER OF THIS TAB HOLDS (Polymarket's Sell, 2026-10-23: "wir brauchen bid und asks und auch die UI
+          // funktionen dafür"): `outcome` the side sold, at least `price` of the scale a share, `sharesMsat` the payout units sold.
+          // Signed with the order's kept session key over sellId and posted to every seat of its round: it rests in the book as an
+          // ask until it fills or the market closes; what it sold is paid out at settlement, less its fee. Kept with the order, so
+          // the client counts what is still offered.
+          sell: async (entryIdHex, outcome, price, sharesMsat) => {
+            const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
+            if (!x) return { ok: false, why: 'this tab placed no such order' };
+            if (!x.order.sessionKeyPkcs8) return { ok: false, why: 'this order was read back from the seats; its shares can be sold only in the tab that bought them' };
+            if (outcome !== 0 && outcome !== 1) return { ok: false, why: 'a sell sells outcome 0 or 1' };
+            let id;
+            const nonce = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
+            try { id = ARENACLIENT.orderSellId({ roundId: ARENACLIENT.fromHex(x.roundIdHex), entryId: ARENACLIENT.fromHex(entryIdHex), outcome, price: BigInt(price), sharesMsat: BigInt(sharesMsat), nonce }); }
+            catch (e) { return { ok: false, why: e.message }; }
+            const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(x.order.sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']);
+            const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, id));
+            const body = JSON.stringify({ entry: entryIdHex, outcome, price: String(price), sharesMsat: String(sharesMsat), nonce: String(nonce), signature: ARENACLIENT.toHex(sig) });
+            const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/sell?round=' + x.roundIdHex, { method: 'POST', body })
+              .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
+            const ok = seats.some((r) => r.status >= 200 && r.status < 300);
+            const sellIdHex = ARENACLIENT.toHex(id);
+            if (ok) { x.order.sells = [...(x.order.sells || []), { id: sellIdHex, outcome, price: String(price), sharesMsat: String(sharesMsat), atMs: Date.now() }]; rememberPick(x); }
+            return { ok, seats, id: sellIdHex };
           },
         } : null,
         state: () => ({ join: window.ARENA_JOIN || null, picks: (ARENACLIENT.marketLines && window.ARENA_MARKET_LINES) ? window.ARENA_MARKET_LINES() : [] }),
