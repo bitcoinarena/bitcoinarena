@@ -4387,6 +4387,50 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and posted to every seat - through a fedimint-cli client of that federation when one is named (ARENA_SPENT_SET_CLIENT_DIR).
   // ASKED DIRECTLY over the guardian's own socket when no client is named (kanban #326, rehearsal 17: a client of a halted federation
   // can no longer be joined), and posted to every seat, not only the peers given.
+  // A SEAT'S OWN ADVERTISEMENT NAMES ITS GUARDIANS' FEDERATIONS (kanban #577, the owner 2026-10-23: a founding counts only with no hand step,
+  // and e2f42eea's needed n495-7's guardian_of update posted by hand): every 10 min a seat set up by hand - one that names its bond wallet
+  // (ARENA_BOND_CLI) and has no installer home, where the custody agent does it - reads the federation and guardian key of each guardian it
+  // runs (its invite-code, local.json, consensus.json) and, when its advertisement lacks one, posts an update from that wallet. Entries the
+  // advertisement has are kept: nothing is removed. One update at a time (`.advert-self.json`); ARENA_ADVERT_SELF=dry builds and checks only.
+  if (process.env.ARENA_BOND_CLI && !process.env.ARENA_HOME && process.env.ARENA_ADVERT_SELF !== '0' && (guardian || guardianNext)) {
+    const selfFile = db && db.arenaPath ? `${db.arenaPath}.advert-self.json` : null;
+    const entryOf = (dir) => {
+      try {
+        const invite = readFileSync(joinPath(dir, 'invite-code'), 'utf8').replace(/["\s]/g, '');
+        const peer = JSON.parse(readFileSync(joinPath(dir, 'local.json'), 'utf8')).identity;
+        const key = JSON.parse(readFileSync(joinPath(dir, 'consensus.json'), 'utf8')).broadcast_public_keys[String(peer)];
+        if (!/^[0-9a-f]{66}$/.test(key || '')) return null;
+        return { federationId: readInvite(invite).federationId, guardianKey: fromHex(key) };
+      } catch { return null; }     // a guardian still in setup has no invite yet
+    };
+    const advertSelf = async () => {
+      const mine = [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean);
+      if (!mine.length) return;
+      const { bondCliFrom, guardianOfFromWallet } = await import('./add-bond-wallet.js');
+      const b = bondCliFrom(); if (!b) return;
+      let last = null; try { last = selfFile ? JSON.parse(readFileSync(selfFile, 'utf8')) : null; } catch { last = null; }
+      if (last && last.txid) { try { b.cli('getmempoolentry', last.txid); return; } catch { /* confirmed or gone: look again */ } }
+      // what the advertisement names, with this seat's own guardians added (or their keys made current) - never fewer
+      const { regtest } = await import('../tools/regtest-bond.mjs');
+      const network = process.env.ARENA_DONATION_NETWORK || 'testnet4';
+      const rt = regtest(b.cli, { network, wallet: b.wallet || 'arena' });
+      const bonds = rt.bondsOf(round.identity.secret);
+      if (!bonds.length) return;
+      const now = (rt.newestUpdateOf(bonds[0]) || {}).advert || bonds[0].advert;
+      const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));
+      for (const e of mine) want.set(toHex(e.federationId), e);
+      const dry = process.env.ARENA_ADVERT_SELF === 'dry';
+      const r = await guardianOfFromWallet({ cli: b.cli, wallet: b.wallet, network, secret: round.identity.secret, guardianOf: [...want.values()], post: !dry });
+      if (r.same) return;
+      if (!r.ok) { console.log(`[advert] guardian_of not posted: ${r.why}`); return; }
+      console.log(`[advert] guardian_of ${dry ? 'would be' : 'posted'}: ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ')} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${r.update ? `, ${r.update.txid}` : ''}`);
+      if (r.update && selfFile) { try { writeFileSync(selfFile, JSON.stringify({ txid: r.update.txid, after: r.plan.after, atMs: Date.now() })); } catch { /* checked on chain next time */ } }
+    };
+    const selfStart = setTimeout(() => { advertSelf().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)); }, 60000);
+    if (selfStart.unref) selfStart.unref();
+    const selfTimer = setInterval(() => { advertSelf().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)); }, 600000);
+    if (selfTimer.unref) selfTimer.unref();
+  }
   if (guardian && guardian.dataDir && (process.env.ARENA_SPENT_SET_CLIENT_DIR || guardian.endpoint)) {
     guardianWiring.spentSet = true;
     const publishOwnSpentSets = async () => {
