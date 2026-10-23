@@ -13,7 +13,7 @@
  *
  *   NODES=<seat urls> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> BOOK_BOT=<book-bot.js of the Up/Down
  *   app> BOT_DIR=<this bot's folder> [BOT_NAME=m1] [PRICE=coinbase|kraken] [LEVELS=2] [STEP_CENTS=2] [EDGE_CENTS=1] [SHARES=100]
- *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [TARGET_MSAT=2000000] [PEER_WAIT_S=60] [DRY=1]
+ *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [SPREAD_S=600] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [TARGET_MSAT=2000000] [PEER_WAIT_S=60] [DRY=1]
  *   node tools/market-bot.mjs
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync, unlinkSync } from 'node:fs';
@@ -52,6 +52,11 @@ const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 1
 // every bot when the window is decided. Unset or 0, the bot only quotes, as before.
 const TAKES = Number(env.TAKES || 0), TAKE_CENTS = Number(env.TAKE_CENTS || 2), TAKE_SHARES = Number(env.TAKE_SHARES || SHARES);
 const TAKE_BASE = Number(env.TAKE_BASE || 0.3);
+// SPREAD OVER THE WINDOW (kanban #576, measured 2026-10-23 09:30-09:34Z: every bot ordered in a window's first minutes, while the last
+// window settled - federation A's 7 guardians went from ~1 to 3.5 cores, the test host to load 28-56): each bot starts each window at its
+// own offset, from its name and the window, somewhere in the first SPREAD_S - so the federation's work, and the trading, last the window
+const SPREAD_MS = Number(env.SPREAD_S || 600) * 1000;
+const offsetIn = (windowStartMs) => SPREAD_MS > 0 ? Number(BigInt('0x' + toHex(sha256(new TextEncoder().encode(`${NAME}:${windowStartMs}`))).slice(0, 12)) % BigInt(SPREAD_MS)) : 0;
 const WINDOW_MS = 900000, GAME = env.GAME || 'btc-updown-15m';
 mkdirSync(DIR, { recursive: true, mode: 0o700 });
 const J = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v));
@@ -351,6 +356,7 @@ async function pass() {
   const last = await lastPrice();
   for (const row of windows) {
     const start = Number(row.windowStartMs), end = start + WINDOW_MS;
+    if (Date.now() < start + offsetIn(start)) continue;   // this bot's turn in this window has not come yet
     let beat; try { beat = await beatOf(start); } catch (e) { say({ step: 'beat', round: row.id.slice(0, 16), why: e.message }); continue; }
     const fair = fairUp({ beat, last, msLeft: end - Date.now() });
     const ladder = quoteLadder({ fair, levels: LEVELS, stepCents: STEP, edgeCents: EDGE, shares: SHARES });
