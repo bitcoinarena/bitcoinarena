@@ -150,6 +150,7 @@ test('the pick: the entry carries it, every seat is handed the entry, the stake 
   const committed = [];
   lock.needed = 2; lock.onCommitted = (eid) => committed.push(toHex(eid));
   const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-a', 'http://seat-b'], fetcher });
+  await sent.handing;   // the other seats in the background (kanban: placed once one seat holds it)
   console.log('  SUBMIT:', JSON.stringify({ ok: sent.ok, posts: [...new Set(posts)].sort(), committed: committed.map((x) => x.slice(0, 8)) }));
   assert.equal(sent.ok, true);
   assert.deepEqual(committed, [sent.entryId], 'the page was not told once that the seats hold the order\'s lock');
@@ -171,7 +172,30 @@ test('a hidden move is the tab\'s once the seats took its entry: onEntries befor
   accept({});
   const sent = await p;
   assert.equal(sent.ok, true);
+  await sent.handing;
   assert.equal(order.filter((x) => x === '/lock').length, 2, 'the lock handed to both seats after acceptance');
+});
+
+// PLACED ONCE ONE SEAT HOLDS IT (the owner 2026-10-23 "Ja, nach 1 Seat"; the lock still comes back when fewer than 5 seats hold it): the
+// order answers as soon as the federation accepted its lock and the first seat holds the entry and both locks - a slow seat is not waited
+// on, and gets its entry and locks in the background
+test('a pick is placed once the first seat holds its entry and locks; a slow seat gets them in the background', async () => {
+  const seed = b32(3);
+  const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
+  const entry = { ...entryFor(round, { seed, curve: (await import('../src/page-curve.js')).pageCurve, random: () => b32(5), pick: 0 }), roundId: ROUND_ID, sessionPubkey: b32(6) };
+  let release; const slow = new Promise((r) => { release = r; });
+  const done = [];
+  const fetcher = async (url) => { const u = new URL(url); if (u.host === 'seat-slow') await slow; done.push(`${u.host}${u.pathname}`); return { status: 201, ok: true, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) }; };
+  const lock = { fields: { paymentImage: { kind: 'point', bytes: new Uint8Array(33).fill(2) }, amountMsat: 900000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 },
+    feeLock: { fields: { paymentImage: { kind: 'hash', bytes: b32(8) }, amountMsat: 50000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 } },
+    accepted: Promise.resolve({}) };
+  const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-fast', 'http://seat-slow'], fetcher });
+  assert.deepEqual([sent.ok, sent.first], [true, 'http://seat-fast'], 'placed on the first seat');
+  assert.deepEqual(done.sort(), ['seat-fast/entry', 'seat-fast/fee-lock', 'seat-fast/lock'], 'the slow seat not waited on');
+  assert.deepEqual(sent.entries.map((x) => x.status), [201, null], 'the slow seat has not answered yet');
+  release();
+  await sent.handing;
+  for (const d of ['seat-slow/entry', 'seat-slow/lock', 'seat-slow/fee-lock']) assert.ok(done.includes(d), `${d} handed in the background`);
 });
 
 test('picked: the join of a pick ends \'picked\' before the session\'s globals - and Unity adopts only joining/joined', () => {
