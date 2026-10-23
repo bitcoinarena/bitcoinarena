@@ -3617,9 +3617,16 @@
     // only; a stake coming back is on no chip until WINNINGS-AUTO has collected it into the player wallet - and while that
     // collect fails, it is counted as pending here (lookThePending). Collected or done, it leaves.
     const stakeBack = window.ARENA_STAKE_BACK = window.ARENA_STAKE_BACK || new Map();
-    // the stake as lookOwed reads it: owed back - by forfeit or by refund - when its state is 'owed' (page-lock.js owed())
-    const noteStakeBack = (rid, lk) => { const m = lk && lk.stake && lk.stake.state === 'owed' ? BigInt(lk.stake.msat || 0n) : 0n;
-      if (m > 0n) stakeBack.set(rid, m); else stakeBack.delete(rid); };
+    // ONE ENTRY PER ORDER, NOT PER ROUND (kanban #593, playtest 2026-10-23: three 100 sat orders in round 9412cdf9 - one key
+    // per round kept one of them): a record's round and order number
+    const backKey = (r) => r.roundIdHex + ':' + (Number(r.order) || 0);
+    // the stake as lookOwed reads it: owed back - by forfeit or by refund - when its state is 'owed' (page-lock.js owed()), and
+    // a lock that entered nothing coming back to the player's key at its expiry (state 'waiting', by refund) - on the pending
+    // chip too (kanban #593: "Auch die UI muss sie beinhalten"; such a stake was on no chip and in no line)
+    const noteStakeBack = (r, lk) => {
+      const st = lk && lk.stake;
+      const m = st && (st.state === 'owed' || (st.state === 'waiting' && st.how === 'refund')) ? BigInt(st.msat || 0n) : 0n;
+      if (m > 0n) stakeBack.set(backKey(r), m); else stakeBack.delete(backKey(r)); };
     // A SLASH'S PAYOUT (spec §5A.3B): the arbitration service lists every share it locked to a wronged player;
     // one read of its list on load and every 10 min, matched against this browser's kept rounds, and a share naming one of
     // their keys is collected into the player wallet (Refund under that key, as a settlement payout) and shown in the history
@@ -3707,8 +3714,10 @@
       // after the settlement was ACCEPTED at 7 of 7). The collect looked at the newest open record only; the 24 h scan
       // (findTheRoundsOwed) re-saves the rounds it finds with a fresh time, so an older round that cannot finish could
       // stay "newest" and starve the round just won. The older open rounds are collected first, each on its own.
+      // EVERY ORDER OF A ROUND TOO (kanban #593, playtest 2026-10-23: three orders in round 9412cdf9, the newest record one of
+      // them - the other two were skipped as "the newest round" and never looked at): a record is its round and its order
       for (const older of keptRecords().collectable
-        .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && r.roundIdHex !== newest.roundIdHex)) {
+        .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && backKey(r) !== backKey(newest))) {
         try {
           // ANOTHER KEPT PHRASE'S RECORD: looked at and collected only while this tab holds that phrase (withRecordPhrase)
           const res = await withRecordPhrase(older, async () => {
@@ -3716,17 +3725,17 @@
           if (!ho) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
           if (lo) collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + lookSaid(lo));
           if (!lo) return true;
-          noteStakeBack(older.roundIdHex, lo);
+          noteStakeBack(older, lo);
           const co = await ARENACLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
             console.log('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + (older.order ? ' order ' + older.order : '') + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
             ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
-            stakeBack.delete(older.roundIdHex);
+            stakeBack.delete(backKey(older));
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             paintHistory();
           } else if (lo.final && lo.inTabMsat === 0n) {
             ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
-            stakeBack.delete(older.roundIdHex);
+            stakeBack.delete(backKey(older));
             collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: ' + ARENACLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
           return true;
@@ -3744,7 +3753,7 @@
         window.ARENA_ELSEWHERE = held ? null : newest.roundIdHex;
         if (!held) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
         if (look) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + lookSaid(look));
-        if (look) { window.ARENA_OWED = look; window.ARENA_WITHDRAWABLE = look.inTabMsat; noteStakeBack(newest.roundIdHex, look); }
+        if (look) { window.ARENA_OWED = look; window.ARENA_WITHDRAWABLE = look.inTabMsat; noteStakeBack(newest, look); }
         // WINNINGS-AUTO (RULED 2026-10-01): what is owed goes into the player's federation wallet by itself, the
         // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
@@ -3752,7 +3761,7 @@
           if (c.collected) {
             console.log('[arena] owed (round ' + newest.roundIdHex.slice(0, 8) + (newest.order ? ' order ' + newest.order : '') + '), collected into the player wallet: ' + c.creditedMsat + ' msat');
             ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0);
-            stakeBack.delete(newest.roundIdHex);
+            stakeBack.delete(backKey(newest));
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             paintHistory();
           }
@@ -3762,7 +3771,7 @@
         else if (look.final && look.inTabMsat === 0n) {
           const line = ARENACLIENT.owedToLine(look);
           ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0);
-          stakeBack.delete(newest.roundIdHex);
+          stakeBack.delete(backKey(newest));
           console.log('[arena] owed: ' + line);
           collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
@@ -4393,6 +4402,7 @@
     // THE HISTORY UNDER THE BALANCES (2026-09-30 16:15; accepted sequence): every deposit, withdrawal and stake this
     // tab made in the federation that holds the funds - its id named, the id LockClient.federationIdOf reads off the
     // lobby's invite - newest first; a stake row names its round and opens that round's replay in a new window.
+    const stakeEntered = (r) => { try { const j = JSON.parse(vault().getItem('arena.lock.saved.' + r.round + '.' + r.player) || 'null'); return !!(j && j.committedTo); } catch { return false; } };
     async function paintHistory() {
       // WHAT A HISTORY ROW SAYS (kanban #564: one place, for the page's rows and the React ones)
       const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
@@ -4405,7 +4415,9 @@
           : r.kind === 'moved-out' ? `Moved to federation ${String(r.to || '').slice(0, 8)}`
           : r.kind === 'swapped-in' ? `Swapped in from federation ${String(r.from || '').slice(0, 8)}`
           : r.kind === 'swapped-out' ? `Swapped to federation ${String(r.to || '').slice(0, 8)}${r.feeMsat && r.feeMsat !== '0' ? ' (fee ' + sat(r.feeMsat) + ')' : ''}`
-          : r.kind === 'stake' ? `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`
+          // ENTERED AS THE LOCK'S OWN RECORD SAYS (kanban #593: the row is written when the lock is made, entry null, and was never
+          // told the seats took it - "not entered" on orders that filled and won)
+          : r.kind === 'stake' ? `Stake · round ${String(r.round).slice(0, 8)}${r.entry || stakeEntered(r) ? '' : ' · not entered'}`
           : String(r.kind || 'entry');
       const fedEl = document.getElementById('arena-history-fed'); const rowsEl = document.getElementById('arena-history-rows');
       if (!fedEl || !rowsEl) return;
@@ -4984,7 +4996,8 @@
         if (one && one.provisional) provisional = true;
       }
       // AND A STAKE OWED BACK ON A ROUND NOT DONE whose collect has not gone through (comment 583): on no other chip
-      for (const [rid, msat] of (window.ARENA_STAKE_BACK || new Map())) if (!done.has(rid)) total += msat;
+      const doneOrders = new Set((ARENACLIENT.savedCollects ? ARENACLIENT.savedCollects(vault(), { seed: typeof collectSeed === "function" ? collectSeed() : null }) : []).filter((r) => r.done).map((r) => r.roundIdHex + ':' + (Number(r.order) || 0)));
+      for (const [k, msat] of (window.ARENA_STAKE_BACK || new Map())) if (!doneOrders.has(k)) total += msat;
       window.ARENA_PENDING_SATS = Number(total / 1000n);
       if (window.ARENA_WALLET_BALANCE) window.ARENA_WALLET_BALANCE.pending = window.ARENA_PENDING_SATS;
       // PAST THE CLOSE THE LINE SAYS WHAT HAPPENS NOW (2026-10-03, playtest d917975d: "window closes 06:43:21 UTC"

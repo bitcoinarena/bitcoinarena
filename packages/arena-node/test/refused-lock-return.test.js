@@ -20,10 +20,12 @@ import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { skipTo } from './test-clock.js';
 
 test('a lock for a round the seats refuse, never entered, is kept by each seat on its own record and its forfeit signed at once; an entered stake never', { timeout: 120000 }, async () => {
   const refusing = { why: null };
-  const w = await lockRound({ serveOpts: { refusedFor: () => refusing.why } });
+  // the return of a lock that entered nothing after the entry close (the next test) kept far off: this one is about refusal
+  const w = await lockRound({ serveOpts: { refusedFor: () => refusing.why, unenteredGraceMs: 1e12 } });
   try {
     const base = (d) => `http://127.0.0.1:${d.port}`;
     // AN ENTERED LOSER, staked at both seats before the round is refused
@@ -89,5 +91,46 @@ test('a lock for a round the seats refuse, never entered, is kept by each seat o
     assert.equal(r1.status, 409); assert.match(w1, /refund key/);
     assert.equal(r2.status, 409); assert.match(w2, /stakes an entry/);
     assert.equal(r3.status, 409); assert.match(w3, /no handout/);
+  } finally { await w.close(); }
+});
+
+// A LOCK THAT ENTERED NOTHING, ITS ROUND OFFERED, COMES BACK ONCE THE ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23:
+// a page's 100 sat stake for round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834
+// blocks on). While the round takes entries it is refused by name; after its entry close each seat keeps it on its own record and
+// the committee signs its forfeit at once. An entered player's stake never.
+test('a lock that entered nothing comes back once the round\'s entries closed, the round still offered; an entered stake never', { timeout: 120000 }, async () => {
+  const GRACE = 600000;
+  const w = await lockRound({ serveOpts: { unenteredGraceMs: GRACE } });
+  try {
+    const base = (d) => `http://127.0.0.1:${d.port}`;
+    const entered = await lockAndPlay(w, LOSER, { noMarks: true });
+    const key = rand(32); const e = rand(32);
+    const dealt = await dealHandout({ preimage: secretScalar(), signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: key,
+      ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: Array.from({ length: w.needed - 1 }, () => scalarFrom32(rand(32)) % FIELD),
+      needed: w.needed, curve: feldmanGroup });
+    assert.equal(dealt.ok, true, dealt.why);
+    for (const d of w.nodes) assert.equal((await fetch(`${base(d)}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
+    const hid = toHex(handoutId(dealt.handout));
+    const outpoint = { txid: rand(32), outIdx: 0n };
+    const fields = { paymentImage: { kind: 'point', bytes: dealt.handout.commitments[0] }, amountMsat: 98000n, claimPk: w.claimPk,
+      refundPk: refundKeyOf(key), expiration: w.port.height + 200 };
+    await w.port.put(outpoint, fields);
+    const hand = (d, f = fields, at = outpoint) => fetch(`${base(d)}/refused-lock?round=${toHex(w.rid)}`, { method: 'POST',
+      body: JSON.stringify({ outpoint: `${toHex(at.txid)}:${at.outIdx}`, fields: lockFieldsToJson(f) }) });
+    // 1. INSIDE THE GRACE AFTER THE ENTRY CLOSE: refused by name
+    const open = await hand(w.a); const openWhy = await open.text();
+    // 2. PAST IT (the fixtures' clock skipped): each seat keeps it, the forfeit is signed
+    skipTo(Number(w.c.entryCloseMs) + GRACE + 1000);
+    const kept = [];
+    for (const d of w.nodes) { const r = await hand(d); kept.push([r.status, (await r.text()).slice(0, 90)]); }
+    const f = await fetch(`${base(w.a)}/forfeit?round=${toHex(w.rid)}&entry=${hid}`);
+    const fj = f.status === 200 ? await f.json() : { why: await f.text() };
+    const verifies = !!fj.signature && schnorr.verify(fromHex(fj.signature), fromHex(fj.contractId), w.claimPk.subarray(1));
+    const r2 = await hand(w.a, entered.fields, entered.outpoint); const w2 = await r2.text();
+    console.log('  FACTS:', JSON.stringify({ open: [open.status, openWhy.slice(0, 90)], kept, forfeit: [f.status, verifies, String(fj.why || '').slice(0, 120)], entered: [r2.status, w2.slice(0, 90)] }));
+    assert.equal(open.status, 409); assert.match(openWhy, /offers that round and its entries are not closed long enough/);
+    for (const [s, why] of kept) assert.equal(s, 201, why);
+    assert.equal(f.status, 200, fj.why); assert.equal(verifies, true, 'the forfeit does not verify under the round\'s claim key');
+    assert.equal(r2.status, 409); assert.match(w2, /stakes an entry/);
   } finally { await w.close(); }
 });

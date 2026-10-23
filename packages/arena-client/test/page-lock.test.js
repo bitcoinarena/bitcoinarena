@@ -616,6 +616,15 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.equal(noLock.final, true);
   assert.deepEqual([noLock.lockAnswers.asked, noLock.lockAnswers.answered], [1, 1]);
 
+  // AN UNSETTLED ROUND WHOSE SEATS SIGNED THE FORFEIT (kanban #593, playtest 2026-10-23: round 8464c5fd never ran, its seats
+  // had signed the return of the unfilled order's lock, and the page said it came back at the lock's expiry): owed now, by forfeit
+  const unsettled = await lookOwed({ ...ask, fetcher: signerNodes({ settled: false }), client: wallet(150), kept });
+  assert.equal(unsettled.stake.state, 'owed', JSON.stringify(unsettled.stake, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.equal(unsettled.stake.how, 'forfeit');
+  assert.equal(unsettled.stakeMsat, 980000n);
+  assert.equal(unsettled.payout.state, 'waiting');
+  assert.deepEqual(spent, [], 'looking at an unsettled round\'s forfeit spent something');
+
   const invoiceFor = async (msat) => ({ ok: true, invoice: `lnbcrt${msat}n1p` });
   const done = await collectAndWithdraw({ ...ask, invite: INVITE, LockClient: { join: async () => { throw new Error('a second wallet was opened'); } },
     fetcher: signerNodes(), client: wallet(0), invoiceFor });
