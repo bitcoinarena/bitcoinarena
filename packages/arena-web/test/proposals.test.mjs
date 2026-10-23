@@ -95,7 +95,10 @@ test('a table: "how?" shows the rule and an example, Insert puts it into what th
 
 test('the reserves in detail: every payment filtered by kind, app and federation, grouped with sums, 25 a page, and the payouts', async () => {
   const { ReservesView, ReserveBalance } = await import('../dist/test/proposals.mjs');
-  assert.match(renderToStaticMarkup(React.createElement(ReserveBalance, { reserves: { sats: 233, agreeing: 13, asked: 14 }, capPct: 10 })), /<a class="lbl balance-link" href="#reserves"[^>]*>Protocol reserves<\/a>.*<a href="#reserves">details<\/a>/);
+  assert.match(renderToStaticMarkup(React.createElement(ReserveBalance, { reserves: { sats: 233, agreeing: 13, asked: 14 }, capPct: 10 })), /<a class="lbl balance-link" href="#reserves"[^>]*>Protocol reserves<\/a>.*<a class="btn rs-toggle" href="#reserves" aria-expanded="false">▾ Open details<\/a>/);
+  // AND CLOSED AGAIN (kanban #589, the owner: "es muss auch wieder einklappen"): open, the same button closes them
+  assert.match(renderToStaticMarkup(React.createElement(ReserveBalance, { reserves: { sats: 233, agreeing: 13, asked: 14 }, capPct: 10, open: true })),
+    /<a class="btn rs-toggle" href="#" aria-expanded="true">▴ Close details<\/a>/);
   const F1 = 'aa'.repeat(32), F2 = 'bb'.repeat(32);
   const rows = Array.from({ length: 30 }, (_, i) => ({ outpoint: 'o' + i, at: `2026-10-23T${String(10 + Math.floor(i / 3)).padStart(2, '0')}:00:00.000Z`, amountMsat: String(1000 * (i + 1)),
     app: i % 3 === 0 ? 'nextblock' : 'btc-updown-15m', kind: i % 3 === 0 ? 'game' : 'market', roundId: 'cc'.repeat(32), entryId: i % 3 === 0 ? 'dd'.repeat(32) : null, federation: i < 20 ? F1 : F2 }));
@@ -175,8 +178,8 @@ test('the forum\'s key line, its reserves on top and a line in place of the view
   assert.equal(r(SignedIn, { name: 'satoshi', npub: 'npub1x' }), 'Signed in as <b title="npub1x">satoshi</b> · your in-game key and name');
   assert.match(r(SignedIn, {}), /^Read freely\. To post, open the Arena once/);
   assert.equal(r(ReserveBalance, { reserves: { sats: 1234567, agreeing: 5, asked: 7 }, capPct: 10 }),
-    '<a class="lbl balance-link" href="#reserves" title="Every payment into the reserves">Protocol reserves</a><b class="sats">1,234,567 sat</b><span class="sub">5 of 7 nodes agree · a PIP may ask up to 123,456 sat · <a href="#reserves">details</a></span>');
-  assert.match(r(ReserveBalance, { reserves: null, why: 'no seat answered', capPct: 10 }), /<b class="sats">–<\/b><span class="sub">could not be read: no seat answered · <a href="#reserves">details<\/a><\/span>/);
-  assert.match(r(ReserveBalance, { reserves: null, capPct: 10 }), /<span class="sub">reading the nodes · <a href="#reserves">details<\/a><\/span>/);
+    '<a class="lbl balance-link" href="#reserves" title="Every payment into the reserves">Protocol reserves</a><b class="sats">1,234,567 sat</b><span class="sub">5 of 7 nodes agree · a PIP may ask up to 123,456 sat</span><a class="btn rs-toggle" href="#reserves" aria-expanded="false">▾ Open details</a>');
+  assert.match(r(ReserveBalance, { reserves: null, why: 'no seat answered', capPct: 10 }), /<b class="sats">–<\/b><span class="sub">could not be read: no seat answered<\/span><a class="btn rs-toggle" href="#reserves"[^>]*>▾ Open details<\/a>/);
+  assert.match(r(ReserveBalance, { reserves: null, capPct: 10 }), /<span class="sub">reading the nodes<\/span><a class="btn rs-toggle"/);
   assert.equal(r(Empty, { text: 'could not load x <b>' }), '<div class="empty">could not load x &lt;b&gt;</div>');
 });

@@ -118,7 +118,7 @@
   // THE BALANCE ON TOP (the owner 2026-10-17): the reserves the nodes agree on, and the most one PIP may ask
   function showBalance() {
     var b = document.getElementById('balance'); if (!b) return;
-    R.draw(b, 'balance', { reserves: state.reserves, why: state.reservesWhy, capPct: CAP_PCT });
+    R.draw(b, 'balance', { reserves: state.reserves, why: state.reservesWhy, capPct: CAP_PCT, open: location.hash === '#reserves' });
   }
 
   function stage(p) {
@@ -317,6 +317,7 @@
   }
   function route() {
     var h = location.hash;
+    showBalance();   // its Open / Close details button follows the view (kanban #589)
     if (h === '#reserves') { reservesView(); showKey(); return; }
     if (h === '#payout' || h === '#fees') { location.replace(h === '#payout' ? '#new-leaderboard' : '#new-fees'); return; }   // the old links
     if (h === '#new-leaderboard') payoutView();
