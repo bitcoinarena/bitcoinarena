@@ -1620,17 +1620,45 @@
     // goes over its route first (tn4.bitcoin-arena.io answered /guardian-N/games in 0.1-0.2 s), and to the Funnel host if that
     // fails; the order flips per path as the sockets' does.
     const RealFetch = window.fetch.bind(window);
+    // A HOST THAT DOES NOT ANSWER, OR A ROUTE THAT IS GONE, ASKED AGAIN ONLY AFTER A PAUSE (kanban #593/#594, the owner
+    // 2026-10-23: "Die Console wird zugespammt", "Das Frontend frisst sehr viel CPU" - three quick tunnels that no longer resolve
+    // and ten stopped test routes, asked every few seconds by the lobby, the census and the collect): a network error on a host,
+    // or a 404 from a route to /headers, /rounds or /games (a seat always serves those), closes that host or route - its origin
+    // and first path segment - for 5 min, for 30 min from its second time. Asked while closed, the request fails at once,
+    // with no network and no console line; one answer opens it again. The page's own files are never closed.
+    const closedUntil = new Map(), closedTimes = new Map();
+    const closeKey = (u) => {
+      try { const x = new URL(String(u), location.href); if (x.origin === location.origin) return null;
+        const seg = x.pathname.split('/').filter(Boolean); return x.origin + (seg.length > 1 ? '/' + seg[0] : ''); } catch { return null; }
+    };
+    const closeIt = (k) => { const n = (closedTimes.get(k) || 0) + 1; closedTimes.set(k, n); closedUntil.set(k, Date.now() + (n > 1 ? 1800000 : 300000)); };
+    window.ARENA_CLOSED_ROUTES = () => [...closedUntil].filter(([, t]) => t > Date.now()).map(([k, t]) => k + ' until ' + new Date(t).toISOString().slice(11, 19));
+    async function guardedFetch(url, input, init) {
+      const k = closeKey(url);
+      if (k && (closedUntil.get(k) || 0) > Date.now()) throw new TypeError('not asked: ' + k + ' did not answer a moment ago');
+      try {
+        const got = await RealFetch(input, init);
+        if (k) {
+          if (got.status === 404 && /\/(headers|rounds|games)$/.test(new URL(String(url), location.href).pathname)) closeIt(k);
+          else { closedUntil.delete(k); closedTimes.delete(k); }
+        }
+        return got;
+      } catch (e) {
+        if (k && !(init && init.signal && init.signal.aborted) && !(e && (e.name === 'AbortError' || e.name === 'TimeoutError'))) closeIt(k);
+        throw e;
+      }
+    }
     window.fetch = async function routedFetch(input, init) {
       const raw = typeof input === 'string' ? input : input && input.url;
       const r = typeof input === 'string' || input instanceof URL ? routed(String(input)) : { url: raw, key: null };
-      if (!r.key || r.url === String(raw)) return RealFetch(input, init);
+      if (!r.key || r.url === String(raw)) return guardedFetch(raw, input, init);
       try {
-        const got = await RealFetch(r.url, init);
+        const got = await guardedFetch(r.url, r.url, init);
         return got;
       } catch (e) {
         if (init && init.signal && init.signal.aborted) throw e;
         viaAlt.set(r.key, !viaAlt.get(r.key));
-        return RealFetch(input, init);
+        return guardedFetch(raw, input, init);
       }
     };
   })();
@@ -3733,8 +3761,12 @@
       // stay "newest" and starve the round just won. The older open rounds are collected first, each on its own.
       // EVERY ORDER OF A ROUND TOO (kanban #593, playtest 2026-10-23: three orders in round 9412cdf9, the newest record one of
       // them - the other two were skipped as "the newest round" and never looked at): a record is its round and its order
+      // A RECORD THAT ONLY WAITS IS LOOKED AT WITH A GROWING PAUSE (kanban #593, the owner: "Das Frontend frisst sehr viel CPU" - every
+      // pass asked every seat about every open record, 409 after 409): 30 s after a look that found nothing owed, doubling to 10 min;
+      // a record with something owed, or never looked at, at once
+      const pauseOf = lookThePayout.pause || (lookThePayout.pause = new Map());
       for (const older of keptRecords().collectable
-        .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && backKey(r) !== backKey(newest))) {
+        .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && backKey(r) !== backKey(newest) && !((pauseOf.get(backKey(r)) || {}).until > Date.now()))) {
         try {
           // ANOTHER KEPT PHRASE'S RECORD: looked at and collected only while this tab holds that phrase (withRecordPhrase)
           const res = await withRecordPhrase(older, async () => {
@@ -3742,6 +3774,8 @@
           if (!ho) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
           if (lo) collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + lookSaid(lo));
           if (!lo) return true;
+          { const was = pauseOf.get(backKey(older)), ms = lo.owedMsat > 0n ? 0 : Math.min(600000, was ? was.ms * 2 : 30000);
+            pauseOf.set(backKey(older), { ms: ms || 30000, until: Date.now() + ms }); }
           noteStakeBack(older, lo);
           const co = await ARENACLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {

@@ -17815,19 +17815,24 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
   // WHO ANSWERED: the list carries how many signer nodes were asked, answered and named a lock, and each
   // one's reply in short - an empty list nobody answered is not "no lock".
   const asked = [...new Set(nodes || [])];
-  const said = [];
-  for (const node of asked) {
+  // EVERY SIGNER NODE AT ONCE (kanban #593: one after another, 35 nodes and dead ones among them, a look took minutes and the
+  // collect never reached the round owed): the answers in the nodes' order
+  const answers = await Promise.all(asked.map(async (node) => {
+    const name = String(node).replace(/^https?:\/\//, '').slice(0, 40);
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`);
-      if (!r.ok) { said.push(`${String(node).replace(/^https?:\/\//, '').slice(0, 40)} ${r.status}`); continue; }
+      if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
       const got = await r.json();
-      said.push(`${String(node).replace(/^https?:\/\//, '').slice(0, 40)} ${got.length}`);
-      for (const l of got) {
-        const [txid, outIdx] = String(l.outpoint).split(':');
-        if (!found.has(l.outpoint))
-          found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
-      }
-    } catch (e) { said.push(`${String(node).replace(/^https?:\/\//, '').slice(0, 40)} ${String(e && e.message || e).slice(0, 40)}`); }
+      return { said: `${name} ${got.length}`, got };
+    } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
+  }));
+  const said = answers.map((a) => a.said);
+  for (const { got } of answers) {
+    for (const l of got) {
+      const [txid, outIdx] = String(l.outpoint).split(':');
+      if (!found.has(l.outpoint))
+        found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+    }
   }
   const out = [...found.values()];
   out.asked = asked.length;
@@ -17945,16 +17950,19 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
  * points at nothing this key can take.
  */
 async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
-  const said = [];
-  for (const node of [...new Set(nodes || [])]) {
+  // EVERY SIGNER NODE AT ONCE (kanban #593), the first ACCEPTED in the nodes' order
+  const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`);
-      if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
+      if (!r.ok) return { said: `${node}: ${r.status}` };
       const j = await r.json();
       if (j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) return { ok: true, txid: j.txid, moved: j.moved, from: node };
-      said.push(`${node}: ${j.state}`);
-    } catch (e) { said.push(`${node}: ${e.message}`); }
-  }
+      return { said: `${node}: ${j.state}` };
+    } catch (e) { return { said: `${node}: ${e.message}` }; }
+  }));
+  const hit = answers.find((a) => a.ok);
+  if (hit) return hit;
+  const said = answers.map((a) => a.said);
   return { ok: false, why: `no signer node holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
 
