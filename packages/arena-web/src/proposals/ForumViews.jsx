@@ -17,11 +17,15 @@ export function SignedIn({ name, npub }) {
 }
 
 /** The reserves on top: { reserves: { sats, agreeing, asked } | null, why, capPct } - what the nodes agree on and the most one PIP may ask. */
-export function ReserveBalance({ reserves, why, capPct }) {
+// OPEN AND CLOSED AS AN ACCORDION (kanban #589, the owner 2026-10-23: "es muss auch wieder einklappen - mach ein klar sichtbares
+// Accordion mit offen und closed button"): `open` while the details show; the one button opens them, or closes them again
+export const ReservesToggle = ({ open }) => (
+  <a className="btn rs-toggle" href={open ? '#' : '#reserves'} aria-expanded={open ? 'true' : 'false'}>{open ? '▴ Close details' : '▾ Open details'}</a>);
+export function ReserveBalance({ reserves, why, capPct, open = false }) {
   return (
-    <><a className="lbl balance-link" href="#reserves" title="Every payment into the reserves">Protocol reserves</a><b className="sats">{reserves ? `${n(reserves.sats)} sat` : '–'}</b>
+    <><a className="lbl balance-link" href={open ? '#' : '#reserves'} title="Every payment into the reserves">Protocol reserves</a><b className="sats">{reserves ? `${n(reserves.sats)} sat` : '–'}</b>
       <span className="sub">{reserves ? `${reserves.agreeing} of ${reserves.asked} nodes agree · a PIP may ask up to ${n(Math.floor(reserves.sats * capPct / 100))} sat`
-        : why ? `could not be read: ${why}` : 'reading the nodes'} · <a href="#reserves">details</a></span></>);
+        : why ? `could not be read: ${why}` : 'reading the nodes'}</span><ReservesToggle open={open} /></>);
 }
 
 // THE RESERVES IN DETAIL (kanban #589, the owner 2026-10-23: "in clicking on protocol reserves a page appears that shows details, again
@@ -37,7 +41,7 @@ export class ReservesView extends React.Component {
   render() {
     const { rows, payouts, status, error } = this.props;
     const s = this.state, PAGE = 25;
-    const back = <div className="bar"><a className="btn" href="#">← All proposals</a></div>;
+    const back = <div className="bar"><ReservesToggle open /></div>;
     if (error) return <div>{back}<h1>Protocol reserves</h1><div className="empty">The reserves could not be read: {error}</div></div>;
     if (!rows) return <div>{back}<h1>Protocol reserves</h1><div className="empty">Reading the nodes…</div></div>;
     const apps = [...new Set(rows.map((r) => r.app))].sort(), feds = [...new Set(rows.map((r) => r.federation))].sort();
