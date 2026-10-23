@@ -124,6 +124,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const d = decodePresent(bytes);
       const had = db.prepare('SELECT bytes FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(d.roundId, d.role, toHex(d.nodePubkey));
       if (had && Buffer.compare(Buffer.from(had.bytes), Buffer.from(bytes)) === 0) return { ok: true, held: true };
+      // A ROUND WHOSE SEATING HAS CLOSED takes no PRESENT, and is refused before the signature is checked (kanban #587, measured
+      // 2026-10-23 13:2xZ: seat 7 spent 41 % of a core on verifyPresent while idle - PRESENTs of closed rounds, refused after the
+      // check and so never kept, checked again on every tick from every peer that sent them)
+      const t = starts.get(toHex(d.roundId));
+      if (t && BigInt(nowMs()) >= t.close) return { ok: false, why: 'that round\'s seating has closed' };
     } catch { /* not decodable: verifyPresent says why */ }
     const v = verifyPresent(bytes, { verify });
     if (!v.ok) return v;
@@ -231,7 +236,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           const batch = answers.get(b);
           const a = batch ? batch[w.ridHex] : single.get(`${b}|${w.ridHex}|${w.role}`);
           if (!a) continue;
-          for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present));
+          // a round already started is read for its certificate only: its PRESENTs are not taken (b5e8b412's late read)
+          if (!w.late) for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present));
           const cert = a.cert && a.cert[w.role];
           if (cert) keepCert(w.t.rid, w.role, fromHex(cert));
           const sig = a.sig && a.sig[w.role];
