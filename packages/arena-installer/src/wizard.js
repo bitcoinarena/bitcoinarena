@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, buildAdvertUpdate, advertFor, lockOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { installMinimum } from './install-minimum.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
 import { setUpOwnLnd, lndReady } from './lnd-setup.js';
@@ -97,6 +97,17 @@ export function depositParts(s, pegInSats) {
   return parts;
 }
 
+// ONE DEPOSIT FOR ALL NODES OF A COUNT (kanban #596, the owner 2026-10-23: "wenn mehr als 1 instance ausgewählt ist tut der User nur 1 Bond
+// einzahlen, das wird automatisch multipliziert und aus N Instanzen auf gesplittet"): node 1 asks for its own deposit and the others' -
+// each as much as its own, plus the payment that hands it on - and each further node's bond step is paid from node 1's wallet
+export const SPLIT_FEE_SATS = 500;
+export function withOtherNodes(s, parts, { further = false } = {}) {
+  const n = s && s.instances ? Number(s.instances.count) || 1 : 1;
+  if (n <= 1 || further) return parts;
+  const one = Object.values(parts).reduce((a, x) => a + x, 0);
+  return { ...parts, otherNodes: (n - 1) * (one + SPLIT_FEE_SATS) };
+}
+
 /** A SEAT RESTARTS when its settings file changed after it started (kanban #577): the text written at its start against the one now. */
 export const seatNeedsRestart = (before, after) => String(before || '') !== String(after || '');
 
@@ -107,7 +118,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
-  restartSeat = (home) => control('restart', 'node', { home }) }) {
+  restartSeat = (home) => control('restart', 'node', { home }), fundFrom = null }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
@@ -151,7 +162,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: doneOf(s), chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0);
+      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS,
       // kanban #596: how many nodes on this machine, and Fedimint on a RAM disk from more than 5
@@ -529,9 +540,25 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
       // THE MINIMUM ASKED OF THE SEATS (kanban #543): a new node bonds at least the network's target, so it is useful from the start
       if (!laterCustody(s)) { const m = await installMinimum({ fetcher }); state.save({ bondMinimum: { sats: m.sats, from: m.from, why: m.why, atMs: nowMs() } }); }
-      const parts = depositParts(state.read(), pegInSats);
+      const parts = withOtherNodes(state.read(), depositParts(state.read(), pegInSats), { further: !!fundFrom });
       const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
-      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s),
+      // A FURTHER NODE OF A COUNT: its deposit paid from node 1's wallet, once (kanban #596)
+      let fundedFrom = state.read().fundedFrom || null, fundWhy = null;
+      if (fundFrom && total < needSats && !(fundedFrom && fundedFrom.txid)) {
+        const baseSeed = fundFrom.readSecret('seed.hex');
+        if (!baseSeed) fundWhy = 'the first node has no wallet yet';
+        else {
+          try {
+            const bw = walletOf(fromHex(baseSeed));
+            const got = await chainKit.coinsOf(s.chain, bw.spk);
+            const tx = buildSend({ wallet: bw, coins: got.coins, script: w.spk, sats: needSats - total, feeRate: 2 });
+            const txid = await chainKit.broadcast(s.chain, tx.hex);
+            fundedFrom = { txid, sats: needSats - total, atMs: nowMs() };
+            state.save({ fundedFrom });
+          } catch (e) { fundWhy = `the first node's wallet could not pay this node's part: ${e.message}`; }
+        }
+      }
+      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, fundedFrom, fundWhy, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s),
         minimum: state.read().bondMinimum || null };
     },
     'POST /api/bond/post': async (b) => {

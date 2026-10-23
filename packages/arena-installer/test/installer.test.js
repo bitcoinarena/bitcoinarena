@@ -457,3 +457,40 @@ test('the intro\'s count of nodes and the RAM disk choice are checked and kept (
     assert.deepEqual(nodeState(home).read().instances, { count: 7, ram: false }, 'kept on disk');
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+// ONE DEPOSIT FOR ALL NODES (kanban #596, the owner 2026-10-23: "nur 1 Bond einzahlen, das wird automatisch multipliziert und aus N Instanzen
+// auf gesplittet"): node 1 asks for every node's deposit, each further node's bond step is paid from node 1's wallet - once
+test('one deposit for all nodes: node 1 asks for N parts, a further node is paid from node 1\'s wallet once (kanban #596)', async () => {
+  const { withOtherNodes, SPLIT_FEE_SATS } = await import('../src/wizard.js');
+  const { walletOf } = await import('../src/wallet.js');
+  const toHex = (u) => Buffer.from(u).toString('hex');
+  const parts = { bond: 50000, fees: 2000 };
+  assert.deepEqual(withOtherNodes({ instances: { count: 3 } }, parts), { bond: 50000, fees: 2000, otherNodes: 2 * (52000 + SPLIT_FEE_SATS) });
+  assert.deepEqual(withOtherNodes({ instances: { count: 3 } }, parts, { further: true }), parts, 'a further node asks for its own part only');
+  assert.deepEqual(withOtherNodes({}, parts), parts, 'one node');
+  const root = mkdtempSync(join(tmpdir(), 'arena-multi-'));
+  try {
+    const base = nodeState(join(root, 'a')), b = nodeState(join(root, 'b'));
+    base.writeSecret('seed.hex', 'aa'.repeat(32)); b.writeSecret('seed.hex', 'bb'.repeat(32));
+    base.save({ instances: { count: 3, ram: false } });
+    b.save({ instances: { count: 3, ram: false }, roles: ['verify'], chain: { kind: 'core', url: 'http://x/' }, done: { chain: 1, roles: 1, apps: 1, seed: 1, owner: 1, reach: 1, service: 1 } });
+    const baseSpk = toHex(walletOf(Buffer.from('aa'.repeat(32), 'hex')).spk);
+    const sent = [];
+    const chainKit = { coinsOf: async (chain, spk) => ({ tip: 157430, coins: toHex(spk) === baseSpk ? [{ txid: 'cd'.repeat(32), vout: 1, sats: 300000, height: 157420 }] : [] }),
+      broadcast: async (chain, hex) => { sent.push(hex); return 'ef'.repeat(32); } };
+    const w = createWizard({ state: b, release: RELEASE, seatPort: 1, chainKit, fundFrom: base, fetcher: async () => { throw new Error('offline'); } });
+    const server = http.createServer((q, s) => w.handle(q, s));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const c = client(server.address().port);
+    await c.get(`/?t=${w.token}`);
+    const r = (await c.post('/api/bond/check', {})).json;
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.parts.otherNodes, undefined, 'node b asks for its own part only');
+    assert.deepEqual([r.fundedFrom.txid, r.fundedFrom.sats], ['ef'.repeat(32), r.needSats], 'paid from node 1\'s wallet');
+    assert.equal(sent.length, 1);
+    const again = (await c.post('/api/bond/check', {})).json;
+    assert.equal(sent.length, 1, 'paid once, not at every check');
+    assert.equal(again.fundedFrom.txid, 'ef'.repeat(32));
+    server.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
