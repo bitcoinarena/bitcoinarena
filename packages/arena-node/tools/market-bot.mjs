@@ -35,7 +35,7 @@ import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { TICK } from '../../arena-protocol/src/order-book.js';
+import { TICK, sellId } from '../../arena-protocol/src/order-book.js';
 import { lockEntry } from './entry-locks.mjs';
 import { saveLock, lookOwed, collectOwed } from '../../arena-client/src/page-lock.js';
 
@@ -52,6 +52,11 @@ const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 1
 // every bot when the window is decided. Unset or 0, the bot only quotes, as before.
 const TAKES = Number(env.TAKES || 0), TAKE_CENTS = Number(env.TAKE_CENTS || 2), TAKE_SHARES = Number(env.TAKE_SHARES || SHARES);
 const TAKE_BASE = Number(env.TAKE_BASE || 0.3);
+// THE SELLER (kanban #588, 2026-10-23: "wir brauchen bid und asks"): a bot sells shares it holds when the window has moved
+// SELL_CENTS against or for its buy - its side's fair value that far under (cut the loss) or over (take the profit) the limit it
+// bought at - with chance SELL_BASE a pass, all its unoffered shares of the entry at the fair value less 1¢: asks on the book from
+// held shares, as Polymarket's Sell. SELLS=0 (the default): the bot never sells.
+const SELLS = Number(env.SELLS || 0), SELL_CENTS = Number(env.SELL_CENTS || 8), SELL_BASE = Number(env.SELL_BASE || 0.5);
 // TAKES OVER THE WHOLE WINDOW (kanban #586, the owner: "There must be always action"; measured 2026-10-23 10:00-11:00Z: every bot
 // spent its takes early - minutes 0-2, 13 and 14 and several in between had no take, and makers and takers alike stopped
 // AHEAD_S before the close, just when the outcome is clearest): a bot's k-th take is due at its own point inside the k-th of
@@ -319,7 +324,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   const took = said.filter((x) => x.lock >= 200 && x.lock < 300).length;
   if (env.DEBUG) for (const x of said) say({ step: 'seat answer', ...x });
   if (took < needed) throw new Error(`the seats did not take the order: ${took} of ${needed} needed took its lock; ${said.find((x) => x.handoutWhy)?.handoutWhy ? `handout: ${said.find((x) => x.handoutWhy).handoutWhy}; ` : ''}${said.find((x) => x.why)?.why || 'no reason given'}`);
-  return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' ') };
+  return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' '), session: toHex(session), limitCents: Number(rung.price / TICK), outcome: Number(rung.outcome) };
 }
 
 // ---- WHAT THE BOT WINS, COLLECTED (slice 5): for every order whose window ended more than a minute ago, the page's own look
@@ -367,6 +372,42 @@ function takeOf(fair, taken, startMs, closeMs) {
     stakeMsat: stakeFor({ shares: TAKE_SHARES, priceCents }) };
 }
 
+// ---- THE SELLER (SELLS, above): the book of the window read from the seats; each of this bot's orders in it that holds
+// shares of its side, unoffered, and whose side's fair value moved SELL_CENTS from its limit, sold at the fair value less 1¢ ----
+async function sellPass(row, fair, closeAt) {
+  if (!(SELLS > 0) || DRY || closeAt - Date.now() < TAKE_AHEAD_MS) return;
+  const mine = orders.filter((o) => o.round === row.id && o.session && (o.sold || 0) < SELLS);
+  if (!mine.length) return;
+  // only a round's signer seats hold its book (the others answer an empty one): every seat asked, the fullest answer kept, as the page does
+  const books = (await Promise.all(nodes.map((n) => getJson(`${n}/book?round=${row.id}`, 5000).catch(() => null)))).filter(Boolean);
+  const book = books.reduce((a, b) => ((b.positions || []).length > ((a && a.positions) || []).length ? b : a), null);
+  if (!book) return;
+  const pos = new Map((book.positions || []).map((p) => [p.entry, p]));
+  const resting = new Set((book.resting && book.resting.sells) || []);
+  for (const o of mine) {
+    const p = pos.get(o.entry);
+    if (!p) continue;
+    const side = Number(o.outcome), sh = (p.shares || [0, 0]).map((x) => BigInt(x));
+    const offered = (o.sells || []).filter((x) => resting.has(x.id) || Date.now() - x.atMs < 30000).reduce((t, x) => t + BigInt(x.sharesMsat), 0n);
+    const free = sh[side] - sh[1 - side] - offered;
+    const shares = free / 1000n;
+    if (shares < 1n) continue;
+    const fairCents = Math.round((side === 0 ? fair : 1 - fair) * 100);
+    if (Math.abs(fairCents - Number(o.limitCents)) < SELL_CENTS || Math.random() >= SELL_BASE) continue;
+    const priceCents = Math.min(99, Math.max(1, fairCents - 1)), price = BigInt(priceCents) * TICK, sharesMsat = shares * 1000n;
+    const nonce = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
+    const id = sellId({ roundId: fromHex(row.id), entryId: fromHex(o.entry), outcome: side, price, sharesMsat, nonce });
+    const signature = toHex(ed25519.sign(id, fromHex(o.session)));
+    const body = J({ entry: o.entry, outcome: side, price, sharesMsat, nonce, signature });
+    const said = await Promise.all(nodes.map((n) => fetch(`${n}/sell?round=${row.id}`, { method: 'POST', body, signal: AbortSignal.timeout(8000) })
+      .then(async (r) => ({ status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 120) })).catch((e) => ({ status: 0, why: e.message.slice(0, 80) }))));
+    const took = said.filter((x) => x.status >= 200 && x.status < 300).length;
+    if (took) { o.sells = [...(o.sells || []), { id: toHex(id), sharesMsat: String(sharesMsat), priceCents, atMs: Date.now() }]; o.sold = (o.sold || 0) + 1; keepOrders(); }
+    say({ step: took ? 'sell' : 'sell refused', round: row.id.slice(0, 16), side: side === 0 ? 'Up' : 'Down', boughtAt: o.limitCents, fairCents, priceCents, shares: String(shares), took,
+      ...(took ? {} : { why: said.map((x) => x.why).filter(Boolean)[0] || '' }) });
+  }
+}
+
 // ---- THE LOOP ----
 const seatedOf = new Map();   // round id -> its seating certificate's signer nodes
 async function pass() {
@@ -386,6 +427,7 @@ async function pass() {
     const todo = makerTurn ? ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made)) : [];
     const take = takeOf(fair, taken, start, closeAt);
     if (take) todo.push(take);
+    if (SELLS > 0 && !DRY) { try { await sellPass(row, fair, closeAt); } catch (e) { say({ step: 'sell pass failed', round: row.id.slice(0, 16), why: String(e.message).slice(0, 200) }); } }
     say({ step: 'quote', round: row.id.slice(0, 16), window: new Date(start).toISOString().slice(11, 16), beat, last, fair: Number(fair.toFixed(4)),
       ladder: ladder.map((q) => `${Number(q.outcome) === 0 ? 'Up' : 'Down'}@${q.priceCents}c×${q.shares}=${q.stakeMsat}msat`), placed: [...done], todo: todo.length,
       ...(take ? { take: `${Number(take.outcome) === 0 ? 'Up' : 'Down'}@${take.priceCents}c×${take.shares}` } : {}) });
@@ -401,8 +443,9 @@ async function pass() {
       try {
         const o = await placeOrder(c, rid, q, index, seated.signerNodes, closeAt, q.key ? TAKE_AHEAD_MS : AHEAD_MS);
         done.add(q.key || `${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
-        orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now() }); keepOrders();
-        say({ step: q.key ? 'take' : 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...o });
+        orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now(), session: o.session, outcome: o.outcome, limitCents: o.limitCents }); keepOrders();
+        const { session: _s, ...shown } = o;
+        say({ step: q.key ? 'take' : 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...shown });
       } catch (e) { say({ step: 'order failed', round: row.id.slice(0, 16), priceCents: q.priceCents, why: String(e.message).slice(0, 300) }); break; }
     }
   }
