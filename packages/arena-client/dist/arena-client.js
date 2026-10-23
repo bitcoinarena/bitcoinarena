@@ -18149,15 +18149,17 @@ async function collectSlashPayout({ round, roundId, invite, seed, curve, LockCli
  * for anything else (the window, a signer node short), asked again.
  */
 async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client = null, onStep = () => {}, refused = false, order = 0 } = {}) {
+  client = null, onStep = () => {}, refused = false, forfeited = false, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const noted = `${STAKE_NOTE}${toHex(roundId)}${orderTag(order)}`;
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
   } catch { /* an unreadable note is no note */ }
-  // A REFUSED ROUND IS NEVER SETTLED (§23.2 REFUSED): its stake comes back by the forfeit alone
-  if (!refused) {
+  // A REFUSED ROUND IS NEVER SETTLED (§23.2 REFUSED): its stake comes back by the forfeit alone - and so does a stake the
+  // look already found forfeited by the signer nodes (kanban #593, playtest 2026-10-23: round 8464c5fd never settled, its seats
+  // had signed the forfeit of the unfilled order's locks, and the collect asked for a settlement first - nothing was redeemed)
+  if (!refused && !forfeited) {
     const s = await settlementOf({ roundId, nodes, fetcher });
     if (!s.ok) return { ok: false, final: false, why: s.why };
   }
@@ -18698,7 +18700,8 @@ function owedToLine(o) {
 async function collectOwed({ look, client, ...ask } = {}) {
   const got = { payout: null, stake: null, refund: null };
   if (look.payoutMsat > 0n) got.payout = await redeemPayout({ ...ask, client });
-  if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client, refused: !!(look.stake && look.stake.refused) });
+  if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client, refused: !!(look.stake && look.stake.refused),
+    forfeited: !!(look.stake && look.stake.state === 'owed' && look.stake.how === 'forfeit') });
   if (look.refundMsat > 0n) got.refund = await refundKept({ ...ask, client });
   return got;
 }
@@ -18720,7 +18723,11 @@ async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, cur
   // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
   const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
   if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) });
-  return { collected: true, got, creditedMsat };
+  // COLLECTED ONLY WHEN SOMETHING WAS (kanban #593: this said `collected: true` whatever came of the redeems - the record of round
+  // 8464c5fd was marked done with its 100 sat still in the federation, the redeem never tried): a payout, stake or refund the
+  // federation accepted, or money that reached the wallet
+  const collected = creditedMsat > 0n || [got.payout, got.stake, got.refund].some((x) => x && x.ok);
+  return { collected, got, creditedMsat, why: collected ? null : [got.payout, got.stake, got.refund].filter((x) => x && !x.ok).map((x) => x.why).filter(Boolean).join('; ') || null };
 }
 
 /**

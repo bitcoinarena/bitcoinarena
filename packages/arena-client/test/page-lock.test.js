@@ -624,6 +624,12 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.equal(unsettled.stakeMsat, 980000n);
   assert.equal(unsettled.payout.state, 'waiting');
   assert.deepEqual(spent, [], 'looking at an unsettled round\'s forfeit spent something');
+  // AND IT IS REDEEMED, NOT ASKED FOR A SETTLEMENT FIRST (kanban #593: the collect of 8464c5fd stopped at "no signer node holds an
+  // accepted settlement" and was still called collected)
+  const back593 = await collectOwed({ look: unsettled, client: wallet(150), ...ask, fetcher: signerNodes({ settled: false }), kept, storage: tabStorage() });
+  assert.equal(back593.stake && back593.stake.ok, true, JSON.stringify(back593.stake, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.deepEqual(spent, ['redeem'], 'the forfeited stake was not redeemed');
+  spent.length = 0;
 
   const invoiceFor = async (msat) => ({ ok: true, invoice: `lnbcrt${msat}n1p` });
   const done = await collectAndWithdraw({ ...ask, invite: INVITE, LockClient: { join: async () => { throw new Error('a second wallet was opened'); } },
