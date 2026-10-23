@@ -30,7 +30,7 @@ import { keepItemPurchase, itemsOwned } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
-import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
+import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
@@ -1386,7 +1386,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reserveDkgs = new Map();
   const reserveDkgOf = (fedHex) => {
     if (!reserveDkgs.has(fedHex)) reserveDkgs.set(fedHex, new Dkg(round, { curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
-      fetcher: (u, o) => fetch(u, o), epochOf: (nodes) => reserveEpochId(fromHex(fedHex), nodes) }));
+      fetcher: (u, o) => fetch(u, o), epochOf: (nodes) => reserveEpochId(fromHex(fedHex), nodes), thresholdOf: guardianThreshold }));
     return reserveDkgs.get(fedHex);
   };
   const reserveState = new Map();   // federation hex -> { members, at, ok, why, told, got }
@@ -1409,7 +1409,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // A threshold for this many guardian seats, or null: the committee rule's sizes only (7 -> 5, 2 -> 2); a federation of six (a
   // successor still being seated) waits, and /reserves says why
-  const reserveNeeded = (n) => { try { return committeeThreshold(n); } catch { return null; } };
+  // THE RESERVE KEY'S THRESHOLD IS THE FEDERATION'S OWN (§23A 2f + 1: 7 of 10, 5 of 7; kanban #397, 2026-10-23: e2f42eea's ten guardian
+  // seats got no reserve key from the committee rule, which knows 7 and 2 only)
+  const reserveNeeded = (n) => { try { return guardianThreshold(n); } catch { return null; } };
   const RESERVE_DKG_MS = Number(process.env.ARENA_RESERVE_DKG_MS || 120000);
   // A FEDERATION'S RESERVE KEY, FOR AN ENTRY TO PAY: this seat's own when it guards the federation; else
   // the key its guardian seats serve at GET /reserves, taken only when at least the threshold of them name the same one. Kept.
@@ -8172,7 +8174,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           if (held.ok && !keyOf.get(fedHex)) keyOf.set(fedHex, held.pool.groupPublicKey);
           const st = reserveState.get(fedHex) || null;
-          return { federationId: fedHex, members: nodes.map(toHex), needed, ...(needed === null ? { why: `no reserve key for ${nodes.length} guardian seats: the threshold rule knows 7 (5) and 2 (2)` } : {}),
+          return { federationId: fedHex, members: nodes.map(toHex), needed, ...(needed === null ? { why: `no reserve key for ${nodes.length} guardian seats` } : {}),
             key: held.ok ? toHex(held.pool.groupPublicKey) : null, mine: held.ok ? held.signerNode.id : null,
             publicShares: pub && pub.ok ? Object.fromEntries([...pub.shares].map(([j, P]) => [j, toHex(P)])) : null,
             epoch: nodes.length ? toHex(reserveEpochId(fromHex(fedHex), nodes)) : null,

@@ -37,10 +37,12 @@ export class Dkg {
    * makes the secrets; `peers` and `fetcher` are how a contribution reaches
    * the other signer nodes, injected the way `Payouts` injects them.
    */
-  constructor(round, { curve, random, peers = [], fetcher = null, epochOf = epochId } = {}) {
+  constructor(round, { curve, random, peers = [], fetcher = null, epochOf = epochId, thresholdOf = receiptsNeeded } = {}) {
     this.round = round;
     // WHICH EPOCH A COMMITTEE IS: a round's by default; a federation's reserve key names its own (reserveEpochId)
     this.epochOf = epochOf;
+    // ITS THRESHOLD: a round committee's by default; a federation's reserve key its guardian seats' own (guardianThreshold, kanban #397)
+    this.thresholdOf = thresholdOf;
     this.curve = curve;
     this.random = random;
     this.peers = peers;
@@ -88,7 +90,7 @@ export class Dkg {
     // this daemon was ever on refused a two-signer-node one outright - "a threshold of
     // 5 cannot be dealt to 2 signer nodes" - and its round's pool had no key at all.
     let needed;
-    try { needed = receiptsNeeded(signerNodes.length); }
+    try { needed = this.thresholdOf(signerNodes.length); }
     catch (e) { return { ok: false, why: e.message }; }
 
     const order = [...signerNodes].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
