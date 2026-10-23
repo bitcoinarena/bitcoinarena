@@ -40,3 +40,26 @@ test('the copy: the guardian\'s spent nonces, sorted, as of its last finished se
   const down = await produceSpentSet({ guardianDir: dir, clientDir: '/client', federationId: FED, nodeSecret: secret, run: async () => ({ ok: false, err: 'Error: Unauthorized' }) });
   assert.match(down.why, /did not answer its spent nonces: Error: Unauthorized/);
 });
+
+// kanban #326, rehearsal 17 (2026-10-23): a client of a halted federation can no longer be joined (T2's config download failed on
+// its two missing guardians), so the guardian is asked directly over its own socket - its mint module's instance id from its client config
+test('with an endpoint the guardian is asked over its socket: the mintv2 instance id from its client config, the admin password as auth', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guardian-'));
+  writeFileSync(join(dir, 'local.json'), JSON.stringify({ identity: 0, p2p_endpoints: {} }));
+  writeFileSync(join(dir, 'admin-password'), 'pw\n');
+  writeFileSync(join(dir, 'client.json'), JSON.stringify({ modules: { 0: { kind: 'lnv2' }, 1: { kind: 'meta' }, 2: { kind: 'mintv2' }, 3: { kind: 'wallet' } } }));
+  const asked = [];
+  const call = async (endpoint, method, { auth = null } = {}) => { asked.push([endpoint, method, auth]);
+    if (method === 'module_2_blwp_spent_nonces') return [nonce('bb'), nonce('aa')];
+    if (method === 'session_count') return 783;
+    throw new Error('unknown'); };
+  const run = async () => { throw new Error('no fedimint-cli on this path'); };
+  const got = await produceSpentSet({ guardianDir: dir, endpoint: 'wss://g/t2-1/guardian', federationId: FED, nodeSecret: secret, call, run });
+  assert.equal(got.ok, true, got.why);
+  assert.deepEqual(asked, [['wss://g/t2-1/guardian', 'module_2_blwp_spent_nonces', 'pw'], ['wss://g/t2-1/guardian', 'session_count', null]]);
+  assert.deepEqual([got.session, got.nonces], [782, 2]);
+  // a guardian whose federation has no mintv2 is said, by name
+  writeFileSync(join(dir, 'client.json'), JSON.stringify({ modules: { 0: { kind: 'mint' } } }));
+  const none = await produceSpentSet({ guardianDir: dir, endpoint: 'wss://g/x', federationId: FED, nodeSecret: secret, call, run });
+  assert.match(none.why, /has no mintv2 module/);
+});
