@@ -3410,13 +3410,28 @@
             // AN ORDER: the pick at most this price of the scale, until this time - from a market client's order
             ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: ARENACLIENT.fromHex(named.roundIdHex), sessionPubkey });
-        const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes });
-        console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
-        if (!sent.entries.some((x) => x.status === 201)) { window.ARENA_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return; }
-        window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick };
-        rememberPick(Object.assign(ARENACLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick,
+        // SUBMITTED AT ONCE, PLACED AFTER (kanban #601, the owner 2026-10-23: "Deutlich unter 1s ist die Zielmarke", ruling "Sofort eingereicht"): the
+        // order is the tab's - shown, cancellable - as soon as its locks are sent to the federation and the first seat took its entry
+        // (`submitted`); it is placed once the first seat holds the accepted lock; refused by the federation or every seat, it is taken back
+        const recordOf = (eid, state) => Object.assign(ARENACLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: eid, pick: chosen.pick,
           round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }),
-          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0 } } : {}));
+          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0, state } } : {});
+        const t0 = performance.now();
+        let early = null;
+        const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onSubmitted: (x) => {
+          early = x.entryId;
+          window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: x.entryId, pick: chosen.pick, state: 'submitted' };
+          rememberPick(recordOf(x.entryId, 'submitted'));
+          console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': submitted in ' + Math.round(performance.now() - t0) + ' ms');
+        } });
+        console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status))
+          + (sent.ok ? ' - placed in ' + Math.round(performance.now() - t0) + ' ms' : ''));
+        if (!sent.entries.some((x) => x.status === 201) || (sent.why && /not accepted/.test(sent.why))) {
+          if (early) { try { window.sessionStorage.setItem('arena.market.picks', JSON.stringify(readPicks().filter((x) => x.entryIdHex !== early))); } catch { /* this page only */ } }
+          window.ARENA_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return;
+        }
+        window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, state: sent.ok ? 'placed' : 'submitted' };
+        rememberPick(recordOf(sent.entryId, sent.ok ? 'placed' : 'submitted'));
         return;
       }
       // THE ITEMS THIS RUN PLAYS WITH: on a round of version 10 or later whose game sells items, the ones this
