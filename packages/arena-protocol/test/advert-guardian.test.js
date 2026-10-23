@@ -37,3 +37,16 @@ test('guardian_capable and guardian_endpoint are under the advert id, so under t
   assert.notEqual(Buffer.from(advertId(notCapable)).toString('hex'), id, 'guardian_capable is not in the id');
   assert.notEqual(Buffer.from(advertId(elsewhere)).toString('hex'), id, 'guardian_endpoint is not in the id');
 });
+
+// A FREE FOUNDING SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): guardian_capable 2 - a guardian whose guardian-next waits
+// in setup. It reads back as capable with foundingSlot, is under the advert id, and an advert without it keeps its bytes.
+test('guardian_capable 2: a free founding slot, through encode and decode; an advert without it keeps its bytes', () => {
+  const a = advert(), slot = { ...a, foundingSlot: true };
+  const bytes = encodeAdvert(slot);
+  assert.deepEqual(decodeAdvert(bytes), slot);
+  assert.notEqual(Buffer.from(advertId(slot)).toString('hex'), Buffer.from(advertId(a)).toString('hex'), 'the slot is not in the id');
+  assert.equal(decodeAdvert(encodeAdvert(a)).foundingSlot, undefined, 'a 1 reads as no slot');
+  assert.deepEqual(encodeAdvert({ ...a, foundingSlot: false }), encodeAdvert(a), 'no slot: the same bytes as before');
+  assert.throws(() => encodeAdvert({ ...a, guardianCapable: 3 }), /guardian_capable is 0, 1 or 2, not 3/);
+  assert.throws(() => encodeAdvert({ ...slot, guardianEndpoint: '' }), /names a ws:\/\/ or wss:\/\/ guardian_endpoint/);
+});

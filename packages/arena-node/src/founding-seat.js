@@ -97,6 +97,10 @@ export const OVERLOADED = 1;
  * WHY AN OPERATOR IS NOT FREE (kanban #585): its nodes' adverts that name a federation guardingOpenOf counts as OPEN - one held OPEN
  * (and not overloaded), or one this seat holds no record of. [{ node, federation, status }], status 'OPEN' or 'not held'.
  */
+// HELD BACK BY A FEDERATION (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): an OPEN one, one not held, or an overloaded one when
+// the node advertises no free founding slot (guardian_capable 2) - drawn without one, it can never take part (founding 4d4c9cac: test host
+// seats of A at load 4.33 drawn #1 and #10, founding off, every draw void)
+const holdsBack = (e, st) => st === undefined || st === 'OPEN' || (st === 'OVERLOADED' && !(e && e.advert && e.advert.foundingSlot === true));
 export function guardingWhy({ entries = [], held = [], op, except = null }) {
   const full = new Set((held || []).filter((r) => r && typeof r.load === 'number' && r.load >= OVERLOADED).map((r) => lower(r.federation)));
   const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), full.has(lower(r.federation)) ? 'OVERLOADED' : r.status]));
@@ -105,7 +109,7 @@ export function guardingWhy({ entries = [], held = [], op, except = null }) {
     if (!e || opOf(e) !== op) continue;
     for (const g of (e.advert && e.advert.guardianOf) || []) {
       const f = toHex(g.federationId);
-      if (f !== lower(except) && (!status.has(f) || status.get(f) === 'OPEN')) out.push({ node: toHex(e.pubkey), federation: f, status: status.has(f) ? 'OPEN' : 'not held' });
+      if (f !== lower(except) && holdsBack(e, status.get(f))) out.push({ node: toHex(e.pubkey), federation: f, status: !status.has(f) ? 'not held' : status.get(f) === 'OVERLOADED' ? 'overloaded, no free slot' : 'OPEN' });
     }
   }
   return out;
@@ -114,13 +118,14 @@ export function guardingWhy({ entries = [], held = [], op, except = null }) {
 export function guardingOpenOf({ entries = [], held = [], except = null }) {
   // AN OVERLOADED FEDERATION HOLDS NOBODY BACK (the owner 2026-10-22: "Also when federation is over loaded? That is causing the current
   // conflict"): an OPEN federation at load >= 1 - deposits refused (load ruling A) - frees its guardians for a founding, which they
-  // serve through their guardian-next; measured 3d30afd4: A at load 4.33 kept 4 of the 14 test nodes out, 10 eligible, no alternates
+  // serve through their guardian-next; measured 3d30afd4: A at load 4.33 kept 4 of the 14 test nodes out, 10 eligible, no alternates.
+  // ONLY A NODE WITH A FREE SLOT (kanban #599): one that advertises its guardian-next (holdsBack)
   const full = new Set((held || []).filter((r) => r && typeof r.load === 'number' && r.load >= OVERLOADED).map((r) => lower(r.federation)));
   const status = new Map((held || []).filter(Boolean).map((r) => [lower(r.federation), full.has(lower(r.federation)) ? 'OVERLOADED' : r.status]));
   const ops = new Set();
   for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) {
     const f = toHex(g.federationId);
-    if (f !== lower(except) && (!status.has(f) || status.get(f) === 'OPEN')) ops.add(opOf(e));   // a draining one frees its guardians
+    if (f !== lower(except) && holdsBack(e, status.get(f))) ops.add(opOf(e));   // a draining one frees its guardians
   }
   return ops;
 }
