@@ -12,6 +12,26 @@ import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, BOND_SUM_VERSION, networkOf } from './constants.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf, blockMerkleRoot } from './tx.js';
+
+// ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
+// decodeAdvert 23 %, sha256 13 %, parseTransaction 7 %, readSlice 6 % - every census height parsed every transaction of its 2,017
+// blocks again, and decoded every advertisement again, though the blocks themselves are kept, one copy shared by every view): a
+// transaction's parse, its txid in hex and the advertisement it commits to are kept with its raw bytes (a WeakMap: they go with the
+// block). The same bytes parse to the same transaction, so a kept answer is the answer.
+const parsedKept = new WeakMap();
+const txidHexKept = new WeakMap();
+const advertKept = new WeakMap();
+function parsedTx(raw) {
+  if (!(raw instanceof Uint8Array)) return parseTransaction(raw);
+  let tx = parsedKept.get(raw);
+  if (!tx) { tx = parseTransaction(raw); parsedKept.set(raw, tx); }
+  return tx;
+}
+function txidHexOf(tx) {
+  let h = txidHexKept.get(tx);
+  if (h === undefined) { h = toHex(tx.txid); txidHexKept.set(tx, h); }
+  return h;
+}
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
   paysBondMarker, paysMarkerProgram,
@@ -452,7 +472,7 @@ export function chainViewOf(view) {
   for (let i = 0; i < view.blocks.length; i++) {
     const height = view.firstHeight + i;
     let ids;
-    try { ids = view.blocks[i].transactions.map((raw) => parseTransaction(raw).txid); }
+    try { ids = view.blocks[i].transactions.map((raw) => parsedTx(raw).txid); }
     catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
 
     const claimed = merkleRootOf(view.blocks[i].header);
@@ -609,8 +629,8 @@ export function chainFactsAt(blocks, censusHeight) {
     if (block.height > censusHeight) continue;
 
     for (const raw of block.transactions) {
-      const tx = parseTransaction(raw);
-      const txid = toHex(tx.txid);
+      const tx = parsedTx(raw);
+      const txid = txidHexOf(tx);
       for (let vout = 0; vout < tx.outputs.length; vout++) {
         const key = `${txid}:${vout}`;
         if (createdAt.has(key)) continue;
@@ -635,7 +655,7 @@ export function chainFactsAt(blocks, censusHeight) {
  */
 /** The advertisement a bond transaction commits to (raw bytes or parsed), or null - as SCAN reads it. */
 export function advertInTransaction(raw) {
-  try { return committedAdvertIn(raw instanceof Uint8Array ? parseTransaction(raw) : raw); } catch { return null; }
+  try { return committedAdvertIn(raw instanceof Uint8Array ? parsedTx(raw) : raw); } catch { return null; }
 }
 
 /** The ancestor advertisement a BLWP-era bond transaction commits to (ancestor.js), or null. */
@@ -653,6 +673,12 @@ function committedAncestorAdvertIn(tx) {
 }
 
 function committedAdvertIn(tx) {
+  if (advertKept.has(tx)) return advertKept.get(tx);
+  const advert = committedAdvertInFresh(tx);
+  advertKept.set(tx, advert);
+  return advert;
+}
+function committedAdvertInFresh(tx) {
   const commitments = commitmentsOf(tx);
   if (!commitments.length) return null;
   for (const item of witnessRunsOf(tx)) {
@@ -693,7 +719,7 @@ function candidatesIn(blocks, censusHeight, network) {
     if (block.height > censusHeight) continue;
     for (const raw of block.transactions) {
       let tx;
-      try { tx = parseTransaction(raw); } catch { continue; }
+      try { tx = parsedTx(raw); } catch { continue; }
       // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9): a bond the BLWP
       // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
       // operator re-affirmed it for this network (deriveCensus)
@@ -878,7 +904,7 @@ function resolveBody(seen, entry, verifyAdvert) {
   // an ancestor's bond (scan found it by the ancestor's marker) is read by the ancestor's layout and id (ancestor.js)
   const ancestor = !!entry.ancestor;
   let tx;
-  try { tx = parseTransaction(seen.transaction); }
+  try { tx = parsedTx(seen.transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
 
   // IT HAS TO BE THIS ENTRY'S OWN TRANSACTION. 5A.4 resolves the body "for
