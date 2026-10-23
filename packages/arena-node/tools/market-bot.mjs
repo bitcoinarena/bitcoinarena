@@ -13,7 +13,7 @@
  *
  *   NODES=<seat urls> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> BOOK_BOT=<book-bot.js of the Up/Down
  *   app> BOT_DIR=<this bot's folder> [BOT_NAME=m1] [PRICE=coinbase|kraken] [LEVELS=2] [STEP_CENTS=2] [EDGE_CENTS=1] [SHARES=100]
- *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [GIVE_ABOVE_MSAT=3000000] [DRY=1]
+ *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [TARGET_MSAT=2000000] [PEER_WAIT_S=60] [DRY=1]
  *   node tools/market-bot.mjs
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync, unlinkSync } from 'node:fs';
@@ -151,12 +151,10 @@ async function wallet() {
 
 // ---- A DEPOSIT WHEN THE WALLET RUNS LOW: from the payer lnd through the named gateway (as tn4-rps-paid.mjs) ----
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 }, (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
-// ---- REBALANCING THROUGH E-CASH (slice 3): the bots of one machine share a spool folder. A bot that holds more than GIVE_ABOVE_MSAT
-// puts ALL its e-cash there (sendAllEcash: one string, valid until received - kept in a file, written whole, mode 0600); a bot that runs
-// low takes files from it first (claimed by an atomic rename, so no two bots take the same notes) and pays a Lightning deposit only when
-// the spool is empty. Only e-cash of this bot's own federation goes in its federation's spool.
+// ---- THE SPOOL FOLDER (slice 3): the bots of one machine share it, per federation. Bots once put ALL their e-cash there in one file
+// (sendAllEcash); a bot that runs low still takes such files first (claimed by an atomic rename). Since #586 it holds the requests
+// between bots below (payNeeds, topUp) instead: a winner paying out everything left it nothing to play with.
 const SPOOL = env.SPOOL_DIR || join(DIR, '..', 'spool');
-const GIVE_ABOVE = BigInt(env.GIVE_ABOVE_MSAT || 3000000);
 const spoolOf = () => { const d = join(SPOOL, walletFed ? walletFed.slice(0, 16) : 'unknown'); mkdirSync(d, { recursive: true, mode: 0o700 }); return d; };
 async function takeFromSpool(needMsat) {
   const w = await wallet(), d = spoolOf();
@@ -176,31 +174,64 @@ async function takeFromSpool(needMsat) {
   }
   return have;
 }
-async function giveToSpool() {
-  const w = await wallet();
-  const have = BigInt(await w.balanceMsat());
-  if (have <= GIVE_ABOVE) return;
-  const sent = JSON.parse(await w.sendAllEcash());
-  if (!sent.ecash) return;
-  const d = spoolOf(), f = `${Date.now()}-${NAME}.ecash`;
-  writeFileSync(join(d, `${f}.tmp`), sent.ecash, { mode: 0o600 });
-  renameSync(join(d, `${f}.tmp`), join(d, f));
-  say({ step: 'spool out', file: f, msat: sent.msat });
+// ---- REBALANCING BETWEEN BOTS (kanban #586, the owner 2026-10-23: "if bot a has won and bot b has lost, there will be an imbalance.
+// You need to balance it again"): a bot keeps TARGET_MSAT. One that runs short asks the others first - it makes a deposit invoice for
+// what brings it back to TARGET and posts it as a request (`need-<ms>-<bot>.json`, claimed by an atomic rename like the spool's files);
+// a bot holding more than TARGET pays any request its surplus above TARGET covers (its withdraw, through the federation's gateway:
+// e-cash in, e-cash out, no channel between). A request nobody claims within PEER_WAIT_S is taken back and paid by the payer lnd.
+// The wallet cannot send part of its notes (sendAllEcash only), so an invoice is the one exact transfer between two bots.
+const TARGET = BigInt(env.TARGET_MSAT || 2000000);
+const PEER_WAIT_MS = Number(env.PEER_WAIT_S || 60) * 1000;
+const needs = () => readdirSync(spoolOf()).filter((x) => /^need-\d+-[^.]+\.json$/.test(x)).sort();
+async function payNeeds() {
+  const w = await wallet(), d = spoolOf();
+  let have = BigInt(await w.balanceMsat());
+  if (have <= TARGET) return;
+  for (const f of needs()) {
+    if (f.endsWith(`-${NAME}.json`)) continue;
+    const mine = join(d, `${f}.paying-${NAME}`);
+    let ask; try { ask = JSON.parse(readFileSync(join(d, f), 'utf8')); } catch { continue; }
+    // the request and the gateway's 1 % both out of the surplus above TARGET
+    if (BigInt(ask.msat) * 102n / 100n > have - TARGET) continue;
+    try { renameSync(join(d, f), mine); } catch { continue; }   // claimed by another bot, or taken back by its asker
+    try {
+      const paid = JSON.parse(await w.withdraw(ask.invoice, env.GATEWAY || null));
+      have = BigInt(await w.balanceMsat());
+      say({ step: 'paid a bot', to: ask.bot, msat: ask.msat, state: paid.state, balanceMsat: have });
+    } catch (e) { say({ step: 'pay a bot failed', to: ask.bot, msat: ask.msat, why: String(e.message).slice(0, 200) }); }
+    try { unlinkSync(mine); } catch { /* gone already */ }
+    if (have <= TARGET) break;
+  }
 }
 async function topUp(needMsat) {
   const w = await wallet();
   let have = BigInt(await w.balanceMsat());
   if (have >= needMsat) return have;
-  have = await takeFromSpool(needMsat);
+  have = await takeFromSpool(needMsat);   // e-cash files an older bot left in the spool
   if (have >= needMsat) return have;
-  if (!env.LNCLI) throw new Error(`the wallet holds ${have} msat, ${needMsat} needed, and no payer is named (LNCLI)`);
-  const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
-  const amount = needMsat * 3n - have;
+  const amount = (needMsat > TARGET ? needMsat : TARGET) - have;
   const rcv = JSON.parse(await w.receive(String(amount), env.GATEWAY || ''));
-  const paid = await payer('payinvoice', '--force', '--timeout', '90s', rcv.invoice);
+  // FIRST THE OTHER BOTS
+  const d = spoolOf(), f = `need-${Date.now()}-${NAME}.json`;
+  writeFileSync(join(d, `${f}.tmp`), JSON.stringify({ bot: NAME, msat: String(amount), invoice: rcv.invoice }), { mode: 0o600 });
+  renameSync(join(d, `${f}.tmp`), join(d, f));
+  const until = Date.now() + PEER_WAIT_MS;
+  while (Date.now() < until && existsSync(join(d, f))) await new Promise((r) => setTimeout(r, 2000));
+  let by = 'a bot';
+  if (existsSync(join(d, f))) {
+    // nobody claimed it: taken back (a rename that fails means a bot claimed it just now - then that bot pays)
+    let back = false; try { renameSync(join(d, f), join(d, `${f}.self`)); back = true; } catch { /* claimed */ }
+    if (back) {
+      unlinkSync(join(d, `${f}.self`));
+      if (!env.LNCLI) throw new Error(`the wallet holds ${have} msat, ${needMsat} needed, no bot paid and no payer is named (LNCLI)`);
+      const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
+      const paid = await payer('payinvoice', '--force', '--timeout', '90s', rcv.invoice);
+      by = (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0];
+    }
+  }
   const final = await w.awaitReceive(rcv.operation);
   const after = BigInt(await w.balanceMsat());
-  say({ step: 'deposit', msat: amount, paid: (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0], final, balanceMsat: after });
+  say({ step: 'deposit', msat: amount, by, final, balanceMsat: after });
   return after;
 }
 
@@ -353,7 +384,7 @@ async function pass() {
 for (;;) {
   try { await pass(); } catch (e) { say({ step: 'pass failed', why: String(e.stack || e.message).slice(0, 400) }); }
   if (!DRY) { try { await collectPass(); } catch (e) { say({ step: 'collect pass failed', why: String(e.message).slice(0, 200) }); } }
-  if (!DRY) { try { await giveToSpool(); } catch (e) { say({ step: 'spool out failed', why: String(e.message).slice(0, 200) }); } }
+  if (!DRY) { try { await payNeeds(); } catch (e) { say({ step: 'pay bots failed', why: String(e.message).slice(0, 200) }); } }
   if (env.ONCE) break;
   await new Promise((r) => setTimeout(r, LOOP_MS));
 }
