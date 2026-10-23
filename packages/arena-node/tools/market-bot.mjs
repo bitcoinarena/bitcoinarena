@@ -107,25 +107,35 @@ const SOURCES = {
 };
 const lastPrice = SOURCES[env.PRICE || 'coinbase'];
 if (!lastPrice) throw new Error(`no price source ${env.PRICE}`);
+const beats = new Map();   // window start -> its price to beat (it never changes once the window started)
 async function beatOf(startMs) {
+  if (beats.has(startMs)) return beats.get(startMs);
+  if (beats.size > 8) beats.clear();
   const iso = (t) => new Date(t).toISOString();
   const c = await getJson(`https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60&start=${iso(startMs - 180000)}&end=${iso(startMs)}`);
   const before = Array.isArray(c) ? c.filter((x) => x[0] * 1000 < startMs).sort((a, b) => b[0] - a[0])[0] : null;
   if (!before) throw new Error(`no 1-minute candle before ${iso(startMs)}`);
+  if (startMs < Date.now()) beats.set(startMs, before[4]);
   return before[4];
 }
 
 // ---- THE OPEN WINDOWS: the rounds of the market the seats list, entry open, closing far enough ahead to pay into ----
 // THE WALLET'S FEDERATION: only its rounds are traded (each window has a round per federation; a lock pays into one)
 let walletFed = null;   // set by wallet()
+// THE LISTING KEPT UNTIL THE NEXT QUARTER HOUR, at most 5 min (kanban #586): a window's rounds do not change while it runs, so a bot
+// passing every minute asks the seats no more often than one passing every five - the time filters below are read again each pass
+let listed = null;   // { at, rows }
 async function openWindows() {
   const now = Date.now();
   if (!DRY) await wallet();
-  for (const n of nodes) {
+  const quarter = Math.floor(now / WINDOW_MS);
+  for (const n of [...(listed && Math.floor(listed.at / WINDOW_MS) === quarter && now - listed.at < 300000 ? [null] : []), ...nodes]) {
     try {
       // `next=2`: at most two upcoming rounds of each series - not every round the seat holds (measured 2026-10-22 23:00Z: ten bots
       // asking the whole listing, ~1,500 rounds, every minute put the test host at load 26); the same query from every bot is cached at the seat
-      const rows = ((await getJson(`${n}/rounds?next=2&ahead=${WINDOW_MS * 2}`, 15000)).rounds || [])
+      const all = n === null ? listed.rows : ((await getJson(`${n}/rounds?next=2&ahead=${WINDOW_MS * 2}`, 15000)).rounds || []);
+      if (n !== null) listed = { at: now, rows: all };
+      const rows = all
         // open until its entry closes or its window ends, whichever is first (measured 2026-10-23 07:47Z: the 07:30 window's round,
         // its entry close still ahead, refused every order two minutes past 07:45 - "the round is closed")
         .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs
