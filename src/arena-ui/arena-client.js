@@ -32988,11 +32988,13 @@ function pickSheet({ market, contract = null, stakeMsat = contract ? contract.st
 // `onEntries` (measured on the paid regtest stack: a paid head-to-head tap was counted only after the guardians
 // accepted its lock and the 7 seats had each checked it - 6.5 s median at load 30-47; the seats had taken the entry at ~2.8 s):
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
-async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null }) {
+// `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
+async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
   const entriesNow = nodes.map((node) => ({ node, status: null, why: 'not answered yet' }));
+  let submittedSaid = false;
   const entryPs = nodes.map(async (node, i) => {
     let x;
     try {
@@ -33000,6 +33002,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
     } catch (e) { x = { node, status: 0, why: e.message }; }
     entriesNow[i] = x;
+    if (x.status === 201 && onSubmitted && !submittedSaid) { submittedSaid = true; try { onSubmitted({ entryId: toHex(eid), node }); } catch { /* the caller's own fault */ } }
     return x;
   });
   const entriesAll = Promise.all(entryPs);

@@ -189,8 +189,10 @@ test('a pick is placed once the first seat holds its entry and locks; a slow sea
   const lock = { fields: { paymentImage: { kind: 'point', bytes: new Uint8Array(33).fill(2) }, amountMsat: 900000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 },
     feeLock: { fields: { paymentImage: { kind: 'hash', bytes: b32(8) }, amountMsat: 50000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 } },
     accepted: Promise.resolve({}) };
-  const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-fast', 'http://seat-slow'], fetcher });
+  const submitted = [];
+  const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-fast', 'http://seat-slow'], fetcher, onSubmitted: (x) => submitted.push(x.node) });
   assert.deepEqual([sent.ok, sent.first], [true, 'http://seat-fast'], 'placed on the first seat');
+  assert.deepEqual(submitted, ['http://seat-fast'], 'submitted once, as soon as the first seat took the entry (kanban #601)');
   assert.deepEqual(done.sort(), ['seat-fast/entry', 'seat-fast/fee-lock', 'seat-fast/lock'], 'the slow seat not waited on');
   assert.deepEqual(sent.entries.map((x) => x.status), [201, null], 'the slow seat has not answered yet');
   release();
