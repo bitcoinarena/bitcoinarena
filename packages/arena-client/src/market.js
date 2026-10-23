@@ -113,35 +113,43 @@ export function pickSheet({ market, contract = null, stakeMsat = contract ? cont
 export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
-  const entries = await Promise.all(nodes.map(async (node) => {
+  // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
+  const entriesNow = nodes.map((node) => ({ node, status: null, why: 'not answered yet' }));
+  const entryPs = nodes.map(async (node, i) => {
+    let x;
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes });
-      return { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
-    } catch (e) { return { node, status: 0, why: e.message }; }
-  }));
-  const took = entries.filter((x) => x.status === 201).map((x) => x.node);
-  if (onEntries) { try { onEntries({ entryId: toHex(eid), entries }); } catch { /* the caller's own fault */ } }
-  if (!took.length) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
-  if (!stakeLock) return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: null, feeLock: null };
+      x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
+    } catch (e) { x = { node, status: 0, why: e.message }; }
+    entriesNow[i] = x;
+    return x;
+  });
+  const entriesAll = Promise.all(entryPs);
+  if (onEntries) entriesAll.then((entries) => { try { onEntries({ entryId: toHex(eid), entries }); } catch { /* the caller's own fault */ } });
+  if (!stakeLock) {
+    const entries = await entriesAll;
+    const took = entries.filter((x) => x.status === 201);
+    if (!took.length) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
+    return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: null, feeLock: null };
+  }
   // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (measured on the regtest market
   // stack): handed once, at once, while the federation was still accepting the lock, every seat that looked first refused it
-  // and none was asked again - so the order was tradable nowhere (a batch needs 5 seats holding its locks). The first pass
-  // after acceptance is awaited; the seats still refusing are asked again in the background until the round's entry closes
-  // (`stakeLock.handUntilMs`) or LOCK_HAND_MS passes - `handing` is that whole.
-  if (stakeLock.accepted && typeof stakeLock.accepted.then === 'function') {
-    try { await stakeLock.accepted; } catch (e) { return { ok: false, entryId: toHex(eid), entries, why: `the stake lock was not accepted: ${e.message}` }; }
-  }
+  // and none was asked again - so the order was tradable nowhere (a batch needs 5 seats holding its locks).
+  const accepted = (async () => {
+    if (stakeLock.accepted && typeof stakeLock.accepted.then === 'function') await stakeLock.accepted;
+  })();
+  accepted.catch(() => {});
   const kinds = [{ door: 'lock', fields: stakeLock.fields }, ...(stakeLock.feeLock ? [{ door: 'fee-lock', fields: stakeLock.feeLock.fields }] : [])];
   const tookLock = new Map(kinds.map((k) => [k.door, new Set()]));
   const said = {};
   let committedSaid = false;
-  const pass = async () => {
+  const handTo = async (left) => {
     await Promise.all(kinds.map(async (k) => {
-      const left = took.filter((n) => !tookLock.get(k.door).has(n));
-      if (!left.length) return;
-      const r = await handLock({ entryId: eid, fields: k.fields, nodes: left, needed: 0, fetcher, door: k.door });
+      const to = left.filter((n) => !tookLock.get(k.door).has(n));
+      if (!to.length) return;
+      const r = await handLock({ entryId: eid, fields: k.fields, nodes: to, needed: 0, fetcher, door: k.door });
       for (const x of r.said) if (x.status === 201) tookLock.get(k.door).add(x.node);
-      said[k.door] = { committed: tookLock.get(k.door).size, needed: took.length, said: r.said };
+      said[k.door] = { committed: tookLock.get(k.door).size, needed: nodes.length, said: r.said };
     }));
     // THE PAGE TOLD ONCE ENOUGH SEATS HOLD THE STAKE LOCK (kanban #593, playtest 2026-10-23: a market order never said so -
     // the game's client does (client.js) - so the page's lock record never named its entry: every order's stake row read
@@ -151,16 +159,44 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
       try { stakeLock.onCommitted(eid); } catch { /* the page's bookkeeping, not the seats' */ }
     }
   };
-  await pass();
-  const until = Math.max(Date.now() + LOCK_HAND_MS_PICK, Number(stakeLock.handUntilMs || 0));
+  const holds = (n) => kinds.every((k) => tookLock.get(k.door).has(n));
+  // PLACED ONCE ONE SEAT HOLDS IT (the owner 2026-10-23 ~19:15Z, "Ja, nach 1 Seat"; "Der lock wird immernoch refunded wenn es keine 5
+  // bestätigen"): the order counts as placed as soon as the federation accepted its lock and the first seat holds its entry and its
+  // locks - the money is in the lock, and no seat can say so without it. The other seats get theirs in the background (`handing`); an order
+  // fewer than 5 seats hold never trades, and its lock comes back as an unfilled order's does. Each seat's own chain: its entry, then -
+  // once the lock is accepted - its locks.
+  const chains = entryPs.map((p) => p.then(async (x) => {
+    if (x.status !== 201) return null;
+    await accepted;
+    await handTo([x.node]);
+    return holds(x.node) ? x.node : null;
+  }).catch(() => null));
+  const first = await new Promise((res) => {
+    let left = chains.length;
+    for (const c of chains) c.then((n) => { if (n) res(n); else if (--left === 0) res(null); });
+    if (!left) res(null);
+  });
+  let refusedWhy = null;
+  try { await accepted; } catch (e) { refusedWhy = `the stake lock was not accepted: ${e.message}`; }
   const handing = (async () => {
+    await Promise.all(chains);
+    const took = (await entriesAll).filter((x) => x.status === 201).map((x) => x.node);
+    if (refusedWhy || !took.length) return said;
+    const until = Math.max(Date.now() + LOCK_HAND_MS_PICK, Number(stakeLock.handUntilMs || 0));
     for (let pause = 1000; Date.now() < until && kinds.some((k) => tookLock.get(k.door).size < took.length); pause = Math.min(pause * 2, 15000)) {
       await new Promise((r) => setTimeout(r, pause));
-      await pass();
+      await handTo(took);
     }
     return said;
   })();
-  return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing };
+  if (refusedWhy) return { ok: false, entryId: toHex(eid), entries: await entriesAll, why: refusedWhy };
+  if (!first) {
+    const entries = await entriesAll;
+    if (!entries.some((x) => x.status === 201)) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
+    return { ok: false, entryId: toHex(eid), entries, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing,
+      why: 'no seat holds the order\'s locks yet: they are handed again in the background' };
+  }
+  return { ok: true, entryId: toHex(eid), entries: entriesNow.slice(), first, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing, entriesAll };
 }
 const LOCK_HAND_MS_PICK = 120000;
 
