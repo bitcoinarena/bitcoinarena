@@ -6091,6 +6091,7 @@
             const nodes = signers.length ? signers : (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : []);
             // the round on screen: its next order's stake dealt ahead (kanban #601)
             try { if (row && row.contract && window.ARENA_ROW_NODES) { const all = window.ARENA_ROW_NODES(id); if (all && all.length) { prepRound(id, row.contract, all); window.ARENA_PREP_STAKE(id, row.contract, all); } } } catch { /* the join deals it */ }
+            try { const q = window.ARENA_ROW_SEARCH && window.ARENA_ROW_SEARCH.get(id); if (q) ARENACLIENT.joinFromQuery(ARENACLIENT.lobbyJoinSearch(q, id)).catch(() => {}); } catch { /* the join reads it */ }
             const ask = (n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
               .then((r) => (r.ok ? r.json() : null)).catch(() => null);
             const size = (b) => (b ? (b.batches || []).length + (b.positions || []).length + ((b.levels && b.levels.buys) || []).length + ((b.levels && b.levels.sells) || []).length : -1);
