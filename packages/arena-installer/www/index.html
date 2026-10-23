@@ -53,7 +53,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .fed-explain { display: grid; grid-template-columns: 170px 1fr; gap: 14px; align-items: center; margin: 6px 0 14px; }
     .fed-ring { width: 170px; } .fed-explain .big { font-size: 16px; } .fed-explain p { margin: 6px 0; }
     .choices { display: grid; gap: 10px; margin: 8px 0 12px; } .choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer; }
-    .choice:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); } .choice input[type=radio] { width: auto; margin-top: 4px; } .choice p { margin: 4px 0 0; font-size: 13px; opacity: .85; }
+    .choice:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); } .choice input[type=radio], .choice input[type=checkbox] { width: auto; margin-top: 4px; flex: none; } .choice[hidden] { display: none; } .choice p { margin: 4px 0 0; font-size: 13px; opacity: .85; }
     .choice .tag { font-size: 11px; background: #f7931a; color: #111; border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
     .rules { display: grid; gap: 10px; margin: 6px 0 14px; } .rule { display: grid; grid-template-columns: 44px 1fr; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; align-items: start; }
     .rule .ic { font-size: 28px; line-height: 1; text-align: center; } .rule p { margin: 4px 0 0; font-size: 14px; } .rule.good { border-color: #2ea043; } .rule.bad { border-color: #da3633; background: rgba(218,54,51,.07); } .red { color: #ff7b72; }
