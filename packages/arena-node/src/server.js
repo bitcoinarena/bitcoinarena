@@ -136,6 +136,7 @@ import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
+import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -1169,7 +1170,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // names, for the round's network, in force at the round's census height, and
   // signed by that network's donation authority at that height - Ed25519
   // (ruled 2026-09-13), rotations included. Anything else is no set.
-  const verifyDonation = (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
+  const verifyDonation = verifyEd25519Kept;   // kept per (sig, msg, key) - verified.js (kanban #576)
   // THE DEVELOPERS' BALLOTS (§27A.4.1donation-ballots.js): the sets they approved stand beside the admin key's
   const verifySecp256k1 = (sig, digest, pub) => { try { return secp256k1.verify(sig, digest, pub); } catch { return false; } };
   const donationBallots = round.db ? createDonationBallots({ db: round.db, knownSets: () => donationSets, verifySecp256k1, log: (l) => console.log(l) }) : null;
@@ -2151,7 +2152,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // taken only fresh (EMERGENCY_FRESH_BLOCKS): a request dated back into time is refused - unless this seat holds it already
     const had = absences.emergencyFor(d.nodePubkey);
     const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: Number.isInteger(tip) ? tip : now.height, fresh: !(had && had.postedAt <= d.postedAt),
-      verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
+      verify: verifySchnorrKept });
     if (!st.ok) return { ok: false, why: st.why };
     const r = absences.offerEmergency(d);
     if (!r.ok) return r;
@@ -3904,7 +3905,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A HALT PROVEN BY THE SEATS (§23A.5 "How a halt is proven", RULED 2026-10-14): this seat observes every guardian of every
   // federation it holds a record of, signs once the last session has not moved for abandon_blocks, and keeps its peers' observations
   const fedClocks = FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet;
-  const schnorrVerify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
+  const schnorrVerify = verifySchnorrKept;   // kept per (sig, msg, key) - verified.js (kanban #576)
   // ... and kept across restarts beside the held absences (kanban #326: a roll counted abandon_blocks again from the restart)
   const haltsFile = db && db.arenaPath ? `${db.arenaPath}.halts.json` : null;
   halts = typeof chainTip === 'function' ? createHalts({ records: fedRecords, censusSeats: () => fedRecords.censusKeys(), clocks: fedClocks, verify: schnorrVerify,
