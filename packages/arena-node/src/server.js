@@ -121,6 +121,7 @@ import { createAppDevKeys } from './app-dev-keys.js';
 import { splitAsSet, nextVersionWithSplit } from './app-version.js';
 import { checkUpdate } from './plugin-check.js';
 import { machineOf } from './machine.js';
+import { createMarketEarnings } from './market-earnings.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
@@ -3406,6 +3407,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rounds' count or their newest row, which one covering-index read tells.
   let openList = { key: null, ids: [] };
   let dashboardKept = null;   // /dashboard.json, kept 30 s
+  // WHAT THE MARKETS PAID THIS SEAT (kanban #600): each ACCEPTED settlement of a market round read once, a few plans every 5 min
+  const marketEarnings = createMarketEarnings({ db: round.db, ownPayoutHex: toHex(refundKeyOf(round.pubkey)),
+    summaryOf: (rid) => settlements.summaryOf(rid),
+    marketOf: (rid) => {
+      let c; try { const r = round.get(rid); c = r ? decodeRoundContract(new Uint8Array(r.contract)) : null; } catch { c = null; }
+      const g = c && c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
+      return g && g.manifest && g.manifest.resultType === RESULT_TYPE.ATTESTED ? { gameId: c.gameId } : null;
+    } });
+  { const run = () => marketEarnings.pass().catch((e) => console.log(`[market-earnings] ${e.message}`));
+    setTimeout(run, 90000).unref(); setInterval(run, 300000).unref(); }
   // the dashboard's pools: the settlement's own (census committees and the round federation's guardians)
   const dashboardPools = (rid, contract) => {
     const game = roster.committeeFor(rid, 'game'); const settle = roster.committeeFor(rid, 'settlement');
@@ -5808,7 +5819,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, marketRows: marketEarnings.rows(), hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }

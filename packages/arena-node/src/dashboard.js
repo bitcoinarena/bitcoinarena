@@ -29,7 +29,7 @@ const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
 // `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js) - its score shown with the round
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, apps = null, matchFor = null, devClient = null, devClients = null, reserveKeys = [] } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, apps = null, matchFor = null, devClient = null, devClients = null, reserveKeys = [], marketRows = [] } = {}) {
   const db = round.db;
   // WHAT EACH ROUND PAID THE PROTOCOL RESERVES: its rows under a federation's reserve key, as kept here
   const reserveKeyHexes = (reserveKeys || []).map((k) => String(k).toLowerCase());
@@ -113,6 +113,23 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     const d = new Date(at).toISOString().slice(0, 10);
     const t = daily.get(d) || zero(); add(t); daily.set(d, t);
   }
+  // THE MARKETS' NODE FEES (kanban #600): what each settled market round paid this seat (market-earnings.js), as "other" income - by its
+  // settlement's time, in the day, month, year and total, and under its game
+  const marketByGame = new Map();
+  for (const m of marketRows || []) {
+    const msat = BigInt(m.msat || 0n);
+    if (msat <= 0n) continue;
+    const at = Number(m.madeMs);
+    const add = (t) => { t.otherMsat += msat; };
+    if (at >= dayStart) add(totals.day);
+    if (at >= monthStart) add(totals.month);
+    if (at >= yearStart) add(totals.year);
+    add(totals.total);
+    const d = new Date(at).toISOString().slice(0, 10);
+    const t = daily.get(d) || zero(); add(t); daily.set(d, t);
+    const g = marketByGame.get(m.game) || { rounds: 0, earned: zero(), month: zero() };
+    g.rounds++; add(g.earned); if (at >= monthStart) add(g.month); marketByGame.set(m.game, g);
+  }
   // THE LIGHTNING COSTS OF A NODE THAT HOSTS AN LND: the fees its own payments paid, by when they were made
   const lnd = hosts && hosts.lnd && !hosts.lnd.error ? hosts.lnd : null;
   for (const p of (lnd && lnd.paymentFees) || []) {
@@ -139,6 +156,12 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     add(r.earned ? g.earned : g.owed);
     if (r.earned && r.settlement.madeMs >= monthStart) add(g.month);
     g.rounds++; perGame.set(r.game, g);
+  }
+  for (const [game, m] of marketByGame) {
+    const hostedAs = apps instanceof Map && apps.get(game);
+    const g = perGame.get(game) || { game, name: hostedAs ? hostedAs.name : null, rounds: 0, earned: zero(), month: zero(), owed: zero() };
+    g.rounds += m.rounds; g.earned.otherMsat += m.earned.otherMsat; g.month.otherMsat += m.month.otherMsat;
+    perGame.set(game, g);
   }
   const byGame = [...perGame.values()].map((g) => ({ game: g.game, name: g.name, rounds: g.rounds, earned: out(g.earned), month: out(g.month), owed: out(g.owed) }));
   const settlements = db.prepare('SELECT round_id, state, why, made_ms FROM lock_settlements ORDER BY made_ms DESC LIMIT 100').all()
