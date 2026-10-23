@@ -114,7 +114,18 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
       hash = cache.topHashes.get(h);
     }
     if (hash === undefined) {
-      hash = await call('getblockhash', [h]);
+      // ONE ASK OF A HEIGHT IN FLIGHT, HOWEVER MANY VIEWS WALK IT AT ONCE (kanban #587, measured 2026-10-23 on seats 1, 5 and 7 after
+      // a restart: 700-1,300 getblockhash a second for ~5 min, ~550 heights each asked ~119 times in 8 s - a starting seat reads
+      // hundreds of views together, each walked the same heights, and each missed the empty cache on its own). As for blocks
+      // (inFlight below): the second asker waits for the first. A height near a view's top is shared under the best hash it was
+      // read for, so it stays exactly as current as its own ask.
+      const fly = cache && cache.hashInFlight && (deep || top) ? (deep ? `d${h}` : `t${best}:${h}`) : null;
+      let ask = fly ? cache.hashInFlight.get(fly) : undefined;
+      if (!ask) {
+        ask = Promise.resolve(call('getblockhash', [h]));
+        if (fly) { cache.hashInFlight.set(fly, ask); ask.then(() => cache.hashInFlight.delete(fly), () => cache.hashInFlight.delete(fly)); }
+      }
+      hash = await ask;
       if (deep) cache.putHash(h, hash);
       else if (top && cache.topBest === best) cache.topHashes.set(h, hash);
     }
@@ -164,6 +175,7 @@ export function blockCache({ max = 50000 } = {}) {
     hashes,
     topHashes: new Map(),                    // height -> hash near the views' tops, valid while topBest is bitcoind's best (blocksOver)
     topBest: null, bestInFlight: null,
+    hashInFlight: new Map(),                 // `d<height>` / `t<best>:<height>` -> the getblockhash still out (blocksOver)
     putHash: (height, hash) => {
       hashes.set(height, hash);
       if (hashes.size > max) hashes.delete(hashes.keys().next().value);
