@@ -288,6 +288,13 @@ export class OrderBook {
   certify(roundIdBytes, cert) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
+    // A CERTIFICATE THIS SEAT HOLDS ALREADY (kanban #576): carry() hands every peer's certificates of the round to every settlement,
+    // and the same set held certified here was verified when it was stored - not its signatures again. Measured 2026-10-23 00:2xZ on
+    // test host seat 1: this re-verification was 10.1 s of processor in 90 s, a third of all the seat did.
+    if (cert && cert.record && /^[0-9]{1,15}$/.test(String(cert.record.k)) && Array.isArray(cert.record.orders)) {
+      const held = this.db.prepare('SELECT batch_id, certificate FROM market_batches WHERE round_id = ? AND k = ?').get(Buffer.from(roundIdBytes), Number(cert.record.k));
+      if (held && held.certificate) { const rec = this.#recordId(roundIdBytes, cert.record); if (rec.ok && rec.id === held.batch_id) return { ok: true, fresh: false }; }
+    }
     const c = this.#check(roundIdBytes, m, cert && cert.record, { importing: true });
     if (!c.ok) return c;
     const sigs = this.#counted(m, c.id, (cert && cert.sigs) || []);

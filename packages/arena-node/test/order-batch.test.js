@@ -60,6 +60,12 @@ test('seven seats certify every batch of locked orders inside the interval: the 
     for (const b of books) assert.equal(JSON.stringify(b.batches), JSON.stringify(books[0].batches), 'two seats hold the book differently');
     console.log('  CERTIFIED:', JSON.stringify({ results, batches: books[0].batches.length, priced: books[0].batches.filter((x) => x.price !== null).length }));
     assert.equal(books[0].batches.length, 2 * RUNS);
+    // A CERTIFICATE HELD ALREADY (kanban #576): answered from what the seat holds, no signature checked again - and another
+    // set for that batch is still refused
+    const held = w.nodes[1].orderBook.certificates(w.rid)[0];
+    assert.deepEqual(w.nodes[1].orderBook.certify(w.rid, { record: held.record, sigs: held.sigs.map((s) => ({ ...s, signature: '00'.repeat(64) })) }), { ok: true, fresh: false });
+    const other = w.nodes[1].orderBook.certify(w.rid, { record: { ...held.record, orders: held.record.orders.slice(1) }, sigs: held.sigs });
+    assert.equal(other.ok, false);
     // THE INTERVAL: certified at every seat, plus the seats' 100 ms grace after the cutoff, before the next cutoff
     assert.ok(results[1000].max + 100 < 1000, `1 s does not hold: max ${results[1000].max} ms`);
     console.log(`  INTERVAL: ${results[500].max + 100 < 500 ? '0.5 s HOLDS' : '0.5 s does NOT hold'} (certified max ${results[500].max} ms + 100 ms grace)`);
