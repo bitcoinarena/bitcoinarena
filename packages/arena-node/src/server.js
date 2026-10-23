@@ -1030,6 +1030,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (owner) for (const s of owner.storeSettings().sources || []) found.add(baseOf(s));
     return [...found].filter((u) => /^https?:\/\//.test(u));
   };
+  // EVERY SEAT THIS ONE CAN NAME: networkSeats() and every endpoint of the chain's newest census - the census observers and spent
+  // sets are judged by (kanban #326, rehearsal 17, measured 2026-10-23 00:5xZ: a T-tree seat holds no round, so networkSeats() was
+  // its peers alone, and the T seats and the test host/n495 seats each held only their own group's halt observations)
+  const everySeat = () => {
+    const to = new Set(networkSeats());
+    try { for (const e of endpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
+    return [...to].filter((u) => /^https?:\/\//.test(u));
+  };
   const readNetworkApps = async () => {
     const seats = networkSeats();
     const byId = new Map();
@@ -3894,13 +3902,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     load: () => (haltsFile ? JSON.parse(readFileSync(haltsFile, 'utf8')) : []), save: (v) => { if (haltsFile) { try { writeFileSync(haltsFile, JSON.stringify(v)); } catch { /* kept in memory */ } } },
     sign: (h) => schnorr.sign(h, round.identity.secret), ownKey: round.pubkey, height: async () => Number(await chainTip()),
     ask: (endpoint) => wsSessionCount(endpoint),
-    // to every seat of the census (networkSeats: the advertisements' endpoints and the peers given), as the games are read - and to
-    // every seat of the chain's newest census, the one the observers are judged by (kanban #326, rehearsal 17, measured 2026-10-23
-    // 00:5xZ: a T-tree seat holds no round, so networkSeats() was its peers alone; the T seats and the test host/n495 seats each held only
-    // their own group's observations - 17 and 22 of T2's, 9 in common - though either took the other's when it was posted by hand)
-    post: async (o) => { const to = new Set(networkSeats());
-      try { for (const e of endpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
-      await Promise.all([...to].filter((u) => /^https?:\/\//.test(u)).map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
+    // to every seat (everySeat: the round census's endpoints, the peers given, and the chain's newest census)
+    post: async (o) => { await Promise.all(everySeat().map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
       signal: AbortSignal.timeout(15000) }).catch(() => null))); },
     say: (o) => console.log(`[halt] ${JSON.stringify(o)}`) }) : null;
   if (halts) {
@@ -4372,18 +4375,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // A SEATED GUARDIAN'S OWN COPY OF A HALTED FEDERATION'S SPENT SET (§23A.5 step 1): every 10 min, for each federation held
   // HALTED whose record names this node a guardian, its guardian is asked (the fork's admin endpoint) and the signed copy is offered here
-  // and posted to the peers. Only with a fedimint-cli client of that federation named (ARENA_SPENT_SET_CLIENT_DIR).
-  if (guardian && guardian.dataDir && process.env.ARENA_SPENT_SET_CLIENT_DIR) {
+  // and posted to every seat - through a fedimint-cli client of that federation when one is named (ARENA_SPENT_SET_CLIENT_DIR).
+  // ASKED DIRECTLY over the guardian's own socket when no client is named (kanban #326, rehearsal 17: a client of a halted federation
+  // can no longer be joined), and posted to every seat, not only the peers given.
+  if (guardian && guardian.dataDir && (process.env.ARENA_SPENT_SET_CLIENT_DIR || guardian.endpoint)) {
     guardianWiring.spentSet = true;
     const publishOwnSpentSets = async () => {
       for (const fid of new Set([...fedRecords.haltedFederations(), ...(halts ? halts.haltedFederations() : [])])) {
         const held = fedRecords.recordOf(fid);
         if (!held || !(held.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) continue;
-        const got = await produceSpentSet({ guardianDir: guardian.dataDir, clientDir: process.env.ARENA_SPENT_SET_CLIENT_DIR,
+        const got = await produceSpentSet({ guardianDir: guardian.dataDir, clientDir: process.env.ARENA_SPENT_SET_CLIENT_DIR || null,
+          endpoint: process.env.ARENA_SPENT_SET_CLIENT_DIR ? null : guardian.endpoint,
           cli: process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', federationId: fid, nodeSecret: round.identity.secret });
         if (!got.ok) { console.log(`[liquidation] ${fid.slice(0, 16)}: no spent set from this guardian - ${got.why}`); continue; }
         const here = liquidations.offer(got.copy);
-        const there = await publishSpentSet(got.copy, peers || []);
+        const there = await publishSpentSet(got.copy, everySeat());
         console.log(`[liquidation] ${fid.slice(0, 16)}: spent set of session ${got.session} (${got.nonces} nonces) kept here: ${here.ok}, posted to ${there.filter((x) => x.ok).length} of ${there.length} peers`);
       }
     };
