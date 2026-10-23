@@ -298,7 +298,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   // the lock lasts the round's own stake expiry (a market's window and settlement, 1800+ blocks), not lockEntry's 150 for a short game -
   // measured 22:53Z: "that stake lock's lock height 155634 (its expiration 157469 less the round's 1835 blocks)"
   const tLock = Date.now();
-  const locks = await lockEntry({ lc: w, c: oc, split, stakePoint: point, player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks) });
+  // SUBMITTED BEFORE THE GUARDIANS AGREE (kanban #601, the owner 2026-10-23 "Sofort eingereicht"): the locks sent, the entry handed to the seats
+  // while the federation accepts them, the locks to the seats once it did
+  const locks = await lockEntry({ lc: w, c: oc, split, stakePoint: point, player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
   const lockMs = Date.now() - tLock;
   if (env.DEBUG) say({ step: 'locks', gate: gate.pays, gateWhy: gate.why, fee: !!locks.fee, feeLock: locks.entryFields.feeLockOutpoint && toHex(locks.entryFields.feeLockOutpoint.txid).slice(0, 12), feeMsat: split.feeMsat, netMsat: split.netMsat });
   const needed = receiptsNeeded(signers.length), e = rand(32);
@@ -319,7 +321,8 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   // seven seats in a row. Each seat's four posts stay in order; the seats run side by side. `ms`: the whole order, the locks at the
   // federation (lockMs), and the seats (seatsMs, firstSeatMs when the first one held the lock)
   const tSeats = Date.now();
-  let firstSeatMs = null;
+  let firstSeatMs = null, submittedMs = null, acceptedMs = null;
+  const accepted = (locks.accepted || Promise.resolve()).then(() => { acceptedMs = Date.now() - t0; });
   const said = [];
   await Promise.all(nodes.map(async (n) => {
     try {
@@ -327,6 +330,8 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
       const hWhy = h.status >= 300 ? (await h.text()).trim().slice(0, 200) : null;
       const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
       const enWhy = en.status >= 300 ? (await en.text()).trim().slice(0, 200) : null;
+      if (en.status >= 200 && en.status < 300 && submittedMs === null) submittedMs = Date.now() - t0;
+      await accepted;
       if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)) });
       const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) });
       const lWhy = l.status >= 300 ? (await l.text()).trim().slice(0, 200) : null;
@@ -340,7 +345,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   if (env.DEBUG) for (const x of said) say({ step: 'seat answer', ...x });
   if (took < needed) throw new Error(`the seats did not take the order: ${took} of ${needed} needed took its lock; ${said.find((x) => x.handoutWhy)?.handoutWhy ? `handout: ${said.find((x) => x.handoutWhy).handoutWhy}; ` : ''}${said.find((x) => x.why)?.why || 'no reason given'}`);
   return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' '), session: toHex(session), limitCents: Number(rung.price / TICK), outcome: Number(rung.outcome),
-    ms: Date.now() - t0, lockMs, seatsMs, firstSeatMs };
+    ms: Date.now() - t0, lockMs, submittedMs, acceptedMs, seatsMs, firstSeatMs };
 }
 
 // ---- WHAT THE BOT WINS, COLLECTED (slice 5): for every order whose window ended more than a minute ago, the page's own look
