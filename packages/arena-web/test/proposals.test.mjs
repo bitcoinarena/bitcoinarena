@@ -93,7 +93,7 @@ test('a table: "how?" shows the rule and an example, Insert puts it into what th
   assert.equal(f.state.preview, true);
 });
 
-test('the reserves in detail: every payment filtered by kind, app and federation, grouped with sums, 25 a page, and the payouts', async () => {
+test('the reserves in detail: every payment filtered by kind, app and federation, grouped with sums, 15 a page, and the payouts, right under the box with no button of their own', async () => {
   const { ReservesView, ReserveBalance } = await import('../dist/test/proposals.mjs');
   assert.match(renderToStaticMarkup(React.createElement(ReserveBalance, { reserves: { sats: 233, agreeing: 13, asked: 14 }, capPct: 10 })), /<a class="lbl balance-link" href="#reserves"[^>]*>Protocol reserves<\/a>.*<a class="btn rs-toggle" href="#reserves" aria-expanded="false">▾ Open details<\/a>/);
   // AND CLOSED AGAIN (kanban #589, the owner: "es muss auch wieder einklappen"): open, the same button closes them
@@ -108,11 +108,12 @@ test('the reserves in detail: every payment filtered by kind, app and federation
   let h = html();
   assert.match(h, /<p class="rs-sum" id="rs-sum"><b>465 sat<\/b> in 30 payments<\/p>/);
   assert.match(h, /Page 1 of 2/);
-  assert.equal((h.match(/<tr><td>2026-10-23/g) || []).length, 25, '25 rows a page');
+  assert.equal((h.match(/<tr><td>2026-10-23/g) || []).length, 15, '15 rows a page (the owner: "nur 15 Einträge pro Table")');
+  assert.doesNotMatch(h, /rs-toggle|Close details|<h1>/, 'the details carry a close button or a heading of their own (the owner: "unten kein Close Details")');
   assert.match(h, /<td>2026-10-23 10:00<\/td><td class="al-right">1<\/td><td>nextblock<\/td><td>game<\/td><td title="c{64}">cccccccc<\/td><td title="d{64}">dddddddd<\/td>/);
   assert.match(h, /<td>btc-updown-15m<\/td><td>market<\/td><td title="c{64}">cccccccc<\/td><td title="">market pool<\/td>/);
   assert.match(h, /<td title="e{64}">eeeeeeee<\/td><td class="al-right">102<\/td><td>you@wallet.example<\/td><td>CLAIMED<\/td>/);
-  v.state.page = 1; assert.equal((html().match(/<tr><td>2026-10-23/g) || []).length, 5);
+  v.state.page = 1; assert.equal((html().match(/<tr><td>2026-10-23/g) || []).length, 15);
   v.set('kind', 'game'); h = html();
   assert.match(h, /<b>145 sat<\/b> in 10 payments \(of 30\)/);
   assert.match(h, /Page 1 of 1/);
