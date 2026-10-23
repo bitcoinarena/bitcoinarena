@@ -13,7 +13,7 @@
  *
  *   NODES=<seat urls> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> BOOK_BOT=<book-bot.js of the Up/Down
  *   app> BOT_DIR=<this bot's folder> [BOT_NAME=m1] [PRICE=coinbase|kraken] [LEVELS=2] [STEP_CENTS=2] [EDGE_CENTS=1] [SHARES=100]
- *   [MAX_ORDERS=4 per window] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [GIVE_ABOVE_MSAT=3000000] [DRY=1]
+ *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [GIVE_ABOVE_MSAT=3000000] [DRY=1]
  *   node tools/market-bot.mjs
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync, unlinkSync } from 'node:fs';
@@ -35,6 +35,7 @@ import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { TICK } from '../../arena-protocol/src/order-book.js';
 import { lockEntry } from './entry-locks.mjs';
 import { saveLock, lookOwed, collectOwed } from '../../arena-client/src/page-lock.js';
 
@@ -44,6 +45,13 @@ const NAME = env.BOT_NAME || 'bot', DIR = env.BOT_DIR, DRY = !!env.DRY;
 const nodes = env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
 const LEVELS = Number(env.LEVELS || 2), STEP = Number(env.STEP_CENTS || 2), EDGE = Number(env.EDGE_CENTS || 1), SHARES = Number(env.SHARES || 100);
 const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 120) * 1000, AHEAD_MS = Number(env.AHEAD_S || 120) * 1000;
+// THE TAKER (kanban #586, the owner 2026-10-23: "if it's clear that up is winning more bots click up ... There must be always action"):
+// TAKES taker buys a window at most, each of TAKE_SHARES on the side the fair chance favours, its limit TAKE_CENTS above that
+// side's fair value - past the makers' bids, which rest EDGE_CENTS inside it, so it crosses the other side's resting bids and
+// the batch trades. A bot takes in a pass with chance TAKE_BASE + (1 - TAKE_BASE) x |2 fair - 1|: some action always, nearly
+// every bot when the window is decided. Unset or 0, the bot only quotes, as before.
+const TAKES = Number(env.TAKES || 0), TAKE_CENTS = Number(env.TAKE_CENTS || 2), TAKE_SHARES = Number(env.TAKE_SHARES || SHARES);
+const TAKE_BASE = Number(env.TAKE_BASE || 0.3);
 const WINDOW_MS = 900000, GAME = env.GAME || 'btc-updown-15m';
 mkdirSync(DIR, { recursive: true, mode: 0o700 });
 const J = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v));
@@ -63,7 +71,7 @@ async function importApp(file) {
   writeFileSync(copy, src);
   return import(copy);
 }
-const { fairUp, quoteLadder } = await importApp(env.BOOK_BOT);
+const { fairUp, quoteLadder, stakeFor } = await importApp(env.BOOK_BOT);
 
 // ---- WHAT THIS BOT PLACED, KEPT ACROSS RESTARTS: per window, the rungs ("outcome:priceCents") already ordered ----
 const placedFile = join(DIR, 'placed.json');
@@ -287,6 +295,17 @@ async function collectPass() {
   }
 }
 
+// ---- THE TAKER (TAKES, above) ----
+// this pass's taker buy, or null: the favoured side (a tie is Up, the market's rule) at its fair value + TAKE_CENTS, 1..99 cents
+function takeOf(fair, taken) {
+  if (!(TAKES > taken)) return null;
+  if (Math.random() >= TAKE_BASE + (1 - TAKE_BASE) * Math.abs(2 * fair - 1)) return null;
+  const outcome = fair >= 0.5 ? 0 : 1;
+  const priceCents = Math.min(99, Math.max(1, Math.round((outcome === 0 ? fair : 1 - fair) * 100) + TAKE_CENTS));
+  return { key: `take:${taken}`, outcome, priceCents, price: BigInt(priceCents) * TICK, shares: TAKE_SHARES,
+    stakeMsat: stakeFor({ shares: TAKE_SHARES, priceCents }) };
+}
+
 // ---- THE LOOP ----
 const seatedOf = new Map();   // round id -> its seating certificate's signer nodes
 async function pass() {
@@ -299,9 +318,13 @@ async function pass() {
     const fair = fairUp({ beat, last, msLeft: end - Date.now() });
     const ladder = quoteLadder({ fair, levels: LEVELS, stepCents: STEP, edgeCents: EDGE, shares: SHARES });
     const done = new Set(placed[row.id] || []);
-    const todo = ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - done.size));
+    const made = [...done].filter((k) => !k.startsWith('take:')).length, taken = done.size - made;
+    const todo = ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made));
+    const take = takeOf(fair, taken);
+    if (take) todo.push(take);
     say({ step: 'quote', round: row.id.slice(0, 16), window: new Date(start).toISOString().slice(11, 16), beat, last, fair: Number(fair.toFixed(4)),
-      ladder: ladder.map((q) => `${Number(q.outcome) === 0 ? 'Up' : 'Down'}@${q.priceCents}c×${q.shares}=${q.stakeMsat}msat`), placed: [...done], todo: todo.length });
+      ladder: ladder.map((q) => `${Number(q.outcome) === 0 ? 'Up' : 'Down'}@${q.priceCents}c×${q.shares}=${q.stakeMsat}msat`), placed: [...done], todo: todo.length,
+      ...(take ? { take: `${Number(take.outcome) === 0 ? 'Up' : 'Down'}@${take.priceCents}c×${take.shares}` } : {}) });
     if (DRY || !todo.length) continue;
     const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${row.id}`)).arrayBuffer()));
     const rid = roundId(c);
@@ -313,9 +336,9 @@ async function pass() {
       const index = done.size;
       try {
         const o = await placeOrder(c, rid, q, index, seated.signerNodes);
-        done.add(`${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
+        done.add(q.key || `${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
         orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now() }); keepOrders();
-        say({ step: 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...o });
+        say({ step: q.key ? 'take' : 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...o });
       } catch (e) { say({ step: 'order failed', round: row.id.slice(0, 16), priceCents: q.priceCents, why: String(e.message).slice(0, 300) }); break; }
     }
   }
