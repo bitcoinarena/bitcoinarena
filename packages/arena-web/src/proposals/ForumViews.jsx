@@ -40,21 +40,20 @@ export class ReservesView extends React.Component {
   set(k, v) { this.setState({ [k]: v, page: 0 }); }
   render() {
     const { rows, payouts, status, error } = this.props;
-    const s = this.state, PAGE = 25;
-    const back = <div className="bar"><ReservesToggle open /></div>;
-    if (error) return <div>{back}<h1>Protocol reserves</h1><div className="empty">The reserves could not be read: {error}</div></div>;
-    if (!rows) return <div>{back}<h1>Protocol reserves</h1><div className="empty">Reading the nodes…</div></div>;
+    const s = this.state, PAGE = 15;   // 15 a table (the owner 2026-10-23: "nur 15 Einträge pro Table")
+    // UNDER THE BOX THAT OPENS AND CLOSES IT (kanban #589, the owner: "unten kein Close Details"): no button of its own
+    if (error) return <div className="empty">The reserves could not be read: {error}</div>;
+    if (!rows) return <div className="empty">Reading the nodes…</div>;
     const apps = [...new Set(rows.map((r) => r.app))].sort(), feds = [...new Set(rows.map((r) => r.federation))].sort();
     const shown = rows.filter((r) => (s.kind === 'all' || r.kind === s.kind) && (s.app === 'all' || r.app === s.app) && (s.fed === 'all' || r.federation === s.fed));
     const sum = shown.reduce((t, r) => t + Number(r.amountMsat), 0);
     const groups = s.group === 'none' ? null : [...shown.reduce((m, r) => { const k = s.group === 'kind' ? r.kind : s.group === 'app' ? r.app : short(r.federation);
       const g = m.get(k) || { key: k, count: 0, msat: 0 }; g.count++; g.msat += Number(r.amountMsat); m.set(k, g); return m; }, new Map()).values()].sort((a, b) => b.msat - a.msat);
     const pages = Math.max(1, Math.ceil(shown.length / PAGE)), page = Math.min(s.page, pages - 1);
+    const payPages = Math.max(1, Math.ceil((payouts || []).length / PAGE)), payPage = Math.min(s.payPage || 0, payPages - 1);
     const sel = (k, opts) => <select id={`rs-${k}`} value={s[k]} onChange={(e) => this.set(k, e.target.value)}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>;
     return (
       <div>
-        {back}
-        <h1>Protocol reserves</h1>
         <p className="lead">Every payment into the reserves: 2 % of each round and 20 % of each item, as the nodes record them. {status || ''}</p>
         <div className="rs-filters">
           <label>Kind {sel('kind', [['all', 'All'], ['market', 'Markets'], ['game', 'Games'], ['item', 'Items']])}</label>
@@ -74,9 +73,12 @@ export class ReservesView extends React.Component {
           <button type="button" className="btn" disabled={page >= pages - 1} onClick={() => this.setState({ page: page + 1 })}>Older →</button></div>
         <h3>Paid out to proposals</h3>
         {payouts && payouts.length ? <div className="tbl rs"><table id="rs-payouts"><thead><tr><th>Proposal</th><th className="al-right">Sats</th><th>To</th><th>State</th><th>Federation</th></tr></thead>
-          <tbody>{payouts.map((p) => <tr key={p.proposal + (p.txid || '')}><td title={p.proposal}>{short(p.proposal)}</td><td className="al-right">{p.amountSats ? n(Number(p.amountSats)) : '–'}</td>
+          <tbody>{payouts.slice(payPage * PAGE, payPage * PAGE + PAGE).map((p) => <tr key={p.proposal + (p.txid || '')}><td title={p.proposal}>{short(p.proposal)}</td><td className="al-right">{p.amountSats ? n(Number(p.amountSats)) : '–'}</td>
             <td>{String(p.lnurl || '–').slice(0, 40)}</td><td>{p.state}</td><td title={p.federation}>{short(p.federation)}</td></tr>)}</tbody></table></div>
           : <div className="empty">No payout yet.</div>}
+        {payPages > 1 ? <div className="bar rs-pager"><button type="button" className="btn" disabled={payPage === 0} onClick={() => this.setState({ payPage: payPage - 1 })}>← Newer</button>
+          <span className="say" id="rs-pay-page">Page {payPage + 1} of {payPages}</span>
+          <button type="button" className="btn" disabled={payPage >= payPages - 1} onClick={() => this.setState({ payPage: payPage + 1 })}>Older →</button></div> : null}
       </div>);
   }
 }
