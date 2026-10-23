@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Facts, NodesTable, Capacity, Line, nodeView, capacityView } from '../dist/test/health.mjs';
+import { Facts, NodesTable, Capacity, Line, Machines, nodeView, capacityView, machinesView, appsView } from '../dist/test/health.mjs';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
 const fedNo = (f) => ({ [A]: 1, [B]: 2 })[f] || null;
@@ -77,4 +77,39 @@ test('a bar cell: how far, green when done', async () => {
 test('the reading state as one line: plain, or red with why', () => {
   assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'read 21:40:12 UTC · 24 nodes asked' })), 'read 21:40:12 UTC · 24 nodes asked');
   assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'could not read the network: <x>', bad: true })), '<span class="bad">could not read the network: &lt;x&gt;</span>');
+});
+
+// MACHINES AND APPS (kanban #597, testnet4 only): nodes grouped by the machine each names, its load, its nodes' earnings summed; every app's
+// newest version and what the nodes earned from it, all versions under one name
+const dash = (totalMsat, monthMsat, byGame = []) => ({ ok: true, body: { totals: { total: { gameVerifyMsat: String(totalMsat), settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '7000' },
+  month: { gameVerifyMsat: '0', settlementMsat: String(monthMsat), guardianMsat: '0', otherMsat: '0' } }, byGame } });
+const on = (id, extra = {}) => ({ ok: true, ms: 100, body: { version: '2026.1.7', protocols: [19], machine: { id, name: null, load: [6.28, 7.36, 7.94], cores: 16, ...extra } } });
+
+test('machines: nodes grouped by machine, load and earnings in the title, folded until clicked; nodes that name none counted', () => {
+  const nodes = [
+    { node: '11'.repeat(32), base: 'https://a', version: on('m1'), dash: dash(23678, 9000) },
+    { node: '22'.repeat(32), base: 'https://b', version: on('m1', { name: 'test host' }), dash: dash(1000, 1000) },
+    { node: '33'.repeat(32), base: 'https://c', version: on('m2', { load: [20.4, 21, 22.7], cores: 12 }) },
+    { node: '44'.repeat(32), base: 'https://d', version: up },
+    { node: '55'.repeat(32), base: 'https://e', version: { ok: false, why: 'no answer' } },
+  ];
+  const v = machinesView(nodes);
+  assert.equal(v.unnamed, 1, 'an answering node of an older release is counted, an unanswering one is not');
+  assert.deepEqual(v.machines.map((m) => [m.title, m.nodes.length, m.total, m.month, m.tone]), [['test host', 2, 24, 10, 'ok'], ['Machine 2', 1, 0, 0, 'bad']]);
+  assert.equal(v.machines[1].nodes[0].total, null, 'a node whose dashboard did not answer earns "-", not 0');
+  const h = renderToStaticMarkup(React.createElement(Machines, { view: v }));
+  assert.match(h, /<b>test host<\/b>.*2 nodes.*load 6\.28 · 7\.36 · 7\.94.*16 cores.*earned 24 sat.*this month 10 sat/);
+  assert.doesNotMatch(h, /<table>/, 'a machine opened before a click');
+  assert.match(h, /1 answering node name no machine/);
+  assert.match(renderToStaticMarkup(React.createElement(Machines, { view: machinesView([]) })), /no node names its machine yet/);
+});
+
+test('apps: the newest version, and every version\'s earnings under the app\'s name, in sat', () => {
+  const games = [{ id: 'aa'.repeat(32), name: 'btc-updown-15m', title: 'Bitcoin Up or Down', type: 'market', version: 18 },
+    { id: 'ab'.repeat(32), name: 'btc-updown-15m', title: 'Bitcoin Up or Down', type: 'market', version: 19 },
+    { id: 'cc'.repeat(32), name: 'nextblock', title: 'Tick Tock', type: 'game', version: 5 }];
+  const g = (game, e, m) => ({ game, name: 'x', earned: { gameVerifyMsat: String(e), settlementMsat: '0', guardianMsat: '0', otherMsat: '0' }, month: { gameVerifyMsat: String(m) } });
+  const nodes = [{ dash: dash(0, 0, [g('aa'.repeat(32), 5000, 1000), g('ab'.repeat(32), 3000, 3000)]) }, { dash: dash(0, 0, [g('AB'.repeat(32), 2000, 0), g('ee'.repeat(32), 9000, 0)]) }];
+  const rows = appsView(games, nodes);
+  assert.deepEqual(rows.map((a) => [a.title, a.newest, a.total, a.month]), [['Bitcoin Up or Down', 19, 10, 4], ['x', null, 9, 0], ['Tick Tock', 5, 0, 0]]);
 });

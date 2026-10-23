@@ -120,6 +120,7 @@ import { packageOf, verifyPackage, installPackage, registrationFromPackage } fro
 import { createAppDevKeys } from './app-dev-keys.js';
 import { splitAsSet, nextVersionWithSplit } from './app-version.js';
 import { checkUpdate } from './plugin-check.js';
+import { machineOf } from './machine.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
@@ -5135,7 +5136,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const version = read('VERSION');
           let latest; try { latest = await latestReleaseFor(version); } catch (e) { latest = { latest: null, newer: false, why: e.message }; }
           return answer(200, { node: toHex(round.pubkey), version, commit: read('COMMIT'), latest,
-            protocols: SUPPORTED_PROTOCOL_VERSIONS, update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
+            protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
         }
         if (req.method === 'GET' && url.pathname === '/owner/bond') {
           const found = ownBondNow();
