@@ -6,7 +6,7 @@
 // waiting in setup (`keep`, kanban #495): fedimintd detached with a pidfile, on every system, adopted by the next start.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startGuardian, guardianUnit, pidfileUnits } from '../src/guardian.js';
@@ -114,3 +114,33 @@ test('pidfileUnits: a detached fedimintd outlives the call, is seen by its pidfi
   writeFileSync(join(data, 'fedimintd.pid'), String(process.pid));     // this test's own pid: alive, but not fedimintd
   assert.equal(await units.active(data), false);
 });
+
+// kanban #577 (2026-10-23): bitcoind restarted and wrote a new cookie; fedimintd keeps the secret it was started with, and a running guardian
+// was adopted on every node restart - an hour without bitcoin RPC. Its cookie's fingerprint is kept beside its data and compared on adoption.
+test('a running guardian started on an old bitcoind cookie is started again on adoption; on the same cookie it is adopted', async () => {
+  const { dir, cookie, bin, call } = setup();
+  const store = join(dir, 'f.db');
+  const first = fakePids();
+  const g1 = await startGuardian({ nodePort: 6541, host: '127.0.0.1', storePath: store, bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log: () => {}, keep: true, pids: first });
+  assert.equal(first.calls.started.length, 1);
+  assert.match(g1.cookieSha, /^[0-9a-f]{64}$/);
+  assert.ok(!require_secret(join(dir, 'f.db.guardian', 'bitcoind-cookie.sha')), 'the fingerprint file holds no secret');
+  // the same cookie: adopted, nothing started
+  const same = fakePids(5161);
+  const g2 = await startGuardian({ nodePort: 6541, host: '127.0.0.1', storePath: store, bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log: () => {}, keep: false, pids: same });
+  assert.equal(g2.adopted, true); assert.equal(same.calls.started.length, 0); assert.equal(same.calls.stopped, 0);
+  // bitcoind restarted: a new cookie - the running guardian is stopped and started again with the new secret
+  writeFileSync(cookie, '__cookie__:fresh');
+  const lines = [];
+  const after = fakePids(5161);
+  const g3 = await startGuardian({ nodePort: 6541, host: '127.0.0.1', storePath: store, bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log: (l) => lines.push(l), keep: false, pids: after });
+  assert.equal(after.calls.stopped, 1, 'the guardian on the old cookie was stopped');
+  assert.equal(after.calls.started.length, 1, 'and started again');
+  assert.equal(after.calls.started[0].env.FM_BITCOIND_PASSWORD, 'fresh');
+  assert.equal(g3.adopted, false); assert.notEqual(g3.cookieSha, g1.cookieSha);
+  assert.ok(lines.some((l) => /old bitcoind cookie/.test(l)));
+});
+const require_secret = (file) => { try { return /sekrit|fresh/.test(String(readFileSync(file))); } catch { return false; } };

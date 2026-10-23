@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { join } from 'node:path';
 import { serve } from './server.js';
-import { startGuardian, guardianPorts } from './guardian.js';
+import { startGuardian, guardianPorts, cookieFingerprint } from './guardian.js';
 import { serviceSettings } from './service-settings.js';
 import { nodeIdentity } from './store.js';
 
@@ -131,8 +131,25 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   // guardian's directory - its federation key - is kept beside the store (<store>.guardian.retired-<time>), and the node starts a guardian
   // in setup on an empty directory, so the next founding can draw it
 
+  // A NEW BITCOIND COOKIE RESTARTS THE GUARDIANS (kanban #577, guardian.js cookieFingerprint): fedimintd read the old secret once and would
+  // run without bitcoin RPC until restarted by hand; every 30 s the cookie's fingerprint is compared with the one each guardian started with
+  const cookieWatch = chain.cookiePath ? setInterval(async () => {
+    const now = cookieFingerprint(chain.cookiePath);
+    if (!now) return;
+    for (const slot of ['guardian', 'next']) {
+      const g = slot === 'guardian' ? guardian : next;
+      if (!g.running || !g.cookieSha || g.cookieSha === now) continue;
+      try {
+        await (g.halt || g.stop)();
+        const fresh = await start(slot);
+        if (slot === 'guardian') guardian = fresh.running ? fresh : none; else next = fresh.running ? fresh : none;
+        (chain.log || console.log)(`[guardian] bitcoind wrote a new cookie: the ${slot === 'guardian' ? 'guardian' : 'guardian-next'} was started again with it${fresh.running ? '' : ` - and did not start: ${fresh.why}`}`);
+      } catch (e) { (chain.log || console.log)(`[guardian] the ${slot} could not be started again on the new cookie: ${e.message}`); }
+    }
+  }, Number((chain.env || process.env).ARENA_COOKIE_WATCH_MS || 30000)) : null;
+  if (cookieWatch && cookieWatch.unref) cookieWatch.unref();
   const closeNode = node.close;
-  node.close = async () => { try { await closeNode(); } finally { await stopBoth(); } };
+  node.close = async () => { if (cookieWatch) clearInterval(cookieWatch); try { await closeNode(); } finally { await stopBoth(); } };
   node.guardianRunning = guardian.running;
   node.guardianSetup = guardian.running && plan.own === 'setup';
   node.guardianNextRunning = next.running;

@@ -82,6 +82,11 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
     `wallet-unlock-password-file=${passwordFile}`, 'wallet-unlock-allow-create=true',
     '[Bitcoin]', 'bitcoin.active=true', 'bitcoin.testnet4=true', 'bitcoin.node=bitcoind',
     '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true',
+    // A BITCOIND RESTART DOES NOT STOP LND (kanban #577, measured 2026-10-23: the test host's bitcoind was restarted at 05:14Z and every LND on
+    // it shut itself down five minutes later - "Health check: chain backend failed after 3 calls" - with exit status 0, which the service
+    // manager does not restart (KeepAlive on failure only), so the gateways stood disconnected): the chain backend check off, LND waits
+    // for bitcoind and goes on
+    '[healthcheck]', 'healthcheck.chainbackend.attempts=0',
     ...(tor ? lndTorLines(tor) : []), '',
   ].join('\n');
   writeFileSync(join(lnddir, 'lnd.conf'), conf, { mode: 0o600 });

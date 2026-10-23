@@ -30,8 +30,22 @@
 import { spawn, execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, unlinkSync, constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { p2pTunnelPort } from './p2p-tunnel.js';
+
+/**
+ * THE BITCOIND COOKIE A GUARDIAN WAS STARTED WITH, AS A FINGERPRINT (kanban #577, measured 2026-10-23: the test host's testnet4 bitcoind was
+ * restarted at 05:14Z and wrote a new cookie; fedimintd takes the secret once, as FM_BITCOIND_PASSWORD, and never reads the file again - so
+ * every guardian on that bitcoind logged "No bitcoin rpc connection" for an hour, its wallet stood still, and federation B's session 4659
+ * could not close. A node restart did not help either: a running guardian is adopted, not restarted). The sha256 of the secret, never the
+ * secret, kept beside the guardian's data (`bitcoind-cookie.sha`); a guardian whose fingerprint is not the cookie's now is started again.
+ */
+export function cookieFingerprint(cookiePath) {
+  try { return createHash('sha256').update(readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':')).digest('hex'); } catch { return null; }
+}
+const COOKIE_SHA = 'bitcoind-cookie.sha';
+const keptFingerprint = (dataDir) => { try { return readFileSync(join(dataDir, COOKIE_SHA), 'utf8').trim() || null; } catch { return null; } };
+const keepFingerprint = (dataDir, sha) => { if (sha) { try { writeFileSync(join(dataDir, COOKIE_SHA), sha + '\n', { mode: 0o600 }); } catch { /* checked again next start */ } } };
 
 /** The guardian's ports, all local: offsets from the node's own port, so four nodes on one machine never collide. */
 export function guardianPorts(nodePort) {
@@ -235,6 +249,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const endpoint = slot === 'next'
     ? env[`ARENA_GUARDIAN_NEXT_ENDPOINT_${nodePort}`] || (named ? named.replace(/\/guardian\/?$/, '') + S.path : guardianEndpoint(nodePort, { host, tailscale: ts, path: S.path }))
     : named || guardianEndpoint(nodePort, { host, tailscale: ts });
+  const cookieSha = cookieFingerprint(cookiePath);
   const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
@@ -246,31 +261,51 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   if (env.ARENA_GUARDIAN_KEEP === '1' && storePath !== ':memory:') {
     const unit = guardianUnit(nodePort, slot);
     if (await units.active(unit)) {
-      log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-      return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {}, halt: () => units.stop(unit) };
+      const had = keptFingerprint(dataDir);
+      if (!had || !cookieSha || had === cookieSha) {
+        log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
+        return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha: had || cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
+      }
+      log(`[guardian] ${unit} runs with an old bitcoind cookie (bitcoind was restarted): started again`);
+      await units.stop(unit);
     }
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
+    keepFingerprint(dataDir, cookieSha);
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
-    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, stop: async () => {}, halt: () => units.stop(unit) };
+    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
   }
   // A GUARDIAN THAT OUTLIVES ITS NODE WITHOUT SYSTEMD (pidfileUnits): adopted whenever it still runs - a setup kept across a restart that
   // has since finished its DKG runs the federation on these ports, and a second fedimintd would not start - and started kept when the
   // node asks (`keep`: it waits in setup). Closing the node leaves it running; `halt` stops it (a fresh setup, the owner page's stop).
   if (storePath !== ':memory:') {
-    const kept = (adopted, pid) => ({ running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
-      stop: async () => {}, halt: () => pids.stop(dataDir) });
+    const kept = (adopted, pid, sha) => ({ running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
+      cookieSha: sha, stop: async () => {}, halt: () => pids.stop(dataDir) });
     if (await pids.active(dataDir)) {
-      log(`[guardian] fedimintd ${pids.pid(dataDir)} already runs on ${dataDir}: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-      return kept(true, pids.pid(dataDir));
+      const had = keptFingerprint(dataDir);
+      // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
+      if (!had || !cookieSha || had === cookieSha) {
+        log(`[guardian] fedimintd ${pids.pid(dataDir)} already runs on ${dataDir}: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
+        return kept(true, pids.pid(dataDir), had || cookieSha);
+      }
+      log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie (bitcoind was restarted): started again`);
+      await pids.stop(dataDir);
+      if (!keep) {
+        const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
+        keepFingerprint(dataDir, cookieSha);
+        log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
+        return kept(false, pid, cookieSha);
+      }
     }
     if (keep) {
       const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
+      keepFingerprint(dataDir, cookieSha);
       log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
-      return kept(false, pid);
+      return kept(false, pid, cookieSha);
     }
   }
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
+  keepFingerprint(dataDir, cookieSha);
   let exited = false;
   child.on('exit', (code, sig) => { exited = true; log(`[guardian] fedimintd exited (${sig || code})`); });
   log(`[guardian] fedimintd ${child.pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
@@ -280,5 +315,5 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     child.kill('SIGTERM');
     setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, 10000).unref();
   });
-  return { running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot, stop, halt: stop };
+  return { running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot, cookieSha, stop, halt: stop };
 }
