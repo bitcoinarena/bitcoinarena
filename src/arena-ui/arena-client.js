@@ -14059,7 +14059,9 @@ async function readRandomness(id, nodes, fetcher) {
  * committee is keys - there is no map between them. A node with no share in
  * the handout refuses, which is the right answer and is counted as one.
  */
-async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}) {
+// `out`: given, `out.posted` (each seat's own post) is set before the first answer - a market order hands its entries after them without
+// waiting for this answer
+async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
   // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
@@ -14069,26 +14071,41 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
   // EVERY NODE AT ONCE (2026-10-02, the join's 2-3 s): posted one after another, the handout was ~0.8 s of a funded
-  // paid join before its lock (0.0.2476). Still all of them before the lock is made, read in the nodes' order.
-  const answers = await Promise.all(nodes.map(async (node) => {
+  // paid join before its lock (0.0.2476). Read in the nodes' order.
+  // NOT THE SLOWEST SEAT'S TIME (playtest 2026-10-23 ~21:05Z, "First order is always slow second is <1s"; measured on UI 343: 11.3 s and
+  // 22.9 s between the deposit and the lock, all 14 seats waited for while a busy one answered late): answered once `needed` seats took it
+  // and every seat answered or `graceMs` passed after that; the others' answers come in the background (`rest`). A seat that never answers
+  // is a seat that refused, after `waitMs`.
+  const answers = nodes.map((node) => ({ node, why: `${node}: not answered yet` }));
+  const posts = nodes.map(async (node, i) => {
     const at = node.replace(/\/+$/, '') + '/handout';
     try {
-      const r = await fetcher(at, { method: 'POST', body: stake.body });
-      if (r.ok) return { node, ok: true };
-      return { node, why: `${node}: ${(await r.text()).trim()}` };
+      const r = await fetcher(at, { method: 'POST', body: stake.body, signal: AbortSignal.timeout(waitMs) });
+      answers[i] = r.ok ? { node, ok: true } : { node, why: `${node}: ${(await r.text()).trim()}` };
     } catch (e) {
-      return { node, why: `${node}: ${e.message}` };
+      answers[i] = { node, why: `${node}: ${e.message}` };
     }
-  }));
+  });
+  const rest = Promise.all(posts).then(() => answers.slice());
+  const posted = new Map(nodes.map((node, i) => [node, posts[i]]));   // each seat's own post: its entry goes after it
+  if (out) out.posted = posted;
+  await new Promise((res) => {
+    let left = posts.length, grace = null;
+    const done = () => { clearTimeout(grace); res(); };
+    for (const p of posts) p.then(() => {
+      if (--left === 0) return done();
+      if (!grace && answers.filter((a) => a.ok).length >= needed) grace = setTimeout(done, graceMs);
+    });
+  });
   const accepted = answers.filter((a) => a.ok).map((a) => a.node);
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   if (accepted.length < needed)
     return {
-      ok: false, accepted: accepted.length, needed, refused,
+      ok: false, accepted: accepted.length, needed, refused, rest, posted,
       why: `${accepted.length} of the ${needed} signer nodes needed to open this stake took the `
         + 'handout, so it could never be settled',
     };
-  return { ok: true, accepted: accepted.length, needed, refused };
+  return { ok: true, accepted: accepted.length, needed, refused, rest, posted };
 }
 
 /**
@@ -14452,7 +14469,7 @@ async function committeeBond(o = {}) {
  * read). In the candidates' order, each { where, body }: the bond prover takes the body as it is, and the next seat when one
  * does not prove.
  */
-async function committeeBonds({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000 } = {}) {
+async function committeeBonds({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000, enough = Infinity } = {}) {
   const keys = new Set((committee || []).map((k) => toHex(k)));
   const candidates = [...new Set([bond, ...(nodes || []).map((n) => `${String(n).replace(/\/+$/, '')}/bond`)].filter(Boolean))];
   const whose = async (u) => {
@@ -14464,7 +14481,14 @@ async function committeeBonds({ bond, nodes = [], committee = [], fetcher = fetc
       return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? { where: u, body: o } : null;
     } catch { return null; }
   };
-  return (await Promise.all(candidates.map(whose))).filter(Boolean);
+  // ANSWERED ONCE `enough` WERE FOUND (kanban #601: one seat that does not answer held every fresh read of a round 8 s), else when all answered
+  const found = [];
+  await new Promise((res) => {
+    let left = candidates.length;
+    if (!left) return res();
+    for (const u of candidates) whose(u).then((x) => { if (x) found.push(x); if (--left === 0 || found.length >= enough) res(); });
+  });
+  return found.sort((a, b) => candidates.indexOf(a.where) - candidates.indexOf(b.where));
 }
 /** How many committee seats' bonds a join hands the bond prover, at most. */
 const COMMITTEE_BONDS_ASKED = 3;
@@ -14499,9 +14523,34 @@ function bondProvider(where, { fetcher = fetch, body = null } = {}) {
  * anywhere is the single-player daily, which is what almost every visitor
  * opens. Only a URL that NAMES a round changes that.
  */
-async function joinFromQuery(search, { fetcher = fetch } = {}) {
+// READ ONCE PER ROUND, NOT PER ORDER (kanban #601, the owner 2026-10-23: "601 target is below 300ms on web"; measured on UI 344: the press to the
+// join's first step was 99-132 ms, the round, its advert and its committee's bonds read from the seats again for every order; on UI 345,
+// 8 s whenever the kept answer had run out - committeeBonds waits 8 s for a seat that does not answer): a round's contract is its id's,
+// so the answer is kept up to JOIN_KEPT_MS per query and read again behind it once it is JOIN_FRESH_MS old - a press never waits for that
+// read; the lobby warms it while it shows the round. A failed read is not kept. Each caller gets its own copy of the top level (the page
+// sets `federation` on it).
+const JOIN_KEPT = new Map();
+const JOIN_KEPT_MS = 900000;
+const JOIN_FRESH_MS = 60000;
+async function joinFromQuery(search, { fetcher = fetch, kept = fetcher === fetch } = {}) {
   const named = joinQuery(search);
   if (!named) return null;
+  if (!kept) return readJoin(named, fetcher);
+  const key = JSON.stringify(named);
+  const now = Date.now();
+  for (const [k, v] of JOIN_KEPT) if (v.at + JOIN_KEPT_MS < now) JOIN_KEPT.delete(k);
+  const read = () => {
+    const k = { at: Date.now(), p: readJoin(named, fetcher) };
+    k.p.then(() => { const was = JOIN_KEPT.get(key); if (!was || was.at <= k.at || !was.done) JOIN_KEPT.set(key, Object.assign(k, { done: true })); },
+      () => { if (JOIN_KEPT.get(key) === k) JOIN_KEPT.delete(key); });
+    return k;
+  };
+  let k = JOIN_KEPT.get(key);
+  if (!k) { k = read(); JOIN_KEPT.set(key, k); }
+  else if (k.done && now - k.at > JOIN_FRESH_MS && !k.refreshing) { k.refreshing = true; read(); }   // the kept answer serves; a new one behind it
+  return { ...(await k.p) };
+}
+async function readJoin(named, fetcher) {
 
   const { contract, from, refused } = await fetchRound(named.round, named.nodes, { fetcher });
   const advert = /^[0-9a-f]{128}$/i.test(named.advert)
@@ -14530,7 +14579,7 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
       headers: headerSources(named.chainFrom).map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       // EVERY COMMITTEE SEAT FOUND, UP TO COMMITTEE_BONDS_ASKED, each with the /bond it answered; the named bond when none did
       bonds: await (async () => {
-        const found = await committeeBonds({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher });
+        const found = await committeeBonds({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher, enough: COMMITTEE_BONDS_ASKED });
         return found.length ? found.slice(0, COMMITTEE_BONDS_ASKED).map((b) => bondProvider(b.where, { fetcher, body: b.body }))
           : [bondProvider(named.bond, { fetcher })];
       })(),
@@ -18884,7 +18933,7 @@ async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door 
   // the answers keep the nodes' order.
   const said = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body, signal: AbortSignal.timeout(30000) });   // a seat that never answers is a seat that refused
       return { node, status: r.status, why: (await r.text()).trim() };
     } catch (e) {
       return { node, status: 0, why: e.message };
@@ -32989,7 +33038,8 @@ function pickSheet({ market, contract = null, stakeMsat = contract ? contract.st
 // accepted its lock and the 7 seats had each checked it - 6.5 s median at load 30-47; the seats had taken the entry at ~2.8 s):
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 // `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
-async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null }) {
+// `handedOut` (postHandout's `posted`): a seat's entry is posted once that seat answered its handout - one slow seat is not waited on by the others
+async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
@@ -32998,7 +33048,8 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
   const entryPs = nodes.map(async (node, i) => {
     let x;
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes });
+      if (handedOut && handedOut.get(node)) await handedOut.get(node);
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
     } catch (e) { x = { node, status: 0, why: e.message }; }
     entriesNow[i] = x;
@@ -33016,8 +33067,16 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
   // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (measured on the regtest market
   // stack): handed once, at once, while the federation was still accepting the lock, every seat that looked first refused it
   // and none was asked again - so the order was tradable nowhere (a batch needs 5 seats holding its locks).
+  // NEVER WAITED ON FOREVER (playtest 2026-10-23 ~21:00Z, "I placed an order that never finishes": a federation that does not decide on the
+  // lock left the page at "placing …" for good): after `acceptWaitMs` the order is refused by name. A lock accepted later is the wallet's
+  // still - an expired lock no seat used comes back as a refund (page-lock expiredBack).
+  const acceptWaitMs = Number(stakeLock.acceptWaitMs) || ACCEPT_WAIT_MS;
   const accepted = (async () => {
-    if (stakeLock.accepted && typeof stakeLock.accepted.then === 'function') await stakeLock.accepted;
+    if (!(stakeLock.accepted && typeof stakeLock.accepted.then === 'function')) return;
+    let timer;
+    try {
+      await Promise.race([stakeLock.accepted, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not decide on it within ${Math.round(acceptWaitMs / 1000)} s`)), acceptWaitMs); })]);
+    } finally { clearTimeout(timer); }
   })();
   accepted.catch(() => {});
   const kinds = [{ door: 'lock', fields: stakeLock.fields }, ...(stakeLock.feeLock ? [{ door: 'fee-lock', fields: stakeLock.feeLock.fields }] : [])];
@@ -33080,6 +33139,8 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
   return { ok: true, entryId: toHex(eid), entries: entriesNow.slice(), first, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing, entriesAll };
 }
 const LOCK_HAND_MS_PICK = 120000;
+const ACCEPT_WAIT_MS = 60000;   // the federation's word on an order's lock (measured: 0.4-2.6 s; 15.5 s the slowest seen)
+const ENTRY_WAIT_MS = 20000;    // one seat's answer to the entry
 
 /**
  * THE TAB'S RECORD OF A PICK (what the lobby's market lines are made of): its round, entry and pick, its market's game, its
