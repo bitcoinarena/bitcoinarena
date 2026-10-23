@@ -1405,10 +1405,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!now.ok) return {};
     // one seat per node key: a node with two bonds is two census entries (reserve-members.js, kanban #397)
     const out = reserveMembersOf(now.entries);
+    // A FEDERATION THE BASIS DOES NOT NAME YET is read from the chain's newest census, as its record is (#549; kanban #397, measured
+    // 2026-10-23 04:08Z: e2f42eea's ten guardian seats held its 7-of-10 key while test host seat 1, whose newest round's census predates
+    // their advert updates, listed it with 0 members). A federation the basis names keeps its members: no reserve epoch moves.
+    if (fedRecords && fedRecords.censusNewest) {
+      try { for (const [f, es] of Object.entries(reserveMembersOf(fedRecords.censusNewest() || []))) if (!out[f]) out[f] = es; } catch { /* the basis alone */ }
+    }
     return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: endpointsOf(es, round.pubkey) }]));
   };
-  // A threshold for this many guardian seats, or null: the committee rule's sizes only (7 -> 5, 2 -> 2); a federation of six (a
-  // successor still being seated) waits, and /reserves says why
+  // A threshold for this many guardian seats, or null; /reserves says why.
   // THE RESERVE KEY'S THRESHOLD IS THE FEDERATION'S OWN (§23A 2f + 1: 7 of 10, 5 of 7; kanban #397, 2026-10-23: e2f42eea's ten guardian
   // seats got no reserve key from the committee rule, which knows 7 and 2 only)
   const reserveNeeded = (n) => { try { return guardianThreshold(n); } catch { return null; } };
