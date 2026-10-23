@@ -57,6 +57,18 @@ export async function lockEntry({ lc, c, split, stakePoint, player, claimPk, gat
   const zero = { txid: new Uint8Array(32), outIdx: 0n };
   const F = gate.pays ? rand(32) : null;
   if (!split.shares.length) {
+    // THE STAKE AND THE FEE IN ONE TRANSACTION when the client has `lockBoth` (as the page's join, page-lock.js): one transaction
+    // for the guardians to agree on, not two - kanban #576, measured 2026-10-23 10:3xZ: with 20 market bots, federation A's 7
+    // guardians at ~0.7 core each and ~4 threads waiting on disk at any time, the work scaling with the transactions agreed
+    if (F && typeof lc.lockBoth === 'function') {
+      const both = JSON.parse(await lc.lockBoth(toHex(stakePoint), String(split.netMsat), toHex(sha256(F)), String(split.feeMsat), toHex(claimPk), toHex(refundPk), expiry));
+      const stake = lockFromClient(both.stake, { point: stakePoint, claimPk, refundPk });
+      const got = lockFromClient(both.fee, { hash: sha256(F), claimPk, refundPk });
+      if (stake.fields.amountMsat !== split.netMsat) throw new Error(`the lock client locked ${stake.fields.amountMsat} msat of stake, not ${split.netMsat}`);
+      if (got.fields.amountMsat !== split.feeMsat) throw new Error(`the lock client locked ${got.fields.amountMsat} msat as the fee, not ${split.feeMsat}`);
+      const fee = { outpoint: got.outpoint, fields: got.fields, preimage: F };
+      return { stake, fee, entryFields: { stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee.outpoint, feePreimage: F } };
+    }
     const stake = lockFromClient(await lc.lock(toHex(stakePoint), String(split.netMsat), toHex(claimPk), toHex(refundPk), expiry),
       { point: stakePoint, claimPk, refundPk });
     let fee = null;
