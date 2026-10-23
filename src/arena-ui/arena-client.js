@@ -19010,7 +19010,9 @@ function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP
   for (const r of recv) for (const p of pay) if (gwKey(r) !== gwKey(p) && out.length < max) out.push([r, p]);
   return out.length ? out : [[recv[0], '']];
 }
-async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {} }) {
+// `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
+async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
+  rows = ['swapped-out', 'swapped-in'] }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   onState({ state: 'swapping', amountMsat: amount });
@@ -19038,10 +19040,39 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
     return { ok: false, state: 'stopped', why, tried };
   }
   const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
-  if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'swapped-out', msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
-  if (storage && toFederationId) ledgerAppend(storage, toFederationId, { kind: 'swapped-in', msat: String(amount), from: hex(fromFederationId) });
+  if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: rows[0], msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
+  if (storage && toFederationId) ledgerAppend(storage, toFederationId, { kind: rows[1], msat: String(amount), from: hex(fromFederationId) });
   onState({ state: 'swapped', amountMsat: amount, feeMsat });
   return { ok: true, state: 'swapped', movedMsat: amount, feeMsat };
+}
+
+/**
+ * THE PLAYER'S OWN MOVE (kanban #598, the owner 2026-10-23: "Move from Federation X to Federation Y mit einem amount, standardmässig alles von
+ * der Federation"): `from` / `to` as { federation (hex), invite }. Both wallets of this seed are opened as the stake opens them; `amountMsat`
+ * null moves all that `from` can send after the fees. The swap's two legs (swapForRound), its history rows moved-out / moved-in.
+ */
+async function moveCanMsat({ from, seed, LockClient, storage } = {}) {
+  const a = await openPlayerWallet({ federationId: fromHex(String(from.federation)), invite: from.invite, seed, LockClient, storage });
+  try { return BigInt(await a.withdrawableMsat()); } catch (e) {
+    if (/too low to send any amount after fees/i.test(String((e && e.message) || e))) return 0n;
+    throw e;
+  }
+}
+async function movePlayerWallet({ from, to, seed, LockClient, storage, amountMsat = null, gateways = [], onState = () => {} } = {}) {
+  if (!from || !to || !from.invite || !to.invite) return { ok: false, state: 'refused', why: 'both federations need their invite' };
+  if (String(from.federation).toLowerCase() === String(to.federation).toLowerCase()) return { ok: false, state: 'refused', why: 'choose two different federations' };
+  const fromId = fromHex(String(from.federation)), toId = fromHex(String(to.federation));
+  const a = await openPlayerWallet({ federationId: fromId, invite: from.invite, seed, LockClient, storage });
+  const b = await openPlayerWallet({ federationId: toId, invite: to.invite, seed, LockClient, storage });
+  let can;
+  try { can = BigInt(await a.withdrawableMsat()); } catch (e) {
+    if (/too low to send any amount after fees/i.test(String((e && e.message) || e))) can = 0n; else throw e;
+  }
+  const amount = amountMsat === null ? can : BigInt(amountMsat);
+  if (amount <= 0n) return { ok: false, state: 'refused', canMsat: can, why: can <= 0n ? 'nothing to send from that federation after the fees' : 'a move is more than 0 sat' };
+  if (amount > can) return { ok: false, state: 'refused', canMsat: can, why: `that federation can send ${can / 1000n} sat after the fees, less than the ${amount / 1000n} sat asked` };
+  const done = await swapForRound({ from: a, to: b, amountMsat: amount, gateways, storage, fromFederationId: fromId, toFederationId: toId, onState, rows: ['moved-out', 'moved-in'] });
+  return { ...done, canMsat: can };
 }
 
 /**
@@ -34453,7 +34484,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
