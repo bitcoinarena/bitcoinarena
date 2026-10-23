@@ -688,7 +688,7 @@ export async function committeeBond(o = {}) {
  * read). In the candidates' order, each { where, body }: the bond prover takes the body as it is, and the next seat when one
  * does not prove.
  */
-export async function committeeBonds({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000 } = {}) {
+export async function committeeBonds({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000, enough = Infinity } = {}) {
   const keys = new Set((committee || []).map((k) => toHex(k)));
   const candidates = [...new Set([bond, ...(nodes || []).map((n) => `${String(n).replace(/\/+$/, '')}/bond`)].filter(Boolean))];
   const whose = async (u) => {
@@ -700,7 +700,14 @@ export async function committeeBonds({ bond, nodes = [], committee = [], fetcher
       return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? { where: u, body: o } : null;
     } catch { return null; }
   };
-  return (await Promise.all(candidates.map(whose))).filter(Boolean);
+  // ANSWERED ONCE `enough` WERE FOUND (kanban #601: one seat that does not answer held every fresh read of a round 8 s), else when all answered
+  const found = [];
+  await new Promise((res) => {
+    let left = candidates.length;
+    if (!left) return res();
+    for (const u of candidates) whose(u).then((x) => { if (x) found.push(x); if (--left === 0 || found.length >= enough) res(); });
+  });
+  return found.sort((a, b) => candidates.indexOf(a.where) - candidates.indexOf(b.where));
 }
 /** How many committee seats' bonds a join hands the bond prover, at most. */
 export const COMMITTEE_BONDS_ASKED = 3;
@@ -791,7 +798,7 @@ async function readJoin(named, fetcher) {
       headers: headerSources(named.chainFrom).map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       // EVERY COMMITTEE SEAT FOUND, UP TO COMMITTEE_BONDS_ASKED, each with the /bond it answered; the named bond when none did
       bonds: await (async () => {
-        const found = await committeeBonds({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher });
+        const found = await committeeBonds({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher, enough: COMMITTEE_BONDS_ASKED });
         return found.length ? found.slice(0, COMMITTEE_BONDS_ASKED).map((b) => bondProvider(b.where, { fetcher, body: b.body }))
           : [bondProvider(named.bond, { fetcher })];
       })(),

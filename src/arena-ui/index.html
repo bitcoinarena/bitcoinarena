@@ -2686,8 +2686,10 @@
     async function joinTheRoundIfOneWasNamed() {
       if (typeof ARENACLIENT === 'undefined') return;
       const thisJoin = window.ARENA_JOIN || null;   // the lobby's join this call makes (null for a round link)
+      const readAt = performance.now();
       const named = await ARENACLIENT.joinFromQuery(location.search);
       if (!named) return;
+      console.log('[arena] join: the round read in ' + Math.round(performance.now() - readAt) + ' ms, ' + Math.round(readAt - (window.ARENA_ORDER_PRESSED_AT || readAt)) + ' ms after the press');
       // A ROUND OF ANOTHER FEDERATION IS JOINED WITH THAT FEDERATION'S INVITE (measured 2026-10-14 19:06Z on testnet4):
       // the lobby names one invite (federation A's), and an Up or Down order on federation B's round was refused before anything
       // was staked - "That invite names another federation than the round's b18947f0" - in both tabs, whose wallets held their
@@ -7112,6 +7114,11 @@
               })();
               return answer(true, 'no-row-waiting', more);
             }
+            // REFUSED OUT LOUD (measured on UI 347, kanban #601: an order pressed in its window's last minutes found no joinable row and
+            // answered false only - window.ARENA_JOIN was left as it was, and the market's client showed the order as going for good)
+            { const listed = (window.ARENA_LOBBY_ROWS || []).some((x) => x.id === id);
+              window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false,
+                why: listed ? 'this round takes no more orders - its entry has closed' : 'this round is no longer listed' }; }
             return answer(false, 'no-row', more);
           }
           // ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN: this paid join is refused by name (see ARENA_PAID_RUN_ELSEWHERE)
