@@ -7728,6 +7728,16 @@ function receiptsNeeded(slots) {
   throw new Error(`no committee threshold for ${slots} slots`);
 }
 
+/**
+ * A FEDERATION'S OWN THRESHOLD over its guardian seats (§23A: "2f + 1 ... 7 of 10, 5 of 7, 3 of 4"; fedimint's own n - floor((n - 1) / 3)):
+ * what its reserve key needs (§27A.9.2, "the 5-of-7 key of its guardian seats"). Not a game committee's threshold (receiptsNeeded) -
+ * that one knows the committee sizes only, and a federation of the founding's ten got no reserve key from it (kanban #397, 2026-10-23).
+ */
+function guardianThreshold(n) {
+  if (!Number.isInteger(n) || n < 1) throw new Error(`no guardian threshold for ${n} seats`);
+  return n - Math.floor((n - 1) / 3);
+}
+
 // ---- arena-protocol/src/genesis.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -11646,6 +11656,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   '5add5235b912410e9afaf2d7b38fab7deeb82fe455bbc730f5c38da1d7b81dbc': Object.freeze({
     name: 'btc-updown-15m',
     // manifest version 17, parent 8be37be1 - version 16 in every term, its client's comments cleaned
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '600ef6dde43f818e8ff46a78da9fb8c907fcbaa01ea5af59a756dc2c62459613': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 18, parent 5add5235 - version 17 in every term, its client both halves of the book: Buy or Sell (kanban #588)
     requiredProtocolVersion: 2,
     cores: Object.freeze({
 
