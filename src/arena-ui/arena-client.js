@@ -32901,6 +32901,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
   const kinds = [{ door: 'lock', fields: stakeLock.fields }, ...(stakeLock.feeLock ? [{ door: 'fee-lock', fields: stakeLock.feeLock.fields }] : [])];
   const tookLock = new Map(kinds.map((k) => [k.door, new Set()]));
   const said = {};
+  let committedSaid = false;
   const pass = async () => {
     await Promise.all(kinds.map(async (k) => {
       const left = took.filter((n) => !tookLock.get(k.door).has(n));
@@ -32909,6 +32910,13 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
       for (const x of r.said) if (x.status === 201) tookLock.get(k.door).add(x.node);
       said[k.door] = { committed: tookLock.get(k.door).size, needed: took.length, said: r.said };
     }));
+    // THE PAGE TOLD ONCE ENOUGH SEATS HOLD THE STAKE LOCK (kanban #593, playtest 2026-10-23: a market order never said so -
+    // the game's client does (client.js) - so the page's lock record never named its entry: every order's stake row read
+    // "not entered", and no pending note was kept for its winnings)
+    if (!committedSaid && typeof stakeLock.onCommitted === 'function' && tookLock.get('lock').size >= Math.max(1, Number(stakeLock.needed) || 1)) {
+      committedSaid = true;
+      try { stakeLock.onCommitted(eid); } catch { /* the page's bookkeeping, not the seats' */ }
+    }
   };
   await pass();
   const until = Math.max(Date.now() + LOCK_HAND_MS_PICK, Number(stakeLock.handUntilMs || 0));
