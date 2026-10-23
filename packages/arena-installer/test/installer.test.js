@@ -157,7 +157,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   // THE APPS (kanban #569): the release's three, all chosen at first; the node hosts the ones saved
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'apps');
-  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:17', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
+  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:19', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
   assert.equal((await c.post('/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] })).json.ok, true);
   assert.equal((await c.get('/api/state')).json.step, 'seed');
 
@@ -405,7 +405,13 @@ test('the intro: what a node is, one picture, what it earns and needs, then step
   assert.match(intro, /100 rounds of 1,000 sat → 4,000 sat to the nodes/);
   for (const need of ['A computer that stays on', 'About 3 GB of disk', 'Home internet', 'A bond of 50,000 sat']) assert.ok(intro.includes(need), need);
   assert.match(html, /const intro = st\.step === 'chain' && !st\.done\.chain && !introSeen\(\);/, 'shown only before the first step is done');
-  assert.match(html, /\$\('intro-go'\)\.onclick = \(\) => \{ introSkipped = true; try \{ localStorage\.setItem/, '"Set up my node" goes on, remembered where the browser allows');
+  assert.match(html, /\$\('intro-go'\)\.onclick = async \(\) => \{[^]*?introSkipped = true; try \{ localStorage\.setItem/, '"Set up my node" goes on, remembered where the browser allows');
+  // HOW MANY NODES (kanban #596): the count, its note, and the RAM disk checkbox from more than 5, posted before the steps
+  assert.match(intro, /<input id="intro-count" type="number" min="1" max="20" value="1"/);
+  assert.match(intro, /<label class="choice" id="intro-ram-row" hidden><input id="intro-ram" type="checkbox" checked> <span><b>Put Fedimint on a RAM disk<\/b>/);
+  assert.match(html, /\$\('intro-ram-row'\)\.hidden = n < 6/);
+  assert.match(html, /n >= 10 \? ' 10 or more nodes found their own federation\.'/);
+  assert.match(html, /await post\('\/api\/instances', \{ count: n, ram: n >= 6 \? \$\('intro-ram'\)\.checked : false \}\)/);
 });
 
 test('the roles step shows each role in one line, its needs as chips, the long text behind "more" ("a wall of text that nobody reads")', () => {
@@ -428,4 +434,25 @@ test('the wizard page draws no step itself: the roles into their list, every oth
   assert.match(html, /R\.show\(st\.step, \(k\) => \$\('s-' \+ k\), ctx\);/);
   for (const k of ['chain', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']) assert.ok(html.includes(`<section id="s-${k}"></section>`), `${k}: an empty section for React`);
   for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"', 'innerHTML', 'const esc']) assert.ok(!html.includes(gone), gone);
+});
+
+// HOW MANY NODES FROM THE INTRO (kanban #596): POST /api/instances checked and kept; the state says it back
+test('the intro\'s count of nodes and the RAM disk choice are checked and kept (kanban #596)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+  try {
+    const w = createWizard({ state: nodeState(home), release: RELEASE, seatPort: 1 });
+    const server = http.createServer((q, s) => w.handle(q, s));
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const c = client(server.address().port);
+    await c.get(`/?t=${w.token}`);
+    assert.deepEqual((await c.get('/api/state')).json.instances, { count: 1, ram: false }, 'one node unless chosen');
+    assert.match((await c.post('/api/instances', { count: 25 })).json.why, /from 1 to 20/);
+    const ten = (await c.post('/api/instances', { count: 10, ram: true })).json;
+    assert.deepEqual([ten.ok, ten.instances], [true, { count: 10, ram: true }]);
+    assert.match(ten.note, /10 or more nodes found their own federation/);
+    assert.deepEqual((await c.get('/api/state')).json.instances, { count: 10, ram: true });
+    assert.deepEqual((await c.post('/api/instances', { count: 7, ram: false })).json.instances, { count: 7, ram: false }, 'declined');
+    server.close();
+    assert.deepEqual(nodeState(home).read().instances, { count: 7, ram: false }, 'kept on disk');
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });

@@ -48,6 +48,7 @@ export const GATEWAY_SEAT = Object.freeze({ minInboundSats: 100000, minOutboundS
 import { findGatewayd, configureGateway, testGateway, joinFederation } from './gateway.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
 // A SESSION LASTS A WEEK IDLE AND OUTLIVES AN INSTALLER RESTART (ruling 8: "Tells user to bookmark this page as it can take days on
@@ -152,7 +153,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0);
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
-      confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
+      confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS,
+      // kanban #596: how many nodes on this machine, and Fedimint on a RAM disk from more than 5
+      instances: s.instances || { count: 1, ram: false }, instancesMax: INSTANCES_MAX, ramFrom: RAM_FROM };
   };
   // THE RELEASE'S APPS (kanban #569): read once - the release folder does not change under a running wizard
   const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
@@ -161,6 +164,13 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   // THE STEPS' DOORS. Each answers { ok, ... } and saves only what passed.
   const api = {
     'GET /api/state': async () => ({ ok: true, ...view() }),
+    // HOW MANY NODES (kanban #596): the intro's count and RAM disk choice, checked as `arena-install --instances` checks them
+    'POST /api/instances': async (b) => {
+      const c = instancesChoice({ count: b.count, ram: b.ram, network: 'testnet4' });
+      if (!c.ok) return c;
+      state.save({ instances: { count: c.count, ram: c.ram } });
+      return { ok: true, instances: { count: c.count, ram: c.ram }, note: instancesNote(c.count) };
+    },
 
     'POST /api/chain/test': async (b) => ({ ok: true, result: await test(chainOf(b)) }),
     'POST /api/chain/save': async (b) => {
