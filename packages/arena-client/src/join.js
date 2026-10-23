@@ -278,7 +278,9 @@ async function readRandomness(id, nodes, fetcher) {
  * committee is keys - there is no map between them. A node with no share in
  * the handout refuses, which is the right answer and is counted as one.
  */
-export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000 } = {}) {
+// `out`: given, `out.posted` (each seat's own post) is set before the first answer - a market order hands its entries after them without
+// waiting for this answer
+export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
   // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
@@ -305,6 +307,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   });
   const rest = Promise.all(posts).then(() => answers.slice());
   const posted = new Map(nodes.map((node, i) => [node, posts[i]]));   // each seat's own post: its entry goes after it
+  if (out) out.posted = posted;
   await new Promise((res) => {
     let left = posts.length, grace = null;
     const done = () => { clearTimeout(grace); res(); };
@@ -732,9 +735,28 @@ export function bondProvider(where, { fetcher = fetch, body = null } = {}) {
  * anywhere is the single-player daily, which is what almost every visitor
  * opens. Only a URL that NAMES a round changes that.
  */
-export async function joinFromQuery(search, { fetcher = fetch } = {}) {
+// READ ONCE PER ROUND, NOT PER ORDER (kanban #601, the owner 2026-10-23: "601 target is below 300ms on web"; measured on UI 344: the press to the
+// join's first step was 99-132 ms, the round, its advert and its committee's bonds read from the seats again for every order): a round's
+// contract is its id's, so the answer is kept for JOIN_KEPT_MS per query and the lobby warms it while it shows the round; a failed read is
+// not kept. Each caller gets its own copy of the top level (the page sets `federation` on it).
+const JOIN_KEPT = new Map();
+const JOIN_KEPT_MS = 120000;
+export async function joinFromQuery(search, { fetcher = fetch, kept = fetcher === fetch } = {}) {
   const named = joinQuery(search);
   if (!named) return null;
+  if (!kept) return readJoin(named, fetcher);
+  const key = JSON.stringify(named);
+  const now = Date.now();
+  for (const [k, v] of JOIN_KEPT) if (v.until < now) JOIN_KEPT.delete(k);
+  let k = JOIN_KEPT.get(key);
+  if (!k) {
+    k = { until: now + JOIN_KEPT_MS, p: readJoin(named, fetcher) };
+    JOIN_KEPT.set(key, k);
+    k.p.catch(() => { if (JOIN_KEPT.get(key) === k) JOIN_KEPT.delete(key); });
+  }
+  return { ...(await k.p) };
+}
+async function readJoin(named, fetcher) {
 
   const { contract, from, refused } = await fetchRound(named.round, named.nodes, { fetcher });
   const advert = /^[0-9a-f]{128}$/i.test(named.advert)
