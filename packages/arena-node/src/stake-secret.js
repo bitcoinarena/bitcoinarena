@@ -71,6 +71,12 @@ export class StakeSecrets {
   constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null } = {}) {
     // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled or not
     this.bookStanding = bookStanding;
+    // WHAT AN ENTRY'S SHARES OPEN TO, KEPT (kanban #587, measured 2026-10-23 on an idle seat: ECDH in openShare/openMyShare 4.5 % of
+    // its main thread - every settle pass and every peer's GET /share opened the same envelopes again): an entry's handout and its
+    // dealt shares never change, so this node's own opened share, and a stake secret once reconstructed and checked against the
+    // entry's commitment, are kept per entry - at most KEPT_ENTRIES each, the oldest dropped first. A failed open is not kept.
+    this.mineKept = new Map();
+    this.openedKept = new Map();
     this.round = round;
     this.curve = curve;
     this.peers = peers;
@@ -109,11 +115,16 @@ export class StakeSecrets {
    * and there is no cache to go stale, because the envelope is the truth.
    */
   async mine(entryIdBytes) {
+    const k = toHex(entryIdBytes);
+    const had = this.mineKept.get(k);
+    if (had) return had;
     const found = this.handoutOf(entryIdBytes);
     if (!found.ok) return found;
-    return openMyShare(found.handout, {
+    const got = await openMyShare(found.handout, {
       pubkey: this.round.pubkey, secret: this.round.identity.secret, curve: this.curve,
     });
+    if (got.ok) keep(this.mineKept, k, got);
+    return got;
   }
 
   /**
@@ -258,6 +269,8 @@ export class StakeSecrets {
    * nothing.
    */
   async open({ roundId, entryId, needed = SHARES_NEEDED }) {
+    const opened = this.openedKept.get(`${toHex(entryId)}:${needed}`);
+    if (opened) return opened;
     const found = this.handoutOf(entryId);
     if (!found.ok) return found;
 
@@ -324,6 +337,14 @@ export class StakeSecrets {
     } catch (e) {
       return { ok: false, held: bySignerNode.size, why: `those shares do not open that stake: ${e.message}` };
     }
-    return { ok: true, preimage, held: bySignerNode.size, signerNodes: [...bySignerNode.keys()] };
+    const done = { ok: true, preimage, held: bySignerNode.size, signerNodes: [...bySignerNode.keys()] };
+    keep(this.openedKept, `${toHex(entryId)}:${needed}`, done);
+    return done;
   }
+}
+
+const KEPT_ENTRIES = 20000;
+function keep(map, k, v) {
+  map.set(k, v);
+  if (map.size > KEPT_ENTRIES) map.delete(map.keys().next().value);
 }
