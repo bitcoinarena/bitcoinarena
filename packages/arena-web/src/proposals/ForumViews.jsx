@@ -60,6 +60,9 @@ function Post({ p, depth, children }) {
  * One thread: { thread: null (not held) | { heading, amount, lnurl, stage, stageLine, post, comments: [{ id, depth, ...post }] }, status,
  * onReply(text, parentId) -> Promise<{ ok, say }> }. A reply goes to the post named by its Reply button, else to the proposal.
  */
+// THE TABLE THE FORM'S HELP SHOWS AND INSERTS (kanban #590)
+export const TABLE_EXAMPLE = '| What | Sats |\n| --- | --: |\n| Server, one year | 50,000 |\n| Domain | 1,500 |';
+
 export class ProposalThread extends React.Component {
   constructor(props) { super(props); this.state = { text: '', replyTo: null, replyName: null, say: '', bad: false, busy: false }; this.send = this.send.bind(this); this.box = React.createRef(); }
   async send(e) {
@@ -114,8 +117,14 @@ export function amountCheck({ amount, lnurl }, reserves, capPct) {
 export class NewProposal extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { title: '', content: '', improves: '', amount: '', lnurl: '', preview: false, say: '', bad: false, busy: false };
+    this.state = { title: '', content: '', improves: '', amount: '', lnurl: '', preview: false, say: '', bad: false, busy: false, tableHelp: false };
     this.submit = this.submit.bind(this);
+  }
+  // A TABLE, AS AN EXAMPLE TO COPY (kanban #590, the owner 2026-10-23: "not sure how tables work. Explain it better in the help"): put at
+  // the end of what the proposal does, with the preview opened so it shows as a table at once
+  insertTable() {
+    const c = this.state.content;
+    this.setState({ content: c + (c && !c.endsWith('\n') ? '\n\n' : c ? '\n' : '') + TABLE_EXAMPLE + '\n', preview: true, say: '' });
   }
   used() { return this.props.purposeLength(this.state.title, this.state.content, this.state.improves); }
   async submit(e) {
@@ -147,7 +156,12 @@ export class NewProposal extends React.Component {
           <p className="reserves-line">{r ? <>The protocol reserves hold <b>{n(r.sats)} sat</b> ({r.agreeing} of {r.asked} nodes agree). A proposal may ask at most <b>{capPct}%: {n(max)} sat</b>.</>
             : `The reserves could not be read${reservesWhy ? `: ${reservesWhy}` : ''}. A proposal may ask at most ${capPct}% of them.`}</p>
           <label>Title<input {...field('title')} maxLength={120} required placeholder="A short name for the PIP" /></label>
-          <label>What the proposal does <span className="hint">Markdown: # headings, **bold**, lists, `code`, links and tables (| a | b |)</span><textarea {...field('content')} rows={10} required /></label>
+          <label>What the proposal does <span className="hint">Markdown: # heading, **bold**, *italic*, - list, `code`, [link](https://…) and tables{' '}
+            <button type="button" className="linkish" id="pip-table-help" aria-expanded={s.tableHelp ? 'true' : 'false'} onClick={() => this.setState({ tableHelp: !s.tableHelp })}>{s.tableHelp ? 'hide how' : 'how?'}</button></span>
+            {s.tableHelp ? <div className="mdhelp" id="pip-table-howto"><p>A table is one line per row, its cells between | bars. A second line of dashes makes the first row the header; a colon
+              aligns a column: <code>:--</code> left, <code>:-:</code> centre, <code>--:</code> right.</p><pre>{TABLE_EXAMPLE}</pre>
+              <button type="button" className="btn" id="pip-table-insert" onClick={() => this.insertTable()}>Insert this table</button></div> : null}
+            <textarea {...field('content')} rows={10} required /></label>
           <div className="bar"><button type="button" className="btn" onClick={() => this.setState({ preview: !s.preview })}>{s.preview ? 'Hide preview' : 'Preview'}</button>
             <span className={`say${used > 4000 ? ' bad' : ''}`}>{n(used)} of 4,000 characters</span></div>
           {s.preview ? <div className="md preview"><h3>{s.title}</h3><div dangerouslySetInnerHTML={{ __html: markdown(s.content) }} /><h3 className="improves">How it improves Bitcoin Arena</h3><div dangerouslySetInnerHTML={{ __html: markdown(s.improves) }} /></div> : null}

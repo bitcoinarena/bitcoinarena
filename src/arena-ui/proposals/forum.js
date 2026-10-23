@@ -46,6 +46,13 @@
     return x.replace(/\u0000(\d+)\u0000/g, function (_, i) { return '<code>' + codes[Number(i)] + '</code>'; });
   }
   function cells(line) { return line.trim().replace(/^\||\|$/g, '').split('|').map(function (c) { return c.trim(); }); }
+  // A TABLE ROW (kanban #590, the owner 2026-10-23: "not sure how tables work" - "| a | b |" typed under a heading rendered as
+  // text): a line that starts and ends with "|". Rows with a separator line (| --- | --- |) under the first are a table with
+  // that first row as its header, each column aligned as its separator says (:-- left, :-: centre, --: right); rows without one
+  // are a table too, all of them body rows.
+  var ROW = /^\s*\|.*\|\s*$/, SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  function alignOf(c) { c = c.trim(); return /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : /^:-/.test(c) ? 'left' : ''; }
+  function cell(tag, text, align) { return '<' + tag + (align ? ' class="al-' + align + '"' : '') + '>' + inline(text) + '</' + tag + '>'; }
   function markdown(src) {
     var lines = String(src || '').replace(/\r/g, '').split('\n'), out = [], i = 0;
     while (i < lines.length) {
@@ -53,11 +60,19 @@
       if (/^```/.test(l)) { var code = []; i++; while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]); i++; out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); continue; }
       var h = /^(#{1,6})\s+(.*)$/.exec(l);
       if (h) { var n = Math.min(6, h[1].length + 2); out.push('<h' + n + '>' + inline(h[2]) + '</h' + n + '>'); i++; continue; }
-      if (/\|/.test(l) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
-        var head = cells(l), rows = []; i += 2;
+      if (/\|/.test(l) && i + 1 < lines.length && SEP.test(lines[i + 1])) {
+        var head = cells(l), align = cells(lines[i + 1]).map(alignOf), rows = []; i += 2;
         while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) rows.push(cells(lines[i++]));
-        out.push('<div class="tbl"><table><thead><tr>' + head.map(function (c) { return '<th>' + inline(c) + '</th>'; }).join('') + '</tr></thead><tbody>'
-          + rows.map(function (r) { return '<tr>' + head.map(function (_, k) { return '<td>' + inline(r[k] || '') + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>');
+        out.push('<div class="tbl"><table><thead><tr>' + head.map(function (c, k) { return cell('th', c, align[k]); }).join('') + '</tr></thead><tbody>'
+          + rows.map(function (r) { return '<tr>' + head.map(function (_, k) { return cell('td', r[k] || '', align[k]); }).join('') + '</tr>'; }).join('') + '</tbody></table></div>');
+        continue;
+      }
+      if (ROW.test(l)) {
+        var body = [];
+        while (i < lines.length && ROW.test(lines[i])) body.push(cells(lines[i++]));
+        var width = Math.max.apply(null, body.map(function (r) { return r.length; }));
+        out.push('<div class="tbl"><table><tbody>' + body.map(function (r) { var row = []; for (var k = 0; k < width; k++) row.push(cell('td', r[k] || '', '')); return '<tr>' + row.join('') + '</tr>'; }).join('')
+          + '</tbody></table></div>');
         continue;
       }
       if (/^\s*([-*+]|\d+\.)\s+/.test(l)) {
@@ -69,7 +84,7 @@
       if (/^>\s?/.test(l)) { var q = []; while (i < lines.length && /^>\s?/.test(lines[i])) q.push(lines[i++].replace(/^>\s?/, '')); out.push('<blockquote>' + inline(q.join(' ')) + '</blockquote>'); continue; }
       if (!l.trim()) { i++; continue; }
       var para = [];
-      while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|>\s?|\s*([-*+]|\d+\.)\s+)/.test(lines[i]) && !(/\|/.test(lines[i]) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1]))) para.push(lines[i++]);
+      while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|>\s?|\s*([-*+]|\d+\.)\s+)/.test(lines[i]) && !ROW.test(lines[i]) && !(/\|/.test(lines[i]) && i + 1 < lines.length && SEP.test(lines[i + 1]))) para.push(lines[i++]);
       out.push('<p>' + para.map(inline).join('<br>') + '</p>');
     }
     return out.join('\n');
