@@ -3611,6 +3611,23 @@
       collectSaid.clear();
       return did.length ? 'reopened ' + did.join(', ') : 'no done record of a round starting ' + want;
     };
+    // DONE TOO EARLY, OPENED AGAIN BY ITSELF (kanban #593, playtest 2026-10-23: round 8464c5fd's record was marked done while its
+    // 99 sat stake lock and 1 sat fee lock were still in the federation, both forfeits signed - the look of an older build could
+    // not see them, and a record marked done is never looked at again): once per page, every record of the last 72 h is looked at
+    // once more. The look marks it done again only when nothing of it is left in the federation - never by hand in the console.
+    {
+      const v = vault(), since = Date.now() - 72 * 3600 * 1000, did = [];
+      try {
+        for (let i = 0; i < v.length; i++) {
+          const k = v.key(i); if (!k || !k.startsWith('arena.collect.')) continue;
+          let r; try { r = JSON.parse(v.getItem(k)); } catch { continue; }
+          if (!r || !r.done || !(Number(r.savedMs) >= since)) continue;
+          v.setItem(k, JSON.stringify(Object.assign({}, r, { done: null })));
+          did.push(String(r.roundIdHex).slice(0, 8) + (r.order ? '.o' + r.order : ''));
+        }
+      } catch { /* looked at as they are */ }
+      if (did.length) console.log('[arena] collect: ' + did.length + ' record(s) of the last 72 h marked done looked at again once: ' + did.join(', '));
+    }
     let payoutAskingSince = 0;
     // A STAKE OWED BACK, BY ROUND, UNTIL IT IS COLLECTED (comment 583): the signer nodes' forfeit or the refund
     // by the player's key, as the last look of a round not done saw it. The pending chip counts winnings from /standing
