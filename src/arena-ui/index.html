@@ -1107,6 +1107,10 @@
     #arena-settings .settings-head h2 { display: flex; align-items: center; gap: 10px; }
     #arena-settings .settings-head h2 .mark { width: 28px; height: 28px; }
     #arena-settings .settings-head h2 small { color: #8b949e; font-size: 13px; font-weight: 600; letter-spacing: 0; }
+    /* THE RESCAN'S PROGRESS (kanban #595): a bar 1..100 %, the line under it, and what each order gave back */
+    #arena-set-rescan .rescan-bar { height: 8px; border-radius: 4px; background: #2f3b49; overflow: hidden; margin: 10px 0 6px; }
+    #arena-set-rescan .rescan-bar span { display: block; height: 100%; background: #f7931a; transition: width .3s; }
+    #arena-set-rescan .rescan-rows { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #c9d1d9; }
     #arena-settings .settings-card { max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box;
       background: linear-gradient(180deg, #161c24, #11161c); border: 1px solid #2f3b49; border-radius: 10px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
@@ -1358,6 +1362,8 @@
       <div id="arena-fps-host"></div>
     </section>
     <section class="settings-card" id="arena-set-logs"></section>
+    <!-- MISSING MONEY? (kanban #595): every order and stake this browser made looked at again, with its progress -->
+    <section class="settings-card" id="arena-set-rescan"></section>
     <section class="settings-card" id="arena-set-seed"></section>
     <!-- DELETE THIS ACCOUNT FROM THIS BROWSER (2026-10-11: "Im settings screen gibt es die Möglichkeit seinen
          Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"): this tab's phrase, its wallets' data and the
@@ -3835,6 +3841,62 @@
       paintWallet();
     }
 
+    // RESCAN FOR MISSING MONEY (kanban #595, the owner 2026-10-23: "soetwas wie Rescanning... mit 1..100% was man in der UI
+    // aktivieren kann wenn Geld fehlt"): every collect record of this browser - every age, every kept phrase - opened and looked at
+    // once, one after another, what is owed collected into the player wallet as the collect does; `onStep({ pct, line })` hands the
+    // progress to Settings' card. The collect's own pass waits meanwhile. Answers { line, rows, collectedMsat, waitingMsat }.
+    window.ARENA_RESCAN = async (onStep = () => {}) => {
+      while (payoutAsking) await new Promise((r) => setTimeout(r, 500));
+      payoutAsking = true; payoutAskingSince = Date.now();
+      const sat = (msat) => Math.floor(Number(msat) / 1000).toLocaleString('en-US') + ' sat';
+      try {
+        const v = vault();
+        for (let i = 0; i < v.length; i++) {
+          const k = v.key(i); if (!k || !k.startsWith('arena.collect.')) continue;
+          let r; try { r = JSON.parse(v.getItem(k)); } catch { continue; }
+          if (r && r.done) v.setItem(k, JSON.stringify(Object.assign({}, r, { done: null })));
+        }
+        const recs = keptRecords().collectable.filter((r) => ARENACLIENT.roundLocks(r.round));
+        let collected = 0n, waiting = 0n; const rows = [];
+        for (let i = 0; i < recs.length; i++) {
+          const r = recs[i], name = 'Round ' + r.roundIdHex.slice(0, 8) + (r.order ? ', order ' + r.order : '');
+          onStep({ pct: Math.max(1, Math.floor((100 * i) / recs.length)), line: 'Rescanning… ' + (i + 1) + ' of ' + recs.length + ': ' + name });
+          try {
+            const res = await withRecordPhrase(r, async () => {
+              const { look, LockClient } = await lookRound(r);
+              if (!look) { rows.push({ key: backKey(r), text: name + ': open in another tab of this browser' }); return true; }
+              collectNote(r.roundIdHex.slice(0, 8) + (r.order ? '.o' + r.order : ''), 'rescan: ' + lookSaid(look));
+              noteStakeBack(r, look);
+              if (look.owedMsat > 0n) {
+                const c = await ARENACLIENT.collectIntoPlayerWallet({ look, ...roundAsk(r, LockClient) });
+                if (c.collected) {
+                  const got = BigInt(c.creditedMsat || 0);
+                  collected += got;
+                  ARENACLIENT.markCollectDone(vault(), r.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, r.seed, r.order || 0);
+                  stakeBack.delete(backKey(r));
+                  rows.push({ key: backKey(r), text: name + ': ' + sat(got) + ' brought back' });
+                } else rows.push({ key: backKey(r), text: name + ': ' + sat(look.owedMsat) + ' owed, not collected yet - ' + String(c.why || 'asked again on the next look').slice(0, 120) });
+              } else if (look.final && look.inTabMsat === 0n) {
+                ARENACLIENT.markCollectDone(vault(), r.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, r.seed, r.order || 0);
+              } else if (look.stake && look.stake.state === 'waiting' && look.stake.msat) {
+                waiting += BigInt(look.stake.msat);
+                rows.push({ key: backKey(r), text: name + ': ' + sat(look.stake.msat) + ' waiting - ' + (look.stake.how === 'refund' && look.stake.expiration
+                  ? 'back to your key from block ' + look.stake.expiration : String(look.stake.why || 'its round has not decided yet').slice(0, 120)) });
+              }
+              return true;
+            });
+            if (res === null) rows.push({ key: backKey(r), text: name + ': its phrase is open in another tab of this browser' });
+          } catch (e) { rows.push({ key: backKey(r), text: name + ': ' + String(e && e.message || e).slice(0, 120) }); }
+        }
+        if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
+        paintHistory();
+        const line = recs.length + ' order' + (recs.length === 1 ? '' : 's') + ' looked at · ' + sat(collected) + ' brought back' + (waiting > 0n ? ' · ' + sat(waiting) + ' still waiting' : '');
+        onStep({ pct: 100, line });
+        console.log('[arena] rescan: ' + line);
+        return { line, rows, collectedMsat: String(collected), waitingMsat: String(waiting) };
+      } finally { payoutAsking = false; payoutAskingSince = 0; }
+    };
+
     // 6d'S DESTINATION (24A.2): "the client withdraws it over Lightning". THE ONE ACTION THAT
     // SPENDS (W4 / 6d): what is owed is looked at again, collected into the round's wallet in
     // this tab, and at once paid to an invoice from the player's own wallet - made by their
@@ -4629,6 +4691,8 @@
     { let on = false; try { on = window.ARENA_BROWSER_STORE().getItem('arena.debugFederations') === '1'; } catch { /* off */ }
       window.ArenaSettings.debug(document.getElementById('arena-set-debug-feds'), { on,
         onToggle: (v) => { try { window.ARENA_BROWSER_STORE().setItem('arena.debugFederations', v ? '1' : '0'); } catch { /* this tab only */ } } }); }
+    // MISSING MONEY? THE RESCAN (kanban #595)
+    window.ArenaSettings.rescan(document.getElementById('arena-set-rescan'), { onRescan: (step) => window.ARENA_RESCAN(step) });
     // THE COMMUNITY: the Bitcoin Arena on Armada (its public invite link)
     window.ArenaSettings.community(document.getElementById('arena-set-community'), { href: 'https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF' });
     // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
