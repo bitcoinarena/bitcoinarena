@@ -13,7 +13,7 @@
  *
  *   NODES=<seat urls> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> BOOK_BOT=<book-bot.js of the Up/Down
  *   app> BOT_DIR=<this bot's folder> [BOT_NAME=m1] [PRICE=coinbase|kraken] [LEVELS=2] [STEP_CENTS=2] [EDGE_CENTS=1] [SHARES=100]
- *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [SPREAD_S=600] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [TARGET_MSAT=2000000] [PEER_WAIT_S=60] [DRY=1]
+ *   [MAX_ORDERS=4 per window] [TAKES=0 per window] [TAKE_CENTS=2] [TAKE_SHARES=SHARES] [TAKE_BASE=0.3] [TAKE_AHEAD_S=45] [SPREAD_S=600] [LOOP_S=120] [AHEAD_S=120] [GATEWAY=<url>] [LNCLI= PAYER_DIR= PAYER_RPC= for deposits] [SPOOL_DIR=<shared folder>] [TARGET_MSAT=2000000] [PEER_WAIT_S=60] [DRY=1]
  *   node tools/market-bot.mjs
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync, unlinkSync } from 'node:fs';
@@ -52,6 +52,13 @@ const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 1
 // every bot when the window is decided. Unset or 0, the bot only quotes, as before.
 const TAKES = Number(env.TAKES || 0), TAKE_CENTS = Number(env.TAKE_CENTS || 2), TAKE_SHARES = Number(env.TAKE_SHARES || SHARES);
 const TAKE_BASE = Number(env.TAKE_BASE || 0.3);
+// TAKES OVER THE WHOLE WINDOW (kanban #586, the owner: "There must be always action"; measured 2026-10-23 10:00-11:00Z: every bot
+// spent its takes early - minutes 0-2, 13 and 14 and several in between had no take, and makers and takers alike stopped
+// AHEAD_S before the close, just when the outcome is clearest): a bot's k-th take is due at its own point inside the k-th of
+// TAKES equal slices of the window, so twenty bots take all window long; takes run until TAKE_AHEAD_S before the close
+const TAKE_AHEAD_MS = Number(env.TAKE_AHEAD_S || 45) * 1000;
+const OPEN_AHEAD_MS = TAKES > 0 ? Math.min(AHEAD_MS, TAKE_AHEAD_MS) : AHEAD_MS;
+const unitOf = (text) => Number(BigInt('0x' + toHex(sha256(new TextEncoder().encode(text))).slice(0, 12))) / 2 ** 48;
 // SPREAD OVER THE WINDOW (kanban #576, measured 2026-10-23 09:30-09:34Z: every bot ordered in a window's first minutes, while the last
 // window settled - federation A's 7 guardians went from ~1 to 3.5 cores, the test host to load 28-56): each bot starts each window at its
 // own offset, from its name and the window, somewhere in the first SPREAD_S - so the federation's work, and the trading, last the window
@@ -122,7 +129,7 @@ async function openWindows() {
         // open until its entry closes or its window ends, whichever is first (measured 2026-10-23 07:47Z: the 07:30 window's round,
         // its entry close still ahead, refused every order two minutes past 07:45 - "the round is closed")
         .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs
-          && Math.min(Number(r.entryCloseMs), Number(r.windowStartMs) + WINDOW_MS) - now > AHEAD_MS)
+          && Math.min(Number(r.entryCloseMs), Number(r.windowStartMs) + WINDOW_MS) - now > OPEN_AHEAD_MS)
         .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)));
       return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
     } catch (e) { say({ step: 'rounds', seat: n, why: e.message }); }
@@ -241,7 +248,7 @@ async function topUp(needMsat) {
 }
 
 // ---- ONE ORDER: the page's join for a market order, with the bot mark ----
-async function placeOrder(c, rid, rung, orderIndex, signers, closeMs) {
+async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs = AHEAD_MS) {
   const r = { ...c, orderStakeMsat: rung.stakeMsat };
   // THE SEATED SIGNER NODES (the seating certificate's settlement committee), not the contract's list: a seated round's shares are
   // dealt to them - measured 2026-10-22 22:50Z, shares dealt to c.nodes: "this node is not one of the signer nodes that handout was dealt to"
@@ -262,7 +269,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs) {
   await topUp(rung.stakeMsat + 200000n);
   // A DEPOSIT CAN TAKE MINUTES (measured 2026-10-23 07:51-08:02Z: a payment in flight until its invoice expired, the order then
   // made two minutes past its window and refused): the window is asked again here, before any lock is paid
-  if (closeMs - Date.now() < AHEAD_MS) throw new Error('its window closes before this order would stand: not placed');
+  if (closeMs - Date.now() < marginMs) throw new Error('its window closes before this order would stand: not placed');
   const seed = Uint8Array.from(Buffer.from(readFileSync(join(DIR, 'seed.hex'), 'utf8').trim(), 'hex'));
   // the order's own key (join.js playerFor with its order number): the payout and refund key the bot finds again from its seed
   const player = playerFor({ ...r, id: rid }, { seed, curve: feldmanGroup, order: orderIndex }).pubkey;
@@ -339,8 +346,10 @@ async function collectPass() {
 
 // ---- THE TAKER (TAKES, above) ----
 // this pass's taker buy, or null: the favoured side (a tie is Up, the market's rule) at its fair value + TAKE_CENTS, 1..99 cents
-function takeOf(fair, taken) {
+function takeOf(fair, taken, startMs, closeMs) {
   if (!(TAKES > taken)) return null;
+  const span = closeMs - TAKE_AHEAD_MS - startMs;
+  if (Date.now() < startMs + (span / TAKES) * (taken + unitOf(`${NAME}:${startMs}:take:${taken}`))) return null;   // not yet its slot
   if (Math.random() >= TAKE_BASE + (1 - TAKE_BASE) * Math.abs(2 * fair - 1)) return null;
   const outcome = fair >= 0.5 ? 0 : 1;
   const priceCents = Math.min(99, Math.max(1, Math.round((outcome === 0 ? fair : 1 - fair) * 100) + TAKE_CENTS));
@@ -356,14 +365,16 @@ async function pass() {
   const last = await lastPrice();
   for (const row of windows) {
     const start = Number(row.windowStartMs), end = start + WINDOW_MS;
-    if (Date.now() < start + offsetIn(start)) continue;   // this bot's turn in this window has not come yet
+    const closeAt = Math.min(Number(row.entryCloseMs), end);
+    // the makers' turn: from this bot's offset in the window until AHEAD_S before the close
+    const makerTurn = Date.now() >= start + offsetIn(start) && closeAt - Date.now() > AHEAD_MS;
     let beat; try { beat = await beatOf(start); } catch (e) { say({ step: 'beat', round: row.id.slice(0, 16), why: e.message }); continue; }
     const fair = fairUp({ beat, last, msLeft: end - Date.now() });
     const ladder = quoteLadder({ fair, levels: LEVELS, stepCents: STEP, edgeCents: EDGE, shares: SHARES });
     const done = new Set(placed[row.id] || []);
     const made = [...done].filter((k) => !k.startsWith('take:')).length, taken = done.size - made;
-    const todo = ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made));
-    const take = takeOf(fair, taken);
+    const todo = makerTurn ? ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made)) : [];
+    const take = takeOf(fair, taken, start, closeAt);
     if (take) todo.push(take);
     say({ step: 'quote', round: row.id.slice(0, 16), window: new Date(start).toISOString().slice(11, 16), beat, last, fair: Number(fair.toFixed(4)),
       ladder: ladder.map((q) => `${Number(q.outcome) === 0 ? 'Up' : 'Down'}@${q.priceCents}c×${q.shares}=${q.stakeMsat}msat`), placed: [...done], todo: todo.length,
@@ -378,7 +389,7 @@ async function pass() {
     for (const q of todo) {
       const index = done.size;
       try {
-        const o = await placeOrder(c, rid, q, index, seated.signerNodes, Math.min(Number(row.entryCloseMs), end));
+        const o = await placeOrder(c, rid, q, index, seated.signerNodes, closeAt, q.key ? TAKE_AHEAD_MS : AHEAD_MS);
         done.add(q.key || `${q.outcome}:${q.priceCents}`); placed[row.id] = [...done]; keepPlaced();
         orders.push({ round: row.id, order: index, entry: o.entry, windowEndMs: end, atMs: Date.now() }); keepOrders();
         say({ step: q.key ? 'take' : 'order', round: row.id.slice(0, 16), side: Number(q.outcome) === 0 ? 'Up' : 'Down', priceCents: q.priceCents, stakeMsat: q.stakeMsat, ...o });
