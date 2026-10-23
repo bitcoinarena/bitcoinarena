@@ -78,6 +78,6 @@ test('the page deals and posts at that rule, not at its slot count or a default'
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.ok(!/needed: named\.round\.settlementSlots/.test(page), 'the page still deals every signer node a vote on its own stake');
   assert.match(page, /needed: ARENACLIENT\.sharesNeededFor\(named\.round\),/, 'the page does not deal at the round\'s threshold');
-  assert.match(page, /postHandout\(stake, named\.nodes, \{ needed: ARENACLIENT\.sharesNeededFor\(named\.round\) \}\)/,
+  assert.match(page, /postHandout\(stake, named\.nodes, \{ needed: ARENACLIENT\.sharesNeededFor\(named\.round\)(, out: handedOut)? \}\)/,
     'the page posts the handout at a default that is not this round\'s');
 });
