@@ -278,7 +278,7 @@ async function readRandomness(id, nodes, fetcher) {
  * committee is keys - there is no map between them. A node with no share in
  * the handout refuses, which is the right answer and is counted as one.
  */
-export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}) {
+export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000 } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
   // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
@@ -288,26 +288,40 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
   // EVERY NODE AT ONCE (2026-10-02, the join's 2-3 s): posted one after another, the handout was ~0.8 s of a funded
-  // paid join before its lock (0.0.2476). Still all of them before the lock is made, read in the nodes' order.
-  const answers = await Promise.all(nodes.map(async (node) => {
+  // paid join before its lock (0.0.2476). Read in the nodes' order.
+  // NOT THE SLOWEST SEAT'S TIME (playtest 2026-10-23 ~21:05Z, "First order is always slow second is <1s"; measured on UI 343: 11.3 s and
+  // 22.9 s between the deposit and the lock, all 14 seats waited for while a busy one answered late): answered once `needed` seats took it
+  // and every seat answered or `graceMs` passed after that; the others' answers come in the background (`rest`). A seat that never answers
+  // is a seat that refused, after `waitMs`.
+  const answers = nodes.map((node) => ({ node, why: `${node}: not answered yet` }));
+  const posts = nodes.map(async (node, i) => {
     const at = node.replace(/\/+$/, '') + '/handout';
     try {
-      const r = await fetcher(at, { method: 'POST', body: stake.body });
-      if (r.ok) return { node, ok: true };
-      return { node, why: `${node}: ${(await r.text()).trim()}` };
+      const r = await fetcher(at, { method: 'POST', body: stake.body, signal: AbortSignal.timeout(waitMs) });
+      answers[i] = r.ok ? { node, ok: true } : { node, why: `${node}: ${(await r.text()).trim()}` };
     } catch (e) {
-      return { node, why: `${node}: ${e.message}` };
+      answers[i] = { node, why: `${node}: ${e.message}` };
     }
-  }));
+  });
+  const rest = Promise.all(posts).then(() => answers.slice());
+  const posted = new Map(nodes.map((node, i) => [node, posts[i]]));   // each seat's own post: its entry goes after it
+  await new Promise((res) => {
+    let left = posts.length, grace = null;
+    const done = () => { clearTimeout(grace); res(); };
+    for (const p of posts) p.then(() => {
+      if (--left === 0) return done();
+      if (!grace && answers.filter((a) => a.ok).length >= needed) grace = setTimeout(done, graceMs);
+    });
+  });
   const accepted = answers.filter((a) => a.ok).map((a) => a.node);
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   if (accepted.length < needed)
     return {
-      ok: false, accepted: accepted.length, needed, refused,
+      ok: false, accepted: accepted.length, needed, refused, rest, posted,
       why: `${accepted.length} of the ${needed} signer nodes needed to open this stake took the `
         + 'handout, so it could never be settled',
     };
-  return { ok: true, accepted: accepted.length, needed, refused };
+  return { ok: true, accepted: accepted.length, needed, refused, rest, posted };
 }
 
 /**

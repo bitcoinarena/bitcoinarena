@@ -3126,6 +3126,7 @@
           const stageNow = document.getElementById('stage');
           // the claim key asked while the lobby showed this round, if it is in and attested; else asked here as ever
           const prepped = ROUND_PREP.get(named.roundIdHex);
+          console.log('[arena] join step -> claim key');
           const early = prepped ? await prepped.claim.catch(() => null) : null;
           const att = (early && early.ok) ? early : await ARENACLIENT.awaitAttestedClaimKey({
             round: Object.assign({}, named.round, { id: ARENACLIENT.fromHex(named.roundIdHex) }),
@@ -3142,7 +3143,7 @@
             console.error('[arena] join refused: ' + att.why);
             return;
           }
-          claimKey = att;
+          claimKey = att; console.log('[arena] join step <- claim key');
         }
         // `round.id` IS BYTES, and the page holds the hex it was sent. The
         // contract decodes without an id - it is the hash OF the contract -
@@ -3188,7 +3189,8 @@
         // `roundPays` is: this file is the one `node --test` cannot load.
         // A kept stake's handout was taken by the signer nodes before its lock was made.
         const put = reuse ? { ok: true, accepted: signerNodes.signerNodes.length, refused: [] }
-          : await ARENACLIENT.postHandout(stake, named.nodes, { needed: ARENACLIENT.sharesNeededFor(named.round) });
+          : await joinStep('postHandout', () => ARENACLIENT.postHandout(stake, named.nodes, { needed: ARENACLIENT.sharesNeededFor(named.round) }));
+        window.ARENA_HANDED_OUT = put.posted || null;   // the seats still answering: each gets its entry after its handout (kanban #601)
         if (!put.ok) {
           window.ARENA_JOIN_REFUSED = put.why;
           console.error('[arena] join refused: ' + window.ARENA_JOIN_REFUSED);
@@ -3442,7 +3444,7 @@
         };
         const secs = (ms) => (ms / 1000).toFixed(2).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m)) + ' s';
         let submittedAt = null;
-        const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onSubmitted: (x) => {
+        const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, onSubmitted: (x) => {
           early = x.entryId;
           window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: x.entryId, pick: chosen.pick, state: 'submitted' };
           rememberPick(recordOf(x.entryId, 'submitted'));
