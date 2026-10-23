@@ -555,12 +555,12 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
   const mine = toHex(refundKeyOf(player.pubkey));
   const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
-  const signerNodes = ({ settled = true, payout = true, forfeit = 200, known = true } = {}) => async (url) => {
+  const signerNodes = ({ settled = true, payout = true, forfeit = 200, known = true, refusal = null } = {}) => async (url) => {
     if (url.includes('/lock-settlement')) return new Response(JSON.stringify(settled ? { state: 'ACCEPTED', txid: 'ef'.repeat(32),
       moved: { payouts: payout ? [{ kind: 'qualifier', pk: mine, msat: '978000' }] : [] } } : { state: 'NONE' }), { status: 200 });
     if (url.includes('/stake-lock')) return new Response(JSON.stringify(known ? [{ entryId: 'ee'.repeat(32), outpoint: `${'cd'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c1' }] : []), { status: 200 });
     if (url.includes('/forfeit')) return forfeit === 200 ? new Response(JSON.stringify({ signature: 'ab'.repeat(64), contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 })
-      : new Response('that run is FAILED with score 0 and this round\'s minimum is 1: not a qualifier', { status: 409 });
+      : new Response(refusal || 'that run is FAILED with score 0 and this round\'s minimum is 1: not a qualifier', { status: 409 });
     return new Response('no', { status: 404 });
   };
   const spent = [];
@@ -629,6 +629,22 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   const back593 = await collectOwed({ look: unsettled, client: wallet(150), ...ask, fetcher: signerNodes({ settled: false }), kept, storage: tabStorage() });
   assert.equal(back593.stake && back593.stake.ok, true, JSON.stringify(back593.stake, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
   assert.deepEqual(spent, ['redeem'], 'the forfeited stake was not redeemed');
+  spent.length = 0;
+
+  // EXPIRED, NAMED BY THE SIGNER NODES, AND NO FORFEIT (kanban #593, playtest 2026-10-23: round 07e4f3fa's lock lay in the federation
+  // past its expiry and Rescan said "waiting - no signer node gave a forfeit" for good): back by the player's own key - from the lock
+  // as the signer nodes named it, with no record of it in this tab; before its expiry it still waits
+  const noForfeit = signerNodes({ payout: false, forfeit: 409, refusal: 'no forfeit: the round is not ACCEPTED at this signer node' });
+  const before = await lookOwed({ ...ask, fetcher: noForfeit, client: wallet(3) });
+  assert.equal(before.stake.state, 'waiting');
+  const expired = await lookOwed({ ...ask, fetcher: noForfeit, client: wallet(0) });
+  assert.equal(expired.stake.state, 'owed', JSON.stringify(expired.stake, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.equal(expired.stake.how, 'refund');
+  assert.equal(expired.refundMsat, 980000n);
+  assert.deepEqual(spent, [], 'looking at an expired lock spent something');
+  const back07 = await collectOwed({ look: expired, client: wallet(0), ...ask, fetcher: noForfeit, storage: tabStorage() });
+  assert.equal(back07.refund && back07.refund.ok, true, JSON.stringify(back07.refund, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.deepEqual(spent, ['refund'], 'the expired lock was not refunded by the player\'s key');
   spent.length = 0;
 
   const invoiceFor = async (msat) => ({ ok: true, invoice: `lnbcrt${msat}n1p` });
