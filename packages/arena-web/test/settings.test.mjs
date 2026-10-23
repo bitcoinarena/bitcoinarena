@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NameCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard } from '../dist/test/settings.mjs';
+import { NameCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard } from '../dist/test/settings.mjs';
 
 const live = (C, props) => { const c = new C(props); c.setState = (u) => Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); return c; };
 const html = (c) => renderToStaticMarkup(React.createElement(React.Fragment, null, c.render()));
@@ -62,4 +62,25 @@ test('the confirmed federations with Forget, none said; the community link; the 
   assert.deepEqual([...items.matchAll(/<option value="(\d+)"/g)].map((m) => Number(m[1])), [40, 30, 20, 10, 0]);
   assert.match(items, /<option value="20" selected="">20%<\/option>/);
   assert.match(h(DebugCard, { on: true, onToggle() {} }), /<input type="checkbox" id="arena-debug-feds" checked=""\/>/);
+});
+
+// MISSING MONEY? (kanban #595): Rescan shows its progress 1..100 % on the button and the bar while the page looks, then what came
+// back and each order's line
+test('the rescan: progress on the button and the bar while it runs, then what came back and each order', async () => {
+  let step;
+  const done = new Promise((r) => { step = r; });
+  const c = live(RescanCard, { onRescan: async (onStep) => { onStep({ pct: 0, line: 'Rescanning… 1 of 4: Round 8464c5fd' }); onStep({ pct: 50, line: 'Rescanning… 3 of 4: Round 9412cdf9, order 2' });
+    await done; return { line: '4 orders looked at · 100 sat brought back', rows: [{ key: 'a', text: 'Round 8464c5fd: 100 sat brought back' }] }; } });
+  assert.match(html(c), /<button id="arena-rescan" type="button">Rescan<\/button>/);
+  assert.doesNotMatch(html(c), /rescan-bar/);
+  const running = c.run();
+  let h = html(c);
+  assert.match(h, /<button id="arena-rescan" type="button" disabled="">Rescanning… 50%<\/button>/);
+  assert.match(h, /role="progressbar" aria-valuenow="50"[^>]*><span style="width:50%"><\/span>/);
+  assert.match(h, /Rescanning… 3 of 4: Round 9412cdf9, order 2/);
+  step(); await running;
+  h = html(c);
+  assert.match(h, /<button id="arena-rescan" type="button">Rescan<\/button>/);
+  assert.match(h, /<div class="muted" id="arena-rescan-line">4 orders looked at · 100 sat brought back<\/div>/);
+  assert.match(h, /<li>Round 8464c5fd: 100 sat brought back<\/li>/);
 });
