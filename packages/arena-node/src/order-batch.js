@@ -387,6 +387,10 @@ export class OrderBook {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
     if (!this.leads(roundIdBytes, k)) return refuse(`batch ${k} is led by the round's seat ${BigInt(k) % BigInt(m.contract.nodes.length)}, not this one`);
+    // A CLOSED MARKET ASKS NOBODY (kanban #576, measured 2026-10-23 02:1xZ on test host seat 1: 2,346 batch-proposal requests a minute,
+    // every one for one of the 23 book rounds it held - all closed, none with an undecided batch): nothing trades after the close
+    // (#check refuses such a batch), so only a batch still pending here is decided; the seats holding one pending lead it in turn
+    if (BigInt(this.cutoffOf(k)) > m.contract.entryCloseMs + BigInt(this.intervalMs) && !this.pending(roundIdBytes).length) return { ok: true, empty: true, decided: [] };
     const rid = toHex(roundIdBytes);
     const t0 = this.now();
     const peers = this.peersFor(roundIdBytes);
