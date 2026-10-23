@@ -55,7 +55,7 @@ import { startNode } from './node-start.js';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { hostsFromEnv, hostsReader } from './hosts.js';
-import { statSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { statSync, readFileSync, existsSync, writeFileSync, rmSync, renameSync } from 'node:fs';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
@@ -268,6 +268,15 @@ if (url) {
           parts.push(new Uint8Array(hdr)); prev = blockHashOf(new Uint8Array(hdr));
         }
         live = new Uint8Array(Buffer.concat(parts)); liveTip = have + parts.length - 1;
+        // AND KEPT, so the next start reads only what is new (kanban #576, measured 2026-10-23: the file still ended at 156,046,
+        // so every restart read ~1,350 headers again, two RPC calls each): written whole - a temporary file, then a rename -
+        // once 144 new headers are held, not on every 30 s read
+        const onFile = (startOf() || new Uint8Array()).length / 80;
+        if (live.length / 80 - onFile >= 144) {
+          writeFileSync(`${dir}/headers.bin.tmp`, live);
+          renameSync(`${dir}/headers.bin.tmp`, `${dir}/headers.bin`);
+          console.log(`[headers] kept ${live.length / 80} headers to height ${liveTip}`);
+        }
       } catch (e) { console.error(`[headers] not extended: ${e.message}`); }
     };
     extend();
