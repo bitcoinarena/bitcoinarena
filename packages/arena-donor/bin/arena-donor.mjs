@@ -14,7 +14,7 @@
 // The federation is the page's own wasm lock client (donor.json wasmPkg), run in Node; each federation's wallet state is
 // kept in <dir>/wallet-<federation id 16>.json. The LND is the dev's own, through lncli. Invites: donor.json `invites`
 // (federation id -> invite), and the `testnet.federation` invite of every `invitesFrom` daily.json.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync, renameSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync, renameSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -99,6 +99,8 @@ async function lockClient() {
   const esm = join(tmpdir(), `arena-donor-lock-client-${process.pid}.mjs`);
   copyFileSync(join(cfg.wasmPkg, 'blwp_lock_client.js'), esm);
   const m = await import(esm);
+  // loaded: the copy is not read again (kanban #587, 2026-10-23: 42 of them in /tmp, one per start, none removed)
+  try { unlinkSync(esm); } catch { /* gone */ }
   await m.default({ module_or_path: readFileSync(join(cfg.wasmPkg, 'blwp_lock_client_bg.wasm')) });
   LockClient = m.LockClient;
   return LockClient;
@@ -180,8 +182,14 @@ async function pass() {
         redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n), alreadySpent: r.spent.length,
         failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`), receipted: r.receipted, seats: r.answers.map((a) => `${a.seat}: ${a.status || a.why} ${a.said || ''}`.trim()) });
     }
-    // UNCLAIMED E-CASH, RECOVERED ON ITS OWN: after the redeem, before the withdrawal - see claimUnclaimed
-    {
+    // UNCLAIMED E-CASH, RECOVERED ON ITS OWN: after the redeem, before the withdrawal - see claimUnclaimed.
+    // AT MOST EVERY unclaimedEverySec A FEDERATION (default an hour; kanban #587, measured 2026-10-23): pendingOutputs reads the
+    // federation's whole issuance history from a guardian. Asked every 5 min by each donor, it outgrew the guardians' answer
+    // limit - "Response is too big", every guardian building the answer and throwing it away, ~23 times an hour since 03:19Z -
+    // for something seen once (2026-10-14). Refused as too big, it is not asked again for 6 hours.
+    state.unclaimedNextAt = state.unclaimedNextAt || {};
+    if (Date.now() >= (state.unclaimedNextAt[fed] || 0)) {
+      state.unclaimedNextAt[fed] = Date.now() + Number(cfg.unclaimedEverySec || 3600) * 1000;
       const f16 = fed.slice(0, 16), walletPath = join(dir, `wallet-${f16}.json`), recPath = join(dir, `wallet-${f16}.recovering.json`);
       const secret = walletSecretFor(key.secretHex, fed);
       const pendingMsatOf = async (c) => { try { return JSON.parse(await c.pendingOutputs()).reduce((t, x) => t + BigInt(x.amount_msat), 0n); } catch { return -1n; } };
@@ -207,7 +215,11 @@ async function pass() {
         });
         writeJson(statePath, state);
         if (r.step !== 'none') say({ step: `unclaimed: ${r.step}`, federation: f16, ...r });
-      } catch (e) { say({ step: 'unclaimed: check failed', federation: f16, why: e.message }); }
+      } catch (e) {
+        if (/too bi/i.test(String(e.message))) state.unclaimedNextAt[fed] = Date.now() + 6 * 3600 * 1000;
+        writeJson(statePath, state);
+        say({ step: 'unclaimed: check failed', federation: f16, why: e.message, nextAt: new Date(state.unclaimedNextAt[fed]).toISOString() });
+      }
     }
     // A DRAINING FEDERATION'S MONEY FOLLOWS ITS SUCCESSOR (kanban #578, the owner 2026-10-22: "federations that are draining and are
     // re-created keep their dev settings, it seems that was not the case" - dev b held 9,285 msat in draining B, which would have
