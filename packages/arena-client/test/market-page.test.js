@@ -215,6 +215,22 @@ test('an order whose lock the federation never accepts is refused after acceptWa
   assert.deepEqual(done, ['/entry', '/entry'], 'no lock handed for it');
 });
 
+// A SEAT STILL TAKING ITS HANDOUT gets its entry after it (playtest 2026-10-23): the others are not held up
+test('submitPick posts a seat\'s entry only after that seat answered its handout', async () => {
+  const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
+  const entry = { ...entryFor(round, { seed: b32(3), curve: (await import('../src/page-curve.js')).pageCurve, random: () => b32(5), pick: 0 }), roundId: ROUND_ID, sessionPubkey: b32(6) };
+  let release; const handed = new Promise((r) => { release = r; });
+  const order = [];
+  const fetcher = async (url) => { order.push(new URL(url).host); return { status: 201, ok: true, text: async () => '' }; };
+  const p = submitPick({ entry, stakeLock: null, nodes: ['http://fast', 'http://slow'], fetcher, handedOut: new Map([['http://slow', handed]]) });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(order, ['fast'], 'the slow seat\'s entry waits for its handout');
+  release();
+  const sent = await p;
+  assert.deepEqual(order, ['fast', 'slow']);
+  assert.equal(sent.ok, true);
+});
+
 test('picked: the join of a pick ends \'picked\' before the session\'s globals - and Unity adopts only joining/joined', () => {
   const then = PAGE.indexOf("if (window.ARENA_PICKED && window.ARENA_PICKED.round === id) {");
   const entryBranch = PAGE.indexOf("if (window.ARENA_ENTRY && Number(window.ARENA_ENTRY.joinTick) > 0", then);

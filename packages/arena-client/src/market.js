@@ -111,7 +111,8 @@ export function pickSheet({ market, contract = null, stakeMsat = contract ? cont
 // accepted its lock and the 7 seats had each checked it - 6.5 s median at load 30-47; the seats had taken the entry at ~2.8 s):
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 // `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
-export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null }) {
+// `handedOut` (postHandout's `posted`): a seat's entry is posted once that seat answered its handout - one slow seat is not waited on by the others
+export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
@@ -120,6 +121,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
   const entryPs = nodes.map(async (node, i) => {
     let x;
     try {
+      if (handedOut && handedOut.get(node)) await handedOut.get(node);
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
     } catch (e) { x = { node, status: 0, why: e.message }; }
