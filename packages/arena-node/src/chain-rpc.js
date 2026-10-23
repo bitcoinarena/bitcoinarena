@@ -86,15 +86,37 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
 // minute). Below DEEP_BLOCKS under the view's top the hash read once is kept (cache.hashAt); a reorganisation that deep is not
 // followed by a kept hash - and the census checks the header links of every view itself, so a stale one is refused, not believed.
 export const DEEP_BLOCKS = 24;
+// AND THE TOP OF A VIEW IS KEPT WHILE THE CHAIN IS THE SAME CHAIN (kanban #587, measured 2026-10-23 on seat 7 three minutes after a
+// restart: 931 getblockhash a second - the top 24 heights of every view asked again, views built for thousands of rounds - a third of
+// the seat's start-up CPU and a core of bitcoind's): while bitcoind's best block hash is the one they were read under, every height's
+// hash is unchanged, so they are kept under it and dropped when it moves. Each view asks the best hash once, at its start - views
+// asking at the same moment share the one ask - so a view is exactly as current as its own per-height reads were; no answer is
+// kept by time (a census is stored for days under its block hash, and must never be one of a branch the chain has left).
+function bestOf(call, cache) {
+  if (!cache.bestInFlight) {
+    cache.bestInFlight = Promise.resolve(call('getbestblockhash', [])).finally(() => { cache.bestInFlight = null; });
+  }
+  return cache.bestInFlight;
+}
 
 export async function blocksOver(call, from, to, { cache = null } = {}) {
   const blocks = [];
+  let best = null;
   for (let h = from; h <= to; h++) {
     const deep = cache && cache.hashes && h <= to - DEEP_BLOCKS;
+    let top = !deep && cache && cache.topHashes;
     let hash = deep ? cache.hashes.get(h) : undefined;
+    // a bitcoind that does not answer the best hash: this view asks its top heights as before
+    if (top && best === null) { try { best = await bestOf(call, cache); } catch { best = false; } }
+    if (best === false) top = false;
+    if (top) {
+      if (cache.topBest !== best) { cache.topHashes.clear(); cache.topBest = best; }
+      hash = cache.topHashes.get(h);
+    }
     if (hash === undefined) {
       hash = await call('getblockhash', [h]);
       if (deep) cache.putHash(h, hash);
+      else if (top && cache.topBest === best) cache.topHashes.set(h, hash);
     }
     const had = cache ? cache.get(hash) : undefined;
     if (had) { blocks.push(had); continue; }
@@ -140,6 +162,8 @@ export function blockCache({ max = 50000 } = {}) {
       if (kept.size > max) kept.delete(kept.keys().next().value);
     },
     hashes,
+    topHashes: new Map(),                    // height -> hash near the views' tops, valid while topBest is bitcoind's best (blocksOver)
+    topBest: null, bestInFlight: null,
     putHash: (height, hash) => {
       hashes.set(height, hash);
       if (hashes.size > max) hashes.delete(hashes.keys().next().value);
@@ -211,7 +235,7 @@ export async function headersToTip(call, { count } = {}) {
 export async function censusWithFreshHashes({ read, derive, cache }) {
   let census = derive(await read());
   if (!census.ok && /not a chain/.test(String(census.why)) && cache && cache.hashes && cache.hashes.size) {
-    cache.hashes.clear();
+    cache.hashes.clear(); if (cache.topHashes) cache.topHashes.clear();
     census = derive(await read());
   }
   return census;
@@ -239,7 +263,7 @@ export function viewLinks(view) {
 export async function viewWithFreshHashes({ read, cache }) {
   let view = await read();
   if (cache && cache.hashes && cache.hashes.size && !viewLinks(view)) {
-    cache.hashes.clear();
+    cache.hashes.clear(); if (cache.topHashes) cache.topHashes.clear();
     view = await read();
   }
   return view;

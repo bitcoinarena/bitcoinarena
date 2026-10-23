@@ -157,6 +157,7 @@ test('a shared block cache: an overlapping view reads only its new blocks and ho
   let reads = 0;
   const call = async (method, [arg]) => {
     if (method === 'getblockhash') return hashAt.get(arg);
+    if (method === 'getbestblockhash') return hashAt.get(Math.max(...hashAt.keys()));
     if (method === 'getblock') { reads++; return Buffer.from(rawFor(arg)).toString('hex'); }
     throw new Error(method);
   };
@@ -186,6 +187,7 @@ test('views read at the same time share one read of each block and hold one obje
   // bitcoind answers a block only after a while: every view asks for it before the first answer is back
   const call = async (method, [arg]) => {
     if (method === 'getblockhash') return `h${arg}`;
+    if (method === 'getbestblockhash') return 'h9';   // the chain these views read ends at 9
     if (method === 'getblock') { reads++; await new Promise((r) => setTimeout(r, 20)); return Buffer.from(rawFor(arg)).toString('hex'); }
     throw new Error(method);
   };
@@ -197,7 +199,7 @@ test('views read at the same time share one read of each block and hold one obje
   assert.equal(cache.inFlight.size, 0, 'a finished read stayed in flight');
   // a read that fails is not kept: the next asker reads again
   let fail = true;
-  const flaky = async (method, [arg]) => { if (method === 'getblockhash') return `x${arg}`; if (fail) { fail = false; throw new Error('bitcoind said no'); } return Buffer.from(rawFor(`x${arg}`)).toString('hex'); };
+  const flaky = async (method, [arg]) => { if (method === 'getblockhash') return `x${arg}`; if (method === 'getbestblockhash') return 'x0'; if (fail) { fail = false; throw new Error('bitcoind said no'); } return Buffer.from(rawFor(`x${arg}`)).toString('hex'); };
   await assert.rejects(blocksOver(flaky, 0, 0, { cache }), /bitcoind said no/);
   assert.equal(cache.inFlight.size, 0);
   assert.equal((await blocksOver(flaky, 0, 0, { cache })).blocks.length, 1);
@@ -211,11 +213,13 @@ test('a second census view asks only its top DEEP_BLOCKS heights; the cookie is 
   const asked = [];
   // testnet4's block 0, raw: one block every height answers (the view only divides the bytes; the census checks the links)
   const hexOf = '0100000000000000000000000000000000000000000000000000000000000000000000004e7b2b9128fe0291db0693af2ae418b767e657cd407e80cb1434221eaea7a07a046f3566ffff001dbb0c78170101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff5504ffff001d01044c4c30332f4d61792f323032342030303030303030303030303030303030303030303165626435386332343439373062336161396437383362623030313031316662653865613865393865303065ffffffff0100f2052a010000002321000000000000000000000000000000000000000000000000000000000000000000ac00000000';
-  const call = async (method, params) => { asked.push(method); return method === 'getblockhash' ? `${String(params[0]).padStart(64, '0')}` : hexOf; };
+  let tip = 99;   // the best block follows the tip, as bitcoind's does
+  const call = async (method, params) => { asked.push(method); return method === 'getblockhash' ? `${String(params[0]).padStart(64, '0')}` : method === 'getbestblockhash' ? `best-${tip}` : hexOf; };
   const cache = blockCache();
   await blocksOver(call, 0, 99, { cache });
   assert.equal(asked.filter((m) => m === 'getblockhash').length, 100, 'the first view reads every height');
   asked.length = 0;
+  tip = 101;
   const v = await blocksOver(call, 0, 101, { cache });
   assert.equal(v.blocks.length, 102);
   assert.equal(asked.filter((m) => m === 'getblockhash').length, DEEP_BLOCKS + 2, 'the second: its top DEEP_BLOCKS and the two new heights');
@@ -293,4 +297,39 @@ test('the series writer skips a round refused within the last minute, and rememb
   assert.match(server, /if \(Date\.now\(\) - \(refusedAt\.get\(hex\) \|\| 0\) < REFUSED_RETRY_MS\) continue;/);
   assert.match(server, /const REFUSED_RETRY_MS = 60000;/);
   assert.match(server, /else if \(assigned\.why !== NO_CHAIN_VIEW_WHY && !\/still reading its chain view\/\.test\(String\(assigned\.why\)\)\) refusedAt\.set\(hex, Date\.now\(\)\);/);
+});
+
+test('the top of a view is asked once while the best block stays, and again once it moves (kanban #587)', async () => {
+  const { blocksOver, blockCache, DEEP_BLOCKS } = await import('../src/chain-rpc.js');
+  const top = DEEP_BLOCKS + 10;
+  const hashAt = new Map(Array.from({ length: top + 1 }, (_, h) => [h, `h${h}`]));
+  const tx = [1, 0, 0, 0, 1, ...new Array(36).fill(0), 1, 0, 255, 255, 255, 255, 1, ...new Array(8).fill(0), 0, 0, 0, 0, 0];
+  const rawFor = (hash) => new Uint8Array([...new Array(80).fill(hash.length), 1, ...tx]);
+  const asked = [];
+  const call = async (method, [arg] = []) => {
+    asked.push(method);
+    if (method === 'getblockhash') return hashAt.get(arg);
+    if (method === 'getbestblockhash') return hashAt.get(Math.max(...hashAt.keys()));
+    if (method === 'getblock') return Buffer.from(rawFor(arg)).toString('hex');
+    throw new Error(method);
+  };
+  const cache = blockCache();
+  await blocksOver(call, 0, top, { cache });
+  const firstHashes = asked.filter((m) => m === 'getblockhash').length;
+  assert.equal(firstHashes, top + 1, 'the first view asks every height once');
+  asked.length = 0;
+  const again = await blocksOver(call, 0, top, { cache });
+  assert.deepEqual([asked.filter((m) => m === 'getblockhash').length, asked.filter((m) => m === 'getbestblockhash').length], [0, 1],
+    'the same view under the same best block asks no height again - only the best hash, once');
+  // a new block at the top: the best hash moves, the top heights are asked again, and the new block is read
+  hashAt.set(top + 1, `h${top + 1}`);
+  asked.length = 0;
+  const grown = await blocksOver(call, 1, top + 1, { cache });
+  assert.ok(asked.filter((m) => m === 'getblockhash').length >= DEEP_BLOCKS, 'the best block moved: the top heights are asked again');
+  assert.equal(grown.blocks.length, top + 1);
+  // a reorganised top: same height, another hash, another best - the old one is never answered
+  hashAt.set(top + 1, 'h-other');
+  const reorg = await blocksOver(call, top, top + 1, { cache });
+  assert.notEqual(reorg.blocks[1], grown.blocks[top], 'a block of the branch the chain left was answered');
+  assert.equal(again.blocks.length, top + 1);
 });
