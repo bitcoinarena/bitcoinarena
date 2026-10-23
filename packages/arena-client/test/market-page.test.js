@@ -146,9 +146,13 @@ test('the pick: the entry carries it, every seat is handed the entry, the stake 
   const fetcher = async (url, init) => { posts.push(`${new URL(url).host}${new URL(url).pathname}`); return { status: 201, ok: true, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) }; };
   const lock = { fields: { paymentImage: { kind: 'point', bytes: new Uint8Array(33).fill(2) }, amountMsat: 900000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 },
     feeLock: { fields: { paymentImage: { kind: 'hash', bytes: b32(8) }, amountMsat: 50000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 } } };
+  // the page's lock record told once, with the entry, when enough seats hold the stake lock (kanban #593: never, before)
+  const committed = [];
+  lock.needed = 2; lock.onCommitted = (eid) => committed.push(toHex(eid));
   const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-a', 'http://seat-b'], fetcher });
-  console.log('  SUBMIT:', JSON.stringify({ ok: sent.ok, posts: [...new Set(posts)].sort() }));
+  console.log('  SUBMIT:', JSON.stringify({ ok: sent.ok, posts: [...new Set(posts)].sort(), committed: committed.map((x) => x.slice(0, 8)) }));
   assert.equal(sent.ok, true);
+  assert.deepEqual(committed, [sent.entryId], 'the page was not told once that the seats hold the order\'s lock');
   for (const s of ['seat-a', 'seat-b']) for (const door of ['/entry', '/lock', '/fee-lock']) assert.ok(posts.includes(`${s}${door}`), `${s}${door} not handed`);
 });
 
