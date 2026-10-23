@@ -333,3 +333,25 @@ test('the top of a view is asked once while the best block stays, and again once
   assert.notEqual(reorg.blocks[1], grown.blocks[top], 'a block of the branch the chain left was answered');
   assert.equal(again.blocks.length, top + 1);
 });
+
+test('views walking the same heights at once ask each height once, not once per view (kanban #587)', async () => {
+  const { blocksOver, blockCache } = await import('../src/chain-rpc.js');
+  const tx = [1, 0, 0, 0, 1, ...new Array(36).fill(0), 1, 0, 255, 255, 255, 255, 1, ...new Array(8).fill(0), 0, 0, 0, 0, 0];
+  const rawFor = (hash) => new Uint8Array([...new Array(80).fill(hash.length), 1, ...tx]);
+  const asked = new Map();
+  // bitcoind answers a little later, so the eight views are all walking before the first answer is back
+  const call = async (method, [arg] = []) => {
+    asked.set(method, (asked.get(method) || 0) + 1);
+    await new Promise((r) => setTimeout(r, 2));
+    if (method === 'getblockhash') return `h${arg}`;
+    if (method === 'getbestblockhash') return 'h99';
+    if (method === 'getblock') return Buffer.from(rawFor(arg)).toString('hex');
+    throw new Error(method);
+  };
+  const cache = blockCache();
+  const views = await Promise.all(Array.from({ length: 8 }, () => blocksOver(call, 0, 99, { cache })));
+  assert.equal(asked.get('getblockhash'), 100, `100 heights, ${asked.get('getblockhash')} asks`);
+  assert.equal(asked.get('getblock'), 100);
+  for (const v of views) assert.equal(v.blocks.length, 100);
+  assert.equal(cache.hashInFlight.size, 0, 'a finished ask stayed in flight');
+});
