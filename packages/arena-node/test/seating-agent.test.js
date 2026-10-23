@@ -17,8 +17,11 @@ const nodes = Array.from({ length: 9 }, (_, i) => { const secret = new Uint8Arra
 const signer = (n) => (m) => schnorr.sign(m, n.secret);
 const START = 60500n;
 const NOW = Number(START) - 150000;            // inside the PRESENT window, before seating_close (start - 120 s)
-// a certificate of the seating every node makes from all nine PRESENTs, signed by its seated
-const certFor = (rid, role) => {
+// a certificate of the seating every node makes from all nine PRESENTs, signed by its seated - made once per round and role, as on the
+// network (each node signs its seating once and keeps that signature, so every peer hands out the same bytes)
+const certsMade = new Map();
+const certFor = (rid, role) => { const k = `${toHex(rid)}:${role}`; if (!certsMade.has(k)) certsMade.set(k, certOnce(rid, role)); return certsMade.get(k); };
+const certOnce = (rid, role) => {
   const seated = seatedFrom({ drawn: nodes.map((n) => n.pubkey), present: nodes.map((n) => n.pubkey), slots: 7 });
   return encodeSeatingCertificate({ roundId: rid, role, seated,
     signatures: seated.map((k) => ({ nodePubkey: k, signature: signSeating({ roundId: rid, role, seated }, signer(nodes.find((n) => toHex(n.pubkey) === toHex(k)))) })) });
@@ -118,4 +121,14 @@ test('a started round nobody can certify is asked, but this node builds no certi
   await w.agent.tick();
   await w.agent.tick();
   assert.equal(w.asked.filter((a) => a.startsWith('POST')).length, 0, 'nothing is posted: no PRESENT, no seating signature handed out');
+});
+
+test('a started round\'s PRESENTs are neither taken nor checked: only its certificates cost signature checks (kanban #587)', async () => {
+  // measured 2026-10-23 13:2xZ: closed rounds' PRESENTs, refused after their check and never kept, were checked on every tick
+  const w = world({ now: Number(START) + 60000, servesCert: true });
+  await w.agent.tick();
+  assert.equal(w.verifies(), 14, 'two certificates of 7 seated signatures each, and no PRESENT');
+  await w.agent.tick();
+  assert.equal(w.verifies(), 14, 'the second tick asks nothing and checks nothing');
+  assert.equal(w.agent.presentsOf(w.rid).length, 0, 'no PRESENT of a started round is kept');
 });
