@@ -99,7 +99,8 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
   const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const yearStart = Date.UTC(now.getUTCFullYear(), 0, 1);
-  const totals = { day: zero(), month: zero(), year: zero(), owed: zero() };
+  // total: every earned round this seat holds, of any year (kanban #597: the health page's "total sats earned")
+  const totals = { day: zero(), month: zero(), year: zero(), total: zero(), owed: zero() };
   const daily = new Map();
   for (const r of checked) {
     const add = (t) => { t.gameVerifyMsat += BigInt(r.gameVerifyMsat); t.settlementMsat += BigInt(r.settlementMsat); t.guardianMsat += BigInt(r.guardianMsat); };
@@ -108,6 +109,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     if (at >= dayStart) add(totals.day);
     if (at >= monthStart) add(totals.month);
     if (at >= yearStart) add(totals.year);
+    add(totals.total);
     const d = new Date(at).toISOString().slice(0, 10);
     const t = daily.get(d) || zero(); add(t); daily.set(d, t);
   }
@@ -132,19 +134,20 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
   // EARNINGS PER GAME: every checked round's shares under its game - earned (settled ACCEPTED) and owed
   const perGame = new Map();
   for (const r of checked) {
-    const g = perGame.get(r.game) || { game: r.game, name: r.gameName, rounds: 0, earned: zero(), owed: zero() };
-    const t = r.earned ? g.earned : g.owed;
-    t.gameVerifyMsat += BigInt(r.gameVerifyMsat); t.settlementMsat += BigInt(r.settlementMsat); t.guardianMsat += BigInt(r.guardianMsat);
+    const g = perGame.get(r.game) || { game: r.game, name: r.gameName, rounds: 0, earned: zero(), month: zero(), owed: zero() };
+    const add = (t) => { t.gameVerifyMsat += BigInt(r.gameVerifyMsat); t.settlementMsat += BigInt(r.settlementMsat); t.guardianMsat += BigInt(r.guardianMsat); };
+    add(r.earned ? g.earned : g.owed);
+    if (r.earned && r.settlement.madeMs >= monthStart) add(g.month);
     g.rounds++; perGame.set(r.game, g);
   }
-  const byGame = [...perGame.values()].map((g) => ({ game: g.game, name: g.name, rounds: g.rounds, earned: out(g.earned), owed: out(g.owed) }));
+  const byGame = [...perGame.values()].map((g) => ({ game: g.game, name: g.name, rounds: g.rounds, earned: out(g.earned), month: out(g.month), owed: out(g.owed) }));
   const settlements = db.prepare('SELECT round_id, state, why, made_ms FROM lock_settlements ORDER BY made_ms DESC LIMIT 100').all()
     .map((s) => ({ round: hex(s.round_id), state: s.state, madeMs: Number(s.made_ms), why: String(s.why || '').slice(0, 200) }));
   const byState = {};
   for (const s of db.prepare('SELECT state, COUNT(*) AS n FROM lock_settlements GROUP BY state').all()) byState[s.state] = s.n;
   return {
     node: me, nowMs, sinceMs: first && first.t ? Number(first.t) : null,
-    totals: { day: out(totals.day), month: out(totals.month), year: out(totals.year), owed: out(totals.owed) },
+    totals: { day: out(totals.day), month: out(totals.month), year: out(totals.year), total: out(totals.total), owed: out(totals.owed) },
     days, roundsChecked: checked.length, rounds: checked.slice(0, roundsShown), byGame,
     settlements, settlementsByState: byState, federations: [...federations.values()],
     notes: {

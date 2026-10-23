@@ -42,6 +42,9 @@
   .facts.r .fact span { text-transform: uppercase; letter-spacing: .06em; font-weight: 700; font-size: 10.5px; }
   .facts.r .fact b { font-size: 19px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   button.fold { font-size: 12px; }
+  .machines { display: flex; flex-direction: column; gap: 6px; }
+  .machine { border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  button.mhead { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; width: 100%; text-align: left; background: none; border: 0; padding: 4px 0; color: inherit; cursor: pointer; }
   .cap { display: flex; flex-direction: column; gap: 10px; }
   .capcard { border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; padding: 10px 12px; background: var(--bg); }
   .capcard.ok { border-left-color: var(--ok); } .capcard.warn { border-left-color: var(--warn); } .capcard.bad { border-left-color: var(--bad); }
@@ -65,6 +68,7 @@
   <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>every 60 s · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span><a href="../">← Bitcoin Arena</a></div>
   <div class="card"><h2>Network</h2><div id="network"></div></div>
   <div class="card"><h2>Nodes</h2><div class="scroll" id="nodes"></div></div>
+  <div class="card"><h2>Machines</h2><div class="scroll" id="machines"></div></div>
   <div class="card"><h2>Capacity</h2><div id="capacity"></div></div>
   <div class="card"><h2>Federations</h2><div class="scroll" id="feds"></div></div>
   <div class="card"><h2>Waiting for a founding</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">guardian-capable nodes that guard no OPEN federation - ten of them found the next one. Ready = its guardian waits in setup</div><div id="founding-facts"></div><div class="scroll" id="founding"></div></div>
@@ -75,6 +79,7 @@
   <div class="card"><h2>Liquidity providers</h2><div class="scroll" id="liquidity"></div></div>
   <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll" id="lnd"></div></div>
   <div class="card"><h2>Games and markets</h2><div class="scroll" id="games"></div></div>
+  <div class="card"><h2>Apps</h2><div class="scroll" id="apps"></div></div>
   <div class="card"><h2>Fees in force</h2><div id="fees"></div></div>
 </main>
 <script>
@@ -186,7 +191,10 @@
       await paintPending(seats);
       await paintLiquidity(fedList, nodes, tip);
       paintLnd(nodes);
-      paintGames(await gamesP);
+      paintMachines(nodes);
+      const games = await gamesP;
+      paintGames(games);
+      paintApps(games, nodes);
       paintFees(fees);
       say('read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked');
       window.ARENA_HEALTH = { atMs: Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
@@ -441,6 +449,16 @@
         l.synced ? { t: 'yes', c: 'ok' } : { t: 'no', c: 'bad' }, l.activeChannels, satMsat(l.localMsat), satMsat(l.remoteMsat), l.forwards30d == null ? '-' : l.forwards30d] };
     });
     drawTable('lnd', ['Node', 'Alias', 'LND key', 'Synced', 'Active channels', 'Local (sat)', 'Remote / inbound (sat)', 'Forwards 30 d'], rows, 'no node shows an LND on its dashboard');
+  }
+
+  // MACHINES AND APPS (kanban #597, testnet4 only): the nodes by the machine each names, with its load and what its nodes earned; every
+  // app's newest version and what the nodes earned from it (HealthViews.jsx machinesView / appsView)
+  function paintMachines(nodes) { H.draw($('machines'), 'machines', { view: H.machinesView(nodes) }); }
+  function paintApps(g, nodes) {
+    const AH = ['App', 'Type', 'Newest version', 'Earned by nodes (sat)', 'This month (sat)'];
+    const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => ({ key: a.name, dot: a.newest != null ? 'ok' : 'warn',
+      cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), sat(a.total), sat(a.month)] }));
+    drawTable('apps', AH, rows, 'no app read', 'summed from every answering node\'s dashboard - each node counts only its own share');
   }
 
   function paintGames(g) {

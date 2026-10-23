@@ -18,6 +18,16 @@ export function Facts({ items }) {
   return <div className="facts r">{items.map(([k, v, c]) => <div key={k} className="fact"><b className={c || ''}>{String(v)}</b><span>{k}</span></div>)}</div>;
 }
 
+// WHAT A NODE EARNED (kanban #597): its dashboard's income - game/verify, settlement, guardian and other fees - in all and this month (UTC),
+// in sat; null for a node whose dashboard did not answer. A seat before 597 has no "total" yet: its year stands in.
+const INCOME = ['gameVerifyMsat', 'settlementMsat', 'guardianMsat', 'otherMsat'];
+export const incomeSat = (t) => (t ? Math.floor(INCOME.reduce((s, k) => s + Number(t[k] || 0), 0) / 1000) : 0);
+export function nodeEarnings(n) {
+  const d = n.dash && n.dash.ok ? n.dash.body : null;
+  if (!d || !d.totals) return null;
+  return { total: incomeSat(d.totals.total || d.totals.year), month: incomeSat(d.totals.month) };
+}
+
 /** A node's row: its health dot, what it answered, its release and protocol, roles, serving, bond and lock, the last 24 h. */
 export function nodeView(n, { tip, served = {}, fedNo = () => null, active }) {
   const v = n.version, b = n.bond;
@@ -32,7 +42,7 @@ export function nodeView(n, { tip, served = {}, fedNo = () => null, active }) {
     release: v && v.ok ? `${v.body.version || 'checkout'}` : '-', commit: v && v.ok && v.body.commit ? short(v.body.commit, 7) : null,
     protocol: v && v.ok ? Math.max(...(v.body.protocols || [0])) : null, tags, serving: n.serving,
     bond: bond ? `${sat(bond.sats)} sat` : '-', lock: lock ? (lock.blocksLeft > 0 ? `matures in ${lock.blocksLeft}` : 'mature') : null, lockWaits: !!(lock && lock.blocksLeft > 0),
-    active, rounds24h: served[n.node] || 0, asked: !!v };
+    active, rounds24h: served[n.node] || 0, asked: !!v, earned: nodeEarnings(n) };
 }
 
 export class NodesTable extends React.Component {
@@ -47,6 +57,7 @@ export class NodesTable extends React.Component {
         <td className="wrap">{r.tags.length ? r.tags.map((t) => <span key={t} className="tag">{t}</span>) : '-'}</td>
         <td>{r.serving == null ? '-' : r.serving ? <span className="ok">yes</span> : <span className="warn">no</span>}</td>
         <td>{r.bond}</td><td>{r.lock ? <span className={r.lockWaits ? 'warn' : ''}>{r.lock}</span> : '-'}</td>
+        <td>{r.earned ? sat(r.earned.total) : '-'}</td><td>{r.earned ? sat(r.earned.month) : '-'}</td>
         <td>{!r.asked ? <span className="muted">-</span> : r.active ? <><span className="ok">active</span>{r.rounds24h ? <span className="muted"> · {r.rounds24h} round{r.rounds24h === 1 ? '' : 's'} in 24 h</span> : null}</> : <span className="muted">inactive</span>}</td>
       </tr>);
   }
@@ -56,10 +67,10 @@ export class NodesTable extends React.Component {
     const open = this.state.idleOpen;
     return (
       <table>
-        <thead><tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th><th>Last 24 h</th></tr></thead>
+        <thead><tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th><th>Earned (sat)</th><th>This month</th><th>Last 24 h</th></tr></thead>
         <tbody>
           {act.map((r, i) => this.row(r, i))}
-          {idle.length ? <tr><td colSpan={11}><button type="button" className="fold" onClick={() => this.setState({ idleOpen: !open })}>{open ? '▾' : '▸'} {idle.length} inactive node{idle.length === 1 ? '' : 's'} - bonded, not answering and no round signed in 24 h</button></td></tr> : null}
+          {idle.length ? <tr><td colSpan={13}><button type="button" className="fold" onClick={() => this.setState({ idleOpen: !open })}>{open ? '▾' : '▸'} {idle.length} inactive node{idle.length === 1 ? '' : 's'} - bonded, not answering and no round signed in 24 h</button></td></tr> : null}
           {open ? idle.map((r, i) => this.row(r, act.length + i)) : null}
         </tbody>
       </table>);
@@ -128,4 +139,80 @@ export function Table({ head, rows, empty, foot }) {
         {foot ? <tr><td colSpan={head.length} className="muted">{foot}</td></tr> : null}
       </tbody>
     </table>);
+}
+
+// MACHINES (kanban #597, testnet4 only - the owner 2026-10-23: "a section machines where each machine is listed with all its nodes ... the
+// machines folded as an accordion, in the title the number of nodes and the load 1, 5, 15 m, total sats earned, per month earned"): the
+// nodes grouped by the machine id each one's /owner/version names (machine.js: a hash of its host), the load the newest of them answered,
+// and the sum of their earnings. A node that names no machine (mainnet, or a release before 597) is counted, not grouped.
+const loadTone = (load, cores) => { const x = Number(load) / Math.max(1, Number(cores) || 1); return x >= 1 ? 'bad' : x >= 0.7 ? 'warn' : 'ok'; };
+export function machinesView(nodes) {
+  const by = new Map();
+  let unnamed = 0;
+  for (const n of nodes) {
+    const m = n.version && n.version.ok ? n.version.body.machine : null;
+    if (!m || !m.id) { if (n.version && n.version.ok) unnamed++; continue; }
+    const g = by.get(m.id) || { id: m.id, name: m.name || null, load: m.load || [], cores: m.cores || null, nodes: [], total: 0, month: 0 };
+    if (!g.name && m.name) g.name = m.name;
+    const e = nodeEarnings(n);
+    if (e) { g.total += e.total; g.month += e.month; }
+    g.nodes.push({ key: n.node || n.base, node: short(n.node, 12), address: (n.base || '').replace(/^https?:\/\//, ''),
+      release: n.version.body.version || 'checkout', total: e ? e.total : null, month: e ? e.month : null });
+    by.set(m.id, g);
+  }
+  const machines = [...by.values()].sort((a, b) => (b.nodes.length - a.nodes.length) || a.id.localeCompare(b.id))
+    .map((g, i) => ({ ...g, title: g.name || `Machine ${i + 1}`, tone: loadTone(g.load[0], g.cores) }));
+  return { machines, unnamed };
+}
+const loadText = (l) => (l && l.length === 3 ? l.map((x) => Number(x).toFixed(2)).join(' · ') : '-');
+export class Machines extends React.Component {
+  constructor(props) { super(props); this.state = { open: {} }; }
+  render() {
+    const { view } = this.props;
+    if (!view || !view.machines.length) return <div className="muted">no node names its machine yet{view && view.unnamed ? ` (${view.unnamed} answering nodes run a release before it)` : ''}</div>;
+    const open = this.state.open;
+    return (
+      <div className="machines">
+        {view.machines.map((m) => (
+          <div key={m.id} className="machine">
+            <button type="button" className="fold mhead" onClick={() => this.setState({ open: { ...open, [m.id]: !open[m.id] } })}>
+              <span>{open[m.id] ? '▾' : '▸'}</span><Dot c={m.tone} /><b>{m.title}</b><span className="mono muted">{m.id.slice(0, 8)}</span>
+              <span>{m.nodes.length} node{m.nodes.length === 1 ? '' : 's'}</span>
+              <span>load {loadText(m.load)}{m.cores ? <span className="muted"> ({m.cores} cores)</span> : null}</span>
+              <span>earned {sat(m.total)} sat</span><span>this month {sat(m.month)} sat</span>
+            </button>
+            {open[m.id] ? (
+              <table>
+                <thead><tr><th>Node key</th><th>Address</th><th>Release</th><th>Earned (sat)</th><th>This month</th></tr></thead>
+                <tbody>{m.nodes.map((n) => (
+                  <tr key={n.key}><td className="mono">{n.node}</td><td className="mono">{n.address}</td><td>{n.release}</td>
+                    <td>{n.total == null ? '-' : sat(n.total)}</td><td>{n.month == null ? '-' : sat(n.month)}</td></tr>))}
+                </tbody>
+              </table>) : null}
+          </div>))}
+        {view.unnamed ? <div className="muted">{view.unnamed} answering node{view.unnamed === 1 ? '' : 's'} name no machine (a release before it)</div> : null}
+      </div>);
+  }
+}
+
+// APPS (kanban #597): every app the seats host, its newest version, and what the nodes earned from it - in all and this month - summed
+// from every node's dashboard (byGame: each version's game id, so all versions of an app add up under its name)
+export function appsView(games, nodes) {
+  const byName = new Map(), nameOfId = new Map();
+  for (const x of games || []) {
+    const k = x.name || x.title;
+    const a = byName.get(k) || { name: k, title: x.title || k, type: x.type || '-', newest: null, total: 0, month: 0 };
+    if (x.version != null && (a.newest == null || Number(x.version) > Number(a.newest))) a.newest = x.version;
+    byName.set(k, a); nameOfId.set(String(x.id).toLowerCase(), k);
+  }
+  for (const n of nodes) {
+    const d = n.dash && n.dash.ok ? n.dash.body : null;
+    for (const g of (d && d.byGame) || []) {
+      const k = nameOfId.get(String(g.game).toLowerCase()) || g.name || short(g.game, 8);
+      const a = byName.get(k) || { name: k, title: k, type: '-', newest: null, total: 0, month: 0 };
+      a.total += incomeSat(g.earned); a.month += incomeSat(g.month);
+      byName.set(k, a);
+    }
+  }
+  return [...byName.values()].sort((a, b) => (b.total - a.total) || a.title.localeCompare(b.title));
 }
