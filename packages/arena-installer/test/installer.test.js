@@ -410,6 +410,7 @@ test('the intro: what a node is, one picture, what it earns and needs, then step
   assert.match(intro, /<input id="intro-count" type="number" min="1" max="20" value="1"/);
   assert.match(intro, /<label class="choice" id="intro-ram-row" hidden><input id="intro-ram" type="checkbox" checked> <span><b>Put Fedimint on a RAM disk<\/b>/);
   assert.match(html, /\$\('intro-ram-row'\)\.hidden = n < 6/);
+  assert.match(html, /\.choice\[hidden\] \{ display: none; \}/, 'hidden wins over the choice\'s flex: no RAM disk checkbox up to 5 nodes');
   assert.match(html, /n >= 10 \? ' 10 or more nodes found their own federation\.'/);
   assert.match(html, /await post\('\/api\/instances', \{ count: n, ram: n >= 6 \? \$\('intro-ram'\)\.checked : false \}\)/);
 });
