@@ -25,13 +25,16 @@
 // --add-custody  custody for a node installed without it: the wizard opens again at its roles step with custody chosen and shows the
 //              custody steps (Lightning, federation, the bond's rules); the posted bond's advertisement is updated, no second bond
 // --join-federation  the node's gateway (set up in the wizard's Lightning step) joins a federation by its invite code (gateway.js)
+// --instances  how many nodes on this machine, 1 by default (testnet4 only; kanban #596): each its own seed, owner key and bond, in
+//              <home>-b, -c, ... with its ports 100 apart (instance.js); from 10 they found their own federation. With more than 5:
+//              --ram / --no-ram puts Fedimint on a RAM disk or not; neither given, the console asks "Enable RAM disk for Fedimint? [Y/n]"
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
 import { port as offsetPort } from '../src/instance.js';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createWizard } from '../src/wizard.js';
 import { nodeState, defaultHome } from '../src/state.js';
 import { openQuickTunnel } from '../src/tunnel.js';
@@ -130,6 +133,34 @@ if (args.includes('--join-federation')) {
   await finish(0);
 }
 
+// HOW MANY NODES (kanban #596): the count checked, the RAM disk asked from more than 5 when not given, both kept for the wizard
+if (args.includes('--instances')) {
+  const { instancesChoice, instancesNote, RAM_FROM, RAM_QUESTION, ramAnswer } = await import('../src/instances.js');
+  const count = Number(opt('--instances', '1'));
+  let ram = args.includes('--no-ram') ? false : args.includes('--ram') ? true : undefined;
+  if (ram === undefined && count >= RAM_FROM) {
+    if (process.stdin.isTTY) {
+      const { createInterface } = await import('node:readline/promises');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      ram = ramAnswer(await rl.question(RAM_QUESTION)); rl.close();
+    } else { ram = true; console.log(`${RAM_QUESTION}yes (the default; no console to ask)`); }
+  }
+  const c = instancesChoice({ count, ram, network: 'testnet4' });
+  if (!c.ok) { console.error(c.why); process.exit(1); }
+  state.save({ instances: { count: c.count, ram: c.ram } });
+  const note = instancesNote(c.count);
+  if (note) console.log(note + (c.ram ? ' Fedimint on a RAM disk.' : ''));
+}
+
+// A FURTHER NODE OF A COUNT (kanban #596): started by the node before it with --from-home, it takes over that node's first choices
+const fromHome = opt('--from-home', '');
+if (fromHome) {
+  const { prefillFrom } = await import('../src/instances.js');
+  const r = prefillFrom(nodeState(resolve(fromHome)), state);
+  const plan = nodeState(resolve(fromHome)).read().instances || {};
+  console.log(`\nNode ${opt('--node-of', '?')} of ${plan.count || '?'} on this machine, in ${home}` + (r.ok ? ` (its Bitcoin source, roles and apps as the first node's)` : ` (${r.why})`));
+}
+
 if (args.includes('--add-custody')) {
   const { beginAddCustody } = await import('../src/wizard.js');
   const r = beginAddCustody(state);
@@ -153,7 +184,18 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   if (l && l.command && l.command.name) console.log(`On the command line: ${l.command.name} status | doctor | restart <service> | logs | config${l.command.note ? ` (${l.command.note})` : ''}`);
   if (l) console.log(`To start it again: ${l.app ? `open "Arena Node" in Applications (${l.app})` : l.menu && /Start Menu/.test(l.menu) ? 'Start menu > Arena Node' : 'Arena Node in your desktop menu'}, or run ${l.start}`);
   if (tunnel) tunnel.close();
-  server.close(); setTimeout(() => process.exit(0), 300);
+  server.close();
+  // THE NEXT NODE OF A COUNT (kanban #596): its own wizard, in its own home with its own instance and ports, started here
+  import('../src/instances.js').then(({ nextInstance }) => {
+    const base = resolve(fromHome || home), plan = nodeState(base).read().instances || { count: 1 };
+    const next = nextInstance(plan.count, base, home);
+    if (!next) { setTimeout(() => process.exit(0), 300); return; }
+    console.log(`\nNext: node ${next.index} of ${next.count} (instance ${next.instance}, ports +${next.portOffset}).`);
+    const pass = ['--tunnel', '--local'].filter((f) => args.includes(f));
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--home', next.home, '--instance', next.instance, '--port-offset', String(next.portOffset),
+      '--from-home', base, '--node-of', String(next.index), ...pass], { stdio: 'inherit', env: process.env });
+    child.on('exit', (code) => process.exit(code ?? 0));
+  });
 } });
 
 // THE TUNNEL ENDS WITH THE INSTALLER (measured on the test host: an installer ended by a signal left its cloudflared running,
