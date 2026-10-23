@@ -4400,7 +4400,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const peer = JSON.parse(readFileSync(joinPath(dir, 'local.json'), 'utf8')).identity;
         const key = JSON.parse(readFileSync(joinPath(dir, 'consensus.json'), 'utf8')).broadcast_public_keys[String(peer)];
         if (!/^[0-9a-f]{66}$/.test(key || '')) return null;
-        return { federationId: readInvite(invite).federationId, guardianKey: fromHex(key) };
+        const fid = readInvite(invite).federationId;   // hex, as an invite reads
+        return { federationId: typeof fid === 'string' ? fromHex(fid) : fid, guardianKey: fromHex(key) };
       } catch { return null; }     // a guardian still in setup has no invite yet
     };
     const advertSelf = async () => {
