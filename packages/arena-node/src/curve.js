@@ -89,7 +89,15 @@ export const pointFromScalar = (scalar) => {
   return secp256k1.Point.BASE.multiply(k % secp256k1.Point.Fn.ORDER).toBytes(true);
 };
 
-/** Sum of coefficient * point, in the same encoding, for the same reason. */
+/**
+ * Sum of coefficient * point, in the same encoding, for the same reason.
+ *
+ * EVERY TERM IS PUBLIC - commitments and a share's polynomial powers (Feldman), FROST's binding factors and challenges, DKG
+ * proofs' challenges; a secret becomes a point only through pointFromScalar, which stays constant-time - so the variable-time
+ * multiplyUnsafe is used, and a coefficient of 1 is no multiplication (kanban #576, measured 2026-10-23: openMyShare's Feldman
+ * check was seat 1's largest curve cost while 20 market bots ordered; 5 terms with i^j coefficients 6.31 ms -> 0.41 ms, random
+ * 256-bit ones 6.32 -> 2.55 ms, the same point on 600 of 600 inputs).
+ */
 export const combinePoints = (terms) => {
   let sum = null;
   for (const { point, coefficient } of terms) {
@@ -97,7 +105,8 @@ export const combinePoints = (terms) => {
       % secp256k1.Point.Fn.ORDER;
     if (k === 0n) continue;                       // 0 * anything is the identity
     if (point.length === 33 && point.every((b) => b === 0)) continue;   // identity * k
-    const p = secp256k1.Point.fromBytes(point).multiply(k);
+    const P = secp256k1.Point.fromBytes(point);
+    const p = k === 1n ? P : P.multiplyUnsafe(k);
     sum = sum === null ? p : sum.add(p);
   }
   return sum === null ? new Uint8Array(33) : sum.toBytes(true);
