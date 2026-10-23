@@ -4,7 +4,8 @@
 // guardians still seated publish, signed, their copy of the federation's spent-note set (the nonces the consensus has already
 // redeemed) as of the last session they hold."
 //
-// The node runs its guardian (§23A.2), so it asks it, as the guardian's admin, through the fork's admin endpoint
+// The node runs its guardian (§23A.2), so it asks it, as the guardian's admin, directly over the guardian's socket (`endpoint`;
+// see produceSpentSet) or else through a fedimint-cli client, at the fork's admin endpoint
 // `blwp_spent_nonces` of its MINTV2 module (tools/fedimint-spent-nonces.patch; our federations run mintv2, not mint) and the public `session_count` - both over a client of that federation:
 //   fedimint-cli --data-dir <client> dev api blwp_spent_nonces null --module mintv2 --peer-id <own id> --password <admin password>
 //   fedimint-cli --data-dir <client> dev api session_count null --peer-id <own id>
@@ -16,6 +17,7 @@ import { execFile } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodeSpentSet, signSpentSet } from '../../arena-protocol/src/spent-set.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { wsGuardianCall } from './halts.js';
 
 const runCli = (bin, args, env) => new Promise((done) => execFile(bin, args, { timeout: 120000, maxBuffer: 1 << 26, env },
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
@@ -27,19 +29,36 @@ const valueOf = (out) => { const j = JSON.parse(out); return j && typeof j === '
  * THE COPY. `guardianDir` this node's guardian data dir; `clientDir` a fedimint-cli client of the federation; `federationId` hex;
  * `nodeSecret` 32 bytes. Answers { ok, copy: { spentSet hex, signature hex }, session, nonces } or why not.
  */
-export async function produceSpentSet({ guardianDir, clientDir, cli = 'fedimint-cli', federationId, nodeSecret, mintModule = 'mintv2', run = runCli, env = process.env }) {
+export async function produceSpentSet({ guardianDir, clientDir = null, endpoint = null, cli = 'fedimint-cli', federationId, nodeSecret, mintModule = 'mintv2', run = runCli, call = wsGuardianCall, env = process.env }) {
   let peer, password;
   try { peer = JSON.parse(readFileSync(join(guardianDir, 'local.json'), 'utf8')).identity; password = readFileSync(join(guardianDir, 'admin-password'), 'utf8').trim(); }
   catch (e) { return { ok: false, why: `this node's guardian config is not readable: ${e.message}` }; }
   if (!Number.isInteger(peer)) return { ok: false, why: 'the guardian config names no identity' };
-  const base = ['--data-dir', clientDir, 'dev', 'api'];
-  const n = await run(cli, [...base, 'blwp_spent_nonces', 'null', '--module', mintModule, '--peer-id', String(peer), '--password', password], env);
-  if (!n.ok) return { ok: false, why: `the guardian did not answer its spent nonces: ${(n.err || n.out).trim().split('\n').pop().slice(0, 200)}` };
-  const c = await run(cli, [...base, 'session_count', 'null', '--peer-id', String(peer)], env);
-  if (!c.ok) return { ok: false, why: `the guardian did not answer its session count: ${(c.err || c.out).trim().split('\n').pop().slice(0, 200)}` };
   let nonces, sessions;
-  try { nonces = valueOf(n.out).map((h) => fromHex(String(h))); sessions = Number(valueOf(c.out)); }
-  catch (e) { return { ok: false, why: `the guardian's answer did not read: ${e.message}` }; }
+  if (endpoint) {
+    // ITS OWN GUARDIAN, ASKED DIRECTLY over the guardian's socket (kanban #326, rehearsal 17, 2026-10-23 01:4xZ): a client of a halted
+    // federation can no longer be joined - T2's config download failed on its two missing guardians - and a halted federation is the
+    // only one a spent set is for. The mint module's instance id is read from the guardian's own client config.
+    let id;
+    try { const mods = JSON.parse(readFileSync(join(guardianDir, 'client.json'), 'utf8')).modules || {};
+      id = Object.keys(mods).find((k) => String((mods[k] && (mods[k].kind || (mods[k].config && mods[k].config.kind))) || '') === mintModule); }
+    catch (e) { return { ok: false, why: `this node's guardian client config is not readable: ${e.message}` }; }
+    if (id === undefined) return { ok: false, why: `the guardian's federation has no ${mintModule} module` };
+    try { nonces = await call(endpoint, `module_${id}_blwp_spent_nonces`, { auth: password }); }
+    catch (e) { return { ok: false, why: `the guardian did not answer its spent nonces: ${String(e.message).slice(0, 200)}` }; }
+    try { sessions = await call(endpoint, 'session_count'); }
+    catch (e) { return { ok: false, why: `the guardian did not answer its session count: ${String(e.message).slice(0, 200)}` }; }
+    try { nonces = nonces.map((h) => fromHex(String(h))); sessions = Number(sessions); }
+    catch (e) { return { ok: false, why: `the guardian's answer did not read: ${e.message}` }; }
+  } else {
+    const base = ['--data-dir', clientDir, 'dev', 'api'];
+    const n = await run(cli, [...base, 'blwp_spent_nonces', 'null', '--module', mintModule, '--peer-id', String(peer), '--password', password], env);
+    if (!n.ok) return { ok: false, why: `the guardian did not answer its spent nonces: ${(n.err || n.out).trim().split('\n').pop().slice(0, 200)}` };
+    const c = await run(cli, [...base, 'session_count', 'null', '--peer-id', String(peer)], env);
+    if (!c.ok) return { ok: false, why: `the guardian did not answer its session count: ${(c.err || c.out).trim().split('\n').pop().slice(0, 200)}` };
+    try { nonces = valueOf(n.out).map((h) => fromHex(String(h))); sessions = Number(valueOf(c.out)); }
+    catch (e) { return { ok: false, why: `the guardian's answer did not read: ${e.message}` }; }
+  }
   if (nonces.some((x) => x.length !== 33)) return { ok: false, why: 'a nonce the guardian named is not 33 bytes' };
   if (!Number.isInteger(sessions) || sessions < 1) return { ok: false, why: 'the guardian has finished no session' };
   // AS OF THE LAST SESSION IT HOLDS: the session count names the next one, so the last finished is one less

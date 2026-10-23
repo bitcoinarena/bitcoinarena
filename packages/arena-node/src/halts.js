@@ -119,7 +119,18 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
  * A GUARDIAN'S SESSION COUNT, asked as the stock client asks (fedimint's JSON-RPC over WebSocket, `session_count`). `overrides`
  * is FM_WS_API_CONNECT_OVERRIDES' "public=local,..." - a seat reaches its own machine's guardians by their local socket.
  */
-export async function wsSessionCount(endpoint, { overrides = process.env.FM_WS_API_CONNECT_OVERRIDES || '', timeoutMs = 10000, WebSocketImpl = null } = {}) {
+export async function wsSessionCount(endpoint, opts = {}) {
+  const n = await wsGuardianCall(endpoint, 'session_count', opts);
+  if (!Number.isInteger(n)) throw new Error(`session_count answered ${JSON.stringify(n)}`);
+  return n;
+}
+
+/**
+ * ONE CALL TO A GUARDIAN'S API over its websocket (fedimint JSON-RPC: `method`, params [{ auth, params }]) - a module's endpoint
+ * is `module_<instance id>_<name>`, an admin one takes the admin password as `auth`. The endpoint is mapped through
+ * FM_WS_API_CONNECT_OVERRIDES as the guardians' own clients map it. Answers the result, or throws the error.
+ */
+export async function wsGuardianCall(endpoint, method, { auth = null, params = null, overrides = process.env.FM_WS_API_CONNECT_OVERRIDES || '', timeoutMs = 10000, WebSocketImpl = null } = {}) {
   let url = String(endpoint || '');
   for (const pair of String(overrides).split(',')) {
     const i = pair.indexOf('=');
@@ -132,7 +143,7 @@ export async function wsSessionCount(endpoint, { overrides = process.env.FM_WS_A
     const done = (f, v) => { clearTimeout(t); try { ws.close(); } catch { /* closed */ } f(v); };
     const t = setTimeout(() => done(reject, new Error('no answer in time')), timeoutMs);
     ws.on('error', (e) => done(reject, e));
-    ws.on('open', () => ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'session_count', params: [{ auth: null, params: null }] })));
-    ws.on('message', (m) => { try { const j = JSON.parse(String(m)); if (j.id === 1) done(Number.isInteger(j.result) ? resolve : reject, Number.isInteger(j.result) ? j.result : new Error(JSON.stringify(j.error || j))); } catch (e) { done(reject, e); } });
+    ws.on('open', () => ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: [{ auth, params }] })));
+    ws.on('message', (m) => { try { const j = JSON.parse(String(m)); if (j.id === 1) done(j.error || !('result' in j) ? reject : resolve, j.error || !('result' in j) ? new Error(JSON.stringify(j.error || j)) : j.result); } catch (e) { done(reject, e); } });
   });
 }
