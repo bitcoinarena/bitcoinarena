@@ -304,7 +304,9 @@
     };
     tryNode(0).then(function (x) {
       if (location.hash !== '#reserves') return;
-      var rows = (x.d.paidIn || []).map(function (p) {
+      // EVERY PAYMENT: each federation's own list (the answer's top-level paidIn is the newest 50 only)
+      var all = (x.d.federations || []).reduce(function (t, f) { return t.concat((f.paidIn || []).map(function (p) { return Object.assign({ federationId: f.federationId }, p); })); }, []);
+      var rows = (all.length ? all : (x.d.paidIn || [])).map(function (p) {
         var app = p.game || '–';
         return { outpoint: p.outpoint, at: String(p.at || ''), amountMsat: String(p.amountMsat || '0'), app: app, roundId: p.roundId,
           entryId: /^0+$/.test(String(p.entryId || '')) ? null : p.entryId, federation: p.federationId,
