@@ -2899,7 +2899,12 @@
       window.ARENA_JOIN_FEES = null;
       const marketReserve = !!(marketHere && marketHere.fee && marketHere.fee.reserveBps > 0);
       if (pays && ARENACLIENT.fetchFees && named.round.censusHeight !== undefined && (marketReserve || (ARENACLIENT.roundPaysReserves && ARENACLIENT.roundPaysReserves(named.round)))) {
-        const fs = await joinStep('fetchFees', () => ARENACLIENT.fetchFees({ nodes: named.nodes, height: Number(named.round.censusHeight) }));
+        // THE FEES AT A CENSUS HEIGHT DO NOT CHANGE (kanban #601: asked of the seats again for every order, part of the 280-520 ms before the lock):
+        // kept per height once the seats agreed, every next order of this page takes them at once
+        const feesKey = String(named.round.censusHeight);
+        const fs = (window.ARENA_FEES_KEPT || (window.ARENA_FEES_KEPT = new Map())).get(feesKey)
+          || await joinStep('fetchFees', () => ARENACLIENT.fetchFees({ nodes: named.nodes, height: Number(named.round.censusHeight) }));
+        if (fs.ok) window.ARENA_FEES_KEPT.set(feesKey, fs);
         if (!fs.ok) { window.ARENA_JOIN_REFUSED = 'the fees at this round could not be read: ' + fs.why; console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED); return; }
         named.round.feeSet = fs.fees;
         if (marketReserve) named.round.feeBps = ARENACLIENT.marketFeeBpsOf(fs.fees);
@@ -2910,7 +2915,11 @@
       let reservesHere = null;
       if (pays && donationSet && ARENACLIENT.roundPaysReserves && ARENACLIENT.roundPaysReserves(named.round)) {
         const fid = named.round.federationId;   // the entry's federation (on a round that takes any, the one the page chose)
-        const rk = await joinStep('fetchReserveKey', () => ARENACLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
+        // A FEDERATION'S RESERVE KEY, kept 10 minutes (kanban #601): a reserve epoch lasts far longer, and every order asked the seats again
+        const rkKey = Array.from(fid || [], (b) => b.toString(16).padStart(2, '0')).join('');
+        const rkKept = (window.ARENA_RESERVE_KEY_KEPT || (window.ARENA_RESERVE_KEY_KEPT = new Map())).get(rkKey);
+        const rk = rkKept && Date.now() - rkKept.atMs < 600000 ? rkKept.rk : await joinStep('fetchReserveKey', () => ARENACLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
+        if (rk.ok && !(rkKept && rkKept.rk === rk)) window.ARENA_RESERVE_KEY_KEPT.set(rkKey, { rk, atMs: Date.now() });
         if (!rk.ok) { window.ARENA_JOIN_REFUSED = 'this round pays the protocol reserves, and ' + rk.why; console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED); return; }
         const rd = ARENACLIENT.reservesDonationForRound(named.round);
         reservesHere = { ...rd, key: rk.key };
