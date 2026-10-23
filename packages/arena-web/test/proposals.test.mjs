@@ -76,6 +76,23 @@ test('a new proposal: the reserves and the cap, the amount checked as typed, the
   await out.submit({ preventDefault() {} }); assert.match(out.state.say, /^Open the Arena once first/);
 });
 
+test('a table: "how?" shows the rule and an example, Insert puts it into what the proposal does and opens the preview', async () => {
+  const { NewProposal, TABLE_EXAMPLE } = await import('../dist/test/proposals.mjs');
+  const props = { reserves: { sats: 1000, agreeing: 1, asked: 1 }, capPct: 10, types: [['#new', 'Payout']], hash: '#new', markdown: (s) => `<p>${s}</p>`, signedIn: true,
+    purposeLength: () => 0, onPublish: async () => ({ ok: true, say: '' }) };
+  const f = new NewProposal(props); f.setState = (u) => Object.assign(f.state, typeof u === 'function' ? u(f.state) : u);
+  const html = () => renderToStaticMarkup(React.createElement(React.Fragment, null, f.render()));
+  assert.match(html(), /tables <button type="button" class="linkish" id="pip-table-help" aria-expanded="false">how\?<\/button>/);
+  assert.doesNotMatch(html(), /pip-table-howto/);
+  f.state.tableHelp = true;
+  assert.match(html(), /<div class="mdhelp" id="pip-table-howto"><p>A table is one line per row, its cells between \| bars\. A second line of dashes makes the first row the header/);
+  assert.ok(html().includes('<pre>| What | Sats |\n| --- | --: |'), 'the example is not shown as typed');
+  f.state.content = '# My server';
+  f.insertTable();
+  assert.equal(f.state.content, '# My server\n\n' + TABLE_EXAMPLE + '\n');
+  assert.equal(f.state.preview, true);
+});
+
 test('change fees: the fees in force with their limits, only typed fees checked by the page\'s rule, a reason required, then published', async () => {
   const { FeesProposal } = await import('../dist/test/proposals.mjs');
   const feeVal = (k, v) => (k.endsWith('Bps') ? `${Number(v) / 100} %` : `${v} %`);

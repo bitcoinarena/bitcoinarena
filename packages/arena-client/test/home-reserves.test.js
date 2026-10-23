@@ -104,7 +104,7 @@ test('title, content and "how it improves Bitcoin Arena" round-trip through the 
   assert.deepEqual(parts(purpose), { title: 'A second relay', content: '## Plan\n\n| item | sat |\n|---|---:|\n| server | 800 |\n| domain | 200 |\n\n- **fast** and `cheap`', improves: 'Faster joins for every game.' });
   assert.deepEqual(parts('Old style title\nall of this is content'), { title: 'Old style title', content: 'all of this is content', improves: '' }, 'an older proposal');
   const html = markdown(parts(purpose).content);
-  assert.match(html, /<table><thead><tr><th>item<\/th><th>sat<\/th><\/tr><\/thead><tbody><tr><td>server<\/td><td>800<\/td><\/tr><tr><td>domain<\/td><td>200<\/td><\/tr><\/tbody><\/table>/);
+  assert.match(html, /<table><thead><tr><th>item<\/th><th class="al-right">sat<\/th><\/tr><\/thead><tbody><tr><td>server<\/td><td class="al-right">800<\/td><\/tr><tr><td>domain<\/td><td class="al-right">200<\/td><\/tr><\/tbody><\/table>/);
   assert.match(html, /<h4>Plan<\/h4>/); assert.match(html, /<li><b>fast<\/b> and <code>cheap<\/code><\/li>/);
   const evil = markdown('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://bitcoin-arena.io)\n\n| <b>a</b> |\n|---|\n| <script> |');
   assert.ok(!/<img|<script|<b>a|href="javascript/.test(evil), evil);
