@@ -117,6 +117,14 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   const after = { roles: want.sort(), custody: custody === undefined ? before.custody : !!custody };
   if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
   const advert = { ...now, roles: after.roles, guardianCapable: after.custody, timestamp: BigInt(Date.now()) };
+  const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post });
+  if (!sent.ok) return sent;
+  const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
+  return post ? { ok: true, plan, update: { txid: sent.txid } } : { ok: true, plan };
+}
+
+/** AN ADVERTISEMENT UPDATE OF `bond`, ITS CARRIER FUNDED FROM THE BOND WALLET: built, checked with testmempoolaccept, and with `post` sent. */
+function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post }) {
   const prepared = rt.prepareAdvertUpdate(secret, advert);
   const address = JSON.parse(cli('decodescript', toHex(prepared.spk))).address;
   let funded;
@@ -133,9 +141,33 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   const update = rt.postAdvertUpdate(prepared, { txid: bond.txid, vout: bond.vout }, { utxo: { txid: d.txid, vout: out.n, value: UPDATE_CARRIER_SATS }, feeSats: 1200n });
   const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([final.hex, update.hex])));
   if (!accept.every((a) => a.allowed)) return { ok: false, why: `the network would refuse it (${accept.map((a) => a['reject-reason']).filter(Boolean).join(', ')}); nothing was sent` };
-  const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: String(BigInt(Math.round(Number(funded.fee) * 1e8)) + 1200n), countsAfter: 6 };
-  if (!post) return { ok: true, plan };
+  const feeSats = String(BigInt(Math.round(Number(funded.fee) * 1e8)) + 1200n);
+  if (!post) return { ok: true, feeSats };
   cli('sendrawtransaction', final.hex);
   cli('sendrawtransaction', update.hex);
-  return { ok: true, plan, update: { txid: update.txid } };
+  return { ok: true, feeSats, txid: update.txid };
+}
+
+/**
+ * THE FEDERATIONS THIS NODE'S GUARDIANS SERVE, IN ITS ADVERTISEMENT (kanban #577, 2026-10-23: a founding's record lists the census nodes whose
+ * advertisements name the federation, and a seat set up by hand had to have that update posted by hand - the step that kept e2f42eea's
+ * founding from counting as hands-free): an advertisement update of the node's newest bond with guardian_of[] set to `guardianOf`
+ * ([{ federationId, guardianKey }] as bytes - every federation one of its guardians runs), funded from the bond wallet as the roles are.
+ * Answers { ok: false, same: true } when the advertisement says that already.
+ */
+export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, post = false }) {
+  const { regtest } = await import('../tools/regtest-bond.mjs');
+  const rt = regtest(cli, { network, wallet: wallet || 'arena' });
+  const bonds = rt.bondsOf(secret);
+  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
+  const bond = bonds[0];
+  const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
+  const key = (gs) => (gs || []).map((g) => `${toHex(g.federationId)}:${toHex(g.guardianKey)}`).sort().join(',');
+  const before = key(now.guardianOf), after = key(guardianOf);
+  if (before === after) return { ok: false, same: true, why: 'the advertisement names these guardians already' };
+  const advert = { ...now, guardianOf: guardianOf.map((g) => ({ federationId: g.federationId, guardianKey: g.guardianKey })), timestamp: BigInt(Date.now()) };
+  const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post });
+  if (!sent.ok) return sent;
+  const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
+  return post ? { ok: true, plan, update: { txid: sent.txid } } : { ok: true, plan };
 }
