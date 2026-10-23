@@ -16,3 +16,13 @@ export function receiptsNeeded(slots) {
   if (slots === 3) return 2;
   throw new Error(`no committee threshold for ${slots} slots`);
 }
+
+/**
+ * A FEDERATION'S OWN THRESHOLD over its guardian seats (§23A: "2f + 1 ... 7 of 10, 5 of 7, 3 of 4"; fedimint's own n - floor((n - 1) / 3)):
+ * what its reserve key needs (§27A.9.2, "the 5-of-7 key of its guardian seats"). Not a game committee's threshold (receiptsNeeded) -
+ * that one knows the committee sizes only, and a federation of the founding's ten got no reserve key from it (kanban #397, 2026-10-23).
+ */
+export function guardianThreshold(n) {
+  if (!Number.isInteger(n) || n < 1) throw new Error(`no guardian threshold for ${n} seats`);
+  return n - Math.floor((n - 1) / 3);
+}
