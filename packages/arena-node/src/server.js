@@ -677,6 +677,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // (kanban #576, measured 2026-10-23: every 5 s the sweep read the settlement state of all ~2,350 attested rounds a seat holds)
   const attestedDone = new Set();
   const NO_COUNTED_ENTRY_WAIT_MS = Number(process.env.ARENA_NO_ENTRY_SETTLE_WAIT_MS || 1800000);
+  // NOT THIS NODE'S TURN UNTIL A HEIGHT: the takeover order is the chain's (settlement.js turn: place k may combine at the
+  // beacon + 2k), so a round refused for its turn is asked again once the chain reaches the height its refusal names - not
+  // every 60 s before it can change (kanban #576). A round this node signed into (SUBMITTING) keeps the backoff: its ask
+  // looks in the federation whether the settlement went in.
+  const attestedTurnAt = new Map();   // round hex -> the height its turn can come
   const settleAttestedSoon = () => {
     if (attestedSweep || !settlements) return;
     let sweeping = false;
@@ -691,10 +696,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         .all().map((r) => new Uint8Array(r.round_id));
       const open = ids.map((rid) => ({ rid, k: toHex(rid) })).filter(({ k }) => !attestedDone.has(k));
       attestedWait.keep(new Set(open.map(({ k }) => k)));
-      let anyWaiting = false;
+      let anyWaiting = false, tipNow = NaN;
+      try { tipNow = typeof chainTip === 'function' ? Number(await chainTip()) : NaN; } catch { tipNow = NaN; }
       for (const { rid, k } of open) {
+        const turnAt = attestedTurnAt.get(k);
+        if (turnAt !== undefined) { if (!(tipNow >= turnAt)) { anyWaiting = true; continue; } attestedTurnAt.delete(k); }
         if (!attestedWait.due(k)) { anyWaiting = true; continue; }
-        if (stateOf(round, rid) === 'ACCEPTED') { attestedDone.add(k); attestedWait.clear(k); continue; }
+        const st = stateOf(round, rid);
+        if (st === 'ACCEPTED') { attestedDone.add(k); attestedWait.clear(k); continue; }
         anyWaiting = true;
         const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
         if (got && got.state && got.state !== 'HELD') console.log(`[outcome] ${k.slice(0, 16)} settlement: ${got.state} - ${got.why || ''}`);
@@ -703,6 +712,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (got && !got.ok && !got.state && got.why) {
           // a closed, attested round with no counted entry has nothing to claim and will not get an entry: its long wait
           attestedWait.refused(k, /^an attested round with no counted entry/.test(got.why) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
+          const takeover = /^not this signer node's turn to combine: .* may take over at height (\d+)/.exec(got.why);
+          if (takeover && st !== 'SUBMITTING') attestedTurnAt.set(k, Number(takeover[1]));
           const was = attestedWhy.get(k);
           if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
         } else attestedWait.clear(k);
