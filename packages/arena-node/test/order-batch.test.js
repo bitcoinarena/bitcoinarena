@@ -66,6 +66,14 @@ test('seven seats certify every batch of locked orders inside the interval: the 
     assert.deepEqual(w.nodes[1].orderBook.certify(w.rid, { record: held.record, sigs: held.sigs.map((s) => ({ ...s, signature: '00'.repeat(64) })) }), { ok: true, fresh: false });
     const other = w.nodes[1].orderBook.certify(w.rid, { record: { ...held.record, orders: held.record.orders.slice(1) }, sigs: held.sigs });
     assert.equal(other.ok, false);
+    // A CLOSED MARKET ASKS NOBODY (kanban #576): a batch after the close, with nothing pending here, sends no request at all
+    const kc = Math.floor(Number(w.c.entryCloseMs) / 1000) + 5;
+    const lc = w.nodes.find((d) => d.orderBook.leads(w.rid, kc));
+    const was = lc.orderBook.fetcher; let asked = 0;
+    lc.orderBook.fetcher = async (u, o) => { asked += 1; return was(u, o); };
+    assert.deepEqual(await lc.orderBook.lead(w.rid, kc), { ok: true, empty: true, decided: [] });
+    assert.equal(asked, 0, 'a closed market\'s leader asked its peers');
+    lc.orderBook.fetcher = was;
     // THE INTERVAL: certified at every seat, plus the seats' 100 ms grace after the cutoff, before the next cutoff
     assert.ok(results[1000].max + 100 < 1000, `1 s does not hold: max ${results[1000].max} ms`);
     console.log(`  INTERVAL: ${results[500].max + 100 < 500 ? '0.5 s HOLDS' : '0.5 s does NOT hold'} (certified max ${results[500].max} ms + 100 ms grace)`);
