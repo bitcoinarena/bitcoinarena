@@ -3136,7 +3136,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // backlog lasts (measured on a copy of second-host seat 2: 154,244 of 206,582 rounds unused and past their windows, 675 -> 199 MB; a pass of
   // 5,000 held the loop 1.0 s, so 1,000), then hourly; ARENA_LEAN_PRUNE=0 stops it
   const UNUSED_PASS = Number(process.env.ARENA_UNUSED_PASS || 1000);
-  let unusedAfter = 0, unusedIdleUntil = 0;
+  // THE FIRST LOOK WAITS (kanban #576, profiled 2026-10-23 01:49Z on a restarting test host seat: its first 45 s were 96 % busy, the
+  // unused-round passes 3.3 s of it - decoding every stored contract - on top of the catch-up from its peers): 5 min after start
+  let unusedAfter = 0, unusedIdleUntil = Date.now() + Number(process.env.ARENA_UNUSED_FIRST_MS || 300000);
   const unusedTally = { deleted: 0, rows: 0, passes: 0, lastAtMs: null, caughtUpAtMs: null };
   const unusedPass = () => {
     if (shuttingDown || process.env.ARENA_LEAN_PRUNE === '0' || Date.now() < unusedIdleUntil) return;
