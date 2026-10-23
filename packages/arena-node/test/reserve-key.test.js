@@ -88,3 +88,32 @@ test('seven guardian seats make a 5-of-7 reserve key: five sign, four do not, al
     assert.equal(r2.ok, false); assert.match(r2.why, /no passed vote/); assert.ok(s2 >= 400);
   } finally { await Promise.all(nodes.map((n) => n.close())); delete process.env.ARENA_RESERVE_DKG; }
 });
+
+// kanban #397 (2026-10-23): the founding's federations have ten guardians, and the committee rule gave them no reserve key
+// ("the threshold rule knows 7 (5) and 2 (2)"). The reserve key's threshold is the federation's own, 2f + 1 (§23A).
+test('the federation threshold: 7 of 10, 5 of 7, 3 of 4; ten guardian seats make a 7-of-10 reserve key that six cannot use', async () => {
+  const { guardianThreshold } = await import('../../arena-protocol/src/threshold.js');
+  assert.deepEqual([10, 9, 7, 6, 4, 3, 2, 1].map(guardianThreshold), [7, 7, 5, 5, 3, 3, 2, 1]);
+  process.env.ARENA_RESERVE_DKG = '0';
+  const nodes = [];
+  for (let i = 0; i < 10; i++) nodes.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, poolCurve: curve }));
+  try {
+    const members = sortKeys(nodes.map((n) => n.round.pubkey));
+    const peersOf = (n) => nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
+    for (let pass = 0; pass < 2; pass++) for (const n of nodes) await n.reserves.make(toHex(FED), members, peersOf(n));
+    const held = nodes.map((n) => n.reserves.dkgOf(toHex(FED)).signerNodeFor(members));
+    for (const h of held) assert.equal(h.ok, true, h.why);
+    const key = held[0].pool.groupPublicKey;
+    assert.ok(held.every((h) => toHex(h.pool.groupPublicKey) === toHex(key)), 'one key on all ten');
+    const signWith = (chosen) => {
+      const message = rand(32);
+      const nonces = chosen.map((h) => ({ hiding: nonceGenerate(rand(32), h.signerNode.share), binding: nonceGenerate(rand(32), h.signerNode.share) }));
+      const commitments = chosen.map((h, i) => ({ id: h.signerNode.id, hiding: curve.pointFromScalar(nonces[i].hiding), binding: curve.pointFromScalar(nonces[i].binding) }));
+      const shares = chosen.map((h, i) => signShare340({ id: h.signerNode.id, share: h.signerNode.share, groupPublicKey: key, nonces: nonces[i], message, commitments, curve }));
+      return schnorr.verify(aggregate340({ commitments, message, groupPublicKey: key, shares, curve }).signature, message, key.subarray(1));
+    };
+    assert.equal(signWith(held.slice(0, 7)), true, 'seven of ten sign');
+    assert.equal(signWith(held.slice(3, 10)), true, 'any seven');
+    assert.equal(signWith(held.slice(0, 6)), false, 'six of ten do not');
+  } finally { await Promise.all(nodes.map((n) => n.close())); delete process.env.ARENA_RESERVE_DKG; }
+});
