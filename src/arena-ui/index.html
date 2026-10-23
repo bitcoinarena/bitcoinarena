@@ -3687,6 +3687,10 @@
       if (did.length) console.log('[arena] collect: ' + did.length + ' record(s) of the last 72 h marked done looked at again once: ' + did.join(', '));
     }
     let payoutAskingSince = 0;
+    // A RESCAN IS WAITING (kanban #595, the owner 2026-10-23: "Das ist immer beim 1. mal stuck bei 1%, nach einem reload geht es dann"):
+    // the first collect pass after a load walks every open record, and the Rescan waited for all of it at 1 %. The pass now stops
+    // after the record it is on, and the Rescan, which looks at every record anyway, goes on from there.
+    let rescanWanted = false;
     // A STAKE OWED BACK, BY ROUND, UNTIL IT IS COLLECTED (comment 583): the signer nodes' forfeit or the refund
     // by the player's key, as the last look of a round not done saw it. The pending chip counts winnings from /standing
     // only; a stake coming back is on no chip until WINNINGS-AUTO has collected it into the player wallet - and while that
@@ -3797,6 +3801,7 @@
       const pauseOf = lookThePayout.pause || (lookThePayout.pause = new Map());
       for (const older of keptRecords().collectable
         .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && backKey(r) !== backKey(newest) && !((pauseOf.get(backKey(r)) || {}).until > Date.now()))) {
+        if (rescanWanted) break;
         try {
           // ANOTHER KEPT PHRASE'S RECORD: looked at and collected only while this tab holds that phrase (withRecordPhrase)
           const res = await withRecordPhrase(older, async () => {
@@ -3825,6 +3830,7 @@
           else { collectHeld.delete(older.roundIdHex); collectFailed.delete(older.roundIdHex); }
         } catch (e) { collectFailed.set(older.roundIdHex, e.message); collectHeld.delete(older.roundIdHex); console.error('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
       }
+      if (rescanWanted) { payoutAsking = false; payoutAskingSince = 0; return; }
       try {
         // THE NEWEST RECORD MAY BE ANOTHER KEPT PHRASE'S: the whole look and collect runs while this tab holds
         // that phrase (withRecordPhrase), into that seed's own wallet (roundAsk hands it r.seed)
@@ -3870,7 +3876,12 @@
     // once, one after another, what is owed collected into the player wallet as the collect does; `onStep({ pct, line })` hands the
     // progress to Settings' card. The collect's own pass waits meanwhile. Answers { line, rows, collectedMsat, waitingMsat }.
     window.ARENA_RESCAN = async (onStep = () => {}) => {
-      while (payoutAsking) await new Promise((r) => setTimeout(r, 500));
+      rescanWanted = true;
+      if (payoutAsking) onStep({ pct: 1, line: 'Rescanning… the automatic collect finishes the order it is on first' });
+      // at most 90 s: a step that does not return (a seat that never answers) holds the Rescan no longer - the federation spends a lock
+      // once, so a look of the same record in both reads it gone in the second
+      const waitedFrom = Date.now();
+      try { while (payoutAsking && Date.now() - waitedFrom < 90000) await new Promise((r) => setTimeout(r, 500)); } finally { rescanWanted = false; }
       payoutAsking = true; payoutAskingSince = Date.now();
       const sat = (msat) => Math.floor(Number(msat) / 1000).toLocaleString('en-US') + ' sat';
       try {
