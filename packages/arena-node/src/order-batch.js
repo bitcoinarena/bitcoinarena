@@ -108,7 +108,12 @@ export class OrderBook {
   /** The orders of a round that are tradable here: entries with a limit price whose two locks this seat verified. */
   #syncTradable(roundIdBytes) {
     const put = this.db.prepare('INSERT OR IGNORE INTO market_orders (order_id, round_id, body, received_ms, batch) VALUES (?, ?, ?, ?, NULL)');
-    for (const { entryId, entry } of this.round.entriesOf(roundIdBytes)) {
+    // ONLY THE ENTRIES NOT IN THE BOOK YET (kanban #576, profiled 2026-10-23 00:5xZ on test host seat 1: every batch proposal decoded
+    // every entry of the round and read both its locks, 2.7 s of processor in 90 s, for rows the insert then ignored)
+    const fresh = this.db.prepare('SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) '
+      + 'AND lower(hex(entry_id)) NOT IN (SELECT order_id FROM market_orders WHERE round_id = ?) ORDER BY entry_id').all(roundIdBytes, Buffer.from(roundIdBytes));
+    for (const r of fresh) {
+      const entryId = new Uint8Array(r.entry_id), entry = decodeEntryContract(new Uint8Array(r.contract));
       if (!isOrder(entry)) continue;
       const stake = this.round.stakeLock(entryId);
       const fee = this.round.feeLock ? this.round.feeLock(entryId) : null;
