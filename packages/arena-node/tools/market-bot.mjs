@@ -114,7 +114,10 @@ async function openWindows() {
       // `next=2`: at most two upcoming rounds of each series - not every round the seat holds (measured 2026-10-22 23:00Z: ten bots
       // asking the whole listing, ~1,500 rounds, every minute put the test host at load 26); the same query from every bot is cached at the seat
       const rows = ((await getJson(`${n}/rounds?next=2&ahead=${WINDOW_MS * 2}`, 15000)).rounds || [])
-        .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs && Number(r.entryCloseMs) - now > AHEAD_MS)
+        // open until its entry closes or its window ends, whichever is first (measured 2026-10-23 07:47Z: the 07:30 window's round,
+        // its entry close still ahead, refused every order two minutes past 07:45 - "the round is closed")
+        .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs
+          && Math.min(Number(r.entryCloseMs), Number(r.windowStartMs) + WINDOW_MS) - now > AHEAD_MS)
         .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)));
       return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
     } catch (e) { say({ step: 'rounds', seat: n, why: e.message }); }
