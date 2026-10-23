@@ -253,5 +253,27 @@ export function sandboxFor(core, options) {
     cache.set(key, s);
   }
   if (s.refused) throw new Error(s.refused);
+  askedAt.set(key, Date.now());
+  if (!sweeper && CORE_IDLE_MS > 0) { sweeper = setInterval(() => endIdleCores(CORE_IDLE_MS), 60000); sweeper.unref(); }
   return s;
+}
+
+// AN IDLE CORE'S THREAD IS ENDED, and loaded again on its next ask (kanban #576, measured 2026-10-23 03:5xZ on test host seat 1:
+// RSS 1,139 MB of which the node's own heap was 212 MB - the rest mostly the 11 worker threads, one isolate per core of every
+// game version it hosts, each kept for the life of the process though most versions are seldom played). Every caller asks
+// sandboxFor() for each use, so nothing holds an ended core.
+const CORE_IDLE_MS = Number(process.env.ARENA_CORE_IDLE_MS || 15 * 60000);
+const askedAt = new Map();
+let sweeper = null;
+/** End every loaded core not asked for in `idleMs`; answers how many were ended. */
+export function endIdleCores(idleMs = CORE_IDLE_MS) {
+  const now = Date.now();
+  let ended = 0;
+  for (const [key, at] of [...askedAt]) {
+    if (now - at < idleMs) continue;
+    const s = cache.get(key);
+    askedAt.delete(key); cache.delete(key);
+    if (s && typeof s.end === 'function') { try { s.end(); ended += 1; } catch { /* already gone */ } }
+  }
+  return ended;
 }
