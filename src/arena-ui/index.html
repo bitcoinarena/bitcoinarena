@@ -2545,6 +2545,41 @@
     // 'locking' 2.27 s, 1.2 s of it fetchSettlementSignerNodes and then the claim key. Kept per round, the promises; a
     // failure or a key not attested yet is not kept, so the join then asks as before (with its own waiting line).
     const ROUND_PREP = new Map();
+    // THE NEXT ORDER'S STAKE, DEALT AHEAD (kanban #601, "below 300ms on web"; measured on UI 344: dealing it was ~80 ms of CPU after every
+    // press): a market round's stake depends on its signer nodes and the order's own player key only - not on the amount - so the stake of
+    // this tab's next order number is dealt while the round is shown, and the join takes it (once: `takeStake`). Only for a tab that holds
+    // a seed already; nothing dealt here is sent anywhere until a join hands it out.
+    const STAKE_PREP = new Map();
+    function prepStake(roundIdHex, round, nodes) {
+      try {
+        if (!window.sessionStorage.getItem('arena.player.seed') || !ARENACLIENT.roundLocks(round)) return;
+        const order = Number(window.sessionStorage.getItem('arena.order.next.' + roundIdHex) || 0) || 0;
+        const random = (n) => crypto.getRandomValues(new Uint8Array(n));
+        const seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random });
+        const withId = Object.assign({}, round, { id: ARENACLIENT.fromHex(roundIdHex) });
+        const player = ARENACLIENT.playerFor(withId, { seed, curve: window.ARENA_CURVE, order });
+        const key = roundIdHex + ':' + ARENACLIENT.toHex(player.pubkey);
+        if (STAKE_PREP.has(key)) return;
+        const p = prepRound(roundIdHex, round, nodes).signer.then((sn) => ARENACLIENT.stakeFor(withId, {
+          signerNodes: sn.signerNodes, curve: window.ARENA_CURVE, random, playerPubkey: player.pubkey,
+          needed: ARENACLIENT.sharesNeededFor(round), confirmedGames: typeof confirmedMarkets === 'function' ? confirmedMarkets() : null,
+        }).then((stake) => ({ stake, signerKeys: sn.signerNodes.map((k) => ARENACLIENT.toHex(k.key || k)).join(',') })));
+        p.catch(() => { if (STAKE_PREP.get(key) === p) STAKE_PREP.delete(key); });
+        STAKE_PREP.set(key, p);
+      } catch { /* the join deals it itself */ }
+    }
+    // the stake dealt ahead for this round and player, once, when it was dealt to these signer nodes - else null
+    async function takeStake(roundIdHex, playerPubkey, signerNodes) {
+      const key = roundIdHex + ':' + ARENACLIENT.toHex(playerPubkey);
+      const p = STAKE_PREP.get(key);
+      if (!p) return null;
+      STAKE_PREP.delete(key);
+      try {
+        const got = await p;
+        return got.signerKeys === signerNodes.map((k) => ARENACLIENT.toHex(k.key || k)).join(',') ? got.stake : null;
+      } catch { return null; }
+    }
+    window.ARENA_PREP_STAKE = prepStake;
     function prepRound(roundIdHex, round, nodes) {
       const known = ROUND_PREP.get(roundIdHex);
       if (known) return known;
@@ -2739,9 +2774,26 @@
       // an ORDER's own key: its number from the market's order call; a game's entry or a single pick is 0
       // THE COMMITTEE'S PRICE for this round's run, from its seats (§11): read from now on, applied at its ticks
       if (window.ARENA_PRICES) window.ARENA_PRICES.watch(named.roundIdHex, named.nodes);
-      const player = ARENACLIENT.playerFor(
-        Object.assign({}, named.round, { id: ARENACLIENT.fromHex(named.roundIdHex) }),
-        { seed, curve: window.ARENA_CURVE, order: Number((pickFor(named.roundIdHex) || {}).orderIndex) || 0 });
+      const roundWithId = Object.assign({}, named.round, { id: ARENACLIENT.fromHex(named.roundIdHex) });
+      let player = ARENACLIENT.playerFor(roundWithId, { seed, curve: window.ARENA_CURVE, order: Number((pickFor(named.roundIdHex) || {}).orderIndex) || 0 });
+      // AN ORDER NUMBER ALREADY USED IS SKIPPED (playtest 2026-10-23 23:13: "Order not placed: this tab's stake in this round is already locked
+      // and committed to entry 4f02…" - the tab's order counter is sessionStorage, and after a reload it began at 0 again, the key of an
+      // order already placed): a market order whose number holds a lock some seat committed takes the next free number
+      { const chosenNow = pickFor(named.roundIdHex);
+        if (chosenNow && chosenNow.limitPrice && ARENACLIENT.roundLocks(named.round)) {
+          let i = Number(chosenNow.orderIndex) || 0;
+          for (let n = 0; n < 200; n++, i++) {
+            const k = ARENACLIENT.savedLock(vault(), { roundId: roundWithId.id, playerPubkey: player.pubkey });
+            if (!k || !k.committedTo) break;
+            player = ARENACLIENT.playerFor(roundWithId, { seed, curve: window.ARENA_CURVE, order: i + 1 });
+          }
+          if (i !== (Number(chosenNow.orderIndex) || 0)) {
+            console.log('[arena] order number ' + chosenNow.orderIndex + ' is taken in this round: this order is number ' + i);
+            chosenNow.orderIndex = i;
+            try { window.sessionStorage.setItem('arena.order.next.' + named.roundIdHex, String(i + 1)); } catch { /* this order only */ }
+          }
+        }
+      }
       // WHAT THIS TAB ALREADY DONATED TO THIS ROUND, FROM ITS NOTES, before any
       // signer node (M3.2 6e): the panel shows it even if the signer node is refused later;
       // payDonation's own answer replaces it when it comes.
@@ -3174,7 +3226,9 @@
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
-        stake = reuse ? reuse.stake : await ARENACLIENT.stakeFor(
+        const dealtAhead = reuse ? null : await takeStake(named.roundIdHex, player.pubkey, signerNodes.signerNodes);
+        if (dealtAhead) console.log('[arena] join: the stake dealt ahead for this order is taken');
+        stake = reuse ? reuse.stake : dealtAhead || await ARENACLIENT.stakeFor(
           Object.assign({}, named.round, { id: ARENACLIENT.fromHex(named.roundIdHex) }), {
             signerNodes: signerNodes.signerNodes, curve: window.ARENA_CURVE, random, playerPubkey: player.pubkey,
             needed: ARENACLIENT.sharesNeededFor(named.round), confirmedGames: confirmedMarkets(),
@@ -3188,9 +3242,17 @@
         // The posting and the threshold are in `arena-client` for the reason
         // `roundPays` is: this file is the one `node --test` cannot load.
         // A kept stake's handout was taken by the signer nodes before its lock was made.
-        const put = reuse ? { ok: true, accepted: signerNodes.signerNodes.length, refused: [] }
-          : await joinStep('postHandout', () => ARENACLIENT.postHandout(stake, named.nodes, { needed: ARENACLIENT.sharesNeededFor(named.round) }));
-        window.ARENA_HANDED_OUT = put.posted || null;   // the seats still answering: each gets its entry after its handout (kanban #601)
+        // A MARKET ORDER'S LOCK DOES NOT WAIT FOR THE HANDOUT (kanban #601, "below 300ms on web"; measured on UI 344: the handout 71-121 ms,
+        // then the lock 45 ms, one after the other): both go at once, each seat gets the entry after its own handout, and an order fewer
+        // seats than needed took the handout of is refused after it was sent (its lock comes back as an unused lock does)
+        const handedOut = {};
+        const putP = reuse ? Promise.resolve({ ok: true, accepted: signerNodes.signerNodes.length, refused: [] })
+          : joinStep('postHandout', () => ARENACLIENT.postHandout(stake, named.nodes, { needed: ARENACLIENT.sharesNeededFor(named.round), out: handedOut }))
+            .catch((e) => ({ ok: false, accepted: 0, refused: [], why: 'the handout: ' + (e && e.message ? e.message : e) }));
+        window.ARENA_HANDED_OUT = handedOut.posted || null;   // the seats still answering: each gets its entry after its handout
+        window.ARENA_HANDOUT_DONE = putP;
+        const deferHandout = !!(pickFor(named.roundIdHex) && pickFor(named.roundIdHex).limitPrice);
+        const put = deferHandout ? { ok: true, accepted: '(being answered)', refused: [] } : await putP;
         if (!put.ok) {
           window.ARENA_JOIN_REFUSED = put.why;
           console.error('[arena] join refused: ' + window.ARENA_JOIN_REFUSED);
@@ -3454,6 +3516,9 @@
         } });
         console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status))
           + (sent.ok ? ' - placed in ' + Math.round(performance.now() - t0) + ' ms' : ''));
+        // THE HANDOUT'S WORD, NOW (a market order sent beside it): fewer seats than needed hold the stake - the order is refused
+        { const put = await (window.ARENA_HANDOUT_DONE || Promise.resolve({ ok: true }));
+          if (!put.ok && sent.ok) { sent.ok = false; sent.why = 'not accepted: ' + put.why; sent.entries = sent.entries.map((x) => ({ ...x, status: x.status === 201 ? 0 : x.status })); } }
         if (!sent.entries.some((x) => x.status === 201) || (sent.why && /not accepted/.test(sent.why))) {
           if (early) { try { window.sessionStorage.setItem('arena.market.picks', JSON.stringify(readPicks().filter((x) => x.entryIdHex !== early))); } catch { /* this page only */ } }
           window.ARENA_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return;
@@ -3462,6 +3527,7 @@
         { const from = window.ARENA_ORDER_PRESSED_AT || t0;
           tookNote((submittedAt !== null ? 'Order submitted in ' + secs(submittedAt) + ' · ' : '') + (sent.ok ? 'placed in ' + secs(performance.now() - from) : 'placing on the other seats …'), true); }
         rememberPick(recordOf(sent.entryId, sent.ok ? 'placed' : 'submitted'));
+        setTimeout(() => prepStake(named.roundIdHex, named.round, named.nodes), 0);   // the next order's stake, dealt now (kanban #601)
         return;
       }
       // THE ITEMS THIS RUN PLAYS WITH: on a round of version 10 or later whose game sells items, the ones this
@@ -6023,6 +6089,8 @@
               signers = [...new Set(((row && row.said) || []).filter((c) => c && c.node && keys.has(c.key)).map((c) => c.node))];
             } catch { signers = []; }
             const nodes = signers.length ? signers : (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : []);
+            // the round on screen: its next order's stake dealt ahead (kanban #601)
+            try { if (row && row.contract && window.ARENA_ROW_NODES) { const all = window.ARENA_ROW_NODES(id); if (all && all.length) { prepRound(id, row.contract, all); window.ARENA_PREP_STAKE(id, row.contract, all); } } } catch { /* the join deals it */ }
             const ask = (n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
               .then((r) => (r.ok ? r.json() : null)).catch(() => null);
             const size = (b) => (b ? (b.batches || []).length + (b.positions || []).length + ((b.levels && b.levels.buys) || []).length + ((b.levels && b.levels.sells) || []).length : -1);
@@ -6917,6 +6985,9 @@
         for (const r of (window.ARENA_LOBBY || [])) {
           if (r.free || !r.raw || !r.raw.contract || !ARENACLIENT.roundLocks(r.raw.contract)) continue;
           try { prepRound(r.id, r.raw.contract, (testnet ? testnet.named : named).nodes); } catch { /* the join asks itself */ }
+          if (r.raw.contract.market || ARENACLIENT.marketForRound(r.raw.contract)) prepStake(r.id, r.raw.contract, (testnet ? testnet.named : named).nodes);
+          // the round as the join reads it, read now (kanban #601: ~100 ms of every order's press)
+          try { ARENACLIENT.joinFromQuery(ARENACLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id)).catch(() => {}); } catch { /* the join reads it itself */ }
         }
         // A HEAD-TO-HEAD GAME'S TABLES (measured: a paid tap read the round's donation set, signer nodes and claim
         // key after the tap - ~2.7 s of it): every paid table of the slot on screen and the next one is read now, while it is
