@@ -1639,7 +1639,12 @@
     };
     const closeIt = (k) => { const n = (closedTimes.get(k) || 0) + 1; closedTimes.set(k, n); closedUntil.set(k, Date.now() + (n > 1 ? 1800000 : 300000)); };
     window.ARENA_CLOSED_ROUTES = () => [...closedUntil].filter(([, t]) => t > Date.now()).map(([k, t]) => k + ' until ' + new Date(t).toISOString().slice(11, 19));
+    // AN http:// NODE FROM AN https:// PAGE IS NEVER ASKED (kanban #594, the owner's console 2026-10-23: ~150 "Mixed Content ...
+    // requested an insecure resource" a load - test nodes advertising http://198.51.100.7:65xx): the browser blocks it anyway and
+    // says so in the console each time; here it fails at once, silently, as a closed route does. Loopback stays allowed.
+    const insecure = (u) => { try { const x = new URL(String(u), location.href); return location.protocol === 'https:' && x.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(x.hostname); } catch { return false; } };
     async function guardedFetch(url, input, init) {
+      if (insecure(url)) throw new TypeError('not asked: an http:// node from an https:// page');
       const k = closeKey(url);
       if (k && (closedUntil.get(k) || 0) > Date.now()) throw new TypeError('not asked: ' + k + ' did not answer a moment ago');
       try {
