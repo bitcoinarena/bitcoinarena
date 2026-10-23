@@ -2616,6 +2616,20 @@
     }
     window.ARENA_HIDDEN_MOVES = readHidden;
     // ---------------------------------------------------------------- markets (§0A.7a): Up/Down's page part, packages/btc-updown/page/market-page.js (kanban #521)
+    // AN ORDER'S SESSION KEY FROM THE WALLET (kanban #592: "orders follow the wallet, not the tab"): the Ed25519 secret is
+    // SHA-256("arena/order-session/v1" || seed || round id || order number, 4 bytes big-endian) - every tab and device holding the
+    // seed makes the same key, so an order is cancelled and its shares sold from any of them, also after a reload. Before, the key was
+    // random and kept in the tab alone: an order read back from the seats could be neither cancelled nor sold. Answers { pkcs8Hex, pub }.
+    window.ARENA_ORDER_SESSION_KEY = async function orderSessionKey(seed, roundIdHex, order) {
+      const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, Number(order) >>> 0, false);
+      const msg = new Uint8Array([...new TextEncoder().encode('arena/order-session/v1'), ...seed, ...ARENACLIENT.fromHex(roundIdHex), ...n]);
+      const secret = new Uint8Array(await crypto.subtle.digest('SHA-256', msg));
+      const pkcs8 = new Uint8Array([...ARENACLIENT.fromHex('302e020100300506032b657004220420'), ...secret]);
+      const priv = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign']);
+      const x = (await crypto.subtle.exportKey('jwk', priv)).x;
+      const pub = Uint8Array.from(atob(x.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (x.length % 4)) % 4)), (c) => c.charCodeAt(0));
+      return { pkcs8Hex: ARENACLIENT.toHex(pkcs8), pub };
+    };
     async function joinTheRoundIfOneWasNamed() {
       if (typeof ARENACLIENT === 'undefined') return;
       const thisJoin = window.ARENA_JOIN || null;   // the lobby's join this call makes (null for a round link)
@@ -3365,10 +3379,15 @@
         // a session key of its own, Ed25519 as a run's, that signs nothing - a pick sends no mark
         let sessionPubkey = random(32), sessionKeyPkcs8 = null;
         try {
-          const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
-          sessionPubkey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
-          // AN ORDER'S KEY IS KEPT: it signs the order's cancel and its sell (protocol cancelId / sellId)
-          if (chosen.limitPrice) sessionKeyPkcs8 = ARENACLIENT.toHex(new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey)));
+          // AN ORDER'S KEY, FROM THE WALLET (kanban #592): it signs the order's cancel and its sell (protocol cancelId / sellId);
+          // kept with the order too, and made again from the seed wherever it is not
+          if (chosen.limitPrice) {
+            const k = await window.ARENA_ORDER_SESSION_KEY(seed, named.roundIdHex, Number(chosen.orderIndex) || 0);
+            sessionPubkey = k.pub; sessionKeyPkcs8 = k.pkcs8Hex;
+          } else {
+            const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+            sessionPubkey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+          }
         } catch { /* a browser without WebCrypto Ed25519: random bytes, as no mark is ever checked against them */ }
         if (chosen.limitPrice && !sessionKeyPkcs8) { window.ARENA_JOIN_REFUSED = 'this browser cannot make the Ed25519 key an order is cancelled with'; return; }
         const entry = keptEntry || Object.assign(ARENACLIENT.entryFor(
@@ -5875,7 +5894,15 @@
         // A MARKET'S CLIENT: place an order (the pick at most this price of the scale) through the same join and
         // lock as a pick; the round's cleared book; this tab's orders; cancel one (signed with its kept session key, posted to
         // every seat of its round). Which outcome is which, and how a price is shown, is the client's.
-        market: game.attested ? {
+        market: game.attested ? (() => {
+          // THE KEY AN ORDER IS CANCELLED AND SOLD WITH: the one kept with it, else made again from this tab's wallet seed (kanban #592)
+          const orderKeyOf = async (x) => {
+            if (x.order.sessionKeyPkcs8) return x.order.sessionKeyPkcs8;
+            let seed = null;
+            try { if (window.sessionStorage.getItem('arena.player.seed')) seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { seed = null; }
+            return seed ? (await window.ARENA_ORDER_SESSION_KEY(seed, x.roundIdHex, Number(x.order.index) || 0)).pkcs8Hex : null;
+          };
+          return {
           // `stakeMsat`: the order's own amount, msat - from 1 sat to the cap (order-book.js); none: the round's stake
           order: (id, pick, limitPrice, orderExpiryMs = 0, stakeMsat = null) => {
             // EACH ORDER ITS OWN PLAYER KEY (measured by the bots: a tab's second order in a round took the
@@ -5921,13 +5948,14 @@
           // an old order read back from the seats is left out while its result is read (marketViewLines)
           orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && x.gameId === game.id && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
             limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled,
-            canSell: !!x.order.sessionKeyPkcs8, sells: x.order.sells || [] })); },
+            canSell: true, sells: x.order.sells || [] })); },
           cancel: async (entryIdHex) => {
             const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
             if (!x) return { ok: false, why: 'this tab placed no such order' };
             // A RESTORED ORDER: read back from the seats, without the session key it is cancelled with
-            if (!x.order.sessionKeyPkcs8) return { ok: false, why: 'this order was read back from the seats; it can be cancelled only in the tab that placed it' };
-            const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(x.order.sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']);
+            const pk8 = await orderKeyOf(x);
+            if (!pk8) return { ok: false, why: 'this browser holds no wallet seed to make the order\'s key with' };
+            const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(pk8), { name: 'Ed25519' }, false, ['sign']);
             const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, ARENACLIENT.orderCancelId({ roundId: ARENACLIENT.fromHex(x.roundIdHex), entryId: ARENACLIENT.fromHex(entryIdHex) })));
             const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig })
               .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
@@ -5943,13 +5971,14 @@
           sell: async (entryIdHex, outcome, price, sharesMsat) => {
             const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
             if (!x) return { ok: false, why: 'this tab placed no such order' };
-            if (!x.order.sessionKeyPkcs8) return { ok: false, why: 'this order was read back from the seats; its shares can be sold only in the tab that bought them' };
+            const pk8 = await orderKeyOf(x);
+            if (!pk8) return { ok: false, why: 'this browser holds no wallet seed to make the order\'s key with' };
             if (outcome !== 0 && outcome !== 1) return { ok: false, why: 'a sell sells outcome 0 or 1' };
             let id;
             const nonce = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
             try { id = ARENACLIENT.orderSellId({ roundId: ARENACLIENT.fromHex(x.roundIdHex), entryId: ARENACLIENT.fromHex(entryIdHex), outcome, price: BigInt(price), sharesMsat: BigInt(sharesMsat), nonce }); }
             catch (e) { return { ok: false, why: e.message }; }
-            const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(x.order.sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']);
+            const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(pk8), { name: 'Ed25519' }, false, ['sign']);
             const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, id));
             const body = JSON.stringify({ entry: entryIdHex, outcome, price: String(price), sharesMsat: String(sharesMsat), nonce: String(nonce), signature: ARENACLIENT.toHex(sig) });
             const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/sell?round=' + x.roundIdHex, { method: 'POST', body })
@@ -5959,7 +5988,7 @@
             if (ok) { x.order.sells = [...(x.order.sells || []), { id: sellIdHex, outcome, price: String(price), sharesMsat: String(sharesMsat), atMs: Date.now() }]; rememberPick(x); }
             return { ok, seats, id: sellIdHex };
           },
-        } : null,
+        }; })() : null,
         state: () => ({ join: window.ARENA_JOIN || null, picks: (ARENACLIENT.marketLines && window.ARENA_MARKET_LINES) ? window.ARENA_MARKET_LINES() : [] }),
         back: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
           location.search = q.toString(); },
