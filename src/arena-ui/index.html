@@ -3418,11 +3418,28 @@
           chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0, state } } : {});
         const t0 = performance.now();
         let early = null;
+        // HOW LONG IT TOOK, SHOWN (the owner 2026-10-23 ~20:35Z: "In der Web ui wenn die Order [placed] wurde sag wie lange das gedauert hat - Bei btc
+        // up down"): a note at the foot of the page - submitted in N s, then placed in N s - over the market's own client, gone after 6 s
+        const tookNote = (text, done) => {
+          let el = document.getElementById('arena-order-took');
+          if (!el) {
+            el = document.createElement('div'); el.id = 'arena-order-took'; el.setAttribute('role', 'status');
+            el.style.cssText = 'position:fixed;left:50%;bottom:calc(44px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:60;'
+              + 'background:#11161d;color:#e8edf3;border:1px solid #f7931a;border-radius:999px;padding:7px 14px;font:600 13px system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none';
+            document.body.appendChild(el);
+          }
+          el.textContent = text; el.style.display = '';
+          clearTimeout(tookNote.timer); if (done) tookNote.timer = setTimeout(() => { el.style.display = 'none'; }, 6000);
+        };
+        const secs = (ms) => (ms / 1000).toFixed(2).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m)) + ' s';
+        let submittedAt = null;
         const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onSubmitted: (x) => {
           early = x.entryId;
           window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: x.entryId, pick: chosen.pick, state: 'submitted' };
           rememberPick(recordOf(x.entryId, 'submitted'));
           console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': submitted in ' + Math.round(performance.now() - t0) + ' ms');
+          submittedAt = performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0);   // from the press (market.order), else from here
+          tookNote('Order submitted in ' + secs(submittedAt) + ' · placing …', false);
         } });
         console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status))
           + (sent.ok ? ' - placed in ' + Math.round(performance.now() - t0) + ' ms' : ''));
@@ -3431,6 +3448,8 @@
           window.ARENA_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return;
         }
         window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, state: sent.ok ? 'placed' : 'submitted' };
+        { const from = window.ARENA_ORDER_PRESSED_AT || t0;
+          tookNote((submittedAt !== null ? 'Order submitted in ' + secs(submittedAt) + ' · ' : '') + (sent.ok ? 'placed in ' + secs(performance.now() - from) : 'placing on the other seats …'), true); }
         rememberPick(recordOf(sent.entryId, sent.ok ? 'placed' : 'submitted'));
         return;
       }
@@ -5971,6 +5990,7 @@
           return {
           // `stakeMsat`: the order's own amount, msat - from 1 sat to the cap (order-book.js); none: the round's stake
           order: (id, pick, limitPrice, orderExpiryMs = 0, stakeMsat = null) => {
+            window.ARENA_ORDER_PRESSED_AT = performance.now();   // the press: what the order's note counts from (kanban #601)
             // EACH ORDER ITS OWN PLAYER KEY (measured by the bots: a tab's second order in a round took the
             // first one's saved lock - "that fee lock holds 510 msat and the entry's fee is 490"): this tab's orders in a round
             // are numbered 0, 1, 2 ... - the first is the round's key as before - and every order is its own entry, lock,
