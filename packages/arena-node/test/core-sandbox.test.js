@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { sandboxFor } from '../src/core-sandbox.js';
+import { sandboxFor, endIdleCores } from '../src/core-sandbox.js';
 import { replay } from '../src/replay.js';
 
 const DIR = mkdtempSync(join(tmpdir(), 'hostile-core-'));
@@ -139,6 +139,19 @@ test('the census: what a sandboxed core finds on its global object', () => {
   assert.equal(census.prepare.writable, false);
   console.log('CENSUS ' + JSON.stringify(census.names));
   console.log('CENSUS-ABSENT ' + JSON.stringify(FORBIDDEN));
+});
+
+// kanban #576: an idle core's thread is ended (its isolate's memory goes with it) and the next ask loads it again
+test('an idle core is ended and loaded again on its next ask', () => {
+  const c = core({ step: 'st.note = String(w[0] + w[4])' });
+  const a = sandboxFor(c);
+  assert.equal(endIdleCores(60000), 0, 'a core asked just now is not idle');
+  assert.ok(endIdleCores(0) >= 1);
+  assert.throws(() => a.call('meta'), /ended by the node/);
+  const b = sandboxFor(c);
+  assert.notEqual(b, a, 'the next ask loads the core again');
+  const out = b.call('replay', { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[3, 0, 0, 0, 4]], events: {}, marks: [], pictures: [] });
+  assert.match(out.stateHash, /^h:/);
 });
 
 test('a good core still replays after every attack, and the report', async () => {
