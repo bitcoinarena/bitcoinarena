@@ -17,8 +17,14 @@ const nodes = Array.from({ length: 9 }, (_, i) => { const secret = new Uint8Arra
 const signer = (n) => (m) => schnorr.sign(m, n.secret);
 const START = 60500n;
 const NOW = Number(START) - 150000;            // inside the PRESENT window, before seating_close (start - 120 s)
+// a certificate of the seating every node makes from all nine PRESENTs, signed by its seated
+const certFor = (rid, role) => {
+  const seated = seatedFrom({ drawn: nodes.map((n) => n.pubkey), present: nodes.map((n) => n.pubkey), slots: 7 });
+  return encodeSeatingCertificate({ roundId: rid, role, seated,
+    signatures: seated.map((k) => ({ nodePubkey: k, signature: signSeating({ roundId: rid, role, seated }, signer(nodes.find((n) => toHex(n.pubkey) === toHex(k)))) })) });
+};
 
-function world({ withhold = null, leftNode = () => false } = {}) {
+function world({ withhold = null, leftNode = () => false, now = NOW, servesCert = false } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
   const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START };
@@ -40,11 +46,12 @@ function world({ withhold = null, leftNode = () => false } = {}) {
       const i = nodes.findIndex((n) => n.endpoint === `${u.protocol}//${u.host}`);
       const presents = withhold === i ? [] : ['game', 'settlement'].map((role) => ({ role, node: toHex(nodes[i].pubkey),
         present: toHex(signPresent({ roundId: rid, role, nodePubkey: nodes[i].pubkey }, signer(nodes[i]))) }));
-      return new Response(JSON.stringify({ rounds: { [toHex(rid)]: { presents, sig: {}, cert: {} } } }), { status: 200 });
+      const cert = servesCert ? Object.fromEntries(['game', 'settlement'].map((role) => [role, toHex(certFor(rid, role))])) : {};
+      return new Response(JSON.stringify({ rounds: { [toHex(rid)]: { presents, sig: {}, cert } } }), { status: 200 });
     }
     return new Response('ok', { status: 200 });
   };
-  const agent = seatingAgent({ round, roster, sign: signer(me), verify, fetcher, nowMs: () => NOW, leftNode });
+  const agent = seatingAgent({ round, roster, sign: signer(me), verify, fetcher, nowMs: () => now, leftNode });
   return { agent, rid, asked, verifies: () => verifies, drawn };
 }
 
@@ -92,4 +99,23 @@ test('a node its owner took out with the emergency key (§23A.5a, protocol 17) i
   const back = world({ leftNode: (hex) => hex === me });
   await back.agent.tick();
   assert.equal(back.agent.presentsOf(back.rid).some((p) => p.node === me), false, 'the owner\'s node, back online, says PRESENT for nothing');
+});
+
+test('a seat restarted after its round started reads the certificate it lacks - and sends no PRESENT, signs no seating', async () => {
+  // kanban #576, 2026-10-23 12:0xZ: seats restarted after the 12:00 window started counted themselves unseated for good
+  const w = world({ now: Number(START) + 60000, servesCert: true });
+  await w.agent.tick();
+  assert.equal(w.asked.filter((a) => a.endsWith('/seating-batch')).length, 8, 'the started round is asked of the other drawn nodes');
+  assert.equal(w.asked.filter((a) => a.startsWith('POST')).length, 0, 'no PRESENT is handed out for a round already started');
+  assert.equal(w.agent.presentsOf(w.rid).some((p) => p.node === toHex(nodes[0].pubkey)), false, 'and this node signs none');
+  w.asked.length = 0;
+  await w.agent.tick();
+  assert.equal(w.asked.filter((a) => a.endsWith('/seating-batch')).length, 0, 'both certificates held: nothing more is asked');
+});
+
+test('a started round nobody can certify is asked, but this node builds no certificate of its own', async () => {
+  const w = world({ now: Number(START) + 60000, servesCert: false });
+  await w.agent.tick();
+  await w.agent.tick();
+  assert.equal(w.asked.filter((a) => a.startsWith('POST')).length, 0, 'nothing is posted: no PRESENT, no seating signature handed out');
 });

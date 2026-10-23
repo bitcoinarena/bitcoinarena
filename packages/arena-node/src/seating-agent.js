@@ -168,7 +168,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const work = [];
       for (const [ridHex, t] of starts) {
         if (t.start + 600000n < now) { starts.delete(ridHex); continue; }   // long started: nothing left to seat
-        if (now < t.close - PRESENT_WINDOW_MS || now > t.start) continue;
+        if (now < t.close - PRESENT_WINDOW_MS) continue;
+        // A ROUND ALREADY STARTED IS ONLY READ, for the certificate this node lacks (kanban #576, measured 2026-10-23 12:0xZ: seats
+        // restarted after the 12:00 window started never asked for its certificates - a started round was skipped - so each
+        // counted itself unseated and refused the claim key, "this node is not assigned to that round", and no order of that
+        // window went in). It sends no PRESENT and signs no seating late: it keeps what the seated already certified (keepCert
+        // checks it), until the round leaves the index 10 min after its start.
+        const late = now > t.start;
         for (const role of SEATING_ROLES) {
           // a certificate stands here: a second one reaches this node by POST /seating, and is then the proof of equivocation
           if (certs.has(`${ridHex}:${role}`) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role)) continue;
@@ -176,7 +182,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           if (!c.ok) continue;
           const drawnKeys = c.drawn.map((e) => e.pubkey);
           work.push({ t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey),
-            slots: slotsForRole(t.contract, role), closed: now >= t.close });
+            slots: slotsForRole(t.contract, role), closed: now >= t.close, late });
         }
       }
       if (!work.length) return;
@@ -195,7 +201,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         for (const p of list) await post(b, '/present', p);             // a node without the batch door
       }));
       // 2. THIS NODE'S SEATING SIGNATURE for each closed round it is seated in, before the reads
-      for (const w of work) if (w.closed) signMine(w);
+      for (const w of work) if (w.closed && !w.late) signMine(w);
       // 3. ONE READ PER NODE, for every round of this tick it is drawn for
       // ONLY WHAT THIS NODE STILL LACKS (measured 2026-10-12 21:3x local on seat 3: GET /seating-batch 88 times in 30 s,
       // 14.3 MB of JSON out - every round of the window asked of every node each tick, its PRESENTs sent back though held - the
@@ -229,9 +235,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           const cert = a.cert && a.cert[w.role];
           if (cert) keepCert(w.t.rid, w.role, fromHex(cert));
           const sig = a.sig && a.sig[w.role];
-          if (sig && w.closed) keepSig(w, sig);
+          if (sig && w.closed && !w.late) keepSig(w, sig);
         }
-        if (w.closed) { signMine(w); await certify(w); }
+        if (w.closed && !w.late) { signMine(w); await certify(w); }
       }
     } catch (e) { log(`[seating] ${e.message}`); }
     finally {
