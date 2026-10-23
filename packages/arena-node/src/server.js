@@ -2194,7 +2194,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // out of every seating once its owner's emergency leave request is held here (§23A.5a)
     leftNode: (hex) => !!absences.emergencyFor(hex),
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
-    verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
     log: (m) => console.log(m), windowOf: marketWindowFor,
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
     onSeated: (rid, role, seated) => {
