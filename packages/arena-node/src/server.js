@@ -3894,8 +3894,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     load: () => (haltsFile ? JSON.parse(readFileSync(haltsFile, 'utf8')) : []), save: (v) => { if (haltsFile) { try { writeFileSync(haltsFile, JSON.stringify(v)); } catch { /* kept in memory */ } } },
     sign: (h) => schnorr.sign(h, round.identity.secret), ownKey: round.pubkey, height: async () => Number(await chainTip()),
     ask: (endpoint) => wsSessionCount(endpoint),
-    // to every seat of the census (networkSeats: the advertisements' endpoints and the peers given), as the games are read
-    post: async (o) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
+    // to every seat of the census (networkSeats: the advertisements' endpoints and the peers given), as the games are read - and to
+    // every seat of the chain's newest census, the one the observers are judged by (kanban #326, rehearsal 17, measured 2026-10-23
+    // 00:5xZ: a T-tree seat holds no round, so networkSeats() was its peers alone; the T seats and the test host/n495 seats each held only
+    // their own group's observations - 17 and 22 of T2's, 9 in common - though either took the other's when it was posted by hand)
+    post: async (o) => { const to = new Set(networkSeats());
+      try { for (const e of endpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
+      await Promise.all([...to].filter((u) => /^https?:\/\//.test(u)).map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
       signal: AbortSignal.timeout(15000) }).catch(() => null))); },
     say: (o) => console.log(`[halt] ${JSON.stringify(o)}`) }) : null;
   if (halts) {
