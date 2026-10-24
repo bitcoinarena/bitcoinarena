@@ -71,7 +71,9 @@ export class ServicesPanel extends React.Component {
         {message ? <p className="warn">{message}</p> : null}
         {groups.map(([title, xs]) => (
           <React.Fragment key={title}><h3 className="sh">{title}</h3><div className="svc-grid">{xs.map((s) => this.card(s))}</div></React.Fragment>))}
-        <p className="sub">{r.command ? <>On the node's machine: <code>{r.command} status</code>, <code>{r.command} doctor</code>, <code>{r.command} restart &lt;service&gt;</code>.</> : 'Set up by hand: what runs outside the node is started and stopped on its machine.'}</p>
+        {/* no commands to type (owner-page rule, 2026-10-20; kanban #563): an installed node's every service is started, stopped and
+            set to start at boot on its card above; only a node set up by hand has services outside it the node cannot start */}
+        {r.command ? null : <p className="sub">Set up by hand: what runs outside the node is started and stopped on its machine.</p>}
       </div>
     );
   }
