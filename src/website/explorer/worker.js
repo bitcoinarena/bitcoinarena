@@ -36,7 +36,8 @@ async function readTx(id) {
   const seats = answers.map((a) => ({ seat: a.seat.replace('https://tn4.bitcoin-arena.io/', ''), key: a.body && a.body.seat ? a.body.seat : null,
     status: a.status, known: !!(a.body && a.body.known), storedAt: a.body && a.body.storedAt ? a.body.storedAt : null,
     steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null,
-    did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [] }));
+    did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [],
+    locks: a.body && a.body.locks ? a.body.locks : null }));
   const settlement = known.map((a) => a.body.settlement).find((x) => x && x.txid) || null;
   const client = known.map((a) => a.body.client).find(Boolean) || null;
   // WHO PROCESSED ITS ROUND (the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the committees, the

@@ -29,6 +29,7 @@
   .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
   .filters select, .filters input { background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 7px 10px; font: 13px system-ui; }
   .filters input { flex: 1; min-width: 160px; max-width: 280px; font-family: "JetBrains Mono", monospace; }
+  tr.pg td { color: var(--cyan); } td.nw { white-space: nowrap; }
   .bar { height: 8px; background: var(--btc); border-radius: 4px; min-width: 2px; }
 </style>
 </head>
@@ -79,16 +80,54 @@ async function list() {
   try { const r = await (await fetch('/api/recent')).json(); txs = r.txs; keep('explorer.recent', txs); draw(); } catch (e) { if (!txs.length) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
 }
 
+// ONE TRANSACTION AS ITS HISTORY (the owner 2026-10-24: "The timing should come from the node, not the ui. Only parts come from the ui. Want
+// the full history of what happens at the node and ui (if any)"): every node's own record - each door it passed with its steps, when it
+// stored the entry, verified each lock, took the order into its book, and what it did to settle the round - and the page's steps where
+// the page handed them, on one clock; above it the node side's times from the first node the transaction reached
+function timelineOf(tx) {
+  const ev = [];
+  const add = (atMs, where, what, extra = {}) => { if (Number.isFinite(atMs)) ev.push({ atMs, where, what, ...extra }); };
+  for (const s of tx.seats) {
+    for (const d of s.steps || []) add(d.atMs, s.seat, d.door + ' door', { took: d.ms, detail: (d.steps || []).map((x) => x.step + ' ' + x.ms).join(', '), ok: d.status >= 200 && d.status < 300, status: d.status, kind: 'door' });
+    if (s.storedAt) add(Date.parse(s.storedAt), s.seat, 'stored the entry', { kind: 'stored' });
+    if (s.book && s.book.receivedAt) add(Date.parse(s.book.receivedAt), s.seat, 'took the order into its book' + (s.book.batch ? ' (batch ' + s.book.batch + ')' : ''), { kind: 'book' });
+    for (const k of ['stake', 'fee']) { const l = s.locks && s.locks[k]; if (l && l.verifiedAt) add(Date.parse(l.verifiedAt), s.seat, 'verified the ' + k + ' lock', { detail: l.outpoint || '', kind: k + 'lock' }); }
+    for (const d of s.did || []) add(d.atMs, s.seat, d.what, { detail: d.detail || '', kind: 'settle' });
+  }
+  const p = tx.processed;
+  if (p) {
+    for (const o of p.outcomes || []) { add(Date.parse(o.observedAt), 'attestors', 'observed the result: ' + (o.value !== null ? 'value ' + o.value : 'outcome ' + o.outcome), { kind: 'outcome' });
+      add(Date.parse(o.receivedAt), 'nodes', 'received the result\'s attestation', { kind: 'outcome' }); }
+    if (p.settledAt) add(Date.parse(p.settledAt), 'nodes', 'settlement made' + (tx.settlement ? ': ' + tx.settlement.state : ''), { detail: tx.settlement ? tx.settlement.txid : '', kind: 'settle' });
+  }
+  const c = tx.client, press = c && c.pressedAt ? Date.parse(c.pressedAt) : null;
+  if (press) {
+    add(press, 'page', 'order pressed', { kind: 'page' });
+    for (const x of c.steps || []) add(press + x.ms, 'page', x.step, { kind: 'page' });
+    for (const [k, v] of [['submitted (first node took the entry)', c.submittedMs], ['placed (enough nodes took it)', c.placedMs], ['lock accepted by the guardians', c.lockMs]]) if (Number.isFinite(v)) add(press + v, 'page', k, { kind: 'page' });
+  }
+  return ev.sort((a, b) => a.atMs - b.atMs || (a.where < b.where ? -1 : 1));
+}
 function drawTx(tx) {
   const e = tx.entry || {};
-  const press = tx.client && tx.client.pressedAt ? Date.parse(tx.client.pressedAt) : null;
-  const t0 = press || Math.min(...tx.seats.flatMap((s) => s.steps.map((x) => x.atMs)).filter(Number.isFinite));
-  const rel = (ms) => (Number.isFinite(ms) ? ((ms - t0) / 1000).toFixed(2) + ' s' : '–');
-  const slow = (ms) => (ms > 3000 ? 'slow' : '');
-  const c = tx.client;
-  const clientRows = c ? [['submitted', c.submittedMs], ['placed', c.placedMs], ['lock accepted', c.lockMs]].map(([k, v]) => `<tr><td>${k}</td><td class="${slow(v)}">${v === null || v === undefined ? '–' : (v / 1000).toFixed(2) + ' s'}</td></tr>`).join('') : '';
-  const pageSteps = c && Array.isArray(c.steps) ? c.steps.map((x) => `<tr><td>${esc(x.step)}</td><td>${(x.ms / 1000).toFixed(2)} s</td></tr>`).join('') : '';
-  const doors = tx.seats.flatMap((s) => s.steps.map((x) => ({ ...x, seat: s.seat }))).sort((a, b) => a.atMs - b.atMs);
+  const ev = timelineOf(tx);
+  const nodeEv = ev.filter((x) => x.where !== 'page');
+  const t0 = nodeEv.length ? nodeEv[0].atMs : ev.length ? ev[0].atMs : Date.now();
+  const rel = (ms) => { const d = (ms - t0) / 1000; return (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2) + ' s'; };
+  const utc = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 23);
+  const known = tx.seats.filter((s) => s.known).length;
+  // THE NODE SIDE, SUMMED UP: first, the majority's and the last node's time for each step, from the first node the transaction reached
+  const stepOf = (kind, label) => {
+    const per = new Map(); for (const x of nodeEv) if (x.kind === kind && !per.has(x.where)) per.set(x.where, x.atMs);
+    const t = [...per.values()].sort((a, b) => a - b); if (!t.length) return '';
+    const maj = t[Math.floor(t.length / 2)];
+    return `<tr><td>${label}</td><td>${rel(t[0])}</td><td>${rel(maj)}</td><td>${rel(t[t.length - 1])}</td><td class="dim">${t.length} node(s)</td></tr>`;
+  };
+  const summary = [stepOf('door', 'reached the node'), stepOf('stored', 'entry stored'), stepOf('stakelock', 'stake lock verified'), stepOf('feelock', 'fee lock verified'),
+    stepOf('book', 'in the order book'), stepOf('settle', 'settlement step')].join('');
+  const rows = ev.map((x) => `<tr class="${x.where === 'page' ? 'pg' : ''}"><td class="mono">${utc(x.atMs)}</td><td class="nw ${x.atMs - t0 > 3000 ? 'slow' : ''}">${rel(x.atMs)}</td>
+    <td class="nw">${esc(x.where)}</td><td>${esc(x.what)}${x.status && !x.ok ? ' <span class="bad">' + esc(x.status) + '</span>' : ''}</td><td class="nw">${Number.isFinite(x.took) ? x.took + ' ms' : ''}</td>
+    <td class="dim mono">${esc(x.detail || '')}</td></tr>`).join('');
   $('main').innerHTML = `<h1>Transaction</h1><p class="mono">${esc(tx.id)}</p>
   <div class="card"><dl>
     <dt>App</dt><dd>${esc(appName(e.app || e.gameId))}</dd><dt>Round</dt><dd class="mono">${esc(e.round || '–')}</dd><dt>Federation</dt><dd class="mono">${esc(e.federation || '–')}</dd>
@@ -97,13 +136,12 @@ function drawTx(tx) {
     <dt>Stake lock</dt><dd class="mono">${esc(tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–')}</dd>
     <dt>Fee lock</dt><dd class="mono">${esc(tx.locks && tx.locks.fee ? tx.locks.fee.outpoint : e.feeLockOutpoint || '–')}</dd>
     <dt>Settlement</dt><dd class="mono">${tx.settlement ? esc(tx.settlement.state + ' · ' + tx.settlement.txid) : '<span class="dim">not yet</span>'}</dd>
-    <dt>Stored first</dt><dd>${tx.storedFirst ? esc(tx.storedFirst.replace('T', ' ').replace('Z', ' UTC')) : '–'}</dd>
-    <dt>Read</dt><dd class="dim">${esc(tx.readAt)} · ${tx.cached ? 'cached' : 'from ' + tx.seats.filter((s) => s.status).length + ' nodes in ' + tx.readMs + ' ms'}</dd></dl></div>
-  <h2>The page's timing ${press ? '<span class="dim">(from the press, ' + esc(tx.client.pressedAt) + ')</span>' : ''}</h2>
-  <div class="card">${c ? `<table><tr><th>Step</th><th>After the press</th></tr>${clientRows}${pageSteps}</table>` : '<p class="dim">The page handed no timing for this transaction.</p>'}</div>
-  <h2>At the nodes <span class="dim">(time ${press ? 'after the press' : 'after the first door'})</span></h2>
-  <div class="card"><table><tr><th>Node</th><th>Door</th><th>Arrived</th><th>Took</th><th>Steps</th><th>Answer</th></tr>${doors.map((x) => `<tr><td>${esc(x.seat)}</td><td>${esc(x.door)}</td>
-    <td class="${slow(x.atMs - t0)}">${rel(x.atMs)}</td><td>${x.ms} ms</td><td class="dim">${esc(x.steps.map((s) => s.step + ' ' + s.ms).join(', '))}</td><td class="${x.status >= 200 && x.status < 300 ? 'ok' : 'bad'}">${x.status}</td></tr>`).join('') || '<tr><td colspan=6 class="dim">No node kept steps for it.</td></tr>'}</table></div>
+    <dt>First at a node</dt><dd>${nodeEv.length ? esc(utc(t0)) + ' UTC' : '–'}</dd>
+    <dt>Read</dt><dd class="dim">${esc(tx.readAt)} · ${tx.cached ? 'cached' : 'from ' + tx.seats.filter((s) => s.status).length + ' nodes in ' + tx.readMs + ' ms'} · ${known} node(s) hold it</dd></dl></div>
+  <h2>At the nodes <span class="dim">(from the first node it reached: first · half the nodes · last)</span></h2>
+  <div class="card">${summary ? '<table><tr><th>Step</th><th>First</th><th>Half</th><th>Last</th><th></th></tr>' + summary + '</table>' : '<p class="dim">No node kept steps for it.</p>'}</div>
+  <h2>History <span class="dim">(every node's record${tx.client ? ' and the page\'s steps' : '; the page that placed it handed no steps'}, one clock)</span></h2>
+  <div class="card"><table><tr><th>UTC</th><th>From first node</th><th>Where</th><th>What</th><th>Took</th><th>Detail</th></tr>${rows || '<tr><td colspan=6 class="dim">Nothing recorded.</td></tr>'}</table></div>
   ${processedHtml(tx)}
   <h2>Nodes</h2><div class="card"><table><tr><th>Node</th><th>Holds it</th><th>Stored</th><th>Book</th></tr>${tx.seats.map((s) => `<tr><td>${esc(s.seat)}</td><td class="${s.known ? 'ok' : 'dim'}">${s.known ? 'yes' : s.status ? 'no' : 'no answer'}</td>
     <td>${s.storedAt ? rel(Date.parse(s.storedAt)) : '–'}</td><td class="dim">${s.book ? 'batch ' + esc(s.book.batch || '–') : ''}</td></tr>`).join('')}</table></div>`;
@@ -117,14 +155,11 @@ function processedHtml(tx) {
   const list = (ks) => (ks && ks.length ? ks.map((k) => (k === p.asker ? '<b>' + nm(k) + '</b> (asker)' : nm(k))).join(', ') : '<span class="dim">–</span>');
   const outs = (p.outcomes || []).map((o) => `<tr><td>${o.value !== null ? 'value ' + esc(o.value) : 'outcome ' + esc(o.outcome)}</td><td>${esc(o.observedAt.replace('T', ' ').slice(0, 19))} UTC</td>
     <td>${(o.attestors || []).map(nm).join(', ') || '–'}</td></tr>`).join('');
-  const did = tx.seats.flatMap((s) => (s.did || []).map((d) => ({ ...d, seat: s.seat }))).sort((a, b) => a.atMs - b.atMs);
   return `<h2>Who processed the round</h2><div class="card"><dl>
     <dt>Ran the game</dt><dd>${list(p.game)}</dd><dt>Signs the settlement</dt><dd>${list(p.settlement)}</dd>
     <dt>Asker</dt><dd>${p.asker ? nm(p.asker) + ' <span class="dim">combines and submits the settlement first; the next takes over if it does not</span>' : '–'}</dd>
     <dt>Settled</dt><dd>${p.settledAt ? esc(p.settledAt.replace('T', ' ').slice(0, 19)) + ' UTC' + (p.settlementWhy ? ' <span class="dim">· ' + esc(p.settlementWhy) + '</span>' : '') : '<span class="dim">not yet</span>'}</dd></dl></div>
-  <h2>Result verified by</h2><div class="card">${outs ? '<table><tr><th>Result</th><th>Observed</th><th>Attested by</th></tr>' + outs + '</table>' : '<p class="dim">No result attested yet.</p>'}</div>
-  <h2>Settlement steps at each node</h2><div class="card">${did.length ? '<table><tr><th>Node</th><th>When</th><th>Did</th><th>Detail</th></tr>' + did.map((d) => `<tr><td>${esc(d.seat)}</td>
-    <td>${esc(d.at.replace('T', ' ').slice(0, 23))}</td><td>${esc(d.what)}</td><td class="mono dim">${esc(d.detail || '')}</td></tr>`).join('') + '</table>' : '<p class="dim">No node has settled this round yet.</p>'}</div>`;
+  <h2>Result verified by</h2><div class="card">${outs ? '<table><tr><th>Result</th><th>Observed</th><th>Attested by</th></tr>' + outs + '</table>' : '<p class="dim">No result attested yet.</p>'}</div>`;
 }
 
 async function one(id) {
