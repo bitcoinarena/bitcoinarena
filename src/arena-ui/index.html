@@ -2641,6 +2641,10 @@
           if (census && window.ARENA_LEARN_NODES) window.ARENA_LEARN_NODES(census);   // the network's nodes, found on the fly
           if (census && round.federationId) {
             const fedHex = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            // A STATUS READ IN THE LAST TWO MINUTES IS WHAT THE ORDER GOES ON (kanban #625, measured 2026-10-24 20:5xZ: a fresh page's first
+            // order waited 1.6 s in this read of every seat's /federations): read again beside it; the first read of a page is waited for
+            const fresh = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === fedHex && Date.now() - (window.ARENA_FED_STATUS_AT || 0) < 120000;
+            const readFed = async () => {
             // EVERY FEDERATION THE SEATS LIST, each record checked against this census: the round's own is its
             // status; the others' loads say whether Move is offered (§23A.3: above 90 %, to one below 50 %)
             const all = ARENACLIENT.federationStatuses
@@ -2648,7 +2652,7 @@
               : new Map([[fedHex, await ARENACLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.ARENA_VERIFY_KEPT })]]);
             const fs = all.get(fedHex) || { status: 'unverified', allows: ARENACLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading"
-            window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
+            window.ARENA_FED_STATUS = { ...fs, federation: fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load
             if (window.ARENA_SUM_HELD) window.ARENA_SUM_HELD();   // a held federation's funds summed once its status is known
             if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);   // notes out of a DRAINING / CRITICAL federation, by themselves
@@ -2656,6 +2660,8 @@
             window.ARENA_FED_MOVE = ARENACLIENT.moveOffer ? ARENACLIENT.moveOffer(window.ARENA_FED_STATUS, [...all.values()]) : null;
             if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
             console.log(`[arena] federation ${fedHex.slice(0, 16)}: ${fs.status}${fs.signers ? ` (${fs.signers} of ${fs.nominal} guardians signed, height ${fs.height})` : ''}${fs.why ? ' - ' + fs.why : ''}`);
+            };
+            if (fresh) readFed().catch((e) => console.warn('[arena] federation record: ' + e.message)); else await readFed();
           }
         } catch (e) { console.warn('[arena] federation record: ' + e.message); }
         if (window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.allows && !window.ARENA_FED_STATUS.allows.join)
