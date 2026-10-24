@@ -149,7 +149,8 @@ export async function verifyEntryGifts({ round, port, entry, contract, entryIdBy
   return { ok: true, rows: [...devs.rows, ...res.rows.map((r) => ({ ...r, reserve: true }))] };
 }
 
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined }) {
+// `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {} }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -171,7 +172,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
+  let t = Date.now();
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+  timing.statusMs = Date.now() - t;
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the contract handed over: its id is another' };
@@ -184,14 +187,18 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (2026-10-03): a stake whose donation outputs are wrong or missing is
   // not counted - nothing is kept for it, and the lock may be handed over again.
+  t = Date.now();
   const donated = await verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients: donationRecipients, reserveKey, federationId: fed.federationId, split });
+  timing.giftsMs = Date.now() - t;
   if (!donated.ok) return donated;
   if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
 
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
+  t = Date.now();
   const gate = await roundMintsFees({ contract, port });
+  timing.gateMs = Date.now() - t;
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
     return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };
   round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat });

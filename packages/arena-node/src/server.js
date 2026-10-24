@@ -7741,11 +7741,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a lock is handed over for an entry id');
         let fields;
+        const lt0 = Date.now(), timing = {};
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
+        timing.bodyMs = Date.now() - lt0;
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
+        const lockTimed = (said) => { const ms = Date.now() - lt0; if (ms > 5000) console.log(`[lock] ${toHex(eid).slice(0, 16)} took ${ms} ms (${said}): ${Object.entries(timing).map(([k, v]) => `${k} ${v}`).join(', ')}`); };
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (2026-10-03)
         let donationRecipients = null;
@@ -7756,9 +7760,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let reserveKey = null, split;
         { const se = decodeEntryContract(stored); const rr = round.get(se.roundId);
           if (rr && se.reserveOutpoint) { const rcx = decodeRoundContract(new Uint8Array(rr.contract)); const ef = entryFederation(rcx, se);
-            if (ef.ok) reserveKey = await reserveKeyFor(toHex(ef.federationId)); split = roundSplitBps(feesFor(rcx)); } }
-        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split }); }
-        catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+            if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); } }
+        try {
+          let t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
+          got = await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing });
+        } catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+        lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
         // AN ORDER (comment 1127): tradable here once both its locks are verified
         if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
