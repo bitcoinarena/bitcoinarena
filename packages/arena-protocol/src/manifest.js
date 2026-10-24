@@ -47,7 +47,7 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION, SCALAR_VERSION, SCALAR_TEMPLATE_VERSION, ATTESTOR_DRAW_VERSION } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION, SCALAR_VERSION, SCALAR_TEMPLATE_VERSION } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
 import { itemsFit, writeItems, readItems, ITEMS_MARKER } from './items.js';
 import { EVENT_VERSION } from './contracts.js';
@@ -253,7 +253,8 @@ export const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !
 /**
  * ATTESTORS DRAWN PER ROUND (kanban #630, protocol 21): an attested game that names no keys of its own but a draw - `attestDraw`
  * { count 7, threshold 5 }, after its own marker - is attested by the 7 node keys its round draws (sortition.js drawAttestors),
- * an outcome standing with 5 of them. Its `attestors` are written empty and its threshold 0, as a market on a game's are.
+ * an outcome standing with 5 of them. Its `attestors` are written empty and its threshold 0, as a market on a game's are. Any round
+ * protocol: a seat that cannot read the draw cannot load the manifest.
  */
 export const ATTEST_DRAW_MARKER = 0x09;
 export const isDrawnAttest = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.attestDraw;
@@ -263,8 +264,8 @@ export function attestDrawFits(d, m) {
     return { ok: false, why: 'a game whose attestors are drawn names no attestor keys and a threshold of 0' };
   if (m.gameSource !== undefined && m.gameSource !== null) return { ok: false, why: 'a market on a game has no attestors to draw: its outcome is its source round\'s signed result' };
   if (m.scalar !== undefined && m.scalar !== null) return { ok: false, why: 'a scalar market\'s attestors are not drawn yet (#630 covers outcome markets)' };
-  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= ATTESTOR_DRAW_VERSION))
-    return { ok: false, why: `a game whose attestors are drawn requires protocol version ${protocolVersionName(ATTESTOR_DRAW_VERSION)} or later (#630)` };
+  // NO ROUND PROTOCOL GATE: who attests is the game's term, not a round rule - a seat that cannot read the draw cannot load the manifest
+  // at all, so it hosts none of its rounds (a version gate would have moved Up/Down's rounds from protocol 3 to 21, every rule between)
   return { ok: true };
 }
 

@@ -621,9 +621,6 @@ const TAG_SWITCH_VERSION = 18;
 const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 const PRESSURE_WEIGHT_VERSION = 20;
-// ATTESTORS DRAWN PER ROUND (kanban #630, the owner 2026-10-24: "pre deterministic and drawed randomly, not a fixed set of nodes ... 5 of 7"):
-// an attested game names a draw instead of fixed keys - 7 of the round's census, an outcome standing with 5 of them
-const ATTESTOR_DRAW_VERSION = 21;   // not in SUPPORTED_PROTOCOL_VERSIONS until the seats sign drawn attestations (#630 step 2)
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -11864,6 +11861,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 11,
+  }),
+  // UP/DOWN VERSION 24 (kanban #630): no attestor keys - each round's 7 are drawn from its census, 5 decide; protocol 2, as version 23
+  '8e47d27fd39597cfa6e29412efa450a994f013b5db8d553ce55304da000cb3ca': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    requiredProtocolVersion: 2,
   }),
 });
 
@@ -30833,7 +30844,8 @@ const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.scal
 /**
  * ATTESTORS DRAWN PER ROUND (kanban #630, protocol 21): an attested game that names no keys of its own but a draw - `attestDraw`
  * { count 7, threshold 5 }, after its own marker - is attested by the 7 node keys its round draws (sortition.js drawAttestors),
- * an outcome standing with 5 of them. Its `attestors` are written empty and its threshold 0, as a market on a game's are.
+ * an outcome standing with 5 of them. Its `attestors` are written empty and its threshold 0, as a market on a game's are. Any round
+ * protocol: a seat that cannot read the draw cannot load the manifest.
  */
 const ATTEST_DRAW_MARKER = 0x09;
 const isDrawnAttest = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.attestDraw;
@@ -30843,8 +30855,8 @@ function attestDrawFits(d, m) {
     return { ok: false, why: 'a game whose attestors are drawn names no attestor keys and a threshold of 0' };
   if (m.gameSource !== undefined && m.gameSource !== null) return { ok: false, why: 'a market on a game has no attestors to draw: its outcome is its source round\'s signed result' };
   if (m.scalar !== undefined && m.scalar !== null) return { ok: false, why: 'a scalar market\'s attestors are not drawn yet (#630 covers outcome markets)' };
-  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= ATTESTOR_DRAW_VERSION))
-    return { ok: false, why: `a game whose attestors are drawn requires protocol version ${protocolVersionName(ATTESTOR_DRAW_VERSION)} or later (#630)` };
+  // NO ROUND PROTOCOL GATE: who attests is the game's term, not a round rule - a seat that cannot read the draw cannot load the manifest
+  // at all, so it hosts none of its rounds (a version gate would have moved Up/Down's rounds from protocol 3 to 21, every rule between)
   return { ok: true };
 }
 
