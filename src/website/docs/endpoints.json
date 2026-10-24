@@ -10641,5 +10641,89 @@
   "changesState": true,
   "needsAuth": "owner",
   "pathParams": []
+ },
+ {
+  "audience": "player/page",
+  "line": 7748,
+  "headers": [],
+  "pathParams": [],
+  "method": "POST",
+  "path": "/exchange",
+  "params": "body JSON { from, to, ecash, amountMsat }",
+  "auth": "none; the e-cash is the payment",
+  "returns": "200 JSON { ok, msat, ecash, federation }; 400/409/429/503",
+  "purpose": "Moves money into another federation without Lightning: e-cash of `from` in, the same amount of the seat's e-cash of `to` out. A retry with the same e-cash is answered the same and never paid twice.",
+  "summary": "Exchange e-cash between federations",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{ from: federation id hex, to: federation id hex, ecash: e-cash string of `from`, amountMsat: the amount it carries }"
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ ok, msat, ecash (of `to`), federation }"
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not an exchange request."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused before anything was taken (too little held, over the limit, e-cash spent), with the reason."
+   },
+   {
+    "status": "429",
+    "contentType": "text/plain",
+    "description": "This seat's hourly exchange limit is spent."
+   },
+   {
+    "status": "503",
+    "contentType": "text/plain",
+    "description": "Taken, the payout failed: ask again with the same e-cash."
+   }
+  ],
+  "changesState": true,
+  "needsAuth": "none"
+ },
+ {
+  "audience": "player/page",
+  "line": 7748,
+  "headers": [],
+  "pathParams": [],
+  "method": "GET",
+  "path": "/exchange",
+  "params": "query federations (comma-separated ids, up to 8)",
+  "auth": "none",
+  "returns": "200 JSON { maxMsat, perHourMsat, holds: { federation: msat } }",
+  "purpose": "What this seat can exchange: its limits and the e-cash it holds in each named federation.",
+  "summary": "Read a seat's exchange offer",
+  "query": [
+   {
+    "name": "federations",
+    "required": false,
+    "type": "string",
+    "description": "Federation ids, 64 hex, comma-separated."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ maxMsat, perHourMsat, holds }"
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat runs no exchange."
+   }
+  ],
+  "changesState": false,
+  "needsAuth": "none"
  }
 ]
