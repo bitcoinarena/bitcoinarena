@@ -143,6 +143,10 @@ async function openWindows() {
       // `next=2`: at most two upcoming rounds of each series - not every round the seat holds (measured 2026-10-22 23:00Z: ten bots
       // asking the whole listing, ~1,500 rounds, every minute put the test host at load 26); the same query from every bot is cached at the seat
       const all = n === null ? listed.rows : ((await getJson(`${n}/rounds?next=2&ahead=${WINDOW_MS * 2}`, 15000)).rounds || []);
+      // AN EMPTY ANSWER IS ONE SEAT'S, NOT THE MARKET'S (kanban #602, measured 2026-10-24 00:00-00:12Z: the 7 test host seats listed no
+      // round - the day's series unfunded there - and every bot said "no open window" while the 7 second-host seats listed the open window):
+      // the next seat is asked, and only a listing with rounds is kept
+      if (!all.length) { if (n !== null) say({ step: 'rounds', seat: n, why: 'listed no round' }); continue; }
       if (n !== null) listed = { at: now, rows: all };
       const rows = all
         // open until its entry closes or its window ends, whichever is first (measured 2026-10-23 07:47Z: the 07:30 window's round,
@@ -150,7 +154,7 @@ async function openWindows() {
         .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs
           && Math.min(Number(r.entryCloseMs), Number(r.windowStartMs) + WINDOW_MS) - now > OPEN_AHEAD_MS)
         .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)));
-      return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
+      if (rows.length) return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
     } catch (e) { say({ step: 'rounds', seat: n, why: e.message }); }
   }
   return [];
@@ -158,6 +162,26 @@ async function openWindows() {
 
 // ---- THE WALLET: one lock client, its notes in BOT_DIR/wallet.json (written whole on every change, never half) ----
 let lc = null, LockClientCls = null, inviteText = null;
+// EVERY FEDERATION CALL HAS A TIME LIMIT (kanban #602, measured 2026-10-23 22:38-22:50Z: a bot with a brand-new wallet waited on one
+// lock-client call that got no answer - its only open handles were its guardian sockets - and stood still for good, with no error, no
+// log line and no retry): a call over its limit is named in the log and throws; the wallet is opened again on the next call and the
+// pass is tried again. The limits (ms) are far above what the calls take (measured: join 0.6-1.6 s, balance 1 ms, invoice 0.3-0.6 s).
+const LIMIT = { join: 60000, balance: 20000, feeRule: 20000, invoice: 30000, ecashIn: 30000, deposit: 15 * 60000, round: 15000 };
+async function fed(name, f, ms = LIMIT[name]) {
+  const t0 = Date.now();
+  let timer;
+  try {
+    return await Promise.race([f(), new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error(`${name} got no answer in ${Math.round(ms / 1000)} s`), { overLimit: name })), ms); })]);
+  } catch (e) {
+    if (e && e.overLimit) {
+      say({ step: 'over limit', call: name, ms: Date.now() - t0, limitMs: ms });
+      if (name !== 'round') { const old = lc; lc = null; try { if (old && typeof old.free === 'function') old.free(); } catch { /* still busy: dropped */ } }
+    }
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+// the deposit path's steps, timed from the first one (kanban #602)
+const depositSteps = (t0) => (step, more = {}) => say({ step: 'deposit step', what: step, ms: Date.now() - t0, ...more });
 const io = { puts: 0, writes: 0, writeMs: 0 };   // the wallet file's puts and writes (kanban #601)
 async function wallet() {
   if (lc) return lc;
@@ -183,7 +207,9 @@ async function wallet() {
   const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
   inviteText = invite;
   walletFed = String(LockClient.federationIdOf(invite)).toLowerCase();
-  lc = await LockClient.join(invite, walletFed, readFileSync(seedFile, 'utf8').trim(), store);
+  const t0 = Date.now();
+  lc = await fed('join', () => LockClient.join(invite, walletFed, readFileSync(seedFile, 'utf8').trim(), store));
+  say({ step: 'wallet open', ms: Date.now() - t0, fresh: held.size === 0 || undefined });
   return lc;
 }
 
@@ -196,12 +222,12 @@ const SPOOL = env.SPOOL_DIR || join(DIR, '..', 'spool');
 const spoolOf = () => { const d = join(SPOOL, walletFed ? walletFed.slice(0, 16) : 'unknown'); mkdirSync(d, { recursive: true, mode: 0o700 }); return d; };
 async function takeFromSpool(needMsat) {
   const w = await wallet(), d = spoolOf();
-  let have = BigInt(await w.balanceMsat());
+  let have = BigInt(await fed('balance', () => w.balanceMsat()));
   for (const f of readdirSync(d).filter((x) => x.endsWith('.ecash')).sort()) {
     if (have >= needMsat) break;
     const mine = join(d, `${f}.taking-${NAME}`);
     try { renameSync(join(d, f), mine); } catch { continue; }   // another bot took it
-    const said = JSON.parse(await w.receiveEcash(readFileSync(mine, 'utf8').trim()));
+    const said = JSON.parse(await fed('ecashIn', () => w.receiveEcash(readFileSync(mine, 'utf8').trim())));
     if (said.state === 'Success' || said.state === 'AlreadyReceived') unlinkSync(mine);
     else renameSync(mine, `${mine}.${String(said.state || 'refused').toLowerCase()}`);
     // the reissue is answered before the balance shows it (measured 23:23Z: "Success", balance 0, and a Lightning deposit paid for
@@ -243,16 +269,20 @@ async function payNeeds() {
 }
 async function topUp(needMsat) {
   const w = await wallet();
-  let have = BigInt(await w.balanceMsat());
+  let have = BigInt(await fed('balance', () => w.balanceMsat()));
   if (have >= needMsat) return have;
+  const step = depositSteps(Date.now());
+  step('balance read', { balanceMsat: have, needMsat });
   have = await takeFromSpool(needMsat);   // e-cash files an older bot left in the spool
   if (have >= needMsat) return have;
   const amount = (needMsat > TARGET ? needMsat : TARGET) - have;
-  const rcv = JSON.parse(await w.receive(String(amount), env.GATEWAY || ''));
+  const rcv = JSON.parse(await fed('invoice', () => w.receive(String(amount), env.GATEWAY || '')));
+  step('invoice made', { msat: amount });
   // FIRST THE OTHER BOTS
   const d = spoolOf(), f = `need-${Date.now()}-${NAME}.json`;
   writeFileSync(join(d, `${f}.tmp`), JSON.stringify({ bot: NAME, msat: String(amount), invoice: rcv.invoice }), { mode: 0o600 });
   renameSync(join(d, `${f}.tmp`), join(d, f));
+  step('asked the other bots');
   const until = Date.now() + PEER_WAIT_MS;
   while (Date.now() < until && existsSync(join(d, f))) await new Promise((r) => setTimeout(r, 2000));
   let by = 'a bot';
@@ -265,10 +295,12 @@ async function topUp(needMsat) {
       const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
       const paid = await payer('payinvoice', '--force', '--timeout', '90s', rcv.invoice);
       by = (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0];
+      step('payer paid', { by });
     }
-  }
-  const final = await w.awaitReceive(rcv.operation);
-  const after = BigInt(await w.balanceMsat());
+  } else step('a bot paid');
+  const final = await fed('deposit', () => w.awaitReceive(rcv.operation));
+  step('deposit in', { final });
+  const after = BigInt(await fed('balance', () => w.balanceMsat()));
   say({ step: 'deposit', msat: amount, by, final, balanceMsat: after });
   return after;
 }
@@ -379,7 +411,7 @@ function claimKeyOf(c, rid, signers) {
 let feeRuleKept = null;
 async function feeRuleOf(w) {
   if (feeRuleKept && Date.now() - feeRuleKept.at < 60000) return feeRuleKept.rule;
-  const rule = JSON.parse(await w.feeRule());
+  const rule = JSON.parse(await fed('feeRule', () => w.feeRule()));
   feeRuleKept = { at: Date.now(), rule };
   return rule;
 }
@@ -489,7 +521,7 @@ async function pass() {
       ladder: ladder.map((q) => `${Number(q.outcome) === 0 ? 'Up' : 'Down'}@${q.priceCents}c×${q.shares}=${q.stakeMsat}msat`), placed: [...done], todo: todo.length,
       ...(take ? { take: `${Number(take.outcome) === 0 ? 'Up' : 'Down'}@${take.priceCents}c×${take.shares}` } : {}) });
     if (DRY || !todo.length) continue;
-    const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${row.id}`)).arrayBuffer()));
+    const c = decodeRoundContract(new Uint8Array(await fed('round', async () => (await fetch(`${nodes[0]}/round?id=${row.id}`, { signal: AbortSignal.timeout(LIMIT.round) })).arrayBuffer())));
     const rid = roundId(c);
     if (toHex(rid) !== row.id) throw new Error('the seat answered another round');
     // seated before anything is paid (§5A.7) - read once per round: a round's seated signers do not change
