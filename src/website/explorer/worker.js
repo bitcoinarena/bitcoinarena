@@ -79,14 +79,34 @@ async function keep(env, tx, had) {
       tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now());
 }
 
+// THE OLDER TRANSACTIONS TOO (the owner 2026-10-24: "You should do that for each tx"): besides the newest READ_BACK_MS, each minute reads one
+// older window, walking back from where it stopped (KV 'backfill') until the nodes' 14 days; then it stops
+const BACKFILL_UNTIL_MS = 14 * 24 * 3600000, BACKFILL_ROWS = 200;
+async function backfill(env) {
+  const t0 = Date.now();
+  let at = Number(await env.EXPLORER.get('backfill')) || t0 - READ_BACK_MS;
+  if (at <= t0 - BACKFILL_UNTIL_MS) return;
+  const from = at - READ_BACK_MS;
+  const n = await readWindow(env, from, BACKFILL_ROWS, at);
+  await env.EXPLORER.put('backfill', String(from));
+  console.log(JSON.stringify({ backfill: { from: new Date(from).toISOString(), to: new Date(at).toISOString(), ...n } }));
+}
+
 async function poll(env) {
-  const t0 = Date.now(), since = t0 - READ_BACK_MS;
-  const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/txs?since=${since}&limit=500&full=1`, READ_MS)) })));
+  const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
+  console.log(JSON.stringify({ poll: n }));
+  await backfill(env).catch((e) => console.log(JSON.stringify({ backfillError: String(e && e.message ? e.message : e) })));
+}
+
+/** Every seat's transactions stored from `since` (at most `limit` each, those before `before` when it is given), merged into D1. */
+async function readWindow(env, since, limit, before) {
+  const t0 = Date.now();
+  const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/txs?since=${since}&limit=${limit}&full=1`, READ_MS)) })));
   const byId = new Map();
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.txs)) continue;
     for (const t of g.body.txs) {
-      if (!hex64.test(String(t.id)) || !t.detail) continue;
+      if (!hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
       if (!byId.has(t.id)) byId.set(t.id, new Map());
       byId.get(t.id).set(g.seat, { status: 200, body: t.detail });
     }
@@ -109,7 +129,7 @@ async function poll(env) {
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
-  console.log(JSON.stringify({ poll: { seats: [...answered.values()].filter(Boolean).length, txs: ids.length, written: writes.length, ms: Date.now() - t0 } }));
+  return { seats: [...answered.values()].filter(Boolean).length, txs: ids.length, written: writes.length, ms: Date.now() - t0 };
 }
 
 async function recent(env) {
