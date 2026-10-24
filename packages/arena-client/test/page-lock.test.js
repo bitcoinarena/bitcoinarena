@@ -2187,3 +2187,21 @@ test('the early offer outlives the round\'s entry: at the close the join ends by
   await early.claimed;
   assert.equal(await earlyDepositOffer({ round, invite: INVITE, seed: sd, LockClient, storage: tab }), null, 'paid after the close: the wallet holds the stake now');
 });
+
+// A FEDERATION WITH NO FEES IS NOT DRY-RUN (kanban #618: the quote was 2.7 s of a 5.5 s order, and every answer was the amount itself):
+// with a 0/0 fee rule the funding check and the lock ask the lock client for no quote; the lock is made, and an empty wallet is still
+// refused by name before anything is locked
+test('a fee-free federation: no lockCostMsat at the funding check or the lock; the lock is made; too little is refused by name', async () => {
+  const { LockClient, log } = lockClient({ feeRule: { ppm: 0n, baseMsat: 0n }, lockFee: 0n });
+  let quotes = 0;
+  const cost = LockClient.prototype.lockCostMsat;
+  LockClient.prototype.lockCostMsat = async function (m) { quotes++; return cost.call(this, m); };
+  const tab = tabStorage();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, onDeposit: () => {} });
+  const got = await ask({ LockClient, storage: tab });
+  assert.equal(quotes, 0, 'the lock client was asked for a quote');
+  assert.ok(log.some((l) => l.lock || l.lockSubmit || l.lockBoth), 'nothing was locked');
+  assert.ok(got.walletBeforeMsat > got.walletAfterMsat);
+  const empty = lockClient({ feeRule: { ppm: 0n, baseMsat: 0n }, lockFee: 0n });
+  await assert.rejects(() => ask({ LockClient: empty.LockClient, storage: tabStorage() }), /the player wallet holds 0 msat and this round's locks need/);
+});
