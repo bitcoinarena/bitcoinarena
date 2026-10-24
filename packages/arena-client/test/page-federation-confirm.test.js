@@ -168,5 +168,5 @@ test('with no status read by a join yet, the modal asks the seats for the signed
   const join = HTML.indexOf("const gate = await window.ARENA_FEDERATION_GATE({ round: named.round, invite: named.federation");
   const lock = HTML.indexOf("signerNodes = await joinStep('clientSettlementSignerNodes'");
   assert.ok(join > 0 && join < lock, 'the join asks before the signer nodes and the lock');
-  assert.match(HTML.slice(join, lock), /if \(!gate\.ok\) throw new Error\(gate\.why\)/);
+  assert.match(HTML.slice(join, lock), /if \(!gate\.ok\) throw new Error\((named\.noInviteWhy \|\| )?gate\.why\)/);
 });
