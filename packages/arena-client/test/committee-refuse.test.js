@@ -95,3 +95,11 @@ test('the committee compare is not held for the slowest seat: more than half ans
   assert.ok(Date.now() - t < 500, 'all in: no grace waited');
   await majorityThenGrace([], 10);
 });
+
+test('too few of the four picked seats give a chain: the other seats are asked, and two of them agreeing is the chain (playtest 2026-10-24)', async () => {
+  const { agreedChain } = await import('../src/headers.js');
+  void agreedChain;
+  const src = (await import('node:fs')).readFileSync(new URL('../src/committee.js', import.meta.url), 'utf8');
+  assert.match(src, /AND THE OTHER SEATS WHEN TOO FEW OF THOSE ANSWERED/);
+  assert.match(src, /headerSources\(nodes, \{ n: 64 \}\)\.filter\(\(u\) => !askedKeys\.has\(originOf\(u\)\)\)/);
+});
