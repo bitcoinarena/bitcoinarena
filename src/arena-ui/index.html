@@ -790,11 +790,16 @@
        version info are shown bellow the arena. they should be at the same position as on the game pages: bottom right of the window. the game
        loading screen are missing this information at all"): the games screen, a game's loading screen, the leaderboard and the shop draw the
        build line and Donate as a game's own client does */
+    /* AND OVER A UNITY GAME'S OWN MENU (kanban #607, 2026-10-24: "footer missing on tic toc next block game launch page ... where you can select
+       to play or spectate"): Unity asks the page's lobby every 0.75 s while its title screen shows (SplashScreen.cs), and the page keeps
+       body.arena-unity-menu while it is asked; a round being played asks nothing, and its HUD keeps the corner */
     body.arena-picking #arena-donate-go, body.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-donate-go,
+    body.arena-unity-menu #arena-donate-go,
     body:has(#arena-season.show) #arena-donate-go, body:has(#arena-shop.show) #arena-donate-go {
       display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
       border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
     body.arena-picking #arena-build, body.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-build,
+    body.arena-unity-menu #arena-build,
     body:has(#arena-season.show) #arena-build, body:has(#arena-shop.show) #arena-build {
       display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px; padding: 0 100px 0 8px;
       background: none; border-radius: 0; font-size: 10px; text-align: right; }
@@ -7163,7 +7168,11 @@
       // reissued it. A copy an earlier page kept is received first. Nothing leaves the federation; no fee is paid.
       // THE LOBBY, AS UNITY DRAWS IT, is Tick Tock's: unityLobbyView (packages/nextblock/page/unity-page.js, kanban #521), handed
       // this lobby's own state at each read - what it shows is that, and what it presses comes back here (ARENA_LOBBY_ACT)
-      window.ARENA_LOBBY_VIEW = () => unityLobbyView({ me, lobbyNow, closedRounds, lobbyViewRow, refused, unanswered, askedNodes, failedNodes, named });
+      // WHILE UNITY'S MENU ASKS (kanban #607): each ask is the title screen showing; arena-unity-menu draws the build line and Donate over it
+      window.ARENA_LOBBY_VIEW = () => { window.ARENA_UNITY_MENU_AT = Date.now(); return unityLobbyView({ me, lobbyNow, closedRounds, lobbyViewRow, refused, unanswered, askedNodes, failedNodes, named }); };
+      if (!window.ARENA_UNITY_MENU_TIMER) window.ARENA_UNITY_MENU_TIMER = setInterval(() => {
+        document.body.classList.toggle('arena-unity-menu', Date.now() - (window.ARENA_UNITY_MENU_AT || 0) < 2500);
+      }, 1000);
       window.ARENA_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (2026-09-13 07:11: "after
