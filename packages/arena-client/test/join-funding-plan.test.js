@@ -62,9 +62,10 @@ test('the page runs this rule: at the press, before the swap (the merge), and be
   const bundle = readFileSync(new URL('../tools/bundle.js', import.meta.url), 'utf8');
   assert.match(bundle, /joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet/);
   assert.match(html, /const pressPlan = ARENACLIENT\.joinFundingPlan\(.*\n\s*const coveredElsewhere = !pressPlan\.askEarly;/);
-  const merge = html.indexOf('await window.ARENA_MERGE_NOW(plan.mergeFirst'), swap = html.indexOf('ARENACLIENT.swapPlayerWalletForRound({'), said = html.indexOf('ARENACLIENT.notSpendableYet({'),
+  // the swap's place is the e-cash exchange's since kanban #614 (no Lightning swap at the press)
+  const merge = html.indexOf('await window.ARENA_MERGE_NOW(plan.mergeFirst'), swap = html.indexOf('await window.ARENA_EXCHANGE_INTO({ to: here'), said = html.indexOf('ARENACLIENT.notSpendableYet({'),
     fund = html.indexOf('await ARENACLIENT.fundPlayerWallet(Object.assign({}, wallet, { early,');
-  assert.ok(merge > 0 && swap > merge && said > swap && fund > said, 'merge, then swap, then the not-spendable check, then the funding');
+  assert.ok(merge > 0 && swap > merge && said > swap && fund > said, 'merge, then the exchange, then the not-spendable check, then the funding');
   assert.match(html, /window\.ARENA_SHOW_NOTICE\('Not spendable yet', text\)/);
 });
 

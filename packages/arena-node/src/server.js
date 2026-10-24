@@ -122,6 +122,7 @@ import { splitAsSet, nextVersionWithSplit } from './app-version.js';
 import { checkUpdate } from './plugin-check.js';
 import { machineOf } from './machine.js';
 import { createMarketEarnings } from './market-earnings.js';
+import { createEcashExchange } from './ecash-exchange.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
@@ -2513,6 +2514,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // THE PORT OF ONE FEDERATION, BY ITS ID (2026.0.3): a round that takes any federation has none of its own -
   // each entry's locks are in the federation the entry names (entryFederation)
+  // THE E-CASH EXCHANGE (kanban #614): on a seat with stake-lock ports; ARENA_EXCHANGE=0 turns it off, ARENA_EXCHANGE_MAX_SAT and
+  // ARENA_EXCHANGE_HOUR_SAT set its limits (1,000 sat an exchange, 20,000 sat an hour)
+  const ecashExchange = stakeLocks && process.env.ARENA_EXCHANGE !== '0' ? createEcashExchange({ db: round.db,
+    portOf: (f) => portOfFederation(fromHex(f)), maxMsat: BigInt(process.env.ARENA_EXCHANGE_MAX_SAT || 1000) * 1000n,
+    perHourMsat: BigInt(process.env.ARENA_EXCHANGE_HOUR_SAT || 20000) * 1000n, log: (m) => console.log(m) }) : null;
   async function portOfFederation(fid) {
     if (!stakeLocks) return null;
     if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
@@ -7737,6 +7743,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // contract it locked, as JSON. The signer node asks the federation what it holds
       // at the entry's outpoint, hashes the contract, checks every field against
       // the entry, and only then counts the stake as seen.
+      // MONEY INTO ANOTHER FEDERATION WITHOUT LIGHTNING (kanban #614): e-cash of `from` in, the seat's own e-cash of `to` out, the same
+      // amount (ecash-exchange.js); GET says which federations this seat holds notes in and how much
+      if (url.pathname === '/exchange' && (req.method === 'POST' || req.method === 'GET')) {
+        if (!ecashExchange) return text(res, 404, 'this seat runs no e-cash exchange');
+        const send = (o) => { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(o)); };
+        if (req.method === 'GET') {
+          const feds = String(url.searchParams.get('federations') || '').toLowerCase().split(',').filter((f) => /^[0-9a-f]{64}$/.test(f)).slice(0, 8);
+          return send(await ecashExchange.offer(feds));
+        }
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an exchange is JSON: { from, to, ecash, amountMsat }'); }
+        const r = await ecashExchange.exchange(body || {});
+        return r.ok ? send(r) : text(res, r.status || 409, r.why);
+      }
       if (req.method === 'POST' && url.pathname === '/lock') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a lock is handed over for an entry id');

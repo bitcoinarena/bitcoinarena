@@ -801,6 +801,21 @@ impl LockClient {
         .to_string())
     }
 
+    /// AN AMOUNT AS E-CASH (kanban #614, the owner 2026-10-24: "Kein Lightning swap, sondern übertragen in die andere federation"): the stock
+    /// mint module's send of exactly `amount_msat`, as the prefixed base32 string a seat's exchange takes - the player's side of an e-cash
+    /// exchange into another federation. Answers {"msat", "ecash"}; the caller keeps the string until the exchange answered.
+    #[wasm_bindgen(js_name = sendEcash)]
+    pub async fn send_ecash(&self, amount_msat: String) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        let amount = Amount::from_msats(amount_msat.parse().map_err(js)?);
+        let (_, ecash) = mint.send(amount, serde_json::Value::Null, false).await.map_err(js)?;
+        Ok(serde_json::json!({
+            "msat": amount.msats,
+            "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash),
+        })
+        .to_string())
+    }
+
     /// THE OUTPUTS STILL IN ISSUANCE (spec 23A.5 "Notes still in issuance at the halt"): everything issued to this
     /// wallet's seed that it neither holds as a note nor has spent - read from one answering guardian, so it works while the
     /// federation is halted. Answers [{"nonce", "amount_msat", "request"}]; `request` is what a pending-output claim presents.
