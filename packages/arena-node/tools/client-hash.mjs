@@ -35,8 +35,11 @@ async function served(name) {
 }
 
 // THE ENGINE'S SCRIPTS AND EACH GAME'S (one list per game): a page serves both, and both decide money.
-// a game's pinned list, and its others (Next Block's pinnedV5, kanban #523: the bundles manifest version 5 names)
-const PINNED = [...Object.entries(LIST.pinned), ...Object.values(LIST.games || {}).flatMap((g) => [...Object.entries(g.pinned), ...Object.entries(g.pinnedV5 || {})])];
+// a game's pinned list, and every list a later version of it names (Next Block's pinnedV5: the bundles version 5 names; markV6: the
+// mark version 6 names, the icon and the wordmark with their comments cleaned)
+const listsOf = (g) => Object.values(g).filter((v) => v && typeof v === 'object' && !Array.isArray(v));
+const PINNED = [...[...Object.entries(LIST.pinned), ...Object.values(LIST.games || {}).flatMap((g) => listsOf(g).flatMap((l) => Object.entries(l)))]
+  .reduce((m, [name, hs]) => m.set(name, [...new Set([...(m.get(name) || []), ...hs])]), new Map())];   // one entry per file: every hash any list gives it
 let good = true;
 for (const [name, hashes] of PINNED) {
   const bytes = await served(name);

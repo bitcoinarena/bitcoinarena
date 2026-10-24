@@ -23,7 +23,8 @@ const SCRIPTS = ['arena-client.js', 'arena-curve.js', 'blwp_lock_client.js', 'bl
 const MARK = ['nextblock-icon.svg', 'nextblock-wordmark.svg', 'favicon.ico', 'apple-touch-icon.png', 'nextblock-icon-192.png',
   'nextblock-icon-512.png', 'nextblock-og.png', 'site.webmanifest'];
 const GAME_SCRIPTS = { nextblock: ['blwp-core.js', ...MARK] };
-const pinsOf = (name) => LIST.pinned[name] || Object.values(LIST.games).map((g) => g.pinned[name]).find(Boolean);
+// a file is pinned when the page's own list or any list of a game names it - a game's later versions keep lists of their own (markV6)
+const pinsOf = (name) => [...(LIST.pinned[name] || []), ...Object.values(LIST.games).flatMap((g) => Object.values(g).filter((l) => l && typeof l === 'object' && !Array.isArray(l)).flatMap((l) => l[name] || []))];
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const run = (arg) => new Promise((done) => {
   execFile(process.execPath, [TOOL, arg], { encoding: 'utf8' }, (err, stdout) =>

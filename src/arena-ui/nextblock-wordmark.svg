@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300">
   <title>Tick Tock, Next Block</title>
-  <!-- the wordmark (#228): the icon beside the name, white then the bitcoin orange -->
+  <!-- the wordmark: the icon beside the name, white then the bitcoin orange -->
   <g transform="translate(20 22) scale(0.5)"><rect width="512" height="512" rx="112" fill="#0d1014"/>
   <circle cx="256" cy="256" r="178" fill="none" stroke="#f7931a" stroke-width="44"/>
   <g fill="#f7931a"><rect x="244" y="96" width="24" height="40" rx="6"/><rect x="244" y="376" width="24" height="40" rx="6"/><rect x="96" y="244" width="40" height="24" rx="6"/><rect x="376" y="244" width="40" height="24" rx="6"/></g>
