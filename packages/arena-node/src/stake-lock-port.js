@@ -41,9 +41,23 @@ const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 // 60-80 % CPU each, the machine at load 50 and a paid tap past 1.5 s at p95). `blwp-stake-lock --mode serve` keeps its client
 // open and answers one JSON line per question. A binary without that mode (an older build), a tool that exits, or a question
 // it does not answer in time: the question is asked the old way, one run, and the next start of the server waits a minute.
-export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spawn, now = () => Date.now() }) {
+export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spawn, now = () => Date.now(), log = (m) => console.log(m) }) {
   let child = null, ready = null, buf = '', n = 0, downUntil = 0;
   const waiting = new Map();
+  // WHAT THE ONE SERVER IS ASKED, AND HOW LONG EACH WAITS (kanban #605, measured 2026-10-24: POST /lock up to 107 s on the test host seats,
+  // 0 ms of it on the loop, while one status read takes 0.4-0.6 s; the server answers one question at a time): every minute, the asks
+  // of the last minute by mode, the slowest wait and the deepest queue; an answer that waited over 5 s is named at once
+  const minute = { at: now(), modes: {}, slowest: 0, deepest: 0 };
+  const counted = (mode, ms, ahead) => {
+    minute.modes[mode] = (minute.modes[mode] || 0) + 1;
+    if (ms > minute.slowest) minute.slowest = ms;
+    if (ahead > minute.deepest) minute.deepest = ahead;
+    if (ms > 5000) log(`[stake-lock] ${mode} answered after ${ms} ms, ${ahead} ask(s) ahead of it`);
+    if (now() - minute.at >= 60000) {
+      log(`[stake-lock] last minute: ${Object.entries(minute.modes).map(([m, k]) => `${m} ${k}`).join(', ')}; slowest ${minute.slowest} ms, deepest queue ${minute.deepest}`);
+      minute.at = now(); minute.modes = {}; minute.slowest = 0; minute.deepest = 0;
+    }
+  };
   const fail = (why) => { for (const [, w] of waiting) w.reject(new Error(why)); waiting.clear(); child = null; ready = null; downUntil = now() + 60000; };
   const start = () => {
     if (ready) return ready;
@@ -77,10 +91,11 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spa
     async ask(mode, args) {
       const c = await start();
       const id = ++n;
+      const t0 = now(), ahead = waiting.size;
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
+        const timer = setTimeout(() => { waiting.delete(id); counted(mode, now() - t0, ahead); reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
         timer.unref?.();
-        waiting.set(id, { resolve, reject, timer });
+        waiting.set(id, { resolve: (v) => { counted(mode, now() - t0, ahead); resolve(v); }, reject: (e) => { counted(mode, now() - t0, ahead); reject(e); }, timer });
         c.stdin.write(JSON.stringify({ id, mode, args }) + '\n');
       });
     },
