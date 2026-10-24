@@ -471,10 +471,18 @@ export class OrderBook {
   /** Before a settlement: every certified batch another seat holds and this one does not, imported on its certificate. */
   async carry(roundIdBytes) {
     const rid = toHex(roundIdBytes);
+    // A BATCH CERTIFIED HERE ALREADY IS NOT LOOKED AT AGAIN (kanban #576, profiled 2026-10-24 12:4xZ on test host seat 1: every peer hands
+    // every certified batch of the round, and certify() read and decoded the round's contract and hashed the batch for each one - ~3 % of
+    // the main thread - to answer "held already" or refuse; carry uses neither answer)
+    const held = new Set(this.db.prepare('SELECT k FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL').all(Buffer.from(roundIdBytes)).map((r) => String(r.k)));
     for (const base of this.peersFor(roundIdBytes)) {
       let body;
       try { const r = await this.fetcher(`${base}/book-certificates?round=${rid}`); if (!r.ok) continue; body = await r.json(); } catch { continue; }
-      for (const cert of (body && body.certificates) || []) this.certify(roundIdBytes, cert);
+      for (const cert of (body && body.certificates) || []) {
+        const k = cert && cert.record ? String(cert.record.k) : null;
+        if (k !== null && held.has(k)) continue;
+        if (this.certify(roundIdBytes, cert).ok && k !== null) held.add(k);
+      }
     }
   }
 
