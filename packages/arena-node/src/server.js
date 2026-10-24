@@ -61,7 +61,7 @@ import { pruneTranscripts, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcrip
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
-import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
+import { seriesRoundIdOf, stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { paysBondMarker } from '../../arena-protocol/src/chain.js';
@@ -2023,6 +2023,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!r.ok) return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` };
       round.importEntry(new Uint8Array(await r.arrayBuffer()), entryHex);
     }
+    // AND ITS HANDOUT (measured 2026-10-24 16:51Z on fed2-3 after the entry and locks were replayed: "a loser's P could not be opened: this node
+    // accepted no handout for that entry"): the stake's shares, this seat's own among them, checked as POST /handout checks them, and then
+    // that they open to the entry's own stake point
+    const entry = decodeEntryContract(round.entry(eid));
+    const ref = entry.vssSharesRef;
+    if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
+      const h = await fetch(`${base}/handout?id=${toHex(ref)}`, { signal: AbortSignal.timeout(10000) });
+      if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for the order's handout` };
+      const bytes = new Uint8Array(await h.arrayBuffer());
+      const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
+      if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
+      const took = await takeHandout(bytes);
+      if (!took.ok) return { ok: false, why: `its handout: ${took.why}` };
+    }
     const l = await fetch(`${base}/order-locks?entry=${entryHex}`, { signal: AbortSignal.timeout(10000) });
     if (!l.ok) return { ok: false, why: `${base} answered ${l.status} for the order's locks` };
     const locks = await l.json();
@@ -3729,6 +3743,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
     try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+  };
+  // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
+  // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
+  // Answers { ok, id, signerNode } or { ok: false, status, why }.
+  const takeHandout = async (bytes) => {
+    let handout;
+    try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
+    const forRound = round.get(handout.roundId);
+    if (!forRound) return { ok: false, status: 404, why: 'this node holds no such round, so it cannot say what its stakes open at' };
+    const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
+    // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
+    { const why = offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
+    let threshold;
+    try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
+    if (handout.needed !== threshold)
+      return { ok: false, status: 409, why: `that handout is dealt ${handout.needed} of ${handout.shares.length}, and this round's stakes open at ${threshold} of ${roundContract.settlementSlots}` };
+    const seen = acceptHandout(handout);
+    if (!seen.ok) return { ok: false, status: 409, why: seen.why };
+    const mine = await openMyShare(handout, { pubkey: round.pubkey, secret: round.identity.secret, curve: feldmanGroup });
+    if (!mine.ok) return { ok: false, status: 409, why: mine.why };
+    const id = handoutId(handout);
+    round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
+    return { ok: true, id, signerNode: mine.signerNode };
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
   // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
@@ -6880,44 +6917,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // a stolen database is a pile of envelopes.
       if (req.method === 'POST' && url.pathname === '/handout') {
         const steps = stepLog('handout', '-').on(res);   // (kanban #618, step-log.js)
-        let handout;
-        try { handout = decodeHandout(await read(req)); }
-        catch (e) { return text(res, 400, 'that is not a handout: ' + e.message); }
-        steps.at('body');
-
-        // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout`
-        // checks a handout only against itself, and measured: a crafted 1-of-2
-        // (one signer node opens it alone) and a 7-of-7 on seven signer nodes (every signer node must
-        // open it) were both taken 201. A loser who could deal his own
-        // threshold could deal an unopenable stake and be refunded on the
-        // timelock every time. So a stake is dealt at the round's number or not
-        // at all - the same number the settle opens at and the page deals.
-        const forRound = round.get(handout.roundId);
-        if (!forRound) return text(res, 404, 'this node holds no such round, so it cannot say what its stakes open at');
-        const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
-        // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
-        { const why = offerRefusal(roundContract); if (why) return text(res, 409, `handout refused: ${why}`); }
-        let threshold;
-        try { threshold = roundThreshold(roundContract.settlementSlots); }
-        catch (e) { return text(res, 409, e.message); }
-        if (handout.needed !== threshold)
-          return text(res, 409, `that handout is dealt ${handout.needed} of ${handout.shares.length}, and `
-            + `this round's stakes open at ${threshold} of ${roundContract.settlementSlots}`);
-
-        const seen = acceptHandout(handout);
-        steps.at('checked');
-        if (!seen.ok) return text(res, 409, seen.why);
-
-        const mine = await openMyShare(handout, {
-          pubkey: round.pubkey, secret: round.identity.secret, curve: feldmanGroup,
-        });
-        steps.at('share opened');
-        if (!mine.ok) return text(res, 409, mine.why);
-
-        const id = handoutId(handout);
-        round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
-        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(mine.signerNode), ...CORS });
-        return res.end(Buffer.from(id));
+        // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout` checks a handout only against itself, and measured: a crafted
+        // 1-of-2 and a 7-of-7 on seven signer nodes were both taken 201. A stake is dealt at the round's number or not at all - the same
+        // number the settle opens at and the page deals (takeHandout).
+        const got = await takeHandout(await read(req));
+        steps.at(got.ok ? 'share opened' : 'refused');
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), ...CORS });
+        return res.end(Buffer.from(got.id));
       }
 
       if (req.method === 'GET' && url.pathname === '/handout') {
