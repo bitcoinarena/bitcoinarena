@@ -14188,7 +14188,7 @@ const ATTESTATION_BYTES = 100;
  * refused by name; the one that stands comes back with the attested set's id,
  * which the entry names as claim_key_attestation_ref.
  */
-async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fetch } = {}) {
+async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fetch, timeoutMs = 30000 } = {}) {
   if (!round || !(round.id instanceof Uint8Array)) throw new Error('there is no round id to ask a claim key for');
   if (!curve || typeof curve.verify !== 'function') throw new Error('checking a claim key needs the page\'s curve');
   const id = toHex(round.id);
@@ -14197,29 +14197,49 @@ async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fe
   // EVERY NODE AT ONCE (measured 2026-10-14 03:26Z on testnet4): asked one after another, the 14 seats a v2 round
   // draws from took 27 s here - a round whose key all 7 signer nodes had attested since 03:24Z - and a market order's 60 s
   // expiry and an 8 s RPS table both ran out before the pick. Read together, kept in the nodes' order as before.
-  const answers = await Promise.all((nodes || []).map(async (node) => {
+  // AND DONE ONCE ENOUGH HAVE ATTESTED (kanban #606, measured 2026-10-24 06:36Z: a market bot's first order of a window waited 44 s
+  // here - every seat was waited for, one of them slow, though the signer nodes' attestations had stood seconds in): each answer is
+  // taken as it comes, and the key is answered the moment its attestation stands; the slower seats are not waited for.
+  // `timeoutMs`: a seat that has not answered by then is counted as refusing.
+  const take = ({ refused: why, bytes, node }) => {
+    if (why) { refused.push(why); return null; }
     try {
-      const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id);
-      if (!r.ok) return { refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
-      return { bytes: new Uint8Array(await r.arrayBuffer()), node };
-    } catch (e) { return { refused: `${node}: ${e.message}` }; }
-  }));
-  for (const { refused: why, bytes, node } of answers) {
-    if (why) { refused.push(why); continue; }
-    try {
-      if (bytes.length !== ATTESTATION_BYTES + 64) { refused.push(`${node}: answered ${bytes.length} bytes, not one signed claim key`); continue; }
+      if (bytes.length !== ATTESTATION_BYTES + 64) { refused.push(`${node}: answered ${bytes.length} bytes, not one signed claim key`); return null; }
       const a = decodeClaimKeyAttestation(bytes.subarray(0, ATTESTATION_BYTES));
-      if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); continue; }
+      if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); return null; }
       const k = toHex(a.claimPk);
       if (!byKey.has(k)) byKey.set(k, { claimPk: a.claimPk, signatures: [] });
       byKey.get(k).signatures.push({ signerNodePubkey: a.signerNodePubkey, signature: bytes.subarray(ATTESTATION_BYTES) });
-    } catch (e) { refused.push(`${node}: ${e.message}`); }
-  }
+      return k;
+    } catch (e) { refused.push(`${node}: ${e.message}`); return null; }
+  };
+  const judge = (k) => {
+    const { claimPk, signatures } = byKey.get(k);
+    return { claimPk, said: claimKeyIsAttested({ roundId: round.id, claimPk, signatures, signerNodes,
+      settlementSlots: round.settlementSlots, verify: (s, m, kk) => curve.verify(s, m, kk) }) };
+  };
+  const early = await new Promise((resolve) => {
+    let left = (nodes || []).length;
+    if (!left) { resolve(null); return; }
+    for (const node of nodes) {
+      (async () => {
+        try {
+          const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id, timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : undefined);
+          if (!r.ok) return { refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
+          return { bytes: new Uint8Array(await r.arrayBuffer()), node };
+        } catch (e) { return { refused: `${node}: ${e.message}` }; }
+      })().then((answer) => {
+        const k = take(answer);
+        if (k) { const j = judge(k); if (j.said.ok) resolve({ ok: true, claimPk: j.claimPk, ref: j.said.ref, attested: j.said.attested, needed: j.said.needed, refused }); }
+        if (--left === 0) resolve(null);
+      });
+    }
+  });
+  if (early) return early;
   let best = null;
-  for (const { claimPk, signatures } of byKey.values()) {
-    const said = claimKeyIsAttested({ roundId: round.id, claimPk, signatures, signerNodes,
-      settlementSlots: round.settlementSlots, verify: (s, m, k) => curve.verify(s, m, k) });
-    if (said.ok) return { ok: true, claimPk, ref: said.ref, attested: said.attested, needed: said.needed, refused };
+  for (const k of byKey.keys()) {
+    const { said } = judge(k);
+    if (said.ok) { const { claimPk } = byKey.get(k); return { ok: true, claimPk, ref: said.ref, attested: said.attested, needed: said.needed, refused }; }
     if (!best || (said.attested || 0) > (best.attested || 0)) best = said;
   }
   return {

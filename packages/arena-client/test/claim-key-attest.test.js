@@ -137,7 +137,20 @@ test('a signer node that serves its own key is refused: asked alone it does not 
     const all = await f.ask();
     assert.equal(all.ok, true, all.why);
     assert.equal(toHex(all.claimPk), toHex(CLAIM), 'the rogue signer node\'s key was taken');
-    assert.equal(all.attested, 6);
+    // answered once its attestation stands (kanban #606): at the round's needed count, not after every seat
+    assert.ok(all.attested >= all.needed && all.attested <= 6, `attested ${all.attested} of needed ${all.needed}`);
+  } finally { await f.close(); }
+});
+
+test('a seat that hangs does not hold the claim key: it is answered once enough signer nodes attested (kanban #606)', async () => {
+  const f = await federationRound({ signerNodes: 7 });
+  try {
+    const hung = f.nodes[0];
+    const fetcher = (url, o) => (url.startsWith(hung) ? new Promise((_, reject) => { o && o.signal && o.signal.addEventListener('abort', () => reject(new Error('aborted'))); }) : fetch(url, o));
+    const t0 = Date.now();
+    const got = await attestedClaimKey({ round: f.round, signerNodes: f.signerNodes, nodes: f.nodes, curve: pageCurve, fetcher, timeoutMs: 20000 });
+    assert.equal(got.ok, true, got.why);
+    assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms with one seat hanging`);
   } finally { await f.close(); }
 });
 
