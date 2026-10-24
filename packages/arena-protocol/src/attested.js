@@ -21,7 +21,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
-import { isAttested, isTemplate, isGameMarket, isScalar, marketOfRound } from './manifest.js';
+import { isAttested, isTemplate, isGameMarket, isScalar, isDrawnAttest, marketOfRound } from './manifest.js';
 
 export const OUTCOME_SIGNATURE_BYTES = 64;
 
@@ -81,7 +81,7 @@ export function decodeAttestation(bytes) {
 // THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
 // marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
 // are not the question its attestors answered.
-export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null }) {
+export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null, drawn = null }) {
   if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
   // A MARKET ON A GAME (feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
   // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
@@ -101,20 +101,26 @@ export function attestationStands(a, { manifest: game, roundIdBytes, verify, rou
   if (a.outcome >= manifest.outcomes.length)
     return { ok: false, why: `that attestation names outcome ${a.outcome}, out of range: game "${manifest.gameName}" has ${manifest.outcomes.length} outcomes (0 to ${manifest.outcomes.length - 1})` };
   if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
-  const named = new Set(manifest.attestors.map(toHex));
+  // A DRAWN SET (#630): the round's own 7 attestors (sortition.js drawAttestors, node keys, BIP-340 - the caller's `verify`), 5 standing
+  const draws = isDrawnAttest(manifest);
+  if (draws && !(Array.isArray(drawn) && drawn.length === manifest.attestDraw.count))
+    return { ok: false, why: `game "${manifest.gameName}" draws its attestors per round, and the round's ${manifest.attestDraw.count} drawn attestors were not given` };
+  const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : manifest.attestors.map(toHex);
+  const need = draws ? manifest.attestDraw.threshold : manifest.attestThreshold;
+  const named = new Set(keysOf);
   const signed = new Set();
   for (const s of a.signatures || []) {
     const k = toHex(s.key);
-    if (!named.has(k)) return { ok: false, why: `that attestation is signed by key ${k.slice(0, 16)}, which game "${manifest.gameName}" does not name as an attestor` };
+    if (!named.has(k)) return { ok: false, why: `that attestation is signed by key ${k.slice(0, 16)}, which ${draws ? 'this round did not draw as an attestor' : `game "${manifest.gameName}" does not name as an attestor`}` };
     let good = false;
     try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
     if (!good) return { ok: false, why: `attestor ${k.slice(0, 16)}'s signature on that attestation does not verify` };
     signed.add(k);
   }
-  if (signed.size < manifest.attestThreshold)
-    return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${manifest.attestThreshold} of its ${manifest.attestors.length}` };
+  if (signed.size < need)
+    return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${need} of its ${named.size}` };
   return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size,
-    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${manifest.attestors.length} attestors (threshold ${manifest.attestThreshold})` };
+    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${named.size} attestors (threshold ${need})` };
 }
 
 /**
