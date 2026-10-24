@@ -62,7 +62,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const posted = row ? null : contractOf(rid);
     if (!row && !posted) return null;
     const c = roster.committeeFor(rid, role, posted ? { posted } : {});
-    if (!c.ok) return null;
+    if (!c.ok) return { refused: c.why };
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
     return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify };
   };
@@ -73,7 +73,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const held = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
     if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) return { ok: true, kept: false };
     const check = checkFor(rid, role);
-    if (!check) return { ok: false, why: 'this node cannot draw that round yet' };
+    if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
     const key = `${toHex(rid)}:${role}`;
@@ -97,6 +97,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
 
   // ROUNDS BY START TIME, read once each (the seats hold thousands)
   const starts = new Map();      // rid hex -> { rid, start: bigint, close: bigint }
+  const unwritten = new Map();   // anchor hex -> { rid, askedMs }: tables whose round 0 this seat does not hold
   let lastRow = 0;
   const index = () => {
     for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
@@ -109,7 +110,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (pick (c), known-game.js tableAnchorOf): its later rounds exchange no
       // PRESENT and sign no seating - the roster seats them with the first round's certificate
       const anchor = tableAnchorOf(c);
-      if (anchor && !anchor.first) continue;
+      if (anchor && !anchor.first) {
+        // A TABLE WHOSE FIRST ROUND THIS SEAT NEVER WROTE (kanban #604): its certificate is asked of the table's seats
+        const a = toHex(anchor.anchorId);
+        if (!unwritten.has(a) && !round.get(anchor.anchorId)) unwritten.set(a, { rid: anchor.anchorId, askedMs: -Infinity, sinceMs: nowMs() });
+        continue;
+      }
       starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c });
     }
   };
@@ -174,6 +180,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const t0 = Date.now(); let fellBack = 0, peers = 0, rounds = 0;
     try {
       index();
+      await askUnwritten();
       const now = BigInt(nowMs());
       const work = [];
       for (const [ridHex, t] of starts) {
@@ -259,6 +266,30 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   }
 
   /** The old doors, one round at a time: for a node that has no GET /seating-batch. */
+  // A TABLE'S CERTIFICATES THIS SEAT CANNOT EXCHANGE FOR (kanban #604: the 10-24 series reached the test host seats at 00:12Z, after their
+  // tables' round 0 had started; they held no row of it, never asked for its certificate and answered the unseated draw): read from the
+  // table's drawn seats once a minute until both stand, each checked by keepCert on round 0 built from the series (`contractOf`)
+  async function askUnwritten() {
+    const t = nowMs();
+    for (const [a, u] of unwritten) {
+      const lacking = SEATING_ROLES.filter((role) => !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(u.rid, role));
+      // asked for at most 3 h: a table nobody certified is not asked for all day
+      if (!lacking.length || round.get(u.rid) || t - u.sinceMs > 3 * 3600000) { unwritten.delete(a); continue; }
+      if (t - u.askedMs < 60000) continue;
+      u.askedMs = t;
+      const posted = contractOf(u.rid);
+      if (!posted) continue;
+      for (const role of lacking) {
+        const c = roster.committeeFor(u.rid, role, { posted });
+        if (!c.ok) continue;
+        for (const b of endpointsOf(c.drawn, round.pubkey)) {
+          const j = await getJson(b, `/seating?round=${a}&role=${role}`);
+          if (j && j.cert && keepCert(u.rid, role, fromHex(j.cert)).ok) break;
+        }
+      }
+    }
+  }
+
   async function askOne(b, w) {
     const rid = w.ridHex;
     if (!w.closed) { const got = await getJson(b, `/present?round=${rid}`); return got ? { presents: got.presents || [] } : null; }
