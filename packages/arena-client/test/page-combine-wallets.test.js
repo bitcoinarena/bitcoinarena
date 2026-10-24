@@ -22,7 +22,7 @@ const SEEDS = { cur: hex(1), rich: hex(2), poor: hex(3), none: hex(4), held: hex
 const FED = 'fe'.repeat(32);
 
 // a browser: storage, kept phrases, one fake wallet per phrase (e-cash notes it can send once), and the current tab's main
-function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [], blwp = {} } = {}) {
+function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [], blwp = {}, handover = null } = {}) {
   const store = new Map();
   const L = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
   const proxy = new Proxy(L, { ownKeys: () => [...store.keys()], getOwnPropertyDescriptor: (t, k) => (store.has(k) ? { enumerable: true, configurable: true, value: store.get(k) } : undefined) });
@@ -61,6 +61,16 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     openPlayerWallet: async ({ seed, ancestor }) => { const w = (ancestor ? ancestors : wallets).get(seed); opened.push(w.name); return w; },
   };
   const window = { ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
+  // THE OTHER TAB THAT PLAYS WITH A HELD PHRASE (#615), as the page's channel answers for it: `handover` 'answers' sends all and keeps it for the asker
+  const asked = [];
+  window.ARENA_ASK_HANDOVER = async (phrase16, fed, to16) => {
+    asked.push([phrase16, fed, to16]);
+    if (handover !== 'answers') return { ok: false, why: 'that tab did not answer in 20 s' };
+    const w = [...wallets.entries()].find(([h]) => h.slice(0, 16) === phrase16)[1];
+    const sent = JSON.parse(await w.sendAllEcash());
+    L.setItem(`arena.ecash.pending.${fed.slice(0, 16)}.1.${phrase16.slice(0, 8)}`, JSON.stringify({ ecash: sent.ecash, msat: sent.msat, from: 'tab', fed, to: to16, at: Date.now() }));
+    return { ok: true, msat: sent.msat };
+  };
   const locked = [];
   const navigator = { locks: { request: async (name, _o, fn) => { locked.push(name); return fn(heldLocks.some((h) => name === 'arena.phrase.' + h.slice(0, 16)) ? null : { name }); } } };
   const sessionStorage = { getItem: (k) => (k === 'arena.player.seed' ? SEEDS.cur : null) };
@@ -69,7 +79,7 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
   const run = () => combineWallets(main, { federation: 'fed1invite' }, { federationId: FED });
   const runIn = (fed) => window.ARENA_COMBINE_IN(main, fed, 'fed1invite');
   const pendingKeys = () => [...store.keys()].filter((k) => k.startsWith('arena.ecash.pending.'));
-  return { run, runIn, main, wallets, ancestors, log, opened, locked, store, pendingKeys,
+  return { run, runIn, main, wallets, ancestors, log, opened, locked, store, pendingKeys, asked, state: () => window.ARENA_MERGE_STATE,
     total: () => main.msat + [...wallets.values(), ...ancestors.values()].reduce((t, w) => t + w.msat, 0n) };
 }
 
@@ -177,4 +187,34 @@ test('another federation is merged on its own; e-cash kept for one federation is
   assert.equal(kept, undefined, 'the merged copy was received and dropped');
   await b.run();
   assert.ok(b.log.some((l) => l.includes('receive ecash:keptfed:9000 Success')), 'its own federation receives it');
+});
+
+test('a phrase another tab plays with: that tab is asked to hand its money over, and it lands here; a tab that does not answer is named (#615)', async () => {
+  const b = browser({ balances: { held: 3285000 }, heldLocks: [SEEDS.held], handover: 'answers' });
+  const before = b.total();
+  await b.runIn(FED);
+  assert.deepEqual(b.asked, [[SEEDS.held.slice(0, 16), FED, SEEDS.cur.slice(0, 16)]]);
+  assert.ok(!b.opened.includes('held'), 'never opened here while another tab holds it');
+  assert.equal(b.main.msat, 3285000n, 'the other tab\'s money is in this tab\'s wallet');
+  assert.equal(b.total(), before, 'nothing created or lost');
+  assert.deepEqual(b.pendingKeys(), []);
+  assert.equal(b.state()[FED.slice(0, 16)].state, 'merged');
+
+  const quiet = browser({ balances: { held: 3285000 }, heldLocks: [SEEDS.held] });
+  await quiet.runIn(FED);
+  assert.equal(quiet.main.msat, 0n);
+  const m = quiet.state()[FED.slice(0, 16)];
+  assert.equal(m.state, 'stuck');
+  assert.match(m.why, /open in another tab of this browser \(that tab did not answer in 20 s\) - close that tab/);
+});
+
+test('money handed over to another tab is not taken by this one - until two minutes passed (the asking tab closed) (#615)', async () => {
+  const rec = (at) => ({ ecash: 'ecash:x:7000', msat: '7000', from: 'tab', fed: FED, to: 'aa'.repeat(8), at });
+  const fresh = browser({ balances: {}, pending: [{ key: `arena.ecash.pending.${FED.slice(0, 16)}.1.x`, rec: rec(Date.now()) }] });
+  await fresh.runIn(FED);
+  assert.equal(fresh.main.msat, 0n);
+  assert.equal(fresh.pendingKeys().length, 1, 'left for the tab it was handed to');
+  const stale = browser({ balances: {}, pending: [{ key: `arena.ecash.pending.${FED.slice(0, 16)}.1.x`, rec: rec(Date.now() - 130000) }] });
+  await stale.runIn(FED);
+  assert.equal(stale.main.msat, 7000n, 'stranded for two minutes: merged here');
 });
