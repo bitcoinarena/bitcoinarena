@@ -19,7 +19,7 @@ const RELEASE = resolve(fileURLToPath(import.meta.url), '../../../..');
 const reg = (app, ...files) => files.map((f) => join(RELEASE, 'packages', app, 'plugin', f));
 const NEXTBLOCK = reg('nextblock', 'nextblock.js', 'nextblock-v2.js', 'nextblock-v3.js', 'nextblock-v4.js', 'nextblock-v5.js');
 const RPS = reg('rock-paper-scissors', 'rock-paper-scissors.js', 'rock-paper-scissors-v2.js', 'rock-paper-scissors-v3.js', 'rock-paper-scissors-v4.js', 'rock-paper-scissors-v5.js');
-const UPDOWN = reg('btc-updown', 'btc-updown.js', ...Array.from({ length: 22 }, (_, i) => `btc-updown-v${i + 2}.js`));
+const UPDOWN = reg('btc-updown', 'btc-updown.js', ...Array.from({ length: 23 }, (_, i) => `btc-updown-v${i + 2}.js`).filter((f) => f !== 'btc-updown-v20.js'));   // app.json carries no v20
 
 test('the release\'s apps: Next Block first, then by title, each with every registration it hosts, absolute', () => {
   const apps = appsIn(RELEASE);
