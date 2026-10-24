@@ -287,7 +287,13 @@ async fn main() -> anyhow::Result<()> {
         // reserve key - a 5-of-7 key nobody holds alone - can claim; and that claim, FROST-signed by the seats, into a reserve output
         "receive-to-key" => receive_to_key(&a, &client, lnv2).await,
         "claim-incoming" => claim_incoming(&a, &client, lnv2, &api).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming or id"),
+        // THE SEAT'S SIDE OF AN E-CASH EXCHANGE BETWEEN FEDERATIONS (kanban #614, the owner 2026-10-24: "Kein Lightning swap, sondern übertragen
+        // in die andere federation"): the player's notes of one federation reissued into the seat's client there (ecash-receive), the seat's
+        // notes of the other federation handed back (ecash-send), and what the seat's client holds (balance)
+        "ecash-send" => ecash_send(&a, &client).await,
+        "ecash-receive" => ecash_receive(&a, &client).await,
+        "balance" => { println!("{}", serde_json::json!({ "mode": "balance", "msat": client.get_balance_for_btc().await?.msats })); Ok(()) }
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming, ecash-send, ecash-receive, balance or id"),
     }
 }
 
@@ -932,6 +938,44 @@ async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
 /// the same contract) and its preimage is that seed's hash; its ephemeral key is the claim key (no ECDH: nobody derives a key from
 /// it). The gateway is asked for the invoice of exactly --amount-msat; the contract carries that less the gateway's receive fee.
 /// Prints the invoice, its payment hash, the contract id and the contract itself (consensus-encoded hex) for --mode claim-incoming.
+/// E-CASH OUT (kanban #614): exactly --amount-msat of this client's notes as the prefixed base32 string another wallet of the same
+/// federation receives. Prints {"mode", "msat", "ecash"}; spent here, the string is the only copy - the caller keeps it until it is received.
+async fn ecash_send(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
+    let mint = client.get_first_module::<fedimint_mintv2_client::MintClientModule>()?;
+    let amount = Amount::from_msats(need(a, "amount-msat")?.parse()?);
+    let (_, ecash) = mint.send(amount, serde_json::Value::Null, false).await?;
+    println!("{}", serde_json::json!({ "mode": "ecash-send", "msat": amount.msats,
+        "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash) }));
+    Ok(())
+}
+
+/// E-CASH IN (kanban #614): --ecash reissued into this client; prints {"mode", "state", "msat"} once the federation reissued it -
+/// "Success", "Rejected" (already spent) or "AlreadyReceived" - and the amount the string carried.
+async fn ecash_receive(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
+    let mint = client.get_first_module::<fedimint_mintv2_client::MintClientModule>()?;
+    let bytes = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, need(a, "ecash")?.trim())?;
+    let before = client.get_balance_for_btc().await?.msats;
+    let operation = match mint.receive(bytes, serde_json::Value::Null).await {
+        Ok(op) => op,
+        Err(fedimint_mintv2_client::ReceiveECashError::AlreadyReceived) => {
+            println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": "AlreadyReceived", "msat": 0 }));
+            return Ok(());
+        }
+        Err(e) => return Err(anyhow!("{e}")),
+    };
+    let state = mint.await_final_receive_operation_state(operation).await?;
+    // THE AMOUNT IT CARRIED, AS THE BALANCE SAYS IT (measured 2026-10-24 on test host seat 1: read at once, the balance had not yet risen -
+    // "msat": 0 after a Success of 1,000 sat): read again for up to 10 s until it has; the exchange pays what this says, never what was claimed
+    let mut after = client.get_balance_for_btc().await?.msats;
+    for _ in 0..100 {
+        if after > before { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        after = client.get_balance_for_btc().await?.msats;
+    }
+    println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": format!("{state:?}"), "msat": after.saturating_sub(before) }));
+    Ok(())
+}
+
 async fn receive_to_key(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<()> {
     use fedimint_core::encoding::Encodable;
     use fedimint_lnv2_common::Bolt11InvoiceDescription;

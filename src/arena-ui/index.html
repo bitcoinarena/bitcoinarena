@@ -3091,33 +3091,21 @@
               await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
             }
           } catch (e) { console.warn('[arena] merge before the join: ' + e.message); }
-          // A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3): before a top-up, the player's notes
-          // in another OPEN federation this page verified move the shortfall here through a gateway that serves both - the
-          // fee shown and the press the player's (ARENA_SWAP_CONFIRM); declined, the deposit offer follows as before
+          // A ROUND IN ANOTHER FEDERATION IS ENTERED BY AN E-CASH EXCHANGE WITH A SEAT (kanban #614, the owner 2026-10-24: "Kein Lightning swap,
+          // sondern übertragen in die andere federation"; "es sollte automatisch passieren"): before a top-up, what the round's federation lacks
+          // is moved from the wallet's federation that holds the most spendable sats - its e-cash to a seat, the seat's e-cash of this federation
+          // back (ARENA_EXCHANGE_INTO). No gateway, no invoice, no dialog. The Lightning swap and its "Enter by swap" press are gone from here.
           try {
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
-            const loads = window.ARENA_FED_LOADS || new Map();
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
-            for (const other of ARENACLIENT.ledgerFederations(vault()).filter((f) => f !== here)) {
-              const st = loads.get(other);
-              // AN UNVERIFIED SOURCE ON THE KNOWN-GOOD LIST MAY PAY (the owner 2026-10-20 17:3xZ: 200 sat in 4dc88be7, an Up/Down order in 337ae01a showed
-              // "Not enough sats ... Deposit with Lightning?" - 4dc88be7 read "Not checked yet" because today's rounds name a census older than its
-              // guardians' adverts, and only an OPEN source was swapped from). Moving notes OUT is allowed for an unverified federation
-              // (FEDERATION_ALLOWS.unverified.move); the client's own known-good list vouches for it, its invite the status's or the one its wallet opened with
-              const known = ARENACLIENT.federationIsKnown ? ARENACLIENT.federationIsKnown(other) : false;
-              const fromInvite = (st && st.invite) || (known && ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), other) : null);
-              const mayPay = st ? (st.status === 'OPEN' || (st.status === 'unverified' && known)) : known;
-              if (!mayPay || !fromInvite || !ARENACLIENT.swapPlayerWalletForRound) continue;
-              const r = await ARENACLIENT.swapPlayerWalletForRound({ round: named.round, toInvite: named.federation, fromInvite, fromFederationId: other,
-                seed, LockClient: wasm.LockClient, storage: vault(), needMsat, gateways: wallet.gateways,
-                confirm: (q) => (window.ARENA_SWAP_CONFIRM ? window.ARENA_SWAP_CONFIRM(q, other, here) : Promise.resolve(false)),
-                onState: (m) => onStep(m.state === 'swapping' ? `swapping ${Math.ceil(Number(m.amountMsat) / 1000)} sat from federation ${other.slice(0, 8)} into this round's`
-                  : m.state === 'swapped' ? `swapped from federation ${other.slice(0, 8)} (fee ${Math.ceil(Number(m.feeMsat) / 1000)} sat)` : `the swap stopped (${m.why})`) });
-              window.ARENA_SWAPPED = { from: other, to: here, state: r.state, movedMsat: r.movedMsat ? String(r.movedMsat) : null, feeMsat: r.feeMsat !== undefined ? String(r.feeMsat) : null,
-                quotedFeeMsat: r.quote ? String(r.quote.feeMsat) : null };
-              if (r.state === 'swapped' || r.state === 'enough' || r.state === 'declined') break;
+            const c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(here);
+            let have = 0n; try { have = c ? BigInt(await c.balanceMsat()) : 0n; } catch { have = 0n; }
+            if (have < needMsat && window.ARENA_EXCHANGE_INTO) {
+              const r = await window.ARENA_EXCHANGE_INTO({ to: here, toInvite: named.federation, needMsat: needMsat - have, nodes: named.nodes || [], seed, LockClient: wasm.LockClient, onStep });
+              window.ARENA_EXCHANGED = r;
+              console.log(`[arena] exchange into ${here.slice(0, 8)}: ${r.ok ? `${r.msat} msat from ${String(r.from).slice(0, 8)} in ${r.ms} ms` : r.why}`);
             }
-          } catch (e) { console.warn('[arena] swap: ' + e.message); }
+          } catch (e) { console.warn('[arena] exchange: ' + e.message); }
           // NOT SPENDABLE YET IS SAID, NOT ASKED AS A DEPOSIT: when what the player holds would cover the round only with money still merging,
           // the order stops here by name - nothing taken, the reason the merge's own
           {
@@ -4312,6 +4300,93 @@
       const inReact = window.ARENA_ASK_IN_REACT('arena-warn-confirm', { title: 'Enter by swap', sub: `This round is in federation ${String(to).slice(0, 8)}; your money is in federation ${String(from).slice(0, 8)}.`, items: swapItems, yes: 'Swap and enter' });
       window.ARENA_SWAP_SHOWN = { amountMsat: String(q.amountMsat), feeMsat: String(q.feeMsat), from, to };
       return inReact;
+    };
+    // THE E-CASH EXCHANGE, THE PAGE'S SIDE (kanban #614): `needMsat` of the wallet's e-cash of the federation holding the most spendable sats
+    // handed to a seat (POST /exchange), the seat's e-cash of `to` received here. Kept in this browser (arena.ecash.exchange.*) until it is
+    // done: a seat that refused it outright gets nothing and the notes come back here; a seat that took it and did not answer is asked
+    // again with the same notes (the seat answers a retry the same, never pays twice - ecash-exchange.js).
+    window.ARENA_EXCHANGE_INTO = async ({ to, toInvite, needMsat, nodes, seed, LockClient, onStep = () => {} }) => {
+      const t0 = Date.now();
+      const vault = () => window.ARENA_BROWSER_STORE();
+      const openW = async (fid, invite) => (window.ARENA_WALLETS && window.ARENA_WALLETS.get(fid))
+        || ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite, seed, LockClient, storage: vault() });
+      // AN EXCHANGE LEFT UNANSWERED BEFORE (a seat that took the notes and did not answer): asked again with the same notes, then received
+      for (const k of Object.keys(vault()).filter((x) => x.startsWith('arena.ecash.exchange.'))) {
+        let x; try { x = JSON.parse(vault().getItem(k)); } catch { vault().removeItem(k); continue; }
+        for (const n of nodes) {
+          try {
+            const r = await fetch(String(n).replace(/\/+$/, '') + '/exchange', { method: 'POST', signal: AbortSignal.timeout(30000), body: JSON.stringify({ from: x.from, to: x.to, ecash: x.ecash, amountMsat: x.msat }) });
+            if (!r.ok) continue;
+            const a = await r.json();
+            const tw = await openW(x.to, x.to === to ? toInvite : (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), x.to) : null));
+            const got = JSON.parse(await tw.receiveEcash(a.ecash));
+            if (got.state === 'Success' || got.state === 'AlreadyReceived') { vault().removeItem(k); console.log(`[arena] exchange kept since ${k.slice(21)} answered: ${a.msat} msat into ${String(x.to).slice(0, 8)}`); }
+            break;
+          } catch { /* the next seat */ }
+        }
+      }
+      const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;
+      const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation) && p.federation !== to);
+      const src = parts.filter((p) => spendable(p) >= needMsat).sort((x, y) => (spendable(y) > spendable(x) ? 1 : -1))[0];
+      if (!src) return { ok: false, why: 'no other federation of this wallet holds enough spendable sats' };
+      const from = src.federation;
+      const w = await openW(from, ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), from) : null);
+      if (typeof w.sendEcash !== 'function') return { ok: false, why: 'this page\'s wallet cannot send an amount of e-cash' };
+      onStep(`moving ${Math.ceil(Number(needMsat) / 1000).toLocaleString('en-US')} sat from federation ${from.slice(0, 8)} into this round's`);
+      const sent = JSON.parse(await w.sendEcash(String(needMsat)));
+      const key = 'arena.ecash.exchange.' + Date.now();
+      vault().setItem(key, JSON.stringify({ from, to, ecash: sent.ecash, msat: String(sent.msat) }));
+      let answer = null, why = '', taken = false;
+      for (const n of nodes) {
+        try {
+          const r = await fetch(String(n).replace(/\/+$/, '') + '/exchange', { method: 'POST', signal: AbortSignal.timeout(60000),
+            body: JSON.stringify({ from, to, ecash: sent.ecash, amountMsat: String(sent.msat) }) });
+          if (r.ok) { answer = await r.json(); break; }
+          why = `${r.status} ${(await r.text()).trim().slice(0, 160)}`;
+          if (r.status === 503) { taken = true; break; }
+        } catch (e) { why = e.message; taken = true; break; }   // no answer: the seat may have taken it - asked again later, not taken back
+      }
+      if (!answer) {
+        if (!taken) { try { await w.receiveEcash(sent.ecash); vault().removeItem(key); } catch { /* kept: received at the next merge */ } }
+        return { ok: false, from, why: why || 'no seat exchanges' };
+      }
+      const tw = await openW(to, toInvite);
+      const got = JSON.parse(await tw.receiveEcash(answer.ecash));
+      if (got.state === 'Success' || got.state === 'AlreadyReceived') vault().removeItem(key);
+      if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
+      return { ok: got.state === 'Success' || got.state === 'AlreadyReceived', from, to, msat: answer.msat, ms: Date.now() - t0, state: got.state };
+    };
+    // THE MONEY MOVED BEFORE THE PRESS (kanban #614, the owner 2026-10-24: "Das darf auch nicht länger als 100-300ms dauern"): an exchange is
+    // two reissues - seconds - so it is done when the lobby shows rounds this wallet could not pay where its money is, not when the player
+    // presses. The soonest paying round of a fixed stake: when no federation it is listed in holds that stake spendable, and another of the
+    // wallet's federations does, the stake (and 5 % for the fees) is moved into the soonest one's federation now. A market's rounds are
+    // listed in every federation and need none (moneyFirst). One at a time, at most once a minute.
+    window.ARENA_PREPARE_FUNDS = async () => {
+      const st = window.ARENA_PREPARE_FUNDS;
+      if (st.busy || Date.now() - (st.lastMs || 0) < 60000) return;
+      if (!window.sessionStorage.getItem('arena.player.seed')) return;
+      const fedOf = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.federationId instanceof Uint8Array ? ARENACLIENT.toHex(c.federationId) : null; };
+      const rows = (window.ARENA_LOBBY_ROWS || []).filter((r) => !r.free && r.joinable && fedOf(r) && Number((r.contract || r.raw.contract).stakeMsat || 0) > 0)
+        .sort((a, b) => Number(a.entryCloseMs || 0) - Number(b.entryCloseMs || 0));
+      if (!rows.length) return;
+      const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation));
+      const spendable = (f) => { const p = parts.find((x) => x.federation === f); return p ? BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n : 0n; };
+      const first = rows[0], stake = BigInt((first.contract || first.raw.contract).stakeMsat);
+      const need = stake + stake / 20n;
+      const same = rows.filter((r) => Number(r.entryCloseMs || 0) === Number(first.entryCloseMs || 0));
+      if (same.some((r) => spendable(fedOf(r)) >= need)) return;
+      const to = fedOf(first);
+      if (!parts.some((p) => p.federation !== to && spendable(p.federation) >= need - spendable(to))) return;
+      st.busy = true; st.lastMs = Date.now();
+      try {
+        const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+        const seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
+        const toInvite = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(window.ARENA_BROWSER_STORE(), to) : null;
+        const r = await window.ARENA_EXCHANGE_INTO({ to, toInvite, needMsat: need - spendable(to), nodes: window.ARENA_ROW_NODES(first.id), seed, LockClient: wasm.LockClient });
+        window.ARENA_PREPARED = r;
+        console.log(`[arena] money moved ahead into ${to.slice(0, 8)}: ${r.ok ? `${r.msat} msat from ${String(r.from).slice(0, 8)} in ${r.ms} ms` : r.why}`);
+      } catch (e) { console.warn('[arena] money moved ahead: ' + e.message); }
+      finally { st.busy = false; }
     };
     window.ARENA_PAINT_CONFIRMED = () => {
       const el = document.getElementById('arena-set-federations'); if (!el) return;
@@ -7005,6 +7080,7 @@
           window.ARENA_LOBBY_CLOSED = [...closedOf(got, search), ...(got2 && testnet ? closedOf(got2, testnet.search) : [])]; }
         // the seats of a listed round: its side's lobby nodes (a head-to-head table says who sits at it to them, ARENA_GAME.here)
         window.ARENA_ROW_NODES = (id) => (testnet && rowSearch.get(id) === testnet.search ? testnet.named.nodes : named.nodes) || [];
+        if (window.ARENA_PREPARE_FUNDS) window.ARENA_PREPARE_FUNDS();
         lobbyNow();
         refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];
         unanswered = [...(got.unanswered || []), ...((got2 && got2.unanswered) || [])];

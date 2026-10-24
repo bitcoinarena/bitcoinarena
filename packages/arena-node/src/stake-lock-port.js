@@ -201,6 +201,21 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      * message the committee must sign - the invoice's consensus hash, which the gateway checks under the
      * contract's refund key. With it: the stock client's send_payment to `gateway`, and the preimage if it paid.
      */
+    /** THE SEAT'S E-CASH IN THIS FEDERATION (kanban #614): what its client holds, msat. */
+    async ecashBalance() {
+      const j = await run(bin, ['--mode', 'balance', '--data-dir', dataDir], timeoutMs);
+      return BigInt(j.msat);
+    },
+    /** E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). */
+    async ecashReceive(ecash) {
+      const j = await run(bin, ['--mode', 'ecash-receive', '--data-dir', dataDir, '--ecash', String(ecash)], timeoutMs);
+      return { state: String(j.state), msat: BigInt(j.msat || 0) };
+    },
+    /** Exactly `amountMsat` of the seat's notes here, as e-cash another wallet of this federation receives (kanban #614). */
+    async ecashSend(amountMsat) {
+      const j = await run(bin, ['--mode', 'ecash-send', '--data-dir', dataDir, '--amount-msat', String(amountMsat)], timeoutMs);
+      return { ecash: String(j.ecash), msat: BigInt(j.msat) };
+    },
     async send({ gateway, outpoint = null, paymentHash, amountMsat, expiration, claimPk, refundPk, invoice, auth = null }) {
       const args = ['--mode', 'send', '--data-dir', dataDir, '--hash', String(paymentHash), '--amount-msat', String(amountMsat),
         '--expiration', String(expiration), '--claim-pk', String(claimPk), '--refund-pk', toHex(refundPk), '--invoice', String(invoice),
