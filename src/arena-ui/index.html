@@ -602,7 +602,7 @@
        bar. add one as on every other page. the back button should move to the header"): the game's own bar - the logo, ← and the
        trophy, shop and gear - sits over the sheet, the sheet starts below it, and the bar's ← closes the sheet (back to the game) */
     body:has(#arena-season.show) #arena-money, body:has(#arena-shop.show) #arena-money { z-index: 60; }
-    body:has(#arena-season.show) #arena-games-back, body:has(#arena-shop.show) #arena-games-back { display: inline-flex; flex: none; align-items: center; gap: 4px;
+    body:has(#arena-season.show) #arena-games-back, body:has(#arena-shop.show) #arena-games-back, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-games-back { display: inline-flex; flex: none; align-items: center; gap: 4px;
       margin-right: auto; padding: 7px 10px; cursor: pointer; background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px;
       font: 600 13px/1 system-ui, sans-serif; }
     body:not(.arena-clean) #arena-season, body:not(.arena-clean) #arena-shop { padding-top: calc(58px + env(safe-area-inset-top, 0px)); }
@@ -695,7 +695,7 @@
     /* AND IN EVERY GAME (2026-10-17: "The games also need to have the Bitcoin arena logo as the main Testnet page has"): a game's
        own client keeps the games screen's bar with the logo; Tick Tock's header starts with the mark, before "← Arena" */
     #arena-game-home { display: none; }
-    body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home { display: inline-grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 7px;
+    body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-game-home { display: inline-grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 7px;
       text-decoration: none; font: 800 16px/1 system-ui, sans-serif; color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-game-home i { font-style: normal; }
     body.arena-clean #arena-game-home { display: none !important; }
@@ -751,9 +751,9 @@
     /* THE WALLET IN A GAME'S OWN HEADER: balance, Deposit and Withdraw over Unity, its loading screen, the
        leaderboard and the shop, as on the games screen; a phone keeps the balance (Deposit and Withdraw are in Settings and the lobby) */
     #arena-hdr-bal, #arena-hdr-deposit, #arena-hdr-withdraw { display: none; }
-    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-bal, body:has(#arena-season.show) #arena-hdr-bal, body:has(#arena-shop.show) #arena-hdr-bal,
-    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-deposit, body:has(#arena-season.show) #arena-hdr-deposit, body:has(#arena-shop.show) #arena-hdr-deposit,
-    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-withdraw, body:has(#arena-season.show) #arena-hdr-withdraw, body:has(#arena-shop.show) #arena-hdr-withdraw {
+    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-bal, body:has(#arena-season.show) #arena-hdr-bal, body:has(#arena-shop.show) #arena-hdr-bal, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-hdr-bal,
+    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-deposit, body:has(#arena-season.show) #arena-hdr-deposit, body:has(#arena-shop.show) #arena-hdr-deposit, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-hdr-deposit,
+    body.arena-game-chosen:not(.arena-own-client) #arena-hdr-withdraw, body:has(#arena-season.show) #arena-hdr-withdraw, body:has(#arena-shop.show) #arena-hdr-withdraw, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-hdr-withdraw {
       display: inline-flex; align-items: center; flex: none; }
     /* EVERY MAIN GAME SCREEN, THE LOBBY TOO, HAS DEPOSIT AND WITHDRAW (2026-10-19: "All main game screens incl lobby in
        next block show deposit & withdrawal"): with the backup warning out of the header there is room; a phone shows their icons, as it
@@ -779,7 +779,7 @@
     #arena-hdr-why:empty { display: none; }
     /* THE NAME BESIDE THE MARK IN A GAME'S HEADER TOO (2026-10-19: "is missing the "Bitcoin Arena" label on the tic toc
        next block game and on all game loadings screens (desktop version)"): as the games screen draws it */
-    body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home {
+    body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-game-home {
       display: inline-flex; align-items: center; gap: 8px; width: auto; height: 32px; margin-right: 6px; background: none; border-radius: 0; color: #e8eaed;
       font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
     #arena-game-home i { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-weight: 800; color: #1a0f00; text-shadow: none;
@@ -1163,6 +1163,30 @@
     #arena-settings-advanced { position: fixed; inset: 0; z-index: 41; overflow-y: auto; background: #0b0e12; padding: 16px; box-sizing: border-box; }
     #arena-settings .settings-card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
       color: #f7931a; border-bottom: 1px solid #2f3b49; padding-bottom: 8px; }
+    /* A CLOSE BUTTON ON THE LEADERBOARD AND THE SHOP, AS SETTINGS HAS ONE (kanban #609) - at the sheet's top right */
+    #arena-season .box, #arena-shop .box { position: relative; }
+    #arena-season .sheet-close, #arena-shop .sheet-close { position: absolute; top: 0; right: 0; font: 600 15px/1.35 system-ui, sans-serif; padding: 9px 14px;
+      cursor: pointer; background: #1e2833; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
+    #arena-season .sheet-close:hover, #arena-shop .sheet-close:hover, #arena-season .sheet-close:focus-visible, #arena-shop .sheet-close:focus-visible { color: #f7931a; border-color: #f7931a; outline: none; }
+    body.arena-clean #arena-season .sheet-close, body.arena-clean #arena-shop .sheet-close { display: none; }
+    /* SETTINGS WITH THE HEADER AND THE FOOTER, AS THE LEADERBOARD AND THE SHOP (kanban #608): the page's bar stays over it, the layer starts
+       below the bar; the build line and Donate stay at the bottom right */
+    body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-money { z-index: 60; }
+    body:not(.arena-clean) #arena-settings, body:not(.arena-clean) #arena-settings-advanced { padding-top: calc(58px + env(safe-area-inset-top, 0px)); }
+    /* THE OLD WALLET CARD IS THE WALLET WINDOW'S ONLY (kanban #612: "after reloading any page, opening the settings layer shows the old and new
+       wallet section"): until the window first opens it waited in Settings, under Open wallet; it is never shown there */
+    #arena-settings #arena-set-wallet { display: none; }
+    /* ROOM IN EVERY CARD (kanban #613: "the content in the different sections is to cramped ... This also applies to the Advanced settings
+       overlay"): more padding, the heading's line further from what follows, text, buttons and fields apart */
+    #arena-settings .settings-card, #arena-settings-advanced .settings-card { padding: 18px 20px; margin-bottom: 18px; }
+    #arena-settings .settings-card h3, #arena-settings-advanced .settings-card h3 { margin-bottom: 16px; }
+    #arena-settings .settings-card p, #arena-settings-advanced .settings-card p,
+    #arena-settings .settings-card .sub, #arena-settings-advanced .settings-card .sub { margin: 10px 0; line-height: 1.5; }
+    #arena-settings .settings-card button, #arena-settings-advanced .settings-card button { margin: 8px 10px 8px 0; }
+    #arena-settings .settings-card input, #arena-settings .settings-card select, #arena-settings .settings-card textarea,
+    #arena-settings-advanced .settings-card input, #arena-settings-advanced .settings-card select, #arena-settings-advanced .settings-card textarea { margin: 6px 0; }
+    #arena-settings .settings-card label, #arena-settings-advanced .settings-card label { display: inline-flex; align-items: center; gap: 8px; margin: 8px 0; }
+
     #arena-settings button, #arena-seed-modal button { font: inherit; font-weight: 600; padding: 9px 14px; margin: 4px 6px 4px 0;
       cursor: pointer; background: #1e2833; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
     #arena-settings button.primary, #arena-seed-modal button.primary { background: #f7931a; color: #1b1000; border-color: #f7931a; }
@@ -1802,9 +1826,9 @@
   })();
   </script>
 
-  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
+  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><button type="button" class="sheet-close">&#10005; Close</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
   <!-- THE GAME'S SHOP: its items, each bought once with this wallet and kept for good -->
-  <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
+  <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><button type="button" class="sheet-close">&#10005; Close</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-label="Zap"></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a></div><div class="foot-row"><span class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</span><button type="button" class="donate-btn" title="Donate to the protocol developers" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate</button></div></div></div>
@@ -5886,6 +5910,7 @@
         load();
       });
       box.querySelector('.back').addEventListener('click', close);
+      { const x = box.querySelector('.sheet-close'); if (x) x.addEventListener('click', close); }   // its Close (kanban #609)
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && s.open) close(); });
       // THE STRIP AND THE WALLET BAR open the chosen game's board (body.arena-game-chosen shows them once there is one)
       for (const id of ['arena-season-go', 'arena-wb-season']) {
@@ -7814,6 +7839,8 @@
       if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[arena] shop: ' + e.message)));
       const back = document.querySelector('#arena-shop .back');
       if (back) back.addEventListener('click', () => document.getElementById('arena-shop').classList.remove('show'));
+      const shut = document.querySelector('#arena-shop .sheet-close');   // its Close (kanban #609)
+      if (shut) shut.addEventListener('click', () => document.getElementById('arena-shop').classList.remove('show'));
     }
     // ONE OVERLAY AT A TIME, AND ITS OWN BUTTON CLOSES IT (2026-10-19: "click on the leaderboard opens the
     // leaderboard. clicking it again should close it ... same for the other buttons: balance, deposit, withdraw"; "when opening an overlay
