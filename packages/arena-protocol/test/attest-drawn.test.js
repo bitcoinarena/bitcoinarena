@@ -18,7 +18,7 @@ const BODY = {
   gameName: 'up-down-drawn', gameDevPubkey: DEV.pub, version: 1, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.ATTESTED,
   cores: [], runTicksMax: 0, roundPeriodMs: 0n, payoutRule: PAYOUT_RULE.PARI_MUTUEL, rankNumerator: 0, rankDenominator: 0, minScore: 0,
   clients: [], gameDonationSetId: b32(0xd0), outcomes: ['Up', 'Down'], attestors: [], attestThreshold: 0,
-  attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 21,
+  attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2,
 };
 const MARKET = { ...BODY, signature: new Uint8Array(sign(null, Buffer.from(manifestBodyId(BODY)), DEV.key)) };
 const ROUND = b32(0x77);
@@ -34,7 +34,7 @@ test('the draw is in the manifest\'s bytes, read back the same; fixed keys along
   assert.deepEqual(encodeManifest(back), encodeManifest(MARKET));
   assert.throws(() => manifestBodyId({ ...BODY, attestors: [DEV.pub], attestThreshold: 1 }), /names no attestor keys/);
   assert.throws(() => manifestBodyId({ ...BODY, attestDraw: { count: 3, threshold: 2 } }), /7 of the round's nodes/);
-  assert.throws(() => manifestBodyId({ ...BODY, requiredProtocolVersion: 20 }), /requires protocol version/);
+  assert.doesNotThrow(() => manifestBodyId({ ...BODY, requiredProtocolVersion: 2 }), 'a drawn game asks no round protocol of its own');
 });
 
 test('5 of the round\'s 7 drawn attestors stand; 4 do not; a key the round did not draw is refused by name; no draw given, no standing', () => {

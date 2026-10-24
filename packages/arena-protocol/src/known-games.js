@@ -563,8 +563,8 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 11,
   }),
-  // UP/DOWN VERSION 24 (kanban #630): no attestor keys - each round's 7 are drawn from its census, 5 decide; requires protocol 21
-  'fa9a22a5771cd65a2cf883d4b690fde01e00630d50aadf013c6116a1dc24b38d': Object.freeze({
+  // UP/DOWN VERSION 24 (kanban #630): no attestor keys - each round's 7 are drawn from its census, 5 decide; protocol 2, as version 23
+  '8e47d27fd39597cfa6e29412efa450a994f013b5db8d553ce55304da000cb3ca': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
 
@@ -575,6 +575,6 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-    requiredProtocolVersion: 21,
+    requiredProtocolVersion: 2,
   }),
 });

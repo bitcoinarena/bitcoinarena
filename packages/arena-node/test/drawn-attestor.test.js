@@ -19,7 +19,7 @@ const MANIFEST = {
   gameName: 'up-down-drawn', gameDevPubkey: new Uint8Array(32).fill(9), version: 1, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.ATTESTED,
   cores: [], runTicksMax: 0, roundPeriodMs: 900000n, payoutRule: PAYOUT_RULE.PARI_MUTUEL, rankNumerator: 0, rankDenominator: 0, minScore: 0,
   clients: [], gameDonationSetId: new Uint8Array(32), outcomes: ['Up', 'Down'], attestors: [], attestThreshold: 0,
-  attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 21,
+  attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2,
 };
 const verify = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
 
