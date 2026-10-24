@@ -159,6 +159,8 @@
   <a href="#money">Where the money goes</a>
   <a href="#reserves">Protocol reserves</a>
   <a href="#proposals">Funding proposals</a>
+  <b>Technology</b>
+  <a href="#tech">Technologies used</a>
 </aside>
 
 <main id="top">
@@ -280,7 +282,7 @@
   <p>Drive a truck through the next Bitcoin block. Every player of a round gets the same block and the same seed; the best run of the round wins the pot.</p>
   <ul>
     <li><b>Play</b>: load mempool transactions onto your truck, cross the bitcoin price war front (the closer you drive to it, the more points you score) and deliver to the miners' drop-off before time runs out.</li>
-    <li><b>Checked by replay</b>: your inputs go to every node of the round as you play. Each node replays them with the game's deterministic core and signs the score it gets. The battlefield's BTC price is a sample the committee signs every 5 seconds: each seat reads Coinbase's exchange ticker (the last trade and its time), a reading older than 5 seconds counts as none, and a seat signs a proposed price only within 0.05 % of its own reading, so no seat can pick the price. A scheme in which every seat signs its own reading and the median is taken is being built for a later protocol version.</li>
+    <li><b>Checked by replay</b>: your inputs go to every node of the round as you play. Each node replays them with the game's deterministic core and signs the score it gets. The battlefield's BTC price is a sample the committee signs every 5 seconds. Each seat reads Coinbase's exchange ticker (the last trade and its time); a reading older than 5 seconds counts as none. A seat signs a proposed price only within 0.05 % of its own reading, so no seat can pick the price. A scheme in which every seat signs its own reading and the median is taken is being built for a later protocol version.</li>
     <li><b>Payout</b>: a rank curve. The top quarter of the players who qualified share the losers' stakes, with weights 0.75<sup>rank−1</sup>; qualifiers below them get their stake back.</li>
     <li><b>Rounds</b>: a new round starts every 90 seconds. The run lasts 82 seconds. You can join until 45 seconds after the start, but a late run still ends with the round. The rounds overlap, so one is always open.</li>
   </ul>
@@ -320,7 +322,7 @@
 
   </div></details>
   <details class="sec" open><summary><h2 id="nostr">Nostr</h2></summary><div class="sec-body">
-  <p>Bitcoin Arena is Nostr native: your Nostr key can be your wallet login, your node owner key and your community identity, and your Lightning wallet can connect over Nostr. Everything below is built and in use.</p>
+  <p>Your Nostr key can be your wallet login, your node's owner key and your name in the community, and your Lightning wallet can connect over Nostr. Everything below is built and in use.</p>
   <div class="tbl"><table><thead><tr><th>What</th><th>How it works</th><th>NIPs</th></tr></thead><tbody>
     <tr><td><b>Login with Nostr</b> (players)</td><td>Sign in with an nsec, a browser extension, or a remote signer: a <code>bunker://</code> link, a NIP-05 name, or a <code>nostrconnect://</code> QR code for a phone signer such as Amber. You can also create a Nostr account in the page.</td><td>NIP-07, NIP-46</td></tr>
     <tr><td><b>Your wallet from your key</b></td><td>The wallet's seed is stored as one app-data event (kind 30078, <code>d = bitcoin-arena/seed</code>), encrypted to your own key. Log in on another device and the wallet comes back. With an nsec the seed is derived from the key itself. An existing seed event is never overwritten.</td><td>NIP-78, NIP-44</td></tr>
@@ -352,10 +354,10 @@
   </div>
 
   <h3 id="cheat">When a node cheats</h3>
-  <p>A node is not trusted. Everything it signs can be checked by someone else, and a false signature is evidence against it. This is what happens when one tries.</p>
+  <p>Nodes are not trusted. Anyone can check what a node signs, and a false signature is evidence against it. This section shows what happens when a node cheats.</p>
 
   <h4>What a node could try</h4>
-  <p>Each of these is a cheat, and each leaves a proof anyone can check:</p>
+  <p>Each of these cheats leaves a proof anyone can check:</p>
   <div class="tbl"><table><thead><tr><th>The cheat</th><th>The proof</th></tr></thead><tbody>
     <tr><td>Signing two different results for the same player in one round</td><td>The two signed results</td></tr>
     <tr><td>Signing a result that replaying the player's inputs does not give</td><td>The inputs, the nodes' receipts for them, and the replay</td></tr>
@@ -370,19 +372,19 @@
   <p>Every round has a committee of 7 seats, and a result or payout counts only when 5 of them sign the same one. Up to 9 nodes are drawn per role, so spares take the seats of nodes that do not show up. The draw comes from a Bitcoin block hash, and your app computes the committee itself. A cheating node is one signature of the five needed. To change a result, five nodes would have to lie together.</p>
 
   <h4>How it is caught: replay and the objection window</h4>
-  <p>After a result is signed, it waits <b>10 minutes</b> before it is final. In that time <b>anyone</b> can object: the player, another player, a node that is not in the committee, a spectator or a watchtower. An objection is not an opinion. It is the player's inputs, the receipts the committee's nodes signed for them, and the result that replaying them gives. Any node checks it the same way, by running the game again with the round's own rules (<code>POST /objection</code>; <code>tools/check-objection.mjs</code> does the same check outside any node).</p>
+  <p>After a result is signed, it waits <b>10 minutes</b> before it is final. In that time <b>anyone</b> can object: the player, another player, a node that is not in the committee, a spectator or a watchtower. An objection is evidence: the player's inputs, the receipts the committee's nodes signed for them, and the result that replaying them gives. Any node checks it the same way, by running the game again with the round's own rules (<code>POST /objection</code>; <code>tools/check-objection.mjs</code> does the same check outside any node).</p>
   <ul>
     <li>A <b>valid</b> objection stops the result. The whole committee replays the inputs again, and the replay decides. The new result gets its own 10-minute window.</li>
     <li>If the committee cannot get 5 of 7 to agree, the entry is <b>void</b> and the stake goes back to the player.</li>
     <li>An objection that does not check is refused with its reason, and nothing is stored.</li>
   </ul>
-  <p>The player's app sends the inputs of the run to all the round's nodes as it plays, each node signs a receipt for them, so the evidence does not live only on the player's phone.</p>
+  <p>The player's app sends the run's inputs to all the round's nodes as it plays, and each node signs a receipt for them. So the evidence is not only on the player's phone.</p>
 
   <h4>What evidence is kept</h4>
-  <p>Nodes keep every proof they hold and hand it to anyone who asks (<code>/slash-proofs</code>, <code>/equivocation</code>). A proof has no deadline. An objection that arrives after the 10 minutes can no longer change a final result: the payment goes ahead. But it is still a proof against every node that signed the false result.</p>
+  <p>Nodes keep every proof they hold and hand it to anyone who asks (<code>/slash-proofs</code>, <code>/equivocation</code>). A proof has no deadline. An objection that arrives after the 10 minutes can no longer change a final result: the payment goes ahead. It is still a proof against every node that signed the false result.</p>
 
   <h4>What happens to the cheater</h4>
-  <p>Every node puts up a <b>bond</b> on Bitcoin to get a seat. The bond is designed with a slash path that only a separate set of <b>arbitration</b> keys can use, and only with a proof:</p>
+  <p>Every node puts up a <b>bond</b> on Bitcoin to get a seat. The bond has a slash path that only a separate set of <b>arbitration</b> keys can use, and only with a proof:</p>
   <ul>
     <li>The arbitration keys sign a transaction that takes the bond. It names the proof's hash on chain, so anyone can fetch the proof later and check it again. A slash without a valid proof is itself public evidence against the arbitration set.</li>
     <li>Half the bond goes to the players the cheat harmed. Of the other half, 75% goes evenly to the other active nodes (not the round's own seats) and 25% to the developers. Nothing is burned.</li>
@@ -396,9 +398,9 @@
     <li><b>Your app</b> works out the committee and checks every signature itself, and sends your inputs to every node of the round as you play.</li>
   </ul>
 
-  <h4>The honest limits</h4>
-  <p>Bitcoin itself cannot replay a game, so a slash needs the arbitration set to confirm that the proof checks. That trust is limited, not removed: the arbitration set is separate from the committees, cannot touch stakes, and cannot hold a bond forever. In the design, 30 days after a bond confirms its owner can always take it back.</p>
-  <p><b>Your money never depends on slashing.</b> Three things protect it even if arbitration failed entirely: the 5-of-7 rule, stakes that go back to you by default if nothing is signed, and the objection window. Slashing is the penalty for getting caught, not the thing that keeps you safe.</p>
+  <h4>The limits</h4>
+  <p>Bitcoin cannot replay a game, so a slash needs the arbitration set to confirm that the proof checks. So you trust the arbitration set, but only a little: it is separate from the committees, cannot touch stakes, and cannot hold a bond forever. In the design, 30 days after a bond confirms its owner can always take it back.</p>
+  <p><b>Your money never depends on slashing.</b> Three things protect it even if arbitration failed completely: the 5-of-7 rule, stakes that go back to you by default if nothing is signed, and the objection window. Slashing only punishes a node that was caught.</p>
 
   <div class="note"><b>Today, on testnet4:</b> objections, the re-run, void-and-refund and the evidence nodes keep are built and running. The slash itself is <b>not</b>: a node only works out and records what a slash would owe (<code>/slash-owing</code>), and no bond is taken. Mainnet is not live.</div>
 
@@ -444,7 +446,7 @@
 
   <h3 id="run">Run a node</h3>
   <h4 id="installer">With the installer (Linux, macOS, Windows)</h4>
-  <p>The releases are on GitHub in the <b>invite-only</b> repository <code>a tester/bitcoin-arena</code> (Releases; ask for an invite). The easiest way is the package for your system. Each one holds everything: Node.js, the node, the installer, <code>cloudflared</code> and Tor. Each opens a small Arena Node window that starts the installer and opens its setup page in your browser.</p>
+  <p>The releases are on GitHub in the <b>invite-only</b> repository <code>a tester/bitcoin-arena</code> (Releases; ask for an invite). The simplest way is the package for your system. Each package contains Node.js, the node, the installer, <code>cloudflared</code> and Tor. Each opens a small Arena Node window that starts the installer and opens its setup page in your browser.</p>
   <ul>
     <li><b>Windows</b>: <code>ArenaNodeSetup-&lt;version&gt;-windows-x64.exe</code>. It installs into your user folder (no administrator) and adds <b>Arena Node</b> to the Start menu and the desktop. Windows SmartScreen warns about an unsigned program: choose “More info”, then “Run anyway”. If Windows Firewall asks whether <code>cloudflared</code> may use public and private networks, choose <b>Cancel</b>: your node's tunnel only connects out and works either way.</li>
     <li><b>macOS</b>: <code>ArenaNode-&lt;version&gt;-darwin-arm64.dmg</code> (Apple silicon) or <code>-darwin-x64.dmg</code> (Intel). Drag <b>Arena Node</b> to Applications. The first time, right-click it and choose Open: the app is not signed with an Apple Developer ID yet.</li>
@@ -573,14 +575,14 @@ arena-donor sign &lt;dir&gt; # sign a game's manifest</pre>
 
   </div></details>
   <details class="sec" open><summary><h2 id="why-build">Build and earn</h2></summary><div class="sec-body">
-  <p>A game that pays real money usually needs a company: a server, a wallet to hold players' money, a way to stop cheaters and someone to pay out. Bitcoin Arena does all of that for every game on it, so a developer writes only the game.</p>
+  <p>A game played for money usually needs a company: a server, a wallet to hold players' money, a way to stop cheaters and someone to pay out. Bitcoin Arena does all of that, so a developer writes only the game.</p>
   <div class="grid">
     <div class="box"><h4>You never hold players' money</h4><p>Stakes are locked in a federation of independent nodes (Fedimint). No single node can take them, and neither can you.</p></div>
     <div class="box"><h4>Cheating does not pay</h4><p>Your game's rules run as a deterministic core. Independent nodes replay every run from the player's inputs; a run that does not replay to the same score is not paid.</p></div>
     <div class="box"><h4>Payouts are already built</h4><p>Pick a payout rule in your manifest: the rank curve for games, pari-mutuel for markets. Every node computes the same table to the millisatoshi.</p></div>
     <div class="box"><h4>No server, no approval</h4><p>A game exists once its developer signs its manifest. Nobody has to approve it; each node chooses which games it hosts.</p></div>
-    <div class="box"><h4>Players arrive with a wallet</h4><p>One seed and one wallet work across every game, so a player of one game can stake on yours without a new sign-up.</p></div>
-    <div class="box"><h4>You earn on every paid entry</h4><p>2% of every paid stake on protocol 11 (half the player's donation before it) goes to the game's developer, on every node that hosts it, for as long as people play.</p></div>
+    <div class="box"><h4>Players already have a wallet</h4><p>One seed and one wallet work across every game, so a player of one game can stake on yours without a new sign-up.</p></div>
+    <div class="box"><h4>You earn on every paid entry</h4><p>2% of every paid stake on protocol 11 (half the player's donation before it) goes to the game's developer, on every node that hosts it, for as long as the game is played.</p></div>
   </div>
   <p>There are two kinds: <b>games</b>, whose runs the nodes replay, and <b>prediction markets</b>, whose outcome named attestors sign. Start here:</p>
   <div class="grid">
@@ -713,7 +715,7 @@ export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
 
   </div></details>
   <details class="sec" open><summary><h2 id="h2h">Implement a head-to-head game</h2></summary><div class="sec-body">
-  <p>In a replayed game every run is checked on its own, so one player's score can never depend on what another player did. A <b>head-to-head game</b> is for the games where it does: each player picks a move in secret, all moves are shown together, and the game's rule decides who won. The engine does the hiding, the showing, the checking and the money; your game only says what beats what. The example is the real <b>Rock Paper Scissors</b> (<code>packages/rock-paper-scissors</code>).</p>
+  <p>In a replayed game every run is checked on its own, so one player's score can never depend on what another player did. A <b>head-to-head game</b> is for the games where it does: each player picks a move in secret, all moves are shown together, and the game's rule decides who won. The engine hides the moves, reveals them, checks them and moves the money; your game only says which move beats which. The example is the real <b>Rock Paper Scissors</b> (<code>packages/rock-paper-scissors</code>).</p>
   <div class="tbl"><table><thead><tr><th>Result type</th><th>The result comes from</th><th>Example</th></tr></thead><tbody>
     <tr><td><code>REPLAY</code> (1)</td><td>each player's own run, replayed by every node</td><td>Tick Tock, Next Block</td></tr>
     <tr><td><code>ATTESTED</code> (2)</td><td>an outcome signed by the attestors the game names</td><td>a prediction market</td></tr>
@@ -888,7 +890,7 @@ for (const node of committeeNodes)
     <li><b>When a federation is drained</b> (it is closing or has lost guardians), its reserves move on their own to a healthy federation: its successor, or else the open federation with the lowest id. No vote is needed for that move; every node records it.</li>
   </ul>
   <h3 id="proposals">Funding proposals: how the reserves pay out</h3>
-  <p><b>Anyone can propose a payout</b>: a player, a developer or a node operator, for any project and to any Lightning address. It does not have to be a developer. A proposal names its purpose, the amount in sat and the Lightning address (LNURL) to pay, and is signed by its author's key. Anyone can comment on it, in threads; comments carry no weight.</p>
+  <p><b>Anyone can propose a payout</b>, not only a developer: a player, a developer or a node operator, for any project and to any Lightning address. A proposal names its purpose, the amount in sat and the Lightning address (LNURL) to pay, and is signed by its author's key. Anyone can comment on it, in threads; comments carry no weight.</p>
   <ol class="steps">
     <li><b>Signal (1 week, 1008 blocks)</b><p>Nodes signal support. The proposal goes on to the vote if the nodes supporting it are at least 15% of the nodes that served a round in the 72 hours (432 blocks) before the week ends. Nothing is paid on a signal.</p></li>
     <li><b>Vote (2 weeks, 2016 blocks)</b><p>Bonded nodes vote YES, NO or ABSTAIN on Bitcoin, weighted by bond and age (rules 1 and 2 below). It passes when 60% of the votes say YES and YES is at least 20% of everyone who could vote. It is decided once its last block is 6 deep.</p></li>
@@ -905,6 +907,28 @@ for (const node of committeeNodes)
   <p>The signal counts only nodes with a bond at least 3 months old that served rounds in 3 of the last 4 weeks. No vote can pass in a network's first 3 months.</p>
   <p><b>Review and discuss</b>: the <a href="https://testnet.bitcoin-arena.io/proposals/">Project proposals</a> forum lists every proposal the nodes hold, with its stage and its replies. Reply or propose there with the same key you play with, or with your nsec.</p>
   <p>To post a proposal, sign it and send it to any node: <code>POST /funding</code> with <code>{ "kind": "proposal", "hex": ... }</code>; the nodes pass it on to each other. <code>GET /funding</code> lists every proposal with its comments, signals and vote. A node owner can propose, comment and signal from the owner area.</p>
+  </div></details>
+  <details class="sec" open><summary><h2 id="tech">Technologies used</h2></summary><div class="sec-body">
+  <p>What Bitcoin Arena is built with, and what each part is for.</p>
+  <div class="tbl"><table><thead><tr><th>Technology</th><th>What it is used for</th></tr></thead><tbody>
+    <tr><td>Bitcoin (testnet4 today)</td><td>Node bonds and their advertisements, funding votes, and the block hashes that seed each committee draw.</td></tr>
+    <tr><td>Bitcoin Core, Electrum</td><td>How a node reads the chain: its own Bitcoin Core, or an Electrum server for a node without custody.</td></tr>
+    <tr><td>Taproot, MuSig2</td><td>The bond output: a MuSig2 key path for the node and the arbitration set, and two script paths.</td></tr>
+    <tr><td>Fedimint 0.12 (mint v2, Lightning v2)</td><td>The federations that hold the stakes as e-cash. A stake lock is a Lightning v2 contract. The network runs a patched Fedimint build.</td></tr>
+    <tr><td>Lightning Network, LND</td><td>Deposits and withdrawals through federation gateways, and the channels of liquidity providers.</td></tr>
+    <tr><td>Rust, WebAssembly</td><td>The wallet in your browser: the Fedimint client and the stake-lock code, compiled to WebAssembly. The dev client runs the same build in Node.js.</td></tr>
+    <tr><td>FROST with BIP-340 Schnorr signatures</td><td>The committee's 5-of-7 signature on a round's settlement and payouts.</td></tr>
+    <tr><td>Ed25519</td><td>Developer keys that sign manifests, attestors' signatures, the page's session keys, and the release signature.</td></tr>
+    <tr><td>Nostr</td><td>Login, the wallet seed backup, Nostr Wallet Connect, node owner keys, results and badges, and the Arena relay.</td></tr>
+    <tr><td>Node.js 24</td><td>The node. Game cores run in a worker thread inside a <code>node:vm</code> sandbox.</td></tr>
+    <tr><td>SQLite (<code>node:sqlite</code>)</td><td>The node's store and the Arena relay's store.</td></tr>
+    <tr><td>React 19, esbuild</td><td>The owner page, the node dashboard, the homepage, the explorer, the installer wizard and parts of the game page.</td></tr>
+    <tr><td>Unity WebGL</td><td>The graphics of Tick Tock, Next Block.</td></tr>
+    <tr><td>Cloudflare Workers, Pages, D1</td><td>bitcoin-arena.io, these docs and the explorer run on Workers; the explorer keeps its data in D1. The testnet page is on Pages.</td></tr>
+    <tr><td>Cloudflare Tunnel, Tor</td><td>How a node is reached without an open port: <code>cloudflared</code> for its public address, Tor for its LND's onion address. Both ship in the installer.</td></tr>
+    <tr><td>Installer packages</td><td>A Windows <code>.exe</code>, a macOS <code>.dmg</code> and a Linux <code>.deb</code>; the node runs under systemd, launchd or a Windows logon task.</td></tr>
+    <tr><td>OpenAPI 3, Swagger UI</td><td>The <a href="https://docs.bitcoin-arena.io/api/">node API reference</a>.</td></tr>
+  </tbody></table></div>
   </div></details>
   <details class="sec" open><summary><h2 id="faq">FAQ</h2></summary><div class="sec-body">
   <details><summary>Where are my sats?</summary><p>As Fedimint e-cash in your browser's wallet, under your 24 words or your Nostr key, in one of the federations. No company holds them. While you play, your stake sits in a lock in the federation that only the round's result, or its expiry, can open.</p></details>
