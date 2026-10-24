@@ -6320,6 +6320,13 @@
       const frame = document.createElement('iframe');
       frame.id = 'arena-client';
       frame.title = game.title;
+      // SHOWN ONCE THE PAGE'S STYLE IS IN IT (kanban #610, the owner 2026-10-24: "Right after loading, and the loading indicator disappears and
+      // it scrolls up a few pixels. You can reproduce it if you throttle the cpu to 6x slow down" - measured under 6x: the client's title at
+      // 58 px for ~0.5 s, then 20 px - its own "← Arena", which the style below hides, stood above it until the frame's load): hidden until
+      // the load has added that style, so the client appears in its final place; shown after 8 s whatever happens
+      frame.style.visibility = 'hidden';
+      const shown = setTimeout(() => { frame.style.visibility = ''; }, 8000);
+      frame.addEventListener('load', () => { clearTimeout(shown); setTimeout(() => { frame.style.visibility = ''; }, 0); }, { once: true });
       frame.src = URL.createObjectURL(new Blob([file.bytes], { type: 'text/html' }));
       // A CLIENT TALLER THAN ITS FRAME SCROLLS (2026-10-12: "scrolling down is not possible" in Bitcoin Up or
       // Down on iOS): the Up/Down client's body is overflow:hidden with only its order list scrolling, and on a phone the market
