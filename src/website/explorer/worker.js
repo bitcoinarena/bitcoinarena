@@ -40,6 +40,9 @@ function merge(id, answers, readMs = null) {
     locks: a.body && a.body.locks ? a.body.locks : null }));
   const settlement = known.map((a) => a.body.settlement).find((x) => x && x.txid) || null;
   const client = known.map((a) => a.body.client).find(Boolean) || null;
+  // its result (won, lost, refunded, pending): a seat that holds the settlement says it; any seat says pending
+  const results = known.map((a) => a.body.result).filter(Boolean);
+  const result = results.find((r) => r.state !== 'pending') || results[0] || null;
   // WHO PROCESSED ITS ROUND (the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the committees, the
   // asker and the outcome's attestors as the seats name them (the first that names each), each seat key named by the seat that has it
   const proc = known.map((a) => a.body.processed).filter(Boolean);
@@ -48,7 +51,7 @@ function merge(id, answers, readMs = null) {
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
   return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs,
-    entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client, processed,
+    entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client, processed, result,
     storedFirst: seats.map((s) => s.storedAt).filter(Boolean).sort()[0] || null, seats };
 }
 
@@ -111,8 +114,10 @@ async function poll(env) {
 
 async function recent(env) {
   // with its amount (the owner 2026-10-24: "Also add the amount to the list page in sats"): the entry's stake, msat
-  const r = await env.DB.prepare("SELECT id, round, app, federation, stored_ms, json_extract(json, '$.entry.stakeMsat') AS stake FROM txs ORDER BY stored_ms DESC LIMIT ?").bind(RECENT_MAX).all();
-  return (r.results || []).map((x) => ({ id: x.id, round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms), stakeMsat: x.stake === null ? null : String(x.stake) }));
+  const r = await env.DB.prepare(`SELECT id, round, app, federation, stored_ms, json_extract(json, '$.entry.stakeMsat') AS stake, json_extract(json, '$.result.state') AS rstate,
+    json_extract(json, '$.result.netMsat') AS rnet, json_extract(json, '$.result.payoutMsat') AS rpaid FROM txs ORDER BY stored_ms DESC LIMIT ?`).bind(RECENT_MAX).all();
+  return (r.results || []).map((x) => ({ id: x.id, round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms), stakeMsat: x.stake === null ? null : String(x.stake),
+    result: x.rstate ? { state: x.rstate, netMsat: x.rnet === null ? null : String(x.rnet), payoutMsat: x.rpaid === null ? null : String(x.rpaid) } : null }));
 }
 
 async function txOf(env, ctx, id) {

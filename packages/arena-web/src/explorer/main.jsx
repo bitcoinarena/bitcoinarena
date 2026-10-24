@@ -15,6 +15,18 @@ const ago = (ms) => { const s = Math.round((Date.now() - ms) / 1000); return s <
 export const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', '-': 'unknown' })[a] || a || 'unknown';
 const given = typeof window !== 'undefined' ? window.EXPLORER_DATA || {} : {};
 
+// THE RESULT (the owner 2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won")
+const sats = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
+const signed = (msat) => (BigInt(msat) >= 0n ? '+' : '−') + sats(String(BigInt(msat) < 0n ? -BigInt(msat) : BigInt(msat))) + ' sat';
+export function resultText(r) {
+  if (!r) return '';
+  if (r.state === 'won') return `Won ${sats(r.payoutMsat)} sat (${signed(r.netMsat)})`;
+  if (r.state === 'lost') return `Lost (${signed(r.netMsat)})`;
+  if (r.state === 'refunded') return 'Refunded';
+  return 'Pending';
+}
+const resultCls = (r) => (r && r.state === 'won' ? 'ok' : r && r.state === 'lost' ? 'bad' : 'dim');
+
 // ---- the list --------------------------------------------------------------------------------------------------------------------------
 const FILTER_KEYS = ['app', 'fed', 'since', 'q'];
 const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
@@ -48,11 +60,12 @@ function List() {
       <input placeholder="part of an id or round" value={f.q} onChange={(e) => set('q', e.target.value.trim())} autoComplete="off" />
       <span className="dim">{shown.length.toLocaleString('en-US')} of {txs.length.toLocaleString('en-US')}</span>
     </div>
-    <div className="card"><table><thead><tr><th>Transaction</th><th>App</th><th className="n">Amount</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
+    <div className="card"><table><thead><tr><th>Transaction</th><th>App</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
       {shown.slice(0, 300).map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{appName(appOf(t))}</td><td className="n nw">{t.stakeMsat !== null && t.stakeMsat !== undefined ? (Number(t.stakeMsat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat' : '–'}</td>
+        <td className={'nw ' + resultCls(t.result)}>{t.result ? (t.result.state === 'won' || t.result.state === 'lost' ? signed(t.result.netMsat) : resultText(t.result)) : '–'}</td>
         <td className="mono">{t.federation ? t.federation.slice(0, 8) : '–'}</td><td className="mono">{String(t.round || '').slice(0, 12)}</td>
         <td>{utc(t.storedMs).slice(0, 19)} UTC <span className="dim">{ago(t.storedMs)}</span></td></tr>))}
-      {!shown.length ? <tr><td colSpan={6} className="dim">No matches.</td></tr> : null}</tbody></table></div>
+      {!shown.length ? <tr><td colSpan={7} className="dim">No matches.</td></tr> : null}</tbody></table></div>
   </>);
 }
 
@@ -125,7 +138,7 @@ function Group({ id, title, events, rel }) {
   const nodes = new Set(real.filter((x) => x.group !== 'page').map((x) => x.where)).size;
   const span = real.length ? `${rel(real[0].atMs)} → ${rel(real[real.length - 1].atMs)}` : '';
   return (
-    <details className="grp" id={'g-' + id}>
+    <details className="grp" id={id} open={typeof location !== 'undefined' && location.hash === '#' + id}>
       <summary><b>{title}</b> <span className="dim">{events.length ? `${span} · ${events.length} events${nodes ? ' · ' + nodes + ' nodes' : ''}` : 'none yet'}</span>
         </summary>
       {events.length ? (<table><thead><tr><th>Time (UTC)</th><th>+</th><th>Where</th><th>Event</th><th>Took</th><th>Detail</th></tr></thead><tbody>
@@ -157,6 +170,8 @@ function Tx({ id }) {
     if (given.tx && given.tx.found) return;   // built into the page from the store: nothing fetched
     fetch('/api/tx/' + id).then(async (r) => { const j = await r.json(); if (j.found) { setTx(j); keep('explorer.tx.' + id, j); } else if (r.status === 404) setMissing(true); }, (e) => setErr(e.message));
   }, [id]);
+  // #settlement, #lock, ... (a link from the UI's history): that group opened and in view
+  useEffect(() => { const h = location.hash.slice(1); const el = h && document.getElementById(h); if (el) { el.open = true; el.scrollIntoView(); } }, [tx && tx.id]);
   if (!tx) return missing ? <><h1>Not found</h1><p className="dim">Transaction {id} is unknown.</p></> : err ? <p className="bad">Could not load: {err}</p> : <p className="dim">Loading…</p>;
   const e = tx.entry || {};
   const ev = timelineOf(tx);
@@ -183,6 +198,7 @@ function Tx({ id }) {
       <dt>Fee</dt><dd>{sat(e.feeMsat)}</dd><dt>Player</dt><dd className="mono">{e.player || '–'}</dd>
       <dt>Stake lock</dt><dd className="mono">{tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–'}</dd>
       <dt>Fee lock</dt><dd className="mono">{tx.locks && tx.locks.fee ? tx.locks.fee.outpoint : e.feeLockOutpoint || '–'}</dd>
+      <dt>Result</dt><dd className={resultCls(tx.result)}><b>{tx.result ? resultText(tx.result) : '–'}</b>{tx.result && tx.result.sharedBy > 1 ? <span className="dim"> · paid to the player key across {tx.result.sharedBy} orders in this round</span> : null}</dd>
       <dt>Settlement</dt><dd className="mono">{tx.settlement ? tx.settlement.state + ' · ' + tx.settlement.txid : <span className="dim">not yet</span>}</dd>
       <dt>Start</dt><dd>{utc(t0)} UTC <span className="dim">{press ? '(order click)' : '(first node)'}</span></dd>
       <dt>Nodes</dt><dd>{known} of {(tx.seats || []).length}</dd></dl></div>

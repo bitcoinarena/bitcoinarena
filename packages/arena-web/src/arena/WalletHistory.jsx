@@ -15,7 +15,7 @@ export class WalletHistory extends React.Component {
       <div key={r.key} className={`hist-row ${r.plus ? 'plus' : 'minus'}${r.onOpen ? ' clickable' : ''}`} title={r.onOpen ? 'Open this round\'s replay in a new window' : undefined}
         onClick={r.onOpen || undefined}>
         <span className="hist-when">{r.when}</span><span className="hist-what" title={r.what}>{r.what}</span>
-        {/^[0-9a-f]{64}$/.test(String(r.tx || '')) ? <a className="hist-tx" href={'https://explorer.bitcoin-arena.io/tx/' + r.tx} target="_blank" rel="noopener noreferrer"
+        {/^[0-9a-f]{64}$/.test(String(r.tx || '')) ? <a className="hist-tx" href={'https://explorer.bitcoin-arena.io/tx/' + r.tx + (r.txAnchor || '')} target="_blank" rel="noopener noreferrer"
           title={'Transaction ' + r.tx + ' in the explorer'} onClick={(e) => e.stopPropagation()}>tx {r.tx.slice(0, 6)}…</a> : <span className="hist-tx" />}
         <span className="hist-amt">{r.amt}</span>
       </div>));
