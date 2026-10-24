@@ -79,7 +79,7 @@ export default {
       return json(tx, { status: tx.found ? 200 : 404 });
     }
     // the pages: /tx/<id> is the same page as /, which reads the id from the address
-    if (/^\/tx\/[0-9a-f]{64}\/?$/.test(url.pathname)) return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
+    if (/^\/tx\/[0-9a-f]{64}\/?$/.test(url.pathname)) return env.ASSETS.fetch(new Request(new URL('/', url), request));   // '/', not '/index.html': the assets answer that with a 307 to '/'
     return env.ASSETS.fetch(request);
   },
 };
