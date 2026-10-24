@@ -72,6 +72,25 @@ test('seven seats certify every batch of locked orders inside the interval: the 
       await ob.carry(w.rid);
       ob.certify = orig;
       assert.equal(calls, 0, 'carry certified batches this seat holds already'); }
+    // A SEAT THAT NEVER RECEIVED ONE ORDER OF A CERTIFIED BATCH (kanban #620, round 42835aaa: two seats lacked entry 008e278a, refused the
+    // batch's certificate, and rebuilt another settlement than the rest): carry replays the order from the seat that hands the batch - its
+    // entry by its hash, its stake and fee lock checked with the federation - takes the certificate, and the books are one again
+    { const d = w.nodes[2], rid = Buffer.from(w.rid);
+      const cert = d.orderBook.certificates(w.rid).find((c) => c.record.orders.length);
+      const eid = cert.record.orders[0], e = Buffer.from(eid, 'hex');
+      d.round.db.exec('PRAGMA foreign_keys = OFF');   // (the loss simulated: rows that never arrived)
+      for (const [t, col, v] of [['entries', 'entry_id', e], ['stake_locks', 'entry_id', e], ['fee_locks', 'entry_id', e], ['stake_seen', 'entry_id', e], ['market_orders', 'order_id', eid]])
+        d.round.db.prepare(`DELETE FROM ${t} WHERE ${col} = ?`).run(v);
+      d.round.db.prepare('DELETE FROM market_batches WHERE round_id = ? AND k = ?').run(rid, Number(cert.record.k));
+      d.round.db.exec('PRAGMA foreign_keys = ON');
+      const refused = d.orderBook.certify(w.rid, cert);
+      assert.equal(refused.ok, false); assert.match(refused.why, /holds no entry/);
+      await d.orderBook.carry(w.rid);
+      assert.ok(d.round.entry(e), 'the entry was replayed');
+      assert.ok(d.round.stakeLock(e), 'its stake lock was verified and kept');
+      assert.ok(d.orderBook.certificates(w.rid).some((c) => String(c.record.k) === String(cert.record.k)), 'the batch is certified here again');
+      const again = await Promise.all(w.nodes.map((x) => fetch(`http://127.0.0.1:${x.port}/book?round=${toHex(w.rid)}`).then((r) => r.json())));
+      for (const b of again) assert.equal(JSON.stringify(b.batches), JSON.stringify(again[0].batches), 'two seats hold the book differently after the replay'); }
     // A CLOSED MARKET ASKS NOBODY (kanban #576): a batch after the close, with nothing pending here, sends no request at all
     const kc = Math.floor(Number(w.c.entryCloseMs) / 1000) + 5;
     const lc = w.nodes.find((d) => d.orderBook.leads(w.rid, kc));

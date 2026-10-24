@@ -2011,6 +2011,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
     peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+  // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
+  // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
+  // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
+  // to the id (round.importEntry), and its stake and fee lock from the same seat (GET /order-locks), each checked with the federation as
+  // POST /lock and POST /fee-lock check them. Answers whether the entry and its locks are held now.
+  orderBook.replayOrder = async (entryHex, base) => {
+    const eid = Buffer.from(entryHex, 'hex');
+    if (!round.entry(eid)) {
+      const r = await fetch(`${base}/entry?id=${entryHex}`, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` };
+      round.importEntry(new Uint8Array(await r.arrayBuffer()), entryHex);
+    }
+    const l = await fetch(`${base}/order-locks?entry=${entryHex}`, { signal: AbortSignal.timeout(10000) });
+    if (!l.ok) return { ok: false, why: `${base} answered ${l.status} for the order's locks` };
+    const locks = await l.json();
+    if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
+    if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
+    console.log(`[orders] replayed order ${entryHex.slice(0, 16)} from ${base}: its entry and locks are held here now`);
+    return { ok: true };
+  };
   // AT EVERY CUTOFF: the batch whose cutoff just passed, for each round holding orders not in a batch, if this seat leads it.
   // A little after the cutoff (orderBatchGraceMs), so an order a page posted just before it has landed at every seat.
   let orderBatchTimeout = null;
@@ -3683,6 +3703,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     return offerRefusal(c);
+  };
+  // AN ENTRY'S STAKE LOCK AND FEE LOCK, CHECKED WITH THE FEDERATION AND KEPT: what POST /lock and POST /fee-lock do, and what a seat does
+  // for an order a certified batch names that never reached it (replayOrder below). Answers verifyStakeLock's / verifyFeeLock's answer.
+  const takeStakeLock = async (eid, fields, timing = {}) => {
+    const stored = round.entry(eid);
+    if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
+    const se = decodeEntryContract(stored);
+    const claimPk = claimKeyOf(se.roundId);
+    // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (2026-10-03)
+    let donationRecipients = null;
+    const rr = round.get(se.roundId);
+    { const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false }; if (ds.ok) donationRecipients = ds.target; }
+    let reserveKey = null, split;
+    if (rr && se.reserveOutpoint) { const rcx = decodeRoundContract(new Uint8Array(rr.contract)); const ef = entryFederation(rcx, se);
+      if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
+    try {
+      const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing });
+    } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+  };
+  const takeFeeLock = async (eid, fields) => {
+    const stored = round.entry(eid);
+    if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
+    const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+    catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
   // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
@@ -7152,6 +7198,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // must verify under, and that key is a field of the entry the player
       // signed. Without this door a stranger holding the proof can read it and
       // cannot check it, which is most of what "portable" was supposed to buy.
+      // AN ORDER'S LOCKS AS THIS SEAT VERIFIED THEM (kanban #620): the stake lock's and the fee lock's fields - what the federation holds at
+      // the outpoints the entry names - for a seat that holds the order's certified batch but never received its locks (replayOrder)
+      if (req.method === 'GET' && url.pathname === '/order-locks') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'GET /order-locks?entry=<entry id>');
+        const st = round.stakeLock(eid), fe = round.feeLock ? round.feeLock(eid) : null;
+        if (!st && !fe) return text(res, 404, 'this seat verified no lock of that entry');
+        const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: eid.toString('hex'), stake: fieldsOf(st), fee: fieldsOf(fe) }));
+      }
       if (req.method === 'GET' && url.pathname === '/entry') {
         const eid = Buffer.from(url.searchParams.get('id') || '', 'hex');
         const entry = round.entry(eid);
@@ -7806,21 +7863,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
         const steps = stepLog('lock', toHex(eid)).on(res); steps.at('entry');
         const lockTimed = (said) => { steps.took(timing).at(said.slice(0, 40)); };
-        const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-        // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (2026-10-03)
-        let donationRecipients = null;
-        { const rr = round.get(decodeEntryContract(stored).roundId);
-          const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
-          if (ds.ok) donationRecipients = ds.target; }
-        let got;
-        let reserveKey = null, split;
-        { const se = decodeEntryContract(stored); const rr = round.get(se.roundId);
-          if (rr && se.reserveOutpoint) { const rcx = decodeRoundContract(new Uint8Array(rr.contract)); const ef = entryFederation(rcx, se);
-            if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); } }
-        try {
-          let t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-          got = await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing });
-        } catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+        const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
         // AN ORDER (comment 1127): tradable here once both its locks are verified
@@ -7842,10 +7885,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
-        const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-        let got;
-        try { got = await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
-        catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+        const got = await takeFeeLock(eid, fields);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
         if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);

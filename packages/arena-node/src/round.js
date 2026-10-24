@@ -638,6 +638,22 @@ export class Round {
   }
 
   /**
+   * AN ENTRY A CERTIFIED BATCH NAMES, BROUGHT FROM ANOTHER SEAT (kanban #620: round 42835aaa never settled - two seats had not received
+   * one order's entry, refused the certified batch that carried it, and rebuilt another settlement than the rest). Kept only when its
+   * bytes hash to the id the batch names (the id is the hash of the contract) and it is of a round this seat holds, open or closed:
+   * the seats that certified the batch checked it at its door. Answers the id, or throws why not.
+   */
+  importEntry(bytes, idHex) {
+    const contract = decodeEntryContract(new Uint8Array(bytes));
+    const id = entryId(contract);
+    if (Buffer.from(id).toString('hex') !== String(idHex).toLowerCase()) throw new Error('those bytes are another entry than the one named');
+    if (!this.get(contract.roundId)) throw new Error('no such round');
+    this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
+      .run(id, contract.roundId, encodeEntryContract(contract), this.now());
+    return id;
+  }
+
+  /**
    * Keeps a handout this node has ALREADY CHECKED.
    *
    * The check needs a group and this class carries no curve, exactly as the
