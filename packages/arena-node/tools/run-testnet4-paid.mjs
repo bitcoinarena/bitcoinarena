@@ -42,12 +42,27 @@ const UPDOWN_PLUGIN = process.env.DUTY_UPDOWN_PLUGIN || '';
 if (UPDOWN_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_PLUGIN)) throw new Error(`DUTY_UPDOWN_PLUGIN names a btc-updown plugin file, not ${UPDOWN_PLUGIN}`);
 const UPDOWN_CHOSEN = UPDOWN_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_PLUGIN}`)).GAME : null;
 if (UPDOWN_CHOSEN) console.log(`[duty] Up/Down rounds of ${UPDOWN_PLUGIN}: game ${Buffer.from(UPDOWN_CHOSEN.gameId).toString('hex').slice(0, 16)}`);
+// AND THE NEXT UP/DOWN VERSION FROM A NAMED DAY ON (kanban #523): DUTY_UPDOWN_NEXT_PLUGIN (btc-updown-v20.js) from DUTY_UPDOWN_NEXT_FROM_SLOT
+// on; the days before it keep DUTY_UPDOWN_PLUGIN from DUTY_UPDOWN_FROM_SLOT as before
+const UPDOWN_NEXT_PLUGIN = process.env.DUTY_UPDOWN_NEXT_PLUGIN || '';
+if (UPDOWN_NEXT_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_NEXT_PLUGIN)) throw new Error(`DUTY_UPDOWN_NEXT_PLUGIN names a btc-updown plugin file, not ${UPDOWN_NEXT_PLUGIN}`);
+const UPDOWN_NEXT = UPDOWN_NEXT_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_NEXT_PLUGIN}`)).GAME : null;
+if (UPDOWN_NEXT) console.log(`[duty] Up/Down rounds from slot ${process.env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0} of ${UPDOWN_NEXT_PLUGIN}: game ${Buffer.from(UPDOWN_NEXT.gameId).toString('hex').slice(0, 16)}`);
 // THE TICK TOCK VERSION THE RUNNER POSTS (kanban #523): DUTY_NEXTBLOCK_PLUGIN names a nextblock plugin file (nextblock-v5.js) and
 // DUTY_NEXTBLOCK_CORE the core its rounds run on (0847c99f, version 5's larger truck); unset, DUTY_NEXTBLOCK_V3=1 as before (tools/duty-nextblock.mjs)
 const NB_PLUGIN_FIELDS = process.env.DUTY_NEXTBLOCK_PLUGIN ? await (async () => {
   const r = nextblockDutyFields(await loadNextblockPlugin(process.env.DUTY_NEXTBLOCK_PLUGIN), process.env.DUTY_NEXTBLOCK_CORE || '');
   if (!r.ok) throw new Error(`DUTY_NEXTBLOCK_PLUGIN ${process.env.DUTY_NEXTBLOCK_PLUGIN}: ${r.why}`);
   console.log(`[duty] Tick Tock rounds of ${process.env.DUTY_NEXTBLOCK_PLUGIN}: game ${Buffer.from(r.fields.gameId).toString('hex').slice(0, 16)}, core ${Buffer.from(r.fields.simCoreHash).toString('hex').slice(0, 16)}`);
+  return r.fields;
+})() : null;
+// AND THE NEXT TICK TOCK VERSION FROM A NAMED DAY ON (kanban #523: a day's committee is drawn from the census at its anchor, so a new game
+// id can be posted only for a day whose anchor comes after the advertisements naming it): DUTY_NEXTBLOCK_NEXT_PLUGIN (nextblock-v6.js)
+// from DUTY_NEXTBLOCK_FROM_SLOT on, on the same DUTY_NEXTBLOCK_CORE; a day before it keeps DUTY_NEXTBLOCK_PLUGIN
+const NB_NEXT_FIELDS = process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN ? await (async () => {
+  const r = nextblockDutyFields(await loadNextblockPlugin(process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN), process.env.DUTY_NEXTBLOCK_CORE || '');
+  if (!r.ok) throw new Error(`DUTY_NEXTBLOCK_NEXT_PLUGIN ${process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN}: ${r.why}`);
+  console.log(`[duty] Tick Tock rounds from slot ${process.env.DUTY_NEXTBLOCK_FROM_SLOT || 0} of ${process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN}: game ${Buffer.from(r.fields.gameId).toString('hex').slice(0, 16)}, core ${Buffer.from(r.fields.simCoreHash).toString('hex').slice(0, 16)}`);
   return r.fields;
 })() : null;
 // PAID_MARKET=1: the paid round is a round of the regtest market the page pins - its seats host nextblock
@@ -74,6 +89,20 @@ import { TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GE
 // 2026.0.2: ARENA_PROTOCOL_VERSION=2 opens the v2 game (its manifest requires the round that names no draw)
 const ROCK_PAPER_SCISSORS = Number(process.env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? RPS_V2 : RPS_V1;
 const RPS_ROUND_FIELDS = Object.freeze({ ...RPS_FIELDS_V1, gameId: ROCK_PAPER_SCISSORS.gameId });
+const toHexOf = (b) => Buffer.from(b).toString('hex');
+// THE ROCK PAPER SCISSORS VERSION THE DAILY RUNNER POSTS (kanban #523: the version whose files carry no names or ticket numbers):
+// DUTY_RPS_PLUGIN names a rock-paper-scissors plugin file (rock-paper-scissors-v5.js) - its round fields are the module's own
+// RPS_ROUND_FIELDS_V<n> (its decide core and config, its game id) - from DUTY_RPS_FROM_SLOT on; unset, version 2 as before
+const RPS_PLUGIN = process.env.DUTY_RPS_PLUGIN || '';
+if (RPS_PLUGIN && !/^rock-paper-scissors(-v\d+)?\.js$/.test(RPS_PLUGIN)) throw new Error(`DUTY_RPS_PLUGIN names a rock-paper-scissors plugin file, not ${RPS_PLUGIN}`);
+const RPS_CHOSEN_FIELDS = RPS_PLUGIN ? await (async () => {
+  const m = await import(`../../rock-paper-scissors/plugin/${RPS_PLUGIN}`);
+  const v = (RPS_PLUGIN.match(/-v(\d+)\.js$/) || [])[1];
+  const fields = v ? m[`RPS_ROUND_FIELDS_V${v}`] : m.RPS_ROUND_FIELDS;
+  if (!fields || toHexOf(fields.gameId) !== toHexOf(m.GAME.gameId)) throw new Error(`DUTY_RPS_PLUGIN ${RPS_PLUGIN}: no round fields for its own game`);
+  console.log(`[duty] Rock Paper Scissors rounds of ${RPS_PLUGIN}: game ${toHexOf(fields.gameId).slice(0, 16)}, core ${toHexOf(fields.simCoreHash).slice(0, 16)}`);
+  return fields;
+})() : null;
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
@@ -330,6 +359,7 @@ if (env.PAID_DUTY_DAILY === '1') {
   // THE CHOSEN VERSION FROM A NAMED DAY ON: DUTY_UPDOWN_FROM_SLOT - the first day slot posted as DUTY_UPDOWN_PLUGIN; a day
   // before it keeps the version its seats' census advertisements name (an Up/Down game no census entry hosts has no committee)
   const UPDOWN_FROM_SLOT = Number(env.DUTY_UPDOWN_FROM_SLOT || 0);
+  const RPS_FROM_SLOT = Number(env.DUTY_RPS_FROM_SLOT || 0);   // the first day slot posted as DUTY_RPS_PLUGIN (kanban #523)
   const censusAt = new Map();
   let busy = false, lastSaid = '';
   const donationSet = () => {
@@ -370,7 +400,9 @@ if (env.PAID_DUTY_DAILY === '1') {
   };
   const post = async (slot) => {
     const postFeds = await fedsNow();
-    const UPDOWN = UPDOWN_CHOSEN && slot >= UPDOWN_FROM_SLOT ? UPDOWN_CHOSEN : UPDOWN_BASE;
+    const UPDOWN = UPDOWN_NEXT && slot >= Number(env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0) ? UPDOWN_NEXT
+      : UPDOWN_CHOSEN && slot >= UPDOWN_FROM_SLOT ? UPDOWN_CHOSEN : UPDOWN_BASE;
+    const rpsFields = RPS_CHOSEN_FIELDS && slot >= RPS_FROM_SLOT ? RPS_CHOSEN_FIELDS : RPS_ROUND_FIELDS;
     const { startMs, endMs } = targetDay(slot);
     const committee = BigInt(startMs - DUTY_COMMITTEE_LEAD_MS);
     const ds = donationSet();
@@ -378,12 +410,13 @@ if (env.PAID_DUTY_DAILY === '1') {
     const per = (extra) => postFeds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
     // DUTY_NEXTBLOCK_V3=1: Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
     // need protocol 10 (ARENA_PROTOCOL_VERSION=10) and seats whose census advertisements name its game id
-    const NB_FIELDS = NB_PLUGIN_FIELDS || (env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {});
+    const NB_FIELDS = (NB_NEXT_FIELDS && slot >= Number(env.DUTY_NEXTBLOCK_FROM_SLOT || 0) ? NB_NEXT_FIELDS : NB_PLUGIN_FIELDS)
+      || (env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {});
     const got = game === 'nextblock'
       ? await round.openGrid({ ...CREATOR, fields: NB_FIELDS, tableFields: per({}), stakeMsat },
         { ...common, slots: (endMs - startMs) / 90000, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(startMs + 45000) })
       : game === 'rps'
-      ? await round.openGrid({ ...CREATOR, fields: { ...RPS_ROUND_FIELDS }, tableFields: [...per({}), ...per({})], stakeMsat },
+      ? await round.openGrid({ ...CREATOR, fields: { ...rpsFields }, tableFields: [...per({}), ...per({})], stakeMsat },
         { ...common, slots: (endMs - startMs) / 8000, windowMs: 8000n, entryAfterStartMs: 80000n, firstCloseMs: BigInt(startMs + 80000) })
       : await round.openGrid({ ...CREATOR, fields: { gameId: UPDOWN.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0 },
         tableFields: per({}), stakeMsat,
