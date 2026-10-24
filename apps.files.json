@@ -351,9 +351,9 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "53166e86e2a4bb3e2cfda20cc4e64a9dbb8a683c",
+      "commit": "596d5bfc381043daf653af003f614e080260eb58",
       "files": {
-        "app.json": "86c81e6e42653a8759d4fdf1923a3bff75cc8963f0ebadfb22b49f8717864128",
+        "app.json": "35c2f5ad73b0c112b01049f62c5a785d0b4d0f3f9345a45d122c10223235f943",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
         "client/index-v10.html": "8d596bc7173f4645f7d87426d056a30f42a9cb43d15cd1fe5f5b8b5d720a3ad9",
         "client/index-v11.html": "50362ea2e8dfee602363ae34676d5340ee8e7478b3a4d47d724417271262dea4",
@@ -386,7 +386,7 @@
         "package.json": "1e66fac37fc76176ef718912298b7a0ba2ac9419389cdc51b98eb59a3cd7fed7",
         "page/book-bot.js": "c5ad215e49559425cc4183fa3fc3a1510542277bb42190195f228ad1f09576d0",
         "page/market-page.css": "e711b857a639bfdb0b174847fcca8504072637a600c50b036af8b75a9e5f7d23",
-        "page/market-page.js": "e5ecb943bcded2fec2aaf4a45ff803c89aa72b7387a2b33b267649c140aa34e4",
+        "page/market-page.js": "93b3635f060e2502c302eb9c4f61ce5c87920cb29ee808e190dac7fe48010dcd",
         "plugin/attestors.js": "b5dfb5f40eb6b315ef0f98dcab73fe603eebb329f4dd6c985513086a1a1f8837",
         "plugin/btc-updown-v10.js": "3c8652c5bc8941c231e266ebcca520fcf8ae137eccd365f9f576c4e186610783",
         "plugin/btc-updown-v11.js": "3e5ef1fc8c371499175d65a7d913771605b030bd5a815229f290440c5b7a36e3",
@@ -403,6 +403,7 @@
         "plugin/btc-updown-v21.js": "166550fea4b5e164d9aedb5a6b293892bbdf72d62fbfd0a99381ea29dd429ec7",
         "plugin/btc-updown-v22.js": "02b109b7c3aabd9ff381cc8871ed08b291bed043321320ef566b56c677c2092e",
         "plugin/btc-updown-v23.js": "fd92a5afb57f27b6568fcee92815ef43a5e2aa04355d98dab71ca68449aabe90",
+        "plugin/btc-updown-v24.js": "41f413cb0038d39b0e94b4b90ee763d49088ac7bab68faed9c2942903fd6a3b6",
         "plugin/btc-updown-v3.js": "94fa6c35b56e3729e90ed2bbe4eda70e1d854919020267ba811cb35903250d01",
         "plugin/btc-updown-v4.js": "3ad1f8437e7c0e3a2af7225ba37d3ae588c480dc9bebfc679483c047c052a784",
         "plugin/btc-updown-v5.js": "cfbe9b2e2033d3f1876b8313ded24711269346b6a0ed2cad2e04006440ac7a3f",
@@ -438,6 +439,7 @@
         "tools/sign-manifest-v21.mjs": "503f93f227f3816909b74b5214b7aee584ed818899becbaf8dc804a94697b775",
         "tools/sign-manifest-v22.mjs": "09925716fb46ad031a943c328b314307d2e380d15630e8fb38883e54466a29b3",
         "tools/sign-manifest-v23.mjs": "ad0d962dcd23e0a87a8baaf89d936a615e2d1b3c78a5f6f60ef1f608d83d8c9e",
+        "tools/sign-manifest-v24.mjs": "625a56c09057a835ce212a3405e692119700f48fe45ebad67096e19d85ac128e",
         "tools/sign-manifest-v3.mjs": "fb1707802e157c8f39feb3fdabf50ce97fac6014f10a5cffe686e92f9072a431",
         "tools/sign-manifest-v4.mjs": "dd790671d0995ae30289fae5cb19077f1f259a03d14160149a20f8a48b05abc3",
         "tools/sign-manifest-v5.mjs": "c2afdf74fd994599467535125b7040679640a62e62a3b3e88ecc35e3dfda5b65",
