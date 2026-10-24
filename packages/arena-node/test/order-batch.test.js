@@ -66,6 +66,12 @@ test('seven seats certify every batch of locked orders inside the interval: the 
     assert.deepEqual(w.nodes[1].orderBook.certify(w.rid, { record: held.record, sigs: held.sigs.map((s) => ({ ...s, signature: '00'.repeat(64) })) }), { ok: true, fresh: false });
     const other = w.nodes[1].orderBook.certify(w.rid, { record: { ...held.record, orders: held.record.orders.slice(1) }, sigs: held.sigs });
     assert.equal(other.ok, false);
+    // AND CARRY LOOKS AT NONE OF THEM AGAIN (kanban #576): every peer hands the same certified batches, all held here already
+    { const ob = w.nodes[1].orderBook, orig = ob.certify.bind(ob); let calls = 0;
+      ob.certify = (...a) => { calls += 1; return orig(...a); };
+      await ob.carry(w.rid);
+      ob.certify = orig;
+      assert.equal(calls, 0, 'carry certified batches this seat holds already'); }
     // A CLOSED MARKET ASKS NOBODY (kanban #576): a batch after the close, with nothing pending here, sends no request at all
     const kc = Math.floor(Number(w.c.entryCloseMs) / 1000) + 5;
     const lc = w.nodes.find((d) => d.orderBook.leads(w.rid, kc));
