@@ -3147,7 +3147,8 @@
             if (have < needMsat && window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* the last read */ } }
             const merging = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0;
             if (ARENACLIENT.notSpendableYet({ haveMsat: have, mergingSat: merging, needMsat }) && !(earlyDeposit && await earlyDeposit)) {
-              const why = Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.state === 'stuck').map(([f, v]) => `federation ${f.slice(0, 8)}: ${v.why}`).join('; ');
+              const why = Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.why && (v.state === 'stuck' || v.state === 'merging'))
+                .map(([f, v]) => `federation ${f.slice(0, 8)}: ${v.state === 'merging' ? 'still ' : ''}${v.why}`).join('; ');
               const text = `${merging.toLocaleString('en-US')} sat of your balance are still merging in from your other wallets in this browser and cannot be spent yet`
                 + (why ? ` (${why})` : '') + '. Nothing was taken - try again in a minute.';
               if (window.ARENA_SHOW_NOTICE) window.ARENA_SHOW_NOTICE('Not spendable yet', text);
@@ -6524,6 +6525,39 @@
       // phrase acaa8a44, a phrase this browser keeps that was no longer the one in use, and the merge below ran only in the lobby round's
       // federation, 337ae01a). Each federation is merged on its own, one at a time; the e-cash kept between the send and the receive names
       // its federation, and is only ever offered to that federation's wallet (an entry an earlier page kept without one: the lobby round's).
+      // THE HAND-OVER BETWEEN TABS (kanban #615): a tab whose merge finds a kept phrase held by another tab of this browser asks that tab, over
+      // the browser's channel, for its notes in one federation. The tab playing with that phrase - not in a running round - sends all its
+      // e-cash there, keeps it in the browser for the asking phrase only (`to`; its own merge never takes it back) and answers; the asking tab
+      // receives it as any kept copy. Its own remembered balance goes at once, so no sum counts that money twice.
+      const handover = (() => { try { return typeof BroadcastChannel === 'function' ? new BroadcastChannel('arena.handover') : null; } catch { return null; } })();
+      if (handover) handover.addEventListener('message', async (ev) => {
+        const m = ev.data || {};
+        if (m.kind !== 'ask' || !/^[0-9a-f]{64}$/.test(String(m.fed)) || !/^[0-9a-f]{16}$/.test(String(m.to))) return;
+        const cur = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').toLowerCase();
+        if (!cur || cur.slice(0, 16) !== m.phrase || m.to === m.phrase) return;
+        const reply = (o) => handover.postMessage(Object.assign({ kind: 'said', id: m.id }, o));
+        if (window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing === false) return reply({ ok: false, why: 'a round is running in that tab' });
+        const c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(m.fed);
+        if (!c || typeof c.sendAllEcash !== 'function') return reply({ ok: false, why: 'that tab has no wallet open in federation ' + m.fed.slice(0, 8) });
+        try {
+          const sent = JSON.parse(await c.sendAllEcash());
+          if (!sent.ecash) return reply({ ok: true, msat: '0' });
+          const L = vault();
+          L.setItem('arena.ecash.pending.' + m.fed.slice(0, 16) + '.' + Date.now() + '.' + cur.slice(0, 8), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: cur.slice(0, 8) + ' (another tab)', fed: m.fed, to: m.to, at: Date.now() }));
+          L.removeItem('arena.wallet.known.' + m.fed.slice(0, 16) + '.' + cur.slice(0, 16));
+          console.log('[arena] handed ' + sent.msat + ' msat in federation ' + m.fed.slice(0, 8) + ' over to this browser\'s other tab');
+          reply({ ok: true, msat: String(sent.msat) });
+          if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
+        } catch (e) { reply({ ok: false, why: 'that tab could not send its notes: ' + (e && e.message ? e.message : e) }); }
+      });
+      window.ARENA_ASK_HANDOVER = (phrase16, fed, to16, ms = 20000) => new Promise((done) => {
+        if (!handover) { done({ ok: false, why: 'this browser has no channel between tabs' }); return; }
+        const id = Math.random().toString(36).slice(2);
+        const on = (ev) => { const m = ev.data || {}; if (m.kind === 'said' && m.id === id) { clearTimeout(t); handover.removeEventListener('message', on); done(m); } };
+        const t = setTimeout(() => { handover.removeEventListener('message', on); done({ ok: false, why: 'that tab did not answer in ' + Math.round(ms / 1000) + ' s' }); }, ms);
+        handover.addEventListener('message', on);
+        handover.postMessage({ kind: 'ask', id, phrase: phrase16, fed, to: to16 });
+      });
       const combiningBy = new Map();
       function combineWallets(main, named, round) { return combineIn(main, ARENACLIENT.toHex(round.federationId), named.federation, { legacy: true }); }
       window.ARENA_COMBINE_IN = (main, fedHex, invite) => combineIn(main, fedHex, invite, { legacy: false });
@@ -6561,6 +6595,8 @@
               let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
               if (!rec || !rec.ecash) { L.removeItem(k); continue; }
               if (rec.fed ? rec.fed !== fedHex : !legacy) continue;   // never into another federation's wallet
+              // handed over to another tab's phrase (#615): that tab's to receive - for two minutes; then any tab's merge (the asking tab closed)
+              if (rec.to && rec.to !== cur.slice(0, 16) && Date.now() - Number(rec.at || 0) < 120000) continue;
               let before = null; try { before = BigInt(await main.balanceMsat()); } catch { before = null; }
               // EACH KEPT COPY ON ITS OWN: one the federation does not take (or a receive that throws) no longer stops the others, and is named
               let said;
@@ -6605,6 +6641,7 @@
           for (const x of others) {
             const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
             const take = async () => {
+              mergeSaid(fedHex, 'merging', 'opening wallet ' + from);
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
                 new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
               if (typeof other.sendAllEcash !== 'function') return;
@@ -6612,8 +6649,10 @@
               // it's not merged yet. The merge is a kind of slow process"): the sum counts it from the next read on, a next page from its first
               const knownKey = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
               const noteEmpty = () => { L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor))); L.removeItem(knownKey); };
+              mergeSaid(fedHex, 'merging', 'reading wallet ' + from);
               const holds = BigInt(await other.balanceMsat());
               if (holds === 0n) { noteEmpty(); return; }
+              mergeSaid(fedHex, 'merging', 'sending the notes of wallet ' + from);
               L.setItem(knownKey, String(holds)); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
               const sent = JSON.parse(await other.sendAllEcash());
               if (!sent.ecash) { noteEmpty(); return; }
@@ -6626,7 +6665,19 @@
             try {
               // this tab's own phrase is held by this tab already; any other is taken under its lock
               if (x.hex !== cur && navigator.locks && navigator.locks.request) {
-                await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
+                let held = false;
+                await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); else held = true; });
+                // ANOTHER TAB OF THIS BROWSER PLAYS WITH THAT PHRASE (kanban #615, the owner 2026-10-24 playtest: "Ich kann immernoch keine Bets
+                // placen" - 3,285 sat "still merging" for good, his own phrase's wallets empty): the merge skipped the locked phrase without a
+                // word, every time. That tab is asked to hand its notes in this federation over (ARENA_ASK_HANDOVER); a tab that does not
+                // answer is named, so the player knows which tab to close
+                if (held && !x.ancestor) {
+                  mergeSaid(fedHex, 'merging', 'wallet ' + from + ' is open in another tab - asking that tab to hand its money over');
+                  const r = await window.ARENA_ASK_HANDOVER(x.hex.slice(0, 16), fedHex, cur.slice(0, 16));
+                  console.log('[arena] wallet ' + from + ' is open in another tab: ' + (r.ok ? 'it handed over ' + r.msat + ' msat in federation ' + fedHex.slice(0, 8) : r.why));
+                  if (r.ok) await receiveKept();
+                  else mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser (' + r.why + ') - close that tab and its money merges here');
+                } else if (held) mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser - close that tab and its money merges here');
               } else await take();
             } catch (e) { console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e));
               mergeSaid(fedHex, 'stuck', 'wallet ' + from + ': ' + (e && e.message ? e.message : e)); }
