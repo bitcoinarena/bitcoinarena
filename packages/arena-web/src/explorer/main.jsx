@@ -34,6 +34,8 @@ export function resultText(r) {
   if (r.state === 'won') return `Won ${sats(r.payoutMsat)} sat (${signed(r.netMsat)})`;
   if (r.state === 'lost') return `Lost (${signed(r.netMsat)})`;
   if (r.state === 'refunded') return 'Refunded';
+  // kanban #629: an order that never filled is neither won nor lost - its stake comes back whole
+  if (r.state === 'unfilled') return r.why && r.why.startsWith('cancelled') ? 'Cancelled · stake back' : 'Not filled · stake back';
   return 'Pending';
 }
 const resultCls = (r) => (r && r.state === 'won' ? 'ok' : r && r.state === 'lost' ? 'bad' : 'dim');
