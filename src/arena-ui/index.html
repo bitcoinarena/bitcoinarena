@@ -684,7 +684,8 @@
     #arena-wb-home i { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-style: normal; font-weight: 800; color: #1a0f00;
       background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-wb-home:hover span { color: #f7931a; }
-    @media (max-width: 420px) { body.arena-picking #arena-wb-home span, body.arena-own-client #arena-wb-home span { display: none; } }
+    /* up to 560px, where the balance chip stacks, the mark alone: the name beside it squeezed the chip (measured at 430px: "2,996 sat" drawn over the back button) */
+    @media (max-width: 560px) { body.arena-picking #arena-wb-home span, body.arena-own-client #arena-wb-home span { display: none; } }
     /* AND IN EVERY GAME (2026-10-17: "The games also need to have the Bitcoin arena logo as the main Testnet page has"): a game's
        own client keeps the games screen's bar with the logo; Tick Tock's header starts with the mark, before "← Arena" */
     #arena-game-home { display: none; }
@@ -836,7 +837,7 @@
     /* A NARROW SCREEN STACKS IT (playtest 2026-10-23 23:39, "There is an issue with the pending balance, it is cut": "97 sat · 100 pe"):
        the balance, and under it what is pending or arriving, smaller - never cut */
     @media (max-width: 560px) {
-      #arena-wallet-bar .wb-bal { flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; line-height: 1.1; overflow: visible; }
+      #arena-wallet-bar .wb-bal { flex: 0 0 auto; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; line-height: 1.1; overflow: hidden; }
       #arena-wallet-bar .wb-bal span { font-size: 11px; white-space: nowrap; }
     }
     body.arena-game-chosen #arena-wb-season { gap: 6px; }
