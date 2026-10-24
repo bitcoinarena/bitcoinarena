@@ -68,7 +68,8 @@ test('the page picks the paid row when Unity reads it, with no lead', () => {
   const unity = readFileSync(new URL('../../nextblock/page/unity-page.js', import.meta.url).pathname, 'utf8');
   const view = unity.slice(unity.indexOf('function unityLobbyView('), unity.indexOf('refused: refused.map(String)', unity.indexOf('function unityLobbyView(')));
   assert.ok(view.length > 0, 'unityLobbyView not found');
-  assert.match(page, /window\.ARENA_LOBBY_VIEW = \(\) => unityLobbyView\(\{ me, lobbyNow, /, 'the lobby hands Unity\'s view its own lobbyNow');
+  // each read is also kept as "Unity's menu is showing" (kanban #607: the build line and Donate over it)
+  assert.match(page, /window\.ARENA_LOBBY_VIEW = \(\) => \{ window\.ARENA_UNITY_MENU_AT = Date\.now\(\); return unityLobbyView\(\{ me, lobbyNow, /, 'the lobby hands Unity\'s view its own lobbyNow');
   assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
   assert.match(page, /const lobbyNow = \(\) => \(window\.ARENA_LOBBY = ARENACLIENT\.lobbyRowsAt\(window\.ARENA_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
   assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');
