@@ -19,6 +19,7 @@ import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
+import { fetchRound } from './join.js';
 import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
@@ -312,4 +313,21 @@ export function newestCheckedCensus() {
   if (!best) return null;
   const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
   return { height: best.height || null, nodes: keys.size, entries: best.entries };
+}
+
+/**
+ * A ROUND'S DRAWN ATTESTORS, AS THIS PAGE DERIVES THEM (kanban #630): its contract read by id from the seats (it hashes to the id), and
+ * the 7 drawn on the census and beacon this page checks itself (client-committee.js attestors) - hex keys, or null. Kept per round:
+ * a round's draw never changes.
+ */
+const ATTESTORS_KEPT = new Map();
+export async function roundAttestors(roundIdHex, nodes, { curve, fetcher = fetch } = {}) {
+  if (ATTESTORS_KEPT.has(roundIdHex)) return ATTESTORS_KEPT.get(roundIdHex);
+  let contract;
+  try { contract = (await fetchRound(roundIdHex, nodes, { fetcher })).contract; } catch { return null; }
+  if (!contract) return null;
+  const got = await clientCommittee(roundIdHex, contract, nodes, { curve, fetcher, compare: false, roles: ['settlement'] });
+  const keys = got && got.ok && Array.isArray(got.attestors) ? got.attestors.map((k) => toHex(k)) : null;
+  if (keys) { ATTESTORS_KEPT.set(roundIdHex, keys); if (ATTESTORS_KEPT.size > 500) ATTESTORS_KEPT.delete(ATTESTORS_KEPT.keys().next().value); }
+  return keys;
 }

@@ -621,6 +621,9 @@ const TAG_SWITCH_VERSION = 18;
 const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 const PRESSURE_WEIGHT_VERSION = 20;
+// ATTESTORS DRAWN PER ROUND (kanban #630, the owner 2026-10-24: "pre deterministic and drawed randomly, not a fixed set of nodes ... 5 of 7"):
+// an attested game names a draw instead of fixed keys - 7 of the round's census, an outcome standing with 5 of them
+const ATTESTOR_DRAW_VERSION = 21;   // not in SUPPORTED_PROTOCOL_VERSIONS until the seats sign drawn attestations (#630 step 2)
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -1007,6 +1010,8 @@ const TAG = {
   // everywhere else, and a seed that shared a tag with anything could be
   // produced by hashing that other thing.
   committeeSeed: 'ARENA/v1/CommitteeSeed',
+  // #630: a round's attestors are drawn on their own seed, H(this tag || committee seed) - never the settlement draw's
+  attestorDraw: 'ARENA/v1/AttestorDraw',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',
@@ -26873,6 +26878,19 @@ const outpointKey = (e) => {
   return s + ':' + e.vout;
 };
 
+/**
+ * A ROUND'S ATTESTORS (kanban #630, protocol 21): ATTESTORS_DRAWN node keys of its census, drawn as its committees are (one key one
+ * seat, weighed by bond) but on their own seed - H("ARENA/v1/AttestorDraw" || committee seed) - so every node draws the same seven from
+ * the round's beacon, before the round, and not the settlement committee. An outcome stands with ATTEST_DRAW_THRESHOLD of them.
+ */
+const ATTESTORS_DRAWN = 7;
+const ATTEST_DRAW_THRESHOLD = 5;
+function drawAttestors({ entries, contract, committeeSeed }) {
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a round\'s attestors are drawn on the seed its beacon produced');
+  return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.attestorDraw, committeeSeed), count: ATTESTORS_DRAWN });
+}
+
 // ---- arena-protocol/src/beacon.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -27409,7 +27427,10 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
     catch (e) { return { ok: false, why: `the ${role} committee cannot be drawn: ${e.message}` }; }
     committees[role] = drawn[role].slice(0, slotsForRole(contract, role));
   }
-  return { ok: true, committees, drawn, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
+  // AND ITS DRAWN ATTESTORS (kanban #630): the 7 a drawn game's outcome is checked against - null where the census cannot hold the draw
+  let attestors = null;
+  try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }).map((e) => e.pubkey); } catch { attestors = null; }
+  return { ok: true, committees, drawn, attestors, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
     checkedCensus: { root: census.root, entries: census.entries } };
 }
 
@@ -27461,6 +27482,7 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+
 
 
 
@@ -27763,6 +27785,23 @@ function newestCheckedCensus() {
   if (!best) return null;
   const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
   return { height: best.height || null, nodes: keys.size, entries: best.entries };
+}
+
+/**
+ * A ROUND'S DRAWN ATTESTORS, AS THIS PAGE DERIVES THEM (kanban #630): its contract read by id from the seats (it hashes to the id), and
+ * the 7 drawn on the census and beacon this page checks itself (client-committee.js attestors) - hex keys, or null. Kept per round:
+ * a round's draw never changes.
+ */
+const ATTESTORS_KEPT = new Map();
+async function roundAttestors(roundIdHex, nodes, { curve, fetcher = fetch } = {}) {
+  if (ATTESTORS_KEPT.has(roundIdHex)) return ATTESTORS_KEPT.get(roundIdHex);
+  let contract;
+  try { contract = (await fetchRound(roundIdHex, nodes, { fetcher })).contract; } catch { return null; }
+  if (!contract) return null;
+  const got = await clientCommittee(roundIdHex, contract, nodes, { curve, fetcher, compare: false, roles: ['settlement'] });
+  const keys = got && got.ok && Array.isArray(got.attestors) ? got.attestors.map((k) => toHex(k)) : null;
+  if (keys) { ATTESTORS_KEPT.set(roundIdHex, keys); if (ATTESTORS_KEPT.size > 500) ATTESTORS_KEPT.delete(ATTESTORS_KEPT.keys().next().value); }
+  return keys;
 }
 
 // ---- arena-client/src/fee-proposal-page.js
@@ -30791,6 +30830,23 @@ function scalarFits(sc, m) {
 }
 /** Is this manifest a scalar market (feature 8): an attested market paid linearly by a signed value between bounds? */
 const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.scalar;
+/**
+ * ATTESTORS DRAWN PER ROUND (kanban #630, protocol 21): an attested game that names no keys of its own but a draw - `attestDraw`
+ * { count 7, threshold 5 }, after its own marker - is attested by the 7 node keys its round draws (sortition.js drawAttestors),
+ * an outcome standing with 5 of them. Its `attestors` are written empty and its threshold 0, as a market on a game's are.
+ */
+const ATTEST_DRAW_MARKER = 0x09;
+const isDrawnAttest = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.attestDraw;
+function attestDrawFits(d, m) {
+  if (!d || d.count !== 7 || d.threshold !== 5) return { ok: false, why: 'a drawn attestor set is 7 of the round\'s nodes, an outcome standing with 5 (#630)' };
+  if (!Array.isArray(m.attestors) || m.attestors.length !== 0 || m.attestThreshold !== 0)
+    return { ok: false, why: 'a game whose attestors are drawn names no attestor keys and a threshold of 0' };
+  if (m.gameSource !== undefined && m.gameSource !== null) return { ok: false, why: 'a market on a game has no attestors to draw: its outcome is its source round\'s signed result' };
+  if (m.scalar !== undefined && m.scalar !== null) return { ok: false, why: 'a scalar market\'s attestors are not drawn yet (#630 covers outcome markets)' };
+  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= ATTESTOR_DRAW_VERSION))
+    return { ok: false, why: `a game whose attestors are drawn requires protocol version ${protocolVersionName(ATTESTOR_DRAW_VERSION)} or later (#630)` };
+  return { ok: true };
+}
 
 
 /**
@@ -30889,7 +30945,8 @@ function encodeManifestBody(m) {
     // A MARKET ON A GAME (feature 6) NAMES NO ATTESTOR: its outcome is its source round's signed result, so the
     // fields are written empty and nothing an attestor signs can decide it; every other attested game names 1 to 16, as before
     const onGame = m.gameSource !== undefined && m.gameSource !== null;
-    if (onGame) {
+    if (m.attestDraw !== undefined && m.attestDraw !== null) { const f = attestDrawFits(m.attestDraw, m); if (!f.ok) throw new Error(f.why); }
+    else if (onGame) {
       if (!Array.isArray(m.attestors) || m.attestors.length !== 0 || m.attestThreshold !== 0)
         throw new Error('a market on a game names no attestors and a threshold of 0: its outcome is its source round\'s signed result');
     } else {
@@ -31003,6 +31060,8 @@ function encodeManifestBody(m) {
     }
     // ITS PROTOCOL RESERVE, after its own marker and only when its terms name one: every manifest before keeps its bytes
     if (m.marketTerms && m.marketTerms.reserveBps) { w.u8(MARKET_RESERVE_MARKER); w.u16(m.marketTerms.reserveBps); }
+    // ITS ATTESTOR DRAW (#630), after its own marker and only when it names one: every attested manifest before keeps its bytes
+    if (m.attestDraw) { w.u8(ATTEST_DRAW_MARKER); w.u8(m.attestDraw.count); w.u8(m.attestDraw.threshold); }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -31064,6 +31123,10 @@ function readBody(r) {
       r.u8();
       if (!body.marketTerms) throw new Error('a market\'s protocol reserve is part of its terms, and this manifest names none');
       body.marketTerms.reserveBps = r.u16();
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === ATTEST_DRAW_MARKER) {
+      r.u8();
+      body.attestDraw = { count: r.u8(), threshold: r.u8() };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -32051,7 +32114,7 @@ function decodeAttestation(bytes) {
 // THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
 // marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
 // are not the question its attestors answered.
-function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null }) {
+function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null, drawn = null }) {
   if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
   // A MARKET ON A GAME (feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
   // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
@@ -32071,20 +32134,26 @@ function attestationStands(a, { manifest: game, roundIdBytes, verify, round = nu
   if (a.outcome >= manifest.outcomes.length)
     return { ok: false, why: `that attestation names outcome ${a.outcome}, out of range: game "${manifest.gameName}" has ${manifest.outcomes.length} outcomes (0 to ${manifest.outcomes.length - 1})` };
   if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
-  const named = new Set(manifest.attestors.map(toHex));
+  // A DRAWN SET (#630): the round's own 7 attestors (sortition.js drawAttestors, node keys, BIP-340 - the caller's `verify`), 5 standing
+  const draws = isDrawnAttest(manifest);
+  if (draws && !(Array.isArray(drawn) && drawn.length === manifest.attestDraw.count))
+    return { ok: false, why: `game "${manifest.gameName}" draws its attestors per round, and the round's ${manifest.attestDraw.count} drawn attestors were not given` };
+  const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : manifest.attestors.map(toHex);
+  const need = draws ? manifest.attestDraw.threshold : manifest.attestThreshold;
+  const named = new Set(keysOf);
   const signed = new Set();
   for (const s of a.signatures || []) {
     const k = toHex(s.key);
-    if (!named.has(k)) return { ok: false, why: `that attestation is signed by key ${k.slice(0, 16)}, which game "${manifest.gameName}" does not name as an attestor` };
+    if (!named.has(k)) return { ok: false, why: `that attestation is signed by key ${k.slice(0, 16)}, which ${draws ? 'this round did not draw as an attestor' : `game "${manifest.gameName}" does not name as an attestor`}` };
     let good = false;
     try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
     if (!good) return { ok: false, why: `attestor ${k.slice(0, 16)}'s signature on that attestation does not verify` };
     signed.add(k);
   }
-  if (signed.size < manifest.attestThreshold)
-    return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${manifest.attestThreshold} of its ${manifest.attestors.length}` };
+  if (signed.size < need)
+    return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${need} of its ${named.size}` };
   return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size,
-    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${manifest.attestors.length} attestors (threshold ${manifest.attestThreshold})` };
+    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${named.size} attestors (threshold ${need})` };
 }
 
 /**
@@ -33251,6 +33320,7 @@ function marketForRound(round, { manifestBytes = null } = {}) {
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
+    ...(m.attestDraw ? { attestDraw: { ...m.attestDraw } } : {}),
     fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null,
     // A SCALAR MARKET'S BOUNDS (protocol 7) and A MARKET ON A GAME'S SOURCE (protocol 6),: what its lines say and
     // what its outcome is checked by - the decoded manifest kept beside them for that check
@@ -33300,7 +33370,8 @@ function pickSheet({ market, contract = null, stakeMsat = contract ? contract.st
       net: `at risk on your pick: ${sats(net)} sats`,
     },
     stakeMsat: stake, feeMsat: fee, donationMsat: 0n, netMsat: net,
-    attestors: `outcome by ${market.threshold} of ${market.attestors.length} attestors named by ${market.name}'s dev`,
+    attestors: market.attestDraw ? `outcome by ${market.attestDraw.threshold} of ${market.attestDraw.count} nodes drawn for each round`
+      : `outcome by ${market.threshold} of ${market.attestors.length} attestors named by ${market.name}'s dev`,
     confirm: market.needsConfirm
       ? `${market.name} is not on this page's list of known markets. Its developer key is ${market.devKey.slice(0, 16)}… and its manifest ${market.gameId.slice(0, 16)}…; `
         + 'only its attestors decide the outcome. Stake on it anyway?'
@@ -33480,19 +33551,24 @@ async function webCryptoEd25519(signature, message, key) {
  * pinned (or confirmed): its round, an outcome in range, the threshold of distinct named attestors, every signature good.
  * `verify(signature, digest, key)` may be async (WebCrypto); a verifier that cannot answer leaves it `unverifiable`.
  */
-async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519 }) {
+async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519, drawn = null, verifySchnorr = null }) {
   let a;
   try { a = decodeAttestation(fromHex(String(attestationHex))); } catch (e) { return { verified: false, why: `not an attestation: ${e.message}` }; }
+  // A MARKET WHOSE ATTESTORS ARE DRAWN PER ROUND (kanban #630): checked against the round's 7 drawn node keys this page derived from the
+  // census (client-committee.js attestors), BIP-340 - with none derived, it is shown unverified, never believed on a seat's word
+  const draws = !!(market && market.attestDraw);
+  if (draws && !(Array.isArray(drawn) && drawn.length === market.attestDraw.count && typeof verifySchnorr === 'function'))
+    return { verified: false, unverifiable: true, why: 'this market draws its attestors per round, and this page has not derived this round\'s 7 yet: the outcome is shown unverified' };
   const digest = attestationBodyId(a);
   const said = new Map();
   for (const s of a.signatures) {
-    const v = await verify(s.signature, digest, s.key);
+    const v = draws ? await verifySchnorr(s.signature, digest, s.key) : await verify(s.signature, digest, s.key);
     if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the outcome is shown unverified' };
     said.set(`${toHex(s.key)}:${toHex(s.signature)}`, v === true);
   }
   const manifest = { gameName: market.name, resultType: RESULT_TYPE.ATTESTED, outcomes: market.outcomes,
-    attestors: market.attestors.map((k) => fromHex(k)), attestThreshold: market.threshold };
-  const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex),
+    attestors: draws ? [] : market.attestors.map((k) => fromHex(k)), attestThreshold: draws ? 0 : market.threshold, ...(draws ? { attestDraw: market.attestDraw } : {}) };
+  const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex), ...(draws ? { drawn } : {}),
     verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
   return stands.ok ? { verified: true, outcome: stands.outcome, label: stands.label, why: stands.why } : { verified: false, why: stands.why };
 }
@@ -33511,7 +33587,7 @@ async function checkAttestation({ attestationHex, market, roundIdHex, verify = w
  * `{ verified, outcome, label, value, refund, why }`; never throws.
  */
 async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundIdHex = null, entryCloseMs = null,
-  sourceCommittee = null, sourceSeries: sourceSeries_ = null, verify = webCryptoEd25519, verifySchnorr = null }) {
+  sourceCommittee = null, sourceSeries: sourceSeries_ = null, verify = webCryptoEd25519, verifySchnorr = null, roundAttestors = null }) {
   try {
     if (o && o.gameOutcome && market && market.gameSource) {
       const g = o.gameOutcome;
@@ -33552,7 +33628,9 @@ async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundI
         verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
       return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
     }
-    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify });
+    // a market whose attestors are drawn: the round's 7 as this page derives them (committee.js roundAttestors)
+    const drawn = market && market.attestDraw && typeof roundAttestors === 'function' ? await roundAttestors(roundIdHex) : null;
+    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify, drawn, verifySchnorr });
     return { verified: false, why: 'the seats handed no evidence for it' };
   } catch (e) { return { verified: false, why: e.message }; }
 }
@@ -34888,7 +34966,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,

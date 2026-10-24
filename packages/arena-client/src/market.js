@@ -313,7 +313,7 @@ export async function checkAttestation({ attestationHex, market, roundIdHex, ver
  * `{ verified, outcome, label, value, refund, why }`; never throws.
  */
 export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundIdHex = null, entryCloseMs = null,
-  sourceCommittee = null, sourceSeries: sourceSeries_ = null, verify = webCryptoEd25519, verifySchnorr = null }) {
+  sourceCommittee = null, sourceSeries: sourceSeries_ = null, verify = webCryptoEd25519, verifySchnorr = null, roundAttestors = null }) {
   try {
     if (o && o.gameOutcome && market && market.gameSource) {
       const g = o.gameOutcome;
@@ -354,7 +354,9 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
         verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
       return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
     }
-    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify });
+    // a market whose attestors are drawn: the round's 7 as this page derives them (committee.js roundAttestors)
+    const drawn = market && market.attestDraw && typeof roundAttestors === 'function' ? await roundAttestors(roundIdHex) : null;
+    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify, drawn, verifySchnorr });
     return { verified: false, why: 'the seats handed no evidence for it' };
   } catch (e) { return { verified: false, why: e.message }; }
 }
