@@ -144,3 +144,15 @@ test('a running guardian started on an old bitcoind cookie is started again on a
   assert.ok(lines.some((l) => /old bitcoind cookie/.test(l)));
 });
 const require_secret = (file) => { try { return /sekrit|fresh/.test(String(readFileSync(file))); } catch { return false; } };
+
+// THE DASHBOARD'S PORT, FREE (kanban #326: another program held a T2 guardian's dashboard port and fedimintd exited at start)
+test('the dashboard port: the slot\'s when free, the next free one when taken', async () => {
+  const { freeLocalPort } = await import('../src/guardian.js');
+  const { createServer } = await import('node:net');
+  const busy = createServer(); await new Promise((ok) => busy.listen(0, '127.0.0.1', ok));
+  const taken = busy.address().port;
+  assert.notEqual(await freeLocalPort(taken, { step: 1, tries: 5 }), taken, 'a taken port is passed by');
+  busy.close();
+  await new Promise((ok) => setTimeout(ok, 50));
+  assert.equal(await freeLocalPort(taken, { step: 1, tries: 5 }), taken, 'a free port is kept');
+});
