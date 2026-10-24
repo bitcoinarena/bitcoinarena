@@ -1,4 +1,4 @@
-#: the bitcoin-arena.io homepage behind its password gate. A Worker (not Pages) because a Worker custom domain gets
+#: the bitcoin-arena.io homepage, open to everyone (kanban #611; behind a password until 2026-10-24). A Worker (not Pages) because a Worker custom domain gets
 # its DNS record from Cloudflare, and the OAuth token here cannot write DNS.
 name = "bitcoin-arena-site"
 main = "worker.js"

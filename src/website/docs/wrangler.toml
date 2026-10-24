@@ -1,4 +1,4 @@
-#: the node API documentation on doc.bitcoin-arena.io, behind the same password gate as the homepage (one cookie
+#: the node API documentation on docs.bitcoin-arena.io, open to everyone like the homepage (kanban #611; behind its password until 2026-10-24).
 # for all of bitcoin-arena.io). A Worker with static assets, as bitcoin-arena-site: its custom domain gets its DNS record.
 name = "bitcoin-arena-docs"
 main = "worker.js"
