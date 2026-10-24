@@ -29,7 +29,7 @@
   .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
   .filters select, .filters input { background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 7px 10px; font: 13px system-ui; }
   .filters input { flex: 1; min-width: 160px; max-width: 280px; font-family: "JetBrains Mono", monospace; }
-  tr.pg td { color: var(--cyan); } td.nw { white-space: nowrap; }
+  tr.pg td { color: var(--cyan); } td.nw { white-space: nowrap; } tr.away td { color: var(--dim); }
   .bar { height: 8px; background: var(--btc); border-radius: 4px; min-width: 2px; }
 </style>
 </head>
@@ -88,7 +88,12 @@ function timelineOf(tx) {
   const ev = [];
   const add = (atMs, where, what, extra = {}) => { if (Number.isFinite(atMs)) ev.push({ atMs, where, what, ...extra }); };
   for (const s of tx.seats) {
-    for (const d of s.steps || []) add(d.atMs, s.seat, d.door + ' door', { took: d.ms, detail: (d.steps || []).map((x) => x.step + ' ' + x.ms).join(', '), ok: d.status >= 200 && d.status < 300, status: d.status, kind: 'door' });
+    for (const d of s.steps || []) {
+      // a node that holds no entry of it (not seated for its round) answers its lock doors 404: said as such, kept out of the summary
+      const away = !s.known && d.status === 404;
+      add(d.atMs, s.seat, d.door + ' door' + (away ? ': not one of its round\'s nodes (holds no entry), 404' : ''), { took: away ? null : d.ms,
+        detail: away ? '' : (d.steps || []).map((x) => x.step + ' ' + x.ms).join(', '), ok: away || (d.status >= 200 && d.status < 300), status: d.status, kind: away ? 'away' : 'door', away });
+    }
     if (s.storedAt) add(Date.parse(s.storedAt), s.seat, 'stored the entry', { kind: 'stored' });
     if (s.book && s.book.receivedAt) add(Date.parse(s.book.receivedAt), s.seat, 'took the order into its book' + (s.book.batch ? ' (batch ' + s.book.batch + ')' : ''), { kind: 'book' });
     for (const k of ['stake', 'fee']) { const l = s.locks && s.locks[k]; if (l && l.verifiedAt) add(Date.parse(l.verifiedAt), s.seat, 'verified the ' + k + ' lock', { detail: l.outpoint || '', kind: k + 'lock' }); }
@@ -125,7 +130,7 @@ function drawTx(tx) {
   };
   const summary = [stepOf('door', 'reached the node'), stepOf('stored', 'entry stored'), stepOf('stakelock', 'stake lock verified'), stepOf('feelock', 'fee lock verified'),
     stepOf('book', 'in the order book'), stepOf('settle', 'settlement step')].join('');
-  const rows = ev.map((x) => `<tr class="${x.where === 'page' ? 'pg' : ''}"><td class="mono">${utc(x.atMs)}</td><td class="nw ${x.atMs - t0 > 3000 ? 'slow' : ''}">${rel(x.atMs)}</td>
+  const rows = ev.map((x) => `<tr class="${x.where === 'page' ? 'pg' : x.away ? 'away' : ''}"><td class="mono">${utc(x.atMs)}</td><td class="nw ${x.atMs - t0 > 3000 ? 'slow' : ''}">${rel(x.atMs)}</td>
     <td class="nw">${esc(x.where)}</td><td>${esc(x.what)}${x.status && !x.ok ? ' <span class="bad">' + esc(x.status) + '</span>' : ''}</td><td class="nw">${Number.isFinite(x.took) ? x.took + ' ms' : ''}</td>
     <td class="dim mono">${esc(x.detail || '')}</td></tr>`).join('');
   $('main').innerHTML = `<h1>Transaction</h1><p class="mono">${esc(tx.id)}</p>

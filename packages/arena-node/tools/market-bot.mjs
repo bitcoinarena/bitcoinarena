@@ -386,6 +386,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
       const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry), signal: limit() });
       const enWhy = en.status >= 300 ? (await en.text()).trim().slice(0, 200) : null;
       if (en.status >= 200 && en.status < 300 && submittedMs === null) submittedMs = Date.now() - t0;
+      // A SEAT THAT REFUSED THE ENTRY GETS NO LOCKS (the owner 2026-10-24, the explorer: "Some show 404"): a node not seated for the round
+      // holds no entry, so its lock doors could only answer 404
+      if (en.status < 200 || en.status >= 300) { said.push({ seat: n.replace(/^https?:\/\//, ''), entry: en.status, why: enWhy }); return; }
       await accepted;
       if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)), signal: limit() });
       const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)), signal: limit() });

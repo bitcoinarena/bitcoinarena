@@ -35,6 +35,19 @@ export const BOND_TERMS = Object.freeze({
 
 const CHAIN_KEPT_MS = 180000;
 export const COMPARE_GRACE_MS = 400;
+/** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
+export function majorityThenGrace(promises, graceMs) {
+  return new Promise((resolve) => {
+    let done = 0, timer = null;
+    const one = () => {
+      done++;
+      if (done === promises.length) { clearTimeout(timer); resolve(); }
+      else if (!timer && done * 2 > promises.length) timer = setTimeout(resolve, graceMs);
+    };
+    if (!promises.length) resolve();
+    for (const p of promises) Promise.resolve(p).then(one, one);
+  });
+}
 const keptChains = new Map();     // network:explorer -> [{ at, chain, firstHeight }], newest last
 const keptCensus = new Map();     // round's census root -> evidence
 const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
@@ -201,13 +214,6 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // answered by then is named as not answering (agrees null - as a seat that does not hold the round), and a lie it tells later is
     // still no part of the committee this client derived itself
     const answeredBy = new Set(); let closed = false;
-    const graceOver = new Promise((resolve) => {
-      let timer = null;
-      const watch = setInterval(() => {
-        if (answeredBy.size === nodes.length) { clearInterval(watch); clearTimeout(timer); resolve(); }
-        else if (!timer && answeredBy.size * 2 > nodes.length) timer = setTimeout(() => { clearInterval(watch); resolve(); }, COMPARE_GRACE_MS);
-      }, 20);
-    });
     const each = nodes.map(async (u) => {
       const said = {};
       for (const role of roles) {
@@ -227,7 +233,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       seats.push({ node: u, agrees: answered.length ? !differ.length : null, why: differ.length ? differ.map((x) => x.why).join('; ') : answered.length ? null : Object.values(said).map((x) => x.why).join('; '), roles: said });
       answeredBy.add(u);
     });
-    await Promise.race([Promise.all(each), graceOver]);
+    await majorityThenGrace(each, COMPARE_GRACE_MS);
     closed = true;
     for (const u of nodes) if (!answeredBy.has(u)) seats.push({ node: u, agrees: null, why: `no committee answer within ${COMPARE_GRACE_MS} ms of the other seats` });
   }
