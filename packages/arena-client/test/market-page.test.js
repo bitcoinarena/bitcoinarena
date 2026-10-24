@@ -215,6 +215,28 @@ test('an order whose lock the federation never accepts is refused after acceptWa
   assert.deepEqual(done, ['/entry', '/entry'], 'no lock handed for it');
 });
 
+// A SEAT'S CHECK STANDS FOR A LOCK CLIENT THAT NEVER HEARS (playtest 2026-10-24 21:32Z, b2b7ced1 "Still not placed": the guardians accepted
+// the lock, the phone's lock client had too few guardian sockets open to hear it): after the head start the seats are asked, and the
+// first seat that verified the lock in the federation places the order
+test('an order is placed by the seats\' own check of its lock when the lock client never hears the acceptance', async () => {
+  const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
+  const entry = { ...entryFor(round, { seed: b32(3), curve: (await import('../src/page-curve.js')).pageCurve, random: () => b32(5), pick: 0 }), roundId: ROUND_ID, sessionPubkey: b32(6) };
+  let lockAsks = 0;
+  const fetcher = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/lock' && ++lockAsks <= 2) return { status: 409, ok: false, text: async () => 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
+    return { status: 201, ok: true, text: async () => '' };
+  };
+  const lock = { fields: { paymentImage: { kind: 'point', bytes: new Uint8Array(33).fill(2) }, amountMsat: 900000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 },
+    accepted: new Promise(() => {}), acceptWaitMs: 5000, acceptHeadMs: 20, acceptAskMs: 20 };
+  const t0 = Date.now();
+  const sent = await submitPick({ entry, stakeLock: lock, nodes: ['http://seat-a', 'http://seat-b'], fetcher });
+  console.log('  SEATS CHECKED:', JSON.stringify({ ok: sent.ok, first: sent.first, lockAsks, ms: Date.now() - t0 }));
+  assert.equal(sent.ok, true, 'placed once a seat verified the lock');
+  assert.ok(Date.now() - t0 < 2000, 'not held until acceptWaitMs');
+  await sent.handing;
+});
+
 // A SEAT STILL TAKING ITS HANDOUT gets its entry after it (playtest 2026-10-23): the others are not held up
 test('submitPick posts a seat\'s entry only after that seat answered its handout', async () => {
   const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };

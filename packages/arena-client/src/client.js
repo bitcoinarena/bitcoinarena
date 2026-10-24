@@ -265,6 +265,7 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // HOW LONG THE LOCKS ARE OFFERED TO THE SIGNER NODES IN THE BACKGROUND: past the start deadline (900 ticks, 15 s) a stake
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 export const LOCK_HAND_MS = 120000;
+const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the seats' own check after it
 
 const OPENED_ROUNDS = new Map();
 
@@ -639,8 +640,13 @@ export class Client {
     // A LOCK STILL BEING ACCEPTED (OPEN-LIST-2140 item 3: the entry goes out on the lock's submission) is handed over the
     // moment the guardians accept it - measured on 0.0.2498, the backoff's first tries fell before acceptance and the one
     // that took landed late: the 5th of 7 signer nodes verified 3.5 s after PLAY. A lock refused there is handed to nobody.
+    // NOT WAITED ON PAST LOCK_ACCEPT_HEAD_MS (playtest 2026-10-24, b2b7ced1: a lock client with too few guardian sockets open never hears the
+    // acceptance): the seats are asked from then on - each verifies the lock with the guardians itself - and a refusal stops the handing
+    let refused = false;
     if (this.stakeLock.accepted && typeof this.stakeLock.accepted.then === 'function') {
-      try { await this.stakeLock.accepted; } catch { return { lock: null, feeLock: null }; }
+      const first = await Promise.race([this.stakeLock.accepted.then(() => 'yes', () => 'no'), this.sleep(LOCK_ACCEPT_HEAD_MS).then(() => 'late')]);
+      if (first === 'no') return { lock: null, feeLock: null };
+      if (first === 'late') this.stakeLock.accepted.catch(() => { refused = true; });
     }
     const needed = this.stakeLock.needed;
     const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
@@ -662,7 +668,7 @@ export class Client {
         this.lockCommittedSaid = true;
         try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the signer node's */ }
       }
-      if (kinds.every((k) => took.get(k.door).size >= nodes.length) || Date.now() >= until) break;
+      if (refused || kinds.every((k) => took.get(k.door).size >= nodes.length) || Date.now() >= until) break;
       await this.sleep(pause);
     }
     return { lock: this.lockHanded, feeLock: this.feeLockHanded };
