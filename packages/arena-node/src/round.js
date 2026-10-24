@@ -2970,16 +2970,29 @@ export class Round {
 
   /** WHAT A RECIPIENT KEY WAS DONATED, oldest first, from `sinceMs`: every output this signer node verified for it. */
   donationsFor(recipientHex, sinceMs = 0) {
+    // READ ONCE PER CHANGE OF THE TABLE (kanban #576, measured on test host seat 1: GET /reserves - every seat asks every other every
+    // 2 min - allocated ~218 MB/min here, each row's stored entry decoded again on every call): a recipient's whole list is kept until
+    // a row is added, replaced or deleted (the table's newest rowid and its count), and handed out as a new array of the same rows
+    const all = !(Number(sinceMs) > 0);
+    if (all) {
+      this._donationStamp ||= this.db.prepare('SELECT max(rowid) AS m, count(*) AS n FROM donation_outputs');
+      const st = this._donationStamp.get(), tag = `${st.m}:${st.n}`;
+      if (this._donationTag !== tag) { this._donationTag = tag; this._donationKept = new Map(); }
+      const was = this._donationKept.get(String(recipientHex).toLowerCase());
+      if (was) return was.slice();
+    }
     // AND WHO SENT IT (2026-10-05): the entry's player key, read from the stored entry; whether that key
     // is also on the Fedimint contract (its payment image) or the contract carries the zero image of an older page.
     const playerOf = (entryId) => { const e = this.entry(entryId); try { return e ? Buffer.from(decodeEntryContract(e).playerPubkey).toString('hex') : null; } catch { return null; } };
-    return this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image, item, parts FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
+    const rows = this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image, item, parts FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
       .all(String(recipientHex).toLowerCase(), Math.max(0, Math.floor(Number(sinceMs) || 0)))
       .map((r) => ({ outpoint: r.outpoint, entryId: Buffer.from(r.entry_id).toString('hex'), roundId: Buffer.from(r.round_id).toString('hex'),
         federationId: Buffer.from(r.federation_id).toString('hex'), amountMsat: r.amount_msat, contractId: r.contract_id, verifiedMs: Number(r.verified_ms),
         playerKey: playerOf(new Uint8Array(r.entry_id)) || r.image || null, senderOnContract: r.sender_on_contract === 1, ...(r.item ? { item: r.item } : {}),
         // a market's donation: each filled order's part (kanban #580)
         ...(r.parts ? (() => { try { return { parts: JSON.parse(r.parts) }; } catch { return {}; } })() : {}) }));
+    if (all) this._donationKept.set(String(recipientHex).toLowerCase(), rows);
+    return all ? rows.slice() : rows;
   }
 
   /**

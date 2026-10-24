@@ -87,3 +87,20 @@ test('a wrong key, a forged signature, a stale receipt or another recipient\'s o
     assert.deepEqual(rows().map((r) => r[0]), [at(OUT[1]), at(OUT[2])], 'another recipient\'s row was deleted');
   } finally { await s.close(); }
 });
+
+test('a recipient\'s rows are read once per change of the table: the same rows again, a new one and a deleted one seen at once (kanban #576)', async () => {
+  const { s, devA, devB } = await seat();
+  try {
+    const r = s.d.round; let decoded = 0; const entry = r.entry.bind(r); r.entry = (id) => { decoded++; return entry(id); };
+    const first = r.donationsFor(devA.recipientPkHex);
+    assert.equal(first.length, 2); const n = decoded;
+    first.pop();   // a caller's array is its own
+    assert.equal(r.donationsFor(devA.recipientPkHex).length, 2);
+    assert.equal(decoded, n, 'no entry decoded again while the table is unchanged');
+    r.putDonationOutputs([{ outpoint: { txid: b32(0x0a), outIdx: 0n }, entryId: s.eid, roundId: s.entry.roundId, federationId: b32(0xfe), recipientPk: Buffer.from(devA.recipientPkHex, 'hex'), amountMsat: 5n, contractId: 'c3', senderOnContract: false }]);
+    assert.equal(r.donationsFor(devA.recipientPkHex).length, 3, 'a new row is seen');
+    assert.equal(r.deleteDonationsRead(devB.recipientPkHex, [at(OUT[2])]), 1);
+    assert.equal(r.donationsFor(devB.recipientPkHex).length, 0, 'a deleted row is gone');
+    assert.equal(r.donationsFor(devA.recipientPkHex, 1).length, 3, 'a read from a time is not kept, and reads the table');
+  } finally { await s.close(); }
+});
