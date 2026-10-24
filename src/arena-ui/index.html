@@ -6592,7 +6592,13 @@
           const seed = walletSeed();
           const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
           const held = ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(vault()) : [];
-          const missing = held.filter((f) => !window.ARENA_WALLETS.has(f));
+          // AN IMPORTED SEED IS LOOKED FOR IN EVERY LISTED FEDERATION (kanban #603, measured 2026-10-24 02:44Z on UI 353: a fresh browser that
+          // restored a seed holding 2,496 sat in 337ae01a and 500 in 4dc88be7 showed 2,499 - its history knows no federation, so only the
+          // lobby's wallet was opened, and recovered): every federation with a verified record and an invite, its wallet opened and so recovered
+          let listed = [];
+          try { if (seed && ARENACLIENT.seedRecovers && ARENACLIENT.seedRecovers(vault(), seed))
+            listed = statuses.filter((x) => x && x.invite && x.federation).map((x) => String(x.federation).toLowerCase()); } catch { listed = []; }
+          const missing = [...new Set([...held, ...listed])].filter((f) => !window.ARENA_WALLETS.has(f));
           if (seed && missing.length && ARENACLIENT.openPlayerWallet) {
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
             // SIDE BY SIDE (playtest 2026-10-21 ~19:45Z: "when having a wallet with 0 sats it takes 20-30 seconds to display the balance of 0" - one
