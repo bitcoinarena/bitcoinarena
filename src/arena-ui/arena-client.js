@@ -27916,8 +27916,8 @@ const BOND_TERMS = Object.freeze({
   regtest: Object.freeze({ arbitrationKeys: ARBITRATION_KEYS_REGTEST, arbitrationK: 5, bondMaturity: 100 }),
 });
 
-const CHAIN_KEPT_MS = 60000;
-const keptChains = new Map();     // network:censusHeight:committeeTime -> { at, chain, firstHeight }
+const CHAIN_KEPT_MS = 180000;
+const keptChains = new Map();     // network:explorer -> [{ at, chain, firstHeight }], newest last
 const keptCensus = new Map();     // round's census root -> evidence
 const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
 const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
@@ -27931,9 +27931,20 @@ const originOf = (u) => { try { const x = new URL(u); const head = x.pathname.sp
 const anchorHeightFor = (networkId) => (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? TESTNET4_ANCHOR_HEIGHT : 0);
 
 async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer = null }) {
-  const key = `${toHex(contract.networkId)}:${contract.censusHeight}:${contract.committeeTimeMs}:${explorer || ''}`;
-  const had = keptChains.get(key);
-  if (had && nowMs - had.at < CHAIN_KEPT_MS) return had;
+  // ONE AGREED CHAIN FOR EVERY ROUND IT HOLDS (kanban #618, the owner 2026-10-24: "Order submitted in 16.78 s"; measured on UI 363: 16.2 s of
+  // a first order were this read, done again for every round - the lobby's round and the order's, same census and beacon - because the
+  // kept chain was keyed by the round's committee time): a chain read in the last CHAIN_KEPT_MS serves any round whose census height it
+  // holds and whose beacon - the first block after committee_time (beacon.js) - is already in it; else it is read again
+  const key = `${toHex(contract.networkId)}:${explorer || ''}`;
+  const serves = (k) => {
+    if (!k || nowMs - k.at >= CHAIN_KEPT_MS) return false;
+    const last = k.firstHeight + k.chain.headers.length - 1;
+    if (Number(contract.censusHeight) < k.firstHeight || Number(contract.censusHeight) > last) return false;
+    const timeOf = (h) => BigInt(new DataView(h.buffer, h.byteOffset + 68, 4).getUint32(0, true)) * 1000n;
+    return k.chain.headers.some((h) => timeOf(h) > BigInt(contract.committeeTimeMs));
+  };
+  const had = (keptChains.get(key) || []).filter(serves).pop();
+  if (had) return had;
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
   // A FEW SEATS, NOT EVERY ONE (headers.js headerSources): two must agree, two may be slow
   const providers = headerSources(nodes).map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
@@ -27954,7 +27965,7 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
     explorerSaid = { census, tip };
   }
   const got = { ok: true, at: nowMs, chain, firstHeight, explorer: explorerSaid };
-  keptChains.set(key, got);
+  keptChains.set(key, [...(keptChains.get(key) || []).filter((k) => nowMs - k.at < CHAIN_KEPT_MS).slice(-3), got]);
   return got;
 }
 
