@@ -7320,6 +7320,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const resultOf = (en, row) => {
           if (!row) return null;
           const stake = BigInt(en.stakeMsat || 0n), fee = BigInt(en.feeMsat || 0n);
+          // AN ORDER THAT NEVER FILLED (kanban #629, 52d5b9d4 shown as lost: its round settles nothing - "no order filled") is neither won
+          // nor lost: its locks come back whole - once cancelled, or once the market's outcome is final
+          try {
+            const bk = orderBook && orderBook.standing ? orderBook.standing(en.roundId, fromHex(idHex)) : null;
+            if (bk && bk.book && !bk.filled && !bk.inPending) {
+              const fin = outcomeFinality(heldOutcomes(round, en.roundId), { windowMs: decodeRoundContract(new Uint8Array(row.contract)).objectionWindowMs, nowMs: round.now() });
+              if (bk.cancelled || fin.final) return { state: 'unfilled', stakeMsat: String(stake), feeMsat: String(fee), netMsat: '0', why: bk.cancelled ? 'cancelled before it filled' : 'never filled: its locks come back whole' };
+            }
+          } catch { /* read as before */ }
           if (!settled || settled.state !== 'ACCEPTED') return { state: 'pending', stakeMsat: String(stake), feeMsat: String(fee) };
           const moves = round.lockSettlementMoves ? round.lockSettlementMoves(en.roundId) : null;
           const claimed = moves && Array.isArray(moves.claims) ? new Set(moves.claims) : null;
