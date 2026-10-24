@@ -26,7 +26,7 @@ import { readAdvertUpdate } from './advert-update.js';
 import { maturityStands } from './bond-script.js';
 import { censusRootOf, sumsBonds, floorOnSums } from './census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from './beacon.js';
-import { selectCommittee, drawCommittee, slotsForRole } from './sortition.js';
+import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from './sortition.js';
 import { networkOf } from './constants.js';
 import { toHex, fromHex } from './hash.js';
 
@@ -198,6 +198,9 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
     catch (e) { return { ok: false, why: `the ${role} committee cannot be drawn: ${e.message}` }; }
     committees[role] = drawn[role].slice(0, slotsForRole(contract, role));
   }
-  return { ok: true, committees, drawn, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
+  // AND ITS DRAWN ATTESTORS (kanban #630): the 7 a drawn game's outcome is checked against - null where the census cannot hold the draw
+  let attestors = null;
+  try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }).map((e) => e.pubkey); } catch { attestors = null; }
+  return { ok: true, committees, drawn, attestors, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
     checkedCensus: { root: census.root, entries: census.entries } };
 }

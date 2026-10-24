@@ -29,7 +29,7 @@ for (const path of args) {
     // AN ATTESTED GAME (§0A.7a): its outcomes, attestors and threshold, from its signed manifest, and the
     // networks it is pinned for (a market pinned for regtest is refused on any other network)
     ...(isAttested(m) ? { attested: { outcomes: [...m.outcomes], attestors: m.attestors.map(toHex), threshold: m.attestThreshold,
-      devKey: toHex(m.gameDevPubkey), networks: [...(KNOWN_GAME.networks || [])] } } : {}),
+      devKey: toHex(m.gameDevPubkey), networks: [...(KNOWN_GAME.networks || [])], ...(m.attestDraw ? { attestDraw: { ...m.attestDraw } } : {}) } } : {}),
     // A MARKET'S OWN FEE, when its manifest names one; without it the page charges the market default (known-game.js)
     ...(m.marketTerms ? { fee: { nodeBps: m.marketTerms.nodeFeeBps, donationBps: m.marketTerms.donationBps } } : {}),
     // AND ITS TERMS' CLOCK: resolution delay and void deadline, which its rounds' lock span is checked by
@@ -55,7 +55,7 @@ ${Object.entries(g.cores).map(([c, cs]) => `      '${c}': Object.freeze([${list(
     sharedWorld: Object.freeze([${list(g.sharedWorld)}]),
     gameDonationSetId: '${g.gameDonationSetId}',${g.attested ? `
     attested: Object.freeze({ outcomes: Object.freeze(${JSON.stringify(g.attested.outcomes).replace(/"/g, "'")}), attestors: Object.freeze([${list(g.attested.attestors)}]),
-      threshold: ${g.attested.threshold}, devKey: '${g.attested.devKey}', networks: Object.freeze([${list(g.attested.networks)}]) }),` : ''}${g.fee ? `
+      threshold: ${g.attested.threshold}, devKey: '${g.attested.devKey}', networks: Object.freeze([${list(g.attested.networks)}])${g.attested.attestDraw ? `, attestDraw: Object.freeze({ count: ${g.attested.attestDraw.count}, threshold: ${g.attested.attestDraw.threshold} })` : ''} }),` : ''}${g.fee ? `
     fee: Object.freeze({ nodeBps: ${g.fee.nodeBps}, donationBps: ${g.fee.donationBps} }),` : ''}${g.terms ? `
     terms: Object.freeze({ resolveAfterCloseMs: '${g.terms.resolveAfterCloseMs}', deadlineAfterResolveMs: '${g.terms.deadlineAfterResolveMs}' }),` : ''}${g.requiredProtocolVersion ? `
     requiredProtocolVersion: ${g.requiredProtocolVersion},` : ''}${g.payoutShares ? `
