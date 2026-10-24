@@ -16819,6 +16819,54 @@ function forgetPhrase(storage, seedHex) {
   return n;
 }
 
+/**
+ * OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24 playtest: "Order not placed: ... Setting the value of
+ * 'arena.lock.saved.42835aaa…' exceeded the quota" - "You need to clean up old storages"). Measured: a player wallet's database is ~115 KB
+ * per federation (its config, every guardian's endpoint) and one order adds ~50 KB; a browser that kept phrase after phrase filled its
+ * 5 MB. Removed, one federation's database at a time:
+ *   - one no phrase this browser keeps can open (`seeds`: every kept phrase, 64 hex) - its secret is gone from here, so are its notes'
+ *     keys; nothing in it can be spent from this browser;
+ *   - one of a kept phrase other than `current` that its merge emptied - noted empty (arena.wallet.empty.*) with as many entries as it
+ *     has now - unless another tab plays with that phrase (`held(hex)`); the phrase is marked to recover, so should money ever reach it,
+ *     its next open finds it at the federation (markSeedRecover).
+ * A database whose federation is not named here in full (`federations`, 64 hex, and every federation with a history) is left alone.
+ * Answers { removed: keys, bytes: what they held (UTF-16), wallets: databases }.
+ */
+function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false } = {}) {
+  if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
+  const keys = storageKeys(storage);
+  const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
+    ...keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase())].filter((f) => /^[0-9a-f]{64}$/.test(f)));
+  const phrases = [...new Set([...seeds, ...(current ? [current] : [])].map((h) => String(h).toLowerCase()).filter((h) => /^[0-9a-f]{64}$/.test(h)))];
+  const cur = current ? String(current).toLowerCase() : null;
+  // every database a kept phrase can open: prefix -> { hex, fed, ancestor }
+  const owned = new Map();
+  for (const f of feds) for (const hex of phrases) for (const ancestor of [false, true]) {
+    let secret; try { secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(fromHex(hex), fromHex(f)); } catch { continue; }
+    owned.set(`arena.walletdb.${f.slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`, { hex, fed: f, ancestor });
+  }
+  const fed16 = new Set([...feds].map((f) => f.slice(0, 16)));
+  const groups = new Map();
+  for (const k of keys) {
+    const m = /^(arena\.walletdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k);
+    if (m && fed16.has(m[2])) { if (!groups.has(m[1])) groups.set(m[1], []); groups.get(m[1]).push(k); }
+  }
+  let removed = 0, bytes = 0, wallets = 0;
+  for (const [prefix, ks] of groups) {
+    const o = owned.get(prefix);
+    let go = !o;
+    if (o && o.hex !== cur && !held(o.hex)) {
+      const mark = 'arena.wallet.empty.' + (o.ancestor ? 'blwp.' : '') + o.fed.slice(0, 16) + '.' + o.hex.slice(0, 16);
+      go = storage.getItem(mark) !== null && storage.getItem(mark) === String(phraseWalletEntries(storage, o.hex, o.fed, { ancestor: o.ancestor }));
+      if (go) { storage.removeItem(mark); markSeedRecover(storage, o.hex); }
+    }
+    if (!go) continue;
+    for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; }
+    wallets++;
+  }
+  return { removed, bytes, wallets };
+}
+
 /** WHERE THE PLAYER WALLET IS KEPT: the tab's storage, under the federation and the secret's hash, never the secret. */
 function walletStoreFor(storage, federationId, secret) {
   const prefix = `arena.walletdb.${toHex(federationId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
@@ -34612,7 +34660,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
