@@ -3,7 +3,8 @@
 // THE WALLET'S HISTORY IN REACT (kanban #564, the Arena page): every federation's rows as the page's paintHistory drew them - when, what
 // (with its federation when there are several), the amount in or out - newest first; a stake that was entered opens its round's replay
 // (the page's own handler, `onOpen(row)`, which opens the window on the click itself). The page reads the ledger; this class component
-// draws the rows it hands over, or the words when there are none.
+// draws the rows it hands over, or the words when there are none. A row of an order names its transaction, short, linked to the explorer
+// in a new window (the owner 2026-10-24: "Die UI braucht die tx ids, stark verkürzt mit link zum Explorer (in a new window)").
 import React from 'react';
 
 export class WalletHistory extends React.Component {
@@ -13,7 +14,10 @@ export class WalletHistory extends React.Component {
     return rows.map((r) => (
       <div key={r.key} className={`hist-row ${r.plus ? 'plus' : 'minus'}${r.onOpen ? ' clickable' : ''}`} title={r.onOpen ? 'Open this round\'s replay in a new window' : undefined}
         onClick={r.onOpen || undefined}>
-        <span className="hist-when">{r.when}</span><span className="hist-what" title={r.what}>{r.what}</span><span className="hist-amt">{r.amt}</span>
+        <span className="hist-when">{r.when}</span><span className="hist-what" title={r.what}>{r.what}</span>
+        {/^[0-9a-f]{64}$/.test(String(r.tx || '')) ? <a className="hist-tx" href={'https://explorer.bitcoin-arena.io/tx/' + r.tx} target="_blank" rel="noopener noreferrer"
+          title={'Transaction ' + r.tx + ' in the explorer'} onClick={(e) => e.stopPropagation()}>tx {r.tx.slice(0, 6)}…</a> : <span className="hist-tx" />}
+        <span className="hist-amt">{r.amt}</span>
       </div>));
   }
 }

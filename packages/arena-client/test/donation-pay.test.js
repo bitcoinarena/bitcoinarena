@@ -594,3 +594,22 @@ test('a node that does not answer holds no join, and a set fetched and checked i
   const lone = await fetchDonationSet({ round, nodes: nodes.slice(2), verifyEd25519, fetcher });
   assert.match(lone.why, /only 0 of 1 nodes served/);
 });
+
+test('a majority that serves the same set is not held for the slowest node (kanban #625); a refusal in before it waits for all', async () => {
+  const { firstMajority } = await import('../src/donation-pay.js');
+  const b = new Uint8Array([1, 2, 3]);
+  const at = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
+  const names = ['a', 'b', 'c', 'd'];
+  let t = Date.now();
+  const got = await firstMajority([at(5, { node: 'a', bytes: b }), at(10, { node: 'b', bytes: b }), at(15, { node: 'c', bytes: b }), new Promise(() => {})], names, { graceMs: 30 });
+  assert.ok(Date.now() - t < 500, 'not held for the hung node');
+  assert.deepEqual(got.map((x) => !!x.bytes), [true, true, true, false]);
+  assert.equal(got[3].late, true);
+  t = Date.now();
+  const refused = await firstMajority([at(2, { node: 'a', why: '404 no such round' }), at(5, { node: 'b', bytes: b }), at(5, { node: 'c', bytes: b }), at(80, { node: 'd', bytes: b })], names, { graceMs: 10 });
+  assert.ok(Date.now() - t >= 70, 'with a refusal in, every answer is waited for');
+  assert.equal(refused[0].why, '404 no such round');
+  assert.ok(refused[3].bytes);
+  const split = await firstMajority([at(5, { node: 'a', bytes: b }), at(5, { node: 'b', bytes: new Uint8Array([9]) }), at(5, { node: 'c', bytes: b }), at(60, { node: 'd', bytes: b })], names, { graceMs: 10 });
+  assert.ok(split.every((x) => x.bytes), 'answers that differ wait for all');
+});

@@ -11766,6 +11766,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  '90fcf7464f555e003049361ee370f392c766146dd840032cd6954640047711ea': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 23, parent 9a49869c - version 22 in every term, each order's transaction id to the explorer
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
   '13699356aae534eeb753de4d441dc223698f429f25aeb30ea3e25f4b4e24993e': Object.freeze({
     name: 'rock-paper-scissors',
     //: manifest version 4, parent 90f462c8 - version 3's rules (core f86afd62, the same decide), the table drawn by React (kanban #564, #523)
@@ -23273,6 +23287,25 @@ function donationRecipientsLine(set) {
  */
 const DONATION_SETS_FETCHED = new Map();      // donation set id hex -> the answers that passed every check
 const DONATION_ANSWER_MS = 6000;
+const QUORUM_GRACE_MS = 250;
+/** Every node's answer, or - once more than half served the same bytes and none refused - those in by QUORUM_GRACE_MS later, the rest
+ *  as late ({ node, why, late: true }). An answer that refuses (not late) still waits for all, so the refusal is said as before. */
+function firstMajority(promises, names, { graceMs = QUORUM_GRACE_MS } = {}) {
+  return new Promise((resolve) => {
+    const got = new Array(promises.length).fill(null);
+    let left = promises.length, timer = null, done = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(got.map((a, i) => a || { node: names[i], why: `no answer within ${graceMs} ms of the others`, late: true })); };
+    const check = () => {
+      if (left === 0) return finish();
+      const served = got.filter((a) => a && a.bytes);
+      if (timer || got.some((a) => a && !a.bytes && !a.late) || served.length * 2 <= promises.length) return;
+      const first = served[0].bytes;
+      const same = (x) => x.length === first.length && x.every((v, i) => v === first[i]);
+      if (served.every((a) => same(a.bytes))) timer = setTimeout(finish, graceMs);
+    };
+    promises.forEach((p, i) => p.then((a) => { got[i] = a; left--; check(); }, (e) => { got[i] = { node: names[i], why: String(e && e.message ? e.message : e) }; left--; check(); }));
+  });
+}
 const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
   const t = setTimeout(() => reject(Object.assign(new Error(`no answer in ${ms} ms`), { late: true })), ms);
   p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
@@ -23295,7 +23328,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   // that does not answer in ANSWER_MS is left out, as long as at least half the nodes answered and every answer agrees.
   const setKey = toHex(round.donationSetId);
   const kept = keepBySet ? DONATION_SETS_FETCHED.get(setKey) : null;
-  const answers = kept || (await Promise.all(nodes.map(async (node) => {
+  // AND NO WAIT FOR THE SLOWEST (kanban #625, measured 2026-10-24 19:10Z: one seat stalled 3-5 s and every order waited for it - the
+  // explorer showed fetchDonationSet 2.7 s, 4.5 s and 5.0 s of orders whose seats all answered in ms): once more than half the nodes
+  // served the same set, the rest get QUORUM_GRACE_MS more and whoever has not answered by then is left out as late
+  const answers = kept || (await firstMajority(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
     try {
       const r = await donationWithinMs(fetcher(`${base}/donation-set?round=${rid}`), DONATION_ANSWER_MS);
@@ -23308,7 +23344,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
     } catch (e) { return { node: base, why: e.message, late: !!e.late }; }
-  }))).filter((a) => a.bytes || !a.late);
+  }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
     return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
@@ -27973,6 +28009,7 @@ const BOND_TERMS = Object.freeze({
 });
 
 const CHAIN_KEPT_MS = 180000;
+const COMPARE_GRACE_MS = 400;
 const keptChains = new Map();     // network:explorer -> [{ at, chain, firstHeight }], newest last
 const keptCensus = new Map();     // round's census root -> evidence
 const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
@@ -28134,7 +28171,19 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   // when every role it answered is the client's; null when it answered none (a seat that does not hold the round: not a lie)
   const seats = [];
   if (compare) {
-    await Promise.all(nodes.map(async (u) => {
+    // NOT HELD FOR THE SLOWEST SEAT (kanban #625, measured 2026-10-24 19:10Z: one stalled seat held an order's committee 4.9 s while
+    // every other seat answered in ms): once more than half the seats answered, the rest get COMPARE_GRACE_MS more; one that has not
+    // answered by then is named as not answering (agrees null - as a seat that does not hold the round), and a lie it tells later is
+    // still no part of the committee this client derived itself
+    const answeredBy = new Set(); let closed = false;
+    const graceOver = new Promise((resolve) => {
+      let timer = null;
+      const watch = setInterval(() => {
+        if (answeredBy.size === nodes.length) { clearInterval(watch); clearTimeout(timer); resolve(); }
+        else if (!timer && answeredBy.size * 2 > nodes.length) timer = setTimeout(() => { clearInterval(watch); resolve(); }, COMPARE_GRACE_MS);
+      }, 20);
+    });
+    const each = nodes.map(async (u) => {
       const said = {};
       for (const role of roles) {
         const mine = (got.committees[role] || []).map(toHex).sort().join(',');
@@ -28149,8 +28198,13 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
       }
       const answered = Object.values(said).filter((x) => x.agrees !== null);
       const differ = Object.values(said).filter((x) => x.agrees === false);
+      if (closed) return;
       seats.push({ node: u, agrees: answered.length ? !differ.length : null, why: differ.length ? differ.map((x) => x.why).join('; ') : answered.length ? null : Object.values(said).map((x) => x.why).join('; '), roles: said });
-    }));
+      answeredBy.add(u);
+    });
+    await Promise.race([Promise.all(each), graceOver]);
+    closed = true;
+    for (const u of nodes) if (!answeredBy.has(u)) seats.push({ node: u, agrees: null, why: `no committee answer within ${COMPARE_GRACE_MS} ms of the other seats` });
   }
   return { ...got, censusRefused, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
     seats, ms: { chainAndCensus: t1 - t0, total: Date.now() - t0 } };
