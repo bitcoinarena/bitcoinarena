@@ -26443,547 +26443,6 @@ async function giftDonation({ game = null, player = null, recipients, sat, walle
  */
 const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, nowMs });
 
-// ---- arena-client/src/fee-proposal-page.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// FEE PROPOSALS ON THE PAGE (2026-10-17: "Proposal type change fees. Any of the fees, all combinations can
-// be changed with a proposal"): the fees in force as the testnet's nodes answer them (GET /fees - at a height when asked: a round's
-// census height, the set its entry pays and its settlement splits), a proposal built from what the form typed - any subset, refused
-// by the very limits and sums the seats enforce (fee-proposal.js feeProposalStands) before anything is signed - and signed by the
-// forum's key, handed to every node as a funding proposal is (funding-page.js postFunding, kind 'fee').
-
-
-const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
-
-/**
- * THE FEES AS THE NODES ANSWER THEM: every node asked GET /fees (with ?height=H when `height` is given); the set most of them name, kept
- * only when `needed` agree. With `height` the set is the one in force there (`atHeight`), else at each node's tip (`inForce`). Answers
- * { ok, fees, agreeing, asked, tip, limits, sums, schedule, proposals } - `proposals` of an agreeing node - or { ok: false, why }.
- */
-async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
-  const asked = [...new Set((nodes || []).map(feesBaseOf))];
-  const q = Number.isInteger(height) && height >= 0 ? `?height=${height}` : '';
-  const answers = (await Promise.all(asked.map(async (b) => {
-    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
-  }))).filter((a) => a && (q ? a.atHeight : a.inForce));
-  const by = new Map();
-  for (const a of answers) { const set = q ? a.atHeight : a.inForce; const k = JSON.stringify(Object.keys(FEES).map((f) => set[f])); by.set(k, [...(by.get(k) || []), a]); }
-  const best = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
-  if (best.length < Math.min(needed, asked.length) || !best.length) return { ok: false, why: `only ${best.length} of ${asked.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${Math.min(needed, asked.length)} must`, asked: asked.length };
-  const a = best[0];
-  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: asked.length, tip: a.tip, limits: a.limits, sums: a.sums,
-    schedule: a.schedule, proposals: a.proposals || [] };
-}
-
-/** The changes a form typed against the fees in force: every fee whose typed whole number differs, in the fees' order. */
-function feeChangesFrom(current, typed) {
-  const out = [];
-  for (const k of Object.keys(FEES)) {
-    if (typed[k] === undefined || typed[k] === null || String(typed[k]).trim() === '') continue;
-    const v = Number(typed[k]);
-    if (!Number.isInteger(v)) throw new Error(`${k} is a whole number`);
-    if (v !== current[k]) out.push({ fee: k, value: v });
-  }
-  return out;
-}
-
-/**
- * A FEE PROPOSAL CHECKED, THEN SIGNED: the same check a seat makes at submission (every limit and every sum of the whole set it makes
- * from `current`, an activation height after its signal and its vote) - a proposal that would be refused is never signed. Answers
- * { ok, id, hex, donations } or { ok: false, why }.
- */
-function signedFeeProposal({ secretKey, networkId, publishedHeight, activationHeight, changes, purpose = '', current = FEES_TODAY, schedule, curve }) {
-  const c = feesCurveOf(curve);
-  if (!changes || !changes.length) return { ok: false, why: 'change at least one fee' };
-  const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, activationHeight, changes, purpose: String(purpose) };
-  const st = feeProposalStands(p, schedule ? { current, schedule } : { current });
-  if (!st.ok) return { ok: false, why: st.why };
-  const id = feeProposalId(p);
-  return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeFeeProposal(p), ...c.signSchnorr(id, secretKey)])), donations: st.donations };
-}
-
-/** The earliest height a proposal published at `tip` may apply from: after its signal, its vote and the vote's depth. */
-const earliestActivation = (tip, schedule) => tip + schedule.signal + schedule.vote + schedule.decideDepth;
-
-const pctOf = (v, unit) => `${(Number(v) / (unit === 'bps' ? 100 : 1)).toLocaleString('en-US', { maximumFractionDigits: 2 })} %`;
-/** A round's fees as a line: "nodes 4 % · developers 4 % · reserves 2 %". */
-const roundFeesLine = (fees) => { const s = roundSplitBps(fees); return `nodes ${pctOf(s.nodes, 'bps')} · developers ${pctOf(s.protocolDevs + s.gameDevs, 'bps')} · reserves ${pctOf(s.reserves, 'bps')}`; };
-/** A market's fees as a line: "nodes 0.4 % · developers 0.4 % · reserves 0.2 %". */
-const marketFeesLine = (fees) => `nodes ${pctOf(fees.marketNodeBps, 'bps')} · developers ${pctOf(fees.marketDonationBps, 'bps')} · reserves ${pctOf(fees.marketReserveBps, 'bps')}`;
-/** A market's whole rate under a fee set (its fee lock): node + donation + reserve, in bps. */
-const marketFeeBpsOf = (fees) => { const r = marketBps(fees); return r.nodeBps + r.donationBps; };
-/** Each fee's unit as the form shows it: bps for rounds and markets, percent for items and the website share. */
-const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => [k, /Bps$/.test(k) ? 'bps' : 'pct'])));
-
-// ---- arena-protocol/src/emergency.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER'S EMERGENCY KEY (spec §23A.5a, protocol 17): a node that will be offline longer than it may be absent is taken out by its
-// owner, from any other node or the Arena site, with a key that can do nothing else - and keeps its bond.
-//
-//   THE CODE     16 bytes derived from the node's 24 words (seed) under ARENA/v1/EmergencyKey, written as ARN-XXXX-... (Crockford
-//                base32 with a check byte). The owner writes it down at install; the 24 words are never typed anywhere else.
-//   THE KEY      its secret is ARENA/v1/EmergencySecret over the code's 16 bytes; the bond advert names its public key (advert.js).
-//   THE REQUEST  (node_key, posted_at), signed by that key under ARENA/v1/EmergencyDeparture, posted to any seat.
-//   THE EFFECT   no guardian role: out of the seating from posted_at, bond untouched. A guardian: DEPARTED at once when the request
-//                was posted before abandon_blocks from his last seen height, bond untouched; later, abandonment as before.
-//
-// NO CURVE: `sign(digest)` and `verify(signature, digest, pubkey)` are injected (BIP-340), as in absence.js.
-
-
-
-const emIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-const emHeight = (h, what) => { if (!Number.isInteger(h) || h < 0 || h > 0xffffffff) throw new Error(`${what} is a block height`); };
-
-/**
- * A REQUEST IS TAKEN ONLY FRESH: posted_at is the signer's own word, so a seat takes a request (POST /emergency-departure, or from a
- * peer) only while its tip is at most this many blocks past posted_at - a late owner cannot date a request back into time. A seat
- * signs a guardian DEPARTED only for a request it took itself (federation-records.js).
- */
-const EMERGENCY_FRESH_BLOCKS = 6;
-
-// THE CODE: Crockford base32 (no I, L, O, U; read I/L as 1 and O as 0), 16 bytes and 1 check byte = 136 bits = 28 characters
-const EM_B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const EM_CODE_BYTES = 16;
-const emCheckByte = (bytes) => taggedHash(TAG.emergencyKey, bytes)[0];
-
-/** The 16 bytes of a node's emergency code, from its seed (the 24 words' 32 bytes). */
-function emergencyCodeBytes(seed) {
-  if (!(seed instanceof Uint8Array) || seed.length < 16) throw new Error('an emergency code is derived from the node\'s seed');
-  return taggedHash(TAG.emergencyKey, seed).slice(0, EM_CODE_BYTES);
-}
-
-/** The code as the owner writes it: ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX. */
-function emergencyCodeText(codeBytes) {
-  if (!(codeBytes instanceof Uint8Array) || codeBytes.length !== EM_CODE_BYTES) throw new Error('an emergency code is 16 bytes');
-  const all = new Uint8Array(EM_CODE_BYTES + 1); all.set(codeBytes); all[EM_CODE_BYTES] = emCheckByte(codeBytes);
-  let bits = 0, acc = 0, out = '';
-  for (const b of all) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { out += EM_B32[(acc >> (bits - 5)) & 31]; bits -= 5; } }
-  if (bits) out += EM_B32[(acc << (5 - bits)) & 31];
-  return 'ARN-' + out.match(/.{1,4}/g).join('-');
-}
-
-/** The code's 16 bytes from what the owner typed (case, spaces and dashes ignored; I/L read as 1, O as 0), or throws why not. */
-function parseEmergencyCode(text) {
-  const raw = String(text || '').toUpperCase().replace(/^\s*ARN[-\s]*/, '').replace(/[\s-]/g, '').replace(/[IL]/g, '1').replace(/O/g, '0');
-  if (!/^[0-9A-HJKMNP-TV-Z]{28}$/.test(raw)) throw new Error('an emergency code is ARN- and 28 letters and digits');
-  let bits = 0, acc = 0; const out = [];
-  for (const ch of raw) { acc = (acc << 5) | EM_B32.indexOf(ch); bits += 5; if (bits >= 8) { out.push((acc >> (bits - 8)) & 255); bits -= 8; } }
-  const all = Uint8Array.from(out.slice(0, EM_CODE_BYTES + 1));
-  const codeBytes = all.slice(0, EM_CODE_BYTES);
-  if (all[EM_CODE_BYTES] !== emCheckByte(codeBytes)) throw new Error('that emergency code is mistyped (its check does not match)');
-  return codeBytes;
-}
-
-/** The emergency key's 32-byte secret, from the code's 16 bytes (the caller's curve makes its public key). */
-const emergencySecret = (codeBytes) => taggedHash(TAG.emergencySecret, codeBytes);
-
-// THE REQUEST
-function encodeEmergencyDeparture(d) {
-  if (!emIs32(d.nodePubkey) || !emIs32(d.emergencyPubkey)) throw new Error('a leave request names the node (32) and its emergency key (32)');
-  emHeight(d.postedAt, 'the height it was posted at');
-  const w = new Writer();
-  w.u8(TYPE_EMERGENCY_DEPARTURE); w.u16(PROTOCOL_VERSION);
-  w.bytes32(d.nodePubkey); w.bytes32(d.emergencyPubkey); w.u32(d.postedAt);
-  return w.finish();
-}
-function decodeEmergencyDeparture(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_EMERGENCY_DEPARTURE) throw new Error('not an emergency leave request');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
-  const d = { nodePubkey: r.bytes32(), emergencyPubkey: r.bytes32(), postedAt: r.u32() };
-  r.end(); encodeEmergencyDeparture(d); return d;
-}
-const emergencyDepartureId = (d) => taggedHash(TAG.emergencyDeparture, encodeEmergencyDeparture(d));
-const signEmergencyDeparture = (d, sign) => ({ ...d, signature: sign(emergencyDepartureId(d)) });
-
-/**
- * A LEAVE REQUEST THAT STANDS: for a node in the census whose advertisement names this emergency key, signed by that key, posted at a
- * height the seat has seen (not ahead of its tip). `advert` the node's census advertisement; `fresh`: on taking it, posted at most
- * EMERGENCY_FRESH_BLOCKS before the tip. Answers { ok, nodePubkey, postedAt } or why not.
- */
-function emergencyDepartureStands(d, { advert, tip, verify, fresh = false }) {
-  try { encodeEmergencyDeparture(d); } catch (e) { return { ok: false, why: e.message }; }
-  if (!advert) return { ok: false, why: 'that node is not in the census' };
-  if (!emIs32(advert.emergencyPubkey)) return { ok: false, why: 'that node\'s advertisement names no emergency key' };
-  if (toHex(advert.emergencyPubkey) !== toHex(d.emergencyPubkey)) return { ok: false, why: 'the request names another emergency key than the node\'s advertisement' };
-  if (Number.isInteger(tip) && d.postedAt > tip) return { ok: false, why: `posted at ${d.postedAt}, ahead of the tip ${tip}` };
-  if (fresh && !(Number.isInteger(tip) && tip - d.postedAt <= EMERGENCY_FRESH_BLOCKS))
-    return { ok: false, why: `posted at ${d.postedAt}, more than ${EMERGENCY_FRESH_BLOCKS} blocks before the tip ${tip}: a request is taken only fresh` };
-  if (!d.signature || !verify(d.signature, emergencyDepartureId(d), d.emergencyPubkey)) return { ok: false, why: 'the request is not signed by the node\'s emergency key' };
-  return { ok: true, nodePubkey: d.nodePubkey, postedAt: d.postedAt };
-}
-
-/**
- * WHAT A STANDING REQUEST DOES (§23A.5a). `guardian`: the node is a seated guardian of a federation; `lastSeenHeight`: the height
- * its federation last saw it in consensus (from the absence attestations), when known; `abandonBlocks`: the network's.
- * Answers { leaves: true, departed: bool, slash: bool, why }.
- */
-function emergencyDepartureEffect(request, { guardian, lastSeenHeight = null, abandonBlocks }) {
-  if (!request || !request.ok) return { leaves: false, departed: false, slash: false, why: 'no standing leave request' };
-  if (!guardian) return { leaves: true, departed: true, slash: false, why: `no guardian role: out of the seating from ${request.postedAt}, the bond untouched` };
-  if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('abandon_blocks is a positive block count');
-  if (Number.isInteger(lastSeenHeight) && request.postedAt >= lastSeenHeight + abandonBlocks)
-    return { leaves: true, departed: false, slash: true, why: `posted at ${request.postedAt}, not before abandon_blocks (${abandonBlocks}) from last seen ${lastSeenHeight}: abandonment` };
-  return { leaves: true, departed: true, slash: false, why: `a guardian's emergency departure at ${request.postedAt}, in time: DEPARTED at once, the succession starts, the bond untouched` };
-}
-
-// ---- arena-client/src/leaderboard-page.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A LEADERBOARD PAYOUT REQUEST FROM THE PAGE: built from the form - the scope, the top N, the amount, the paying federation,
-// an equal or a per-place split, the period and the payment date turned into a height - checked by the record's own rules before it is
-// signed by the forum's key, and handed to every node as a funding proposal is (funding-page.js postFunding, kind 'leaderboard'). A
-// winner's payout needs nothing here: it is a payout contract to the winner's identity key, recorded on the seats under that key, which
-// the page's zap collector (identity.js collectZaps) already reads and spends into the wallet.
-
-
-
-const lbCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
-/** A block about every 10 minutes: the height a date falls at, from the tip now. */
-const LB_BLOCK_MS = 600000;
-const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.ceil((Number(dateMs) - Number(nowMs)) / LB_BLOCK_MS));
-
-/**
- * THE REQUEST, CHECKED THEN SIGNED: the record's own rules (leaderboard-payout.js encodeLeaderboardPayout) and a payment height no earlier
- * than its vote is decided (published + 2 weeks + depth) - one a seat would refuse is never signed. Answers { ok, id, hex, decidableAt }
- * or { ok: false, why }.
- */
-function signedLeaderboardPayout({ secretKey, networkId, publishedHeight, scope, gameName = '', top, amountSats, federationId, splitBps = [], periodDays,
-  paymentHeight, purpose = '', schedule = FUNDING_SCHEDULES.spec, curve }) {
-  const c = lbCurveOf(curve);
-  const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, scope, gameName: scope === LB_SCOPE.ALL ? '' : String(gameName),
-    top: Number(top), amountSats: BigInt(amountSats), federationId: fromHex(federationId), splitBps, periodDays: Number(periodDays), paymentHeight, purpose: String(purpose) };
-  try { encodeLeaderboardPayout(p); } catch (e) { return { ok: false, why: e.message }; }
-  const vp = leaderboardVotePeriod({ proposal: p, schedule });
-  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its 2-week vote is decided (block ${vp.decidableAt})` };
-  const id = leaderboardPayoutId(p);
-  return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeLeaderboardPayout(p), ...c.signSchnorr(id, secretKey)])), decidableAt: vp.decidableAt };
-}
-
-/** A per-place split typed as percents ("50, 30, 20"): bps that add up to 10000 for `top` places, or [] for equal. */
-function splitFromPercents(text, top) {
-  const s = String(text || '').trim();
-  if (!s) return { ok: true, splitBps: [] };
-  const parts = s.split(/[,\s]+/).filter(Boolean).map((x) => Math.round(Number(x.replace(',', '.')) * 100));
-  if (parts.length !== Number(top) || parts.some((b) => !Number.isInteger(b) || b < 1)) return { ok: false, why: `name a share for each of the ${top} places, or leave it empty for equal` };
-  const sum = parts.reduce((t, b) => t + b, 0);
-  if (sum !== 10000) return { ok: false, why: `the shares add up to ${sum / 100} %, not 100 %` };
-  return { ok: true, splitBps: parts };
-}
-
-/** The leaderboard payout requests as the nodes hold them (GET /funding): the list of the node that answers with the most. */
-async function fetchLeaderboards({ nodes, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
-  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
-  const answers = (await Promise.all(asked.map(async (b) => {
-    try { const r = await fetcher(`${b}/funding`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
-  }))).filter((a) => a && Array.isArray(a.leaderboards));
-  if (!answers.length) return { ok: false, why: 'no node answered with leaderboard payouts', asked: asked.length };
-  const best = answers.sort((a, b) => b.leaderboards.length - a.leaderboards.length)[0];
-  return { ok: true, leaderboards: best.leaderboards, tip: best.tip, answered: answers.length, asked: asked.length };
-}
-
-// ---- arena-client/src/exchange-view.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET AS AN EXCHANGE SHOWS IT (2026-10-17: "build a real desktop view with complete order book bids ask,
-// chart, depth (switchable) like an exchange. Like Polymarket is doing"; "For all prediction markets"): the page draws it for any
-// market's own client (ARENA_GAME.market.exchange), from the seats' GET /book - its priced resting levels (book-ledger.js `levels`)
-// and its cleared batches.
-//
-// One side is traded at a time ("Trade Up" / "Trade Down"), as Polymarket shows it: buying that side is a BID at its price; a buy
-// of the other side at q is an ASK of this one at 1 - q (the two make one set); a resting sell of this side is an ask at its price,
-// one of the other side a bid at 1 - its price. Levels are by the cent, sizes in shares (a share pays 1 sat if its side wins),
-// totals in sats. The chart is the price of the side at each batch that matched; depth is the cumulative shares either way.
-const XV_SCALE = 100000n, XV_TICK = 1000n;
-
-const xvBig = (v) => { try { return BigInt(v); } catch { return 0n; } };
-
-/** The ladder for buying `side`: { asks (lowest first), bids (highest first), bestBid, bestAsk, spread, mid } - each level
- *  { cents, shares, totalSat, cumShares }, shares and sats whole numbers. */
-function exchangeLadder(book, { side = 0 } = {}) {
-  const lv = (book && book.levels) || { buys: [], sells: [] };
-  const bids = new Map(), asks = new Map();
-  const add = (m, price, sharesMsat) => {
-    if (price <= 0n || price >= XV_SCALE || sharesMsat <= 0n) return;
-    const cents = Number(price / XV_TICK);
-    m.set(cents, (m.get(cents) || 0n) + sharesMsat);
-  };
-  for (const b of lv.buys || []) {
-    const price = xvBig(b.price), net = xvBig(b.netMsat);
-    if (price <= 0n) continue;
-    const shares = (net * XV_SCALE) / price;
-    if (Number(b.outcome) === side) add(bids, price, shares); else add(asks, XV_SCALE - price, shares);
-  }
-  for (const s of lv.sells || []) {
-    const price = xvBig(s.price), shares = xvBig(s.sharesMsat);
-    if (Number(s.outcome) === side) add(asks, price, shares); else add(bids, XV_SCALE - price, shares);
-  }
-  const rows = (m, desc) => {
-    let cum = 0;
-    return [...m.entries()].sort((a, b) => (desc ? b[0] - a[0] : a[0] - b[0])).map(([cents, msat]) => {
-      const shares = Number(msat / 1000n); cum += shares;
-      return { cents, shares, totalSat: Math.round((shares * cents) / 100), cumShares: cum };
-    }).filter((r) => r.shares > 0);
-  };
-  const a = rows(asks, false), b = rows(bids, true);
-  const bestAsk = a.length ? a[0].cents : null, bestBid = b.length ? b[0].cents : null;
-  return { asks: a, bids: b, bestBid, bestAsk, spread: bestAsk !== null && bestBid !== null ? bestAsk - bestBid : null,
-    mid: bestAsk !== null && bestBid !== null ? (bestAsk + bestBid) / 2 : bestAsk !== null ? bestAsk : bestBid };
-}
-
-/** The side's price at each batch that matched: [{ t (ms, the batch's cutoff), cents }], oldest first. `batchMs` the book's clock. */
-function exchangeHistory(book, { side = 0, batchMs = 500 } = {}) {
-  return ((book && book.batches) || []).filter((b) => b && Array.isArray(b.fills) && b.fills.length && b.price !== undefined && b.price !== null)
-    .map((b) => { const c = Number(xvBig(b.price) / XV_TICK); return { t: (Number(b.k) + 1) * batchMs, cents: side === 0 ? c : 100 - c }; })
-    .sort((x, y) => x.t - y.t);
-}
-
-/** The shares matched in the book so far, in sat: what its positions hold of either side, halved (a set is one Up and one Down). */
-function exchangeVolume(book) {
-  let t = 0n;
-  for (const p of (book && book.positions) || []) for (const s of p.shares || []) t += xvBig(s);
-  return Number(t / 2000n);
-}
-
-const XV_CSS = `
-.xv { display:flex; flex-direction:column; gap:10px; min-width:0; }
-.xv-card { background:var(--card,#171b24); border:1px solid var(--line,#262d3b); border-radius:14px; padding:12px 14px; min-width:0; }
-.xv-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 8px; }
-.xv-head h3 { margin:0; font:700 13px system-ui; color:var(--dim,#8d99a8); text-transform:uppercase; letter-spacing:.06em; }
-.xv-tabs { display:inline-flex; gap:2px; padding:3px; border-radius:10px; background:#0d1014; border:1px solid var(--line,#262d3b); }
-.xv-tabs button { border:0; background:none; color:var(--dim,#8d99a8); font:700 12.5px system-ui; padding:5px 11px; border-radius:7px; cursor:pointer; }
-.xv-tabs button.on { background:#1f2630; color:var(--text,#e8edf3); }
-.xv-canvas { width:100%; height:260px; display:block; }
-.xv-note { color:var(--dim,#8d99a8); font-size:12.5px; margin-top:6px; min-height:1.2em; }
-.xv-book { width:100%; border-collapse:collapse; font:13px system-ui; font-variant-numeric:tabular-nums; }
-.xv-book th { color:var(--dim,#8d99a8); font:600 11.5px system-ui; text-transform:uppercase; letter-spacing:.05em; text-align:right; padding:4px 8px; }
-.xv-book th:first-child, .xv-book td:first-child { text-align:left; }
-.xv-book td { text-align:right; padding:4px 8px; position:relative; cursor:pointer; }
-.xv-book tr.ask td:first-child { color:var(--down,#ff5a6a); font-weight:700; } .xv-book tr.bid td:first-child { color:var(--up,#2fd38a); font-weight:700; }
-.xv-book tr.lvl td { background-repeat:no-repeat; }
-.xv-book tr.ask td.bar { background-image:linear-gradient(90deg, rgba(255,90,106,.16), rgba(255,90,106,.16)); }
-.xv-book tr.bid td.bar { background-image:linear-gradient(90deg, rgba(47,211,138,.16), rgba(47,211,138,.16)); }
-.xv-book tr.lvl:hover td { background-color:rgba(255,255,255,.04); }
-.xv-book tr.mid td { color:var(--dim,#8d99a8); font-size:12px; text-align:center; padding:6px; border-top:1px solid var(--line,#262d3b); border-bottom:1px solid var(--line,#262d3b); cursor:default; }
-.xv-book tr.none td { color:var(--dim,#8d99a8); text-align:center; padding:10px; cursor:default; }
-.xv-scroll { max-height:340px; overflow:auto; }
-`;
-
-/**
- * DRAW THE EXCHANGE into `el` (an element of a client's own document): the chart or the depth (switchable) and the order book,
- * read every `everyMs` from `fetchBook()` (the seats' /book of the market's current round, or null). `outcomes` the market's two
- * labels; `onPrice(cents, side)` when a level is tapped (a client fills its limit with it). Answers { refresh, setSide, stop, last }.
- */
-function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice = null, everyMs = 3000, label = null, closeMs = null }) {
-  const doc = el.ownerDocument, win = doc.defaultView;
-  if (!doc.getElementById('xv-style')) { const st = doc.createElement('style'); st.id = 'xv-style'; st.textContent = XV_CSS; doc.head.appendChild(st); }
-  const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-  el.classList.add('xv');
-  el.innerHTML = `<div class="xv-card"><div class="xv-head"><h3 class="xv-title">Chart</h3><span class="xv-tabs" data-k="view"><button data-v="chart" class="on">Chart</button><button data-v="depth">Depth</button></span></div>
-    <canvas class="xv-canvas"></canvas><div class="xv-note"></div></div>
-    <div class="xv-card"><div class="xv-head"><h3>Order book</h3><span class="xv-tabs" data-k="side"><button data-v="0" class="on">Trade ${esc(outcomes[0])}</button><button data-v="1">Trade ${esc(outcomes[1])}</button></span></div>
-    <div class="xv-scroll"><table class="xv-book"><thead><tr><th>Price</th><th>Shares</th><th>Total</th></tr></thead><tbody></tbody></table></div></div>`;
-  const s = { view: 'chart', side: 0, book: null, at: 0, timer: null, why: '' };
-  const canvas = el.querySelector('canvas'), note = el.querySelector('.xv-note'), body = el.querySelector('tbody');
-  for (const tabs of el.querySelectorAll('.xv-tabs')) tabs.onclick = (e) => {
-    const b = e.target.closest('button'); if (!b) return;
-    for (const x of tabs.querySelectorAll('button')) x.classList.toggle('on', x === b);
-    if (tabs.dataset.k === 'view') s.view = b.dataset.v; else s.side = Number(b.dataset.v);
-    draw();
-  };
-  body.onclick = (e) => { const r = e.target.closest('tr.lvl'); if (r && onPrice) onPrice(Number(r.dataset.c), s.side); };
-
-  function drawBook(ladder) {
-    const max = Math.max(1, ...ladder.asks.map((r) => r.shares), ...ladder.bids.map((r) => r.shares));
-    const row = (r, cls) => `<tr class="lvl ${cls}" data-c="${r.cents}"><td>${r.cents}¢</td><td class="bar" style="background-size:${Math.round((r.shares / max) * 100)}% 100%;background-position:right">${r.shares.toLocaleString('en-US')}</td><td>${r.totalSat.toLocaleString('en-US')} sats</td></tr>`;
-    const asks = ladder.asks.slice(0, 12).reverse().map((r) => row(r, 'ask')).join('');
-    const bids = ladder.bids.slice(0, 12).map((r) => row(r, 'bid')).join('');
-    const last = exchangeHistory(s.book, { side: s.side }).slice(-1)[0];
-    const mid = `<tr class="mid"><td colspan="3">${last ? `Last ${last.cents}¢` : 'No trade yet'}${ladder.spread !== null ? ` · Spread ${ladder.spread}¢` : ''}</td></tr>`;
-    body.innerHTML = (asks || '<tr class="none"><td colspan="3">No asks</td></tr>') + mid + (bids || '<tr class="none"><td colspan="3">No bids</td></tr>');
-  }
-  function sizeCanvas() {
-    const r = canvas.getBoundingClientRect(), dpr = win.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
-    const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); return { g, w: r.width, h: r.height };
-  }
-  function axes(g, w, h, pad, yTicks, yOf, fmt) {
-    g.strokeStyle = 'rgba(141,153,168,.18)'; g.fillStyle = '#8d99a8'; g.font = '11px system-ui'; g.lineWidth = 1;
-    for (const v of yTicks) { const y = yOf(v); g.beginPath(); g.moveTo(pad.l, y); g.lineTo(w - pad.r, y); g.stroke(); g.fillText(fmt(v), w - pad.r + 6, y + 4); }
-  }
-  function drawChart(ladder) {
-    const { g, w, h } = sizeCanvas(); g.clearRect(0, 0, w, h);
-    const pad = { l: 8, r: 40, t: 10, b: 22 };
-    const yOf = (c) => pad.t + (1 - c / 100) * (h - pad.t - pad.b);
-    axes(g, w, h, pad, [0, 25, 50, 75, 100], yOf, (v) => v + '¢');
-    const pts = exchangeHistory(s.book, { side: s.side });
-    // THE AXIS RUNS TO THE MARKET'S CLOSE (measured live: from the first match to now it spanned one minute, 17:48-17:49): from
-    // the first match or 5 min back, whichever is earlier, to its close when that is ahead - the line ends at now
-    const now = Date.now(), close = closeMs ? Number(closeMs()) || 0 : 0;
-    const t1 = close > now ? close : now;
-    const t0 = Math.min(pts.length ? pts[0].t : now, now - 5 * 60000);
-    const xOf = (t) => pad.l + ((t - t0) / Math.max(1, t1 - t0)) * (w - pad.l - pad.r);
-    g.fillStyle = '#8d99a8'; g.font = '11px system-ui';
-    for (const t of [t0, (t0 + t1) / 2, t1]) { const d = new Date(t); const lbl = d.toISOString().slice(11, 16); g.fillText(lbl, Math.min(w - pad.r - 30, Math.max(pad.l, xOf(t) - 14)), h - 6); }
-    const color = s.side === 0 ? '#2fd38a' : '#ff5a6a';
-    if (pts.length) {
-      g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
-      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(p.cents); if (i) { g.lineTo(x, yOf(pts[i - 1].cents)); g.lineTo(x, y); } else g.moveTo(x, y); });
-      g.lineTo(xOf(now), yOf(pts[pts.length - 1].cents)); g.stroke();
-      const lastC = pts[pts.length - 1].cents; g.fillStyle = color; g.beginPath(); g.arc(xOf(now), yOf(lastC), 3.5, 0, Math.PI * 2); g.fill();
-    }
-    if (close > now) { g.strokeStyle = 'rgba(141,153,168,.35)'; g.setLineDash([2, 4]); g.beginPath(); g.moveTo(xOf(now), pad.t); g.lineTo(xOf(now), h - pad.b); g.stroke(); g.setLineDash([]);
-    }
-    if (ladder.mid !== null) { g.setLineDash([4, 4]); g.strokeStyle = 'rgba(232,237,243,.35)'; g.beginPath(); g.moveTo(pad.l, yOf(ladder.mid)); g.lineTo(w - pad.r, yOf(ladder.mid)); g.stroke(); g.setLineDash([]); }
-    const vol = exchangeVolume(s.book);
-    note.textContent = (pts.length ? `${outcomes[s.side]} ${pts[pts.length - 1].cents}¢ at the last match · ${pts.length} match${pts.length === 1 ? '' : 'es'}` : `No match yet in this window`)
-      + (ladder.mid !== null ? ` · mid ${ladder.mid}¢` : '') + (vol ? ` · ${vol.toLocaleString('en-US')} shares matched` : '') + (s.why ? ` · ${s.why}` : '');
-  }
-  function drawDepth(ladder) {
-    const { g, w, h } = sizeCanvas(); g.clearRect(0, 0, w, h);
-    const pad = { l: 8, r: 48, t: 10, b: 22 };
-    const maxQ = Math.max(1, ...ladder.bids.map((r) => r.cumShares), ...ladder.asks.map((r) => r.cumShares));
-    const xOf = (c) => pad.l + (c / 100) * (w - pad.l - pad.r);
-    const yOf = (q) => pad.t + (1 - q / maxQ) * (h - pad.t - pad.b);
-    axes(g, w, h, pad, [0, Math.round(maxQ / 2), maxQ], yOf, (v) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v)));
-    g.fillStyle = '#8d99a8'; g.font = '11px system-ui';
-    for (const c of [0, 25, 50, 75, 100]) g.fillText(c + '¢', Math.min(w - pad.r - 20, Math.max(pad.l, xOf(c) - 8)), h - 6);
-    const area = (rows, color, fill, dir) => {
-      if (!rows.length) return;
-      g.beginPath(); g.moveTo(xOf(rows[0].cents), yOf(0));
-      let q = 0;
-      for (const r of rows) { g.lineTo(xOf(r.cents), yOf(q)); q = r.cumShares; g.lineTo(xOf(r.cents), yOf(q)); }
-      g.lineTo(xOf(dir < 0 ? 0 : 100), yOf(q)); g.lineTo(xOf(dir < 0 ? 0 : 100), yOf(0)); g.closePath();
-      g.fillStyle = fill; g.fill(); g.strokeStyle = color; g.lineWidth = 1.5; g.stroke();
-    };
-    area(ladder.bids, '#2fd38a', 'rgba(47,211,138,.18)', -1);
-    area(ladder.asks, '#ff5a6a', 'rgba(255,90,106,.18)', 1);
-    const bid = ladder.bids.reduce((t, r) => t + r.shares, 0), ask = ladder.asks.reduce((t, r) => t + r.shares, 0);
-    note.textContent = bid || ask ? `Bids ${bid.toLocaleString('en-US')} shares · asks ${ask.toLocaleString('en-US')} shares${ladder.spread !== null ? ` · spread ${ladder.spread}¢` : ''}` : 'Nothing rests in the book now';
-  }
-  function draw() {
-    const ladder = exchangeLadder(s.book, { side: s.side });
-    el.querySelector('.xv-title').textContent = s.view === 'chart' ? (label ? label(s.side) : `${outcomes[s.side]} price`) : 'Depth';
-    drawBook(ladder);
-    if (s.view === 'chart') drawChart(ladder); else drawDepth(ladder);
-    return ladder;
-  }
-  async function refresh() {
-    try { const b = await fetchBook(); if (b) { s.book = b; s.why = ''; } else s.why = 'no seat answered the book'; } catch (e) { s.why = 'the book could not be read'; }
-    s.at = Date.now(); draw();
-    return s.book;
-  }
-  refresh();
-  s.timer = win.setInterval(refresh, everyMs);
-  win.addEventListener('resize', draw);
-  return { refresh, draw, setSide: (k) => { s.side = k; draw(); }, stop: () => win.clearInterval(s.timer), last: () => ({ book: s.book, side: s.side, view: s.view, ladder: exchangeLadder(s.book, { side: s.side }) }) };
-}
-
-// ---- arena-client/src/backup-gate.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE BACKUP WARNING (§24B, as ruled 2026-09-21 20:01): nothing is refused, and the player is told.
-//
-// An earlier cut of this file GATED the first deposit and the first paid join on the phrase being typed
-// back. That is overridden: PLAY is always allowed, free or paid, and so is putting money in. What stands
-// in the lobby instead is a large warning with its own Backup button, and it stays until one full-phrase
-// verification has succeeded.
-//
-// So `mayDeposit` and `mayPayStake` are gone rather than left exported and unused - a refusal nothing
-// calls is a rule somebody will wire back up by accident. What is left is what the warning needs: is this
-// seed backed up, and did the player type its phrase back correctly.
-//
-// WHERE THE FLAG LIVES, and why that is not a hole. It is the player's own browser. A player who clears
-// it and re-verifies has only made himself type the words again; a player who forges it has unlocked his
-// OWN deposit against his OWN warning. This gate protects the player from losing his money, not the
-// operator from the player - so there is nothing here for a node to check and nothing to forge that
-// costs anybody else a satoshi. A rule the node must enforce is a different rule and is not this one.
-//
-// THE PHRASE ITSELF IS NOT THIS FILE'S. Whatever encodes a seed into words hands it in; this checks what
-// was typed against it. That keeps the check honest about one thing only - did he write them down - and
-// keeps a wordlist's correctness where it belongs.
-
-
-const VERIFIED_KEY = 'arena.backup.verified';
-
-/**
- * THE FLAG IS BOUND TO THE SEED IT VERIFIED, AND THAT IS NOT A DETAIL.
- *
- * Measured on the first cut of this file: the seed lives in sessionStorage (`tabSeed` mints a fresh 32
- * bytes when it finds none), so a new tab is a NEW WALLET - while a bare "verified" flag in localStorage
- * outlives every tab. Verify once, open a second tab, and a wallet nobody has ever written down would
- * have been allowed to deposit and to stake. The gate would have been answering about a wallet that no
- * longer existed.
- *
- * So what is recorded is a digest of the seed that was verified, and the gate opens only when the seed in
- * hand hashes to it. A new seed is unverified however many older ones were not.
- */
-const digestOf = (seed) => (seed instanceof Uint8Array && seed.length === 32
-  ? toHex(sha256(seed)) : null);
-
-/** One word, as a comparison sees it: case and stray spacing are the player's, not the phrase's. */
-const normalise = (word) => String(word || '').trim().toLowerCase();
-
-/** The phrase as a list of words, from a string or a list. */
-const wordsOf = (phrase) => (Array.isArray(phrase)
-  ? phrase.map(normalise) : normalise(phrase).split(/\s+/)).filter(Boolean);
-
-/**
- * EVERY WORD, IN ORDER, ALL OF THEM (§24B; §23A.8's three-word check is withdrawn).
- *
- * A player who can produce three of twelve has not shown he wrote twelve down, and three is exactly what
- * somebody copying a screenshot has. What is checked here is what would actually restore the wallet.
- *
- * The answer says WHERE the first wrong word is, because a player who mistyped word nine wants to know
- * that and an attacker learns nothing he did not type himself.
- */
-function verifyPhrase(typed, phrase) {
-  const want = wordsOf(phrase);
-  const got = wordsOf(typed);
-  if (!want.length) return { ok: false, why: 'there is no phrase to check against' };
-  if (!got.length) return { ok: false, why: 'type the whole phrase back, every word, in order' };
-  if (got.length !== want.length)
-    return { ok: false, why: `that is ${got.length} words and the phrase is ${want.length}`, wrongAt: null };
-  for (let i = 0; i < want.length; i++)
-    if (got[i] !== want[i]) return { ok: false, why: `word ${i + 1} is not the one in the phrase`, wrongAt: i };
-  return { ok: true };
-}
-
-/** Has THIS seed's phrase been typed back in full, once, in this browser? */
-function isVerified(storage, seed) {
-  const want = digestOf(seed);
-  if (!want) return false;
-  try { return storage.getItem(VERIFIED_KEY) === want; } catch { return false; }
-}
-
-/** Record that it has, against the seed it was. Only `verifyPhrase` saying ok should reach this. */
-function recordVerified(storage, seed) {
-  const want = digestOf(seed);
-  if (!want) return false;
-  try { storage.setItem(VERIFIED_KEY, want); return true; } catch { return false; }
-}
-
-/**
- * The one call the page makes for a typed phrase: check it, and record it only if it was right.
- * A wrong word never sets the flag, so a near miss leaves the gate exactly where it was.
- */
-function verifyAndRecord({ typed, phrase, storage, seed }) {
-  const said = verifyPhrase(typed, phrase);
-  if (!said.ok) return said;
-  return { ok: true, recorded: recordVerified(storage, seed) };
-}
-
-/** What the lobby's first line and the Settings screen say until a verification has succeeded. */
-const NO_BACKUP_LINE = 'This wallet has no backup. Lose this browser and the money in it is gone - '
-  + 'write your 24 words down now.';
-function backupLine(storage, seed) {
-  return isVerified(storage, seed) ? '' : NO_BACKUP_LINE;
-}
-
-
-
 // ---- arena-protocol/src/seating.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -28021,6 +27480,7 @@ const BOND_TERMS = Object.freeze({
 
 const CHAIN_KEPT_MS = 180000;
 const COMPARE_GRACE_MS = 400;
+const SEATING_ASK_MS = 6000;
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
 function majorityThenGrace(promises, graceMs) {
   return new Promise((resolve) => {
@@ -28172,10 +27632,18 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   for (const role of roles) {
     let spoke = false; const refused = [];
     let found = null;
-    for (const u of nodes) {
+    // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
+    // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
+    const said = new Array(nodes.length).fill(null);
+    await majorityThenGrace(nodes.map(async (u, i) => {
+      try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
+      catch { said[i] = null; }
+    }), COMPARE_GRACE_MS);
+    for (const [i, u] of nodes.entries()) {
       try {
-        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`);
-        const body = await r.text();
+        const r = said[i];
+        if (!r) continue;
+        const body = r.body;
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
@@ -28277,6 +27745,552 @@ function newestCheckedCensus() {
   const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
   return { height: best.height || null, nodes: keys.size, entries: best.entries };
 }
+
+// ---- arena-client/src/fee-proposal-page.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// FEE PROPOSALS ON THE PAGE (2026-10-17: "Proposal type change fees. Any of the fees, all combinations can
+// be changed with a proposal"): the fees in force as the testnet's nodes answer them (GET /fees - at a height when asked: a round's
+// census height, the set its entry pays and its settlement splits), a proposal built from what the form typed - any subset, refused
+// by the very limits and sums the seats enforce (fee-proposal.js feeProposalStands) before anything is signed - and signed by the
+// forum's key, handed to every node as a funding proposal is (funding-page.js postFunding, kind 'fee').
+
+
+
+const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
+
+/**
+ * THE FEES AS THE NODES ANSWER THEM: every node asked GET /fees (with ?height=H when `height` is given); the set most of them name, kept
+ * only when `needed` agree. With `height` the set is the one in force there (`atHeight`), else at each node's tip (`inForce`). Answers
+ * { ok, fees, agreeing, asked, tip, limits, sums, schedule, proposals } - `proposals` of an agreeing node - or { ok: false, why }.
+ */
+async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
+  const asked = [...new Set((nodes || []).map(feesBaseOf))];
+  const q = Number.isInteger(height) && height >= 0 ? `?height=${height}` : '';
+  // NOT HELD FOR THE SLOWEST NODE (kanban #625, measured 2026-10-24 20:07Z: an order's fetchFees took 10 s - 13 of 14 nodes agreed at
+  // once, the 14th was restarting): once more than half the nodes answered, the rest get COMPARE_GRACE_MS more
+  const got = new Array(asked.length).fill(null);
+  await majorityThenGrace(asked.map(async (b, i) => {
+    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); got[i] = r.ok ? await r.json() : null; } catch { got[i] = null; }
+  }), COMPARE_GRACE_MS);
+  const answers = got.filter((a) => a && (q ? a.atHeight : a.inForce));
+  const by = new Map();
+  for (const a of answers) { const set = q ? a.atHeight : a.inForce; const k = JSON.stringify(Object.keys(FEES).map((f) => set[f])); by.set(k, [...(by.get(k) || []), a]); }
+  const best = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
+  if (best.length < Math.min(needed, asked.length) || !best.length) return { ok: false, why: `only ${best.length} of ${asked.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${Math.min(needed, asked.length)} must`, asked: asked.length };
+  const a = best[0];
+  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: asked.length, tip: a.tip, limits: a.limits, sums: a.sums,
+    schedule: a.schedule, proposals: a.proposals || [] };
+}
+
+/** The changes a form typed against the fees in force: every fee whose typed whole number differs, in the fees' order. */
+function feeChangesFrom(current, typed) {
+  const out = [];
+  for (const k of Object.keys(FEES)) {
+    if (typed[k] === undefined || typed[k] === null || String(typed[k]).trim() === '') continue;
+    const v = Number(typed[k]);
+    if (!Number.isInteger(v)) throw new Error(`${k} is a whole number`);
+    if (v !== current[k]) out.push({ fee: k, value: v });
+  }
+  return out;
+}
+
+/**
+ * A FEE PROPOSAL CHECKED, THEN SIGNED: the same check a seat makes at submission (every limit and every sum of the whole set it makes
+ * from `current`, an activation height after its signal and its vote) - a proposal that would be refused is never signed. Answers
+ * { ok, id, hex, donations } or { ok: false, why }.
+ */
+function signedFeeProposal({ secretKey, networkId, publishedHeight, activationHeight, changes, purpose = '', current = FEES_TODAY, schedule, curve }) {
+  const c = feesCurveOf(curve);
+  if (!changes || !changes.length) return { ok: false, why: 'change at least one fee' };
+  const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, activationHeight, changes, purpose: String(purpose) };
+  const st = feeProposalStands(p, schedule ? { current, schedule } : { current });
+  if (!st.ok) return { ok: false, why: st.why };
+  const id = feeProposalId(p);
+  return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeFeeProposal(p), ...c.signSchnorr(id, secretKey)])), donations: st.donations };
+}
+
+/** The earliest height a proposal published at `tip` may apply from: after its signal, its vote and the vote's depth. */
+const earliestActivation = (tip, schedule) => tip + schedule.signal + schedule.vote + schedule.decideDepth;
+
+const pctOf = (v, unit) => `${(Number(v) / (unit === 'bps' ? 100 : 1)).toLocaleString('en-US', { maximumFractionDigits: 2 })} %`;
+/** A round's fees as a line: "nodes 4 % · developers 4 % · reserves 2 %". */
+const roundFeesLine = (fees) => { const s = roundSplitBps(fees); return `nodes ${pctOf(s.nodes, 'bps')} · developers ${pctOf(s.protocolDevs + s.gameDevs, 'bps')} · reserves ${pctOf(s.reserves, 'bps')}`; };
+/** A market's fees as a line: "nodes 0.4 % · developers 0.4 % · reserves 0.2 %". */
+const marketFeesLine = (fees) => `nodes ${pctOf(fees.marketNodeBps, 'bps')} · developers ${pctOf(fees.marketDonationBps, 'bps')} · reserves ${pctOf(fees.marketReserveBps, 'bps')}`;
+/** A market's whole rate under a fee set (its fee lock): node + donation + reserve, in bps. */
+const marketFeeBpsOf = (fees) => { const r = marketBps(fees); return r.nodeBps + r.donationBps; };
+/** Each fee's unit as the form shows it: bps for rounds and markets, percent for items and the website share. */
+const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => [k, /Bps$/.test(k) ? 'bps' : 'pct'])));
+
+// ---- arena-protocol/src/emergency.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE OWNER'S EMERGENCY KEY (spec §23A.5a, protocol 17): a node that will be offline longer than it may be absent is taken out by its
+// owner, from any other node or the Arena site, with a key that can do nothing else - and keeps its bond.
+//
+//   THE CODE     16 bytes derived from the node's 24 words (seed) under ARENA/v1/EmergencyKey, written as ARN-XXXX-... (Crockford
+//                base32 with a check byte). The owner writes it down at install; the 24 words are never typed anywhere else.
+//   THE KEY      its secret is ARENA/v1/EmergencySecret over the code's 16 bytes; the bond advert names its public key (advert.js).
+//   THE REQUEST  (node_key, posted_at), signed by that key under ARENA/v1/EmergencyDeparture, posted to any seat.
+//   THE EFFECT   no guardian role: out of the seating from posted_at, bond untouched. A guardian: DEPARTED at once when the request
+//                was posted before abandon_blocks from his last seen height, bond untouched; later, abandonment as before.
+//
+// NO CURVE: `sign(digest)` and `verify(signature, digest, pubkey)` are injected (BIP-340), as in absence.js.
+
+
+
+const emIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const emHeight = (h, what) => { if (!Number.isInteger(h) || h < 0 || h > 0xffffffff) throw new Error(`${what} is a block height`); };
+
+/**
+ * A REQUEST IS TAKEN ONLY FRESH: posted_at is the signer's own word, so a seat takes a request (POST /emergency-departure, or from a
+ * peer) only while its tip is at most this many blocks past posted_at - a late owner cannot date a request back into time. A seat
+ * signs a guardian DEPARTED only for a request it took itself (federation-records.js).
+ */
+const EMERGENCY_FRESH_BLOCKS = 6;
+
+// THE CODE: Crockford base32 (no I, L, O, U; read I/L as 1 and O as 0), 16 bytes and 1 check byte = 136 bits = 28 characters
+const EM_B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const EM_CODE_BYTES = 16;
+const emCheckByte = (bytes) => taggedHash(TAG.emergencyKey, bytes)[0];
+
+/** The 16 bytes of a node's emergency code, from its seed (the 24 words' 32 bytes). */
+function emergencyCodeBytes(seed) {
+  if (!(seed instanceof Uint8Array) || seed.length < 16) throw new Error('an emergency code is derived from the node\'s seed');
+  return taggedHash(TAG.emergencyKey, seed).slice(0, EM_CODE_BYTES);
+}
+
+/** The code as the owner writes it: ARN-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX. */
+function emergencyCodeText(codeBytes) {
+  if (!(codeBytes instanceof Uint8Array) || codeBytes.length !== EM_CODE_BYTES) throw new Error('an emergency code is 16 bytes');
+  const all = new Uint8Array(EM_CODE_BYTES + 1); all.set(codeBytes); all[EM_CODE_BYTES] = emCheckByte(codeBytes);
+  let bits = 0, acc = 0, out = '';
+  for (const b of all) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { out += EM_B32[(acc >> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits) out += EM_B32[(acc << (5 - bits)) & 31];
+  return 'ARN-' + out.match(/.{1,4}/g).join('-');
+}
+
+/** The code's 16 bytes from what the owner typed (case, spaces and dashes ignored; I/L read as 1, O as 0), or throws why not. */
+function parseEmergencyCode(text) {
+  const raw = String(text || '').toUpperCase().replace(/^\s*ARN[-\s]*/, '').replace(/[\s-]/g, '').replace(/[IL]/g, '1').replace(/O/g, '0');
+  if (!/^[0-9A-HJKMNP-TV-Z]{28}$/.test(raw)) throw new Error('an emergency code is ARN- and 28 letters and digits');
+  let bits = 0, acc = 0; const out = [];
+  for (const ch of raw) { acc = (acc << 5) | EM_B32.indexOf(ch); bits += 5; if (bits >= 8) { out.push((acc >> (bits - 8)) & 255); bits -= 8; } }
+  const all = Uint8Array.from(out.slice(0, EM_CODE_BYTES + 1));
+  const codeBytes = all.slice(0, EM_CODE_BYTES);
+  if (all[EM_CODE_BYTES] !== emCheckByte(codeBytes)) throw new Error('that emergency code is mistyped (its check does not match)');
+  return codeBytes;
+}
+
+/** The emergency key's 32-byte secret, from the code's 16 bytes (the caller's curve makes its public key). */
+const emergencySecret = (codeBytes) => taggedHash(TAG.emergencySecret, codeBytes);
+
+// THE REQUEST
+function encodeEmergencyDeparture(d) {
+  if (!emIs32(d.nodePubkey) || !emIs32(d.emergencyPubkey)) throw new Error('a leave request names the node (32) and its emergency key (32)');
+  emHeight(d.postedAt, 'the height it was posted at');
+  const w = new Writer();
+  w.u8(TYPE_EMERGENCY_DEPARTURE); w.u16(PROTOCOL_VERSION);
+  w.bytes32(d.nodePubkey); w.bytes32(d.emergencyPubkey); w.u32(d.postedAt);
+  return w.finish();
+}
+function decodeEmergencyDeparture(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_EMERGENCY_DEPARTURE) throw new Error('not an emergency leave request');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const d = { nodePubkey: r.bytes32(), emergencyPubkey: r.bytes32(), postedAt: r.u32() };
+  r.end(); encodeEmergencyDeparture(d); return d;
+}
+const emergencyDepartureId = (d) => taggedHash(TAG.emergencyDeparture, encodeEmergencyDeparture(d));
+const signEmergencyDeparture = (d, sign) => ({ ...d, signature: sign(emergencyDepartureId(d)) });
+
+/**
+ * A LEAVE REQUEST THAT STANDS: for a node in the census whose advertisement names this emergency key, signed by that key, posted at a
+ * height the seat has seen (not ahead of its tip). `advert` the node's census advertisement; `fresh`: on taking it, posted at most
+ * EMERGENCY_FRESH_BLOCKS before the tip. Answers { ok, nodePubkey, postedAt } or why not.
+ */
+function emergencyDepartureStands(d, { advert, tip, verify, fresh = false }) {
+  try { encodeEmergencyDeparture(d); } catch (e) { return { ok: false, why: e.message }; }
+  if (!advert) return { ok: false, why: 'that node is not in the census' };
+  if (!emIs32(advert.emergencyPubkey)) return { ok: false, why: 'that node\'s advertisement names no emergency key' };
+  if (toHex(advert.emergencyPubkey) !== toHex(d.emergencyPubkey)) return { ok: false, why: 'the request names another emergency key than the node\'s advertisement' };
+  if (Number.isInteger(tip) && d.postedAt > tip) return { ok: false, why: `posted at ${d.postedAt}, ahead of the tip ${tip}` };
+  if (fresh && !(Number.isInteger(tip) && tip - d.postedAt <= EMERGENCY_FRESH_BLOCKS))
+    return { ok: false, why: `posted at ${d.postedAt}, more than ${EMERGENCY_FRESH_BLOCKS} blocks before the tip ${tip}: a request is taken only fresh` };
+  if (!d.signature || !verify(d.signature, emergencyDepartureId(d), d.emergencyPubkey)) return { ok: false, why: 'the request is not signed by the node\'s emergency key' };
+  return { ok: true, nodePubkey: d.nodePubkey, postedAt: d.postedAt };
+}
+
+/**
+ * WHAT A STANDING REQUEST DOES (§23A.5a). `guardian`: the node is a seated guardian of a federation; `lastSeenHeight`: the height
+ * its federation last saw it in consensus (from the absence attestations), when known; `abandonBlocks`: the network's.
+ * Answers { leaves: true, departed: bool, slash: bool, why }.
+ */
+function emergencyDepartureEffect(request, { guardian, lastSeenHeight = null, abandonBlocks }) {
+  if (!request || !request.ok) return { leaves: false, departed: false, slash: false, why: 'no standing leave request' };
+  if (!guardian) return { leaves: true, departed: true, slash: false, why: `no guardian role: out of the seating from ${request.postedAt}, the bond untouched` };
+  if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('abandon_blocks is a positive block count');
+  if (Number.isInteger(lastSeenHeight) && request.postedAt >= lastSeenHeight + abandonBlocks)
+    return { leaves: true, departed: false, slash: true, why: `posted at ${request.postedAt}, not before abandon_blocks (${abandonBlocks}) from last seen ${lastSeenHeight}: abandonment` };
+  return { leaves: true, departed: true, slash: false, why: `a guardian's emergency departure at ${request.postedAt}, in time: DEPARTED at once, the succession starts, the bond untouched` };
+}
+
+// ---- arena-client/src/leaderboard-page.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A LEADERBOARD PAYOUT REQUEST FROM THE PAGE: built from the form - the scope, the top N, the amount, the paying federation,
+// an equal or a per-place split, the period and the payment date turned into a height - checked by the record's own rules before it is
+// signed by the forum's key, and handed to every node as a funding proposal is (funding-page.js postFunding, kind 'leaderboard'). A
+// winner's payout needs nothing here: it is a payout contract to the winner's identity key, recorded on the seats under that key, which
+// the page's zap collector (identity.js collectZaps) already reads and spends into the wallet.
+
+
+
+const lbCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
+/** A block about every 10 minutes: the height a date falls at, from the tip now. */
+const LB_BLOCK_MS = 600000;
+const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.ceil((Number(dateMs) - Number(nowMs)) / LB_BLOCK_MS));
+
+/**
+ * THE REQUEST, CHECKED THEN SIGNED: the record's own rules (leaderboard-payout.js encodeLeaderboardPayout) and a payment height no earlier
+ * than its vote is decided (published + 2 weeks + depth) - one a seat would refuse is never signed. Answers { ok, id, hex, decidableAt }
+ * or { ok: false, why }.
+ */
+function signedLeaderboardPayout({ secretKey, networkId, publishedHeight, scope, gameName = '', top, amountSats, federationId, splitBps = [], periodDays,
+  paymentHeight, purpose = '', schedule = FUNDING_SCHEDULES.spec, curve }) {
+  const c = lbCurveOf(curve);
+  const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, scope, gameName: scope === LB_SCOPE.ALL ? '' : String(gameName),
+    top: Number(top), amountSats: BigInt(amountSats), federationId: fromHex(federationId), splitBps, periodDays: Number(periodDays), paymentHeight, purpose: String(purpose) };
+  try { encodeLeaderboardPayout(p); } catch (e) { return { ok: false, why: e.message }; }
+  const vp = leaderboardVotePeriod({ proposal: p, schedule });
+  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its 2-week vote is decided (block ${vp.decidableAt})` };
+  const id = leaderboardPayoutId(p);
+  return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeLeaderboardPayout(p), ...c.signSchnorr(id, secretKey)])), decidableAt: vp.decidableAt };
+}
+
+/** A per-place split typed as percents ("50, 30, 20"): bps that add up to 10000 for `top` places, or [] for equal. */
+function splitFromPercents(text, top) {
+  const s = String(text || '').trim();
+  if (!s) return { ok: true, splitBps: [] };
+  const parts = s.split(/[,\s]+/).filter(Boolean).map((x) => Math.round(Number(x.replace(',', '.')) * 100));
+  if (parts.length !== Number(top) || parts.some((b) => !Number.isInteger(b) || b < 1)) return { ok: false, why: `name a share for each of the ${top} places, or leave it empty for equal` };
+  const sum = parts.reduce((t, b) => t + b, 0);
+  if (sum !== 10000) return { ok: false, why: `the shares add up to ${sum / 100} %, not 100 %` };
+  return { ok: true, splitBps: parts };
+}
+
+/** The leaderboard payout requests as the nodes hold them (GET /funding): the list of the node that answers with the most. */
+async function fetchLeaderboards({ nodes, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
+  const answers = (await Promise.all(asked.map(async (b) => {
+    try { const r = await fetcher(`${b}/funding`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
+  }))).filter((a) => a && Array.isArray(a.leaderboards));
+  if (!answers.length) return { ok: false, why: 'no node answered with leaderboard payouts', asked: asked.length };
+  const best = answers.sort((a, b) => b.leaderboards.length - a.leaderboards.length)[0];
+  return { ok: true, leaderboards: best.leaderboards, tip: best.tip, answered: answers.length, asked: asked.length };
+}
+
+// ---- arena-client/src/exchange-view.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A MARKET AS AN EXCHANGE SHOWS IT (2026-10-17: "build a real desktop view with complete order book bids ask,
+// chart, depth (switchable) like an exchange. Like Polymarket is doing"; "For all prediction markets"): the page draws it for any
+// market's own client (ARENA_GAME.market.exchange), from the seats' GET /book - its priced resting levels (book-ledger.js `levels`)
+// and its cleared batches.
+//
+// One side is traded at a time ("Trade Up" / "Trade Down"), as Polymarket shows it: buying that side is a BID at its price; a buy
+// of the other side at q is an ASK of this one at 1 - q (the two make one set); a resting sell of this side is an ask at its price,
+// one of the other side a bid at 1 - its price. Levels are by the cent, sizes in shares (a share pays 1 sat if its side wins),
+// totals in sats. The chart is the price of the side at each batch that matched; depth is the cumulative shares either way.
+const XV_SCALE = 100000n, XV_TICK = 1000n;
+
+const xvBig = (v) => { try { return BigInt(v); } catch { return 0n; } };
+
+/** The ladder for buying `side`: { asks (lowest first), bids (highest first), bestBid, bestAsk, spread, mid } - each level
+ *  { cents, shares, totalSat, cumShares }, shares and sats whole numbers. */
+function exchangeLadder(book, { side = 0 } = {}) {
+  const lv = (book && book.levels) || { buys: [], sells: [] };
+  const bids = new Map(), asks = new Map();
+  const add = (m, price, sharesMsat) => {
+    if (price <= 0n || price >= XV_SCALE || sharesMsat <= 0n) return;
+    const cents = Number(price / XV_TICK);
+    m.set(cents, (m.get(cents) || 0n) + sharesMsat);
+  };
+  for (const b of lv.buys || []) {
+    const price = xvBig(b.price), net = xvBig(b.netMsat);
+    if (price <= 0n) continue;
+    const shares = (net * XV_SCALE) / price;
+    if (Number(b.outcome) === side) add(bids, price, shares); else add(asks, XV_SCALE - price, shares);
+  }
+  for (const s of lv.sells || []) {
+    const price = xvBig(s.price), shares = xvBig(s.sharesMsat);
+    if (Number(s.outcome) === side) add(asks, price, shares); else add(bids, XV_SCALE - price, shares);
+  }
+  const rows = (m, desc) => {
+    let cum = 0;
+    return [...m.entries()].sort((a, b) => (desc ? b[0] - a[0] : a[0] - b[0])).map(([cents, msat]) => {
+      const shares = Number(msat / 1000n); cum += shares;
+      return { cents, shares, totalSat: Math.round((shares * cents) / 100), cumShares: cum };
+    }).filter((r) => r.shares > 0);
+  };
+  const a = rows(asks, false), b = rows(bids, true);
+  const bestAsk = a.length ? a[0].cents : null, bestBid = b.length ? b[0].cents : null;
+  return { asks: a, bids: b, bestBid, bestAsk, spread: bestAsk !== null && bestBid !== null ? bestAsk - bestBid : null,
+    mid: bestAsk !== null && bestBid !== null ? (bestAsk + bestBid) / 2 : bestAsk !== null ? bestAsk : bestBid };
+}
+
+/** The side's price at each batch that matched: [{ t (ms, the batch's cutoff), cents }], oldest first. `batchMs` the book's clock. */
+function exchangeHistory(book, { side = 0, batchMs = 500 } = {}) {
+  return ((book && book.batches) || []).filter((b) => b && Array.isArray(b.fills) && b.fills.length && b.price !== undefined && b.price !== null)
+    .map((b) => { const c = Number(xvBig(b.price) / XV_TICK); return { t: (Number(b.k) + 1) * batchMs, cents: side === 0 ? c : 100 - c }; })
+    .sort((x, y) => x.t - y.t);
+}
+
+/** The shares matched in the book so far, in sat: what its positions hold of either side, halved (a set is one Up and one Down). */
+function exchangeVolume(book) {
+  let t = 0n;
+  for (const p of (book && book.positions) || []) for (const s of p.shares || []) t += xvBig(s);
+  return Number(t / 2000n);
+}
+
+const XV_CSS = `
+.xv { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.xv-card { background:var(--card,#171b24); border:1px solid var(--line,#262d3b); border-radius:14px; padding:12px 14px; min-width:0; }
+.xv-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 8px; }
+.xv-head h3 { margin:0; font:700 13px system-ui; color:var(--dim,#8d99a8); text-transform:uppercase; letter-spacing:.06em; }
+.xv-tabs { display:inline-flex; gap:2px; padding:3px; border-radius:10px; background:#0d1014; border:1px solid var(--line,#262d3b); }
+.xv-tabs button { border:0; background:none; color:var(--dim,#8d99a8); font:700 12.5px system-ui; padding:5px 11px; border-radius:7px; cursor:pointer; }
+.xv-tabs button.on { background:#1f2630; color:var(--text,#e8edf3); }
+.xv-canvas { width:100%; height:260px; display:block; }
+.xv-note { color:var(--dim,#8d99a8); font-size:12.5px; margin-top:6px; min-height:1.2em; }
+.xv-book { width:100%; border-collapse:collapse; font:13px system-ui; font-variant-numeric:tabular-nums; }
+.xv-book th { color:var(--dim,#8d99a8); font:600 11.5px system-ui; text-transform:uppercase; letter-spacing:.05em; text-align:right; padding:4px 8px; }
+.xv-book th:first-child, .xv-book td:first-child { text-align:left; }
+.xv-book td { text-align:right; padding:4px 8px; position:relative; cursor:pointer; }
+.xv-book tr.ask td:first-child { color:var(--down,#ff5a6a); font-weight:700; } .xv-book tr.bid td:first-child { color:var(--up,#2fd38a); font-weight:700; }
+.xv-book tr.lvl td { background-repeat:no-repeat; }
+.xv-book tr.ask td.bar { background-image:linear-gradient(90deg, rgba(255,90,106,.16), rgba(255,90,106,.16)); }
+.xv-book tr.bid td.bar { background-image:linear-gradient(90deg, rgba(47,211,138,.16), rgba(47,211,138,.16)); }
+.xv-book tr.lvl:hover td { background-color:rgba(255,255,255,.04); }
+.xv-book tr.mid td { color:var(--dim,#8d99a8); font-size:12px; text-align:center; padding:6px; border-top:1px solid var(--line,#262d3b); border-bottom:1px solid var(--line,#262d3b); cursor:default; }
+.xv-book tr.none td { color:var(--dim,#8d99a8); text-align:center; padding:10px; cursor:default; }
+.xv-scroll { max-height:340px; overflow:auto; }
+`;
+
+/**
+ * DRAW THE EXCHANGE into `el` (an element of a client's own document): the chart or the depth (switchable) and the order book,
+ * read every `everyMs` from `fetchBook()` (the seats' /book of the market's current round, or null). `outcomes` the market's two
+ * labels; `onPrice(cents, side)` when a level is tapped (a client fills its limit with it). Answers { refresh, setSide, stop, last }.
+ */
+function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice = null, everyMs = 3000, label = null, closeMs = null }) {
+  const doc = el.ownerDocument, win = doc.defaultView;
+  if (!doc.getElementById('xv-style')) { const st = doc.createElement('style'); st.id = 'xv-style'; st.textContent = XV_CSS; doc.head.appendChild(st); }
+  const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  el.classList.add('xv');
+  el.innerHTML = `<div class="xv-card"><div class="xv-head"><h3 class="xv-title">Chart</h3><span class="xv-tabs" data-k="view"><button data-v="chart" class="on">Chart</button><button data-v="depth">Depth</button></span></div>
+    <canvas class="xv-canvas"></canvas><div class="xv-note"></div></div>
+    <div class="xv-card"><div class="xv-head"><h3>Order book</h3><span class="xv-tabs" data-k="side"><button data-v="0" class="on">Trade ${esc(outcomes[0])}</button><button data-v="1">Trade ${esc(outcomes[1])}</button></span></div>
+    <div class="xv-scroll"><table class="xv-book"><thead><tr><th>Price</th><th>Shares</th><th>Total</th></tr></thead><tbody></tbody></table></div></div>`;
+  const s = { view: 'chart', side: 0, book: null, at: 0, timer: null, why: '' };
+  const canvas = el.querySelector('canvas'), note = el.querySelector('.xv-note'), body = el.querySelector('tbody');
+  for (const tabs of el.querySelectorAll('.xv-tabs')) tabs.onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    for (const x of tabs.querySelectorAll('button')) x.classList.toggle('on', x === b);
+    if (tabs.dataset.k === 'view') s.view = b.dataset.v; else s.side = Number(b.dataset.v);
+    draw();
+  };
+  body.onclick = (e) => { const r = e.target.closest('tr.lvl'); if (r && onPrice) onPrice(Number(r.dataset.c), s.side); };
+
+  function drawBook(ladder) {
+    const max = Math.max(1, ...ladder.asks.map((r) => r.shares), ...ladder.bids.map((r) => r.shares));
+    const row = (r, cls) => `<tr class="lvl ${cls}" data-c="${r.cents}"><td>${r.cents}¢</td><td class="bar" style="background-size:${Math.round((r.shares / max) * 100)}% 100%;background-position:right">${r.shares.toLocaleString('en-US')}</td><td>${r.totalSat.toLocaleString('en-US')} sats</td></tr>`;
+    const asks = ladder.asks.slice(0, 12).reverse().map((r) => row(r, 'ask')).join('');
+    const bids = ladder.bids.slice(0, 12).map((r) => row(r, 'bid')).join('');
+    const last = exchangeHistory(s.book, { side: s.side }).slice(-1)[0];
+    const mid = `<tr class="mid"><td colspan="3">${last ? `Last ${last.cents}¢` : 'No trade yet'}${ladder.spread !== null ? ` · Spread ${ladder.spread}¢` : ''}</td></tr>`;
+    body.innerHTML = (asks || '<tr class="none"><td colspan="3">No asks</td></tr>') + mid + (bids || '<tr class="none"><td colspan="3">No bids</td></tr>');
+  }
+  function sizeCanvas() {
+    const r = canvas.getBoundingClientRect(), dpr = win.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
+    const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); return { g, w: r.width, h: r.height };
+  }
+  function axes(g, w, h, pad, yTicks, yOf, fmt) {
+    g.strokeStyle = 'rgba(141,153,168,.18)'; g.fillStyle = '#8d99a8'; g.font = '11px system-ui'; g.lineWidth = 1;
+    for (const v of yTicks) { const y = yOf(v); g.beginPath(); g.moveTo(pad.l, y); g.lineTo(w - pad.r, y); g.stroke(); g.fillText(fmt(v), w - pad.r + 6, y + 4); }
+  }
+  function drawChart(ladder) {
+    const { g, w, h } = sizeCanvas(); g.clearRect(0, 0, w, h);
+    const pad = { l: 8, r: 40, t: 10, b: 22 };
+    const yOf = (c) => pad.t + (1 - c / 100) * (h - pad.t - pad.b);
+    axes(g, w, h, pad, [0, 25, 50, 75, 100], yOf, (v) => v + '¢');
+    const pts = exchangeHistory(s.book, { side: s.side });
+    // THE AXIS RUNS TO THE MARKET'S CLOSE (measured live: from the first match to now it spanned one minute, 17:48-17:49): from
+    // the first match or 5 min back, whichever is earlier, to its close when that is ahead - the line ends at now
+    const now = Date.now(), close = closeMs ? Number(closeMs()) || 0 : 0;
+    const t1 = close > now ? close : now;
+    const t0 = Math.min(pts.length ? pts[0].t : now, now - 5 * 60000);
+    const xOf = (t) => pad.l + ((t - t0) / Math.max(1, t1 - t0)) * (w - pad.l - pad.r);
+    g.fillStyle = '#8d99a8'; g.font = '11px system-ui';
+    for (const t of [t0, (t0 + t1) / 2, t1]) { const d = new Date(t); const lbl = d.toISOString().slice(11, 16); g.fillText(lbl, Math.min(w - pad.r - 30, Math.max(pad.l, xOf(t) - 14)), h - 6); }
+    const color = s.side === 0 ? '#2fd38a' : '#ff5a6a';
+    if (pts.length) {
+      g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(p.cents); if (i) { g.lineTo(x, yOf(pts[i - 1].cents)); g.lineTo(x, y); } else g.moveTo(x, y); });
+      g.lineTo(xOf(now), yOf(pts[pts.length - 1].cents)); g.stroke();
+      const lastC = pts[pts.length - 1].cents; g.fillStyle = color; g.beginPath(); g.arc(xOf(now), yOf(lastC), 3.5, 0, Math.PI * 2); g.fill();
+    }
+    if (close > now) { g.strokeStyle = 'rgba(141,153,168,.35)'; g.setLineDash([2, 4]); g.beginPath(); g.moveTo(xOf(now), pad.t); g.lineTo(xOf(now), h - pad.b); g.stroke(); g.setLineDash([]);
+    }
+    if (ladder.mid !== null) { g.setLineDash([4, 4]); g.strokeStyle = 'rgba(232,237,243,.35)'; g.beginPath(); g.moveTo(pad.l, yOf(ladder.mid)); g.lineTo(w - pad.r, yOf(ladder.mid)); g.stroke(); g.setLineDash([]); }
+    const vol = exchangeVolume(s.book);
+    note.textContent = (pts.length ? `${outcomes[s.side]} ${pts[pts.length - 1].cents}¢ at the last match · ${pts.length} match${pts.length === 1 ? '' : 'es'}` : `No match yet in this window`)
+      + (ladder.mid !== null ? ` · mid ${ladder.mid}¢` : '') + (vol ? ` · ${vol.toLocaleString('en-US')} shares matched` : '') + (s.why ? ` · ${s.why}` : '');
+  }
+  function drawDepth(ladder) {
+    const { g, w, h } = sizeCanvas(); g.clearRect(0, 0, w, h);
+    const pad = { l: 8, r: 48, t: 10, b: 22 };
+    const maxQ = Math.max(1, ...ladder.bids.map((r) => r.cumShares), ...ladder.asks.map((r) => r.cumShares));
+    const xOf = (c) => pad.l + (c / 100) * (w - pad.l - pad.r);
+    const yOf = (q) => pad.t + (1 - q / maxQ) * (h - pad.t - pad.b);
+    axes(g, w, h, pad, [0, Math.round(maxQ / 2), maxQ], yOf, (v) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v)));
+    g.fillStyle = '#8d99a8'; g.font = '11px system-ui';
+    for (const c of [0, 25, 50, 75, 100]) g.fillText(c + '¢', Math.min(w - pad.r - 20, Math.max(pad.l, xOf(c) - 8)), h - 6);
+    const area = (rows, color, fill, dir) => {
+      if (!rows.length) return;
+      g.beginPath(); g.moveTo(xOf(rows[0].cents), yOf(0));
+      let q = 0;
+      for (const r of rows) { g.lineTo(xOf(r.cents), yOf(q)); q = r.cumShares; g.lineTo(xOf(r.cents), yOf(q)); }
+      g.lineTo(xOf(dir < 0 ? 0 : 100), yOf(q)); g.lineTo(xOf(dir < 0 ? 0 : 100), yOf(0)); g.closePath();
+      g.fillStyle = fill; g.fill(); g.strokeStyle = color; g.lineWidth = 1.5; g.stroke();
+    };
+    area(ladder.bids, '#2fd38a', 'rgba(47,211,138,.18)', -1);
+    area(ladder.asks, '#ff5a6a', 'rgba(255,90,106,.18)', 1);
+    const bid = ladder.bids.reduce((t, r) => t + r.shares, 0), ask = ladder.asks.reduce((t, r) => t + r.shares, 0);
+    note.textContent = bid || ask ? `Bids ${bid.toLocaleString('en-US')} shares · asks ${ask.toLocaleString('en-US')} shares${ladder.spread !== null ? ` · spread ${ladder.spread}¢` : ''}` : 'Nothing rests in the book now';
+  }
+  function draw() {
+    const ladder = exchangeLadder(s.book, { side: s.side });
+    el.querySelector('.xv-title').textContent = s.view === 'chart' ? (label ? label(s.side) : `${outcomes[s.side]} price`) : 'Depth';
+    drawBook(ladder);
+    if (s.view === 'chart') drawChart(ladder); else drawDepth(ladder);
+    return ladder;
+  }
+  async function refresh() {
+    try { const b = await fetchBook(); if (b) { s.book = b; s.why = ''; } else s.why = 'no seat answered the book'; } catch (e) { s.why = 'the book could not be read'; }
+    s.at = Date.now(); draw();
+    return s.book;
+  }
+  refresh();
+  s.timer = win.setInterval(refresh, everyMs);
+  win.addEventListener('resize', draw);
+  return { refresh, draw, setSide: (k) => { s.side = k; draw(); }, stop: () => win.clearInterval(s.timer), last: () => ({ book: s.book, side: s.side, view: s.view, ladder: exchangeLadder(s.book, { side: s.side }) }) };
+}
+
+// ---- arena-client/src/backup-gate.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE BACKUP WARNING (§24B, as ruled 2026-09-21 20:01): nothing is refused, and the player is told.
+//
+// An earlier cut of this file GATED the first deposit and the first paid join on the phrase being typed
+// back. That is overridden: PLAY is always allowed, free or paid, and so is putting money in. What stands
+// in the lobby instead is a large warning with its own Backup button, and it stays until one full-phrase
+// verification has succeeded.
+//
+// So `mayDeposit` and `mayPayStake` are gone rather than left exported and unused - a refusal nothing
+// calls is a rule somebody will wire back up by accident. What is left is what the warning needs: is this
+// seed backed up, and did the player type its phrase back correctly.
+//
+// WHERE THE FLAG LIVES, and why that is not a hole. It is the player's own browser. A player who clears
+// it and re-verifies has only made himself type the words again; a player who forges it has unlocked his
+// OWN deposit against his OWN warning. This gate protects the player from losing his money, not the
+// operator from the player - so there is nothing here for a node to check and nothing to forge that
+// costs anybody else a satoshi. A rule the node must enforce is a different rule and is not this one.
+//
+// THE PHRASE ITSELF IS NOT THIS FILE'S. Whatever encodes a seed into words hands it in; this checks what
+// was typed against it. That keeps the check honest about one thing only - did he write them down - and
+// keeps a wordlist's correctness where it belongs.
+
+
+const VERIFIED_KEY = 'arena.backup.verified';
+
+/**
+ * THE FLAG IS BOUND TO THE SEED IT VERIFIED, AND THAT IS NOT A DETAIL.
+ *
+ * Measured on the first cut of this file: the seed lives in sessionStorage (`tabSeed` mints a fresh 32
+ * bytes when it finds none), so a new tab is a NEW WALLET - while a bare "verified" flag in localStorage
+ * outlives every tab. Verify once, open a second tab, and a wallet nobody has ever written down would
+ * have been allowed to deposit and to stake. The gate would have been answering about a wallet that no
+ * longer existed.
+ *
+ * So what is recorded is a digest of the seed that was verified, and the gate opens only when the seed in
+ * hand hashes to it. A new seed is unverified however many older ones were not.
+ */
+const digestOf = (seed) => (seed instanceof Uint8Array && seed.length === 32
+  ? toHex(sha256(seed)) : null);
+
+/** One word, as a comparison sees it: case and stray spacing are the player's, not the phrase's. */
+const normalise = (word) => String(word || '').trim().toLowerCase();
+
+/** The phrase as a list of words, from a string or a list. */
+const wordsOf = (phrase) => (Array.isArray(phrase)
+  ? phrase.map(normalise) : normalise(phrase).split(/\s+/)).filter(Boolean);
+
+/**
+ * EVERY WORD, IN ORDER, ALL OF THEM (§24B; §23A.8's three-word check is withdrawn).
+ *
+ * A player who can produce three of twelve has not shown he wrote twelve down, and three is exactly what
+ * somebody copying a screenshot has. What is checked here is what would actually restore the wallet.
+ *
+ * The answer says WHERE the first wrong word is, because a player who mistyped word nine wants to know
+ * that and an attacker learns nothing he did not type himself.
+ */
+function verifyPhrase(typed, phrase) {
+  const want = wordsOf(phrase);
+  const got = wordsOf(typed);
+  if (!want.length) return { ok: false, why: 'there is no phrase to check against' };
+  if (!got.length) return { ok: false, why: 'type the whole phrase back, every word, in order' };
+  if (got.length !== want.length)
+    return { ok: false, why: `that is ${got.length} words and the phrase is ${want.length}`, wrongAt: null };
+  for (let i = 0; i < want.length; i++)
+    if (got[i] !== want[i]) return { ok: false, why: `word ${i + 1} is not the one in the phrase`, wrongAt: i };
+  return { ok: true };
+}
+
+/** Has THIS seed's phrase been typed back in full, once, in this browser? */
+function isVerified(storage, seed) {
+  const want = digestOf(seed);
+  if (!want) return false;
+  try { return storage.getItem(VERIFIED_KEY) === want; } catch { return false; }
+}
+
+/** Record that it has, against the seed it was. Only `verifyPhrase` saying ok should reach this. */
+function recordVerified(storage, seed) {
+  const want = digestOf(seed);
+  if (!want) return false;
+  try { storage.setItem(VERIFIED_KEY, want); return true; } catch { return false; }
+}
+
+/**
+ * The one call the page makes for a typed phrase: check it, and record it only if it was right.
+ * A wrong word never sets the flag, so a near miss leaves the gate exactly where it was.
+ */
+function verifyAndRecord({ typed, phrase, storage, seed }) {
+  const said = verifyPhrase(typed, phrase);
+  if (!said.ok) return said;
+  return { ok: true, recorded: recordVerified(storage, seed) };
+}
+
+/** What the lobby's first line and the Settings screen say until a verification has succeeded. */
+const NO_BACKUP_LINE = 'This wallet has no backup. Lose this browser and the money in it is gone - '
+  + 'write your 24 words down now.';
+function backupLine(storage, seed) {
+  return isVerified(storage, seed) ? '' : NO_BACKUP_LINE;
+}
+
+
 
 // ---- arena-protocol/src/test-federation.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0

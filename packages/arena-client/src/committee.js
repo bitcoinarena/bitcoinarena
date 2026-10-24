@@ -35,6 +35,7 @@ export const BOND_TERMS = Object.freeze({
 
 const CHAIN_KEPT_MS = 180000;
 export const COMPARE_GRACE_MS = 400;
+const SEATING_ASK_MS = 6000;
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
 export function majorityThenGrace(promises, graceMs) {
   return new Promise((resolve) => {
@@ -186,10 +187,18 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   for (const role of roles) {
     let spoke = false; const refused = [];
     let found = null;
-    for (const u of nodes) {
+    // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
+    // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
+    const said = new Array(nodes.length).fill(null);
+    await majorityThenGrace(nodes.map(async (u, i) => {
+      try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
+      catch { said[i] = null; }
+    }), COMPARE_GRACE_MS);
+    for (const [i, u] of nodes.entries()) {
       try {
-        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`);
-        const body = await r.text();
+        const r = said[i];
+        if (!r) continue;
+        const body = r.body;
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
