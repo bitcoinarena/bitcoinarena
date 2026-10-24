@@ -32,6 +32,9 @@ export const TAG_SWITCH_VERSION = 18;
 export const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 export const PRESSURE_WEIGHT_VERSION = 20;
+// ATTESTORS DRAWN PER ROUND (kanban #630, the owner 2026-10-24: "pre deterministic and drawed randomly, not a fixed set of nodes ... 5 of 7"):
+// an attested game names a draw instead of fixed keys - 7 of the round's census, an outcome standing with 5 of them
+export const ATTESTOR_DRAW_VERSION = 21;   // not in SUPPORTED_PROTOCOL_VERSIONS until the seats sign drawn attestations (#630 step 2)
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -418,6 +421,8 @@ export const TAG = {
   // everywhere else, and a seed that shared a tag with anything could be
   // produced by hashing that other thing.
   committeeSeed: 'ARENA/v1/CommitteeSeed',
+  // #630: a round's attestors are drawn on their own seed, H(this tag || committee seed) - never the settlement draw's
+  attestorDraw: 'ARENA/v1/AttestorDraw',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',
