@@ -127,6 +127,8 @@ export function seatEnv(s, { home, release }) {
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
   // Fedimint on a RAM disk (kanban #596): chosen for more than 5 nodes on this machine (guardian-ram.js)
   if (custody && s.instances && s.instances.ram) lines.push('ARENA_FEDIMINT_RAM=1');
+  // the machine's own name, shown in the health page's machines (kanban #621)
+  if (s.instances && s.instances.name) lines.push(`ARENA_MACHINE_NAME=${s.instances.name}`);
   lines.push(`ARENA_ROLES=${(s.roles || []).join(',')}`);
   return lines.join('\n') + '\n';
 }
