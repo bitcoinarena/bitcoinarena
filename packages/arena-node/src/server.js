@@ -2019,14 +2019,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // batch: ~7 % of the seat's main thread). A round's entry close never changes: read once, kept; a round closed more than two batch
   // intervals ago is passed over, unless one of its batches still waits for its certificate.
   const entryCloseOf = new Map();          // round id hex -> its entry close (ms), 0 when unreadable
+  // AND NOT EVERY ORDER EACH 500 ms (the same profile: the tick's own query - a DISTINCT over every order, book event and batch, each
+  // tick of BATCH_MS - was most of its cost): the rounds with orders or book events are read again only once a new one arrived (the
+  // tables' last rowid, read off the end of the index), the batches waiting for a certificate by their own index
+  const orderRoundsQ = round.db.prepare('SELECT DISTINCT round_id FROM market_orders UNION SELECT DISTINCT round_id FROM market_book_events');
+  const lastOrderQ = round.db.prepare('SELECT (SELECT max(rowid) FROM market_orders) AS o, (SELECT max(rowid) FROM market_book_events) AS e');
+  const openBatchesQ = round.db.prepare('SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL');
+  let orderRounds = [], orderRoundsAt = null;
   const orderBatchTick = async () => {
     const at = round.now();
     const k = Math.floor((at - orderBatchGraceMs) / orderBatchMs) - 1;
     // the rounds with orders: an entry with a limit price, open or within one interval of its close
-    const rounds = round.db.prepare('SELECT DISTINCT round_id FROM market_orders UNION SELECT DISTINCT round_id FROM market_book_events UNION SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL').all().map((r) => new Uint8Array(r.round_id));
-    const waiting = new Set(round.db.prepare('SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL').all().map((r) => toHex(new Uint8Array(r.round_id))));
-    for (const rid of rounds) {
-      const hex = toHex(rid);
+    const last = lastOrderQ.get(); const seen = `${last.o}:${last.e}`;
+    if (seen !== orderRoundsAt) { orderRounds = orderRoundsQ.all().map((r) => { const rid = new Uint8Array(r.round_id); return { rid, hex: toHex(rid) }; }); orderRoundsAt = seen; }
+    const waiting = new Map(openBatchesQ.all().map((r) => { const rid = new Uint8Array(r.round_id); return [toHex(rid), rid]; }));
+    const listed = new Set(orderRounds.map((x) => x.hex));
+    const rounds = [...orderRounds, ...[...waiting].filter(([hex]) => !listed.has(hex)).map(([hex, rid]) => ({ rid, hex }))];
+    for (const { rid, hex } of rounds) {
       let close = entryCloseOf.get(hex);
       if (close === undefined) {
         try { const row = round.get(rid); close = row ? Number(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs) : 0; } catch { close = 0; }
