@@ -16860,7 +16860,7 @@ function forgetPhrase(storage, seedHex) {
  * A database whose federation is not named here in full (`federations`, 64 hex, and every federation with a history) is left alone.
  * Answers { removed: keys, bytes: what they held (UTF-16), wallets: databases }.
  */
-function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false } = {}) {
+function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now() } = {}) {
   if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
   const keys = storageKeys(storage);
   const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
@@ -16880,6 +16880,21 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
     if (m && fed16.has(m[2])) { if (!groups.has(m[1])) groups.set(m[1], []); groups.get(m[1]).push(k); }
   }
   let removed = 0, bytes = 0, wallets = 0;
+  // A COLLECTED ROUND'S LOCK WALLET (kanban #625 follow-up, the owner 2026-10-24 ~18:2xZ: "exceeded the quota" again on
+  // arena.lock.saved.bd53423e; measured: each round a tab collects opens a lock wallet of its own, arena.lockdb.<round16>.<secret16>.*, 36 entries
+  // and ~150 KB, and none was ever removed - a window every 15 min fills a phone's storage within a day): removed once the round's collect is
+  // done and an hour old - its money is in the player wallet; a rescan that needs it again joins it anew (its key is the seed's and the round's)
+  const doneRounds = new Set();
+  for (const k of keys) {
+    if (!k.startsWith('arena.collect.')) continue;
+    try { const r = JSON.parse(storage.getItem(k)); if (r && r.done && r.roundIdHex && now() - Number(r.savedMs || 0) > 3600000) doneRounds.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: kept */ }
+  }
+  const lockGroups = new Map();
+  for (const k of keys) {
+    const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k);
+    if (m && doneRounds.has(m[2])) { if (!lockGroups.has(m[1])) lockGroups.set(m[1], []); lockGroups.get(m[1]).push(k); }
+  }
+  for (const [, ks] of lockGroups) { for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; } wallets++; }
   for (const [prefix, ks] of groups) {
     const o = owned.get(prefix);
     let go = !o;
