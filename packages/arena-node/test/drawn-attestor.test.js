@@ -29,7 +29,7 @@ function seats({ down = [] } = {}) {
   const list = KEYS.map((key, i) => new DrawnAttestor({
     selfKey: key, sign: (d) => schnorr.sign(d, secretOf(i)), attestorsFor: () => KEYS,
     peersFor: () => KEYS.map((_, j) => `http://seat-${j}`).filter((_, j) => j !== i), due: () => [{ roundId: ROUND, window: WINDOW }],
-    readPrice: () => (clock < 900000 ? 8000000 : 8001234), now: () => clock,
+    readPrice: () => (clock < 900000 ? 8000000 : { cents: 8001234, atMs: clock }), now: () => clock,
     hold: async (bytes) => { const st = attestationStands(decodeAttestation(bytes), { manifest: MANIFEST, roundIdBytes: ROUND, verify, drawn: KEYS }); if (st.ok) held.set(i, st); return st.ok; },
     fetcher: async (url) => {
       const j = Number(new URL(url).host.split('-')[1]);

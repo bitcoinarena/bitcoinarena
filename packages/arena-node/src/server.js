@@ -142,6 +142,7 @@ import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
+import { DrawnAttestor } from './drawn-attestor.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -592,6 +593,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and, once ATTESTED, the pari-mutuel table the settlement seats pay from (built here from the entries' picks and the
   // outcome, no game code). null for a round of a replayed game, or of a game this node does not host.
   const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
+  // AN ATTESTATION IN (POST /outcome, and a drawn seat's own combined one - kanban #630): held only if it stands for its round, timely,
+  // and kept; { held, fresh, why, now } or { held: false, status, why }
+  const holdOutcome = (target, raw, a, valued) => {
+    const row = round.get(target);
+    if (!row) return { held: false, status: 404, why: 'this node holds no such round' };
+    const c = decodeRoundContract(new Uint8Array(row.contract));
+    const plugin = attestedOf(c);
+    if (!plugin) return { held: false, status: 409, why: 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation' };
+    // A TEMPLATE'S ROUND (feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
+    const stands = valued ? valueAttestationStands(a, { manifest: marketOfRound(plugin.manifest, c), roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
+      : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), round: c, ...drawnAttestCheck(plugin.manifest, roundIdOf(c)) });
+    if (!stands.ok) return { held: false, status: 409, why: stands.why };
+    // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
+    // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one
+    const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
+    if (!timely.ok) return { held: false, status: 409, why: timely.why };
+    // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
+    const fresh = round.putOutcomeAttestation({ bodyId: valued ? valueAttestationBodyId(a) : attestationBodyId(a), roundId: a.roundId,
+      outcome: valued ? VALUE_HELD_OUTCOME : a.outcome, observedAtMs: a.observedAtMs, bytes: raw, receivedMs: round.now() });
+    if (fresh) settleAttestedSoon();
+    const now = outcomeOf(a.roundId, c);
+    console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
+    return { held: true, fresh, why: stands.why, now };
+  };
   // A GAME WHOSE ATTESTORS ARE DRAWN (kanban #630, protocol 21): an attestation is checked against the round's 7 drawn node keys and their
   // BIP-340 signatures; a game naming fixed keys, against those and Ed25519, as before
   const drawnAttestCheck = (manifest, rid) => {
@@ -2242,6 +2267,49 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
   });
+  // THIS SEAT AS A DRAWN ATTESTOR (kanban #630, protocol 21): only where it hosts a game whose attestors are drawn. Every 10 s it reads
+  // its price; a round of such a game whose window ended in the last 30 min and that this seat is drawn for gets its word, the other
+  // drawn seats' words, and - once 5 signed one body - the attestation held here and handed to the round's settlement committee
+  const drawnHosted = [...hosted.values()].some((h) => h && h.manifest && isDrawnAttest(h.manifest));
+  const drawnContracts = new Map();   // round hex -> { c, window } | null
+  const drawnAttestor = drawnHosted ? new DrawnAttestor({
+    readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
+    attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
+    peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? endpointsOf(got.attestors, round.pubkey) : []; },
+    due: () => {
+      const now = round.now(), out = [];
+      for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ?').all(now - 4 * 3600000)) {
+        const k = toHex(r.round_id);
+        if (!drawnContracts.has(k)) {
+          let got = null;
+          try {
+            const c = decodeRoundContract(new Uint8Array(r.contract)), plugin = attestedOf(c);
+            if (plugin && isDrawnAttest(plugin.manifest)) { const w = marketWindowOf(c, plugin.manifest); if (w.ok && w.window) got = { c, window: w.window }; }
+          } catch { got = null; }
+          drawnContracts.set(k, got);
+        }
+        const d = drawnContracts.get(k);
+        if (d && Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: new Uint8Array(r.round_id), window: d.window });
+      }
+      return out;
+    },
+    hold: async (bytes, rid) => {
+      const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
+      if (!got.held) { console.log(`[attest] ${toHex(rid).slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
+      const picked = roster.committeeFor(rid, 'settlement');
+      const to = new Set([...(picked.ok ? endpointsOf(picked.committee, round.pubkey) : []), ...drawnAttestor.peersFor(rid)]);
+      await Promise.all([...to].map((base) => fetch(`${base}/outcome?round=${toHex(rid)}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }).catch(() => null)));
+      return true;
+    },
+  }) : null;
+  if (drawnAttestor) {
+    const t = setInterval(async () => {
+      await drawnAttestor.read();
+      try { for (const d of await drawnAttestor.pass()) console.log(`[attest] ${d.round.slice(0, 16)}: outcome ${d.outcome} attested by ${d.signers} of 7 drawn seats, held and handed on`); }
+      catch (e) { console.log(`[attest] pass: ${e.message}`); }
+    }, 10000);
+    if (t.unref) t.unref();
+  }
   // RESERVE SEATS (§5A.7): ARENA_SEATING=1 - each role draws 9 for 7 seats, the drawn sign PRESENT before
   // start - 120 s, the seated sign one SEATING certificate, and a round takes entries only with it (seating-agent.js)
   // THE OWNER'S EMERGENCY LEAVE REQUESTS (§23A.5a, protocol 17): one is taken when it stands against the census this seat reads (the
@@ -7646,27 +7714,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           valued = isValueAttestationBytes(raw);
           a = valued ? decodeValueAttestation(raw) : decodeAttestation(raw);
         } catch (e) { return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
-        const row = round.get(target);
-        if (!row) return text(res, 404, 'this node holds no such round');
-        const c = decodeRoundContract(new Uint8Array(row.contract));
-        const plugin = attestedOf(c);
-        if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
-        // A TEMPLATE'S ROUND (feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
-        const stands = valued ? valueAttestationStands(a, { manifest: marketOfRound(plugin.manifest, c), roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
-          : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), round: c, ...drawnAttestCheck(plugin.manifest, roundIdOf(c)) });
-        if (!stands.ok) return text(res, 409, stands.why);
-        // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
-        // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one
-        const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
-        if (!timely.ok) return text(res, 409, timely.why);
-        // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
-        const fresh = round.putOutcomeAttestation({ bodyId: valued ? valueAttestationBodyId(a) : attestationBodyId(a), roundId: a.roundId,
-          outcome: valued ? VALUE_HELD_OUTCOME : a.outcome, observedAtMs: a.observedAtMs, bytes: raw, receivedMs: round.now() });
-        if (fresh) settleAttestedSoon();
-        const now = outcomeOf(a.roundId, c);
-        console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
-        res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ held: true, fresh, why: stands.why, ...now }));
+        const got = holdOutcome(new Uint8Array(target), raw, a, valued);
+        if (!got.held) return text(res, got.status, got.why);
+        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ held: true, fresh: got.fresh, why: got.why, ...got.now }));
       }
       // A MARKET ON A GAME'S OUTCOME (feature 6, protocol 2026.0.6): POST /game-outcome?round=<the market round's id>
       // with { openCents, closeCents, front?, sigs: [{ key, signature }] } - the source round's RoundResult and its seats'
@@ -7691,6 +7742,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c = decodeRoundContract(new Uint8Array(round.get(target).contract));
         res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(target), ...got, ...outcomeOf(new Uint8Array(target), c) }));
+      }
+      // A DRAWN SEAT'S OWN WORD ON A ROUND (kanban #630): what it signed, for the round's other drawn attestors to combine
+      if (req.method === 'GET' && url.pathname === '/attestation-word') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'GET /attestation-word?round=<the round\'s id>');
+        const w = drawnAttestor ? drawnAttestor.served(new Uint8Array(id)) : null;
+        if (!w) return text(res, 404, 'this seat holds no word of its own on that round');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(w));
       }
       if (req.method === 'GET' && url.pathname === '/outcome') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');

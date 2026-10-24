@@ -46,6 +46,7 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
+    ...(m.attestDraw ? { attestDraw: { ...m.attestDraw } } : {}),
     fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null,
     // A SCALAR MARKET'S BOUNDS (protocol 7) and A MARKET ON A GAME'S SOURCE (protocol 6),: what its lines say and
     // what its outcome is checked by - the decoded manifest kept beside them for that check
@@ -95,7 +96,8 @@ export function pickSheet({ market, contract = null, stakeMsat = contract ? cont
       net: `at risk on your pick: ${sats(net)} sats`,
     },
     stakeMsat: stake, feeMsat: fee, donationMsat: 0n, netMsat: net,
-    attestors: `outcome by ${market.threshold} of ${market.attestors.length} attestors named by ${market.name}'s dev`,
+    attestors: market.attestDraw ? `outcome by ${market.attestDraw.threshold} of ${market.attestDraw.count} nodes drawn for each round`
+      : `outcome by ${market.threshold} of ${market.attestors.length} attestors named by ${market.name}'s dev`,
     confirm: market.needsConfirm
       ? `${market.name} is not on this page's list of known markets. Its developer key is ${market.devKey.slice(0, 16)}… and its manifest ${market.gameId.slice(0, 16)}…; `
         + 'only its attestors decide the outcome. Stake on it anyway?'
@@ -275,19 +277,24 @@ export async function webCryptoEd25519(signature, message, key) {
  * pinned (or confirmed): its round, an outcome in range, the threshold of distinct named attestors, every signature good.
  * `verify(signature, digest, key)` may be async (WebCrypto); a verifier that cannot answer leaves it `unverifiable`.
  */
-export async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519 }) {
+export async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519, drawn = null, verifySchnorr = null }) {
   let a;
   try { a = decodeAttestation(fromHex(String(attestationHex))); } catch (e) { return { verified: false, why: `not an attestation: ${e.message}` }; }
+  // A MARKET WHOSE ATTESTORS ARE DRAWN PER ROUND (kanban #630): checked against the round's 7 drawn node keys this page derived from the
+  // census (client-committee.js attestors), BIP-340 - with none derived, it is shown unverified, never believed on a seat's word
+  const draws = !!(market && market.attestDraw);
+  if (draws && !(Array.isArray(drawn) && drawn.length === market.attestDraw.count && typeof verifySchnorr === 'function'))
+    return { verified: false, unverifiable: true, why: 'this market draws its attestors per round, and this page has not derived this round\'s 7 yet: the outcome is shown unverified' };
   const digest = attestationBodyId(a);
   const said = new Map();
   for (const s of a.signatures) {
-    const v = await verify(s.signature, digest, s.key);
+    const v = draws ? await verifySchnorr(s.signature, digest, s.key) : await verify(s.signature, digest, s.key);
     if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the outcome is shown unverified' };
     said.set(`${toHex(s.key)}:${toHex(s.signature)}`, v === true);
   }
   const manifest = { gameName: market.name, resultType: RESULT_TYPE.ATTESTED, outcomes: market.outcomes,
-    attestors: market.attestors.map((k) => fromHex(k)), attestThreshold: market.threshold };
-  const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex),
+    attestors: draws ? [] : market.attestors.map((k) => fromHex(k)), attestThreshold: draws ? 0 : market.threshold, ...(draws ? { attestDraw: market.attestDraw } : {}) };
+  const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex), ...(draws ? { drawn } : {}),
     verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
   return stands.ok ? { verified: true, outcome: stands.outcome, label: stands.label, why: stands.why } : { verified: false, why: stands.why };
 }
