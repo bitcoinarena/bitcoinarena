@@ -170,6 +170,9 @@ function Processed({ tx }) {
     <dl>
       <dt>Game nodes</dt><dd>{list(p.game)}</dd><dt>Settlement nodes</dt><dd>{list(p.settlement)}</dd>
       <dt>Submits settlement</dt><dd>{p.asker ? nm(p.asker) : '–'}</dd>
+      {p.drawnAttestors ? <><dt>Drawn attestors</dt><dd>{p.drawnAttestors.keys ? <>{p.drawnAttestors.keys.map((k, i) => {
+        const signed = (p.outcomes || []).some((o) => (o.attestors || []).includes(k));
+        return <span key={k}>{i ? ', ' : ''}{signed ? <b>{nm(k)} ✓</b> : nm(k)}</span>; })} <span className="dim">· {p.drawnAttestors.needed} of {p.drawnAttestors.keys.length} decide, drawn for this round</span></> : <span className="dim">{p.drawnAttestors.why || 'not known at this node'}</span>}</dd></> : null}
       <dt>Attestors</dt><dd>{(p.outcomes || []).length ? p.outcomes.map((o, i) => <div key={i}>{(o.attestors || []).map(nm).join(', ') || '–'} <span className="dim">· {utc(Date.parse(o.observedAt)).slice(0, 19)} UTC</span></div>) : <span className="dim">not yet</span>}</dd>
       <dt>Settled</dt><dd>{p.settledAt ? <>{utc(Date.parse(p.settledAt)).slice(0, 19)} UTC {p.settlementWhy ? <span className="dim">· {p.settlementWhy}</span> : null}</> : <span className="dim">not yet</span>}</dd>
     </dl></details>);
