@@ -122,6 +122,7 @@ import { splitAsSet, nextVersionWithSplit } from './app-version.js';
 import { checkUpdate } from './plugin-check.js';
 import { machineOf } from './machine.js';
 import { createMarketEarnings } from './market-earnings.js';
+import { stepLog } from './step-log.js';
 import { createEcashExchange } from './ecash-exchange.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
@@ -6832,9 +6833,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // goes to disk; the share is re-opened from it whenever it is needed, so
       // a stolen database is a pile of envelopes.
       if (req.method === 'POST' && url.pathname === '/handout') {
+        const steps = stepLog('handout', '-').on(res);   // (kanban #618, step-log.js)
         let handout;
         try { handout = decodeHandout(await read(req)); }
         catch (e) { return text(res, 400, 'that is not a handout: ' + e.message); }
+        steps.at('body');
 
         // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout`
         // checks a handout only against itself, and measured: a crafted 1-of-2
@@ -6856,11 +6859,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             + `this round's stakes open at ${threshold} of ${roundContract.settlementSlots}`);
 
         const seen = acceptHandout(handout);
+        steps.at('checked');
         if (!seen.ok) return text(res, 409, seen.why);
 
         const mine = await openMyShare(handout, {
           pubkey: round.pubkey, secret: round.identity.secret, curve: feldmanGroup,
         });
+        steps.at('share opened');
         if (!mine.ok) return text(res, 409, mine.why);
 
         const id = handoutId(handout);
@@ -6899,7 +6904,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ upheld: true, round: rh, why: said.why }));
       }
       if (req.method === 'POST' && url.pathname === '/entry') {
+        // EVERY STEP OF THE ORDER WITH ITS TIME (kanban #618, step-log.js): one [steps] line when the answer leaves
+        const steps = stepLog('entry', '-').on(res);
         const contract = decodeEntryContract(await read(req));
+        steps.named('round ' + toHex(contract.roundId).slice(0, 8)).at('body');
         // AN ENTRY INTO A ROUND OF A GAME THIS NODE DOES NOT HOST: that round was never stored, and the node
         // says which game, from what it refused at /round or in a series of that game
         { const game = refusedGameOf.get(toHex(contract.roundId));
@@ -6941,6 +6949,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const efed = entryFederation(rc, contract);
             if (!efed.ok) return text(res, 409, efed.why);
             const fport = await portOfFederation(efed.federationId);
+            steps.at('port');
             if (!fport) return text(res, 409, portRefusal({ federationId: efed.federationId }));
             if (takesAnyFederation(rc)) {
               const dr = drainingRefusal({ ...rc, federationId: efed.federationId });
@@ -6954,6 +6963,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               }
               if (chainFor) {
                 const bonded = await guardiansBonded(contract.roundId, rc, efed.federationId);
+                steps.at('guardians bonded');
                 if (!bonded.ok) return text(res, 409, bonded.why);
               }
             }
@@ -6982,6 +6992,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // PROTOCOL 11 (§27A.9.2): the developers' outputs and the reserve lock, to the entry's federation's reserve key
             const efed = entryFederation(rc, contract);
             const rk = efed.ok ? await reserveKeyFor(toHex(efed.federationId)) : null;
+            steps.at('reserve key');
             const want = ds.ok ? reservesEntryExpected({ entry: contract, recipients: ds.target, reserveKey: rk, split: roundSplitBps(feesFor(rc)) }) : { ok: false, why: ds.why };
             if (!want.ok) return text(res, 409, `entry refused: reserves: ${want.why}`);
           } else if (ds.ok || (contract.donationOutpoints || []).length) {
@@ -6989,7 +7000,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (!want.ok) return text(res, 409, `entry refused: donation: ${want.why}`);
           }
         }
+        steps.at('checked');
         const joined = round.enter(contract);
+        steps.named(toHex(joined)).at('stored');
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
         // invoice on the entry's payment hash, and said how that went in `x-hold`. That was the withdrawn Lightning custody's
         // stake-in, which does not exist (§23.6, RULED 2026-09-22 22:59); a lock round's stake is locked by
@@ -7790,7 +7803,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
-        const lockTimed = (said) => { const ms = Date.now() - lt0; if (ms > 5000) console.log(`[lock] ${toHex(eid).slice(0, 16)} took ${ms} ms (${said}): ${Object.entries(timing).map(([k, v]) => `${k} ${v}`).join(', ')}`); };
+        // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
+        const steps = stepLog('lock', toHex(eid)).on(res); steps.at('entry');
+        const lockTimed = (said) => { steps.took(timing).at(said.slice(0, 40)); };
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (2026-10-03)
         let donationRecipients = null;
@@ -7823,6 +7838,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let fields;
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
+        const steps = stepLog('fee-lock', toHex(eid)).on(res); steps.at('body');   // (kanban #618, step-log.js)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
@@ -7830,6 +7846,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let got;
         try { got = await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+        steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
         if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat`);
