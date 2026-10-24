@@ -18,6 +18,17 @@ const given = typeof window !== 'undefined' ? window.EXPLORER_DATA || {} : {};
 // THE RESULT (the owner 2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won")
 const sats = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const signed = (msat) => (BigInt(msat) >= 0n ? '+' : '−') + sats(String(BigInt(msat) < 0n ? -BigInt(msat) : BigInt(msat))) + ' sat';
+// AN ATTESTED OUTCOME BEFORE THE SETTLEMENT (kanban #629, 2026-10-24: the Up/Down card said lost at the outcome, this page said pending until
+// the settlement after the objection window): the outcome and the order's side are said with it
+const OUTCOMES = { 'btc-updown-15m': ['Up', 'Down'] };
+export function pendingText(tx) {
+  const p = tx.processed, o = p && (p.outcomes || [])[0], e = tx.entry || {};
+  if (!o || o.outcome === null || o.outcome === undefined) return 'Pending';
+  const names = OUTCOMES[e.app] || null, name = (i) => (names && names[i] !== undefined ? names[i] : 'outcome ' + i);
+  const side = e.pick !== null && e.pick !== undefined ? name(Number(e.pick)) : null;
+  const verdict = side === null ? '' : Number(e.pick) === Number(o.outcome) ? ' · your side ' + side + ' won' : ' · your side ' + side + ' lost';
+  return name(Number(o.outcome)) + ' won' + verdict + ' (attested ' + new Date(Date.parse(o.receivedAt)).toISOString().slice(11, 19) + ' UTC) · settlement pending';
+}
 export function resultText(r) {
   if (!r) return '';
   if (r.state === 'won') return `Won ${sats(r.payoutMsat)} sat (${signed(r.netMsat)})`;
@@ -60,7 +71,7 @@ function List() {
       <input placeholder="part of an id or round" value={f.q} onChange={(e) => set('q', e.target.value.trim())} autoComplete="off" />
       <span className="dim">{shown.length.toLocaleString('en-US')} of {txs.length.toLocaleString('en-US')}</span>
     </div>
-    <div className="card"><table><thead><tr><th>Transaction</th><th>App</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
+    <div className="card"><table className="rows"><thead><tr><th>Transaction</th><th>App</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
       {shown.slice(0, 300).map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{appName(appOf(t))}</td><td className="n nw">{t.stakeMsat !== null && t.stakeMsat !== undefined ? (Number(t.stakeMsat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat' : '–'}</td>
         <td className={'nw ' + resultCls(t.result)}>{t.result ? (t.result.state === 'won' || t.result.state === 'lost' ? signed(t.result.netMsat) : resultText(t.result)) : '–'}</td>
         <td className="mono">{t.federation ? t.federation.slice(0, 8) : '–'}</td><td className="mono">{String(t.round || '').slice(0, 12)}</td>
@@ -82,7 +93,7 @@ function settleWord(what) {
 const UI_WORDS = { fetchDonationSet: 'Donation set loaded', fetchFees: 'Fees loaded', clientSettlementSignerNodes: 'Committee checked',
   postHandout: 'Stake shares sent', 'claim key': 'Claim key derived', deposit: 'Wallet balance checked', 'succession and merge': 'Succession and merge checked',
   exchange: 'Exchange checked', 'spendable check': 'Spendable balance checked', 'early deposit': 'Deposit checked',
-  succession: 'Federation succession checked', merge: 'Merge checked' };
+  succession: 'Federation succession checked', 'succession (beside the order)': 'Federation succession checked (beside the order)', merge: 'Merge checked' };
 const uiWord = (name) => UI_WORDS[name] || (/^merge /.test(name) ? 'Merge: ' + name.slice(6) : name);
 /** The UI's steps as rows: "-> x" and "<- x" one row each x with how long it took, the rest as they are. */
 function uiSteps(steps) {
@@ -143,7 +154,7 @@ function Group({ id, title, events, rel }) {
     <details className="grp" id={id} open={typeof location !== 'undefined' && location.hash === '#' + id}>
       <summary><b>{title}</b> <span className="dim">{events.length ? `${span} · ${events.length} events${nodes ? ' · ' + nodes + ' nodes' : ''}` : 'none yet'}</span>
         </summary>
-      {events.length ? (<table><thead><tr><th>Time (UTC)</th><th>+</th><th>Where</th><th>Event</th><th>Took</th><th>Detail</th></tr></thead><tbody>
+      {events.length ? (<table className="rows"><thead><tr><th>Time (UTC)</th><th>+</th><th>Where</th><th>Event</th><th>Took</th><th>Detail</th></tr></thead><tbody>
         {events.map((x, i) => (<tr key={i} className={x.away ? 'away' : x.group === 'page' ? 'pg' : ''}><td className="mono nw"><span className="day">{utc(x.atMs).slice(0, 11)}</span>{utc(x.atMs).slice(11)}</td>
           <td className={'nw' + (rel.ms(x.atMs) > 3000 ? ' slow' : '')}>{rel(x.atMs)}</td><td className="nw">{x.where}</td>
           <td>{x.what}{x.bad ? <span className="bad"> {x.status}</span> : null}</td><td className="nw">{Number.isFinite(x.took) ? x.took + ' ms' : ''}</td>
@@ -200,19 +211,19 @@ function Tx({ id }) {
       <dt>Fee</dt><dd>{sat(e.feeMsat)}</dd><dt>Player</dt><dd className="mono">{e.player || '–'}</dd>
       <dt>Stake lock</dt><dd className="mono">{tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–'}</dd>
       <dt>Fee lock</dt><dd className="mono">{tx.locks && tx.locks.fee ? tx.locks.fee.outpoint : e.feeLockOutpoint || '–'}</dd>
-      <dt>Result</dt><dd className={resultCls(tx.result)}><b>{tx.result ? resultText(tx.result) : '–'}</b>{tx.result && tx.result.sharedBy > 1 ? <span className="dim"> · paid to the player key across {tx.result.sharedBy} orders in this round</span> : null}</dd>
+      <dt>Result</dt><dd className={resultCls(tx.result)}><b>{tx.result ? (tx.result.state === 'pending' ? pendingText(tx) : resultText(tx.result)) : '–'}</b>{tx.result && tx.result.sharedBy > 1 ? <span className="dim"> · paid to the player key across {tx.result.sharedBy} orders in this round</span> : null}</dd>
       <dt>Settlement</dt><dd className="mono">{tx.settlement ? tx.settlement.state + ' · ' + tx.settlement.txid : <span className="dim">not yet</span>}</dd>
       <dt>Start</dt><dd>{utc(t0)} UTC <span className="dim">{press ? '(order click)' : '(first node)'}</span></dd>
       <dt>Nodes</dt><dd>{known} of {(tx.seats || []).length}</dd></dl></div>
     <h2>Node timing <span className="dim">from {press ? 'order click' : 'first node'}</span></h2>
-    <div className="card">{steps.length ? (<table><thead><tr><th>Step</th><th>First</th><th>Median</th><th>Last</th><th>Nodes</th></tr></thead><tbody>
+    <div className="card">{steps.length ? (<table className="rows"><thead><tr><th>Step</th><th>First</th><th>Median</th><th>Last</th><th>Nodes</th></tr></thead><tbody>
       {steps.map((s) => <tr key={s.label}><td>{s.label}</td><td className="nw">{rel(s.first)}</td><td className="nw">{rel(s.half)}</td><td className="nw">{rel(s.last)}</td><td className="dim nw">{s.n}</td></tr>)}</tbody></table>)
       : <p className="dim">No node timing recorded.</p>}</div>
     <h2>Timeline</h2>
     {GROUPS.filter(([g]) => g !== 'page' || tx.client).map(([g, title]) => <Group key={g} id={g} title={title} events={ev.filter((x) => x.group === g)} rel={rel} />)}
     <Processed tx={tx} />
     <details className="grp"><summary><b>Nodes</b> <span className="dim">{known} of {(tx.seats || []).length}</span></summary>
-      <table><thead><tr><th>Node</th><th>Has it</th><th>Stored</th><th>Book</th></tr></thead><tbody>{(tx.seats || []).map((s) => (<tr key={s.seat}><td>{s.seat}</td>
+      <table className="rows"><thead><tr><th>Node</th><th>Has it</th><th>Stored</th><th>Book</th></tr></thead><tbody>{(tx.seats || []).map((s) => (<tr key={s.seat}><td>{s.seat}</td>
         <td className={s.known ? 'ok' : 'dim'}>{s.known ? 'yes' : s.status ? 'no' : 'offline'}</td><td>{s.storedAt ? rel(Date.parse(s.storedAt)) : '–'}</td>
         <td className="dim">{s.book ? 'batch ' + (s.book.batch || '–') : ''}</td></tr>))}</tbody></table></details>
   </>);
