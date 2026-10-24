@@ -78,3 +78,34 @@ test('a seat that never wrote the table\'s first round keeps its certificate, dr
   assert.deepEqual(calls.at(-1), { id: toHex(rid0), posted: true }, 'drawn as a posted contract');
   assert.equal(agent.seatedFor(rid5, 'game').length, 7, 'every round of the table takes it');
 });
+
+test('a seat holding a table\'s later rounds but not its first asks the table\'s seats for the first round\'s certificates (kanban #604)', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const series = new Uint8Array(32).fill(0x7e);
+  const base = { ...contractFor([]), gameId: RPS_V2, protocolVersion: 2, seriesId: series, nodes: [], gameVerifySlots: 7, settlementSlots: 7 };
+  const c0 = { ...base, roundIndex: 0, startTimeMs: START }, c5 = { ...base, roundIndex: 5, startTimeMs: START + 40000n };
+  const rid0 = roundIdOf(c0), rid5 = roundIdOf(c5);
+  const b5 = encodeRoundContract(c5);
+  db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid5, b5);
+  const round = { db, pubkey: nodes[0].pubkey, get: (id) => (toHex(id) === toHex(rid5) ? { contract: b5 } : null) };
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const seated = seatedFrom({ drawn: nodes.map((n) => n.pubkey), present: nodes.map((n) => n.pubkey), slots: 7 });
+  const certOf = (role) => encodeSeatingCertificate({ roundId: rid0, role, seated,
+    signatures: seated.map((k) => ({ nodePubkey: k, signature: signSeating({ roundId: rid0, role, seated }, signer(nodes.find((n) => toHex(n.pubkey) === toHex(k)))) })) });
+  const asked = [];
+  const fetcher = async (url) => {
+    const u = new URL(url); asked.push(`${u.host}${u.pathname}`);
+    if (u.pathname === '/seating' && u.searchParams.get('round') === toHex(rid0)) return new Response(JSON.stringify({ cert: toHex(certOf(u.searchParams.get('role'))) }), { status: 200 });
+    return new Response(JSON.stringify({ rounds: {} }), { status: 200 });
+  };
+  const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+  const agent = seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(nodes[0]), verify, fetcher, nowMs: () => NOW,
+    contractOf: (id) => (toHex(id) === toHex(rid0) ? c0 : null) });
+  await agent.tick();
+  assert.equal(agent.seatedFor(rid5, 'game').length, 7);
+  assert.equal(agent.seatedFor(rid5, 'settlement').length, 7);
+  assert.equal(asked.filter((a) => a.endsWith('/seating')).length, 2, 'one seat asked per role, the first that had it');
+  await agent.tick();
+  assert.equal(asked.filter((a) => a.endsWith('/seating')).length, 2, 'not asked again once both stand');
+});
