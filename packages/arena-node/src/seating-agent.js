@@ -29,7 +29,7 @@ export const BATCH_ROUNDS = 64;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null }) {
   // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
   // not counted, and this node signs none once it holds its own request
   const db = round.db;
@@ -55,10 +55,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
 
   // THE CHECK OF A CERTIFICATE, against this node's own draw for the round
   const checkFor = (rid, role) => {
-    const c = roster.committeeFor(rid, role);
-    if (!c.ok) return null;
+    // A TABLE'S FIRST ROUND THIS SEAT NEVER WROTE (kanban #604: the 10-24 series reached the test host seats at 00:12Z, after their
+    // tables' round 0 had started, so no certificate could be checked and they answered the unseated draw): `contractOf` builds it
+    // from a series this seat holds, and it is drawn as a posted contract
     const row = round.get(rid);
-    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const posted = row ? null : contractOf(rid);
+    if (!row && !posted) return null;
+    const c = roster.committeeFor(rid, role, posted ? { posted } : {});
+    if (!c.ok) return null;
+    const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
     return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify };
   };
   const keepCert = (rid, role, bytes) => {

@@ -53,3 +53,28 @@ test('only the table\'s first round is seated; a later round of the table takes 
   assert.deepEqual(agent.stateOf(rid5).settlement, agent.stateOf(rid0).settlement);
   assert.deepEqual(agent.certOf(rid5, 'settlement'), agent.certOf(rid0, 'settlement'));
 });
+
+test('a seat that never wrote the table\'s first round keeps its certificate, drawn on round 0 built from the series it holds (kanban #604)', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const series = new Uint8Array(32).fill(0x6e);
+  const base = { ...contractFor([]), gameId: RPS_V2, protocolVersion: 2, seriesId: series, nodes: [], gameVerifySlots: 7, settlementSlots: 7 };
+  const c0 = { ...base, roundIndex: 0, startTimeMs: START }, c5 = { ...base, roundIndex: 5, startTimeMs: START + 40000n };
+  const rows = new Map([[toHex(roundIdOf(c5)), encodeRoundContract(c5)]]);   // round 5 held, round 0 never written
+  const rid0 = roundIdOf(c0), rid5 = roundIdOf(c5);
+  const round = { db, pubkey: nodes[0].pubkey, get: (id) => (rows.has(toHex(id)) ? { contract: rows.get(toHex(id)) } : null) };
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const calls = [];
+  const roster = { committeeFor: (id, role, opts = {}) => { calls.push({ id: toHex(id), posted: !!opts.posted }); return { ok: true, drawn }; } };
+  const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+  const seated = seatedFrom({ drawn: nodes.map((n) => n.pubkey), present: nodes.map((n) => n.pubkey), slots: 7 });
+  const cert = encodeSeatingCertificate({ roundId: rid0, role: 'game', seated,
+    signatures: seated.map((k) => ({ nodePubkey: k, signature: signSeating({ roundId: rid0, role: 'game', seated }, signer(nodes.find((n) => toHex(n.pubkey) === toHex(k)))) })) });
+  const without = seatingAgent({ round, roster, sign: signer(nodes[0]), verify, fetcher: async () => new Response('{}'), nowMs: () => NOW });
+  assert.equal(without.keepCert(rid0, 'game', cert).ok, false, 'no row and no series: refused, as before');
+  const agent = seatingAgent({ round, roster, sign: signer(nodes[0]), verify, fetcher: async () => new Response('{}'), nowMs: () => NOW,
+    contractOf: (id) => (toHex(id) === toHex(rid0) ? c0 : null) });
+  assert.deepEqual(agent.keepCert(rid0, 'game', cert), { ok: true, kept: true });
+  assert.deepEqual(calls.at(-1), { id: toHex(rid0), posted: true }, 'drawn as a posted contract');
+  assert.equal(agent.seatedFor(rid5, 'game').length, 7, 'every round of the table takes it');
+});
