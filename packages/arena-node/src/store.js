@@ -787,6 +787,8 @@ export function openStore(path = ':memory:') {
       stored_ms   INTEGER NOT NULL,
       PRIMARY KEY (round_id, k)
     );
+    -- the batches still waiting for their certificate, read on every order tick (kanban #576: a full scan of every batch, every 500 ms)
+    CREATE INDEX IF NOT EXISTS market_batches_open ON market_batches (round_id) WHERE certificate IS NULL;
     -- A BATCH THIS SEAT DECLINED: it did not sign it and never will, so a leader can show the batch can no longer be certified.
     CREATE TABLE IF NOT EXISTS market_batch_declines (
       round_id    BLOB NOT NULL,
