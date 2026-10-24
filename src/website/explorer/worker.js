@@ -110,8 +110,9 @@ async function poll(env) {
 }
 
 async function recent(env) {
-  const r = await env.DB.prepare('SELECT id, round, app, federation, stored_ms FROM txs ORDER BY stored_ms DESC LIMIT ?').bind(RECENT_MAX).all();
-  return (r.results || []).map((x) => ({ id: x.id, round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms) }));
+  // with its amount (the owner 2026-10-24: "Also add the amount to the list page in sats"): the entry's stake, msat
+  const r = await env.DB.prepare("SELECT id, round, app, federation, stored_ms, json_extract(json, '$.entry.stakeMsat') AS stake FROM txs ORDER BY stored_ms DESC LIMIT ?").bind(RECENT_MAX).all();
+  return (r.results || []).map((x) => ({ id: x.id, round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms), stakeMsat: x.stake === null ? null : String(x.stake) }));
 }
 
 async function txOf(env, ctx, id) {
