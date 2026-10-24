@@ -7348,7 +7348,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               observedAt: new Date(Number(x.observed_ms)).toISOString(), receivedAt: new Date(Number(x.received_ms)).toISOString(),
               attestors: a ? a.signatures.map((g) => toHex(g.key)) : [] };
           });
-          return { game: keys('game'), settlement: keys('settlement'), asker, outcomes,
+          // A GAME WHOSE ATTESTORS ARE DRAWN (kanban #630): the round's 7, and how many of them an outcome needs
+          let drawnAttestors = null;
+          try {
+            const c = decodeRoundContract(new Uint8Array(row.contract)), plugin = attestedOf(c);
+            if (plugin && isDrawnAttest(plugin.manifest)) { const d = roster.attestorsFor(rid); drawnAttestors = d.ok ? { keys: d.attestors.map((x) => toHex(x.pubkey)), needed: plugin.manifest.attestDraw.threshold } : { keys: null, why: d.why }; }
+          } catch { drawnAttestors = null; }
+          return { game: keys('game'), settlement: keys('settlement'), asker, outcomes, ...(drawnAttestors ? { drawnAttestors } : {}),
             settledAt: settled && settled.madeMs ? new Date(settled.madeMs).toISOString() : null, settlementWhy: settled ? settled.why || null : null,
             mine: txRecord.roundEvents(toHex(rid)) };
         };
