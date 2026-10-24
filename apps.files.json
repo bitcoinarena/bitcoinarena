@@ -351,7 +351,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "596d5bfc381043daf653af003f614e080260eb58",
+      "commit": "ff47f65926278ad5196b3ed82830b63badf794f6",
       "files": {
         "app.json": "35c2f5ad73b0c112b01049f62c5a785d0b4d0f3f9345a45d122c10223235f943",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -403,7 +403,7 @@
         "plugin/btc-updown-v21.js": "166550fea4b5e164d9aedb5a6b293892bbdf72d62fbfd0a99381ea29dd429ec7",
         "plugin/btc-updown-v22.js": "02b109b7c3aabd9ff381cc8871ed08b291bed043321320ef566b56c677c2092e",
         "plugin/btc-updown-v23.js": "fd92a5afb57f27b6568fcee92815ef43a5e2aa04355d98dab71ca68449aabe90",
-        "plugin/btc-updown-v24.js": "41f413cb0038d39b0e94b4b90ee763d49088ac7bab68faed9c2942903fd6a3b6",
+        "plugin/btc-updown-v24.js": "e5b9873fd9bccfcd369f93f65c7565ab04a2a884a57a5b294532162a10f8abf8",
         "plugin/btc-updown-v3.js": "94fa6c35b56e3729e90ed2bbe4eda70e1d854919020267ba811cb35903250d01",
         "plugin/btc-updown-v4.js": "3ad1f8437e7c0e3a2af7225ba37d3ae588c480dc9bebfc679483c047c052a784",
         "plugin/btc-updown-v5.js": "cfbe9b2e2033d3f1876b8313ded24711269346b6a0ed2cad2e04006440ac7a3f",
@@ -439,7 +439,7 @@
         "tools/sign-manifest-v21.mjs": "503f93f227f3816909b74b5214b7aee584ed818899becbaf8dc804a94697b775",
         "tools/sign-manifest-v22.mjs": "09925716fb46ad031a943c328b314307d2e380d15630e8fb38883e54466a29b3",
         "tools/sign-manifest-v23.mjs": "ad0d962dcd23e0a87a8baaf89d936a615e2d1b3c78a5f6f60ef1f608d83d8c9e",
-        "tools/sign-manifest-v24.mjs": "625a56c09057a835ce212a3405e692119700f48fe45ebad67096e19d85ac128e",
+        "tools/sign-manifest-v24.mjs": "bab07058995d372c28a95935b030f5f82849853c4a0ce412a01af6adaabdec62",
         "tools/sign-manifest-v3.mjs": "fb1707802e157c8f39feb3fdabf50ce97fac6014f10a5cffe686e92f9072a431",
         "tools/sign-manifest-v4.mjs": "dd790671d0995ae30289fae5cb19077f1f259a03d14160149a20f8a48b05abc3",
         "tools/sign-manifest-v5.mjs": "c2afdf74fd994599467535125b7040679640a62e62a3b3e88ecc35e3dfda5b65",
