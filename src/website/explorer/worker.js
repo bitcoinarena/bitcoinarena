@@ -35,26 +35,38 @@ async function readTx(id) {
   const first = known[0] ? known[0].body : null;
   const seats = answers.map((a) => ({ seat: a.seat.replace('https://tn4.bitcoin-arena.io/', ''), key: a.body && a.body.seat ? a.body.seat : null,
     status: a.status, known: !!(a.body && a.body.known), storedAt: a.body && a.body.storedAt ? a.body.storedAt : null,
-    steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null }));
+    steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null,
+    did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [] }));
   const settlement = known.map((a) => a.body.settlement).find((x) => x && x.txid) || null;
   const client = known.map((a) => a.body.client).find(Boolean) || null;
+  // WHO PROCESSED ITS ROUND (the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the committees, the
+  // asker and the outcome's attestors as the seats name them (the first that names each), each seat key named by the seat that has it
+  const proc = known.map((a) => a.body.processed).filter(Boolean);
+  const pick = (k) => (proc.find((p) => p[k] && (!Array.isArray(p[k]) || p[k].length)) || {})[k] || null;
+  const names = Object.fromEntries(seats.filter((x) => x.key).map((x) => [x.key, x.seat]));
+  const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
+    settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
   return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs: Date.now() - t0,
-    entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client,
+    entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client, processed,
     storedFirst: seats.map((s) => s.storedAt).filter(Boolean).sort()[0] || null, seats };
 }
 
 async function poll(env) {
   const kept = (await env.EXPLORER.get('recent', 'json')) || [];
   const since = (await env.EXPLORER.get('since', 'json')) || {};
-  const seen = new Set(kept.map((t) => t.id));
+  const byId = new Map(kept.map((t) => [t.id, t]));
   let added = 0;
   await Promise.all(SEATS.map(async (seat) => {
     const got = await ask(`${seat}/txs?since=${Number(since[seat] || Date.now() - 24 * 3600000)}&limit=500`);
     if (!got.body || !Array.isArray(got.body.txs)) return;
     for (const t of got.body.txs) {
       since[seat] = Math.max(Number(since[seat] || 0), Number(t.storedMs) || 0);
-      if (!hex64.test(String(t.id)) || seen.has(t.id)) continue;
-      seen.add(t.id); kept.push({ id: t.id, round: t.round, storedMs: Number(t.storedMs) }); added++;
+      if (!hex64.test(String(t.id))) continue;
+      const had = byId.get(t.id);
+      // a row kept before the seats named its app and federation gets them from the next seat that does
+      if (had) { if (!had.app && t.app) had.app = t.app; if (!had.federation && t.federation) had.federation = t.federation; continue; }
+      const row = { id: t.id, round: t.round, storedMs: Number(t.storedMs), app: t.app || null, federation: t.federation || null };
+      byId.set(t.id, row); kept.push(row); added++;
     }
   }));
   kept.sort((a, b) => b.storedMs - a.storedMs);

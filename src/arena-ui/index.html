@@ -3592,7 +3592,9 @@
         rememberPick(recordOf(sent.entryId, sent.ok ? 'placed' : 'submitted'));
         if (sessionKeyPkcs8 && window.ARENA_TX_TIMING_POST) {
           const txKey = named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0), txSteps = (window.ARENA_TX_STEPS || []).slice();
-          const post = () => window.ARENA_TX_TIMING_POST({ entryIdHex: sent.entryId, sessionKeyPkcs8, nodes: named.nodes || [], key: txKey, steps: txSteps,
+          // the press, as a time, taken now: the second hand-over comes after the next order's press may have moved ARENA_ORDER_PRESSED_AT
+          const pressedAt = new Date(Date.now() - (performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0))).toISOString();
+          const post = () => window.ARENA_TX_TIMING_POST({ entryIdHex: sent.entryId, sessionKeyPkcs8, nodes: named.nodes || [], key: txKey, steps: txSteps, pressedAt,
             committee: window.ARENA_COMMITTEE_LAST && window.ARENA_COMMITTEE_LAST.round === named.roundIdHex ? window.ARENA_COMMITTEE_LAST.ms : null });
           post(); setTimeout(post, 8000);   // again once the lock's acceptance is in (lockMs)
         }
@@ -6645,10 +6647,10 @@
       };
       // THE ORDER'S OWN TIMING TO THE SEATS (kanban #624): from the press, submitted / placed / lock and each step, signed with the order's
       // session key (Ed25519 over the seats' timingMessage: sha256 of "arena/tx-timing/v1\n" + id + "\n" + the timing's JSON), POST /tx-timing
-      window.ARENA_TX_TIMING_POST = async ({ entryIdHex, sessionKeyPkcs8, nodes, key, steps = [], committee = null }) => {
+      window.ARENA_TX_TIMING_POST = async ({ entryIdHex, sessionKeyPkcs8, nodes, key, steps = [], committee = null, pressedAt = null }) => {
         try {
           const t = (window.ARENA_ORDER_TIMES && window.ARENA_ORDER_TIMES.get(key)) || {};
-          const timing = { pressedAt: window.ARENA_ORDER_PRESSED_AT ? new Date(Date.now() - (performance.now() - window.ARENA_ORDER_PRESSED_AT)).toISOString() : null,
+          const timing = { pressedAt: pressedAt || (window.ARENA_ORDER_PRESSED_AT ? new Date(Date.now() - (performance.now() - window.ARENA_ORDER_PRESSED_AT)).toISOString() : null),
             submittedMs: t.submittedMs ?? null, placedMs: t.placedMs ?? null, lockMs: t.lockMs ?? null, steps, committee,
             ui: (document.querySelector('.build-stamp, #arena-build') || {}).textContent || null, agent: (navigator.userAgent || '').slice(0, 120) };
           const tj = JSON.stringify(timing);
