@@ -207,7 +207,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, VALUE_HELD_OUTCOME } from './game-market.js';
-import { isHeadToHead, marketOfRound, isGameMarket, isScalar, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
+import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
@@ -592,6 +592,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and, once ATTESTED, the pari-mutuel table the settlement seats pay from (built here from the entries' picks and the
   // outcome, no game code). null for a round of a replayed game, or of a game this node does not host.
   const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
+  // A GAME WHOSE ATTESTORS ARE DRAWN (kanban #630, protocol 21): an attestation is checked against the round's 7 drawn node keys and their
+  // BIP-340 signatures; a game naming fixed keys, against those and Ed25519, as before
+  const drawnAttestCheck = (manifest, rid) => {
+    if (!isDrawnAttest(manifest)) return { verify: verifyEd25519 };
+    const got = roster.attestorsFor(new Uint8Array(rid));
+    return { verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } }, drawn: got.ok ? got.attestors.map((e) => e.pubkey) : null };
+  };
   // A CENSUS OBJECTED (§5A.4): rounds whose census block this seat found, on its own chain, to be another block than an
   // explorer outside the network names - after a client's objection, checked here; such a round takes no new entry and lists it
   const censusObjections = new Map();          // round hex -> { explorer, why, atMs }
@@ -7646,7 +7653,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
         // A TEMPLATE'S ROUND (feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
         const stands = valued ? valueAttestationStands(a, { manifest: marketOfRound(plugin.manifest, c), roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
-          : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519, round: c });
+          : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), round: c, ...drawnAttestCheck(plugin.manifest, roundIdOf(c)) });
         if (!stands.ok) return text(res, 409, stands.why);
         // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
         // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one

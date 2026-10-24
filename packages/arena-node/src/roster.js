@@ -18,7 +18,7 @@
 // that reach the census the same way it counts the files that reach the core.
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
-import { selectCommittee, drawCommittee, slotsForRole } from '../../arena-protocol/src/sortition.js';
+import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
@@ -714,6 +714,28 @@ export class Roster {
       this.committees.set(kept, answer);
       if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
     }
+    return answer;
+  }
+
+  /**
+   * A ROUND'S DRAWN ATTESTORS (kanban #630, protocol 21): the 7 node keys of its census drawn on the attestor seed - the same census and
+   * beacon its committees are drawn on, so every seat names the same 7. { ok, attestors: [entry], root } or why it cannot say.
+   */
+  attestorsFor(roundIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'this node holds no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const census = this.censusFor(roundIdBytes);
+    if (!census.ok) return census;
+    const seeded = this.seedFor(roundIdBytes, contract);
+    if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
+    const kept = `${toHex(roundIdBytes)}:attest:${toHex(census.root)}:${toHex(seeded.seed)}`;
+    if (this.committees.has(kept)) return this.committees.get(kept);
+    let attestors;
+    try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }); } catch (e) { return { ok: false, why: e.message, root: census.root }; }
+    const answer = { ok: true, attestors, root: census.root };
+    this.committees.set(kept, answer);
+    if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
     return answer;
   }
 
