@@ -3099,6 +3099,9 @@
           // THE NOTES FOLLOW THE SUCCESSOR (§23A.6 step 3): before any top-up, every federation this browser
           // held notes in whose checked record says DRAINING and names this round's federation as its successor moves what
           // it can send here - no press; the stage line says moving. A join step, never a timer (W4: no interval spends).
+          // EACH STEP BEFORE THE LOCK TIMED (kanban #618, the owner 2026-10-24: "Order submitted in 16.78 s" - measured: 16-39 s between the
+          // deposit step and "the player wallet is open", nothing said in between)
+          const preAt = performance.now(); const lap = (step) => console.log('[arena] TIMED before the lock: ' + step + ' at ' + Math.round(performance.now() - preAt) + ' ms');
           try {
             const census = ARENACLIENT.checkedCensusFor(named.round);
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -3128,6 +3131,7 @@
               await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
             }
           } catch (e) { console.warn('[arena] merge before the join: ' + e.message); }
+          lap('succession and merge');
           // A ROUND IN ANOTHER FEDERATION IS ENTERED BY AN E-CASH EXCHANGE WITH A SEAT (kanban #614, the owner 2026-10-24: "Kein Lightning swap,
           // sondern übertragen in die andere federation"; "es sollte automatisch passieren"): before a top-up, what the round's federation lacks
           // is moved from the wallet's federation that holds the most spendable sats - its e-cash to a seat, the seat's e-cash of this federation
@@ -3143,6 +3147,7 @@
               console.log(`[arena] exchange into ${here.slice(0, 8)}: ${r.ok ? `${r.msat} msat from ${String(r.from).slice(0, 8)} in ${r.ms} ms` : r.why}`);
             }
           } catch (e) { console.warn('[arena] exchange: ' + e.message); }
+          lap('exchange');
           // NOT SPENDABLE YET IS SAID, NOT ASKED AS A DEPOSIT: when what the player holds would cover the round only with money still merging,
           // the order stops here by name - nothing taken, the reason the merge's own
           {
@@ -3163,8 +3168,10 @@
               throw new Error(text);
             }
           }
+          lap('spendable check');
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           const early = earlyDeposit ? await earlyDeposit : null;
+          lap('early deposit');
           await ARENACLIENT.fundPlayerWallet(Object.assign({}, wallet, { early,
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
             askDeposit: (offer) => window.ARENA_ASK_JOIN_DEPOSIT(offer, (o) => showDepositOffer(o, { message: ARENACLIENT.DEPOSIT_INSUFFICIENT })),
