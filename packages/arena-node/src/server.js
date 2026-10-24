@@ -2014,12 +2014,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A little after the cutoff (orderBatchGraceMs), so an order a page posted just before it has landed at every seat.
   let orderBatchTimeout = null;
   const orderBatchGraceMs = Math.min(100, Math.floor(orderBatchMs / 5));
+  // THE ROUNDS A TICK LOOKS AT, NOT EVERY ROUND THAT EVER HAD AN ORDER (kanban #576, profiled 2026-10-24 12:2xZ on test host seat 1: the
+  // tick walked all 131 rounds with orders - 3,475 orders, more every day - and read and decoded each one's contract to ask who leads its
+  // batch: ~7 % of the seat's main thread). A round's entry close never changes: read once, kept; a round closed more than two batch
+  // intervals ago is passed over, unless one of its batches still waits for its certificate.
+  const entryCloseOf = new Map();          // round id hex -> its entry close (ms), 0 when unreadable
   const orderBatchTick = async () => {
     const at = round.now();
     const k = Math.floor((at - orderBatchGraceMs) / orderBatchMs) - 1;
     // the rounds with orders: an entry with a limit price, open or within one interval of its close
     const rounds = round.db.prepare('SELECT DISTINCT round_id FROM market_orders UNION SELECT DISTINCT round_id FROM market_book_events UNION SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL').all().map((r) => new Uint8Array(r.round_id));
+    const waiting = new Set(round.db.prepare('SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL').all().map((r) => toHex(new Uint8Array(r.round_id))));
     for (const rid of rounds) {
+      const hex = toHex(rid);
+      let close = entryCloseOf.get(hex);
+      if (close === undefined) {
+        try { const row = round.get(rid); close = row ? Number(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs) : 0; } catch { close = 0; }
+        entryCloseOf.set(hex, close);
+      }
+      if (close && Number(at) > close + 2 * orderBatchMs + orderBatchGraceMs && !waiting.has(hex)) continue;
       if (!orderBook.leads(rid, k)) continue;
       const got = await orderBook.lead(rid, k).catch((e) => ({ ok: false, why: e.message }));
       if (got.ok && !got.empty) console.log(`[orders] ${toHex(rid).slice(0, 16)} batch ${k}: ${got.orderIds.length} order(s), ${got.cancels} cancel(s), ${got.sells} sell(s), signed by ${got.heldBy} of ${got.of}, certified ${got.certified} in ${got.timings.certifiedMs} ms`);
