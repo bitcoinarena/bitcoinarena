@@ -123,6 +123,7 @@ import { checkUpdate } from './plugin-check.js';
 import { machineOf } from './machine.js';
 import { createMarketEarnings } from './market-earnings.js';
 import { stepLog } from './step-log.js';
+import { createTxRecord, timingMessage } from './tx-record.js';
 import { createEcashExchange } from './ecash-exchange.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
@@ -2008,6 +2009,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
+  // EVERY ORDER'S TRANSACTION, KEPT HERE (kanban #624, tx-record.js): each door's steps per transaction id, and the page's signed timing
+  const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
     peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
@@ -6916,13 +6919,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // goes to disk; the share is re-opened from it whenever it is needed, so
       // a stolen database is a pile of envelopes.
       if (req.method === 'POST' && url.pathname === '/handout') {
-        const steps = stepLog('handout', '-').on(res);   // (kanban #618, step-log.js)
+        const steps = stepLog('handout', '-', { keep: txRecord.keep }).on(res);   // (kanban #618, step-log.js; kept per id, #624)
         // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout` checks a handout only against itself, and measured: a crafted
         // 1-of-2 and a 7-of-7 on seven signer nodes were both taken 201. A stake is dealt at the round's number or not at all - the same
         // number the settle opens at and the page deals (takeHandout).
         const got = await takeHandout(await read(req));
         steps.at(got.ok ? 'share opened' : 'refused');
         if (!got.ok) return text(res, got.status || 409, got.why);
+        steps.named(toHex(got.id));
         res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), ...CORS });
         return res.end(Buffer.from(got.id));
       }
@@ -6958,7 +6962,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'POST' && url.pathname === '/entry') {
         // EVERY STEP OF THE ORDER WITH ITS TIME (kanban #618, step-log.js): one [steps] line when the answer leaves
-        const steps = stepLog('entry', '-').on(res);
+        const steps = stepLog('entry', '-', { keep: txRecord.keep }).on(res);
         const contract = decodeEntryContract(await read(req));
         steps.named('round ' + toHex(contract.roundId).slice(0, 8)).at('body');
         // AN ENTRY INTO A ROUND OF A GAME THIS NODE DOES NOT HOST: that round was never stored, and the node
@@ -7205,6 +7209,57 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // must verify under, and that key is a field of the entry the player
       // signed. Without this door a stranger holding the proof can read it and
       // cannot check it, which is most of what "portable" was supposed to buy.
+      // A TRANSACTION, AS THIS SEAT KNOWS IT (kanban #624): its id is the entry id. The entry (round, app, side, price, stake, keys), when it
+      // was stored here, its locks with their federation transaction ids, its place in the book, the round's settlement, every door it passed
+      // here with each step's time (its handout's too), and the page's own signed timing - what explorer.bitcoin-arena.io shows
+      if (req.method === 'GET' && url.pathname === '/tx') {
+        const idHex = String(url.searchParams.get('id') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(idHex)) return text(res, 400, 'GET /tx?id=<transaction id: the entry id, 64 hex>');
+        const eid = Buffer.from(idHex, 'hex');
+        const raw = round.entry(eid);
+        const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))); };
+        if (!raw) return send(404, { id: idHex, seat: toHex(round.pubkey), known: false, steps: txRecord.steps([idHex]) });
+        const e = decodeEntryContract(raw);
+        const rr = round.get(e.roundId);
+        let app = null, gameId = null, federation = null;
+        try { const rc = decodeRoundContract(new Uint8Array(rr.contract)); gameId = toHex(rc.gameId); const h = hosted.get(gameId); app = h ? h.name : null; const ef = entryFederation(rc, e); federation = ef.ok ? toHex(ef.federationId) : null; } catch { /* named as unknown */ }
+        const stored = round.db.prepare('SELECT joined_ms FROM entries WHERE entry_id = ?').get(eid);
+        const op = (o) => (o && o.txid ? `${toHex(o.txid)}:${String(o.outIdx)}` : null);
+        const lockOf = (l) => (l ? { outpoint: l.outpoint, txid: String(l.outpoint).split(':')[0], contractId: l.contractId, verifiedAt: l.verifiedMs ? new Date(Number(l.verifiedMs)).toISOString() : null } : null);
+        const order = round.db.prepare('SELECT batch, received_ms FROM market_orders WHERE order_id = ?').get(idHex);
+        const settled = rr ? round.lockSettlement(e.roundId) : null;
+        const ref = e.vssSharesRef && !e.vssSharesRef.every((b) => b === 0) ? toHex(e.vssSharesRef) : null;
+        return send(200, { id: idHex, seat: toHex(round.pubkey), known: true,
+          entry: { round: toHex(e.roundId), app, gameId, federation, player: toHex(e.playerPubkey), stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat,
+            limitPrice: e.limitPrice !== undefined ? e.limitPrice : null, pick: e.pick !== undefined ? e.pick : null, handout: ref,
+            stakeLockOutpoint: op(e.stakeLockOutpoint), feeLockOutpoint: op(e.feeLockOutpoint) },
+          storedAt: stored ? new Date(Number(stored.joined_ms)).toISOString() : null,
+          locks: { stake: lockOf(round.stakeLock(eid)), fee: lockOf(round.feeLock ? round.feeLock(eid) : null) },
+          book: order ? { batch: order.batch !== null ? String(order.batch) : null, receivedAt: order.received_ms ? new Date(Number(order.received_ms)).toISOString() : null } : null,
+          settlement: settled ? { txid: settled.txid, state: settled.state, why: settled.why || null } : null,
+          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex) });
+      }
+      // THE NEWEST TRANSACTIONS HERE (kanban #624): what explorer.bitcoin-arena.io polls - ids stored since `since` (ms), oldest first, at most 500
+      if (req.method === 'GET' && url.pathname === '/txs') {
+        const since = Math.max(0, Number(url.searchParams.get('since') || 0) || 0), limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') || 200) || 200));
+        const rows = round.db.prepare('SELECT entry_id, round_id, joined_ms FROM entries WHERE joined_ms > ? ORDER BY joined_ms LIMIT ?').all(since, limit);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ seat: toHex(round.pubkey), txs: rows.map((r) => ({ id: Buffer.from(r.entry_id).toString('hex'), round: Buffer.from(r.round_id).toString('hex'), storedMs: Number(r.joined_ms) })) }));
+      }
+      // THE PAGE'S OWN TIMING OF ITS ORDER (kanban #624): { timing, sig } - sig the order's session key's Ed25519 signature over
+      // timingMessage(id, JSON of timing); kept for GET /tx. No one but the page that holds the order's session key writes it.
+      if (req.method === 'POST' && url.pathname === '/tx-timing') {
+        const idHex = String(url.searchParams.get('id') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(idHex)) return text(res, 400, 'POST /tx-timing?id=<transaction id>');
+        const raw = round.entry(Buffer.from(idHex, 'hex'));
+        if (!raw) return text(res, 404, 'this seat holds no such transaction');
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a timing is JSON { timing, sig }'); }
+        const tj = JSON.stringify(body && body.timing ? body.timing : null);
+        if (!body || !body.timing || typeof body.sig !== 'string' || !/^[0-9a-f]{128}$/i.test(body.sig)) return text(res, 400, 'a timing is { timing, sig } - sig 64 bytes hex');
+        if (!verifyEd25519Kept(fromHex(body.sig), timingMessage(idHex, tj), decodeEntryContract(raw).sessionPubkey)) return text(res, 403, 'that timing is not signed by its order\'s session key');
+        const kept = txRecord.keepClientTiming(idHex, tj);
+        return text(res, kept.ok ? 201 : 400, kept.ok ? 'timing kept' : kept.why);
+      }
       // AN ORDER'S LOCKS AS THIS SEAT VERIFIED THEM (kanban #620): the stake lock's and the fee lock's fields - what the federation holds at
       // the outpoints the entry names - for a seat that holds the order's certified batch but never received its locks (replayOrder)
       if (req.method === 'GET' && url.pathname === '/order-locks') {
@@ -7868,7 +7923,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
-        const steps = stepLog('lock', toHex(eid)).on(res); steps.at('entry');
+        const steps = stepLog('lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('entry');
         const lockTimed = (said) => { steps.took(timing).at(said.slice(0, 40)); };
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
@@ -7888,7 +7943,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let fields;
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
-        const steps = stepLog('fee-lock', toHex(eid)).on(res); steps.at('body');   // (kanban #618, step-log.js)
+        const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }

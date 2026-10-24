@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena Explorer</title>
+<meta name="theme-color" content="#0f0a10">
+<meta name="description" content="Every order's transaction on the Bitcoin Arena: its round, its locks, when each node stored it, and how long each step took.">
+<style>
+  :root { --bg:#0f0a10; --panel:#1a1218; --line:#33232c; --text:#f6ece4; --dim:#a8968c; --btc:#f7931a; --bull:#2fd38a; --cyan:#4fd1ff; --bear:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 400 15px/1.55 Inter, system-ui, sans-serif; }
+  a { color: var(--cyan); text-decoration: none; } a:hover { text-decoration: underline; }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
+  nav { position: sticky; top: 0; background: rgba(15,10,16,.9); border-bottom: 1px solid var(--line); }
+  nav .in, main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+  nav .in { display: flex; align-items: center; gap: 14px; height: 56px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 17px system-ui; color: var(--text); }
+  .brand i { width: 26px; height: 26px; border-radius: 7px; background: conic-gradient(from 210deg, var(--btc), #ffd166, var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; }
+  form { margin-left: auto; display: flex; gap: 8px; flex: 1; max-width: 560px; }
+  input { flex: 1; min-width: 0; background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 8px 12px; font: 13px "JetBrains Mono", monospace; }
+  button { background: var(--btc); color: #1a0f00; border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
+  h1 { font-size: 26px; margin: 24px 0 6px; } h2 { font-size: 18px; margin: 28px 0 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin: 12px 0; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .dim { color: var(--dim); } .ok { color: var(--bull); } .bad { color: var(--bear); } .slow { color: var(--btc); font-weight: 700; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; } dt { color: var(--dim); } dd { margin: 0; word-break: break-all; }
+  .bar { height: 8px; background: var(--btc); border-radius: 4px; min-width: 2px; }
+</style>
+</head>
+<body>
+<nav><div class="in"><a class="brand" href="/"><i>₿</i>Arena Explorer</a>
+  <form id="find"><input id="q" placeholder="transaction id (64 hex)" autocomplete="off"><button>Find</button></form></div></nav>
+<main id="main"><p class="dim">Loading …</p></main>
+<script>
+// THE EXPLORER'S PAGE (kanban #624): the newest transactions, or one - kept in this browser too (localStorage), so a transaction read once shows at
+// once and is refreshed behind it
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const kept = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full: not kept */ } };
+const sat = (msat) => (msat === null || msat === undefined ? '–' : (Number(msat) / 1000).toLocaleString('en-US') + ' sat');
+const ago = (iso) => { const s = Math.round((Date.now() - Date.parse(iso)) / 1000); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; };
+$('find').onsubmit = (e) => { e.preventDefault(); const v = $('q').value.trim().toLowerCase(); if (/^[0-9a-f]{64}$/.test(v)) location.href = '/tx/' + v; };
+
+async function list() {
+  const draw = (txs) => { $('main').innerHTML = `<h1>Newest transactions</h1><p class="dim">Every order and pick the nodes stored, read from them every minute.</p>
+    <div class="card"><table><tr><th>Transaction</th><th>Round</th><th>Stored</th></tr>${txs.slice(0, 200).map((t) => `<tr><td class="mono"><a href="/tx/${t.id}">${t.id.slice(0, 24)}…</a></td>
+    <td class="mono">${esc(String(t.round).slice(0, 16))}</td><td>${new Date(t.storedMs).toISOString().replace('T', ' ').slice(0, 19)} UTC <span class="dim">${ago(new Date(t.storedMs).toISOString())}</span></td></tr>`).join('') || '<tr><td colspan=3 class="dim">None yet.</td></tr>'}</table></div>`; };
+  const had = kept('explorer.recent'); if (had) draw(had);
+  try { const r = await (await fetch('/api/recent')).json(); keep('explorer.recent', r.txs); draw(r.txs); } catch (e) { if (!had) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
+}
+
+function drawTx(tx) {
+  const e = tx.entry || {};
+  const press = tx.client && tx.client.pressedAt ? Date.parse(tx.client.pressedAt) : null;
+  const t0 = press || Math.min(...tx.seats.flatMap((s) => s.steps.map((x) => x.atMs)).filter(Number.isFinite));
+  const rel = (ms) => (Number.isFinite(ms) ? ((ms - t0) / 1000).toFixed(2) + ' s' : '–');
+  const slow = (ms) => (ms > 3000 ? 'slow' : '');
+  const c = tx.client;
+  const clientRows = c ? [['submitted', c.submittedMs], ['placed', c.placedMs], ['lock accepted', c.lockMs]].map(([k, v]) => `<tr><td>${k}</td><td class="${slow(v)}">${v === null || v === undefined ? '–' : (v / 1000).toFixed(2) + ' s'}</td></tr>`).join('') : '';
+  const pageSteps = c && Array.isArray(c.steps) ? c.steps.map((x) => `<tr><td>${esc(x.step)}</td><td>${(x.ms / 1000).toFixed(2)} s</td></tr>`).join('') : '';
+  const doors = tx.seats.flatMap((s) => s.steps.map((x) => ({ ...x, seat: s.seat }))).sort((a, b) => a.atMs - b.atMs);
+  $('main').innerHTML = `<h1>Transaction</h1><p class="mono">${esc(tx.id)}</p>
+  <div class="card"><dl>
+    <dt>App</dt><dd>${esc(e.app || e.gameId || '–')}</dd><dt>Round</dt><dd class="mono">${esc(e.round || '–')}</dd><dt>Federation</dt><dd class="mono">${esc(e.federation || '–')}</dd>
+    <dt>Stake</dt><dd>${sat(e.stakeMsat)}${e.limitPrice !== null && e.limitPrice !== undefined ? ' · at most ' + Math.round(Number(e.limitPrice) / 1000) + '¢' : ''}${e.pick !== null && e.pick !== undefined ? ' · pick ' + esc(e.pick) : ''}</dd>
+    <dt>Fee</dt><dd>${sat(e.feeMsat)}</dd><dt>Player</dt><dd class="mono">${esc(e.player || '–')}</dd>
+    <dt>Stake lock</dt><dd class="mono">${esc(tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–')}</dd>
+    <dt>Fee lock</dt><dd class="mono">${esc(tx.locks && tx.locks.fee ? tx.locks.fee.outpoint : e.feeLockOutpoint || '–')}</dd>
+    <dt>Settlement</dt><dd class="mono">${tx.settlement ? esc(tx.settlement.state + ' · ' + tx.settlement.txid) : '<span class="dim">not yet</span>'}</dd>
+    <dt>Stored first</dt><dd>${tx.storedFirst ? esc(tx.storedFirst.replace('T', ' ').replace('Z', ' UTC')) : '–'}</dd>
+    <dt>Read</dt><dd class="dim">${esc(tx.readAt)} · ${tx.cached ? 'cached' : 'from ' + tx.seats.filter((s) => s.status).length + ' nodes in ' + tx.readMs + ' ms'}</dd></dl></div>
+  <h2>The page's timing ${press ? '<span class="dim">(from the press, ' + esc(tx.client.pressedAt) + ')</span>' : ''}</h2>
+  <div class="card">${c ? `<table><tr><th>Step</th><th>After the press</th></tr>${clientRows}${pageSteps}</table>` : '<p class="dim">The page handed no timing for this transaction.</p>'}</div>
+  <h2>At the nodes <span class="dim">(time ${press ? 'after the press' : 'after the first door'})</span></h2>
+  <div class="card"><table><tr><th>Node</th><th>Door</th><th>Arrived</th><th>Took</th><th>Steps</th><th>Answer</th></tr>${doors.map((x) => `<tr><td>${esc(x.seat)}</td><td>${esc(x.door)}</td>
+    <td class="${slow(x.atMs - t0)}">${rel(x.atMs)}</td><td>${x.ms} ms</td><td class="dim">${esc(x.steps.map((s) => s.step + ' ' + s.ms).join(', '))}</td><td class="${x.status >= 200 && x.status < 300 ? 'ok' : 'bad'}">${x.status}</td></tr>`).join('') || '<tr><td colspan=6 class="dim">No node kept steps for it.</td></tr>'}</table></div>
+  <h2>Nodes</h2><div class="card"><table><tr><th>Node</th><th>Holds it</th><th>Stored</th><th>Book</th></tr>${tx.seats.map((s) => `<tr><td>${esc(s.seat)}</td><td class="${s.known ? 'ok' : 'dim'}">${s.known ? 'yes' : s.status ? 'no' : 'no answer'}</td>
+    <td>${s.storedAt ? rel(Date.parse(s.storedAt)) : '–'}</td><td class="dim">${s.book ? 'batch ' + esc(s.book.batch || '–') : ''}</td></tr>`).join('')}</table></div>`;
+}
+
+async function one(id) {
+  const had = kept('explorer.tx.' + id); if (had) drawTx(had);
+  try {
+    const r = await fetch('/api/tx/' + id); const tx = await r.json();
+    if (r.status === 404 && !had) { $('main').innerHTML = '<h1>Not found</h1><p class="dim">No node holds the transaction ' + esc(id) + '.</p>'; return; }
+    if (tx.found) { keep('explorer.tx.' + id, tx); drawTx(tx); }
+  } catch (e) { if (!had) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
+}
+
+const m = /^\/tx\/([0-9a-f]{64})\/?$/.exec(location.pathname);
+if (m) { $('q').value = m[1]; one(m[1]); } else list();
+</script>
+</body>
+</html>

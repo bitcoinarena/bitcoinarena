@@ -267,7 +267,7 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
 }
 
 /** One signer node of a paying FEDERATION round, a player's stake dealt and joined, the entry naming its lock. */
-export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATION_ID, custody = 'FEDERATION', outpoint: given } = {}) {
+export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATION_ID, custody = 'FEDERATION', outpoint: given, sessionSecret = null } = {}) {
   // A CHAIN THAT BONDS THE ROUND'S COMMITTEE (RULED 2026-09-25): this signer node and a placeholder no daemon stands
   // behind - so the claim key is handed (CLAIM, the key the locks below name), never a DKG toward a key that is not there.
   const slot = bondedChainSlot(lockPort());
@@ -304,7 +304,7 @@ export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATIO
   const feePreimage = rand(32);
   const feeLockOutpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
-    roundId: rid, playerPubkey: player, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
+    roundId: rid, playerPubkey: player, sessionPubkey: ed25519.getPublicKey(sessionSecret || ed25519.utils.randomSecretKey()),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x16), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage, stakeLockOutpoint: outpoint, feeLockOutpoint,
