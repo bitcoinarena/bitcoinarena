@@ -2908,6 +2908,10 @@
       // EACH STEP FROM THE PRESS, KEPT FOR THE ORDER'S TRANSACTION (kanban #624): handed to the seats with the order's timing (ARENA_TX_TIMING_POST)
       const pressAt = window.ARENA_ORDER_PRESSED_AT || performance.now();
       window.ARENA_TX_STEPS = [];
+      // AN ORDER IN FLIGHT HAS THE WALLET TO ITSELF (playtest 2026-10-24 21:24Z, 0f975760: "It's stuck at placing" - "money moved ahead into
+      // 337ae01a ... in 163483 ms", then "lock accepted 170638 ms after the entry went out", 80 ms after it): no money moved ahead starts,
+      // and one under way receives only after the order is placed or refused - 60 s at most
+      window.ARENA_ORDER_BUSY_UNTIL = Date.now() + 60000;
       const txStep = (step) => { try { window.ARENA_TX_STEPS.push({ step, ms: Math.round(performance.now() - pressAt) }); } catch { /* not kept */ } };
       window.ARENA_TX_STEP = txStep;   // the merge's own steps (combineIn) go into this order's timing too
       const joinStep = async (name, f) => {
@@ -3577,6 +3581,7 @@
           chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0, state,
             timing: (window.ARENA_ORDER_TIMES && window.ARENA_ORDER_TIMES.get(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0))) || {} } } : {});
         const t0 = performance.now();
+        const placedIds = window.ARENA_PLACED_IDS || (window.ARENA_PLACED_IDS = new Set());   // placed orders: no slow-tx log for them at 10 s
         let early = null;
         // HOW LONG IT TOOK, SHOWN (the owner 2026-10-23 ~20:35Z: "In der Web ui wenn die Order [placed] wurde sag wie lange das gedauert hat - Bei btc
         // up down"): a note at the foot of the page - submitted in N s, then placed in N s - over the market's own client, gone after 6 s
@@ -3595,6 +3600,10 @@
         let submittedAt = null;
         const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, onSubmitted: (x) => {
           early = x.entryId;
+          // AN ORDER STILL PLACING AFTER 10 s KEEPS ITS LOG TOO (playtest 2026-10-24 21:26Z: "It's stuck at placing" - 0f975760's entry at six
+          // seats, no lock at any, and no log kept: only a placed order kept one): the slow tx row and its Copy log, without waiting for the end
+          { const id = x.entryId, from = window.ARENA_ORDER_PRESSED_AT || t0;
+            setTimeout(() => { if (!placedIds.has(id) && window.ARENA_KEEP_SLOW_TX) window.ARENA_KEEP_SLOW_TX(id, performance.now() - from); }, 10000); }
           window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: x.entryId, pick: chosen.pick, state: 'submitted' };
           rememberPick(recordOf(x.entryId, 'submitted'));
           console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': submitted in ' + Math.round(performance.now() - t0) + ' ms');
@@ -3609,6 +3618,8 @@
           if (!put.ok && sent.ok) { sent.ok = false; sent.why = 'not accepted: ' + put.why; sent.entries = sent.entries.map((x) => ({ ...x, status: x.status === 201 ? 0 : x.status })); } }
         if (!sent.entries.some((x) => x.status === 201) || (sent.why && /not accepted/.test(sent.why))) {
           if (early) { try { window.sessionStorage.setItem('arena.market.picks', JSON.stringify(readPicks().filter((x) => x.entryIdHex !== early))); } catch { /* this page only */ } }
+          window.ARENA_ORDER_BUSY_UNTIL = 0;
+          if (early && window.ARENA_KEEP_SLOW_TX) window.ARENA_KEEP_SLOW_TX(early, performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0));   // a refused order's log, kept
           window.ARENA_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return;
         }
         window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, state: sent.ok ? 'placed' : 'submitted' };
@@ -3617,6 +3628,8 @@
         // THE TRANSACTION'S ID IN THE PAGE'S LOG, AND ITS TIMING TO THE SEATS (kanban #624: "In the logs we need the txid too so tracing delays is
         // 100% possible"): the entry id is the transaction's id - the seats keep each door's steps under it, the page hands its own (signed)
         console.log('[arena] tx ' + sent.entryId + ': ' + (sent.ok ? 'placed' : 'submitted') + ' ' + Math.round(performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0)) + ' ms after the press, round ' + named.roundIdHex.slice(0, 16));
+        if (sent.ok) placedIds.add(sent.entryId);
+        window.ARENA_ORDER_BUSY_UNTIL = 0;
         if (sent.ok && window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0), 'placedMs', performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0));
         rememberPick(recordOf(sent.entryId, sent.ok ? 'placed' : 'submitted'));
         if (sessionKeyPkcs8 && window.ARENA_TX_TIMING_POST) {
@@ -4452,6 +4465,7 @@
         if (!taken) { try { await w.receiveEcash(sent.ecash); vault().removeItem(key); } catch { /* kept: received at the next merge */ } }
         return { ok: false, from, why: why || 'no seat exchanges' };
       }
+      for (let i = 0; i < 240 && Date.now() < (window.ARENA_ORDER_BUSY_UNTIL || 0); i++) await new Promise((r) => setTimeout(r, 250));   // the order first
       const tw = await openW(to, toInvite);
       if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(to, 'exchanged in from federation ' + String(from).slice(0, 8), 30000);
       const got = JSON.parse(await tw.receiveEcash(answer.ecash));
@@ -4466,7 +4480,7 @@
     // listed in every federation and need none (moneyFirst). One at a time, at most once a minute.
     window.ARENA_PREPARE_FUNDS = async () => {
       const st = window.ARENA_PREPARE_FUNDS;
-      if (st.busy || Date.now() - (st.lastMs || 0) < 60000) return;
+      if (st.busy || Date.now() - (st.lastMs || 0) < 60000 || Date.now() < (window.ARENA_ORDER_BUSY_UNTIL || 0)) return;
       if (!window.sessionStorage.getItem('arena.player.seed')) return;
       const fedOf = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.federationId instanceof Uint8Array ? ARENACLIENT.toHex(c.federationId) : null; };
       const rows = (window.ARENA_LOBBY_ROWS || []).filter((r) => !r.free && r.joinable && fedOf(r) && Number((r.contract || r.raw.contract).stakeMsat || 0) > 0)
