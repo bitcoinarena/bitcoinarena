@@ -11,12 +11,29 @@ export const FOUNDING_NODES = 10;     // from ten, the nodes found a federation 
 export const RAM_FROM = 6;            // "bei mehr als 5 nodes"
 export const PORT_STEP = 100;
 
-/** The count and RAM disk choice, checked: { ok, count, ram } or { ok: false, why }. `ram` undefined: the default (yes from RAM_FROM). */
-export function instancesChoice({ count, ram, network = 'testnet4' } = {}) {
+export const MACHINE_NAME_MAX = 40;
+/**
+ * THIS MACHINE'S NAME, THE OPERATOR'S OWN (kanban #621, the owner 2026-10-24: "give your machine a custom name when installing multiple
+ * instances, and that name is displayed in health - machines. This is asked in the installer, all platforms"): every node of the install
+ * names it (ARENA_MACHINE_NAME, machine.js), and the health page's machines section shows it. Trimmed, at most MACHINE_NAME_MAX
+ * characters, no line break, quote, backslash or '=' (it is one line of an environment file). Empty: no name. { ok, name } or { ok: false, why }.
+ */
+export function machineNameChoice(name) {
+  const t = String(name === undefined || name === null ? '' : name).trim();
+  if (!t) return { ok: true, name: null };
+  if (t.length > MACHINE_NAME_MAX) return { ok: false, why: `a machine name is at most ${MACHINE_NAME_MAX} characters` };
+  if (/[\x00-\x1f\x7f"'`\\=$]/.test(t)) return { ok: false, why: 'a machine name has no line break, quote, backslash, $ or =' };
+  return { ok: true, name: t };
+}
+
+/** The count, RAM disk choice and machine name, checked: { ok, count, ram, name } or { ok: false, why }. `ram` undefined: the default (yes from RAM_FROM). */
+export function instancesChoice({ count, ram, name, network = 'testnet4' } = {}) {
   const n = Number(count === undefined || count === '' ? 1 : count);
   if (!Number.isInteger(n) || n < 1 || n > INSTANCES_MAX) return { ok: false, why: `the number of nodes is a whole number from 1 to ${INSTANCES_MAX}` };
   if (n > 1 && network !== 'testnet4') return { ok: false, why: 'more than one node on a machine is for testnet4 only' };
-  return { ok: true, count: n, ram: n >= RAM_FROM ? ram !== false : false };
+  const m = machineNameChoice(name);
+  if (!m.ok) return m;
+  return { ok: true, count: n, ram: n >= RAM_FROM ? ram !== false : false, name: m.name };
 }
 
 /** What the intro says for a count: the bonds it takes, and from ten that they found their own federation. */

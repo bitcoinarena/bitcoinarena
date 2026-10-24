@@ -178,10 +178,10 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     'GET /api/state': async () => ({ ok: true, ...view() }),
     // HOW MANY NODES (kanban #596): the intro's count and RAM disk choice, checked as `arena-install --instances` checks them
     'POST /api/instances': async (b) => {
-      const c = instancesChoice({ count: b.count, ram: b.ram, network: 'testnet4' });
+      const c = instancesChoice({ count: b.count, ram: b.ram, name: b.name, network: 'testnet4' });
       if (!c.ok) return c;
-      state.save({ instances: { count: c.count, ram: c.ram, first: { instance: INSTANCE, portOffset: PORT_OFFSET } } });   // node 1's name and ports (kanban #596)
-      return { ok: true, instances: { count: c.count, ram: c.ram }, note: instancesNote(c.count) };
+      state.save({ instances: { count: c.count, ram: c.ram, name: c.name, first: { instance: INSTANCE, portOffset: PORT_OFFSET } } });   // node 1's name and ports (kanban #596)
+      return { ok: true, instances: { count: c.count, ram: c.ram, name: c.name }, note: instancesNote(c.count) };
     },
 
     'POST /api/chain/test': async (b) => ({ ok: true, result: await test(chainOf(b)) }),

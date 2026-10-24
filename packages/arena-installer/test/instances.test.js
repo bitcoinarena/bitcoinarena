@@ -8,13 +8,13 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { instancesChoice, instancesNote, instancesOf, ramAnswer, RAM_QUESTION, nextInstance, prefillFrom } from '../src/instances.js';
-import { nodeState } from '../src/state.js';
+import { nodeState, seatEnv } from '../src/state.js';
 
 test('the count: 1 by default, 1..20, more than one on testnet4 only; the RAM disk from more than 5, yes unless declined', () => {
-  assert.deepEqual(instancesChoice({}), { ok: true, count: 1, ram: false });
-  assert.deepEqual(instancesChoice({ count: 5, ram: true }), { ok: true, count: 5, ram: false }, '5 nodes: no RAM disk offered');
-  assert.deepEqual(instancesChoice({ count: 6 }), { ok: true, count: 6, ram: true }, 'more than 5: yes by default');
-  assert.deepEqual(instancesChoice({ count: '12', ram: false }), { ok: true, count: 12, ram: false }, 'declined');
+  assert.deepEqual(instancesChoice({}), { ok: true, count: 1, ram: false, name: null });
+  assert.deepEqual(instancesChoice({ count: 5, ram: true }), { ok: true, count: 5, ram: false, name: null }, '5 nodes: no RAM disk offered');
+  assert.deepEqual(instancesChoice({ count: 6 }), { ok: true, count: 6, ram: true, name: null }, 'more than 5: yes by default');
+  assert.deepEqual(instancesChoice({ count: '12', ram: false }), { ok: true, count: 12, ram: false, name: null }, 'declined');
   for (const bad of [0, 21, 2.5, 'x']) assert.equal(instancesChoice({ count: bad }).ok, false, String(bad));
   assert.match(instancesChoice({ count: 3, network: 'mainnet' }).why, /testnet4 only/);
   assert.equal(instancesChoice({ count: 1, network: 'mainnet' }).ok, true, 'one node anywhere');
@@ -57,4 +57,16 @@ test('the next node after each one, none after the last; a further node takes ov
     assert.equal(s.owner, undefined, 'the owner key stays its own'); assert.equal(s.done.seed, undefined, 'the seed stays its own');
     assert.equal(prefillFrom(base, b).ok, false, 'a node that began its steps is left as it is');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// THE MACHINE'S NAME (kanban #621, the owner 2026-10-24: "give your machine a custom name when installing multiple instances, and that name is
+// displayed in health - machines"): checked, kept with the count, and in every node's settings as ARENA_MACHINE_NAME, which the node's
+// machine.js reports and the health page's machines show
+test('the machine name: trimmed, at most 40 characters, one env line; every node of the install names it', () => {
+  assert.deepEqual(instancesChoice({ count: 3, name: '  Office macOS mini ' }), { ok: true, count: 3, ram: false, name: 'Office macOS mini' });
+  assert.equal(instancesChoice({ count: 3, name: 'Ölfeld Büro' }).name, 'Ölfeld Büro');
+  for (const bad of ['a=b', 'two\nlines', 'say "hi"', 'x'.repeat(41), 'back\\slash', '$HOME']) assert.equal(instancesChoice({ count: 2, name: bad }).ok, false, bad);
+  const env = seatEnv({ instances: { count: 3, name: 'Office macOS mini' }, apps: [] }, { home: '/h', release: '/r' });
+  assert.match(env, /^ARENA_MACHINE_NAME=Office macOS mini$/m);
+  assert.doesNotMatch(seatEnv({ instances: { count: 1, name: null }, apps: [] }, { home: '/h', release: '/r' }), /ARENA_MACHINE_NAME/);
 });
