@@ -28730,6 +28730,8 @@ function federationHealth(st) {
   if (status === 'CRITICAL') return { level: 'warn', label: 'Critical', note: `One more guardian lost halts it. Your funds move to ${succ} by themselves.` };
   if (status === 'HALTED') return { level: 'bad', label: 'Offline (halted)', note: 'Every note is frozen until its guardians return or it is liquidated.' };
   if (status === 'CLOSED') return { level: 'idle', label: 'Closed', note: `Its successor holds everything: ${succ}.` };
+  // read but not verified (kanban #631: it said "Not checked yet" though it was checked): its record did not stand - why, when the read says
+  if (status === 'unverified') return { level: 'idle', label: 'Unverified', note: st.why ? String(st.why).slice(0, 160) : 'Its signed record could not be checked now.' };
   return { level: 'idle', label: 'Not checked yet', note: '' };
 }
 

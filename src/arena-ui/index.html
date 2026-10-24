@@ -1098,7 +1098,24 @@
     /* the next round's box is Tick Tock's: games/nextblock/unity-page.css (packages/nextblock/page, kanban #521) */
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
     /* THE WALLET MODAL (kanban #558): over Settings (40), under Deposit and Withdraw (44); its contents styled as Settings' own */
-    #arena-wallet-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 42; width: min(94vw, 560px); max-height: calc(100vh - 70px - env(safe-area-inset-top, 0px)); overflow-y: auto; box-sizing: border-box; background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+    #arena-wallet-modal { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 42; width: min(94vw, 560px); max-height: calc(100vh - 70px - env(safe-area-inset-top, 0px)); max-height: calc(100dvh - 100px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; box-sizing: border-box; background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+    /* TO ITS END ON A PHONE (kanban #631, "can't fully scroll down on mobile"): 100vh is taller than what iOS Safari shows under its bars, so the
+       window's foot lay under them - its height is the visible screen's (dvh) less the header and the page's foot bar (34 px), its last line clear of the home bar */
+    #arena-wallet-modal { padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+    #arena-wallet-modal .wl-tabs { display: flex; gap: 6px; margin: 12px 0 10px; border-bottom: 1px solid #2a3440; }
+    #arena-wallet-modal .wl-tabs button { flex: 1; margin: 0 0 -1px; padding: 9px 6px; width: auto; background: none; color: #8b949e; border: 0; border-bottom: 2px solid transparent;
+      border-radius: 0; font: 600 14px/1.2 system-ui, -apple-system, sans-serif; cursor: pointer; }
+    #arena-wallet-modal .wl-tabs button.on { color: #f7931a; border-bottom-color: #f7931a; }
+    /* the old text line over the balance (kanban #631: "Remove the old text only stuff at the top"): the Federations tab says where it sits */
+    #arena-wallet-modal #arena-balance-line { display: none; }
+    #arena-wallet-modal .ow { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid #2a3440; }
+    #arena-wallet-modal .ow-head { font-weight: 700; color: #f7931a; margin: 0 0 6px; }
+    #arena-wallet-modal .ow-wallet { margin: 6px 0; }
+    #arena-wallet-modal .ow-id { font-size: 13px; color: #c9d1d9; }
+    #arena-wallet-modal .ow-row { display: grid; grid-template-columns: max-content 1fr auto; gap: 10px; font-size: 13px; padding: 2px 0; }
+    #arena-wallet-modal .ow-row .mono { font-family: ui-monospace, monospace; color: #8b949e; }
+    #arena-wallet-modal .ow-merge { margin: 8px 0 4px; width: 100%; }
+    #arena-wallet-modal .ow-why { font-size: 12px; }
     #arena-wallet-modal .wl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
     #arena-wallet-modal .wl-head h3 { margin: 0; color: #f7931a; font: 700 16px/1.3 system-ui, -apple-system, sans-serif; text-transform: none; letter-spacing: 0; }
     #arena-wallet-modal .wl-close { flex: none; background: none; border: 0; color: #e8eaed; font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 6px; margin: 0; width: auto; }
@@ -2680,6 +2697,7 @@
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading"
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load
+            if (window.ARENA_REPAINT_SPLIT) window.ARENA_REPAINT_SPLIT();
             if (window.ARENA_SUM_HELD) window.ARENA_SUM_HELD();   // a held federation's funds summed once its status is known
             if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);   // notes out of a DRAINING / CRITICAL federation, by themselves
             if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();   // and Settings' custody summary
@@ -5075,46 +5093,64 @@
     };
     window.ARENA_PAINT_CUSTODY = paintCustody;
     window.ARENA_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); paintCustody(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
-    // THE OTHER WALLETS THIS BROWSER KEEPS (2026-10-02: "now fix the balances" - his 402 sat sat in another kept
-    // phrase's wallet while this tab showed 0; seven phrases in one browser, three of them holding sats). Every kept phrase
-    // with a wallet here, other than this tab's, is opened read-only (20 s each at most), its balance shown, and offered:
-    // "Use this wallet" makes it this tab's phrase - only when no other open tab holds it. Nothing is moved or spent.
-    let otherWalletsBusy = false;
+    // THE OTHER WALLETS THIS BROWSER KEEPS (2026-10-02: "now fix the balances" - his 402 sat sat in another kept phrase's wallet while this tab
+    // showed 0). Reworked for kanban #631 (the owner 2026-10-24: "Other wallets in the browser, rework that, ok the lobby makes no sense, not all
+    // apps even have a lobby, find better ways to restore funds"): no lobby round is needed - each other kept phrase is read only in the
+    // federations it holds a wallet in (phraseWalletEntries), with that federation's verified invite, 20 s each at most; the Federations tab
+    // shows what each holds and how its merge stands, and "Merge now" moves it into this tab's wallet (ARENA_MERGE_NOW). Nothing is spent here.
+    let otherWalletsBusy = false, otherMerging = false, otherWalletsLast = null;
     async function paintOtherWallets() {
       const el = document.getElementById('arena-other-wallets');
-      if (!el || otherWalletsBusy || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.phraseWalletEntries) return;
-      // drawn by React (kanban #564, window.ArenaWallet.drawOthers - OtherWallets): a line, or the wallets with their "Use this wallet"
-      const draw = (props) => window.ArenaWallet.drawOthers(el, Object.assign({ note: null, lines: null,
-        onUse: (hex) => { sessionStorage.setItem('arena.player.seed', hex); sessionStorage.setItem('arena.player.seed.from', 'minted'); location.reload(); } }, props));
+      if (!el || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.phraseWalletEntries || !ARENACLIENT.openPlayerWallet) return;
+      const mergeState = () => window.ARENA_MERGE_STATE || {};
+      const draw = (props) => window.ArenaWallet.drawOthers(el, Object.assign({ note: null, wallets: null, merging: otherMerging,
+        onMerge: async (feds) => {
+          if (otherMerging || !window.ARENA_MERGE_NOW) return;
+          otherMerging = true; if (otherWalletsLast) draw({ wallets: otherWalletsLast });
+          try {
+            const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+            const seed = walletSeed();
+            await window.ARENA_MERGE_NOW(feds, 90000, { seed, LockClient: wasm.LockClient });
+          } catch (e) { console.log('[arena] merge now: ' + (e && e.message ? e.message : e)); }
+          finally { otherMerging = false; otherWalletsBusy = false; paintOtherWallets(); }
+        } }, props));
+      if (otherWalletsBusy) return;
       const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
       let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
-      const others = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && x.hex !== cur && ARENACLIENT.phraseWalletEntries(L, x.hex) > 0);
-      if (!others.length) { draw({}); return; }
-      const named = window.ARENA_LOBBY_NAMED_FOR_WALLET; const row = (window.ARENA_LOBBY || []).find((x) => !x.free && x.raw && x.raw.contract && ARENACLIENT.roundLocks(x.raw.contract));
-      if (!named || !named.federation || !row) { draw({ note: 'Other wallets in this browser: ' + others.length + ' (open the lobby to read them)' }); return; }
+      const loads = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.entries ? [...window.ARENA_FED_LOADS.entries()] : [];
+      const inviteOf = (fid) => { const st = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(fid); return (st && st.invite) || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(L, fid) : null); };
+      const feds = [...new Set([...loads.map(([k]) => k), ...(ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(L) : [])])].filter((f) => /^[0-9a-f]{64}$/.test(f));
+      const others = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && x.hex !== cur)
+        .map((x) => ({ hex: x.hex, feds: feds.filter((f) => ARENACLIENT.phraseWalletEntries(L, x.hex, f) > 0) })).filter((x) => x.feds.length);
+      if (!others.length) { otherWalletsLast = null; draw({}); return; }
       otherWalletsBusy = true;
-      draw({ note: 'Reading the other wallets in this browser \u2026' });
+      if (!otherWalletsLast) draw({ note: 'Reading them \u2026' });
       try {
         const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-        const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('arena.tab.id'); } catch { return false; } };
-        const lines = [];
-        let total = 0;
+        const tab = sessionStorage.getItem('arena.tab.id');
+        const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== tab; } catch { return false; } };
+        const wallets = [];
         for (const x of others) {
-          let sats = null;
           // NEVER A WALLET ANOTHER OPEN TAB HOLDS: two clients on one wallet spent one note twice (2026-10-01)
-          if (heldElsewhere(x.hex)) { lines.push({ hex: x.hex, sats: null, busy: true }); continue; }
-          try {
-            const c = await Promise.race([ARENACLIENT.playerWallet({ round: row.raw.contract, invite: named.federation, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }),
-              new Promise((_, no) => setTimeout(() => no(new Error('no answer')), 20000))]);
-            sats = Number(BigInt(await c.balanceMsat()) / 1000n);
-          } catch { sats = null; }
-          if (sats) total += sats;
-          lines.push({ hex: x.hex, sats, busy: heldElsewhere(x.hex) });
+          const busy = heldElsewhere(x.hex);
+          const rows = [];
+          for (const fid of x.feds) {
+            let sats = null;
+            const inv = inviteOf(fid);
+            if (!busy && inv) {
+              try {
+                const c = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }),
+                  new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 s')), 20000))]);
+                sats = Number(BigInt(await c.balanceMsat()) / 1000n);
+              } catch { sats = null; }
+            }
+            rows.push({ federation: fid, sats, merge: mergeState()[fid.slice(0, 16)] || null });
+          }
+          wallets.push({ hex: x.hex, busy, feds: rows });
         }
-        // NOTHING SHOWN FOR WALLETS WITH 0 SAT (2026-10-02: "don't show wallets with 0 sat"): only a wallet holding sats,
-        // or one that could not be read now, is named; with none, no line at all
-        draw({ lines });
-      } catch (e) { draw({ note: 'The other wallets in this browser could not be read: ' + (e && e.message ? e.message : e) }); }
+        otherWalletsLast = wallets;
+        draw({ wallets });
+      } catch (e) { draw({ note: 'They could not be read now: ' + (e && e.message ? e.message : e) }); }
       finally { otherWalletsBusy = false; }
     }
     window.ARENA_PAINT_HISTORY = paintHistory;
@@ -6639,12 +6675,13 @@
               const all = await ARENACLIENT.federationStatuses({ nodes, census: best.census, verify: window.ARENA_VERIFY_KEPT });
               const fs = all.get(fedHex) || [...all.values()][0] || { status: 'unverified', allows: ARENACLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record' };
               window.ARENA_FED_TRIED = true;
-              window.ARENA_FED_STATUS = { ...fs, federation: fs.federation || fedHex };
+              window.ARENA_FED_STATUS = { ...fs, federation: fs.federation || fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
               window.ARENA_FED_LOADS = all;
               if (window.ARENA_SUM_HELD) window.ARENA_SUM_HELD();   // a held federation's funds summed once its status is known
               if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);
               if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();
               if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
+              if (window.ARENA_REPAINT_SPLIT) window.ARENA_REPAINT_SPLIT();
               console.log('[arena] federations from the games screen: ' + [...all.entries()].map(([k, v]) => k.slice(0, 8) + ' ' + (v && v.status)).join(', '));
               return;
             }
@@ -7121,6 +7158,9 @@
         return CL.federationHealth ? CL.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
       };
       window.ARENA_FED_HEALTH = (fed) => healthOf((window.ARENA_FED_LOADS || new Map()).get(fed));
+      // THE SPLIT PAINTED AGAIN WHEN THE FEDERATIONS' STATUSES LAND (kanban #631: its rows said "Not checked yet" while the custody card above
+      // them already held every status - the wallet had opened while a status read was on its way)
+      window.ARENA_REPAINT_SPLIT = () => { const el = splitEl(); if (el && el.style.display !== 'none') paintSplit(); };
       const paintSplit = () => {
         const el = splitEl(); if (!el) return;
         const bal = window.ARENA_WALLET_BALANCE; const loads = window.ARENA_FED_LOADS || new Map();
@@ -7184,18 +7224,55 @@
       const walletModal = () => document.getElementById('arena-wallet-modal');
       window.ARENA_CLOSE_WALLET = () => { const m = walletModal(); if (m) m.style.display = 'none'; const sp = splitEl(); if (sp) sp.style.display = 'none'; };
       { const m = walletModal(); const x = m && m.querySelector('.wl-close'); if (x) x.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_CLOSE_WALLET(); }); }
+      // TWO TABS, TRANSACTIONS AND FEDERATIONS (kanban #631, the owner 2026-10-24: "group the page to be more accessible and tidy. Introduce tabs,
+      // transaction history goes into Transactions, federation stuff into federation. Remove the old text only stuff at the top"): the balance
+      // and Deposit / Withdraw / Move stay on top; the history in Transactions; the federations' health, the balance by federation and the
+      // other wallets in Federations. Built once, from the parts every painter still finds by id; the tab chosen is kept for this viewer.
+      const WALLET_TAB_KEY = 'arena.wallet.tab';
+      function arrangeWalletTabs(m, sec, split) {
+        if (!sec || m.querySelector('.wl-tabs')) return;
+        const part = (id) => document.getElementById(id);
+        const tabs = document.createElement('div'); tabs.className = 'wl-tabs'; tabs.setAttribute('role', 'tablist');
+        const panes = {};
+        for (const [key, label] of [['tx', 'Transactions'], ['fed', 'Federations']]) {
+          const b = document.createElement('button'); b.type = 'button'; b.dataset.tab = key; b.textContent = label; b.setAttribute('role', 'tab');
+          tabs.append(b);
+          const p = document.createElement('div'); p.className = 'wl-pane'; p.dataset.pane = key; p.setAttribute('role', 'tabpanel'); panes[key] = p;
+        }
+        // the top: the balance, then what can be done with it (the withdraw panel opens under its button)
+        const actions = part('arena-money-actions');
+        for (const id of ['arena-money-why', 'arena-withdraw-panel']) { const e = part(id); if (e && actions) actions.after(e); }
+        const anchor = part('arena-withdraw-panel') || actions;
+        if (anchor) anchor.after(tabs); else sec.append(tabs);
+        tabs.after(panes.tx, panes.fed);
+        const h = part('arena-history'); if (h) panes.tx.append(h);
+        for (const id of ['arena-custody', 'arena-fed-note']) { const e = part(id); if (e) panes.fed.append(e); }
+        if (split) panes.fed.append(split);
+        const others = part('arena-other-wallets'); if (others) panes.fed.append(others);
+        const show = (key) => {
+          for (const b of tabs.children) { const on = b.dataset.tab === key; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); }
+          for (const [k, p] of Object.entries(panes)) p.style.display = k === key ? '' : 'none';
+          try { localStorage.setItem(WALLET_TAB_KEY, key); } catch { /* this viewer's choice only */ }
+        };
+        tabs.addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) { e.stopPropagation(); show(b.dataset.tab); } });
+        let first = 'tx'; try { if (localStorage.getItem(WALLET_TAB_KEY) === 'fed') first = 'fed'; } catch { first = 'tx'; }
+        show(first);
+        window.ARENA_WALLET_TAB = show;
+      }
       window.ARENA_SHOW_BALANCE_SPLIT = () => {
         const el = splitEl(); if (!el) return;
         const m = walletModal(), body = document.getElementById('arena-wallet-modal-body'), sec = document.getElementById('arena-set-wallet');
         if (m && body) {
           if (sec && sec.parentElement !== body) body.append(sec);
           if (el.parentElement !== body) body.append(el);
+          arrangeWalletTabs(m, sec, el);
           m.style.display = '';
           if (window.ARENA_PAINT_SETTINGS) try { window.ARENA_PAINT_SETTINGS(); } catch { /* painted again with the balance */ }
         }
         const repaint = () => { if (el.style.display !== 'none') paintSplit(); };
         paintSplit(); el.style.display = '';
         if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES().then(repaint, () => {});
+        if (window.ARENA_CHECK_FEDERATIONS) window.ARENA_CHECK_FEDERATIONS().then(() => { repaint(); if (window.ARENA_PAINT_SETTINGS) try { window.ARENA_PAINT_SETTINGS(); } catch { /* painted again */ } }, () => {});
         // a halted federation's payback needs the chain's tip and pace
         const nets = new Set([...(window.ARENA_FED_LOADS || new Map()).values()].filter((x) => x && x.status === 'HALTED' && x.network).map((x) => x.network));
         for (const n of nets) readChain(n).then(repaint, () => {});
@@ -7235,6 +7312,13 @@
           } catch (e) { console.warn('[arena] the move out of federation ' + fid.slice(0, 16) + ' stopped: ' + (e && e.message ? e.message : e)); }
           finally { evacuating.delete(fid); }
         }
+      };
+      // THE FEDERATIONS CHECKED WHEN THE WALLET OPENS (kanban #631, the owner: "Federations are never checked"): a status read is asked for
+      // whenever none is newer than 2 minutes - the games screen's one-time read may have found no census, and a lobby's is not read again
+      window.ARENA_CHECK_FEDERATIONS = () => {
+        if (window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size && Date.now() - (window.ARENA_FED_STATUS_AT || 0) < 120000) return Promise.resolve();
+        window.ARENA_FED_TRIED = false;
+        return checkFederationsEarly((testnet ? testnet.named : named).nodes);
       };
       window.ARENA_OPEN_WALLET_EARLY = function openWalletEarly(lobby) {
         checkFederationsEarly((testnet ? testnet.named : named).nodes).catch(() => {});
