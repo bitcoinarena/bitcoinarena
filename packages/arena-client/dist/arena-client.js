@@ -17077,6 +17077,16 @@ async function quoteLock(client, m) {
 }
 async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, donationCostMsat: donation = 0n }) {
   const locks = feeMsat > 0n ? [amount, feeMsat] : [amount];
+  // A FEDERATION WITH NO FEES IS NOT DRY-RUN (kanban #618, measured 2026-10-24 on testnet4 federation 4dc88be7 from Node: the same
+  // lockCostMsat(99000) answered in 5 ms, 19 ms and 1712 ms, two in parallel in 28-1180 ms - 2.7 s of a 5.5 s order went to the quote -
+  // and every answer was the amount itself): its quote is each lock's amount in whole notes, which is what the floor below already
+  // counts (the allowance is ceilNote - amount); a wallet holding less is "insufficient funds" exactly as the dry run says it
+  if (zeroFees) {
+    const floor = locks.reduce((t, m) => t + ceilNote(m), 0n) + donation;
+    let have = null; try { have = BigInt(await client.balanceMsat()); } catch { have = null; }
+    const short = have !== null && have < floor;
+    return { locks, need: short ? null : floor, floor, quoteWhy: short ? `insufficient funds: the wallet holds ${have} msat, the locks take ${floor}` : null };
+  }
   let quoted = 0n;
   const quotes = await Promise.all(locks.map((m) => quoteLock(client, m).then((q) => ({ q }), (e) => ({ e }))));
   let quoteWhy = null;
