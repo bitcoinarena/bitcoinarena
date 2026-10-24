@@ -41,3 +41,18 @@ test('a wallet that changed after it was noted empty stays (its entry count no l
   assert.equal(tidyStorage(L, { seeds: [CUR, EMPTY], current: CUR }).wallets, 0);
   assert.equal(count(L, EMPTY), 4);
 });
+
+test('a collected round\'s lock wallet goes once its collect is done and an hour old; an open or fresh one stays (kanban #625 follow-up)', () => {
+  const L = store(); const NOW = 10_000_000;
+  const lockdb = (r) => `arena.lockdb.${r.slice(0, 16)}.${'ab'.repeat(8)}.`;
+  const R1 = '11'.repeat(32), R2 = '22'.repeat(32), R3 = '33'.repeat(32);
+  for (const r of [R1, R2, R3]) for (let i = 0; i < 36; i++) L.setItem(lockdb(r) + 'k' + i, 'v'.repeat(1000));
+  L.setItem(`arena.collect.${R1}`, JSON.stringify({ roundIdHex: R1, done: 'collected', savedMs: NOW - 2 * 3600000 }));
+  L.setItem(`arena.collect.${R2}`, JSON.stringify({ roundIdHex: R2, done: null, savedMs: NOW - 2 * 3600000 }));
+  L.setItem(`arena.collect.${R3}`, JSON.stringify({ roundIdHex: R3, done: 'collected', savedMs: NOW - 60000 }));
+  const r = tidyStorage(L, { seeds: [CUR], current: CUR, now: () => NOW });
+  const left = (x) => [...L.map.keys()].filter((k) => k.startsWith(lockdb(x))).length;
+  assert.deepEqual([left(R1), left(R2), left(R3)], [0, 36, 36]);
+  assert.equal(r.removed, 36); assert.ok(r.bytes > 36 * 2000);
+  assert.ok(L.getItem(`arena.collect.${R1}`), 'the collect record itself stays');
+});
