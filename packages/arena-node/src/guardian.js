@@ -33,6 +33,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSyn
 import { join, delimiter } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { p2pTunnelPort } from './p2p-tunnel.js';
+import { createServer } from 'node:net';
 
 /**
  * THE BITCOIND COOKIE A GUARDIAN WAS STARTED WITH, AS A FINGERPRINT (kanban #577, measured 2026-10-23: the test host's testnet4 bitcoind was
@@ -71,6 +72,18 @@ export function guardianNextPorts(nodePort) {
   return { api: o.api + 4000, p2p: o.p2p + 4000, ui: o.ui + 4000, metrics: o.metrics + 4000 };
 }
 const slotPorts = (slot, nodePort) => (slot === 'next' ? guardianNextPorts(nodePort) : guardianPorts(nodePort));
+
+/**
+ * THE DASHBOARD'S PORT, FREE (kanban #326, measured 2026-10-24 17:49Z on the test host: T2's guardians exited at start - fedimintd
+ * "Failed to bind dashboard UI: Address already in use" - because two other programs' headless Chromes held 9341 and 9351 as their
+ * debugging ports): the slot's UI port when nothing listens on it, else the first free one `step` apart, at most `tries` tried. Only the
+ * dashboard moves: the API, P2P and metrics ports stay where the seat, the tunnels and the federation's config expect them.
+ */
+export async function freeLocalPort(port, { step = 50, tries = 20, host = '127.0.0.1' } = {}) {
+  const free = (p) => new Promise((ok) => { const s = createServer(); s.once('error', () => ok(false)); s.listen(p, host, () => s.close(() => ok(true))); });
+  for (let i = 0; i < tries; i++) { const p = port + i * step; if (p <= 65535 && await free(p)) return p; }
+  return port;
+}
 
 /** Fedimint's name for the network bitcoind reports. */
 export function fedimintNetwork(chain) {
@@ -237,7 +250,8 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     break;
   }
   const dataDir = `${storePath === ':memory:' ? join(env.TMPDIR || '/tmp', `blwp-guardian-${nodePort}`) : storePath}${S.dir}`;
-  const ports = slotPorts(slot, nodePort);
+  const ports = { ...slotPorts(slot, nodePort) };
+  { const ui = await freeLocalPort(ports.ui); if (ui !== ports.ui) { log(`[guardian] dashboard port ${ports.ui} is taken: the dashboard listens on ${ui}`); ports.ui = ui; } }
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const pwFile = join(dataDir, 'admin-password');
   if (!existsSync(pwFile)) writeFileSync(pwFile, randomBytes(24).toString('hex'), { mode: 0o600 });
