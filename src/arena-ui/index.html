@@ -613,7 +613,7 @@
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; font: 600 13px/1 system-ui, sans-serif; }
     body.arena-game-chosen #arena-wb-season { display: inline-flex; align-items: center; gap: 5px; }
     #arena-season-go svg, #arena-wb-season svg { width: 15px; height: 15px; color: #f7931a; }
-    @media (max-width: 560px) { #arena-season-go .word, #arena-wb-season .word { display: none; } }
+    @media (max-width: 720px) { #arena-season-go .word, #arena-wb-season .word { display: none; } }   /* the words from 721px: below, a full balance and the mark fit beside the icons */
     body.arena-clean #arena-season, body.arena-clean #arena-season-go, body.arena-clean #arena-wb-season { display: none !important; }
     /* THE GAME'S SHOP: beside the Leaderboard once a game that sells items is chosen, and its sheet - each item
        with its price and Buy, or Owned with "Play with it" */
@@ -661,7 +661,9 @@
       font: 13px/1.2 system-ui, sans-serif; color: #e8eaed; }
     body.arena-picking #arena-wallet-bar { z-index: 38; }
     body.arena-own-client #arena-client { top: calc(41px + env(safe-area-inset-top, 0px)); height: calc(100% - 41px - env(safe-area-inset-top, 0px)); }
-    #arena-wallet-bar .wb-bal { flex: 0 1 auto; min-width: 0; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+    /* THE BALANCE IS NEVER CUT (playtest 2026-10-23 23:39, "97 sat · 100 pe"; measured on UI 351 at 600px: 40px of chip for 172px of text): it keeps
+       its width, and the name beside the mark gives way instead */
+    #arena-wallet-bar .wb-bal { flex: 0 0 auto; margin-left: auto; white-space: nowrap; overflow: hidden; text-align: right; }
     /* THE WAY BACK ALWAYS IN THE BAR (2026-10-17: "the back link is sometimes in the header and sometimes bellow due to
        the wallet balance. leave the back link always in the header and move the balance to the other buttons (withdraw, deposit) on the
        right side. on mobile ... make the leaderboard button only the trophy icon"): in a game's own client the bar reads logo, ← Arena,
@@ -672,18 +674,22 @@
     body.arena-clean #arena-wb-back { display: none !important; }
     /* NO "← bitcoin-arena.io" ON THE GAMES SCREEN (2026-10-19: "the button is superfluous and redundant. the bitcoin
        Arena logo already links back to the homepage") */
-    @media (max-width: 560px) { #arena-wb-back .word { display: none; } }
+    @media (max-width: 720px) { #arena-wb-back .word { display: none; } }
     @media (max-width: 420px) { #arena-wallet-bar { gap: 5px !important; } #arena-wallet-bar button:not(#arena-wb-gear) { padding: 6px 7px !important; font-size: 12.5px !important; } }
     #arena-wallet-bar .wb-bal b { color: #f7931a; }
     /* THE BITCOIN ARENA LOGO, TOP LEFT, TO THE MAIN PAGE (2026-10-17: "show the Bitcoin arena logo on the left on
        Testnet.bitcoin-arena.io and that link goes to the main page"): the homepage's mark on the games screen's bar; a game's own
        client keeps its own left end (its back button) */
     #arena-wb-home { display: none; }
-    body.arena-picking #arena-wb-home, body.arena-own-client #arena-wb-home { display: inline-flex; flex: none; align-items: center; gap: 8px; margin-right: 6px; color: #e8eaed; text-decoration: none;
+    body.arena-picking #arena-wb-home, body.arena-own-client #arena-wb-home { display: inline-flex; flex: 0 1 auto; min-width: 0; overflow: hidden; align-items: center; gap: 8px; margin-right: 6px; color: #e8eaed; text-decoration: none;
       font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; }
     #arena-wb-home i { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-style: normal; font-weight: 800; color: #1a0f00;
       background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-wb-home:hover span { color: #f7931a; }
+    #arena-wb-home span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    #arena-wb-home i { flex: none; }
+    body.arena-picking #arena-wb-home, body.arena-own-client #arena-wb-home { min-width: 26px; }
+    #arena-wallet-bar #arena-wb-gear { flex: none; }
     /* up to 560px, where the balance chip stacks, the mark alone: the name beside it squeezed the chip (measured at 430px: "2,996 sat" drawn over the back button) */
     @media (max-width: 560px) { body.arena-picking #arena-wb-home span, body.arena-own-client #arena-wb-home span { display: none; } }
     /* AND IN EVERY GAME (2026-10-17: "The games also need to have the Bitcoin arena logo as the main Testnet page has"): a game's
