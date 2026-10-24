@@ -913,6 +913,10 @@
     body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-move.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
     body:has(#arena-bal-split:not([style*="none"]):not(:empty)) #arena-ov-scrim { display: block; }
     body:has(#arena-wallet-modal:not([style*="none"])) #arena-ov-scrim { display: block; }
+    /* THE WALLET'S LAYER COVERS THE WHOLE SCREEN (kanban #631, the owner 2026-10-25: "a tap outside then lands on the backdrop and the window
+       stays; only its × closes it"): measured on UI 387 at 390x844, a touch on the top bar's deposit, withdraw, leaderboard, gear or back
+       closed it - the layer began under the bar and ended over the games list's foot */
+    body:has(#arena-wallet-modal:not([style*="none"])) #arena-ov-scrim { top: 0; bottom: 0; }
     body.arena-clean #arena-ov-scrim { display: none !important; }
     /* A LIGHTER LAYER (kanban #536: "the contrast is still not enough, make this newly added layer a bit lighter"): .14 -> .26 */
     /* THE DONATE BOX AS THE OTHER OVERLAYS (kanban #537: "adapt the donate layer to the changes of #533 and #536"): the same lighter layer
@@ -8192,6 +8196,8 @@
         const b = e.target && e.target.closest ? e.target.closest('button') : null; if (!b) return;
         const name = BUTTONS[b.id] || (b.classList.contains('wb-bal') ? 'balance' : null);
         if (!name) return;
+        // WHILE THE WALLET IS OPEN NO HEADER BUTTON ACTS (kanban #631): it is closed by its × only, never by opening another overlay
+        if (OVERLAYS.balance.open()) { e.stopImmediatePropagation(); e.preventDefault(); return; }
         if (OVERLAYS[name].open()) { e.stopImmediatePropagation(); e.preventDefault(); try { OVERLAYS[name].close(); } catch { /* gone already */ } return; }
         for (const [k, o] of Object.entries(OVERLAYS)) if (k !== name) { try { if (o.open()) o.close(); } catch { /* not on this page */ } }
       }, true);
