@@ -6893,11 +6893,21 @@
       // and 60-160 ms for the bots on the same federation - the lobby kept only its own round's wallet warm, so an order in another
       // federation's round read the block count itself, a threshold of identical guardian answers with retries): each kept wallet reads it
       // now and every 45 s, so its lock builds on the kept count (lib.rs count_for_lock keeps one for a minute)
+      // AND KEPT ACROSS A RELOAD (kanban #625, the owner's log 2026-10-24 20:52Z: an order ten seconds after a reload read the count itself,
+      // 29 s with a guardian down): each warm read is kept per federation in this browser; a wallet that opens takes a kept count under
+      // five minutes old (the lock client builds on one that old), so its first lock does not wait for a read
       const WARMED = new WeakSet();
-      const warmCountOf = (client) => {
+      const COUNT_KEY = (fid) => 'arena.blockcount.' + String(fid || '').toLowerCase();
+      const warmCountOf = (client, fid) => {
         if (!client || typeof client.warmBlockCount !== 'function' || WARMED.has(client)) return;
         WARMED.add(client);
-        const warm = () => client.warmBlockCount().catch(() => { /* the lock reads it itself */ });
+        try {
+          const kept = fid ? JSON.parse((window.ARENA_BROWSER_STORE() || localStorage).getItem(COUNT_KEY(fid)) || 'null') : null;
+          if (kept && kept.count > 0 && Date.now() - kept.at < 300000 && typeof client.keepBlockCount === 'function') client.keepBlockCount(kept.count, kept.at);
+        } catch { /* read fresh */ }
+        const warm = () => client.warmBlockCount().then(() => {
+          try { if (fid && typeof client.keptBlockCount === 'function') { const k = client.keptBlockCount(); if (k && k !== 'null') (window.ARENA_BROWSER_STORE() || localStorage).setItem(COUNT_KEY(fid), k); } } catch { /* this page only */ }
+        }).catch(() => { /* the lock reads it itself */ });
         warm(); const t = setInterval(warm, 45000); if (t && t.unref) t.unref();
       };
       const RESUMED = new Set();
@@ -6905,7 +6915,7 @@
         if (!fid || !client) return;
         const k = String(fid).toLowerCase();
         window.ARENA_WALLETS.set(k, client);
-        if (typeof warmCountOf === 'function') warmCountOf(client);
+        if (typeof warmCountOf === 'function') warmCountOf(client, k);
         if (RESUMED.has(k) || !ARENACLIENT.resumeDeposits) return;
         RESUMED.add(k);
         // THE OTHER PHRASES THIS BROWSER KEEPS with a wallet in this federation: a deposit one of them made is claimed there (resumeDeposits), then

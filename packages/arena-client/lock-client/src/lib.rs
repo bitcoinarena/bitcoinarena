@@ -254,6 +254,9 @@ async fn stored_at(api: &DynModuleApi, outpoint: OutPoint) -> anyhow::Result<Opt
     .await
 }
 
+/// How long a consensus block count is built on (see `count_for_lock`).
+const COUNT_KEPT_MS: u64 = 300_000;
+
 #[wasm_bindgen]
 pub struct LockClient {
     client: ClientHandle,
@@ -892,6 +895,26 @@ impl LockClient {
         Ok(count.to_string())
     }
 
+    /// A BLOCK COUNT THE PAGE KEPT (kanban #625: it survives a reload, the client's own does not): taken when it is newer
+    /// than the one held, `at_ms` when it was read (ms since the epoch). Built on as a count this client read itself.
+    #[wasm_bindgen(js_name = keepBlockCount)]
+    pub fn keep_block_count(&self, count: f64, at_ms: f64) {
+        if !(count > 0.0) || !(at_ms > 0.0) { return; }
+        if let Ok(mut kept) = self.last_count.lock() {
+            let newer = match *kept { Some((at, _)) => (at_ms as u64) > at, None => true };
+            if newer { *kept = Some((at_ms as u64, count as u64)); }
+        }
+    }
+
+    /// The block count held, for the page to keep: JSON { count, at } or null.
+    #[wasm_bindgen(js_name = keptBlockCount)]
+    pub fn kept_block_count(&self) -> String {
+        match self.last_count.lock().ok().and_then(|k| *k) {
+            Some((at, count)) => serde_json::json!({ "count": count, "at": at }).to_string(),
+            None => "null".to_string(),
+        }
+    }
+
     #[wasm_bindgen(js_name = lockBoth)]
     pub async fn lock_both(
         &self,
@@ -1419,15 +1442,17 @@ impl LockClient {
 }
 
 impl LockClient {
-    /// THE BLOCK COUNT A LOCK IS BUILT ON (2026-10-02, the join's 2-3 s): a count read in the last 60 s, else a fresh
+    /// THE BLOCK COUNT A LOCK IS BUILT ON (2026-10-02, the join's 2-3 s): a count read in the last COUNT_KEPT_MS, else a fresh
     /// consensus read. The seats accept a lock whose lock_height (its expiration less stake_expiry_blocks) is up to 12
-    /// blocks below the height they verify at (stake-lock-signer-node.js, RULED 2026-09-24 option a); a count a minute old
-    /// is at most a block behind on any chain this runs on.
+    /// blocks below the height they verify at (stake-lock-signer-node.js, RULED 2026-09-24 option a); a count five minutes
+    /// old is a block or two behind on any chain this runs on. (kanban #625, the owner's log 2026-10-24 20:52Z: an order's lock
+    /// read it fresh - countMs 29018 - ten seconds after a reload, a guardian of the federation down: kept five minutes now,
+    /// and the page hands a kept count in at the wallet's open, `keep_block_count`.)
     async fn count_for_lock(&self, api: &DynModuleApi) -> anyhow::Result<u64> {
         let now = fedimint_core::time::duration_since_epoch().as_millis() as u64;
         if let Ok(kept) = self.last_count.lock() {
             if let Some((at, count)) = *kept {
-                if now.saturating_sub(at) < 60_000 {
+                if now.saturating_sub(at) < COUNT_KEPT_MS {
                     return Ok(count);
                 }
             }
