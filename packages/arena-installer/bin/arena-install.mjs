@@ -30,7 +30,7 @@
 //              --ram / --no-ram puts Fedimint on a RAM disk or not; neither given, the console asks "Enable RAM disk for Fedimint? [Y/n]"
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
-import { port as offsetPort } from '../src/instance.js';
+import { port as offsetPort, INSTANCE, PORT_OFFSET } from '../src/instance.js';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -147,7 +147,7 @@ if (args.includes('--instances')) {
   }
   const c = instancesChoice({ count, ram, network: 'testnet4' });
   if (!c.ok) { console.error(c.why); process.exit(1); }
-  state.save({ instances: { count: c.count, ram: c.ram } });
+  state.save({ instances: { count: c.count, ram: c.ram, first: { instance: INSTANCE, portOffset: PORT_OFFSET } } });   // node 1's name and ports: the further nodes' come from them
   const note = instancesNote(c.count);
   if (note) console.log(note + (c.ram ? ' Fedimint on a RAM disk.' : ''));
 }
@@ -190,7 +190,7 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   // THE NEXT NODE OF A COUNT (kanban #596): its own wizard, in its own home with its own instance and ports, started here
   import('../src/instances.js').then(({ nextInstance }) => {
     const base = resolve(fromHome || home), plan = nodeState(base).read().instances || { count: 1 };
-    const next = nextInstance(plan.count, base, home);
+    const next = nextInstance(plan.count, base, home, plan.first || {});
     if (!next) { setTimeout(() => process.exit(0), 300); return; }
     console.log(`\nNext: node ${next.index} of ${next.count} (instance ${next.instance}, ports +${next.portOffset}).`);
     const pass = ['--tunnel', '--local'].filter((f) => args.includes(f));

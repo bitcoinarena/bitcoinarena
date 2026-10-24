@@ -27,19 +27,25 @@ export function instancesNote(count, bondSats = 50000) {
   return n >= FOUNDING_NODES ? `${each}. ${FOUNDING_NODES} or more nodes found their own federation.` : `${each}.`;
 }
 
-/** The nodes of a count: the first in `home` as before, then b, c, ... each in `<home>-<x>`, its ports PORT_STEP apart. */
-export function instancesOf(count, home) {
-  return Array.from({ length: Number(count) || 1 }, (_, i) => (i === 0 ? { instance: '', home, portOffset: 0 }
-    : { instance: String.fromCharCode(97 + i), home: `${home}-${String.fromCharCode(97 + i)}`, portOffset: i * PORT_STEP }));
+/**
+ * The nodes of a count: the first in `home` as before, then b, c, ... each in `<home>-<x>`, its ports PORT_STEP apart. FROM THE FIRST
+ * NODE'S OWN NAME AND PORTS (measured 2026-10-24 on the test host that already runs installer nodes b and c: a count's further nodes were
+ * always instances b, c at +100, +200 and would have taken those nodes' services and ports): `instance` and `portOffset` are node 1's -
+ * node 1 as instance t at +3000 makes tb at +3100 and tc at +3200; node 1 unnamed at +0 makes b, c as before.
+ */
+export function instancesOf(count, home, { instance = '', portOffset = 0 } = {}) {
+  const base = String(instance || ''), off = Number(portOffset) || 0;
+  return Array.from({ length: Number(count) || 1 }, (_, i) => (i === 0 ? { instance: base, home, portOffset: off }
+    : { instance: `${base}${String.fromCharCode(97 + i)}`, home: `${home}-${String.fromCharCode(97 + i)}`, portOffset: off + i * PORT_STEP }));
 }
 
 /** The console's question (more than 5 nodes, neither --ram nor --no-ram): yes unless the answer starts with n. */
 export const RAM_QUESTION = 'Enable RAM disk for Fedimint? [Y/n] ';
 export const ramAnswer = (line) => !/^\s*n/i.test(String(line || ''));
 
-/** The node after `home` in a count's list (instancesOf from `baseHome`), or null: the last one, or a home not in the list. */
-export function nextInstance(count, baseHome, home) {
-  const list = instancesOf(count, baseHome), i = list.findIndex((x) => x.home === home);
+/** The node after `home` in a count's list (instancesOf from `baseHome` and node 1's `first` name and offset), or null: the last one, or a home not in the list. */
+export function nextInstance(count, baseHome, home, first = {}) {
+  const list = instancesOf(count, baseHome, first), i = list.findIndex((x) => x.home === home);
   return i >= 0 && i + 1 < list.length ? { ...list[i + 1], index: i + 2, count: list.length } : null;
 }
 
