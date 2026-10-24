@@ -30,154 +30,19 @@
   .filters select, .filters input { background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 7px 10px; font: 13px system-ui; }
   .filters input { flex: 1; min-width: 160px; max-width: 280px; font-family: "JetBrains Mono", monospace; }
   tr.pg td { color: var(--cyan); } td.nw { white-space: nowrap; } tr.away td { color: var(--dim); }
+  details.grp { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 16px; margin: 10px 0; overflow-x: auto; }
+  details.grp > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+  details.grp > summary::-webkit-details-marker { display: none; }
+  details.grp > summary::before { content: '▸'; color: var(--btc); } details.grp[open] > summary::before { content: '▾'; }
+  details.grp > summary .hint { margin-left: auto; font-size: 12px; }
+  details.grp[open] > summary { margin-bottom: 8px; }
   .bar { height: 8px; background: var(--btc); border-radius: 4px; min-width: 2px; }
 </style>
 </head>
 <body>
-<nav><div class="in"><a class="brand" href="/"><i>₿</i>Arena Explorer</a>
-  <form id="find"><input id="q" placeholder="transaction id (64 hex)" autocomplete="off"><button>Find</button></form></div></nav>
-<main id="main"><p class="dim">Loading …</p></main>
-<script>
-// THE EXPLORER'S PAGE (kanban #624): the newest transactions, or one - kept in this browser too (localStorage), so a transaction read once shows at
-// once and is refreshed behind it
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-const kept = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
-const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full: not kept */ } };
-const sat = (msat) => (msat === null || msat === undefined ? '–' : (Number(msat) / 1000).toLocaleString('en-US') + ' sat');
-const ago = (iso) => { const s = Math.round((Date.now() - Date.parse(iso)) / 1000); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; };
-$('find').onsubmit = (e) => { e.preventDefault(); const v = $('q').value.trim().toLowerCase(); if (/^[0-9a-f]{64}$/.test(v)) location.href = '/tx/' + v; };
-
-// THE NEWEST TRANSACTIONS, WITH THEIR APP, FILTERED (the owner 2026-10-24: "Also display the app that did the transaction in the tx list / With a
-// filter with common options"): by app, by federation, by how long ago, and by any part of an id; the filter kept in the address
-const FILTER_KEYS = ['app', 'fed', 'since', 'q'];
-const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
-function filterOf() { const u = new URLSearchParams(location.search); return Object.fromEntries(FILTER_KEYS.map((k) => [k, u.get(k) || ''])); }
-function setFilter(f) { const u = new URLSearchParams(); for (const k of FILTER_KEYS) if (f[k]) u.set(k, f[k]); history.replaceState(null, '', '/' + (u.toString() ? '?' + u : '')); }
-const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', '-': 'unknown' })[a] || a || 'unknown';
-async function list() {
-  let txs = kept('explorer.recent') || [];
-  const draw = () => {
-    const f = filterOf(), now = Date.now();
-    const appOf = (t) => t.app || '-';   // '-': a row read before the seats named apps
-    const apps = [...new Set(txs.map(appOf))].sort(), feds = [...new Set(txs.map((t) => t.federation).filter(Boolean))].sort();
-    const shown = txs.filter((t) => (!f.app || appOf(t) === f.app) && (!f.fed || t.federation === f.fed) && (!f.since || now - t.storedMs <= Number(f.since) * 1000)
-      && (!f.q || t.id.includes(f.q.toLowerCase()) || String(t.round).includes(f.q.toLowerCase())));
-    const opt = (v, label, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
-    $('main').innerHTML = `<h1>Newest transactions</h1><p class="dim">Every order the nodes stored, read from them every minute.</p>
-    <div class="filters"><select id="f-app">${opt('', 'All apps', f.app)}${apps.map((a) => opt(a, appName(a) + ' (' + txs.filter((t) => appOf(t) === a).length + ')', f.app)).join('')}</select>
-      <select id="f-fed">${opt('', 'All federations', f.fed)}${feds.map((x) => opt(x, 'Federation ' + x.slice(0, 8), f.fed)).join('')}</select>
-      <select id="f-since">${PERIODS.map(([v, l]) => opt(v, l, f.since)).join('')}</select>
-      <input id="f-q" placeholder="part of an id or round" value="${esc(f.q)}" autocomplete="off">
-      <span class="dim">${shown.length.toLocaleString('en-US')} of ${txs.length.toLocaleString('en-US')}</span></div>
-    <div class="card"><table><tr><th>Transaction</th><th>App</th><th>Federation</th><th>Round</th><th>Stored</th></tr>${shown.slice(0, 300).map((t) => `<tr><td class="mono"><a href="/tx/${t.id}">${t.id.slice(0, 16)}…</a></td>
-    <td>${esc(appName(t.app))}</td><td class="mono">${esc(t.federation ? t.federation.slice(0, 8) : '–')}</td><td class="mono">${esc(String(t.round).slice(0, 12))}</td>
-    <td>${new Date(t.storedMs).toISOString().replace('T', ' ').slice(0, 19)} UTC <span class="dim">${ago(new Date(t.storedMs).toISOString())}</span></td></tr>`).join('') || '<tr><td colspan=5 class="dim">None match.</td></tr>'}</table></div>`;
-    const on = (id, k, ev = 'change') => { $(id).addEventListener(ev, () => { const g = filterOf(); g[k] = $(id).value.trim(); setFilter(g); draw(); if (k === 'q') { $('f-q').focus(); $('f-q').setSelectionRange(99, 99); } }); };
-    on('f-app', 'app'); on('f-fed', 'fed'); on('f-since', 'since'); on('f-q', 'q', 'input');
-  };
-  if (txs.length) draw();
-  try { const r = await (await fetch('/api/recent')).json(); txs = r.txs; keep('explorer.recent', txs); draw(); } catch (e) { if (!txs.length) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
-}
-
-// ONE TRANSACTION AS ITS HISTORY (the owner 2026-10-24: "The timing should come from the node, not the ui. Only parts come from the ui. Want
-// the full history of what happens at the node and ui (if any)"): every node's own record - each door it passed with its steps, when it
-// stored the entry, verified each lock, took the order into its book, and what it did to settle the round - and the page's steps where
-// the page handed them, on one clock; above it the node side's times from the first node the transaction reached
-function timelineOf(tx) {
-  const ev = [];
-  const add = (atMs, where, what, extra = {}) => { if (Number.isFinite(atMs)) ev.push({ atMs, where, what, ...extra }); };
-  for (const s of tx.seats) {
-    for (const d of s.steps || []) {
-      // a node that holds no entry of it (not seated for its round) answers its lock doors 404: said as such, kept out of the summary
-      const away = !s.known && d.status === 404;
-      add(d.atMs, s.seat, d.door + ' door' + (away ? ': not one of its round\'s nodes (holds no entry), 404' : ''), { took: away ? null : d.ms,
-        detail: away ? '' : (d.steps || []).map((x) => x.step + ' ' + x.ms).join(', '), ok: away || (d.status >= 200 && d.status < 300), status: d.status, kind: away ? 'away' : 'door', away });
-    }
-    if (s.storedAt) add(Date.parse(s.storedAt), s.seat, 'stored the entry', { kind: 'stored' });
-    if (s.book && s.book.receivedAt) add(Date.parse(s.book.receivedAt), s.seat, 'took the order into its book' + (s.book.batch ? ' (batch ' + s.book.batch + ')' : ''), { kind: 'book' });
-    for (const k of ['stake', 'fee']) { const l = s.locks && s.locks[k]; if (l && l.verifiedAt) add(Date.parse(l.verifiedAt), s.seat, 'verified the ' + k + ' lock', { detail: l.outpoint || '', kind: k + 'lock' }); }
-    for (const d of s.did || []) add(d.atMs, s.seat, d.what, { detail: d.detail || '', kind: 'settle' });
-  }
-  const p = tx.processed;
-  if (p) {
-    for (const o of p.outcomes || []) { add(Date.parse(o.observedAt), 'attestors', 'observed the result: ' + (o.value !== null ? 'value ' + o.value : 'outcome ' + o.outcome), { kind: 'outcome' });
-      add(Date.parse(o.receivedAt), 'nodes', 'received the result\'s attestation', { kind: 'outcome' }); }
-    if (p.settledAt) add(Date.parse(p.settledAt), 'nodes', 'settlement made' + (tx.settlement ? ': ' + tx.settlement.state : ''), { detail: tx.settlement ? tx.settlement.txid : '', kind: 'settle' });
-  }
-  const c = tx.client, press = c && c.pressedAt ? Date.parse(c.pressedAt) : null;
-  if (press) {
-    add(press, 'page', 'order pressed', { kind: 'page' });
-    for (const x of c.steps || []) add(press + x.ms, 'page', x.step, { kind: 'page' });
-    for (const [k, v] of [['submitted (first node took the entry)', c.submittedMs], ['placed (enough nodes took it)', c.placedMs], ['lock accepted by the guardians', c.lockMs]]) if (Number.isFinite(v)) add(press + v, 'page', k, { kind: 'page' });
-  }
-  return ev.sort((a, b) => a.atMs - b.atMs || (a.where < b.where ? -1 : 1));
-}
-function drawTx(tx) {
-  const e = tx.entry || {};
-  const ev = timelineOf(tx);
-  const nodeEv = ev.filter((x) => x.where !== 'page');
-  const t0 = nodeEv.length ? nodeEv[0].atMs : ev.length ? ev[0].atMs : Date.now();
-  const rel = (ms) => { const d = (ms - t0) / 1000; return (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2) + ' s'; };
-  const utc = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 23);
-  const known = tx.seats.filter((s) => s.known).length;
-  // THE NODE SIDE, SUMMED UP: first, the majority's and the last node's time for each step, from the first node the transaction reached
-  const stepOf = (kind, label) => {
-    const per = new Map(); for (const x of nodeEv) if (x.kind === kind && !per.has(x.where)) per.set(x.where, x.atMs);
-    const t = [...per.values()].sort((a, b) => a - b); if (!t.length) return '';
-    const maj = t[Math.floor(t.length / 2)];
-    return `<tr><td>${label}</td><td>${rel(t[0])}</td><td>${rel(maj)}</td><td>${rel(t[t.length - 1])}</td><td class="dim">${t.length} node(s)</td></tr>`;
-  };
-  const summary = [stepOf('door', 'reached the node'), stepOf('stored', 'entry stored'), stepOf('stakelock', 'stake lock verified'), stepOf('feelock', 'fee lock verified'),
-    stepOf('book', 'in the order book'), stepOf('settle', 'settlement step')].join('');
-  const rows = ev.map((x) => `<tr class="${x.where === 'page' ? 'pg' : x.away ? 'away' : ''}"><td class="mono">${utc(x.atMs)}</td><td class="nw ${x.atMs - t0 > 3000 ? 'slow' : ''}">${rel(x.atMs)}</td>
-    <td class="nw">${esc(x.where)}</td><td>${esc(x.what)}${x.status && !x.ok ? ' <span class="bad">' + esc(x.status) + '</span>' : ''}</td><td class="nw">${Number.isFinite(x.took) ? x.took + ' ms' : ''}</td>
-    <td class="dim mono">${esc(x.detail || '')}</td></tr>`).join('');
-  $('main').innerHTML = `<h1>Transaction</h1><p class="mono">${esc(tx.id)}</p>
-  <div class="card"><dl>
-    <dt>App</dt><dd>${esc(appName(e.app || e.gameId))}</dd><dt>Round</dt><dd class="mono">${esc(e.round || '–')}</dd><dt>Federation</dt><dd class="mono">${esc(e.federation || '–')}</dd>
-    <dt>Stake</dt><dd>${sat(e.stakeMsat)}${e.limitPrice !== null && e.limitPrice !== undefined ? ' · at most ' + Math.round(Number(e.limitPrice) / 1000) + '¢' : ''}${e.pick !== null && e.pick !== undefined ? ' · pick ' + esc(e.pick) : ''}</dd>
-    <dt>Fee</dt><dd>${sat(e.feeMsat)}</dd><dt>Player</dt><dd class="mono">${esc(e.player || '–')}</dd>
-    <dt>Stake lock</dt><dd class="mono">${esc(tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–')}</dd>
-    <dt>Fee lock</dt><dd class="mono">${esc(tx.locks && tx.locks.fee ? tx.locks.fee.outpoint : e.feeLockOutpoint || '–')}</dd>
-    <dt>Settlement</dt><dd class="mono">${tx.settlement ? esc(tx.settlement.state + ' · ' + tx.settlement.txid) : '<span class="dim">not yet</span>'}</dd>
-    <dt>First at a node</dt><dd>${nodeEv.length ? esc(utc(t0)) + ' UTC' : '–'}</dd>
-    <dt>Read</dt><dd class="dim">${esc(tx.readAt)} · ${tx.cached ? 'cached' : 'from ' + tx.seats.filter((s) => s.status).length + ' nodes in ' + tx.readMs + ' ms'} · ${known} node(s) hold it</dd></dl></div>
-  <h2>At the nodes <span class="dim">(from the first node it reached: first · half the nodes · last)</span></h2>
-  <div class="card">${summary ? '<table><tr><th>Step</th><th>First</th><th>Half</th><th>Last</th><th></th></tr>' + summary + '</table>' : '<p class="dim">No node kept steps for it.</p>'}</div>
-  <h2>History <span class="dim">(every node's record${tx.client ? ' and the page\'s steps' : '; the page that placed it handed no steps'}, one clock)</span></h2>
-  <div class="card"><table><tr><th>UTC</th><th>From first node</th><th>Where</th><th>What</th><th>Took</th><th>Detail</th></tr>${rows || '<tr><td colspan=6 class="dim">Nothing recorded.</td></tr>'}</table></div>
-  ${processedHtml(tx)}
-  <h2>Nodes</h2><div class="card"><table><tr><th>Node</th><th>Holds it</th><th>Stored</th><th>Book</th></tr>${tx.seats.map((s) => `<tr><td>${esc(s.seat)}</td><td class="${s.known ? 'ok' : 'dim'}">${s.known ? 'yes' : s.status ? 'no' : 'no answer'}</td>
-    <td>${s.storedAt ? rel(Date.parse(s.storedAt)) : '–'}</td><td class="dim">${s.book ? 'batch ' + esc(s.book.batch || '–') : ''}</td></tr>`).join('')}</table></div>`;
-}
-
-// WHO PROCESSED THE ROUND: the seats drawn to run the game and to sign the settlement, the asker who combines and submits it, who attested the
-// outcome, and each seat's own settlement steps with their times
-function processedHtml(tx) {
-  const p = tx.processed; if (!p) return '';
-  const nm = (k) => (p.names && p.names[k] ? esc(p.names[k]) : '<span class="mono dim">' + esc(String(k).slice(0, 12)) + '…</span>');
-  const list = (ks) => (ks && ks.length ? ks.map((k) => (k === p.asker ? '<b>' + nm(k) + '</b> (asker)' : nm(k))).join(', ') : '<span class="dim">–</span>');
-  const outs = (p.outcomes || []).map((o) => `<tr><td>${o.value !== null ? 'value ' + esc(o.value) : 'outcome ' + esc(o.outcome)}</td><td>${esc(o.observedAt.replace('T', ' ').slice(0, 19))} UTC</td>
-    <td>${(o.attestors || []).map(nm).join(', ') || '–'}</td></tr>`).join('');
-  return `<h2>Who processed the round</h2><div class="card"><dl>
-    <dt>Ran the game</dt><dd>${list(p.game)}</dd><dt>Signs the settlement</dt><dd>${list(p.settlement)}</dd>
-    <dt>Asker</dt><dd>${p.asker ? nm(p.asker) + ' <span class="dim">combines and submits the settlement first; the next takes over if it does not</span>' : '–'}</dd>
-    <dt>Settled</dt><dd>${p.settledAt ? esc(p.settledAt.replace('T', ' ').slice(0, 19)) + ' UTC' + (p.settlementWhy ? ' <span class="dim">· ' + esc(p.settlementWhy) + '</span>' : '') : '<span class="dim">not yet</span>'}</dd></dl></div>
-  <h2>Result verified by</h2><div class="card">${outs ? '<table><tr><th>Result</th><th>Observed</th><th>Attested by</th></tr>' + outs + '</table>' : '<p class="dim">No result attested yet.</p>'}</div>`;
-}
-
-async function one(id) {
-  const had = kept('explorer.tx.' + id); if (had) drawTx(had);
-  try {
-    const r = await fetch('/api/tx/' + id); const tx = await r.json();
-    if (r.status === 404 && !had) { $('main').innerHTML = '<h1>Not found</h1><p class="dim">No node holds the transaction ' + esc(id) + '.</p>'; return; }
-    if (tx.found) { keep('explorer.tx.' + id, tx); drawTx(tx); }
-  } catch (e) { if (!had) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
-}
-
-const m = /^\/tx\/([0-9a-f]{64})\/?$/.exec(location.pathname);
-if (m) { $('q').value = m[1]; one(m[1]); } else list();
-</script>
+<!-- THE EXPLORER (kanban #624): React (packages/arena-web/src/explorer/main.jsx, built to explorer.js); the Worker builds what its store
+     holds into the page before this script, so it draws at once -->
+<div id="root"></div>
+<script src="/explorer.js"></script>
 </body>
 </html>

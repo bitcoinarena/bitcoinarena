@@ -23,6 +23,10 @@ await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, for
 await build({ entryPoints: [join(root, 'src/arena/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'arena.js'), legalComments: 'none' });
 copy(join(dist, 'arena.js'), join(root, '../../src/arena-ui/arena-react.js'));
+// THE EXPLORER (kanban #624, explorer.bitcoin-arena.io): one classic script beside its page in src/website/explorer/www
+await build({ entryPoints: [join(root, 'src/explorer/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
+  define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'explorer.js'), legalComments: 'none' });
+copy(join(dist, 'explorer.js'), join(root, '../../src/website/explorer/www/explorer.js'));
 // THE ARENA SITE'S SMALL PAGES (kanban #564): one classic script for /dashboard/ and /guardians/, beside them in src/arena-ui
 await build({ entryPoints: [join(root, 'src/site/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'site.js'), legalComments: 'none' });

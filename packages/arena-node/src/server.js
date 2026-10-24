@@ -7224,13 +7224,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A TRANSACTION, AS THIS SEAT KNOWS IT (kanban #624): its id is the entry id. The entry (round, app, side, price, stake, keys), when it
       // was stored here, its locks with their federation transaction ids, its place in the book, the round's settlement, every door it passed
       // here with each step's time (its handout's too), and the page's own signed timing - what explorer.bitcoin-arena.io shows
-      if (req.method === 'GET' && url.pathname === '/tx') {
-        const idHex = String(url.searchParams.get('id') || '').toLowerCase();
-        if (!/^[0-9a-f]{64}$/.test(idHex)) return text(res, 400, 'GET /tx?id=<transaction id: the entry id, 64 hex>');
+      // ONE TRANSACTION AS THIS SEAT KNOWS IT, for GET /tx and for GET /txs?full=1 (the explorer's store, the owner 2026-10-24: "It should all be
+      // cached not be fetched from a node"): { code, body }
+      const txView = (idHex) => {
         const eid = Buffer.from(idHex, 'hex');
         const raw = round.entry(eid);
-        const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))); };
-        if (!raw) return send(404, { id: idHex, seat: toHex(round.pubkey), known: false, steps: txRecord.steps([idHex]) });
+        if (!raw) return { code: 404, body: { id: idHex, seat: toHex(round.pubkey), known: false, steps: txRecord.steps([idHex]) } };
         const e = decodeEntryContract(raw);
         const rr = round.get(e.roundId);
         let app = null, gameId = null, federation = null;
@@ -7260,7 +7259,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             mine: txRecord.roundEvents(toHex(rid)) };
         };
         const ref = e.vssSharesRef && !e.vssSharesRef.every((b) => b === 0) ? toHex(e.vssSharesRef) : null;
-        return send(200, { id: idHex, seat: toHex(round.pubkey), known: true,
+        return { code: 200, body: { id: idHex, seat: toHex(round.pubkey), known: true,
           entry: { round: toHex(e.roundId), app, gameId, federation, player: toHex(e.playerPubkey), stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat,
             limitPrice: e.limitPrice !== undefined ? e.limitPrice : null, pick: e.pick !== undefined ? e.pick : null, handout: ref,
             stakeLockOutpoint: op(e.stakeLockOutpoint), feeLockOutpoint: op(e.feeLockOutpoint) },
@@ -7268,7 +7267,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           locks: { stake: lockOf(round.stakeLock(eid)), fee: lockOf(round.feeLock ? round.feeLock(eid) : null) },
           book: order ? { batch: order.batch !== null ? String(order.batch) : null, receivedAt: order.received_ms ? new Date(Number(order.received_ms)).toISOString() : null } : null,
           settlement: settled ? { txid: settled.txid, state: settled.state, why: settled.why || null } : null,
-          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex), processed: processedOf(e.roundId, rr) });
+          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex), processed: processedOf(e.roundId, rr) } };
+      };
+      const sendJson = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))); };
+      if (req.method === 'GET' && url.pathname === '/tx') {
+        const idHex = String(url.searchParams.get('id') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(idHex)) return text(res, 400, 'GET /tx?id=<transaction id: the entry id, 64 hex>');
+        const v = txView(idHex);
+        return sendJson(v.code, v.body);
       }
       // THE NEWEST TRANSACTIONS HERE (kanban #624): what explorer.bitcoin-arena.io polls - ids stored since `since` (ms), oldest first, at most 500
       if (req.method === 'GET' && url.pathname === '/txs') {
@@ -7288,8 +7294,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         };
         const fedOf = (rc, raw) => { try { const ef = entryFederation(rc, decodeEntryContract(new Uint8Array(raw))); return ef.ok ? toHex(ef.federationId) : null; } catch { return null; } };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        // full=1: each with its whole record as GET /tx answers it - what the explorer keeps, so a reader never waits on a node
+        const full = url.searchParams.get('full') === '1';
         return res.end(JSON.stringify({ seat: toHex(round.pubkey), txs: rows.map((r) => { const o = roundOfRow(r.round_id);
-          return { id: Buffer.from(r.entry_id).toString('hex'), round: Buffer.from(r.round_id).toString('hex'), storedMs: Number(r.joined_ms), app: o.app, federation: o.rc ? fedOf(o.rc, r.contract) : null }; }) }));
+          const id = Buffer.from(r.entry_id).toString('hex');
+          return { id, round: Buffer.from(r.round_id).toString('hex'), storedMs: Number(r.joined_ms), app: o.app, federation: o.rc ? fedOf(o.rc, r.contract) : null,
+            ...(full ? { detail: txView(id).body } : {}) }; }) }, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
       }
       // THE PAGE'S OWN TIMING OF ITS ORDER (kanban #624): { timing, sig } - sig the order's session key's Ed25519 signature over
       // timingMessage(id, JSON of timing); kept for GET /tx. No one but the page that holds the order's session key writes it.

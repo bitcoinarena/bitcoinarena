@@ -1,39 +1,39 @@
 // THE ARENA'S TRANSACTION EXPLORER, explorer.bitcoin-arena.io (kanban #624, the owner 2026-10-24: "each order that was executed gets a transaction
 // id in upordown and in the account history. They point to explorer.bitcoin-arena.io which records all transactions. They query nodes in the
 // background for new transactions but maintains a local cache for faster loading. Also records the timing info we already display there and
-// all relevant data. Also timings for all other apps."). A transaction's id is its entry id, the same at every seat.
+// all relevant data. Also timings for all other apps."; "It should all be cached not be fetched from a node"; "You should do that for each
+// tx not just on the fly"). A transaction's id is its entry id, the same at every seat.
 //
-//   every minute (cron)   each seat's GET /txs since the last read: the newest transactions, kept in KV (the newest RECENT_MAX)
-//   GET /api/recent       those, newest first
-//   GET /api/tx/<id>      every seat's GET /tx, asked together and merged: the entry, when each seat stored it, each door's steps at each
-//                         seat, the locks' federation transactions, the round's settlement, the page's own signed timing. Kept in KV:
-//                         30 s while the round is not settled, a day once it is.
-//   /, /tx/<id>           the pages (www/), which keep what they read in the browser too
+//   every minute (cron)   each seat's GET /txs?full=1 over the last READ_BACK_MS: every transaction it holds with its whole record;
+//                         merged across the seats and written to D1 (txs) for EVERY transaction, only where it changed
+//   GET /api/recent       the newest, from D1
+//   GET /api/tx/<id>      from D1; one the minute has not read yet is read from the seats once and kept
+//   /, /tx/<id>           the pages (www/), with what D1 holds built into the page, so they draw at once
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
   .concat([1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/fed2-${i}`));
 const RECENT_MAX = 1000;
-const ASK_MS = 6000;
+const ASK_MS = 6000, READ_MS = 20000;
+const READ_BACK_MS = 3 * 3600000;    // a transaction's record still changes until its round settles: read again for 3 h
 const hex64 = /^[0-9a-f]{64}$/;
+const seatName = (url) => url.replace('https://tn4.bitcoin-arena.io/', '');
 
 const json = (body, { status = 200, maxAge = 0 } = {}) => new Response(JSON.stringify(body), { status,
   headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': maxAge ? `public, max-age=${maxAge}` : 'no-store' } });
 
-async function ask(url) {
+async function ask(url, ms = ASK_MS) {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(ASK_MS), headers: { accept: 'application/json' } });
+    const r = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { accept: 'application/json' } });
     const text = await r.text();
     let body = null; try { body = JSON.parse(text); } catch { body = null; }
     return { status: r.status, body };
   } catch (e) { return { status: 0, body: null, why: String(e && e.message ? e.message : e).slice(0, 120) }; }
 }
 
-/** Every seat's view of one transaction, merged. */
-async function readTx(id) {
-  const t0 = Date.now();
-  const answers = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/tx?id=${id}`)) })));
+/** One transaction from every seat's answer ([{ seat, status, body, why }]), merged. */
+function merge(id, answers, readMs = null) {
   const known = answers.filter((a) => a.body && a.body.known);
   const first = known[0] ? known[0].body : null;
-  const seats = answers.map((a) => ({ seat: a.seat.replace('https://tn4.bitcoin-arena.io/', ''), key: a.body && a.body.seat ? a.body.seat : null,
+  const seats = answers.map((a) => ({ seat: seatName(a.seat), key: a.body && a.body.seat ? a.body.seat : null,
     status: a.status, known: !!(a.body && a.body.known), storedAt: a.body && a.body.storedAt ? a.body.storedAt : null,
     steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null,
     did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [],
@@ -47,33 +47,86 @@ async function readTx(id) {
   const names = Object.fromEntries(seats.filter((x) => x.key).map((x) => [x.key, x.seat]));
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
-  return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs: Date.now() - t0,
+  return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs,
     entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client, processed,
     storedFirst: seats.map((s) => s.storedAt).filter(Boolean).sort()[0] || null, seats };
 }
 
+/** Every seat's view of one transaction, asked now - only for one the minute's read has not stored yet. */
+async function readTx(id) {
+  const t0 = Date.now();
+  const answers = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/tx?id=${id}`)) })));
+  return merge(id, answers, Date.now() - t0);
+}
+
+async function sha(text) {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** A merged transaction's write into D1, or null when it is what D1 holds already (its hash leaves out when it was read). */
+async function keep(env, tx, had) {
+  const { readAt, readMs, ...stable } = tx; void readAt; void readMs;
+  const h = await sha(JSON.stringify(stable));
+  if (had === h) return null;
+  const e = tx.entry || {};
+  return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
+    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms`)
+    .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
+      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now());
+}
+
 async function poll(env) {
-  const kept = (await env.EXPLORER.get('recent', 'json')) || [];
-  const since = (await env.EXPLORER.get('since', 'json')) || {};
-  const byId = new Map(kept.map((t) => [t.id, t]));
-  let added = 0;
-  await Promise.all(SEATS.map(async (seat) => {
-    const got = await ask(`${seat}/txs?since=${Number(since[seat] || Date.now() - 24 * 3600000)}&limit=500`);
-    if (!got.body || !Array.isArray(got.body.txs)) return;
-    for (const t of got.body.txs) {
-      since[seat] = Math.max(Number(since[seat] || 0), Number(t.storedMs) || 0);
-      if (!hex64.test(String(t.id))) continue;
-      const had = byId.get(t.id);
-      // a row kept before the seats named its app and federation gets them from the next seat that does
-      if (had) { if (!had.app && t.app) had.app = t.app; if (!had.federation && t.federation) had.federation = t.federation; continue; }
-      const row = { id: t.id, round: t.round, storedMs: Number(t.storedMs), app: t.app || null, federation: t.federation || null };
-      byId.set(t.id, row); kept.push(row); added++;
+  const t0 = Date.now(), since = t0 - READ_BACK_MS;
+  const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/txs?since=${since}&limit=500&full=1`, READ_MS)) })));
+  const byId = new Map();
+  for (const g of got) {
+    if (!g.body || !Array.isArray(g.body.txs)) continue;
+    for (const t of g.body.txs) {
+      if (!hex64.test(String(t.id)) || !t.detail) continue;
+      if (!byId.has(t.id)) byId.set(t.id, new Map());
+      byId.get(t.id).set(g.seat, { status: 200, body: t.detail });
     }
-  }));
-  kept.sort((a, b) => b.storedMs - a.storedMs);
-  await env.EXPLORER.put('recent', JSON.stringify(kept.slice(0, RECENT_MAX)));
-  await env.EXPLORER.put('since', JSON.stringify(since));
-  console.log(JSON.stringify({ poll: { added, kept: Math.min(kept.length, RECENT_MAX) } }));
+  }
+  // a seat that answered the read and did not list a transaction does not hold it; one that did not answer is said so
+  const answered = new Map(got.map((g) => [g.seat, !!(g.body && Array.isArray(g.body.txs))]));
+  const ids = [...byId.keys()];
+  const hashes = new Map();
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    const r = await env.DB.prepare(`SELECT id, hash FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) hashes.set(x.id, x.hash);
+  }
+  const writes = [];
+  for (const id of ids) {
+    const per = byId.get(id);
+    const answers = SEATS.map((seat) => (per.has(seat) ? { seat, ...per.get(seat) }
+      : answered.get(seat) ? { seat, status: 404, body: { known: false } } : { seat, status: 0, body: null, why: 'did not answer the read' }));
+    const w = await keep(env, merge(id, answers, null), hashes.get(id));
+    if (w) writes.push(w);
+  }
+  for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
+  console.log(JSON.stringify({ poll: { seats: [...answered.values()].filter(Boolean).length, txs: ids.length, written: writes.length, ms: Date.now() - t0 } }));
+}
+
+async function recent(env) {
+  const r = await env.DB.prepare('SELECT id, round, app, federation, stored_ms FROM txs ORDER BY stored_ms DESC LIMIT ?').bind(RECENT_MAX).all();
+  return (r.results || []).map((x) => ({ id: x.id, round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms) }));
+}
+
+async function txOf(env, ctx, id) {
+  const row = await env.DB.prepare('SELECT json FROM txs WHERE id = ?').bind(id).first();
+  if (row) return { ...JSON.parse(row.json), cached: true };
+  const tx = await readTx(id);
+  if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); }
+  return tx;
+}
+
+// what D1 holds, built into the page (no "Loading …"): a <script> before the page's own, its JSON safe inside HTML
+async function inline(env, request, data) {
+  const page = await env.ASSETS.fetch(new Request(new URL('/', request.url), request));
+  const html = (await page.text()).replace('</head>', `<script>window.EXPLORER_DATA = ${JSON.stringify(data).replace(/</g, '\\u003c')};</script>\n</head>`);
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 export default {
@@ -81,18 +134,15 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'content-type': 'text/plain' } });
-    if (url.pathname === '/api/recent') return json({ txs: (await env.EXPLORER.get('recent', 'json')) || [] }, { maxAge: 20 });
+    if (url.pathname === '/api/recent') return json({ txs: await recent(env) }, { maxAge: 10 });
     const m = /^\/api\/tx\/([0-9a-f]{64})$/.exec(url.pathname);
     if (m) {
-      const id = m[1];
-      const cached = url.searchParams.has('fresh') ? null : await env.EXPLORER.get(`tx:${id}`, 'json');
-      if (cached) return json({ ...cached, cached: true }, { maxAge: 10 });
-      const tx = await readTx(id);
-      if (tx.found) ctx.waitUntil(env.EXPLORER.put(`tx:${id}`, JSON.stringify(tx), { expirationTtl: tx.settlement && tx.settlement.state === 'ACCEPTED' ? 86400 : 60 }));
+      const tx = url.searchParams.has('fresh') ? await readTx(m[1]) : await txOf(env, ctx, m[1]);
       return json(tx, { status: tx.found ? 200 : 404 });
     }
-    // the pages: /tx/<id> is the same page as /, which reads the id from the address
-    if (/^\/tx\/[0-9a-f]{64}\/?$/.test(url.pathname)) return env.ASSETS.fetch(new Request(new URL('/', url), request));   // '/', not '/index.html': the assets answer that with a 307 to '/'
+    const p = /^\/tx\/([0-9a-f]{64})\/?$/.exec(url.pathname);
+    if (p) return inline(env, request, { tx: await txOf(env, ctx, p[1]) });
+    if (url.pathname === '/' || url.pathname === '/index.html') return inline(env, request, { recent: await recent(env) });
     return env.ASSETS.fetch(request);
   },
 };

@@ -1,5 +1,5 @@
 #: the Arena's transaction explorer on explorer.bitcoin-arena.io (kanban #624): every order's transaction, read from the nodes every minute and
-# on demand, cached in KV. A Worker with static assets, as bitcoin-arena-site: its custom domain gets its DNS record.
+# kept in D1 (a page never waits on a node). A Worker with static assets, as bitcoin-arena-site: its custom domain gets its DNS record.
 name = "bitcoin-arena-explorer"
 main = "worker.js"
 compatibility_date = "2025-09-01"
@@ -17,6 +17,13 @@ run_worker_first = true
 [[kv_namespaces]]
 binding = "EXPLORER"
 id = "4a493f041b6a48c0a2ec27b5f5458466"
+
+#: every transaction, merged from the nodes (migrations/)
+[[d1_databases]]
+binding = "DB"
+database_name = "arena-explorer"
+database_id = "988ad7ad-6d01-4413-a644-a71030dd332f"
+migrations_dir = "migrations"
 
 [triggers]
 crons = ["* * * * *"]
