@@ -27524,8 +27524,21 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   if (had) return had;
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
   // A FEW SEATS, NOT EVERY ONE (headers.js headerSources): two must agree, two may be slow
-  const providers = headerSources(nodes).map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
-  const chain = await agreedChain(providers, { least: Math.min(least, providers.length), anchor });
+  const picked = headerSources(nodes);
+  const providers = picked.map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
+  let chain = await agreedChain(providers, { least: Math.min(least, providers.length), anchor });
+  // AND THE OTHER SEATS WHEN TOO FEW OF THOSE ANSWERED (playtest 2026-10-24 21:08Z: "no agreed headers: only 1 of 4 providers gave a
+  // chain" - two of the four picked were second-host seats answering /headers in 4-15 s right after a restart, while 12 others answered in
+  // 0.2 s): every seat not asked yet is asked, the same two needed to agree
+  if (!chain.ok) {
+    const askedKeys = new Set(picked.map(originOf));
+    const rest = headerSources(nodes, { n: 64 }).filter((u) => !askedKeys.has(originOf(u)));
+    if (rest.length) {
+      const more = rest.map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
+      const again = await agreedChain(more, { least: Math.min(least, more.length), anchor });
+      chain = again.ok ? again : { ...chain, why: `${chain.why}; the other ${rest.length} seat(s): ${again.why}` };
+    }
+  }
   if (!chain.ok) return { ok: false, why: `no agreed headers: ${chain.why}` };
   const at = chain.headers.findIndex((h) => toHex(blockHashOf(h)) === toHex(anchor));
   if (at < 0) return { ok: false, why: 'the agreed headers do not hold the anchor' };
