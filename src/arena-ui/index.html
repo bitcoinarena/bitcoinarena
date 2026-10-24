@@ -6197,6 +6197,7 @@
           // `stakeMsat`: the order's own amount, msat - from 1 sat to the cap (order-book.js); none: the round's stake
           order: (id, pick, limitPrice, orderExpiryMs = 0, stakeMsat = null) => {
             window.ARENA_ORDER_PRESSED_AT = performance.now();   // the press: what the order's note counts from (kanban #601)
+            if (window.ARENA_TIDY_STORAGE) window.ARENA_TIDY_STORAGE();   // room for the order's lock in the browser's storage (kanban #616)
             // EACH ORDER ITS OWN PLAYER KEY (measured by the bots: a tab's second order in a round took the
             // first one's saved lock - "that fee lock holds 510 msat and the entry's fee is 490"): this tab's orders in a round
             // are numbered 0, 1, 2 ... - the first is the round's key as before - and every order is its own entry, lock,
@@ -6558,6 +6559,24 @@
         handover.addEventListener('message', on);
         handover.postMessage({ kind: 'ask', id, phrase: phrase16, fed, to: to16 });
       });
+      // OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24: "exceeded the quota" on an order; "You need to clean
+      // up old storages"): ARENACLIENT.tidyStorage, once after the page's federations are read and again before each order; a phrase another
+      // tab plays with (its heartbeat within 12 s) is never touched
+      window.ARENA_TIDY_STORAGE = () => {
+        try {
+          if (!ARENACLIENT.tidyStorage) return null;
+          const L = vault(); const cur = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').toLowerCase();
+          if (!/^[0-9a-f]{64}$/.test(cur)) return null;
+          let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]').map((x) => (typeof x === 'string' ? x : x && x.hex)).filter(Boolean); } catch { kept = []; }
+          const tab = sessionStorage.getItem('arena.tab.id');
+          const held = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!(h && h.tab !== tab && Date.now() - h.at <= 12000); } catch { return true; } };
+          const federations = [...(window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.keys ? window.ARENA_FED_LOADS.keys() : []), ...(window.ARENA_WALLETS ? window.ARENA_WALLETS.keys() : [])];
+          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held });
+          if (r.removed) console.log('[arena] storage tidied: ' + r.wallets + ' old wallet database(s), ' + r.removed + ' entries, ' + Math.round(r.bytes / 1024) + ' KB freed');
+          return r;
+        } catch (e) { console.log('[arena] storage not tidied: ' + (e && e.message ? e.message : e)); return null; }
+      };
+      setTimeout(() => window.ARENA_TIDY_STORAGE(), 8000);
       const combiningBy = new Map();
       function combineWallets(main, named, round) { return combineIn(main, ARENACLIENT.toHex(round.federationId), named.federation, { legacy: true }); }
       window.ARENA_COMBINE_IN = (main, fedHex, invite) => combineIn(main, fedHex, invite, { legacy: false });
