@@ -373,21 +373,30 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   let firstSeatMs = null, submittedMs = null, acceptedMs = null;
   const accepted = (locks.accepted || Promise.resolve()).then(() => { acceptedMs = Date.now() - t0; });
   const said = [];
-  await Promise.all(nodes.map(async (n) => {
+  // NOT WAITING FOR THE SLOWEST SEAT (kanban #605, measured 2026-10-24: orders accepted 1.3-1.5 s in, yet seatsMs 50-65 s - one seat's
+  // POST /lock answered after a minute, and Promise.all held the order for it): the order stands once `needed` seats hold its lock;
+  // the others finish behind it. Each seat call has SEAT_LIMIT_MS; a seat that does not answer in it is counted as not taking it.
+  const limit = () => AbortSignal.timeout(SEAT_LIMIT_MS);
+  let held = 0, enough;
+  const enoughHeld = new Promise((r) => { enough = r; });
+  const all = Promise.all(nodes.map(async (n) => {
     try {
-      const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
+      const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout), signal: limit() });
       const hWhy = h.status >= 300 ? (await h.text()).trim().slice(0, 200) : null;
-      const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+      const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry), signal: limit() });
       const enWhy = en.status >= 300 ? (await en.text()).trim().slice(0, 200) : null;
       if (en.status >= 200 && en.status < 300 && submittedMs === null) submittedMs = Date.now() - t0;
       await accepted;
-      if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)) });
-      const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) });
+      if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)), signal: limit() });
+      const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)), signal: limit() });
       const lWhy = l.status >= 300 ? (await l.text()).trim().slice(0, 200) : null;
       if (l.status >= 200 && l.status < 300 && firstSeatMs === null) firstSeatMs = Date.now() - t0;
       said.push({ seat: n.replace(/^https?:\/\//, ''), entry: en.status, lock: l.status, ...(enWhy ? { why: enWhy } : {}), ...(hWhy ? { handout: h.status, handoutWhy: hWhy } : {}), ...(lWhy ? { lockWhy: lWhy } : {}) });
+      if (l.status >= 200 && l.status < 300 && ++held >= needed) enough();
     } catch (x) { said.push({ seat: n, why: x.message.slice(0, 80) }); }
   }));
+  await Promise.race([enoughHeld, all]);
+  all.catch(() => { /* each seat's own catch said it */ });
   const seatsMs = Date.now() - tSeats;
   // TAKEN only when enough seats took the entry and its lock (as tn4-rps-paid.mjs counts): else the rung is tried again next pass
   const took = said.filter((x) => x.lock >= 200 && x.lock < 300).length;
@@ -396,6 +405,8 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   return { entry: toHex(eid), took, said: said.map((x) => `${x.seat}:${x.entry}/${x.lock}`).join(' '), session: toHex(session), limitCents: Number(rung.price / TICK), outcome: Number(rung.outcome),
     ms: Date.now() - t0, lockMs, submittedMs, acceptedMs, seatsMs, firstSeatMs, steps };
 }
+// a seat that has not answered one order post in this long is counted as not taking the order (kanban #605)
+const SEAT_LIMIT_MS = Number(env.SEAT_LIMIT_MS || 30000);
 const CLAIM_KEYS = new Map();
 function claimKeyOf(c, rid, signers) {
   const key = `${toHex(rid)}:${signers.map((x) => String(x)).join(',')}`;
