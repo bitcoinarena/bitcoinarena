@@ -8,6 +8,9 @@
 //   steps        each door the transaction passed at this seat (handout, entry, lock, fee-lock): arrival (UTC ms), each step's
 //                offset, the answer's status and the whole time - the [steps] lines of step-log.js, as rows. A handout is kept under its
 //                own id; the entry names it (vssSharesRef), so GET /tx joins the two.
+//   round        what this seat did to settle the transaction's round (the owner 2026-10-24: "Also show who processed the round, e.g for
+//                settlement and verify"): committed to its settlement, gave its signature share, combined it, took it from a peer,
+//                saw it accepted - each with its time; GET /tx names the committees and the outcome's attestors beside them.
 //   client       the page's own timings of the order (from the press: submitted, placed, lock, and its steps before the lock), handed
 //                over by the page and signed with the order's session key, so no one but the player's page writes them.
 //
@@ -33,6 +36,13 @@ export function createTxRecord({ db, now = () => Date.now() }) {
     ms     INTEGER,
     PRIMARY KEY (id, kind, at_ms)
   );
+  CREATE TABLE IF NOT EXISTS tx_round_events (
+    round   TEXT NOT NULL,
+    at_ms   INTEGER NOT NULL,
+    what    TEXT NOT NULL,
+    detail  TEXT,
+    PRIMARY KEY (round, at_ms, what)
+  );
   CREATE TABLE IF NOT EXISTS tx_client_timing (
     id       TEXT PRIMARY KEY,
     timing   TEXT NOT NULL,
@@ -42,12 +52,16 @@ export function createTxRecord({ db, now = () => Date.now() }) {
   const of = db.prepare('SELECT id, kind, at_ms, steps, status, ms FROM tx_steps WHERE id = ? ORDER BY at_ms');
   const putTiming = db.prepare('INSERT OR REPLACE INTO tx_client_timing (id, timing, kept_ms) VALUES (?, ?, ?)');
   const timingOf = db.prepare('SELECT timing, kept_ms FROM tx_client_timing WHERE id = ?');
+  const putRound = db.prepare('INSERT OR IGNORE INTO tx_round_events (round, at_ms, what, detail) VALUES (?, ?, ?, ?)');
+  const roundOf = db.prepare('SELECT at_ms, what, detail FROM tx_round_events WHERE round = ? ORDER BY at_ms');
+  const lastOf = db.prepare('SELECT what FROM tx_round_events WHERE round = ? ORDER BY at_ms DESC LIMIT 1');
   let pruned = 0;
   const prune = () => {
     if (now() - pruned < 3600000) return;
     pruned = now();
     db.prepare('DELETE FROM tx_steps WHERE at_ms < ?').run(now() - KEEP_MS);
     db.prepare('DELETE FROM tx_client_timing WHERE kept_ms < ?').run(now() - KEEP_MS);
+    db.prepare('DELETE FROM tx_round_events WHERE at_ms < ?').run(now() - KEEP_MS);
   };
   return {
     /** step-log.js's `keep`: one door's line, as a row - only a request that named its transaction. */
@@ -62,6 +76,19 @@ export function createTxRecord({ db, now = () => Date.now() }) {
         for (const r of of.all(String(id))) out.push({ door: r.kind, atMs: Number(r.at_ms), at: new Date(Number(r.at_ms)).toISOString(), steps: JSON.parse(r.steps), status: r.status, ms: r.ms });
       }
       return out.sort((a, b) => a.atMs - b.atMs);
+    },
+    /** One thing this seat did to settle a round; the same thing said again in a row is kept once (a settle asked again). */
+    keepRound({ round, what, detail = null }) {
+      if (!/^[0-9a-f]{64}$/.test(String(round))) return;
+      try {
+        const last = lastOf.get(String(round));
+        if (last && last.what === String(what)) return;
+        putRound.run(String(round), now(), String(what), detail === null ? null : String(detail).slice(0, 300)); prune();
+      } catch { /* the log stands */ }
+    },
+    /** What this seat did to settle a round, oldest first: [{ at, atMs, what, detail }]. */
+    roundEvents(round) {
+      return roundOf.all(String(round)).map((r) => ({ atMs: Number(r.at_ms), at: new Date(Number(r.at_ms)).toISOString(), what: r.what, detail: r.detail }));
     },
     /** The page's timing, kept once its signature stands (the caller checks it). */
     keepClientTiming(id, timingJson) {

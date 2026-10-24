@@ -240,6 +240,7 @@ import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
 import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
 import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
 import { createReservePayouts, lnurlClient } from './reserve-payout.js';
+import { askerOrder } from './payout.js';
 import { trancheIdOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
 import { FUNDING_SCHEDULES, activeNodesBefore, activeInWeeks, capStands, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
@@ -2201,6 +2202,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
     },
   });
+  // WHO PROCESSED THE ROUND, KEPT (kanban #624, the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): each
+  // settlement step this seat takes - committed, gave its share, combined and submitted, took a peer's signature - with its time, for GET /tx
+  {
+    const fedOf = (o) => (o && o.federation ? ` (federation ${String(o.federation).slice(0, 8)})` : '');
+    const said = (rid, what, detail = null) => { try { txRecord.keepRound({ round: toHex(rid), what, detail }); } catch { /* the settlement goes on */ } };
+    const wrap = (name, after) => { const f = settlements[name].bind(settlements); settlements[name] = async (...a) => { const r = await f(...a); if (r && r.ok) after(a, r); return r; }; };
+    wrap('commit', ([rid, o]) => said(rid, 'committed to the settlement' + fedOf(o)));
+    wrap('share', ([rid, list, o]) => said(rid, 'gave its signature share' + fedOf(o), `${(list || []).length} signers`));
+    wrap('take', ([rid, , o]) => said(rid, 'took the combined signature' + fedOf(o)));
+    wrap('settle', ([rid], r) => { if (!r.kept) said(rid, r.recovered ? 'saw the settlement accepted' : `combined and submitted the settlement: ${r.state || ''}`, r.txid ? String(r.txid) : null); });
+  }
   // AND THE WINNERS' SHARES OF MARKET ROUNDS SETTLED BEFORE THEY WERE KEPT: once, a minute after start
   setTimeout(() => { settlements.backfillShares().then((n) => { if (n) console.log(`[season] winners' shares kept for ${n} settled round(s)`); }, () => {}); }, 60000).unref?.();
 
@@ -7227,7 +7239,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const op = (o) => (o && o.txid ? `${toHex(o.txid)}:${String(o.outIdx)}` : null);
         const lockOf = (l) => (l ? { outpoint: l.outpoint, txid: String(l.outpoint).split(':')[0], contractId: l.contractId, verifiedAt: l.verifiedMs ? new Date(Number(l.verifiedMs)).toISOString() : null } : null);
         const order = round.db.prepare('SELECT batch, received_ms FROM market_orders WHERE order_id = ?').get(idHex);
-        const settled = rr ? round.lockSettlement(e.roundId) : null;
+        const settled = rr ? round.lockSettlement(e.roundId) || (federation && round.fedLockSettlement ? round.fedLockSettlement(e.roundId, federation) : null) : null;
+        // WHO PROCESSED ITS ROUND (the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the seats drawn to
+        // run the game and to sign the settlement, the asker (who combines and submits it first), the outcome's attestors (who verified the
+        // result), the settlement and what this seat did to it
+        const processedOf = (rid, row) => {
+          if (!row) return null;
+          const keys = (role) => { try { const p = roster.committeeFor(rid, role); return p.ok ? p.committee.map((x) => toHex(x.pubkey)) : null; } catch { return null; } };
+          let asker = null;
+          try { const c = decodeRoundContract(new Uint8Array(row.contract)); const o = askerOrder(rid, [...c.nodes].sort((a, b) => (toHex(a) < toHex(b) ? -1 : 1))); asker = o.ok ? toHex(o.order[0]) : null; } catch { asker = null; }
+          const outcomes = round.outcomeAttestations(rid).map((x) => {
+            const bytes = new Uint8Array(x.bytes);
+            let a = null; try { a = isValueAttestationBytes(bytes) ? decodeValueAttestation(bytes) : decodeAttestation(bytes); } catch { a = null; }
+            return { outcome: Number(x.outcome) === VALUE_HELD_OUTCOME ? null : Number(x.outcome), value: a && a.value !== undefined ? String(a.value) : null,
+              observedAt: new Date(Number(x.observed_ms)).toISOString(), receivedAt: new Date(Number(x.received_ms)).toISOString(),
+              attestors: a ? a.signatures.map((g) => toHex(g.key)) : [] };
+          });
+          return { game: keys('game'), settlement: keys('settlement'), asker, outcomes,
+            settledAt: settled && settled.madeMs ? new Date(settled.madeMs).toISOString() : null, settlementWhy: settled ? settled.why || null : null,
+            mine: txRecord.roundEvents(toHex(rid)) };
+        };
         const ref = e.vssSharesRef && !e.vssSharesRef.every((b) => b === 0) ? toHex(e.vssSharesRef) : null;
         return send(200, { id: idHex, seat: toHex(round.pubkey), known: true,
           entry: { round: toHex(e.roundId), app, gameId, federation, player: toHex(e.playerPubkey), stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat,
@@ -7237,14 +7268,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           locks: { stake: lockOf(round.stakeLock(eid)), fee: lockOf(round.feeLock ? round.feeLock(eid) : null) },
           book: order ? { batch: order.batch !== null ? String(order.batch) : null, receivedAt: order.received_ms ? new Date(Number(order.received_ms)).toISOString() : null } : null,
           settlement: settled ? { txid: settled.txid, state: settled.state, why: settled.why || null } : null,
-          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex) });
+          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex), processed: processedOf(e.roundId, rr) });
       }
       // THE NEWEST TRANSACTIONS HERE (kanban #624): what explorer.bitcoin-arena.io polls - ids stored since `since` (ms), oldest first, at most 500
       if (req.method === 'GET' && url.pathname === '/txs') {
         const since = Math.max(0, Number(url.searchParams.get('since') || 0) || 0), limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') || 200) || 200));
-        const rows = round.db.prepare('SELECT entry_id, round_id, joined_ms FROM entries WHERE joined_ms > ? ORDER BY joined_ms LIMIT ?').all(since, limit);
+        const rows = round.db.prepare('SELECT entry_id, round_id, contract, joined_ms FROM entries WHERE joined_ms > ? ORDER BY joined_ms LIMIT ?').all(since, limit);
+        // each with its app and federation (the owner 2026-10-24: "Also display the app that did the transaction in the tx list"), a round's
+        // contract read once per answer
+        const ofRound = new Map();
+        const roundOfRow = (rid) => {
+          const k = Buffer.from(rid).toString('hex');
+          if (!ofRound.has(k)) {
+            let v = { rc: null, app: null };
+            try { const rr = round.get(new Uint8Array(rid)); const rc = decodeRoundContract(new Uint8Array(rr.contract)); const h = hosted.get(toHex(rc.gameId)); v = { rc, app: h ? h.name : toHex(rc.gameId).slice(0, 16) }; } catch { /* unnamed */ }
+            ofRound.set(k, v);
+          }
+          return ofRound.get(k);
+        };
+        const fedOf = (rc, raw) => { try { const ef = entryFederation(rc, decodeEntryContract(new Uint8Array(raw))); return ef.ok ? toHex(ef.federationId) : null; } catch { return null; } };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ seat: toHex(round.pubkey), txs: rows.map((r) => ({ id: Buffer.from(r.entry_id).toString('hex'), round: Buffer.from(r.round_id).toString('hex'), storedMs: Number(r.joined_ms) })) }));
+        return res.end(JSON.stringify({ seat: toHex(round.pubkey), txs: rows.map((r) => { const o = roundOfRow(r.round_id);
+          return { id: Buffer.from(r.entry_id).toString('hex'), round: Buffer.from(r.round_id).toString('hex'), storedMs: Number(r.joined_ms), app: o.app, federation: o.rc ? fedOf(o.rc, r.contract) : null }; }) }));
       }
       // THE PAGE'S OWN TIMING OF ITS ORDER (kanban #624): { timing, sig } - sig the order's session key's Ed25519 signature over
       // timingMessage(id, JSON of timing); kept for GET /tx. No one but the page that holds the order's session key writes it.

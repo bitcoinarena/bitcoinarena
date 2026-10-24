@@ -26,6 +26,9 @@
   th { color: var(--dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .dim { color: var(--dim); } .ok { color: var(--bull); } .bad { color: var(--bear); } .slow { color: var(--btc); font-weight: 700; }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; } dt { color: var(--dim); } dd { margin: 0; word-break: break-all; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  .filters select, .filters input { background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 7px 10px; font: 13px system-ui; }
+  .filters input { flex: 1; min-width: 160px; max-width: 280px; font-family: "JetBrains Mono", monospace; }
   .bar { height: 8px; background: var(--btc); border-radius: 4px; min-width: 2px; }
 </style>
 </head>
@@ -44,12 +47,35 @@ const sat = (msat) => (msat === null || msat === undefined ? '–' : (Number(msa
 const ago = (iso) => { const s = Math.round((Date.now() - Date.parse(iso)) / 1000); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; };
 $('find').onsubmit = (e) => { e.preventDefault(); const v = $('q').value.trim().toLowerCase(); if (/^[0-9a-f]{64}$/.test(v)) location.href = '/tx/' + v; };
 
+// THE NEWEST TRANSACTIONS, WITH THEIR APP, FILTERED (the owner 2026-10-24: "Also display the app that did the transaction in the tx list / With a
+// filter with common options"): by app, by federation, by how long ago, and by any part of an id; the filter kept in the address
+const FILTER_KEYS = ['app', 'fed', 'since', 'q'];
+const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
+function filterOf() { const u = new URLSearchParams(location.search); return Object.fromEntries(FILTER_KEYS.map((k) => [k, u.get(k) || ''])); }
+function setFilter(f) { const u = new URLSearchParams(); for (const k of FILTER_KEYS) if (f[k]) u.set(k, f[k]); history.replaceState(null, '', '/' + (u.toString() ? '?' + u : '')); }
+const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down' })[a] || a || 'unknown';
 async function list() {
-  const draw = (txs) => { $('main').innerHTML = `<h1>Newest transactions</h1><p class="dim">Every order and pick the nodes stored, read from them every minute.</p>
-    <div class="card"><table><tr><th>Transaction</th><th>Round</th><th>Stored</th></tr>${txs.slice(0, 200).map((t) => `<tr><td class="mono"><a href="/tx/${t.id}">${t.id.slice(0, 24)}…</a></td>
-    <td class="mono">${esc(String(t.round).slice(0, 16))}</td><td>${new Date(t.storedMs).toISOString().replace('T', ' ').slice(0, 19)} UTC <span class="dim">${ago(new Date(t.storedMs).toISOString())}</span></td></tr>`).join('') || '<tr><td colspan=3 class="dim">None yet.</td></tr>'}</table></div>`; };
-  const had = kept('explorer.recent'); if (had) draw(had);
-  try { const r = await (await fetch('/api/recent')).json(); keep('explorer.recent', r.txs); draw(r.txs); } catch (e) { if (!had) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
+  let txs = kept('explorer.recent') || [];
+  const draw = () => {
+    const f = filterOf(), now = Date.now();
+    const apps = [...new Set(txs.map((t) => t.app || ''))].sort(), feds = [...new Set(txs.map((t) => t.federation).filter(Boolean))].sort();
+    const shown = txs.filter((t) => (!f.app || (t.app || '') === f.app) && (!f.fed || t.federation === f.fed) && (!f.since || now - t.storedMs <= Number(f.since) * 1000)
+      && (!f.q || t.id.includes(f.q.toLowerCase()) || String(t.round).includes(f.q.toLowerCase())));
+    const opt = (v, label, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+    $('main').innerHTML = `<h1>Newest transactions</h1><p class="dim">Every order the nodes stored, read from them every minute.</p>
+    <div class="filters"><select id="f-app">${opt('', 'All apps', f.app)}${apps.map((a) => opt(a, appName(a) + ' (' + txs.filter((t) => (t.app || '') === a).length + ')', f.app)).join('')}</select>
+      <select id="f-fed">${opt('', 'All federations', f.fed)}${feds.map((x) => opt(x, 'Federation ' + x.slice(0, 8), f.fed)).join('')}</select>
+      <select id="f-since">${PERIODS.map(([v, l]) => opt(v, l, f.since)).join('')}</select>
+      <input id="f-q" placeholder="part of an id or round" value="${esc(f.q)}" autocomplete="off">
+      <span class="dim">${shown.length.toLocaleString('en-US')} of ${txs.length.toLocaleString('en-US')}</span></div>
+    <div class="card"><table><tr><th>Transaction</th><th>App</th><th>Federation</th><th>Round</th><th>Stored</th></tr>${shown.slice(0, 300).map((t) => `<tr><td class="mono"><a href="/tx/${t.id}">${t.id.slice(0, 16)}…</a></td>
+    <td>${esc(appName(t.app))}</td><td class="mono">${esc(t.federation ? t.federation.slice(0, 8) : '–')}</td><td class="mono">${esc(String(t.round).slice(0, 12))}</td>
+    <td>${new Date(t.storedMs).toISOString().replace('T', ' ').slice(0, 19)} UTC <span class="dim">${ago(new Date(t.storedMs).toISOString())}</span></td></tr>`).join('') || '<tr><td colspan=5 class="dim">None match.</td></tr>'}</table></div>`;
+    const on = (id, k, ev = 'change') => { $(id).addEventListener(ev, () => { const g = filterOf(); g[k] = $(id).value.trim(); setFilter(g); draw(); if (k === 'q') { $('f-q').focus(); $('f-q').setSelectionRange(99, 99); } }); };
+    on('f-app', 'app'); on('f-fed', 'fed'); on('f-since', 'since'); on('f-q', 'q', 'input');
+  };
+  if (txs.length) draw();
+  try { const r = await (await fetch('/api/recent')).json(); txs = r.txs; keep('explorer.recent', txs); draw(); } catch (e) { if (!txs.length) $('main').innerHTML = '<p class="bad">The explorer could not be read: ' + esc(e.message) + '</p>'; }
 }
 
 function drawTx(tx) {
@@ -64,7 +90,7 @@ function drawTx(tx) {
   const doors = tx.seats.flatMap((s) => s.steps.map((x) => ({ ...x, seat: s.seat }))).sort((a, b) => a.atMs - b.atMs);
   $('main').innerHTML = `<h1>Transaction</h1><p class="mono">${esc(tx.id)}</p>
   <div class="card"><dl>
-    <dt>App</dt><dd>${esc(e.app || e.gameId || '–')}</dd><dt>Round</dt><dd class="mono">${esc(e.round || '–')}</dd><dt>Federation</dt><dd class="mono">${esc(e.federation || '–')}</dd>
+    <dt>App</dt><dd>${esc(appName(e.app || e.gameId))}</dd><dt>Round</dt><dd class="mono">${esc(e.round || '–')}</dd><dt>Federation</dt><dd class="mono">${esc(e.federation || '–')}</dd>
     <dt>Stake</dt><dd>${sat(e.stakeMsat)}${e.limitPrice !== null && e.limitPrice !== undefined ? ' · at most ' + Math.round(Number(e.limitPrice) / 1000) + '¢' : ''}${e.pick !== null && e.pick !== undefined ? ' · pick ' + esc(e.pick) : ''}</dd>
     <dt>Fee</dt><dd>${sat(e.feeMsat)}</dd><dt>Player</dt><dd class="mono">${esc(e.player || '–')}</dd>
     <dt>Stake lock</dt><dd class="mono">${esc(tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–')}</dd>
@@ -77,8 +103,27 @@ function drawTx(tx) {
   <h2>At the nodes <span class="dim">(time ${press ? 'after the press' : 'after the first door'})</span></h2>
   <div class="card"><table><tr><th>Node</th><th>Door</th><th>Arrived</th><th>Took</th><th>Steps</th><th>Answer</th></tr>${doors.map((x) => `<tr><td>${esc(x.seat)}</td><td>${esc(x.door)}</td>
     <td class="${slow(x.atMs - t0)}">${rel(x.atMs)}</td><td>${x.ms} ms</td><td class="dim">${esc(x.steps.map((s) => s.step + ' ' + s.ms).join(', '))}</td><td class="${x.status >= 200 && x.status < 300 ? 'ok' : 'bad'}">${x.status}</td></tr>`).join('') || '<tr><td colspan=6 class="dim">No node kept steps for it.</td></tr>'}</table></div>
+  ${processedHtml(tx)}
   <h2>Nodes</h2><div class="card"><table><tr><th>Node</th><th>Holds it</th><th>Stored</th><th>Book</th></tr>${tx.seats.map((s) => `<tr><td>${esc(s.seat)}</td><td class="${s.known ? 'ok' : 'dim'}">${s.known ? 'yes' : s.status ? 'no' : 'no answer'}</td>
     <td>${s.storedAt ? rel(Date.parse(s.storedAt)) : '–'}</td><td class="dim">${s.book ? 'batch ' + esc(s.book.batch || '–') : ''}</td></tr>`).join('')}</table></div>`;
+}
+
+// WHO PROCESSED THE ROUND: the seats drawn to run the game and to sign the settlement, the asker who combines and submits it, who attested the
+// outcome, and each seat's own settlement steps with their times
+function processedHtml(tx) {
+  const p = tx.processed; if (!p) return '';
+  const nm = (k) => (p.names && p.names[k] ? esc(p.names[k]) : '<span class="mono dim">' + esc(String(k).slice(0, 12)) + '…</span>');
+  const list = (ks) => (ks && ks.length ? ks.map((k) => (k === p.asker ? '<b>' + nm(k) + '</b> (asker)' : nm(k))).join(', ') : '<span class="dim">–</span>');
+  const outs = (p.outcomes || []).map((o) => `<tr><td>${o.value !== null ? 'value ' + esc(o.value) : 'outcome ' + esc(o.outcome)}</td><td>${esc(o.observedAt.replace('T', ' ').slice(0, 19))} UTC</td>
+    <td>${(o.attestors || []).map(nm).join(', ') || '–'}</td></tr>`).join('');
+  const did = tx.seats.flatMap((s) => (s.did || []).map((d) => ({ ...d, seat: s.seat }))).sort((a, b) => a.atMs - b.atMs);
+  return `<h2>Who processed the round</h2><div class="card"><dl>
+    <dt>Ran the game</dt><dd>${list(p.game)}</dd><dt>Signs the settlement</dt><dd>${list(p.settlement)}</dd>
+    <dt>Asker</dt><dd>${p.asker ? nm(p.asker) + ' <span class="dim">combines and submits the settlement first; the next takes over if it does not</span>' : '–'}</dd>
+    <dt>Settled</dt><dd>${p.settledAt ? esc(p.settledAt.replace('T', ' ').slice(0, 19)) + ' UTC' + (p.settlementWhy ? ' <span class="dim">· ' + esc(p.settlementWhy) + '</span>' : '') : '<span class="dim">not yet</span>'}</dd></dl></div>
+  <h2>Result verified by</h2><div class="card">${outs ? '<table><tr><th>Result</th><th>Observed</th><th>Attested by</th></tr>' + outs + '</table>' : '<p class="dim">No result attested yet.</p>'}</div>
+  <h2>Settlement steps at each node</h2><div class="card">${did.length ? '<table><tr><th>Node</th><th>When</th><th>Did</th><th>Detail</th></tr>' + did.map((d) => `<tr><td>${esc(d.seat)}</td>
+    <td>${esc(d.at.replace('T', ' ').slice(0, 23))}</td><td>${esc(d.what)}</td><td class="mono dim">${esc(d.detail || '')}</td></tr>`).join('') + '</table>' : '<p class="dim">No node has settled this round yet.</p>'}</div>`;
 }
 
 async function one(id) {
