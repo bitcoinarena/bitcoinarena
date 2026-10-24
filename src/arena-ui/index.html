@@ -1106,11 +1106,11 @@
        amount never wrap, the description ends with an ellipsis, and a narrow screen puts the date on its own line */
     /* the time column as wide as its text (the owner 2026-10-20 19:2xZ, "That looks broken": "2026-10-20 18:33 UTC" needs ~11em, the column
        was 8.2em and the time ran under "Moved in from ..." / "Deposit") */
-    #arena-wallet-modal .hist-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; }
+    #arena-wallet-modal .hist-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: baseline; }
     #arena-wallet-modal .hist-row .hist-when { color: #8b949e; white-space: nowrap; font-variant-numeric: tabular-nums; }
     #arena-wallet-modal .hist-row .hist-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #arena-wallet-modal .hist-row .hist-amt { margin-left: 0; white-space: nowrap; text-align: right; }
-    @media (max-width: 440px) { #arena-wallet-modal .hist-row { grid-template-columns: minmax(0, 1fr) auto; } #arena-wallet-modal .hist-row .hist-when { grid-column: 1 / -1; font-size: 11px; } }
+    @media (max-width: 440px) { #arena-wallet-modal .hist-row { grid-template-columns: minmax(0, 1fr) auto auto; } #arena-wallet-modal .hist-row .hist-when { grid-column: 1 / -1; font-size: 11px; } }
     #arena-wallet-modal .wd-tabs button.on {background: #f7931a; color: #111; border-color: #f7931a; }
     #arena-wallet-modal .settings-card {max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box; background: linear-gradient(180deg, #161c24, #11161c); border: 1px solid #2f3b49; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
     #arena-wallet-modal .settings-card h3 {margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #f7931a; border-bottom: 1px solid #2f3b49; padding-bottom: 8px; }
@@ -1151,6 +1151,8 @@
     #arena-history-fed .fed-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
     #arena-history-fed .fed-chip.warn::before { background: #d29922; } #arena-history-fed .fed-chip.bad::before { background: #f85149; }
     #arena-history-fed .fed-chip.idle::before { background: #6e7681; }
+    #arena-history-rows .hist-tx { color: #8b949e; font: 600 11.5px ui-monospace, monospace; text-decoration: underline dotted; white-space: nowrap; }
+    #arena-history-rows .hist-tx:hover { color: #e8edf3; }
     #arena-history-rows .empty { color: #8b949e; font-size: 14px; padding: 6px 0; }
     .hist-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #2a2f36; font-size: 12px; }
     .hist-row .hist-amt { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -4938,7 +4940,7 @@
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = WHAT(r, sat);
         return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
-          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null };
+          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null, tx: r.entry || null };
       });
       window.ArenaWallet.drawHistory(rowsEl, { rows: view, empty: EMPTY });
     }

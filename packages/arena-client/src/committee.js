@@ -34,6 +34,7 @@ export const BOND_TERMS = Object.freeze({
 });
 
 const CHAIN_KEPT_MS = 180000;
+export const COMPARE_GRACE_MS = 400;
 const keptChains = new Map();     // network:explorer -> [{ at, chain, firstHeight }], newest last
 const keptCensus = new Map();     // round's census root -> evidence
 const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
@@ -195,7 +196,19 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   // when every role it answered is the client's; null when it answered none (a seat that does not hold the round: not a lie)
   const seats = [];
   if (compare) {
-    await Promise.all(nodes.map(async (u) => {
+    // NOT HELD FOR THE SLOWEST SEAT (kanban #625, measured 2026-10-24 19:10Z: one stalled seat held an order's committee 4.9 s while
+    // every other seat answered in ms): once more than half the seats answered, the rest get COMPARE_GRACE_MS more; one that has not
+    // answered by then is named as not answering (agrees null - as a seat that does not hold the round), and a lie it tells later is
+    // still no part of the committee this client derived itself
+    const answeredBy = new Set(); let closed = false;
+    const graceOver = new Promise((resolve) => {
+      let timer = null;
+      const watch = setInterval(() => {
+        if (answeredBy.size === nodes.length) { clearInterval(watch); clearTimeout(timer); resolve(); }
+        else if (!timer && answeredBy.size * 2 > nodes.length) timer = setTimeout(() => { clearInterval(watch); resolve(); }, COMPARE_GRACE_MS);
+      }, 20);
+    });
+    const each = nodes.map(async (u) => {
       const said = {};
       for (const role of roles) {
         const mine = (got.committees[role] || []).map(toHex).sort().join(',');
@@ -210,8 +223,13 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       }
       const answered = Object.values(said).filter((x) => x.agrees !== null);
       const differ = Object.values(said).filter((x) => x.agrees === false);
+      if (closed) return;
       seats.push({ node: u, agrees: answered.length ? !differ.length : null, why: differ.length ? differ.map((x) => x.why).join('; ') : answered.length ? null : Object.values(said).map((x) => x.why).join('; '), roles: said });
-    }));
+      answeredBy.add(u);
+    });
+    await Promise.race([Promise.all(each), graceOver]);
+    closed = true;
+    for (const u of nodes) if (!answeredBy.has(u)) seats.push({ node: u, agrees: null, why: `no committee answer within ${COMPARE_GRACE_MS} ms of the other seats` });
   }
   return { ...got, censusRefused, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
     seats, ms: { chainAndCensus: t1 - t0, total: Date.now() - t0 } };

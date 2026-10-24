@@ -204,6 +204,25 @@ export function donationRecipientsLine(set) {
  */
 const DONATION_SETS_FETCHED = new Map();      // donation set id hex -> the answers that passed every check
 const DONATION_ANSWER_MS = 6000;
+export const QUORUM_GRACE_MS = 250;
+/** Every node's answer, or - once more than half served the same bytes and none refused - those in by QUORUM_GRACE_MS later, the rest
+ *  as late ({ node, why, late: true }). An answer that refuses (not late) still waits for all, so the refusal is said as before. */
+export function firstMajority(promises, names, { graceMs = QUORUM_GRACE_MS } = {}) {
+  return new Promise((resolve) => {
+    const got = new Array(promises.length).fill(null);
+    let left = promises.length, timer = null, done = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(got.map((a, i) => a || { node: names[i], why: `no answer within ${graceMs} ms of the others`, late: true })); };
+    const check = () => {
+      if (left === 0) return finish();
+      const served = got.filter((a) => a && a.bytes);
+      if (timer || got.some((a) => a && !a.bytes && !a.late) || served.length * 2 <= promises.length) return;
+      const first = served[0].bytes;
+      const same = (x) => x.length === first.length && x.every((v, i) => v === first[i]);
+      if (served.every((a) => same(a.bytes))) timer = setTimeout(finish, graceMs);
+    };
+    promises.forEach((p, i) => p.then((a) => { got[i] = a; left--; check(); }, (e) => { got[i] = { node: names[i], why: String(e && e.message ? e.message : e) }; left--; check(); }));
+  });
+}
 const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
   const t = setTimeout(() => reject(Object.assign(new Error(`no answer in ${ms} ms`), { late: true })), ms);
   p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
@@ -226,7 +245,10 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   // that does not answer in ANSWER_MS is left out, as long as at least half the nodes answered and every answer agrees.
   const setKey = toHex(round.donationSetId);
   const kept = keepBySet ? DONATION_SETS_FETCHED.get(setKey) : null;
-  const answers = kept || (await Promise.all(nodes.map(async (node) => {
+  // AND NO WAIT FOR THE SLOWEST (kanban #625, measured 2026-10-24 19:10Z: one seat stalled 3-5 s and every order waited for it - the
+  // explorer showed fetchDonationSet 2.7 s, 4.5 s and 5.0 s of orders whose seats all answered in ms): once more than half the nodes
+  // served the same set, the rest get QUORUM_GRACE_MS more and whoever has not answered by then is left out as late
+  const answers = kept || (await firstMajority(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
     try {
       const r = await donationWithinMs(fetcher(`${base}/donation-set?round=${rid}`), DONATION_ANSWER_MS);
@@ -239,7 +261,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
     } catch (e) { return { node: base, why: e.message, late: !!e.late }; }
-  }))).filter((a) => a.bytes || !a.late);
+  }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
     return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
