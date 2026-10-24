@@ -48,11 +48,11 @@ function List() {
       <input placeholder="part of an id or round" value={f.q} onChange={(e) => set('q', e.target.value.trim())} autoComplete="off" />
       <span className="dim">{shown.length.toLocaleString('en-US')} of {txs.length.toLocaleString('en-US')}</span>
     </div>
-    <div className="card"><table><thead><tr><th>Transaction</th><th>App</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
-      {shown.slice(0, 300).map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{appName(appOf(t))}</td>
+    <div className="card"><table><thead><tr><th>Transaction</th><th>App</th><th className="n">Amount</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
+      {shown.slice(0, 300).map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{appName(appOf(t))}</td><td className="n nw">{t.stakeMsat !== null && t.stakeMsat !== undefined ? (Number(t.stakeMsat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat' : '–'}</td>
         <td className="mono">{t.federation ? t.federation.slice(0, 8) : '–'}</td><td className="mono">{String(t.round || '').slice(0, 12)}</td>
         <td>{utc(t.storedMs).slice(0, 19)} UTC <span className="dim">{ago(t.storedMs)}</span></td></tr>))}
-      {!shown.length ? <tr><td colSpan={5} className="dim">None match.</td></tr> : null}</tbody></table></div>
+      {!shown.length ? <tr><td colSpan={6} className="dim">None match.</td></tr> : null}</tbody></table></div>
   </>);
 }
 
@@ -104,8 +104,8 @@ function Group({ id, title, hint, events, rel }) {
     <details className="grp" id={'g-' + id}>
       <summary><b>{title}</b> <span className="dim">{events.length ? `${span} · ${events.length} event(s)${nodes ? ' at ' + nodes + ' node(s)' : ''}` : 'nothing yet'}</span>
         <span className="hint dim">{hint}</span></summary>
-      {events.length ? (<table><thead><tr><th>UTC</th><th>From first node</th><th>Where</th><th>What</th><th>Took</th><th>Detail</th></tr></thead><tbody>
-        {events.map((x, i) => (<tr key={i} className={x.away ? 'away' : x.group === 'page' ? 'pg' : ''}><td className="mono nw">{utc(x.atMs)}</td>
+      {events.length ? (<table><thead><tr><th>UTC</th><th>From start</th><th>Where</th><th>What</th><th>Took</th><th>Detail</th></tr></thead><tbody>
+        {events.map((x, i) => (<tr key={i} className={x.away ? 'away' : x.group === 'page' ? 'pg' : ''}><td className="mono nw"><span className="day">{utc(x.atMs).slice(0, 11)}</span>{utc(x.atMs).slice(11)}</td>
           <td className={'nw' + (rel.ms(x.atMs) > 3000 ? ' slow' : '')}>{rel(x.atMs)}</td><td className="nw">{x.where}</td>
           <td>{x.what}{x.bad ? <span className="bad"> {x.status}</span> : null}</td><td className="nw">{Number.isFinite(x.took) ? x.took + ' ms' : ''}</td>
           <td className="dim mono">{x.detail || ''}</td></tr>))}</tbody></table>) : <p className="dim">Nothing recorded yet.</p>}
@@ -137,7 +137,10 @@ function Tx({ id }) {
   const e = tx.entry || {};
   const ev = timelineOf(tx);
   const nodeEv = ev.filter((x) => x.group !== 'page' && !x.away);
-  const t0 = nodeEv.length ? nodeEv[0].atMs : ev.length ? ev[0].atMs : Date.now();
+  // THE ORDER'S START: the press where the page handed it, else the first node it reached - so nothing is before it (the owner 2026-10-24:
+  // "Negative timings": the page's steps come before the first node)
+  const press = ev.find((x) => x.group === 'page');
+  const t0 = press ? press.atMs : nodeEv.length ? nodeEv[0].atMs : ev.length ? ev[0].atMs : Date.now();
   const rel = (ms) => { const d = (ms - t0) / 1000; return (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2) + ' s'; };
   rel.ms = (ms) => ms - t0;
   // THE NODE SIDE, SUMMED UP: for each step the first node's, the half-way node's and the last node's time from the first node it reached
@@ -157,11 +160,11 @@ function Tx({ id }) {
       <dt>Stake lock</dt><dd className="mono">{tx.locks && tx.locks.stake ? tx.locks.stake.outpoint : e.stakeLockOutpoint || '–'}</dd>
       <dt>Fee lock</dt><dd className="mono">{tx.locks && tx.locks.fee ? tx.locks.fee.outpoint : e.feeLockOutpoint || '–'}</dd>
       <dt>Settlement</dt><dd className="mono">{tx.settlement ? tx.settlement.state + ' · ' + tx.settlement.txid : <span className="dim">not yet</span>}</dd>
-      <dt>First at a node</dt><dd>{nodeEv.length ? utc(t0) + ' UTC' : '–'}</dd>
+      <dt>Start</dt><dd>{utc(t0)} UTC <span className="dim">{press ? 'the press at the page' : 'the first node it reached'}</span></dd>
       <dt>Read</dt><dd className="dim">{tx.cached ? 'from the explorer\'s store' : 'from the nodes'} · {known} node(s) hold it</dd></dl></div>
-    <h2>At the nodes <span className="dim">(from the first node it reached: first · half the nodes · last)</span></h2>
-    <div className="card">{steps.length ? (<table><thead><tr><th>Step</th><th>First</th><th>Half</th><th>Last</th><th></th></tr></thead><tbody>
-      {steps.map((s) => <tr key={s.label}><td>{s.label}</td><td>{rel(s.first)}</td><td>{rel(s.half)}</td><td>{rel(s.last)}</td><td className="dim">{s.n} node(s)</td></tr>)}</tbody></table>)
+    <h2>At the nodes <span className="dim">(from the start{press ? ', the press' : ', the first node it reached'}: first · half the nodes · last)</span></h2>
+    <div className="card">{steps.length ? (<table><thead><tr><th>Step</th><th>First</th><th>Half</th><th>Last</th><th>Nodes</th></tr></thead><tbody>
+      {steps.map((s) => <tr key={s.label}><td>{s.label}</td><td className="nw">{rel(s.first)}</td><td className="nw">{rel(s.half)}</td><td className="nw">{rel(s.last)}</td><td className="dim nw">{s.n}</td></tr>)}</tbody></table>)
       : <p className="dim">No node kept steps for it.</p>}</div>
     <h2>History <span className="dim">(every node's record{tx.client ? ' and the page\'s steps' : ''}, one clock - open a group)</span></h2>
     {GROUPS.filter(([g]) => g !== 'page' || tx.client).map(([g, title, hint]) => <Group key={g} id={g} title={title} hint={hint} events={ev.filter((x) => x.group === g)} rel={rel} />)}
