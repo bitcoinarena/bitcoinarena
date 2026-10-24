@@ -6792,11 +6792,23 @@
         combiningBy.set(fedHex, run);
         return run;
       }
+      // THE BLOCK COUNT EVERY WALLET'S LOCK IS BUILT ON, WARM (kanban #623, measured 2026-10-24: an order's lock took 0.4-2.7 s in the browser
+      // and 60-160 ms for the bots on the same federation - the lobby kept only its own round's wallet warm, so an order in another
+      // federation's round read the block count itself, a threshold of identical guardian answers with retries): each kept wallet reads it
+      // now and every 45 s, so its lock builds on the kept count (lib.rs count_for_lock keeps one for a minute)
+      const WARMED = new WeakSet();
+      const warmCountOf = (client) => {
+        if (!client || typeof client.warmBlockCount !== 'function' || WARMED.has(client)) return;
+        WARMED.add(client);
+        const warm = () => client.warmBlockCount().catch(() => { /* the lock reads it itself */ });
+        warm(); const t = setInterval(warm, 45000); if (t && t.unref) t.unref();
+      };
       const RESUMED = new Set();
       window.ARENA_KEEP_WALLET = (fid, client) => {
         if (!fid || !client) return;
         const k = String(fid).toLowerCase();
         window.ARENA_WALLETS.set(k, client);
+        if (typeof warmCountOf === 'function') warmCountOf(client);
         if (RESUMED.has(k) || !ARENACLIENT.resumeDeposits) return;
         RESUMED.add(k);
         // THE OTHER PHRASES THIS BROWSER KEEPS with a wallet in this federation: a deposit one of them made is claimed there (resumeDeposits), then
