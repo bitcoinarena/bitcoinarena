@@ -2553,6 +2553,28 @@
           Object.assign({}, opts, { verify: verify, stakeLock: window.ARENA_STAKE_LOCK || undefined }))
           .then(function (client) {
             if (client && client.provedChain) window.ARENA_PROVED_CHAIN = client.provedChain;
+            // A RUN'S TRANSACTION RECORDED AS AN ORDER'S (the owner 2026-10-24: "Make sure that the other apps also get all these timing
+            // fixes"): its tx id in the log, the page's timing signed by the run's own session to the seats (explorer), a slow one's log
+            // kept in this browser
+            if (client && typeof client.join === 'function' && !client.__txWrapped) {
+              client.__txWrapped = true;
+              const join = client.join.bind(client);
+              client.join = async function (entry) {
+                const out = await join(entry);
+                try {
+                  const id = ARENACLIENT.toHex(ARENACLIENT.entryId(entry));
+                  const from = window.ARENA_JOIN_PRESS_AT || performance.now(), tookMs = performance.now() - from;
+                  console.log('[arena] tx ' + id + ': joined ' + Math.round(tookMs) + ' ms after the press');
+                  if (window.ARENA_TX_TIMING_POST && typeof client.sign === 'function') {
+                    const steps = (window.ARENA_TX_STEPS || []).slice(), pressedAt = new Date(Date.now() - tookMs).toISOString();
+                    if (window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(id + ':run', 'submittedMs', tookMs);
+                    window.ARENA_TX_TIMING_POST({ entryIdHex: id, signer: (m) => client.sign(m), nodes: nodes || [], key: id + ':run', steps, pressedAt });
+                  }
+                  if (tookMs > (window.ARENA_SLOW_TX_MS || 2000) && window.ARENA_KEEP_SLOW_TX) setTimeout(() => window.ARENA_KEEP_SLOW_TX(id, tookMs), 8000);
+                } catch (e) { console.log('[arena] the run\'s tx record: ' + (e && e.message ? e.message : e)); }
+                return out;
+              };
+            }
             console.log('[arena] the chain was ' + (client && client.reusedChain ? 'REUSED from this page\'s last round'
               : 'read afresh') + ' to open this session');
             return client;
@@ -2907,6 +2929,7 @@
       // page could not be asked. It has to say it. One line in, one line out, per await that can hold it.
       // EACH STEP FROM THE PRESS, KEPT FOR THE ORDER'S TRANSACTION (kanban #624): handed to the seats with the order's timing (ARENA_TX_TIMING_POST)
       const pressAt = window.ARENA_ORDER_PRESSED_AT || performance.now();
+      window.ARENA_JOIN_PRESS_AT = pressAt;   // a run's entry goes out later, from the game's session (Client.at's join below)
       window.ARENA_TX_STEPS = [];
       // AN ORDER IN FLIGHT HAS THE WALLET TO ITSELF (playtest 2026-10-24 21:24Z, 0f975760: "It's stuck at placing" - "money moved ahead into
       // 337ae01a ... in 163483 ms", then "lock accepted 170638 ms after the entry went out", 80 ms after it): no money moved ahead starts,
@@ -3517,10 +3540,11 @@
       // are kept in the tab until the reveal after entry close (ARENA_GAME.reveal); the join ends 'hidden'.
       const hiding = hiddenFor(named.roundIdHex);
       if (hiding) {
-        let sessionPubkey = random(32);
+        let sessionPubkey = random(32), hiddenKeyPkcs8 = null;
         try {
           const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
           sessionPubkey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+          hiddenKeyPkcs8 = ARENACLIENT.toHex(new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey)));   // signs this entry's timing
         } catch { /* a browser without WebCrypto Ed25519: random bytes, as no mark is ever checked against them */ }
         const hidden = ARENACLIENT.hiddenMove(hiding.move, random);
         const entry = Object.assign(ARENACLIENT.entryFor(
@@ -3541,7 +3565,19 @@
         all.then((done) => { if (done && done.lock) console.log('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
           + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
+        window.ARENA_ORDER_BUSY_UNTIL = 0;
         if (!sent.entries.some((x) => x.status === 201)) { window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
+        // THE SAME TRANSACTION RECORD AS AN ORDER'S (the owner 2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
+        // id in the log, the page's signed timing to the seats (explorer), a slow one's log kept in this browser
+        { const tookMs = performance.now() - (typeof pressAt === 'number' ? pressAt : (window.ARENA_ORDER_PRESSED_AT || performance.now()));
+          console.log('[arena] tx ' + sent.entryId + ': taken ' + Math.round(tookMs) + ' ms after the press, round ' + named.roundIdHex.slice(0, 16));
+          if (window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(named.roundIdHex + ':h', 'submittedMs', tookMs);
+          if (hiddenKeyPkcs8 && window.ARENA_TX_TIMING_POST) {
+            const steps = (window.ARENA_TX_STEPS || []).slice(), pressedAt = new Date(Date.now() - tookMs).toISOString();
+            const post = () => window.ARENA_TX_TIMING_POST({ entryIdHex: sent.entryId, sessionKeyPkcs8: hiddenKeyPkcs8, nodes: named.nodes || [], key: named.roundIdHex + ':h', steps, pressedAt });
+            post(); setTimeout(post, 8000);
+          }
+          if (tookMs > (window.ARENA_SLOW_TX_MS || 2000) && window.ARENA_KEEP_SLOW_TX) setTimeout(() => window.ARENA_KEEP_SLOW_TX(sent.entryId, tookMs), 8000); }
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
           nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
           endMs: String(ARENACLIENT.roundEndMs(named.round)) });   // its reveal deadline: the result stands by then at the latest
@@ -6698,7 +6734,7 @@
       };
       // THE ORDER'S OWN TIMING TO THE SEATS (kanban #624): from the press, submitted / placed / lock and each step, signed with the order's
       // session key (Ed25519 over the seats' timingMessage: sha256 of "arena/tx-timing/v1\n" + id + "\n" + the timing's JSON), POST /tx-timing
-      window.ARENA_TX_TIMING_POST = async ({ entryIdHex, sessionKeyPkcs8, nodes, key, steps = [], committee = null, pressedAt = null }) => {
+      window.ARENA_TX_TIMING_POST = async ({ entryIdHex, sessionKeyPkcs8, signer = null, nodes, key, steps = [], committee = null, pressedAt = null }) => {
         try {
           const t = (window.ARENA_ORDER_TIMES && window.ARENA_ORDER_TIMES.get(key)) || {};
           const timing = { pressedAt: pressedAt || (window.ARENA_ORDER_PRESSED_AT ? new Date(Date.now() - (performance.now() - window.ARENA_ORDER_PRESSED_AT)).toISOString() : null),
@@ -6706,8 +6742,9 @@
             ui: (document.querySelector('.build-stamp, #arena-build') || {}).textContent || null, agent: (navigator.userAgent || '').slice(0, 120) };
           const tj = JSON.stringify(timing);
           const msg = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('arena/tx-timing/v1\n' + String(entryIdHex).toLowerCase() + '\n' + tj)));
-          const k = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']);
-          const sig = ARENACLIENT.toHex(new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, k, msg)));
+          // a run's session signs with the game's own signer (the run client's `sign`), an order's and a hidden move's with its kept key
+          const sig = signer ? ARENACLIENT.toHex(new Uint8Array(await signer(msg)))
+            : ARENACLIENT.toHex(new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']), msg)));
           const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/tx-timing?id=' + entryIdHex, { method: 'POST', body: JSON.stringify({ timing, sig }) })
             .then((r) => r.status, () => 0)));
           console.log('[arena] tx ' + entryIdHex + ': timing to ' + said.filter((x) => x === 201).length + ' of ' + nodes.length + ' seats');
