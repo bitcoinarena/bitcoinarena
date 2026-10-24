@@ -3396,6 +3396,11 @@
             // the guardians refuse refuses the join by name - its stake is never counted, and no money moved.
             if (made.accepted) {
               const t0 = Date.now();
+              // HOW LONG THE LOCK TOOK, KEPT WITH THE ORDER (kanban #619, the owner 2026-10-24: "Display the order accept time and lock time"): from
+              // the press, by round and order number - noteOrderTime puts it on the order's record once that exists
+              const lockKey = named.roundIdHex + ':' + (Number(window.ARENA_PICK_CHOSEN && window.ARENA_PICK_CHOSEN.orderIndex) || 0);
+              const pressedAt = window.ARENA_ORDER_PRESSED_AT || null;
+              made.accepted.then(() => { if (pressedAt !== null && window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(lockKey, 'lockMs', performance.now() - pressedAt); }, () => {});
               made.accepted.then((a) => console.log('[arena] TIMED lock accepted ' + (Date.now() - t0) + ' ms after the entry went out'
                 + (a && a.walletAfterMsat !== undefined ? '; the player wallet holds ' + String(a.walletAfterMsat) + ' msat' : '')))
                 .catch((e) => {
@@ -3536,7 +3541,8 @@
         // (`submitted`); it is placed once the first seat holds the accepted lock; refused by the federation or every seat, it is taken back
         const recordOf = (eid, state) => Object.assign(ARENACLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: eid, pick: chosen.pick,
           round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }),
-          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0, state } } : {});
+          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0, state,
+            timing: (window.ARENA_ORDER_TIMES && window.ARENA_ORDER_TIMES.get(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0))) || {} } } : {});
         const t0 = performance.now();
         let early = null;
         // HOW LONG IT TOOK, SHOWN (the owner 2026-10-23 ~20:35Z: "In der Web ui wenn die Order [placed] wurde sag wie lange das gedauert hat - Bei btc
@@ -3560,6 +3566,7 @@
           rememberPick(recordOf(x.entryId, 'submitted'));
           console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': submitted in ' + Math.round(performance.now() - t0) + ' ms');
           submittedAt = performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0);   // from the press (market.order), else from here
+          if (window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0), 'submittedMs', submittedAt);
           tookNote('Order submitted in ' + secs(submittedAt) + ' · placing …', false);
         } });
         console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status))
@@ -3574,6 +3581,7 @@
         window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, state: sent.ok ? 'placed' : 'submitted' };
         { const from = window.ARENA_ORDER_PRESSED_AT || t0;
           tookNote((submittedAt !== null ? 'Order submitted in ' + secs(submittedAt) + ' · ' : '') + (sent.ok ? 'placed in ' + secs(performance.now() - from) : 'placing on the other seats …'), true); }
+        if (sent.ok && window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0), 'placedMs', performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0));
         rememberPick(recordOf(sent.entryId, sent.ok ? 'placed' : 'submitted'));
         setTimeout(() => prepStake(named.roundIdHex, named.round, named.nodes), 0);   // the next order's stake, dealt now (kanban #601)
         return;
@@ -6259,6 +6267,8 @@
           // an old order read back from the seats is left out while its result is read (marketViewLines)
           orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && x.gameId === game.id && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
             limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled,
+            // (kanban #619: from the press, ms - submitted to the first seat, placed on enough seats, its lock accepted by the guardians)
+            timing: x.order.timing || {},
             canSell: true, sells: x.order.sells || [] })); },
           cancel: async (entryIdHex) => {
             const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
@@ -6574,6 +6584,20 @@
         handover.addEventListener('message', on);
         handover.postMessage({ kind: 'ask', id, phrase: phrase16, fed, to: to16 });
       });
+      // EACH ORDER'S TIMES, FROM THE PRESS (kanban #619, the owner 2026-10-24: "Display the order accept time and lock time here as well so we
+      // don't have to guess how long it took"): submitted to the first seat, placed on enough seats, its lock accepted by the guardians - in
+      // ms, by round and order number until the order's record exists, then on the record (arena.market.picks), which ARENA_GAME.market.orders()
+      // hands the client as `timing`
+      window.ARENA_ORDER_TIMES = window.ARENA_ORDER_TIMES || new Map();
+      window.ARENA_NOTE_ORDER_TIME = (key, what, ms) => {
+        const t = window.ARENA_ORDER_TIMES.get(key) || {}; t[what] = Math.round(ms); window.ARENA_ORDER_TIMES.set(key, t);
+        try {
+          const [round, index] = String(key).split(':');
+          const all = JSON.parse(window.sessionStorage.getItem('arena.market.picks') || '[]');
+          const x = all.find((p) => p.order && p.roundIdHex === round && (Number(p.order.index) || 0) === Number(index));
+          if (x) { x.order.timing = Object.assign({}, x.order.timing || {}, t); window.sessionStorage.setItem('arena.market.picks', JSON.stringify(all)); }
+        } catch { /* kept for this page only */ }
+      };
       // OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24: "exceeded the quota" on an order; "You need to clean
       // up old storages"): ARENACLIENT.tidyStorage, once after the page's federations are read and again before each order; a phrase another
       // tab plays with (its heartbeat within 12 s) is never touched
