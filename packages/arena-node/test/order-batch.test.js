@@ -18,6 +18,7 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { BATCH_MS, YES, NO } from '../../arena-protocol/src/order-book.js';
 import { UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 
 const UPDOWN = testAttestedGame({ name: 'btc-updown-15m', outcomes: [...UP_DOWN_OUTCOMES] });
 const NETWORK = TEST_DONATION_SET_KEYS_REGTEST.recipients;
@@ -78,7 +79,11 @@ test('seven seats certify every batch of locked orders inside the interval: the 
     { const d = w.nodes[2], rid = Buffer.from(w.rid);
       const cert = d.orderBook.certificates(w.rid).find((c) => c.record.orders.length);
       const eid = cert.record.orders[0], e = Buffer.from(eid, 'hex');
+      // and its handout (the stake's shares): fed2-3 had not received it either ("a loser's P could not be opened: this node accepted no
+      // handout for that entry")
+      const vss = decodeEntryContract(d.round.entry(e)).vssSharesRef;
       d.round.db.exec('PRAGMA foreign_keys = OFF');   // (the loss simulated: rows that never arrived)
+      d.round.db.prepare('DELETE FROM handouts WHERE handout_id = ?').run(Buffer.from(vss));
       for (const [t, col, v] of [['entries', 'entry_id', e], ['stake_locks', 'entry_id', e], ['fee_locks', 'entry_id', e], ['stake_seen', 'entry_id', e], ['market_orders', 'order_id', eid]])
         d.round.db.prepare(`DELETE FROM ${t} WHERE ${col} = ?`).run(v);
       d.round.db.prepare('DELETE FROM market_batches WHERE round_id = ? AND k = ?').run(rid, Number(cert.record.k));
@@ -88,6 +93,11 @@ test('seven seats certify every batch of locked orders inside the interval: the 
       await d.orderBook.carry(w.rid);
       assert.ok(d.round.entry(e), 'the entry was replayed');
       assert.ok(d.round.stakeLock(e), 'its stake lock was verified and kept');
+      assert.ok(d.round.handout(vss), 'its handout was checked and kept');
+      // the batch held certified here, only the handout gone (fed2-3 at 16:51Z): carry replays it all the same
+      d.round.db.prepare('DELETE FROM handouts WHERE handout_id = ?').run(Buffer.from(vss));
+      await d.orderBook.carry(w.rid);
+      assert.ok(d.round.handout(vss), 'the handout of an order in a batch held here was replayed');
       assert.ok(d.orderBook.certificates(w.rid).some((c) => String(c.record.k) === String(cert.record.k)), 'the batch is certified here again');
       const again = await Promise.all(w.nodes.map((x) => fetch(`http://127.0.0.1:${x.port}/book?round=${toHex(w.rid)}`).then((r) => r.json())));
       for (const b of again) assert.equal(JSON.stringify(b.batches), JSON.stringify(again[0].batches), 'two seats hold the book differently after the replay'); }

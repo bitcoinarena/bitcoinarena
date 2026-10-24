@@ -468,6 +468,15 @@ export class OrderBook {
       .map((r) => ({ k: String(r.k), record: JSON.parse(r.record), sigs: JSON.parse(r.certificate) }));
   }
 
+  /** An order whole at this seat: its entry, its stake lock, and the handout its entry names (kanban #620). */
+  #orderWhole(entryHex) {
+    const id = fromHex(entryHex);
+    const raw = this.round.entry(id);
+    if (!raw || !this.round.stakeLock(id)) return false;
+    const ref = decodeEntryContract(raw).vssSharesRef;
+    return !ref || ref.every((b) => b === 0) || typeof this.round.handout !== 'function' || !!this.round.handout(ref);
+  }
+
   /** Before a settlement: every certified batch another seat holds and this one does not, imported on its certificate. */
   async carry(roundIdBytes) {
     const rid = toHex(roundIdBytes);
@@ -480,7 +489,15 @@ export class OrderBook {
       try { const r = await this.fetcher(`${base}/book-certificates?round=${rid}`); if (!r.ok) continue; body = await r.json(); } catch { continue; }
       for (const cert of (body && body.certificates) || []) {
         const k = cert && cert.record ? String(cert.record.k) : null;
-        if (k !== null && held.has(k)) continue;
+        // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
+        // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
+        if (k !== null && held.has(k)) {
+          if (typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders))
+            for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
+              try { const r = await this.replayOrder(String(o), base); if (!r.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${r.why}`); }
+              catch (e) { console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${e.message}`); }
+          continue;
+        }
         let got = this.certify(roundIdBytes, cert);
         // A CERTIFIED BATCH NAMING AN ORDER THAT NEVER REACHED THIS SEAT (kanban #620: round 42835aaa never settled - two seats lacked
         // one order of batch 3585700432, refused its certificate here without a word, and rebuilt another settlement): the batch's orders
@@ -488,7 +505,7 @@ export class OrderBook {
         // federation), then the certificate is taken again. A refusal that stands is said.
         if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)) {
           for (const o of cert.record.orders) {
-            if (!isHex(String(o), 32) || (this.round.entry(fromHex(String(o))) && this.round.stakeLock(fromHex(String(o))))) continue;
+            if (!isHex(String(o), 32) || this.#orderWhole(String(o))) continue;
             try { const r = await this.replayOrder(String(o), base); if (!r.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${r.why}`); }
             catch (e) { console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${e.message}`); }
           }
