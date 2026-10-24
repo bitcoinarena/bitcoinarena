@@ -7,7 +7,8 @@
 //   [steps] lock 3dd014ad8c1e2f40 at 2026-10-24T14:59:01.123Z: body +0, entry +1, port +2, status +412, contract +413 -> 201 in 415 ms
 //
 // `at` the request's arrival (UTC), each step's offset from it in ms, then the answer's status and the whole time.
-export function stepLog(kind, id, { log = console.log, now = () => Date.now() } = {}) {
+// `keep` (kanban #624): handed the same line as data - { kind, id, t0, steps, status, ms } - so the seat keeps it per transaction (tx-record.js)
+export function stepLog(kind, id, { log = console.log, now = () => Date.now(), keep = null } = {}) {
   const t0 = now();
   const steps = [];
   let name = String(id);
@@ -22,8 +23,10 @@ export function stepLog(kind, id, { log = console.log, now = () => Date.now() } 
     /** The line, once: `status` the answer's. */
     done(status, why = '') {
       if (said) return; said = true;
+      const ms = now() - t0;
       log(`[steps] ${kind} ${name.slice(0, 16)} at ${new Date(t0).toISOString()}: ${steps.map(([k, v]) => `${k} ${typeof v === 'number' ? '+' + v : v}`).join(', ') || '-'}`
-        + ` -> ${status} in ${now() - t0} ms${why ? ` (${String(why).slice(0, 80)})` : ''}`);
+        + ` -> ${status} in ${ms} ms${why ? ` (${String(why).slice(0, 80)})` : ''}`);
+      if (typeof keep === 'function') keep({ kind, id: name, t0, steps: steps.map(([k, v]) => ({ step: k, ms: v })), status, ms });
     },
     /** Said when this response is sent, whatever path sent it. */
     on(res) { if (res && typeof res.once === 'function') res.once('finish', () => s.done(res.statusCode)); return s; },
