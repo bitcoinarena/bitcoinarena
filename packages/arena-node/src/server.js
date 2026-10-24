@@ -2214,7 +2214,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (role !== 'settlement') return;
       // a seating that differs from the draw's first seats deals the claim key again, to the seated (dkg epoch per committee)
       if (round.seatDrawFree(rid, seated)) { console.log(`[seating] ${toHex(rid).slice(0, 16)}: v2 round, its 7 seated written in`); makeClaimKey(rid); }
+      seatTable(rid, seated);
     } }) : null;
+  // A TABLE'S SEATING SEATS EVERY ROUND OF IT THIS SEAT HOLDS (kanban #604, measured 2026-10-24 04:1xZ): a later round assigned before
+  // the table's certificate stood here kept the draw's first 7 as its signer nodes - the test host seats, which took today's certificates
+  // at 04:0xZ, named 7 where the test host seats named the 5 seated, so their claim key run was another committee's and no key was made
+  // ("1 of the committee's 7 signer nodes have contributed"). Once per table: the rounds of it not started are written in again.
+  const tablesSeated = new Set();
+  function seatTable(anchorRid, seated) {
+    const hex = toHex(anchorRid);
+    if (tablesSeated.has(hex)) return;
+    let w;
+    try { w = writers.find((x) => toHex(seriesRoundIdOf(x.id, 0)) === hex); } catch { return; }   // `writers` is set further down
+    // not while its writer is still walking its rounds in slices (a start): the rounds not listed yet would keep the draw's 7
+    if (!w || w.more) return;
+    tablesSeated.add(hex);                       // a series that is no table is looked at once too
+    if (!tableAnchorOf(seriesRound(w.template, 0))) return;
+    const keys = seated.map((k) => (typeof k === 'string' ? fromHex(k) : k));
+    let n = 0, first = null;
+    for (const id of w.startingWithin(round.now(), Number.MAX_SAFE_INTEGER - Number(round.now()))) {
+      const rid = fromHex(id);
+      if (round.signerNodes(rid).length && round.seatDrawFree(rid, keys)) { n++; first = first || rid; }
+    }
+    if (n) { console.log(`[seating] table ${hex.slice(0, 16)}: ${n} round(s) of it seated again, as its certificate says`); makeClaimKey(first); }
+  }
   if (seating) roster.seatedFor = seating.seatedFor;
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
   if (seatingTimer) seatingTimer.unref();
@@ -3718,6 +3741,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const leaving = owner && owner.leavingAtMs() !== null;
       for (const w of writers) {
         const added = leaving ? 0 : w.write(round.now(), until);
+        // a table whose certificate this seat took before this start (kanban #604): its rounds seated as it says, once
+        if (seating && !tablesSeated.has(toHex(seriesRoundIdOf(w.id, 0)))) {
+          const anchor = seriesRoundIdOf(w.id, 0), seated = seating.seatedFor(anchor, 'settlement');
+          if (seated) seatTable(anchor, seated);
+        }
         if (w.more) more = true;
         if (added) console.log(`[series] ${toHex(w.id).slice(0, 16)}: ${added} round(s) written, ${w.summary(round.now()).ahead} ahead to +72 h`);
         // AND ITS SIGNER NODES ASSIGNED, as POST /round assigns a posted round's (2026-09-30, measured on testnet4:
