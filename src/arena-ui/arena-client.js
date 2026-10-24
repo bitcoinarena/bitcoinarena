@@ -23702,6 +23702,7 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // HOW LONG THE LOCKS ARE OFFERED TO THE SIGNER NODES IN THE BACKGROUND: past the start deadline (900 ticks, 15 s) a stake
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 const LOCK_HAND_MS = 120000;
+const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the seats' own check after it
 
 const OPENED_ROUNDS = new Map();
 
@@ -24076,8 +24077,13 @@ class Client {
     // A LOCK STILL BEING ACCEPTED (OPEN-LIST-2140 item 3: the entry goes out on the lock's submission) is handed over the
     // moment the guardians accept it - measured on 0.0.2498, the backoff's first tries fell before acceptance and the one
     // that took landed late: the 5th of 7 signer nodes verified 3.5 s after PLAY. A lock refused there is handed to nobody.
+    // NOT WAITED ON PAST LOCK_ACCEPT_HEAD_MS (playtest 2026-10-24, b2b7ced1: a lock client with too few guardian sockets open never hears the
+    // acceptance): the seats are asked from then on - each verifies the lock with the guardians itself - and a refusal stops the handing
+    let refused = false;
     if (this.stakeLock.accepted && typeof this.stakeLock.accepted.then === 'function') {
-      try { await this.stakeLock.accepted; } catch { return { lock: null, feeLock: null }; }
+      const first = await Promise.race([this.stakeLock.accepted.then(() => 'yes', () => 'no'), this.sleep(LOCK_ACCEPT_HEAD_MS).then(() => 'late')]);
+      if (first === 'no') return { lock: null, feeLock: null };
+      if (first === 'late') this.stakeLock.accepted.catch(() => { refused = true; });
     }
     const needed = this.stakeLock.needed;
     const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
@@ -24099,7 +24105,7 @@ class Client {
         this.lockCommittedSaid = true;
         try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the signer node's */ }
       }
-      if (kinds.every((k) => took.get(k.door).size >= nodes.length) || Date.now() >= until) break;
+      if (refused || kinds.every((k) => took.get(k.door).size >= nodes.length) || Date.now() >= until) break;
       await this.sleep(pause);
     }
     return { lock: this.lockHanded, feeLock: this.feeLockHanded };
@@ -33343,14 +33349,21 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
   // lock left the page at "placing …" for good): after `acceptWaitMs` the order is refused by name. A lock accepted later is the wallet's
   // still - an expired lock no seat used comes back as a refund (page-lock expiredBack).
   const acceptWaitMs = Number(stakeLock.acceptWaitMs) || ACCEPT_WAIT_MS;
+  // A SEAT THAT VERIFIED THE STAKE LOCK IS THE FEDERATION'S WORD TOO (playtest 2026-10-24 21:32Z, b2b7ced1 "Still not placed": the
+  // guardians accepted the lock at once, but the phone's lock client had 4 of 7 guardian sockets open - Safari opens one socket to a
+  // host at a time, and ~30 queued behind a dead one - so it never heard the threshold, and the page held the locks back for good):
+  // after ACCEPT_HEAD_MS the locks go to the seats anyway, and a seat answers 201 only once a threshold of guardians holds the lock as built
+  let seatSaw = () => {};
+  const seatSawIt = new Promise((r) => { seatSaw = r; });
   const accepted = (async () => {
     if (!(stakeLock.accepted && typeof stakeLock.accepted.then === 'function')) return;
     let timer;
     try {
-      await Promise.race([stakeLock.accepted, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not decide on it within ${Math.round(acceptWaitMs / 1000)} s`)), acceptWaitMs); })]);
+      await Promise.race([stakeLock.accepted, seatSawIt, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not decide on it within ${Math.round(acceptWaitMs / 1000)} s`)), acceptWaitMs); })]);
     } finally { clearTimeout(timer); }
   })();
-  accepted.catch(() => {});
+  let decided = false;
+  accepted.then(() => { decided = true; }, () => { decided = true; });
   const kinds = [{ door: 'lock', fields: stakeLock.fields }, ...(stakeLock.feeLock ? [{ door: 'fee-lock', fields: stakeLock.feeLock.fields }] : [])];
   const tookLock = new Map(kinds.map((k) => [k.door, new Set()]));
   const said = {};
@@ -33363,6 +33376,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
       for (const x of r.said) if (x.status === 201) tookLock.get(k.door).add(x.node);
       said[k.door] = { committed: tookLock.get(k.door).size, needed: nodes.length, said: r.said };
     }));
+    if (tookLock.get('lock').size) seatSaw();
     // THE PAGE TOLD ONCE ENOUGH SEATS HOLD THE STAKE LOCK (kanban #593, playtest 2026-10-23: a market order never said so -
     // the game's client does (client.js) - so the page's lock record never named its entry: every order's stake row read
     // "not entered", and no pending note was kept for its winnings)
@@ -33383,6 +33397,18 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
     await handTo([x.node]);
     return holds(x.node) ? x.node : null;
   }).catch(() => null));
+  // the seats asked while the lock client is still waiting: every seat that holds the entry, each ACCEPT_ASK_MS
+  if (stakeLock.accepted && typeof stakeLock.accepted.then === 'function') {
+    (async () => {
+      await new Promise((r) => setTimeout(r, Number(stakeLock.acceptHeadMs) || ACCEPT_HEAD_MS));
+      while (!decided) {
+        const holding = entriesNow.filter((x) => x && x.status === 201).map((x) => x.node);
+        if (holding.length) await handTo(holding).catch(() => {});
+        if (decided) break;
+        await new Promise((r) => setTimeout(r, Number(stakeLock.acceptAskMs) || ACCEPT_ASK_MS));
+      }
+    })();
+  }
   const first = await new Promise((res) => {
     let left = chains.length;
     for (const c of chains) c.then((n) => { if (n) res(n); else if (--left === 0) res(null); });
@@ -33411,6 +33437,8 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
   return { ok: true, entryId: toHex(eid), entries: entriesNow.slice(), first, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing, entriesAll };
 }
 const LOCK_HAND_MS_PICK = 120000;
+const ACCEPT_HEAD_MS = 3000;   // the lock client's own word first; after this the seats are asked too
+const ACCEPT_ASK_MS = 1500;
 const ACCEPT_WAIT_MS = 60000;   // the federation's word on an order's lock (measured: 0.4-2.6 s; 15.5 s the slowest seen)
 const ENTRY_WAIT_MS = 20000;    // one seat's answer to the entry
 
