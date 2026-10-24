@@ -53,17 +53,18 @@ const FILTER_KEYS = ['app', 'fed', 'since', 'q'];
 const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
 function filterOf() { const u = new URLSearchParams(location.search); return Object.fromEntries(FILTER_KEYS.map((k) => [k, u.get(k) || ''])); }
 function setFilter(f) { const u = new URLSearchParams(); for (const k of FILTER_KEYS) if (f[k]) u.set(k, f[k]); history.replaceState(null, '', '/' + (u.toString() ? '?' + u : '')); }
-const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down' })[a] || a || 'unknown';
+const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', '-': 'unknown' })[a] || a || 'unknown';
 async function list() {
   let txs = kept('explorer.recent') || [];
   const draw = () => {
     const f = filterOf(), now = Date.now();
-    const apps = [...new Set(txs.map((t) => t.app || ''))].sort(), feds = [...new Set(txs.map((t) => t.federation).filter(Boolean))].sort();
-    const shown = txs.filter((t) => (!f.app || (t.app || '') === f.app) && (!f.fed || t.federation === f.fed) && (!f.since || now - t.storedMs <= Number(f.since) * 1000)
+    const appOf = (t) => t.app || '-';   // '-': a row read before the seats named apps
+    const apps = [...new Set(txs.map(appOf))].sort(), feds = [...new Set(txs.map((t) => t.federation).filter(Boolean))].sort();
+    const shown = txs.filter((t) => (!f.app || appOf(t) === f.app) && (!f.fed || t.federation === f.fed) && (!f.since || now - t.storedMs <= Number(f.since) * 1000)
       && (!f.q || t.id.includes(f.q.toLowerCase()) || String(t.round).includes(f.q.toLowerCase())));
     const opt = (v, label, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
     $('main').innerHTML = `<h1>Newest transactions</h1><p class="dim">Every order the nodes stored, read from them every minute.</p>
-    <div class="filters"><select id="f-app">${opt('', 'All apps', f.app)}${apps.map((a) => opt(a, appName(a) + ' (' + txs.filter((t) => (t.app || '') === a).length + ')', f.app)).join('')}</select>
+    <div class="filters"><select id="f-app">${opt('', 'All apps', f.app)}${apps.map((a) => opt(a, appName(a) + ' (' + txs.filter((t) => appOf(t) === a).length + ')', f.app)).join('')}</select>
       <select id="f-fed">${opt('', 'All federations', f.fed)}${feds.map((x) => opt(x, 'Federation ' + x.slice(0, 8), f.fed)).join('')}</select>
       <select id="f-since">${PERIODS.map(([v, l]) => opt(v, l, f.since)).join('')}</select>
       <input id="f-q" placeholder="part of an id or round" value="${esc(f.q)}" autocomplete="off">
