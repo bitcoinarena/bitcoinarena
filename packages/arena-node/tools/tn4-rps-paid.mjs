@@ -218,8 +218,14 @@ try {
   // THE REVEALS after the entry close
   const wait = Number(c.entryCloseMs) - Date.now() + 1500;
   if (wait > 0) { log({ step: 'waiting for the entry close', ms: wait }); await new Promise((r) => setTimeout(r, wait)); }
-  for (const [p, who] of [[p1, 'P1'], [p2, 'P2']])
-    log({ step: 'revealed', player: who, said: (await revealMove({ entryIdHex: toHex(p.eid), move: p.hidden.move, salt: p.hidden.salt, nodes })).map((x) => x.status ?? x) });
+  // BOTH AT ONCE, as two players' pages do (kanban #604, 2026-10-24 05:36Z: one after the other, P1's reveal waited 37 s on one seat
+  // and P2's reached the seats after the reveal window - a FORFEIT the harness made); each seat's refusal is logged with its reason
+  await Promise.all([[p1, 'P1'], [p2, 'P2']].map(async ([p, who]) => {
+    const t0 = Date.now();
+    const said = await revealMove({ entryIdHex: toHex(p.eid), move: p.hidden.move, salt: p.hidden.salt, nodes });
+    log({ step: 'revealed', player: who, ms: Date.now() - t0, said: said.map((x) => x.status ?? x),
+      refused: said.filter((x) => x.status === 409).map((x) => `${x.node}: ${x.why}`) });
+  }));
   // THE SETTLEMENT, until FINAL or 20 min
   const until = Date.now() + 20 * 60000;
   for (;;) {
