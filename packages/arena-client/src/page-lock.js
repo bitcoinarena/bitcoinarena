@@ -1122,6 +1122,9 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
       String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
       JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
+    // WHERE THE LOCK'S TIME WENT, AS THE LOCK CLIENT MEASURED IT (kanban #623: a browser lock 0.3-2.7 s, a bot's 60-160 ms on the same
+    // federation): the block count (kept or read), building the outputs, finalizing and submitting, the mint outputs' wait, the store
+    if (submitted.timing) console.log('[arena] TIMED lock inside: ' + JSON.stringify(submitted.timing));
     const asBuilt = (o, image) => ({ outpoint: { txid: fromHex(submitted.txid), outIdx: BigInt(o.out_idx) },
       fields: { paymentImage: image, amountMsat: BigInt(o.amount_msat), claimPk: claimKey.claimPk, refundPk, expiration: o.computed_expiration },
       contractId: o.computed_contract_id });
