@@ -37,6 +37,22 @@
   details.grp > summary .hint { margin-left: auto; font-size: 12px; }
   details.grp[open] > summary { margin-bottom: 8px; }
   th.n, td.n { text-align: right; }
+  /* A PHONE, NO SIDEWAYS SCROLL (kanban #628, the owner 2026-10-24: "make the Explorer mobile friendly, I should not scroll horizontally"):
+     every table's rows stacked, long ids and keys wrapped, the bar wrapped */
+  @media (max-width: 640px) {
+    html, body { overflow-x: hidden; }
+    nav .in { flex-wrap: wrap; height: auto; padding: 8px 0; gap: 8px; }
+    form { margin-left: 0; max-width: none; width: 100%; }
+    .card, details.grp { overflow-x: visible; padding: 10px 12px; }
+    table.rows thead { display: none; }
+    table.rows, table.rows tbody, table.rows tr { display: block; width: 100%; }
+    table.rows tr { padding: 7px 0; border-bottom: 1px solid var(--line); }
+    table.rows td { display: inline; border: 0; padding: 0 8px 0 0; white-space: normal; }
+    table.rows td.nw { white-space: nowrap; }
+    .mono, dd, td, p.mono { overflow-wrap: anywhere; word-break: break-word; }
+    dl { grid-template-columns: 1fr; } dt { margin-top: 6px; }
+    h1 { font-size: 22px; } h2 { font-size: 16px; }
+  }
   @media (max-width: 640px) { .day { display: none; } details.grp > summary .hint { display: none; } main { width: calc(100% - 16px); } th, td { padding: 5px 5px; } }
   .bar { height: 8px; background: var(--btc); border-radius: 4px; min-width: 2px; }
 </style>
