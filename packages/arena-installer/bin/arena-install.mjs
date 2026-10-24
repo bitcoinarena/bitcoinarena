@@ -25,6 +25,7 @@
 // --add-custody  custody for a node installed without it: the wizard opens again at its roles step with custody chosen and shows the
 //              custody steps (Lightning, federation, the bond's rules); the posted bond's advertisement is updated, no second bond
 // --join-federation  the node's gateway (set up in the wizard's Lightning step) joins a federation by its invite code (gateway.js)
+// --machine-name  this machine's name for the health page's machines (kanban #621); asked at a console when --instances is over 1
 // --instances  how many nodes on this machine, 1 by default (testnet4 only; kanban #596): each its own seed, owner key and bond, in
 //              <home>-b, -c, ... with its ports 100 apart (instance.js); from 10 they found their own federation. With more than 5:
 //              --ram / --no-ram puts Fedimint on a RAM disk or not; neither given, the console asks "Enable RAM disk for Fedimint? [Y/n]"
@@ -145,9 +146,16 @@ if (args.includes('--instances')) {
       ram = ramAnswer(await rl.question(RAM_QUESTION)); rl.close();
     } else { ram = true; console.log(`${RAM_QUESTION}yes (the default; no console to ask)`); }
   }
-  const c = instancesChoice({ count, ram, network: 'testnet4' });
+  // THE MACHINE'S NAME (kanban #621): --machine-name, else asked at a console when more than one node is installed
+  let name = opt('--machine-name', '');
+  if (!name && count > 1 && process.stdin.isTTY) {
+    const { createInterface } = await import('node:readline/promises');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    name = await rl.question('A name for this machine, shown in the health page (empty: none): '); rl.close();
+  }
+  const c = instancesChoice({ count, ram, name, network: 'testnet4' });
   if (!c.ok) { console.error(c.why); process.exit(1); }
-  state.save({ instances: { count: c.count, ram: c.ram, first: { instance: INSTANCE, portOffset: PORT_OFFSET } } });   // node 1's name and ports: the further nodes' come from them
+  state.save({ instances: { count: c.count, ram: c.ram, name: c.name, first: { instance: INSTANCE, portOffset: PORT_OFFSET } } });   // node 1's name and ports: the further nodes' come from them
   const note = instancesNote(c.count);
   if (note) console.log(note + (c.ram ? ' Fedimint on a RAM disk.' : ''));
 }
