@@ -229,7 +229,7 @@ import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYT
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
-import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
+import { reserveEpochId, decodeContribution } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
@@ -2580,6 +2580,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // key"): a round of a game seated per table (known-game.js tableAnchorOf) makes no claim key when it is assigned; the first page that
   // asks GET /claim-key for a round of that table names the table wanted here, and the table's one key is made then
   const wantedTables = new Set();
+  // AND WHEN A FELLOW SIGNER NODE OF THE TABLE IS MAKING IT (kanban #604, measured 2026-10-24 05:1xZ): a page asks the seats it knows,
+  // so a signer node that is none of them - node15 at table 0768dc59 - was never asked, never started, and the six that were waited
+  // for its part until the round was gone ("6 of the committee's 7 signer nodes have contributed"). A peer's contribution posted here,
+  // or its ask for this node's, names the epoch: matched against the next round of each table this node holds, it is that table's
+  // wanted. An epoch matched to none is not looked up again for a minute.
+  const tableWriters = new WeakMap();      // writer -> is it a table's series
+  const epochMissedAt = new Map();         // epoch hex -> when it matched no table here (ms)
+  function peerMakesEpoch(epochId) {
+    const hex = toHex(epochId);
+    if (claimKeyRuns.has(hex) || Date.now() - (epochMissedAt.get(hex) || 0) < 60000) return;
+    let found = null;
+    try {
+      for (const w of writers) {
+        if (!tableWriters.has(w)) tableWriters.set(w, !!tableAnchorOf(seriesRound(w.template, 0)));
+        if (!tableWriters.get(w)) continue;
+        const next = w.soonest(round.now());
+        const row = next ? round.get(fromHex(next)) : null;
+        if (!row) continue;
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const e = dkg.epochFor(c.nodes);
+        if (e.ok && toHex(e.epochId) === hex) { found = { rid: fromHex(next), anchor: tableAnchorOf(c) }; break; }
+      }
+    } catch { return; }                    // `writers` is set further down
+    if (!found || !found.anchor) {
+      epochMissedAt.set(hex, Date.now());
+      if (epochMissedAt.size > 4096) epochMissedAt.delete(epochMissedAt.keys().next().value);
+      return;
+    }
+    const a = toHex(found.anchor.anchorId);
+    if (!wantedTables.has(a)) { wantedTables.add(a); console.log(`[claim-key] table ${a.slice(0, 16)}: a fellow signer node makes its key - made here too`); }
+    makeClaimKey(found.rid);
+  }
   function makeClaimKey(rid) {
     if (claimKeyFor || !dkg.canDeal) return;
     const row = round.get(rid);
@@ -9001,7 +9033,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * same object to everybody and tells nobody anything.
        */
       if (req.method === 'POST' && url.pathname === '/dkg') {
-        const took = await dkg.accept(await read(req));
+        const dealt = await read(req);
+        try { peerMakesEpoch(decodeContribution(dealt).epochId); } catch { /* accept says what is wrong with it */ }
+        const took = await dkg.accept(dealt);
         if (!took.ok) return text(res, 409, took.why);
         res.writeHead(took.fresh ? 201 : 200, { 'content-type': 'text/plain', ...CORS });
         return res.end(took.fresh ? 'taken' : 'already');
@@ -9011,8 +9045,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const id = Buffer.from(url.searchParams.get('epoch') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not an epoch id');
         const held = round.epoch(new Uint8Array(id));
-        if (!held || !held.mine)
+        if (!held || !held.mine) {
+          peerMakesEpoch(new Uint8Array(id));
           return text(res, 404, 'this node has dealt nothing for that committee');
+        }
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(held.mine));
       }
