@@ -505,9 +505,10 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   const forged = signedBytes({ ...SET, signature: ed25519.sign(donationSetBodyId(SET), ed25519.utils.randomSecretKey()) });
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }) })).ok, true);
   // a game set its manifest does not name is no game set: the game dev's half is never routed to it
+  (await import('../src/donation-pay.js')).forgetGameSets();
   const strayGame = [{ recipientPk: Uint8Array.from([0x02, ...b32(0x5e)]), label: 'not the game dev', shareBps: 10000 }];
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }, [], strayGame) })).why,
-    /is not the one the game's manifest names/);
+    /not the set the game's manifest names/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);

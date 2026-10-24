@@ -23287,6 +23287,9 @@ function donationRecipientsLine(set) {
  */
 const DONATION_SETS_FETCHED = new Map();      // donation set id hex -> the answers that passed every check
 const DONATION_ANSWER_MS = 6000;
+const GAME_SETS_FETCHED = new Map();   // a game's donation set by its id: it proves itself, so it is read once a page
+/** Forgets the game sets read (a test that serves a stray one). */
+const forgetGameSets = () => GAME_SETS_FETCHED.clear();
 const QUORUM_GRACE_MS = 250;
 /** Every node's answer, or - once more than half served the same bytes and none refused - those in by QUORUM_GRACE_MS later, the rest
  *  as late ({ node, why, late: true }). An answer that refuses (not late) still waits for all, so the refusal is said as before. */
@@ -23412,21 +23415,29 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   // cannot route the game dev's half anywhere the developer did not sign.
   const wantGame = gameDonationSetIdOf(round.gameId);
   if (!wantGame) return { ok: false, why: 'this page knows no donation set of the round\'s game, so it pays no donation into the round' };
-  const games = await Promise.all(nodes.map(async (node) => {
-    const base = String(node).replace(/\/+$/, '');
-    try {
-      const r = await fetcher(`${base}/game-donation-set?round=${rid}`);
-      if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
-      return { node: base, bytes: new Uint8Array(await r.arrayBuffer()) };
-    } catch (e) { return { node: base, why: e.message }; }
-  }));
-  const gameMissing = games.filter((a) => !a.bytes);
-  if (gameMissing.length)
-    return { ok: false, why: `not every signer node of this round serves its game's donation set: ${gameMissing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-  let gameSet;
-  try { gameSet = decodeDonationSet(games[0].bytes); } catch (e) { return { ok: false, why: `that is no game donation set: ${e.message}` }; }
-  if (toHex(donationSetId(gameSet)) !== wantGame)
-    return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
+  // THE FIRST NODE WHOSE ANSWER HASHES TO IT (kanban #625, measured 2026-10-24 19:56Z: an order's fetchDonationSet took 11.3 s, every node
+  // asked for the game's set and all of them waited on, unbounded): the set proves itself by its id, so one answer that hashes to
+  // the id this page carries is the set - kept per game for the page's life; each node is asked within DONATION_ANSWER_MS
+  let gameSet = GAME_SETS_FETCHED.get(wantGame) || null;
+  if (!gameSet) {
+    const tried = [];
+    gameSet = await new Promise((resolve) => {
+      let left = nodes.length;
+      if (!left) resolve(null);
+      for (const node of nodes) {
+        const base = String(node).replace(/\/+$/, '');
+        (async () => {
+          const r = await donationWithinMs(fetcher(`${base}/game-donation-set?round=${rid}`), DONATION_ANSWER_MS);
+          if (r.status !== 200) throw new Error(`${r.status} ${(await r.text()).trim().slice(0, 100)}`);
+          const g = decodeDonationSet(new Uint8Array(await r.arrayBuffer()));
+          if (toHex(donationSetId(g)) !== wantGame) throw new Error(`serves ${toHex(donationSetId(g)).slice(0, 16)}, not the set the game's manifest names (${wantGame.slice(0, 16)})`);
+          return g;
+        })().then((g) => resolve(g), (e) => { tried.push(`${base}: ${e.message}`); if (--left === 0) resolve(null); });
+      }
+    });
+    if (!gameSet) return { ok: false, why: `no signer node of this round serves its game's donation set: ${tried.join('; ')}` };
+    GAME_SETS_FETCHED.set(wantGame, gameSet);
+  }
   if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
   return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
