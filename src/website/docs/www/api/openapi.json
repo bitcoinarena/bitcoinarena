@@ -358,7 +358,7 @@
      "Players"
     ],
     "summary": "A player's badges (NIP-58)",
-    "description": "The NIP-58 badges this node awarded to one player identity (kind-8 award events, each with the round ids or the board week that earned it - a week's place with the number of nodes its network board was merged from and the 3 that had to agree on a round) and their kind-30009 definitions, exactly as signed, so a client checks ids and signatures itself. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).\n\nAccess: none\n\nReturns: 200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 4507.",
+    "description": "The NIP-58 badges this node awarded to one player identity: the kind-8 award events and their kind-30009 definitions, exactly as signed, so a client can check ids and signatures itself. Each award names the round ids or the board week that earned it. A week's place also names how many nodes the network board was merged from and the 3 that had to agree on a round. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).\n\nAccess: none\n\nReturns: 200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 4507.",
     "operationId": "get_badges",
     "parameters": [
      {
@@ -685,7 +685,7 @@
      "Builders"
     ],
     "summary": "Randomness from a block",
-    "description": "Numbers drawn from a block hash at a height that is deep enough, labelled for what they are for - reproducible by anyone with the chain.\n\nAccess: none\n\nReturns: 200 JSON {node, tip, depth, ...draw}; 400/409/503\n\nSource: `packages/arena-node/src/server.js` line 5317.",
+    "description": "Numbers drawn from the hash of a block that is deep enough, labelled with what they are for. Anyone with the chain can reproduce them.\n\nAccess: none\n\nReturns: 200 JSON {node, tip, depth, ...draw}; 400/409/503\n\nSource: `packages/arena-node/src/server.js` line 5317.",
     "operationId": "get_block_random",
     "parameters": [
      {
@@ -1027,7 +1027,7 @@
      "Operators"
     ],
     "summary": "Capacity pressure: bands, the bonds and peg-ins that relieve it",
-    "description": "Capacity pressure (spec \u00a723A.3a): how full each federation is against what its bonds cover - its band (CALM; PRESSURE from 70 %, CRITICAL from 90 %, FULL at 100 %, each left only below 60 / 80 / 100 %), the bond B* each guardian would need for 50 % load and who is below it with the sats to add, the peg-in P* its gateways should hold - and the network's band (the lowest-load OPEN federation's), B*_net and the installer's minimum bond.\n\nAccess: none\n\nReturns: 200 JSON {ok, node, censusHeight, federations[{federation, status, load, band, reserveSats, exposureCapSats, headroomSats, targetBondSats, guardians, guardiansBelowTarget[{node, bondSats, addSats}], targetPegInSats, gateways, gatewaysBelowTarget[{node, pegInSats, addSats}]}], network{lowestLoad, lowestFederation, band, targetBondSats, installMinimumBondSats}}\n\nSource: `packages/arena-node/src/server.js` line None.",
+    "description": "Capacity pressure (spec \u00a723A.3a). For each federation: how full it is against what its bonds cover; its band (CALM; PRESSURE from 70 %, CRITICAL from 90 %, FULL at 100 %; each left only below 60 / 80 / 100 %); the bond B* each guardian would need for 50 % load, and who is below it with the sats to add; the peg-in P* its gateways should hold. For the network: its band (that of the OPEN federation with the lowest load), B*_net and the installer's minimum bond.\n\nAccess: none\n\nReturns: 200 JSON {ok, node, censusHeight, federations[{federation, status, load, band, reserveSats, exposureCapSats, headroomSats, targetBondSats, guardians, guardiansBelowTarget[{node, bondSats, addSats}], targetPegInSats, gateways, gatewaysBelowTarget[{node, pegInSats, addSats}]}], network{lowestLoad, lowestFederation, band, targetBondSats, installMinimumBondSats}}\n\nSource: `packages/arena-node/src/server.js` line None.",
     "operationId": "get_capacity",
     "responses": {
      "200": {
@@ -1519,7 +1519,7 @@
      "Operators"
     ],
     "summary": "The dashboard's React bundle",
-    "description": "The node dashboard's React bundle (packages/arena-web/dist/dashboard.js): /dashboard draws with it when this release carries it.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React dashboard\n\nSource: `packages/arena-node/src/server.js` line 4757.",
+    "description": "The node dashboard's React bundle (packages/arena-web/dist/dashboard.js). /dashboard draws with it when this release has it.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React dashboard\n\nSource: `packages/arena-node/src/server.js` line 4757.",
     "operationId": "get_dashboard_react_js",
     "responses": {
      "200": {
@@ -1780,7 +1780,7 @@
      "Players"
     ],
     "summary": "[signed] Record a donation gift",
-    "description": "Keeps a donor's signed gift record - to a hosted game's donation set, the network's set in force, or a player (a zap) - checked against the set and the federation output by output; indexed for GET /donations?key= and handed on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the donor's signature\n\nReturns: 200 JSON {id, kept, outputs}; 400/404/422/503\n\nSource: `packages/arena-node/src/server.js` line 5257.",
+    "description": "Checks and keeps a donor's signed gift record to a hosted game's donation set, the network's set in force, or a player (a zap). It is checked against the set and the federation output by output, indexed for GET /donations?key= and passed on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the donor's signature\n\nReturns: 200 JSON {id, kept, outputs}; 400/404/422/503\n\nSource: `packages/arena-node/src/server.js` line 5257.",
     "operationId": "post_donation_gift",
     "requestBody": {
      "required": true,
@@ -2039,7 +2039,7 @@
      "Operators"
     ],
     "summary": "[signed] Owner's emergency leave request",
-    "description": "The owner's emergency leave request (spec \u00a723A.5a, protocol 17): takes an offline node out - no guardian role: out of every seating; a guardian in time: DEPARTED, its federation's succession starts. Taken only fresh (posted at most 6 blocks before the tip) and passed on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the node's emergency key (BIP-340), which its census advertisement names\n\nReturns: 201 {ok, kept, node, postedAt} when taken, 200 when held already; 400/422/503\n\nSource: `packages/arena-node/src/server.js` line 7544.",
+    "description": "The owner's emergency leave request (spec \u00a723A.5a, protocol 17) takes an offline node out. A node without a guardian role leaves every seating; a guardian, if in time, becomes DEPARTED and its federation's succession starts. Taken only when fresh (posted at most 6 blocks before the tip), then passed on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the node's emergency key (BIP-340), which its census advertisement names\n\nReturns: 201 {ok, kept, node, postedAt} when taken, 200 when held already; 400/422/503\n\nSource: `packages/arena-node/src/server.js` line 7544.",
     "operationId": "post_emergency_departure",
     "requestBody": {
      "required": true,
@@ -2120,7 +2120,7 @@
      "Operators"
     ],
     "summary": "The \"my node is offline\" page's React bundle",
-    "description": "The React steps of /Dashboard/emergency (packages/arena-web/dist/emergency.js): the page mounts them with its own /owner/client.js, which still makes the key and the signature; it keeps its own steps when the bundle is missing.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React emergency page\n\nSource: `packages/arena-node/src/server.js` line 4753.",
+    "description": "The React steps of /Dashboard/emergency (packages/arena-web/dist/emergency.js). The page mounts them with its own /owner/client.js, which still makes the key and the signature; without the bundle, the page uses its own steps.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React emergency page\n\nSource: `packages/arena-node/src/server.js` line 4753.",
     "operationId": "get_emergency_react_js",
     "responses": {
      "200": {
@@ -2966,7 +2966,7 @@
      "Players"
     ],
     "summary": "Get or make a lock forfeit",
-    "description": "Returns, or makes with the other signer nodes, the forfeit of a qualifier's lock - or of a cancelled market order's stake and fee locks.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 200 JSON {signature, contractId, claimPk, kept}; 400/409\n\nSource: `packages/arena-node/src/server.js` line 5772.",
+    "description": "Returns the forfeit of a qualifier's lock, or of a cancelled market order's stake and fee locks. If needed, the node makes it with the other signer nodes first.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 200 JSON {signature, contractId, claimPk, kept}; 400/409\n\nSource: `packages/arena-node/src/server.js` line 5772.",
     "operationId": "get_forfeit",
     "parameters": [
      {
@@ -3324,7 +3324,7 @@
      "Players"
     ],
     "summary": "[signed] Submit a funding record",
-    "description": "Keeps a signed funding record - a proposal, signal, comment, vote, fee proposal, fee approval or leaderboard payout request - after checking it, and hands a new one on to every seat once.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the record carries its author's signature\n\nReturns: 200 JSON {ok, id, fresh, ...}; 4xx {ok:false, why}; 501\n\nSource: `packages/arena-node/src/server.js` line 6920.",
+    "description": "Checks and keeps a signed funding record (proposal, signal, comment, vote, fee proposal, fee approval or leaderboard payout request), and passes a new one on to every seat once.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the record carries its author's signature\n\nReturns: 200 JSON {ok, id, fresh, ...}; 4xx {ok:false, why}; 501\n\nSource: `packages/arena-node/src/server.js` line 6920.",
     "operationId": "post_funding",
     "requestBody": {
      "required": true,
@@ -3497,7 +3497,7 @@
      "Builders"
     ],
     "summary": "[signed] Hand in a market-on-a-game outcome",
-    "description": "Hands a seat a market on a game's outcome (protocol 2026.0.6): its source round's signed result, checked and held where an attestation is held; the market then settles as an attested one (pari-mutuel). A refund (Tick Tock FLAT) or a source that can never fit is held as VOID at once. Seats also fetch the result themselves.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7); a source round this node does not hold is fetched from other seats and checked against its id\n\nReturns: 201/200 JSON {round, held, fresh, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5226.",
+    "description": "Hands a seat the source round's signed result for a market on a game's outcome (protocol 2026.0.6). The seat checks it and holds it where it would hold an attestation; the market then settles like an attested one (pari-mutuel). A refund (Tick Tock FLAT), or a source that can never fit, is held as VOID at once. Seats also fetch the result themselves.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7); a source round this node does not hold is fetched from other seats and checked against its id\n\nReturns: 201/200 JSON {round, held, fresh, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5226.",
     "operationId": "post_game_outcome",
     "parameters": [
      {
@@ -3578,7 +3578,7 @@
      "Nodes"
     ],
     "summary": "This node's gateway claim",
-    "description": "This node stands for a gateway seat of its federation (2026.0.15, spec \u00a723A.9): the claim its custody agent signed with the node key - which federation, where its gateway answers, its Lightning node key, inbound and outbound of its public channels (inbound from outside the federation counted apart), its peg-in, when. The federation's guardians read it, probe the gateway and rank the claims. Measured on seat guardian-1 (2026-10-18 22:20Z): 404 {\"ok\":false,\"why\":\"this node stands for no gateway seat\"}.\n\nAccess: none (the claim is signed by the node key)\n\nReturns: 200 JSON signed gateway claim {node, federationId, gatewayUrl, lightningPubkey, capacitySats, pegInSats, atMs, inboundSats, outboundSats, lightningAddr, outsideInboundSats, signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4305.",
+    "description": "This node's claim to a gateway seat of its federation (2026.0.15, spec \u00a723A.9), signed by its custody agent with the node key. It names the federation, where the gateway answers, its Lightning node key, inbound and outbound of its public channels (inbound from outside the federation counted separately), its peg-in, and the time. The federation's guardians read it, probe the gateway and rank the claims. Measured on seat guardian-1 (2026-10-18 22:20Z): 404 {\"ok\":false,\"why\":\"this node stands for no gateway seat\"}.\n\nAccess: none (the claim is signed by the node key)\n\nReturns: 200 JSON signed gateway claim {node, federationId, gatewayUrl, lightningPubkey, capacitySats, pegInSats, atMs, inboundSats, outboundSats, lightningAddr, outsideInboundSats, signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4305.",
     "operationId": "get_gateway_claim",
     "responses": {
      "200": {
@@ -3678,7 +3678,7 @@
      "Nodes"
     ],
     "summary": "The node's Lightning gateway (passthrough)",
-    "description": "The node's Lightning gateway at the node's public address: /gateway/... is carried byte for byte to the gateway on the same machine (ARENA_GATEWAY_PORT, written by the installer for a custody node). Clients of its federation reach the gateway where its api-addr says (<public address>/gateway/), as /guardian carries the guardian (spec \u00a723A.9).\n\nAccess: none here; the gateway's own admin calls need its own password\n\nReturns: the gateway's own answer, byte for byte; 502 text when the gateway on this machine does not answer; 404 \"no such door\" on a seat without ARENA_GATEWAY_PORT\n\nSource: `packages/arena-node/src/server.js` line 4272.",
+    "description": "The node's Lightning gateway at the node's public address. /gateway/... is passed byte for byte to the gateway on the same machine (ARENA_GATEWAY_PORT, set by the installer on a custody node). Clients of its federation reach the gateway at its api-addr (<public address>/gateway/), the same way /guardian reaches the guardian (spec \u00a723A.9).\n\nAccess: none here; the gateway's own admin calls need its own password\n\nReturns: the gateway's own answer, byte for byte; 502 text when the gateway on this machine does not answer; 404 \"no such door\" on a seat without ARENA_GATEWAY_PORT\n\nSource: `packages/arena-node/src/server.js` line 4272.",
     "operationId": "get_gateway_rest",
     "parameters": [
      {
@@ -4382,7 +4382,7 @@
      "Nodes"
     ],
     "summary": "This node's liquidity provider claim",
-    "description": "This node is a liquidity provider (2026.0.16, the fourth service, spec \u00a723A.10): the claim its provider service signed - its Lightning node, the coins it holds free with one signed proof per coin (the address's key signs the claim message: BIP-322-style compact ECDSA, P2TR by the BIP-86 tweak; at most 50), the channels it gave. Guardians count it only while free + channels given >= 5 x L on testnet4 (10 x L on mainnet), L = the 100,000 sat channel; its weight is that amount. Measured on guardian-1 (22:20Z): 200, freeSats 538022, 1 channel of 100,000, funds with signatures; on guardian-3: 404.\n\nAccess: none (the claim and each coin proof are signed)\n\nReturns: 200 JSON signed liquidity claim {node, lightningPubkey, lightningAddr, freeSats, atMs, depositAddress, channels[{peer, capacitySats}], funds[{txid, vout, address, sats, signature}], signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4311.",
+    "description": "This node's liquidity provider claim (2026.0.16, the fourth service, spec \u00a723A.10), signed by its provider service. It names its Lightning node, the free coins it holds with one signed proof per coin (at most 50), and the channels it gave. Each proof is the address key's signature over the claim message: BIP-322-style compact ECDSA, P2TR by the BIP-86 tweak. Guardians count the provider only while free + channels given >= 5 x L on testnet4 (10 x L on mainnet), where L is the 100,000 sat channel; that amount is its weight. Measured on guardian-1 (22:20Z): 200, freeSats 538022, 1 channel of 100,000, funds with signatures; on guardian-3: 404.\n\nAccess: none (the claim and each coin proof are signed)\n\nReturns: 200 JSON signed liquidity claim {node, lightningPubkey, lightningAddr, freeSats, atMs, depositAddress, channels[{peer, capacitySats}], funds[{txid, vout, address, sats, signature}], signature}; 404 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4311.",
     "operationId": "get_liquidity_claim",
     "responses": {
      "200": {
@@ -4509,7 +4509,7 @@
      "Builders"
     ],
     "summary": "Losers' lock settlement state",
-    "description": "Where the round's settlement of losers' locks stands. `moved` is what the settlement paid: `moved.payouts[]` each {kind, pk, sats} - the winners (kind qualifier) and, from 2026.0.16, the four 1 % node pools (game/verify, settlement, custody split guardians \u2154 / gateways \u2153, liquidity providers by weight).\n\nAccess: none\n\nReturns: 200 JSON {state, txid, why, signature, message, madeMs, moved} or {state:NONE}; for a round that takes any federation {state ACCEPTED|REFUSED|SUBMITTING, federations[]}\n\nSource: `packages/arena-node/src/server.js` line 5728.",
+    "description": "Where the round's settlement of losers' locks stands. `moved` is what the settlement paid: `moved.payouts[]`, each {kind, pk, sats}. These are the winners (kind qualifier) and, from 2026.0.16, the four 1 % node pools: game/verify, settlement, custody (guardians \u2154, gateways \u2153) and liquidity providers (by weight).\n\nAccess: none\n\nReturns: 200 JSON {state, txid, why, signature, message, madeMs, moved} or {state:NONE}; for a round that takes any federation {state ACCEPTED|REFUSED|SUBMITTING, federations[]}\n\nSource: `packages/arena-node/src/server.js` line 5728.",
     "operationId": "get_lock_settlement",
     "parameters": [
      {
@@ -5073,7 +5073,7 @@
      "Builders"
     ],
     "summary": "[signed] Submit an outcome attestation",
-    "description": "Submits an attested (oracle/market) round outcome - or a scalar market's observed value; a conflicting one marks the round DISPUTED.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close (and the market's resolution time); a scalar market takes only a value attestation, every other market only an outcome attestation\n\nReturns: 201/200 JSON {held, fresh, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5223.",
+    "description": "Submits the attested outcome of an oracle or market round, or a scalar market's observed value. A conflicting one marks the round DISPUTED.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close (and the market's resolution time); a scalar market takes only a value attestation, every other market only an outcome attestation\n\nReturns: 201/200 JSON {held, fresh, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5223.",
     "operationId": "post_outcome",
     "parameters": [
      {
@@ -5137,7 +5137,7 @@
      "Builders"
     ],
     "summary": "Outcome of an attested round",
-    "description": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund; for a scalar market, its bounds, the attested value and where it pays (clamped), and the scalar table.\n\nAccess: none\n\nReturns: 200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, scalar? {low, high, unit}, outcome?, label?, value?, clamped?, valuesNamed?, attestation? | gameOutcome?, table?, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5278.",
+    "description": "The current outcome of an attested round, with the round's own question and labels if it has one. For a market on a game: the held source result (gameOutcome: RoundResult, signatures, source contract) instead of an attestation, and VOID at once on a refund. For a scalar market: its bounds, the attested value, where it pays (clamped) and the scalar table.\n\nAccess: none\n\nReturns: 200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, scalar? {low, high, unit}, outcome?, label?, value?, clamped?, valuesNamed?, attestation? | gameOutcome?, table?, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5278.",
     "operationId": "get_outcome",
     "parameters": [
      {
@@ -5208,7 +5208,7 @@
      "Operators"
     ],
     "summary": "[signed] Add to the bond (a second output)",
-    "description": "Add to this node's bond: a second bond output beside the first, its body the node's own newest advertisement, counted with it from protocol 19 (kanban #544). Without post: the plan (amount, new total, fees, maturity, about when) checked with testmempoolaccept; with post: true, the funding and bond transactions broadcast. Paid from the installer's wallet, or on a seat set up by hand from the bond wallet it names (kanban #553).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan: {addSats, bondSats, totalSats, fees, maturity, lock, countsAfter}, bond: {txid} or null}; 400 with why; 401/403 when not the owner; 501 without an installer home or a bond wallet (ARENA_BOND_CLI)\n\nSource: `packages/arena-node/src/server.js` line 4744.",
+    "description": "Adds to this node's bond: a second bond output next to the first, with the node's newest advertisement as its body. From protocol 19 both outputs count together (kanban #544). Without post: the plan (amount, new total, fees, maturity, about when), checked with testmempoolaccept. With post: true, the funding and bond transactions are broadcast. Paid from the installer's wallet or, on a seat set up by hand, from the bond wallet it names (kanban #553).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan: {addSats, bondSats, totalSats, fees, maturity, lock, countsAfter}, bond: {txid} or null}; 400 with why; 401/403 when not the owner; 501 without an installer home or a bond wallet (ARENA_BOND_CLI)\n\nSource: `packages/arena-node/src/server.js` line 4744.",
     "operationId": "post_owner_add_bond",
     "requestBody": {
      "required": true,
@@ -5318,7 +5318,7 @@
      "Operators"
     ],
     "summary": "[signed] Withdraw the bond after its lock",
-    "description": "From its maturity block on, the whole bond to the owner's address on its template-2 recovery leaf, signed by this node's key, checked by testmempoolaccept and broadcast. Refused before maturity with the height, the blocks left and the date. The node leaves the census from the next census height.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON {ok, txid, value, fee}; 400; 401/403; 409; 503\n\nSource: `packages/arena-node/src/server.js` line 4524.",
+    "description": "From the bond's maturity block on, sends the whole bond to the owner's address through its template-2 recovery leaf: signed with this node's key, checked with testmempoolaccept, then broadcast. Before maturity it refuses and names the height, the blocks left and the date. The node leaves the census from the next census height.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON {ok, txid, value, fee}; 400; 401/403; 409; 503\n\nSource: `packages/arena-node/src/server.js` line 4524.",
     "operationId": "post_owner_bond_withdraw",
     "requestBody": {
      "required": true,
@@ -5452,7 +5452,7 @@
      "Operators"
     ],
     "summary": "[signed] Become custody from the owner page: plan, start, progress",
-    "description": "Makes an installed node a custody node from the owner page (kanban #563): the installer's own custody steps - Lightning, the gateway, the guardian, the advertisement update - run by the node itself, never \"run arena-install --add-custody\". Without post: the plan; progress: the runner's progress; post with the typed I UNDERSTAND: started.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan} (Lightning, gateway, bond against the guardian floor, what the wallet must hold, part by part, its address) or {ok, progress}; 200 {ok} once started; 400 with why (e.g. \"type I UNDERSTAND\", a short wallet); 401/403 when not the owner; 501 on a node the installer did not set up; 500 with why\n\nSource: `packages/arena-node/src/server.js` line 5340.",
+    "description": "Makes an installed node a custody node from the owner page (kanban #563). The node runs the installer's own custody steps itself (Lightning, the gateway, the guardian, the advertisement update); the owner does not run \"arena-install --add-custody\". Without post: the plan. With progress: the runner's progress. With post and the typed I UNDERSTAND: starts it.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan} (Lightning, gateway, bond against the guardian floor, what the wallet must hold, part by part, its address) or {ok, progress}; 200 {ok} once started; 400 with why (e.g. \"type I UNDERSTAND\", a short wallet); 401/403 when not the owner; 501 on a node the installer did not set up; 500 with why\n\nSource: `packages/arena-node/src/server.js` line 5340.",
     "operationId": "post_owner_custody_add",
     "requestBody": {
      "required": true,
@@ -5876,7 +5876,7 @@
      "Operators"
     ],
     "summary": "[signed] Retire an empty federation this node guards: plan, consent",
-    "description": "Retires a federation that holds nothing (kanban #577): the owner of one of its guardians consents. A seat builds that federation's record CLOSED, with no successor, only when its own owner consented, so the record stands once a threshold of the guardians' owners did; every seat then reads it CLOSED and its guardians are free for the next founding. Once it stands, the node sets its guardian of that federation aside (kept) and starts a guardian in setup.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan} (the federation this node guards, its record status and reserve, the guardian's audit by module, holdsNothing, consented); 200 {ok, consented} once kept; 200 {retired: true} when the record is already CLOSED; 400 with why (no guardian, another federation, \"type RETIRE\"); 409 when it still holds something; 401/403 when not the owner\n\nSource: `packages/arena-node/src/server.js` line 5364.",
+    "description": "Retires a federation that holds nothing (kanban #577): the owner of one of its guardians consents. A seat builds that federation's record as CLOSED, with no successor, only when its own owner consented, so the record stands once a threshold of the guardians' owners consented. Every seat then reads it as CLOSED, and its guardians are free for the next founding. Once the record stands, the node sets its guardian of that federation aside (kept) and starts a guardian in setup.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan} (the federation this node guards, its record status and reserve, the guardian's audit by module, holdsNothing, consented); 200 {ok, consented} once kept; 200 {retired: true} when the record is already CLOSED; 400 with why (no guardian, another federation, \"type RETIRE\"); 409 when it still holds something; 401/403 when not the owner\n\nSource: `packages/arena-node/src/server.js` line 5364.",
     "operationId": "post_owner_federation_retire",
     "requestBody": {
      "required": true,
@@ -6140,7 +6140,7 @@
      "Operators"
     ],
     "summary": "[signed] Become a liquidity provider (installed node)",
-    "description": "An installed node becomes a liquidity provider from its owner page (\"Set up\", then \"Become a liquidity provider\"): without post the plan - LND tested, the deposit against the node's wallet, a custody node's peg-in kept aside; with post the provider service on its LND, the agent that sends the deposit, the role and its settings.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan} (without post) or {ok, plan, done}; 400 {ok:false, why} (no Bitcoin Core, no LND, LND not answering, a provider already); 401/403 when not the owner; 501 on a node not set up by the installer\n\nSource: `packages/arena-node/src/server.js` line 5277.",
+    "description": "Makes an installed node a liquidity provider from its owner page (\"Set up\", then \"Become a liquidity provider\"). Without post: the plan (LND tested, the deposit against the node's wallet, a custody node's peg-in kept aside). With post: sets up the provider service on its LND, the agent that sends the deposit, the role and its settings.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan} (without post) or {ok, plan, done}; 400 {ok:false, why} (no Bitcoin Core, no LND, LND not answering, a provider already); 401/403 when not the owner; 501 on a node not set up by the installer\n\nSource: `packages/arena-node/src/server.js` line 5277.",
     "operationId": "post_owner_liquidity_become",
     "requestBody": {
      "required": true,
@@ -7004,7 +7004,7 @@
      "Operators"
     ],
     "summary": "[signed] Read or switch how the node is reached",
-    "description": "How the world reaches this installed node, read and switched from the owner page: quick, workers, direct, tailscale or permanent; the switch runs the installer's own reach and service steps, detached, since they restart the seat.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, mode, url, stable, serving, progress, modes} (and the switch started when args.mode names one); 401/403 when not the owner; 501 on a node the installer did not set up\n\nSource: `packages/arena-node/src/server.js` line 5106.",
+    "description": "Reads or switches how this installed node is reached, from the owner page: quick, workers, direct, tailscale or permanent. A switch runs the installer's own reach and service steps in the background, since they restart the seat.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, mode, url, stable, serving, progress, modes} (and the switch started when args.mode names one); 401/403 when not the owner; 501 on a node the installer did not set up\n\nSource: `packages/arena-node/src/server.js` line 5106.",
     "operationId": "post_owner_reach",
     "requestBody": {
      "required": true,
@@ -7068,7 +7068,7 @@
      "Operators"
     ],
     "summary": "The owner page's React screens",
-    "description": "The owner page's React screens (packages/arena-web/dist/owner.js): the page mounts them in place of its own panels where they are there.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React screens\n\nSource: `packages/arena-node/src/server.js` line 4762.",
+    "description": "The owner page's React screens (packages/arena-web/dist/owner.js). Where a screen exists, the page mounts it in place of its own panel.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React screens\n\nSource: `packages/arena-node/src/server.js` line 4762.",
     "operationId": "get_owner_react_js",
     "responses": {
      "200": {
@@ -7092,7 +7092,7 @@
      "Operators"
     ],
     "summary": "[signed] Change the node's advertised roles",
-    "description": "Owner-signed ({action: 'roles', args: {roles, custody, post}}): changes what the node advertises - roles among game, verify, settlement, relay, and custody (guardian_capable) - by an advertisement update of its bond paid from the bond wallet. Without post, the plan (fee) after testmempoolaccept; with post: true both transactions are sent. The census reads the new roles 6 blocks later.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 JSON {ok, plan{before{roles, custody}, after{roles, custody}, bond, feeSats, countsAfter}, update{txid}|null}; 400 {ok:false, why} (no bond, no change, an unknown role, the wallet too small, the mempool refuses); 401 not the owner; 501 no bond wallet named (ARENA_BOND_CLI), or an installed node\n\nSource: `packages/arena-node/src/server.js` line 4744.",
+    "description": "Changes the roles the node advertises (owner-signed, {action: 'roles', args: {roles, custody, post}}): any of game, verify, settlement and relay, plus custody (guardian_capable). It does this with an advertisement update of its bond, paid from the bond wallet. Without post: the plan (fee), checked with testmempoolaccept. With post: true, both transactions are sent. The census reads the new roles 6 blocks later.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 JSON {ok, plan{before{roles, custody}, after{roles, custody}, bond, feeSats, countsAfter}, update{txid}|null}; 400 {ok:false, why} (no bond, no change, an unknown role, the wallet too small, the mempool refuses); 401 not the owner; 501 no bond wallet named (ARENA_BOND_CLI), or an installed node\n\nSource: `packages/arena-node/src/server.js` line 4744.",
     "operationId": "post_owner_roles",
     "requestBody": {
      "required": true,
@@ -7162,7 +7162,7 @@
      "Operators"
     ],
     "summary": "[signed] The node's services and their state",
-    "description": "The owner page's Services card: every service of the installed node - Bitcoin Core or the chain bridge, Tor, LND, the gateway, the guardian (inside the seat), the seat, its tunnel, the liquidity provider - running or not, with what it answers (LND synced, the gateway's federations, the public address reaching this node). The same view as `arenanode status` on the node's machine.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, version, instance, port, publicUrl, roles, settings, command, services:[{id, title, running, pid, detail, inside, probe:{ok, says}}]}; 401/403 when not the owner; 501 for a node not started from the installer's arena.conf\n\nSource: `packages/arena-node/src/server.js` line 4649.",
+    "description": "The owner page's Services card. It lists every service of the installed node (Bitcoin Core or the chain bridge, Tor, LND, the gateway, the guardian inside the seat, the seat, its tunnel, the liquidity provider), whether it runs, and what it answers (LND synced, the gateway's federations, the public address reaching this node). It is the same view as `arenanode status` on the node's machine.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, version, instance, port, publicUrl, roles, settings, command, services:[{id, title, running, pid, detail, inside, probe:{ok, says}}]}; 401/403 when not the owner; 501 for a node not started from the installer's arena.conf\n\nSource: `packages/arena-node/src/server.js` line 4649.",
     "operationId": "post_owner_services",
     "requestBody": {
      "required": true,
@@ -7425,7 +7425,7 @@
      "Operators"
     ],
     "summary": "Grids waiting for their beacon, peg-ins confirming",
-    "description": "What the network waits for, as this node reads its own chain: every grid published and not yet posted (its publication found in the node's last 300 blocks, its beacon block read off its own headers, how deep), and every peg-in the gateway claims it reads name as confirming, counted against the federation's finality. The health page and the mining dashboard merge it across nodes. The chain part names this node's tip and the other tips within 12 blocks it knows: a rival of the same work is a split the next block decides, and everything else in the answer counts on this node's own branch.\n\nAccess: none\n\nReturns: 200 JSON {ok, node, tip, tipHash, nowMs, chain{hash, height, rivals[{hash, height, status, forkHeight, work: same|more|less}]}, grids[{game, firstWindowMs, firstCloseMs, lastCloseMs, slots, committeeTimeMs, federation, publication{txid, height, confirmations, inMempool}, beacon{height, depth, needed, medianTimeMs}, stage}], pegIns[{federation, node, txid, vout, sats, confirmations, finality, onChain}]}; 503 when the node reads no chain\n\nSource: `packages/arena-node/src/server.js` line 4324.",
+    "description": "What the network is waiting for, as this node reads its own chain. Every grid published but not yet posted: its publication (found in the node's last 300 blocks), its beacon block (read from its own headers) and how deep it is. Every peg-in that the gateway claims name as confirming, counted against the federation's finality. The health page and the mining dashboard merge this across nodes. The chain part names this node's tip and the other tips it knows within 12 blocks. A rival with the same work is a split that the next block decides; everything else in the answer counts on this node's own branch.\n\nAccess: none\n\nReturns: 200 JSON {ok, node, tip, tipHash, nowMs, chain{hash, height, rivals[{hash, height, status, forkHeight, work: same|more|less}]}, grids[{game, firstWindowMs, firstCloseMs, lastCloseMs, slots, committeeTimeMs, federation, publication{txid, height, confirmations, inMempool}, beacon{height, depth, needed, medianTimeMs}, stage}], pegIns[{federation, node, txid, vout, sats, confirmations, finality, onChain}]}; 503 when the node reads no chain\n\nSource: `packages/arena-node/src/server.js` line 4324.",
     "operationId": "get_pending",
     "responses": {
      "200": {
@@ -8036,7 +8036,7 @@
      "Nodes"
     ],
     "summary": "Connect back to the asker (installer reach test)",
-    "description": "Can the internet reach a new node? The seat connects back to the asking address only (a public one), on the port named, asks GET /reach-nonce and answers whether the nonce came back - never what it read, never whether the port refused or stayed silent. 6 checks a minute per address, 60 in all. Used by the node installer's direct-connection test (ruling 7).\n\nAccess: none\n\nReturns: 200 JSON {ok, reached, address, port, ms?}; 400; 429\n\nSource: `packages/arena-node/src/server.js` line 5317.",
+    "description": "Checks whether the internet can reach a new node. The seat connects back only to the asking address (it must be public), on the named port, asks GET /reach-nonce and says only whether the nonce came back. It does not say what it read, or whether the port refused or did not answer. Limit: 6 checks a minute per address, 60 in all. The node installer's direct-connection test uses it (ruling 7).\n\nAccess: none\n\nReturns: 200 JSON {ok, reached, address, port, ms?}; 400; 429\n\nSource: `packages/arena-node/src/server.js` line 5317.",
     "operationId": "post_reach_check",
     "requestBody": {
      "required": true,
@@ -8266,7 +8266,7 @@
      "Operators"
     ],
     "summary": "Measured replay speed and capacity",
-    "description": "This seat's measured replay speed and the players a round can hold in the result window. Also how this seat keeps its storage lean: transcripts are deleted once the claim window ends (lastPrune), and rounds nobody used go with their committee and seating records after their windows (unusedRounds).\n\nAccess: none\n\nReturns: 200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}\n\nSource: `packages/arena-node/src/server.js` line 5670.",
+    "description": "This seat's measured replay speed and how many players a round can hold in the result window. Also its storage cleanup: transcripts are deleted when the claim window ends (lastPrune), and unused rounds are deleted with their committee and seating records after their windows (unusedRounds).\n\nAccess: none\n\nReturns: 200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}\n\nSource: `packages/arena-node/src/server.js` line 5670.",
     "operationId": "get_replay_budget",
     "parameters": [
      {
@@ -9147,7 +9147,7 @@
      "Players"
     ],
     "summary": "The rounds page's React bundle",
-    "description": "The rounds page's React bundle (packages/arena-web/dist/rounds.js): /rounds draws its stat and round cards with it, and keeps its own drawing when it is missing.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React rounds page\n\nSource: `packages/arena-node/src/server.js` line 4752.",
+    "description": "The rounds page's React bundle (packages/arena-web/dist/rounds.js). /rounds draws its stat and round cards with it; without it, the page uses its own drawing.\n\nAccess: none\n\nReturns: 200 JavaScript module; 404 when this release carries no React rounds page\n\nSource: `packages/arena-node/src/server.js` line 4752.",
     "operationId": "get_rounds_react_js",
     "responses": {
      "200": {
@@ -9171,7 +9171,7 @@
      "Players"
     ],
     "summary": "Leaderboard of a game",
-    "description": "One game's per-player board over its FINAL rounds in a window (presentation, not authority): this node's own rounds, or with scope=network every seat's, a round counted only when 3 seats hand in byte-identical accounts of it.\n\nAccess: none\n\nReturns: 200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); with scope=network also {scope, agree, seats {asked, answered}}; 400/404/500\n\nSource: `packages/arena-node/src/server.js` line 4412.",
+    "description": "One game's leaderboard per player over its FINAL rounds in a time window. It is for display, not an authority. By default it uses this node's own rounds; with scope=network it uses every seat's rounds, and a round counts only when 3 seats hand in byte-identical accounts of it.\n\nAccess: none\n\nReturns: 200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); with scope=network also {scope, agree, seats {asked, answered}}; 400/404/500\n\nSource: `packages/arena-node/src/server.js` line 4412.",
     "operationId": "get_season",
     "parameters": [
      {
@@ -9198,7 +9198,7 @@
       "name": "scope",
       "in": "query",
       "required": false,
-      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own; a round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
+      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
       "schema": {
        "type": "string"
       },
@@ -9239,7 +9239,7 @@
      "Players"
     ],
     "summary": "Leaderboard rounds held by this node",
-    "description": "The rounds this node's own leaderboard is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network leaderboard to merge - and for its weekly top-3 badge, which merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
+    "description": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. The weekly top-3 badge merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
     "operationId": "get_season_rounds",
     "parameters": [
      {
@@ -9906,7 +9906,7 @@
      "Builders"
     ],
     "summary": "A series template",
-    "description": "A series' template as its text line, for a page checking a series round it was handed; the reader believes it only once it hashes to the id it asked for.\n\nAccess: none\n\nReturns: 200 text/plain the template line (cache 1 h); 400; 404\n\nSource: `packages/arena-node/src/server.js` line 5335.",
+    "description": "A series' template as its text line, for a page checking a series round it was given. The reader trusts it only if it hashes to the id it asked for.\n\nAccess: none\n\nReturns: 200 text/plain the template line (cache 1 h); 400; 404\n\nSource: `packages/arena-node/src/server.js` line 5335.",
     "operationId": "get_series_template",
     "parameters": [
      {
