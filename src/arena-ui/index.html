@@ -1153,6 +1153,10 @@
     #arena-history-fed .fed-chip.idle::before { background: #6e7681; }
     #arena-history-rows .hist-tx { color: #8b949e; font: 600 11.5px ui-monospace, monospace; text-decoration: underline dotted; white-space: nowrap; }
     #arena-history-rows .hist-tx:hover { color: #e8edf3; }
+    #arena-history-rows .hist-slow { grid-column: 2 / -1; flex-basis: 100%; display: flex; gap: 8px; align-items: center; font-size: 11.5px; }
+    #arena-history-rows .hist-slow b { color: #f7931a; font-weight: 700; }
+    #arena-history-rows .hist-slow button { background: #1c2128; color: #e8edf3; border: 1px solid #30363d; border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
+    @media (max-width: 440px) { #arena-history-rows .hist-slow { grid-column: 1 / -1; } }
     #arena-history-rows .empty { color: #8b949e; font-size: 14px; padding: 6px 0; }
     .hist-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #2a2f36; font-size: 12px; }
     .hist-row .hist-amt { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -2899,6 +2903,7 @@
       const pressAt = window.ARENA_ORDER_PRESSED_AT || performance.now();
       window.ARENA_TX_STEPS = [];
       const txStep = (step) => { try { window.ARENA_TX_STEPS.push({ step, ms: Math.round(performance.now() - pressAt) }); } catch { /* not kept */ } };
+      window.ARENA_TX_STEP = txStep;   // the merge's own steps (combineIn) go into this order's timing too
       const joinStep = async (name, f) => {
         console.log('[arena] join step -> ' + name); txStep('-> ' + name);
         try { const r = await f(); console.log('[arena] join step <- ' + name); txStep('<- ' + name); return r; }
@@ -3108,22 +3113,35 @@
           // EACH STEP BEFORE THE LOCK TIMED (kanban #618, the owner 2026-10-24: "Order submitted in 16.78 s" - measured: 16-39 s between the
           // deposit step and "the player wallet is open", nothing said in between)
           const preAt = performance.now(); const lap = (step) => { console.log('[arena] TIMED before the lock: ' + step + ' at ' + Math.round(performance.now() - preAt) + ' ms'); txStep(step); };
+          // NOT IN THE ORDER'S WAY WHEN THE ROUND'S FEDERATION PAYS IT ALREADY (kanban #625, the owner's log 2026-10-24 20:30Z: 52, 94 and 126 s
+          // here, reading the status of every other federation this browser holds notes in while seats restarted): then the move out of a
+          // federation being replaced runs beside the order; a status read is kept two minutes
+          const successionMove = async () => {
+            try {
+              const census = ARENACLIENT.checkedCensusFor(named.round);
+              const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+              for (const old of (census ? ARENACLIENT.ledgerFederations(vault()) : []).filter((f) => f !== here)) {
+                const st = await ARENACLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT, keptMs: 120000 });
+                if (st.status !== 'DRAINING' || st.successorId !== here || !st.invite) continue;
+                const su = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === here ? window.ARENA_FED_STATUS
+                  : { ...(await ARENACLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT })), invite: named.federation };
+                const moved = await ARENACLIENT.migratePlayerWallet({ round: Object.assign({}, named.round, { federationId: ARENACLIENT.fromHex(old) }), invite: st.invite,
+                  seed, LockClient: wasm.LockClient, storage: vault(), status: st, successor: { ...su, invite: su.invite || named.federation },
+                  onState: (m) => onStep(m.state === 'moving' ? `moving your balance out of federation ${old.slice(0, 8)} (being replaced): ${Math.floor(Number(m.leftMsat) / 1000)} sat to go`
+                    : m.state === 'stopped' ? `the move out of federation ${old.slice(0, 8)} stopped (${m.why}) - your notes stay there; it is tried again at your next join` : `moved from federation ${old.slice(0, 8)}`) });
+                window.ARENA_MIGRATED = { from: old, to: here, moved: String(moved.moved), chunks: moved.chunks, state: moved.state };
+                console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
+              }
+            } catch (e) { console.warn('[arena] succession move: ' + e.message); }
+          };
+          let coversHere = false;
           try {
-            const census = ARENACLIENT.checkedCensusFor(named.round);
-            const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
-            for (const old of (census ? ARENACLIENT.ledgerFederations(vault()) : []).filter((f) => f !== here)) {
-              const st = await ARENACLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT });
-              if (st.status !== 'DRAINING' || st.successorId !== here || !st.invite) continue;
-              const su = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === here ? window.ARENA_FED_STATUS
-                : { ...(await ARENACLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.ARENA_VERIFY_KEPT })), invite: named.federation };
-              const moved = await ARENACLIENT.migratePlayerWallet({ round: Object.assign({}, named.round, { federationId: ARENACLIENT.fromHex(old) }), invite: st.invite,
-                seed, LockClient: wasm.LockClient, storage: vault(), status: st, successor: { ...su, invite: su.invite || named.federation },
-                onState: (m) => onStep(m.state === 'moving' ? `moving your balance out of federation ${old.slice(0, 8)} (being replaced): ${Math.floor(Number(m.leftMsat) / 1000)} sat to go`
-                  : m.state === 'stopped' ? `the move out of federation ${old.slice(0, 8)} stopped (${m.why}) - your notes stay there; it is tried again at your next join` : `moved from federation ${old.slice(0, 8)}`) });
-              window.ARENA_MIGRATED = { from: old, to: here, moved: String(moved.moved), chunks: moved.chunks, state: moved.state };
-              console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
-            }
-          } catch (e) { console.warn('[arena] succession move: ' + e.message); }
+            const hereFed = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            coversHere = ARENACLIENT.joinFundingPlan({ parts: (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [], roundFederation: hereFed,
+              needMsat: BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n) }).coveredBy === 'here';
+          } catch { coversHere = false; }
+          if (coversHere) successionMove(); else await successionMove();
+          lap(coversHere ? 'succession (beside the order)' : 'succession');
           // MONEY STILL MERGING IS MERGED FIRST (the owner 2026-10-22: "If it's not spendable it should say so in the window instead of a deposit
           // request. But it's been like this for minutes"): this phrase's wallets in the round's federation and in the ones a swap may draw on take
           // in what this browser's other wallets hold, before the swap and the funding read them - a minute at most
@@ -3134,10 +3152,13 @@
             if (plan.coveredBy === 'merge' && plan.mergeFirst.length && window.ARENA_MERGE_NOW) {
               const m = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0);
               onStep(`merging ${m.toLocaleString('en-US')} sat in from your other wallets in this browser first`);
+              // (kanban #625, the owner 2026-10-24 275bf1e2: 52 s between the stake shares and the lock - this wait, unnamed): said in the order's steps
+              txStep('-> merge ' + m + ' sat first');
               await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
+              txStep('<- merge ' + m + ' sat first');
             }
           } catch (e) { console.warn('[arena] merge before the join: ' + e.message); }
-          lap('succession and merge');
+          lap('merge');
           // A ROUND IN ANOTHER FEDERATION IS ENTERED BY AN E-CASH EXCHANGE WITH A SEAT (kanban #614, the owner 2026-10-24: "Kein Lightning swap,
           // sondern übertragen in die andere federation"; "es sollte automatisch passieren"): before a top-up, what the round's federation lacks
           // is moved from the wallet's federation that holds the most spendable sats - its e-cash to a seat, the seat's e-cash of this federation
@@ -3599,6 +3620,8 @@
           const post = () => window.ARENA_TX_TIMING_POST({ entryIdHex: sent.entryId, sessionKeyPkcs8, nodes: named.nodes || [], key: txKey, steps: txSteps, pressedAt,
             committee: window.ARENA_COMMITTEE_LAST && window.ARENA_COMMITTEE_LAST.round === named.roundIdHex ? window.ARENA_COMMITTEE_LAST.ms : null });
           post(); setTimeout(post, 8000);   // again once the lock's acceptance is in (lockMs)
+          const tookMs = performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0);
+          if (tookMs > (window.ARENA_SLOW_TX_MS || 2000) && window.ARENA_KEEP_SLOW_TX) setTimeout(() => window.ARENA_KEEP_SLOW_TX(sent.entryId, tookMs), 8000);
         }
         setTimeout(() => prepStake(named.roundIdHex, named.round, named.nodes), 0);   // the next order's stake, dealt now (kanban #601)
         return;
@@ -4938,13 +4961,15 @@
       // EVERY ROW OF AN ORDER NAMES ITS TRANSACTION (the owner 2026-10-24: "We miss tx ids for most ... You may use the same tx id for the same
       // event and use #anchor to #settlement"): a stake row its entry; its round's winnings, refund or payout the same id, at #settlement
       const txOfRound = new Map(rows.filter((r) => r.kind === 'stake' && r.entry && r.round).map((r) => [r.round, r.entry]));
+      const slow = window.ARENA_SLOW_TX ? window.ARENA_SLOW_TX() : new Map();
       const view = rows.map((r, i) => {
         const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in';
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = WHAT(r, sat);
         return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
           onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null, tx: r.entry || (r.round && r.kind !== 'stake' ? txOfRound.get(r.round) || null : null),
-          txAnchor: r.kind !== 'stake' && !r.entry && r.round && txOfRound.has(r.round) ? '#settlement' : '' };
+          txAnchor: r.kind !== 'stake' && !r.entry && r.round && txOfRound.has(r.round) ? '#settlement' : '',
+          slow: r.kind === 'stake' && r.entry && slow.has(r.entry) ? { ms: slow.get(r.entry).ms, copy: () => window.ARENA_COPY_SLOW_TX_LOG(r.entry) } : null };
       });
       window.ArenaWallet.drawHistory(rowsEl, { rows: view, empty: EMPTY });
     }
@@ -6668,6 +6693,28 @@
           console.log('[arena] tx ' + entryIdHex + ': timing to ' + said.filter((x) => x === 201).length + ' of ' + nodes.length + ' seats');
         } catch (e) { console.log('[arena] tx ' + entryIdHex + ': timing not handed over: ' + (e && e.message ? e.message : e)); }
       };
+      // A SLOW ORDER'S LOG, KEPT IN THIS BROWSER (the owner 2026-10-24: "Store the client log for delayed orders locally with a button copy log and a
+      // label slow tx"): an order placed after more than SLOW_TX_MS keeps the page's log (ARENA_CLIENT_LOGS, secrets taken out) under its
+      // transaction id - the last SLOW_TX_MOST, each cut to SLOW_TX_BYTES; the history marks its row "slow tx" with a Copy log button
+      const SLOW_TX_KEY = 'arena.slowtx', SLOW_TX_MS = 2000, SLOW_TX_MOST = 3, SLOW_TX_BYTES = 150000;
+      const slowTxs = () => { try { return JSON.parse((window.ARENA_BROWSER_STORE() || localStorage).getItem(SLOW_TX_KEY) || '[]'); } catch { return []; } };
+      window.ARENA_SLOW_TX_MS = SLOW_TX_MS;
+      window.ARENA_KEEP_SLOW_TX = (idHex, ms) => {
+        try {
+          let log = window.ARENA_CLIENT_LOGS ? window.ARENA_CLIENT_LOGS() : '';
+          if (log.length > SLOW_TX_BYTES) log = log.slice(log.length - SLOW_TX_BYTES);
+          const all = slowTxs().filter((x) => x.id !== idHex).concat([{ id: idHex, ms: Math.round(ms), at: new Date().toISOString(), log }]).slice(-SLOW_TX_MOST);
+          (window.ARENA_BROWSER_STORE() || localStorage).setItem(SLOW_TX_KEY, JSON.stringify(all));
+          console.log('[arena] tx ' + idHex + ': slow (' + Math.round(ms) + ' ms) - its log kept in this browser');
+          if (window.ARENA_PAINT_HISTORY) window.ARENA_PAINT_HISTORY();
+        } catch (e) { console.log('[arena] tx ' + idHex + ': its log could not be kept: ' + (e && e.message ? e.message : e)); }
+      };
+      window.ARENA_SLOW_TX = () => new Map(slowTxs().map((x) => [x.id, x]));
+      window.ARENA_COPY_SLOW_TX_LOG = async (idHex) => {
+        const x = window.ARENA_SLOW_TX().get(idHex);
+        if (!x) return false;
+        try { await navigator.clipboard.writeText(x.log); return true; } catch { return false; }
+      };
       window.ARENA_ORDER_TIMES = window.ARENA_ORDER_TIMES || new Map();
       window.ARENA_NOTE_ORDER_TIME = (key, what, ms) => {
         const t = window.ARENA_ORDER_TIMES.get(key) || {}; t[what] = Math.round(ms); window.ARENA_ORDER_TIMES.set(key, t);
@@ -6739,14 +6786,20 @@
               // EACH KEPT COPY ON ITS OWN: one the federation does not take (or a receive that throws) no longer stops the others, and is named
               let said;
               if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(fedHex, 'merging in ' + Math.round(Number(rec.msat) / 1000).toLocaleString('en-US') + ' sat from ' + (/another tab/.test(String(rec.from)) ? 'this browser\'s other tab' : 'your other wallet ' + String(rec.from).slice(0, 8)), 30000);
+              const step = (x) => { try { if (window.ARENA_TX_STEP) window.ARENA_TX_STEP(x); } catch { /* not kept */ } };
+              const recvAt = performance.now();
+              step('-> merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat');
               try { said = JSON.parse(await Promise.race([main.receiveEcash(rec.ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in 45 s')), 45000))])); }
-              catch (e) { mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (e && e.message ? e.message : e)); continue; }
+              catch (e) { step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + (e && e.message ? e.message : e) + ')'); mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (e && e.message ? e.message : e)); continue; }
+              step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + said.state + ', ' + Math.round(performance.now() - recvAt) + ' ms)');
               if (!['Success', 'AlreadyReceived', 'Rejected'].includes(said.state)) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': the federation said ' + said.state);
               console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
               // THE KEPT COPY STAYS COUNTED UNTIL THE BALANCE SHOWS IT (measured on UI 268, 19:29:09Z: one sum read 0 sat between "combined ... Success"
               // and the reissued notes landing ~3 s later): after a Success, dropped once this wallet's balance rose, or after 30 s at the latest
               if (said.state === 'Success' && before !== null) {
+                step('-> merge balance shows it');
                 for (let w = 0; w < 60; w++) { let now = before; try { now = BigInt(await main.balanceMsat()); } catch { now = before; } if (now > before) break; await new Promise((r) => setTimeout(r, 500)); }
+                step('<- merge balance shows it');
               }
               if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
             }

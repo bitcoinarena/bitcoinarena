@@ -80,19 +80,21 @@ function settleWord(what) {
   return what;
 }
 const UI_WORDS = { fetchDonationSet: 'Donation set loaded', fetchFees: 'Fees loaded', clientSettlementSignerNodes: 'Committee checked',
-  postHandout: 'Stake shares sent', 'claim key': 'Claim key derived', deposit: 'Wallet balance checked', 'succession and merge': 'Wallets merged',
-  exchange: 'Exchange checked', 'spendable check': 'Spendable balance checked', 'early deposit': 'Deposit checked' };
+  postHandout: 'Stake shares sent', 'claim key': 'Claim key derived', deposit: 'Wallet balance checked', 'succession and merge': 'Succession and merge checked',
+  exchange: 'Exchange checked', 'spendable check': 'Spendable balance checked', 'early deposit': 'Deposit checked',
+  succession: 'Federation succession checked', merge: 'Merge checked' };
+const uiWord = (name) => UI_WORDS[name] || (/^merge /.test(name) ? 'Merge: ' + name.slice(6) : name);
 /** The UI's steps as rows: "-> x" and "<- x" one row each x with how long it took, the rest as they are. */
 function uiSteps(steps) {
   const out = [], open = new Map();
   for (const x of steps) {
-    const m = /^(->|<-)\s*(.+?)(?:\s*\(.*\))?$/.exec(String(x.step));
+    const m = /^(->|<-)\s*(.+?)(?:\s*\((.*)\))?$/.exec(String(x.step));
     if (m && m[1] === '->') { open.set(m[2], x.ms); continue; }
-    if (m && m[1] === '<-' && open.has(m[2])) { out.push({ at: open.get(m[2]), took: x.ms - open.get(m[2]), what: UI_WORDS[m[2]] || m[2] }); open.delete(m[2]); continue; }
+    if (m && m[1] === '<-' && open.has(m[2])) { out.push({ at: open.get(m[2]), took: x.ms - open.get(m[2]), what: uiWord(m[2]), detail: m[3] || '' }); open.delete(m[2]); continue; }
     const name = m ? m[2] : String(x.step);
-    out.push({ at: x.ms, what: UI_WORDS[name] || name });
+    out.push({ at: x.ms, what: uiWord(name), detail: m && m[3] ? m[3] : '' });
   }
-  for (const [name, at] of open) out.push({ at, what: (UI_WORDS[name] || name) + ' (no end)' });
+  for (const [name, at] of open) out.push({ at, what: uiWord(name) + ' (no end)' });
   return out.sort((a, b) => a.at - b.at);
 }
 
@@ -125,7 +127,7 @@ export function timelineOf(tx) {
   const c = tx.client, press = c && c.pressedAt ? Date.parse(c.pressedAt) : null;
   if (press) {
     add(press, 'page', 'UI', 'Order button clicked', { kind: 'page' });
-    for (const x of uiSteps(c.steps || [])) add(press + x.at, 'page', 'UI', x.what, { took: x.took, kind: 'page' });
+    for (const x of uiSteps(c.steps || [])) add(press + x.at, 'page', 'UI', x.what, { took: x.took, detail: x.detail || '', kind: 'page' });
     for (const [k, v] of [['Submitted', c.submittedMs], ['Placed', c.placedMs], ['Lock accepted', c.lockMs]]) if (Number.isFinite(v)) add(press + v, 'page', 'UI', k, { kind: 'page' });
   }
   return ev.sort((a, b) => a.atMs - b.atMs || (a.where < b.where ? -1 : 1));

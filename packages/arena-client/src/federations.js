@@ -10,6 +10,7 @@
 //   HALTED    everything frozen, said so
 //   CLOSED    its successor holds everything
 //   unverified  no record that stands: shown, and nothing about it is taken on trust
+import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
 import { verifyFederationRecord, newestRecord } from '../../arena-protocol/src/federation-record.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { readInvite } from '../../arena-node/src/invite.js';
@@ -34,11 +35,19 @@ export const FEDERATION_ALLOWS = Object.freeze({
  * THE FEDERATION'S STATUS AS THIS CLIENT CAN STAND BEHIND IT. `census` is the entries of a census this client checked
  * (with their advertisements); `verify` BIP-340. Answers { status, allows, signers, height, from, why }.
  */
-export async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch }) {
+export async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch, keptMs = 0 }) {
   const fid = String(federationIdHex).toLowerCase();
+  // KEPT A WHILE WHEN ASKED (kanban #625, the owner's log 2026-10-24 20:30Z: each order read the status of every other federation the
+  // browser holds notes in, 52-126 s while seats restarted): a status that stood is reused for `keptMs`
+  const had = keptMs > 0 ? STATUS_KEPT.get(fid) : null;
+  if (had && Date.now() - had.at < keptMs) return had.status;
   const all = await federationStatuses({ nodes, census, verify, fetcher, only: fid });
-  return all.get(fid) || { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
+  const st = all.get(fid) || { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
+  if (st.status !== 'unverified') STATUS_KEPT.set(fid, { status: st, at: Date.now() });
+  return st;
 }
+const STATUS_KEPT = new Map();
+const STATUS_ASK_MS = 6000;
 
 /**
  * EVERY FEDERATION THE SEATS LIST, EACH AS federationStatus ANSWERS IT (§23A.3,: Move is offered against the
@@ -48,9 +57,13 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
 export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
   const verified = new Map(), refused = new Map(), failed = [];
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
-  await Promise.all((nodes || []).map(async (u) => {
+  // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
+  // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
+  let closed = false;
+  await majorityThenGrace((nodes || []).map(async (u) => {
     try {
-      const r = await readWithOneRetry(fetcher, `${String(u).replace(/\/+$/, '')}/federations`);
+      const r = await readWithOneRetry(fetcher, `${String(u).replace(/\/+$/, '')}/federations`, { signal: AbortSignal.timeout(STATUS_ASK_MS) });
+      if (closed) return;
       if (!r.ok) { failed.push(`${u}: ${r.status}`); return; }
       const j = await r.json();
       for (const f of j.federations || []) {
@@ -60,8 +73,9 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
       }
-    } catch (e) { failed.push(`${u}: ${e.message}`); }
-  }));
+    } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
+  }), COMPARE_GRACE_MS);
+  closed = true;
   const out = new Map();
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
     const best = newestRecord(verified.get(fid) || []);
