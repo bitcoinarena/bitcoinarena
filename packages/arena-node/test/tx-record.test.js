@@ -44,6 +44,11 @@ test('a transaction: its entry, its locks\' txids, each door with its steps, and
     const list = await (await fetch(`${base}/txs?since=0`)).json();
     assert.ok(list.txs.some((t) => t.id === id && t.round === toHex(s.rid) && t.app && /^[0-9a-f]{64}$/.test(t.federation)), JSON.stringify(list.txs));
     assert.equal((await fetch(`${base}/tx?id=${'00'.repeat(32)}`)).status, 404);
+    // the explorer's read: every row with its whole record, as GET /tx answers it
+    const fullList = await (await fetch(`${base}/txs?since=0&full=1`)).json();
+    const row = fullList.txs.find((t) => t.id === id);
+    assert.deepEqual(row.detail.entry, again.entry);
+    assert.equal(row.detail.client.submittedMs, 28900);
   } finally { await s.close(); }
 });
 
