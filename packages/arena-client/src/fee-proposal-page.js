@@ -5,6 +5,7 @@
 // census height, the set its entry pays and its settlement splits), a proposal built from what the form typed - any subset, refused
 // by the very limits and sums the seats enforce (fee-proposal.js feeProposalStands) before anything is signed - and signed by the
 // forum's key, handed to every node as a funding proposal is (funding-page.js postFunding, kind 'fee').
+import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
 import { FEES, FEES_TODAY, feeProposalStands, encodeFeeProposal, feeProposalId, roundSplitBps, marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -19,9 +20,13 @@ const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (
 export async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
   const asked = [...new Set((nodes || []).map(feesBaseOf))];
   const q = Number.isInteger(height) && height >= 0 ? `?height=${height}` : '';
-  const answers = (await Promise.all(asked.map(async (b) => {
-    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
-  }))).filter((a) => a && (q ? a.atHeight : a.inForce));
+  // NOT HELD FOR THE SLOWEST NODE (kanban #625, measured 2026-10-24 20:07Z: an order's fetchFees took 10 s - 13 of 14 nodes agreed at
+  // once, the 14th was restarting): once more than half the nodes answered, the rest get COMPARE_GRACE_MS more
+  const got = new Array(asked.length).fill(null);
+  await majorityThenGrace(asked.map(async (b, i) => {
+    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); got[i] = r.ok ? await r.json() : null; } catch { got[i] = null; }
+  }), COMPARE_GRACE_MS);
+  const answers = got.filter((a) => a && (q ? a.atHeight : a.inForce));
   const by = new Map();
   for (const a of answers) { const set = q ? a.atHeight : a.inForce; const k = JSON.stringify(Object.keys(FEES).map((f) => set[f])); by.set(k, [...(by.get(k) || []), a]); }
   const best = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
