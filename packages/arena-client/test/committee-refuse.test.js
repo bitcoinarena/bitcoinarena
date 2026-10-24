@@ -80,3 +80,18 @@ test('a binding genesis: the join refuses a contract by the parameter it names o
   const live = await clientCommittee('ab'.repeat(32), contract, ['https://s1'], { curve: pageCurve, fetcher });
   assert.doesNotMatch(String(live.why), /genesis binds/);
 });
+
+test('the committee compare is not held for the slowest seat: more than half answered, the rest get a grace (kanban #625)', async () => {
+  const { majorityThenGrace } = await import('../src/committee.js');
+  const at = (ms) => new Promise((r) => setTimeout(r, ms));
+  let t = Date.now();
+  await majorityThenGrace([at(5), at(5), at(5), new Promise(() => {})], 30);
+  assert.ok(Date.now() - t < 400, 'a hung seat holds it only for the grace');
+  t = Date.now();
+  await majorityThenGrace([at(5), at(60), at(60), at(60)], 10);
+  assert.ok(Date.now() - t >= 55, 'with no majority yet, it waits for one');
+  t = Date.now();
+  await majorityThenGrace([at(5), at(8), at(10)], 1000);
+  assert.ok(Date.now() - t < 500, 'all in: no grace waited');
+  await majorityThenGrace([], 10);
+});
