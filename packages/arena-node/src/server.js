@@ -7239,6 +7239,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lockOf = (l) => (l ? { outpoint: l.outpoint, txid: String(l.outpoint).split(':')[0], contractId: l.contractId, verifiedAt: l.verifiedMs ? new Date(Number(l.verifiedMs)).toISOString() : null } : null);
         const order = round.db.prepare('SELECT batch, received_ms FROM market_orders WHERE order_id = ?').get(idHex);
         const settled = rr ? round.lockSettlement(e.roundId) || (federation && round.fedLockSettlement ? round.fedLockSettlement(e.roundId, federation) : null) : null;
+        // ITS RESULT (the owner 2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won"): from the round's
+        // settlement as this seat keeps it - what it paid the order's player key (a market pays per player key: `sharedBy` entries of the
+        // same key in the round share it), and whether the order's stake lock was among the locks it claimed (not claimed: back to the player)
+        const resultOf = (en, row) => {
+          if (!row) return null;
+          const stake = BigInt(en.stakeMsat || 0n), fee = BigInt(en.feeMsat || 0n);
+          if (!settled || settled.state !== 'ACCEPTED') return { state: 'pending', stakeMsat: String(stake), feeMsat: String(fee) };
+          const moves = round.lockSettlementMoves ? round.lockSettlementMoves(en.roundId) : null;
+          const claimed = moves && Array.isArray(moves.claims) ? new Set(moves.claims) : null;
+          const lockAt = op(en.stakeLockOutpoint);
+          const shares = round.lockSettlementShares ? round.lockSettlementShares(en.roundId) || [] : [];
+          const player = toHex(en.playerPubkey);
+          const paid = shares.filter((x) => toHex(x.pubkey) === player).reduce((a, x) => a + BigInt(x.msat), 0n);
+          const sharedBy = round.db.prepare('SELECT contract FROM entries WHERE round_id = ?').all(Buffer.from(en.roundId))
+            .filter((r) => { try { return toHex(decodeEntryContract(new Uint8Array(r.contract)).playerPubkey) === player; } catch { return false; } }).length;
+          const state = paid > 0n ? 'won' : claimed && lockAt && !claimed.has(lockAt) ? 'refunded' : 'lost';
+          return { state, stakeMsat: String(stake), feeMsat: String(fee), payoutMsat: String(paid), netMsat: String(state === 'refunded' ? 0n : paid - stake - fee),
+            sharedBy, settlementTxid: settled.txid };
+        };
         // WHO PROCESSED ITS ROUND (the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the seats drawn to
         // run the game and to sign the settlement, the asker (who combines and submits it first), the outcome's attestors (who verified the
         // result), the settlement and what this seat did to it
@@ -7267,7 +7286,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           locks: { stake: lockOf(round.stakeLock(eid)), fee: lockOf(round.feeLock ? round.feeLock(eid) : null) },
           book: order ? { batch: order.batch !== null ? String(order.batch) : null, receivedAt: order.received_ms ? new Date(Number(order.received_ms)).toISOString() : null } : null,
           settlement: settled ? { txid: settled.txid, state: settled.state, why: settled.why || null } : null,
-          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex), processed: processedOf(e.roundId, rr) } };
+          steps: txRecord.steps(ref ? [idHex, ref] : [idHex]), client: txRecord.clientTiming(idHex), processed: processedOf(e.roundId, rr), result: resultOf(e, rr) } };
       };
       const sendJson = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))); };
       if (req.method === 'GET' && url.pathname === '/tx') {

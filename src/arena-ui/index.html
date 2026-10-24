@@ -4935,12 +4935,16 @@
         if (win) win.location.href = link.url; else window.open(link.url, '_blank', 'noopener');
       };
       // EACH ROW AS DATA (kanban #564), drawn by the page's bundle (window.ArenaWallet, React)
+      // EVERY ROW OF AN ORDER NAMES ITS TRANSACTION (the owner 2026-10-24: "We miss tx ids for most ... You may use the same tx id for the same
+      // event and use #anchor to #settlement"): a stake row its entry; its round's winnings, refund or payout the same id, at #settlement
+      const txOfRound = new Map(rows.filter((r) => r.kind === 'stake' && r.entry && r.round).map((r) => [r.round, r.entry]));
       const view = rows.map((r, i) => {
         const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in';
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = WHAT(r, sat);
         return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
-          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null, tx: r.entry || null };
+          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null, tx: r.entry || (r.round && r.kind !== 'stake' ? txOfRound.get(r.round) || null : null),
+          txAnchor: r.kind !== 'stake' && !r.entry && r.round && txOfRound.has(r.round) ? '#settlement' : '' };
       });
       window.ArenaWallet.drawHistory(rowsEl, { rows: view, empty: EMPTY });
     }

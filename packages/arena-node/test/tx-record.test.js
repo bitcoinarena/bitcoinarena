@@ -31,6 +31,9 @@ test('a transaction: its entry, its locks\' txids, each door with its steps, and
     assert.ok(tx.processed && /^[0-9a-f]{64}$/.test(tx.processed.asker), 'the round\'s asker');
     assert.deepEqual(tx.processed.outcomes, []);
     assert.deepEqual(tx.processed.mine, []);
+    // its result: the round is not settled yet
+    assert.equal(tx.result.state, 'pending');
+    assert.equal(tx.result.stakeMsat, String(tx.entry.stakeMsat));
     // the page's timing: refused unsigned or signed by another key, kept when the order's session key signed it
     const timing = { pressedAt: '2026-10-24T18:08:15.300Z', submittedMs: 28900, placedMs: 29980, lockMs: 29800, steps: [{ step: 'committee', ms: 27000 }] };
     const tj = JSON.stringify(timing);
