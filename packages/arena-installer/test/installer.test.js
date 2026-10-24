@@ -451,10 +451,10 @@ test('the intro\'s count of nodes and the RAM disk choice are checked and kept (
     const ten = (await c.post('/api/instances', { count: 10, ram: true })).json;
     assert.deepEqual([ten.ok, ten.instances], [true, { count: 10, ram: true }]);
     assert.match(ten.note, /10 or more nodes found their own federation/);
-    assert.deepEqual((await c.get('/api/state')).json.instances, { count: 10, ram: true });
+    assert.deepEqual((await c.get('/api/state')).json.instances, { count: 10, ram: true, first: { instance: '', portOffset: 0 } }, 'node 1\'s name and ports kept beside the count');
     assert.deepEqual((await c.post('/api/instances', { count: 7, ram: false })).json.instances, { count: 7, ram: false }, 'declined');
     server.close();
-    assert.deepEqual(nodeState(home).read().instances, { count: 7, ram: false }, 'kept on disk');
+    assert.deepEqual(nodeState(home).read().instances, { count: 7, ram: false, first: { instance: '', portOffset: 0 } }, 'kept on disk');
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

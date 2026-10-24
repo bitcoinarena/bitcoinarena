@@ -38,6 +38,10 @@ test('the next node after each one, none after the last; a further node takes ov
   assert.deepEqual(nextInstance(3, '/h/n', '/h/n-b'), { instance: 'c', home: '/h/n-c', portOffset: 200, index: 3, count: 3 });
   assert.equal(nextInstance(3, '/h/n', '/h/n-c'), null, 'the last one');
   assert.equal(nextInstance(1, '/h/n', '/h/n'), null, 'one node');
+  // FROM NODE 1'S OWN NAME AND PORTS: a count beside nodes already on the machine takes neither their names nor their ports
+  assert.deepEqual(instancesOf(3, '/h/t', { instance: 't', portOffset: 3000 }).map((x) => [x.instance, x.home, x.portOffset]),
+    [['t', '/h/t', 3000], ['tb', '/h/t-b', 3100], ['tc', '/h/t-c', 3200]]);
+  assert.deepEqual(nextInstance(3, '/h/t', '/h/t-b', { instance: 't', portOffset: 3000 }), { instance: 'tc', home: '/h/t-c', portOffset: 3200, index: 3, count: 3 });
   const root = mkdtempSync(join(tmpdir(), 'arena-inst-'));
   try {
     const base = nodeState(join(root, 'n')), b = nodeState(join(root, 'n-b'));

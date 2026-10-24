@@ -49,6 +49,7 @@ import { findGatewayd, configureGateway, testGateway, joinFederation } from './g
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
+import { INSTANCE, PORT_OFFSET } from './instance.js';
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
 // A SESSION LASTS A WEEK IDLE AND OUTLIVES AN INSTALLER RESTART (ruling 8: "Tells user to bookmark this page as it can take days on
@@ -179,7 +180,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     'POST /api/instances': async (b) => {
       const c = instancesChoice({ count: b.count, ram: b.ram, network: 'testnet4' });
       if (!c.ok) return c;
-      state.save({ instances: { count: c.count, ram: c.ram } });
+      state.save({ instances: { count: c.count, ram: c.ram, first: { instance: INSTANCE, portOffset: PORT_OFFSET } } });   // node 1's name and ports (kanban #596)
       return { ok: true, instances: { count: c.count, ram: c.ram }, note: instancesNote(c.count) };
     },
 
