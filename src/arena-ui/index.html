@@ -5965,14 +5965,20 @@
     // A's round although this page had put the wallet's 1,000 sat into B (the lowest load, as ruled), so Up or Down was never
     // played in B. The rows a game is handed put the federation holding most of the wallet's sats first, else the one a deposit
     // goes to; the order among the rest is kept.
+    // BY THE MONEY THAT CAN PAY NOW (the owner 2026-10-24 playtest, "Enter by swap ... your money is in federation 337ae01a" on an Up/Down order
+    // that took 4dc88be7's round of the same window): a part still merging names its federation by 16 hex only (arena.wallet.known.<fed16>),
+    // so a wallet whose largest part was merging failed the 64-hex test and the rows went in the lobby's order; and a merging or arriving part
+    // is no money an order can spend. Ranked by what each federation holds spendable, a federation named by its first 16 hex matched too.
     function moneyFirst(rows) {
       const parts = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [];
-      const most = parts.filter((p) => Number(p.sats) > 0).sort((x, y) => Number(y.sats) - Number(x.sats))[0];
+      const spendable = (p) => Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0);
+      const most = parts.filter((p) => spendable(p) > 0).sort((x, y) => spendable(y) - spendable(x))[0];
       const dep = window.ARENA_DEPOSIT_FEDERATION && window.ARENA_DEPOSIT_FEDERATION.federation;
       const want = String((most && most.federation) || dep || '').toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(want)) return rows;
+      if (!/^[0-9a-f]{16,64}$/.test(want)) return rows;
       const fedOf = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.federationId instanceof Uint8Array ? ARENACLIENT.toHex(c.federationId) : null; };
-      return rows.map((r, i) => [r, i]).sort((x, y) => ((fedOf(x[0]) === want ? 0 : 1) - (fedOf(y[0]) === want ? 0 : 1)) || (x[1] - y[1])).map((x) => x[0]);
+      const ours = (r) => { const f = fedOf(r); return f && f.startsWith(want) ? 0 : 1; };
+      return rows.map((r, i) => [r, i]).sort((x, y) => (ours(x[0]) - ours(y[0])) || (x[1] - y[1])).map((x) => x[0]);
     }
     // ANOTHER GAME'S OWN CLIENT, BY ITS MANIFEST'S HASH: fetched, hashed, run from its checked bytes only
     async function loadTheGameClient(game) {
