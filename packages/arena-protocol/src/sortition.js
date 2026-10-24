@@ -198,3 +198,16 @@ export const outpointKey = (e) => {
   for (let i = 0; i < 32; i++) s += e.txid[i].toString(16).padStart(2, '0');
   return s + ':' + e.vout;
 };
+
+/**
+ * A ROUND'S ATTESTORS (kanban #630, protocol 21): ATTESTORS_DRAWN node keys of its census, drawn as its committees are (one key one
+ * seat, weighed by bond) but on their own seed - H("ARENA/v1/AttestorDraw" || committee seed) - so every node draws the same seven from
+ * the round's beacon, before the round, and not the settlement committee. An outcome stands with ATTEST_DRAW_THRESHOLD of them.
+ */
+export const ATTESTORS_DRAWN = 7;
+export const ATTEST_DRAW_THRESHOLD = 5;
+export function drawAttestors({ entries, contract, committeeSeed }) {
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a round\'s attestors are drawn on the seed its beacon produced');
+  return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.attestorDraw, committeeSeed), count: ATTESTORS_DRAWN });
+}
