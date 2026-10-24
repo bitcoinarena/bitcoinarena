@@ -43,6 +43,8 @@ export class DrawnAttestor {
     let cents = null;
     try { cents = await this.readPrice(); } catch { cents = null; }
     const at = this.now();
+    // a reader answers cents, or { cents, atMs } (the seat's feed: the exchange ticker's last trade)
+    if (cents && typeof cents === 'object') cents = cents.cents;
     if (Number.isFinite(Number(cents)) && Number(cents) > 0) this.samples.push({ atMs: BigInt(at), price: BigInt(Math.round(Number(cents))) });
     const keepFrom = BigInt(at - KEEP_MS);
     while (this.samples.length && this.samples[0].atMs < keepFrom) this.samples.shift();
