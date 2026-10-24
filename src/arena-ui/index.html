@@ -2744,10 +2744,18 @@
             try { await Promise.race([prepRound(named.roundIdHex, named.round, named.nodes).signer, new Promise((r) => setTimeout(r, 12000))]); } catch (e) { /* said below by the gate */ }
           }
           const st = loaded();
+          // NO VERIFIED RECORD READ: THE INVITE THIS BROWSER JOINED THAT FEDERATION WITH BEFORE (kanban #616, the owner 2026-10-24 playtest:
+          // "Order not placed: ... That invite names another federation than the round's 4dc88be70830d361" - the round's federation's record had
+          // not been read on this page, so the lobby's invite, of another federation, was taken). The gate below still checks it names the round's.
+          const kept = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(window.ARENA_BROWSER_STORE(), fid) : null;
           if (st && st.invite && ARENACLIENT.inviteNamesFederation(st.invite, fid)) {
             named.federation = st.invite;
             console.log('[arena] join: the round is in federation ' + fid.slice(0, 16) + ', joined with its own invite');
-          }
+          } else if (kept && ARENACLIENT.inviteNamesFederation(kept, fid)) {
+            named.federation = kept;
+            console.log('[arena] join: no record of federation ' + fid.slice(0, 16) + ' read on this page - joined with the invite this browser used for it before');
+          } else named.noInviteWhy = 'this page has not read federation ' + fid.slice(0, 16) + '\'s record yet (' + ((window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.why)
+            || (st ? 'its record names no invite' : 'no seat answered it')) + ') and this browser never joined it - try again in a minute';
         }
       }
 
@@ -3182,7 +3190,7 @@
           // A FEDERATION NOT ON THE LIST IS SHOWN AND CONFIRMED BEFORE ANYTHING IS LOCKED (§23.6)
           if (window.ARENA_FEDERATION_GATE) {
             const gate = await window.ARENA_FEDERATION_GATE({ round: named.round, invite: named.federation, roundIdHex: named.roundIdHex, nodes: named.nodes });
-            if (!gate.ok) throw new Error(gate.why);
+            if (!gate.ok) throw new Error(named.noInviteWhy || gate.why);
           }
           // AND WHAT ITS RULES WARN OF, CONFIRMED (§18A.7 / §22A)
           if (window.ARENA_WARNINGS_GATE) {
