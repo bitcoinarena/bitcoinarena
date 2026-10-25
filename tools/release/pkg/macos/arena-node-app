@@ -15,7 +15,10 @@
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
 BASE="$HOME/Library/ArenaNode"
 H="$HOME/.arena-node"
-CMD="$H/bin/arenanode"
+# the node's command carries its instance (arena.conf instance=4: arenanode-4), as the installer names it - the bare name only without one
+# (playtest 2026-10-25: a fourth node on the test host, the app looked for arenanode, "No such file or directory", and Go did nothing)
+INST=$(sed -n 's/^instance=//p' "$H/arena.conf" 2>/dev/null | head -1)
+CMD="$H/bin/arenanode${INST:+-$INST}"
 LOG="$BASE/installer.log"
 PIDF="$BASE/installer.pid"; LINKF="$BASE/installer.link"
 
