@@ -12,9 +12,11 @@ RequestExecutionLevel user
 InstallDir "$LOCALAPPDATA\ArenaNode"
 BrandingText "Bitcoin Arena ${VERSION} (testnet4)"
 
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+; the brand mark (kanban #635, the owner's playtest: "It has no logo")
+!define MUI_ICON "bitcoin-arena.ico"
+!define MUI_UNICON "bitcoin-arena.ico"
 !define MUI_WELCOMEPAGE_TITLE "Bitcoin Arena ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "This sets up a Bitcoin Arena node on testnet4.$\r$\n$\r$\nIt copies the node to your user folder (no administrator needed). Then a small Bitcoin Arena window opens and starts the installer, and the setup page opens in your browser, where you choose what your node does.$\r$\n$\r$\nLater, start Arena Node from the Start menu."
+!define MUI_WELCOMEPAGE_TEXT "This sets up a Bitcoin Arena node on testnet4.$\r$\n$\r$\nIt copies the node to your user folder (no administrator needed). Then a small Bitcoin Arena window opens and starts the installer, and the setup page opens in your browser, where you choose what your node does.$\r$\n$\r$\nLater, start Bitcoin Arena from the Start menu."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open Bitcoin Arena now (starts the setup in your browser)"
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenWindow
